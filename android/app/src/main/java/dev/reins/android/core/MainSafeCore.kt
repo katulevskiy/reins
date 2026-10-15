@@ -19,6 +19,7 @@ import dev.reins.core.ProfileView
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 import dev.reins.core.ActivityEntry
+import dev.reins.core.ActivityPush
 import dev.reins.core.ApprovalChoice
 import dev.reins.core.ApprovalKind
 import dev.reins.core.StandingGrant
@@ -27,6 +28,7 @@ import dev.reins.core.BlobView
 import dev.reins.core.ConnectionView
 import dev.reins.core.DeviceView
 import dev.reins.core.EmailContent
+import dev.reins.core.GitCommitView
 import dev.reins.core.GmailStatus
 import dev.reins.core.GrantView
 import dev.reins.core.JoinProgress
@@ -77,6 +79,11 @@ class MainSafeCore(
     override suspend fun approvalView(requestId: String): ApprovalView = io { approvalView(requestId) }
 
     override suspend fun activityApproval(entryId: Long): ApprovalView? = io { activityApproval(entryId) }
+
+    override suspend fun activityPush(entryId: Long): ActivityPush? = io { activityPush(entryId) }
+
+    override suspend fun activityCommitChange(entryId: Long, shortSha: String): GitCommitView =
+        io { activityCommitChange(entryId, shortSha) }
 
     override suspend fun approve(requestId: String, choice: ApprovalChoice) = io { approve(requestId, choice) }
 

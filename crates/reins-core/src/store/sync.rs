@@ -900,6 +900,148 @@ mod tests {
         }
     }
 
+    /// A push's Activity entry as the engine logs it: the call's push kept with it, and this phone's snapshot.
+    fn push_entry(
+        summary: &reins_proto::desktop::PushSummary,
+        detail: &str,
+        decided_by: &str,
+    ) -> crate::store::AuditRecord {
+        let call = crate::store::audit_push::tests::push_call(summary);
+        let parked = crate::views::ParkedRequest {
+            request: reins_proto::relay::RelayRequest {
+                v: 1,
+                id: "r1".into(),
+                connection_id: "desk".into(),
+                connection_label: "Laptop".to_owned(),
+                created_at: 9,
+                wait_until: None,
+                account: None,
+                call: call.clone(),
+            },
+            messages: Vec::new(),
+            covered: BTreeMap::new(),
+            account: None,
+            accounts: Vec::new(),
+            shared_accounts: Vec::new(),
+            connector: None,
+        };
+        crate::store::AuditRecord {
+            seq: 0,
+            at: 10,
+            connection_id: "desk".to_owned(),
+            connection_label: "Laptop".to_owned(),
+            action: "write".to_owned(),
+            outcome: "sent".to_owned(),
+            detail: detail.to_owned(),
+            grant_id: None,
+            service: "github".to_owned(),
+            account: Some("me".to_owned()),
+            count: 1,
+            op: "git_push".to_owned(),
+            info: crate::store::AuditInfo {
+                request: Some(Box::new(crate::titles::request(&call, 9))),
+                git: crate::store::AuditPush::of_call(&call).map(Box::new),
+                snapshot: Some(Box::new(parked)),
+                decided_by: decided_by.to_owned(),
+                ..crate::store::AuditInfo::default()
+            },
+        }
+    }
+
+    /// A push decided on one phone (by its user, or by Bypass there) shows its commits and files, and their changes
+    /// while small, on the other phone, which never saw its approval: from the copy synced with the entry. A copy from
+    /// another device that is too large or malformed is dropped there; the entry itself, its outcome and who decided
+    /// it stay as they are, and nothing is duplicated or rewritten by later syncs.
+    #[test]
+    fn a_push_decided_on_one_phone_shows_its_commits_and_files_on_the_other() {
+        use crate::store::audit_push::tests::summary;
+        let (a_dir, b_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (Phone::new(a_dir.path()).open(), Phone::new(b_dir.path()).open());
+        let mut server = Server::default();
+        server.sync(&a);
+        server.pull(&b);
+        a.append_audit(&push_entry(&summary(2, 2, 5), "small", "bypass")).unwrap();
+        a.append_audit(&push_entry(&summary(3, 4, 300), "large", "")).unwrap();
+        // Another device's copies that no device of this version writes: one too large, one not a push at all.
+        let mut oversize = push_entry(&summary(1, 1, 3), "oversize", "");
+        let mut big = oversize.info.git.as_deref().unwrap().clone();
+        big.summary.updates[0].commits[0].files[0].patch =
+            Some(format!("@@ -1 +1 @@\n{}", vec!["+x".repeat(100); 390].join("\n")));
+        oversize.info.git = Some(Box::new(big));
+        oversize.info.snapshot = None;
+        a.append_audit(&oversize).unwrap();
+        let malformed = serde_json::json!({"decided_by": "autopilot", "git": {"repo": 5, "summary": "no"},
+            "request": {"full": "git push me/app"}});
+        let sealed = a.seal(super::super::audit::INFO_AAD, malformed.to_string().as_bytes()).unwrap();
+        a.lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO audit (at, connection_id, connection_label, action, outcome, detail, service, item_count, \
+                 info, op) VALUES (11, 'desk', 'Laptop', 'write', 'sent', x'00', 'github', 1, ?1, 'git_push')",
+                params![sealed],
+            )
+            .unwrap();
+        server.sync(&a);
+        assert_eq!(server.pull(&b), Pulled::Imported);
+
+        let entries = b.activity(10).unwrap();
+        assert_eq!(entries.len(), 4);
+        let find = |detail: &str| entries.iter().find(|e| e.detail == detail).unwrap().clone();
+        let (small, large, oversize) = (find("small"), find("large"), find("oversize"));
+        assert!(
+            b.audit_snapshot(small.seq).unwrap().is_none(),
+            "the approval itself stays on the phone that showed it"
+        );
+
+        // The small push, with its diffs; who decided it unchanged.
+        let push = b.activity_push(small.seq).unwrap().expect("the push");
+        assert!(!push.this_device && push.diffs && !push.diffs_not_kept);
+        let r = &push.git.refs[0];
+        assert_eq!((r.commit_count, r.commits.len(), r.commits[0].files.len()), (2, 2, 2));
+        assert_eq!((r.commits[0].files[0].additions, r.commits[0].files[0].deletions), (Some(3), Some(1)));
+        assert_eq!(r.commits[0].files[0].diff.len(), 6);
+        let shown = crate::views::activity_entry(&small);
+        assert_eq!((shown.decided_by.as_str(), shown.outcome.as_str()), ("bypass", "sent"));
+        let listed = shown.request.unwrap().git.expect("the list has the push");
+        assert!(!crate::store::has_diffs(&listed), "without diff lines in the list");
+        assert_eq!(listed.refs[0].commits.len(), 2);
+        let approval = b.activity_approval(small.seq).unwrap().expect("opens on the synced push");
+        assert_eq!((approval.kind, approval.op.as_str()), (crate::types::ApprovalKind::Write, "git_push"));
+        assert!(approval.quick.is_none() && approval.wait_until.is_none());
+        assert!(crate::store::has_diffs(approval.git.as_ref().unwrap()));
+
+        // The large push: commits and files with their counts, the diffs not kept, and said so.
+        let push = b.activity_push(large.seq).unwrap().expect("the push");
+        assert!(!push.diffs && push.diffs_not_kept);
+        let r = &push.git.refs[0];
+        assert_eq!((r.commits.len(), r.commits[0].files.len()), (3, 4));
+        assert_eq!(r.commits[0].files[0].additions, Some(3));
+
+        // On the phone that showed them: its own copy, every diff.
+        let here = a.activity(10).unwrap().into_iter().find(|e| e.detail == "large").unwrap();
+        let push = a.activity_push(here.seq).unwrap().unwrap();
+        assert!(push.this_device && push.diffs && !push.diffs_not_kept);
+
+        // Too large, or malformed: dropped; the rest of the entry stays.
+        assert!(oversize.info.git.is_none() && oversize.info.request.is_some());
+        assert!(b.activity_push(oversize.seq).unwrap().is_none());
+        assert!(b.activity_approval(oversize.seq).unwrap().is_none(), "the full request is what it shows");
+        let bad = entries.iter().find(|e| e.at == 11).unwrap();
+        assert!(bad.info.git.is_none());
+        assert_eq!(bad.info.decided_by, "autopilot");
+        assert_eq!(bad.info.request.as_ref().unwrap().full, "git push me/app");
+
+        // Syncing again rewrites and duplicates nothing.
+        let before: Vec<_> = b.activity(10).unwrap();
+        b.append_audit(&push_entry(&summary(1, 1, 1), "from b", "")).unwrap();
+        server.sync(&b);
+        server.pull(&a);
+        let after = b.activity(10).unwrap();
+        assert_eq!(after.len(), 5);
+        assert!(before.iter().all(|e| after.contains(e)));
+        assert_eq!(a.activity(10).unwrap().len(), 5);
+    }
+
     /// An entry's kept approval follows it when a merge renumbers this phone's activity.
     #[test]
     fn an_entrys_approval_follows_it_through_a_merge() {

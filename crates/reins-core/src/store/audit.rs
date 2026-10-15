@@ -12,7 +12,7 @@ pub const AUDIT_RETENTION: i64 = 5_000;
 /// Shown when a detail can no longer be decrypted (data key lost).
 pub const DETAIL_UNAVAILABLE: &str = "(details unavailable)";
 const DETAIL_AAD: &str = "audit.detail";
-const INFO_AAD: &str = "audit.info";
+pub(super) const INFO_AAD: &str = "audit.info";
 const SNAPSHOT_AAD: &str = "audit.snapshot";
 /// The most bytes an entry's snapshot may take (JSON, before sealing); a larger one is not kept.
 pub const MAX_SNAPSHOT: usize = 256 * 1024;
@@ -129,6 +129,10 @@ pub struct AuditInfo {
     /// What it asked, in full (the entry's "Full request").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request: Option<Box<AuditRequest>>,
+    /// A push: its refs, commits and files (and their changes while small), kept with the entry so that every device
+    /// of the account can show them (see [`super::AuditPush`]). Shown only: nothing decides by it.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "super::audit_push::lenient")]
+    pub git: Option<Box<super::AuditPush>>,
     /// The request as its approval showed it (or would have, when it was decided without asking), so the entry's page
     /// can show the same thing. Kept apart from the rest (see [`Store::audit_snapshot`]), never in this JSON.
     #[serde(skip)]
@@ -469,6 +473,38 @@ mod tests {
         let seq = store.append_audit(&small).unwrap();
         let kept = store.audit_snapshot(seq).unwrap().unwrap();
         assert_eq!(kept.connector.unwrap().items[0].body.as_ref().unwrap().len(), SNAPSHOT_ITEM_TEXT);
+    }
+
+    /// Entries written before pushes were kept read without one; a version without the field (the same type without
+    /// `git`) reads entries that have it, as it ignores what it does not know; and a push that does not read never
+    /// costs the entry its other details.
+    #[test]
+    fn a_kept_push_is_compatible_both_ways_and_never_costs_the_entry_its_details() {
+        let old: AuditInfo = serde_json::from_str(r#"{"note": "n", "decided_by": "bypass"}"#).unwrap();
+        assert!(old.git.is_none());
+        let call = crate::store::audit_push::tests::push_call(&crate::store::audit_push::tests::summary(1, 1, 2));
+        let info = AuditInfo {
+            git: crate::store::AuditPush::of_call(&call).map(Box::new),
+            decided_by: "bypass".to_owned(),
+            ..AuditInfo::default()
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert!(json.get("git").is_some());
+        let mut newer = json.clone();
+        newer["from_a_newer_version"] = serde_json::json!({"x": 1});
+        assert_eq!(serde_json::from_value::<AuditInfo>(newer).unwrap(), info, "unknown fields are ignored");
+        let mut broken = json;
+        broken["git"] = serde_json::json!({"repo": "me/app", "summary": {"updates": "not a list"}});
+        let read: AuditInfo = serde_json::from_value(broken).unwrap();
+        assert_eq!((read.git, read.decided_by.as_str()), (None, "bypass"));
+        // Written and read back through the store.
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        let mut rec = record(1);
+        rec.info.git.clone_from(&info.git);
+        let seq = store.append_audit(&rec).unwrap();
+        assert_eq!(store.audit_entry(seq).unwrap().unwrap().info.git, info.git);
+        assert!(store.audit_entry(store.append_audit(&record(2)).unwrap()).unwrap().unwrap().info.git.is_none());
     }
 
     #[test]

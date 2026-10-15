@@ -2739,9 +2739,23 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func activity(limit: UInt32) async throws  -> [ActivityEntry]
     
     /**
-     * An Activity entry's request as its approval showed it (read-only; `None` for older entries).
+     * An Activity entry's request as its approval showed it (read-only; `None` for older entries). On a device that
+     * did not show it, a push still comes back, from the copy synced with the entry (`git` set, little else).
      */
     func activityApproval(entryId: Int64) async throws  -> ApprovalView?
+    
+    /**
+     * One commit of an Activity entry's push (`short_sha` from its `GitCommitView`), with its files and their changes
+     * line by line, loaded from GitHub with this device's own connection: for a push whose changes were not kept
+     * here. Only commits of that push; nothing is asked, logged or shown to an AI.
+     */
+    func activityCommitChange(entryId: Int64, shortSha: String) async throws  -> GitCommitView
+    
+    /**
+     * An Activity entry's push, the best copy this device has: commits, files with lines added and removed, and the
+     * changes line by line where kept (`ActivityPush.diffs`, `diffs_not_kept`). `None` when the entry is no push.
+     */
+    func activityPush(entryId: Int64) async throws  -> ActivityPush?
     
     /**
      * Connects a Google account that was just authorized on this phone (`hint` is its address).
@@ -3478,7 +3492,8 @@ open func activity(limit: UInt32)async throws  -> [ActivityEntry]  {
 }
     
     /**
-     * An Activity entry's request as its approval showed it (read-only; `None` for older entries).
+     * An Activity entry's request as its approval showed it (read-only; `None` for older entries). On a device that
+     * did not show it, a push still comes back, from the copy synced with the entry (`git` set, little else).
      */
 open func activityApproval(entryId: Int64)async throws  -> ApprovalView?  {
     return
@@ -3492,6 +3507,47 @@ open func activityApproval(entryId: Int64)async throws  -> ApprovalView?  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeApprovalView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * One commit of an Activity entry's push (`short_sha` from its `GitCommitView`), with its files and their changes
+     * line by line, loaded from GitHub with this device's own connection: for a push whose changes were not kept
+     * here. Only commits of that push; nothing is asked, logged or shown to an AI.
+     */
+open func activityCommitChange(entryId: Int64, shortSha: String)async throws  -> GitCommitView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_activity_commit_change(
+                        self.uniffiCloneHandle(),FfiConverterInt64.lower(entryId),FfiConverterString.lower(shortSha)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeGitCommitView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * An Activity entry's push, the best copy this device has: commits, files with lines added and removed, and the
+     * changes line by line where kept (`ActivityPush.diffs`, `diffs_not_kept`). `None` when the entry is no push.
+     */
+open func activityPush(entryId: Int64)async throws  -> ActivityPush?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_activity_push(
+                        self.uniffiCloneHandle(),FfiConverterInt64.lower(entryId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeActivityPush.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6171,6 +6227,102 @@ public func FfiConverterTypeActivityMessage_lower(_ value: ActivityMessage) -> R
 
 
 /**
+ * The push of an Activity entry, the best copy this device has (`activity_push`): this device's own copy of the
+ * approval when it showed it, else the copy synced with the entry.
+ */
+public struct ActivityPush: Equatable, Hashable {
+    /**
+     * Refs, then each one's commits, then their files with lines added and removed, and the files' changes line by
+     * line where `diffs`.
+     */
+    public var git: GitPushView
+    /**
+     * Some file has its change line by line (`GitFileView.diff`).
+     */
+    public var diffs: Bool
+    /**
+     * The changes line by line were left out of the copy this device has, to keep the account's synced data small:
+     * say "Diff not kept on this device" (`activity_commit_change` loads one commit's from GitHub). False when they
+     * are here, or when the desktop app sent none (binary, too large).
+     */
+    public var diffsNotKept: Bool
+    /**
+     * The copy is this device's own (the approval as it showed it); false: the one synced with the entry.
+     */
+    public var thisDevice: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Refs, then each one's commits, then their files with lines added and removed, and the files' changes line by
+         * line where `diffs`.
+         */git: GitPushView, 
+        /**
+         * Some file has its change line by line (`GitFileView.diff`).
+         */diffs: Bool, 
+        /**
+         * The changes line by line were left out of the copy this device has, to keep the account's synced data small:
+         * say "Diff not kept on this device" (`activity_commit_change` loads one commit's from GitHub). False when they
+         * are here, or when the desktop app sent none (binary, too large).
+         */diffsNotKept: Bool, 
+        /**
+         * The copy is this device's own (the approval as it showed it); false: the one synced with the entry.
+         */thisDevice: Bool) {
+        self.git = git
+        self.diffs = diffs
+        self.diffsNotKept = diffsNotKept
+        self.thisDevice = thisDevice
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityPush: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityPush: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityPush {
+        return
+            try ActivityPush(
+                git: FfiConverterTypeGitPushView.read(from: &buf), 
+                diffs: FfiConverterBool.read(from: &buf), 
+                diffsNotKept: FfiConverterBool.read(from: &buf), 
+                thisDevice: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityPush, into buf: inout [UInt8]) {
+        FfiConverterTypeGitPushView.write(value.git, into: &buf)
+        FfiConverterBool.write(value.diffs, into: &buf)
+        FfiConverterBool.write(value.diffsNotKept, into: &buf)
+        FfiConverterBool.write(value.thisDevice, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityPush_lift(_ buf: RustBuffer) throws -> ActivityPush {
+    return try FfiConverterTypeActivityPush.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityPush_lower(_ value: ActivityPush) -> RustBuffer {
+    return FfiConverterTypeActivityPush.lower(value)
+}
+
+
+/**
  * What an Activity entry asked, in full (the entry's "What it asked" and "Full request"). Never a secret's value.
  */
 public struct ActivityRequest: Equatable, Hashable {
@@ -6198,6 +6350,13 @@ public struct ActivityRequest: Equatable, Hashable {
      * When it was asked (Unix seconds); 0 when not known.
      */
     public var askedAt: Int64
+    /**
+     * A push: its refs, commits and files with the lines each adds and removes, kept with the entry so that every
+     * device of the account has it (whichever decided it). Without the changes line by line (`GitFileView.diff` is
+     * empty here): `activity_push` has them when they were kept. `None` for anything else, and for entries logged
+     * before pushes were kept.
+     */
+    public var git: GitPushView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6219,13 +6378,20 @@ public struct ActivityRequest: Equatable, Hashable {
          */purpose: String, 
         /**
          * When it was asked (Unix seconds); 0 when not known.
-         */askedAt: Int64) {
+         */askedAt: Int64, 
+        /**
+         * A push: its refs, commits and files with the lines each adds and removes, kept with the entry so that every
+         * device of the account has it (whichever decided it). Without the changes line by line (`GitFileView.diff` is
+         * empty here): `activity_push` has them when they were kept. `None` for anything else, and for entries logged
+         * before pushes were kept.
+         */git: GitPushView? = nil) {
         self.agent = agent
         self.cwd = cwd
         self.why = why
         self.full = full
         self.purpose = purpose
         self.askedAt = askedAt
+        self.git = git
     }
 
     
@@ -6249,7 +6415,8 @@ public struct FfiConverterTypeActivityRequest: FfiConverterRustBuffer {
                 why: FfiConverterString.read(from: &buf), 
                 full: FfiConverterString.read(from: &buf), 
                 purpose: FfiConverterString.read(from: &buf), 
-                askedAt: FfiConverterInt64.read(from: &buf)
+                askedAt: FfiConverterInt64.read(from: &buf), 
+                git: FfiConverterOptionTypeGitPushView.read(from: &buf)
         )
     }
 
@@ -6260,6 +6427,7 @@ public struct FfiConverterTypeActivityRequest: FfiConverterRustBuffer {
         FfiConverterString.write(value.full, into: &buf)
         FfiConverterString.write(value.purpose, into: &buf)
         FfiConverterInt64.write(value.askedAt, into: &buf)
+        FfiConverterOptionTypeGitPushView.write(value.git, into: &buf)
     }
 }
 
@@ -17038,6 +17206,30 @@ fileprivate struct FfiConverterOptionTypeDeviceBridge: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeActivityPush: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityPush?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivityPush.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivityPush.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeActivityRequest: FfiConverterRustBuffer {
     typealias SwiftType = ActivityRequest?
 
@@ -19058,7 +19250,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_activity() != 58338) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_activity_approval() != 46482) {
+    if (uniffi_reins_core_checksum_method_reinscore_activity_approval() != 42434) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_activity_commit_change() != 48115) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_activity_push() != 60254) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_add_account() != 25987) {

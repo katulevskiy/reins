@@ -698,6 +698,21 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         locked { $0.recorded[entryId] }
     }
 
+    func activityPush(entryId: Int64) async throws -> ActivityPush? {
+        locked { s in
+            s.recorded[entryId]?.git.map { git in
+                let diffs = git.refs.contains { r in
+                    (r.files + r.commits.flatMap(\.files)).contains { !$0.diff.isEmpty }
+                }
+                return ActivityPush(git: git, diffs: diffs, diffsNotKept: false, thisDevice: true)
+            }
+        }
+    }
+
+    func activityCommitChange(entryId: Int64, shortSha: String) async throws -> GitCommitView {
+        throw CoreError.Service(reason: "the demo has no GitHub connection")
+    }
+
     func fetchEmail(account: String?, messageId: String) async throws -> EmailContent {
         try await latency(0.25)
         return try locked { s in

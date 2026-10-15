@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, HashMap};
 use zeroize::Zeroizing;
 
 /// Not `audit_snapshots`: an entry's approval (up to 256 KiB each) stays on the phone that showed it. A sealed copy on
-/// disk is the whole database instead, so it keeps it.
+/// disk is the whole database instead, so it keeps it. A push's refs, commits and files travel in the entry's sealed
+/// info instead, bounded (`audit_push.rs`).
 pub(super) const TABLES: &[&str] = &[
     "meta",
     "session",

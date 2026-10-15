@@ -60,11 +60,11 @@ pub use mcp::{McpAddStep, McpCallView, McpServerView, McpToolView};
 pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck};
 pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, ServerInfo, SsoOutcome, SsoStart};
 pub use types::{
-    AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ApprovalChoice, ApprovalKind, ApprovalView, BlobView,
-    ConnectionView, DeviceKind, DeviceView, DiffLineKind, DiffLineView, EmailContent, EmailView, GitCommitView,
-    GitFileView, GitPushView, GitRefView, GmailStatus, GrantRequestView, GrantScopeChoice, GrantView, MessageView,
-    PairingView, PendingItem, PendingKind, QuickApproval, ResourceView, ServiceView, SessionInfo, StandingGrant,
-    StartingPolicy,
+    AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ActivityPush, ActivityRequest, ApprovalChoice,
+    ApprovalKind, ApprovalView, BlobView, ConnectionView, DeviceKind, DeviceView, DiffLineKind, DiffLineView,
+    EmailContent, EmailView, GitCommitView, GitFileView, GitPushView, GitRefView, GmailStatus, GrantRequestView,
+    GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem, PendingKind, QuickApproval, ResourceView,
+    ServiceView, SessionInfo, StandingGrant, StartingPolicy,
 };
 pub use types::{
     AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,

@@ -438,6 +438,15 @@ impl Connector for GitHub {
         Err(CoreError::service(format!("None of the GitHub accounts on the user's phone can see {repo}.")))
     }
 
+    async fn commit_change(
+        &self,
+        account: &str,
+        repo: &str,
+        sha: &str,
+    ) -> Result<reins_proto::desktop::CommitInfo, CoreError> {
+        git::commit_change(self, &self.token(account)?, repo, sha).await
+    }
+
     async fn forget(&self, account: &str) {
         self.store.secret_delete(GITHUB, account).ok();
     }

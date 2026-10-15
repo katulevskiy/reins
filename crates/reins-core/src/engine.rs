@@ -1021,10 +1021,67 @@ impl Engine {
         Ok(self.store.activity(limit.clamp(1, 500))?.iter().map(views::activity_entry).collect())
     }
 
-    /// The request of an Activity entry as its approval showed it, to be shown again read-only; `None` for an entry
-    /// without one (logged before they were kept, or not about a request).
+    /// The request of an Activity entry as its approval showed it, to be shown again read-only. A device without that
+    /// copy (another one showed it) gets a push from the copy synced with the entry. `None` for an entry without
+    /// either (logged before they were kept, or not about a request).
     pub fn activity_approval(&self, entry_id: i64) -> Result<Option<crate::types::ApprovalView>, CoreError> {
-        Ok(self.store.audit_snapshot(entry_id)?.map(|parked| views::entry_approval_view(&parked)))
+        self.store.activity_approval(entry_id)
+    }
+
+    /// The push of an Activity entry: this device's copy of its approval when it has one, else the copy synced with the
+    /// entry; `None` for an entry that is not a push (or was logged before pushes were kept).
+    pub fn activity_push(&self, entry_id: i64) -> Result<Option<crate::types::ActivityPush>, CoreError> {
+        self.store.activity_push(entry_id)
+    }
+
+    /// One commit of an Activity entry's push, its files and their changes, loaded from the git host with this
+    /// device's own connection to it (GitHub): for a push whose changes were not kept here. The user's own read from
+    /// the app: nothing is asked, logged or shown to an AI. `short_sha`: the commit's `GitCommitView.short_sha`.
+    pub async fn activity_commit_change(
+        &self,
+        entry_id: i64,
+        short_sha: &str,
+    ) -> Result<crate::types::GitCommitView, CoreError> {
+        let entry = self.store.audit_entry(entry_id)?.ok_or_else(|| CoreError::invalid("no such Activity entry"))?;
+        let (service, repo, summary) = match self.store.audit_snapshot(entry_id)?.map(|p| p.request.call) {
+            Some(reins_proto::gmail::ToolCall::Connector(call)) if crate::connector::git::is_push(&call) => (
+                call.service.clone(),
+                call.str_arg("repo").unwrap_or_default().to_owned(),
+                crate::connector::git::summary_arg(&call)?,
+            ),
+            _ => {
+                let push = entry.info.git.ok_or_else(|| CoreError::invalid("that Activity entry is not a push"))?;
+                (entry.service.clone(), push.repo, push.summary)
+            }
+        };
+        if short_sha.len() < 7 || !short_sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(CoreError::invalid("that is not a commit id"));
+        }
+        let short = short_sha.to_ascii_lowercase();
+        let sha = summary
+            .updates
+            .iter()
+            .flat_map(|u| &u.commits)
+            .map(|c| c.sha.as_str())
+            .find(|sha| sha.starts_with(&short))
+            .ok_or_else(|| CoreError::invalid("that commit is not part of the push"))?
+            .to_owned();
+        let connector = self.connectors.get(&service).ok_or_else(|| {
+            CoreError::invalid(format!("{} is not available on this device", views::service_name(&service)))
+        })?;
+        // The account that decided it first, then the others: the first whose token can read the commit.
+        let mut accounts = self.accounts_of(&service);
+        if let Some(i) = entry.account.as_ref().and_then(|a| accounts.iter().position(|x| x == a)) {
+            accounts.swap(0, i);
+        }
+        let mut last = CoreError::needs_attention(format!("{} is not connected", views::service_name(&service)));
+        for account in accounts {
+            match connector.commit_change(&account, &repo, &sha).await {
+                Ok(commit) => return Ok(views::commit_view(&commit)),
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
     }
 
     /// Gmail as a whole: ready when every connected account is; otherwise the first problem found.
