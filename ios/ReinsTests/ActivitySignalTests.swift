@@ -71,17 +71,35 @@ final class ActivitySignalTests: XCTestCase {
     }
 
     func testWhatWasDoneReadsInThePast() {
-        XCTAssertEqual(ActivityText.past("Push 3 commits to"), "Pushed 3 commits to")
-        XCTAssertEqual(ActivityText.past("Send an email to"), "Sent an email to")
-        XCTAssertEqual(ActivityText.past("Read 2 emails from"), "Read 2 emails from")
-        XCTAssertEqual(ActivityText.past("Search"), "Searched")
-        XCTAssertEqual(ActivityText.past("Frobnicate the thing"), "Frobnicate the thing", "an unknown verb stays as asked")
+        XCTAssertEqual(AskLabels.past("Push 3 commits to"), "Pushed 3 commits to")
+        XCTAssertEqual(AskLabels.past("Send an email to"), "Sent an email to")
+        XCTAssertEqual(AskLabels.past("Read 2 emails from"), "Read 2 emails from")
+        XCTAssertEqual(AskLabels.past("Search"), "Searched")
+        XCTAssertEqual(AskLabels.past("Frobnicate the thing"), "Frobnicate the thing", "an unknown verb stays as asked")
         let pushed = DemoData.entry(1, at: 0, action: "write", outcome: "sent", detail: "", service: "github",
                                     requestLabel: DemoData.requestLabel("github", "push", "Push 3 commits to", "acme/web"))
         XCTAssertEqual(HistoryRow.title(pushed), "Pushed 3 commits to acme/web")
         let denied = DemoData.entry(2, at: 0, action: "write", outcome: "denied", detail: "", service: "github",
                                     requestLabel: DemoData.requestLabel("github", "delete", "Delete branch", "old/experiment"))
         XCTAssertEqual(HistoryRow.title(denied), "Asked to delete branch old/experiment", "what was denied says what was asked")
+    }
+
+    func testTwoJoinedVerbsBothGoIntoThePast() {
+        XCTAssertEqual(AskLabels.past("Create and push a branch"), "Created and pushed a branch")
+        XCTAssertEqual(AskLabels.past("Push and frobnicate"), "Pushed and frobnicate", "only a verb it knows changes")
+    }
+
+    func testAGitFetchIsOneVerbInEveryTense() {
+        func entry(_ outcome: String) -> ActivityEntry {
+            DemoData.entry(1, at: 0, action: "read", outcome: outcome, detail: "", service: "github",
+                           requestLabel: DemoData.requestLabel("github", "read", "Clone and fetch", "octo/app"))
+        }
+        XCTAssertEqual(HistoryRow.title(entry("released")), "Fetched octo/app", "never \"Cloned and fetch\"")
+        XCTAssertEqual(HistoryRow.title(entry("denied")), "Asked to fetch octo/app")
+        XCTAssertEqual(HistoryRow.title(entry("expired")), "Asked to fetch octo/app", "past tense only for what was carried out")
+        XCTAssertEqual(AskLabels.oneVerb("Clone and fetch octo/app"), "Fetch octo/app")
+        XCTAssertEqual(AskLabels.oneVerb("clone and fetch octo/app"), "fetch octo/app")
+        XCTAssertEqual(AskLabels.oneVerb("Clone octo/app"), "Clone octo/app")
     }
 
     func testTheRiversTilesAreTheKindsGlyphs() {
