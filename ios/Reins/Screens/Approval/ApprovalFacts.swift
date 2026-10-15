@@ -16,7 +16,9 @@ struct Facts: View {
             case .accounts: AccountsFacts(vm: vm, view: view)
             case .send: SendFacts(view: view)
             case .write:
-                if let git = view.git {
+                if let purchase = view.purchase {
+                    PurchaseFacts(purchase: purchase)
+                } else if let git = view.git {
                     GitFacts(view: view, git: git)
                 } else if let mcp = view.mcp {
                     McpFacts(call: mcp)
