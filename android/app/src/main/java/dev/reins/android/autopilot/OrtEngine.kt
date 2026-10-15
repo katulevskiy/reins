@@ -40,6 +40,14 @@ private class OrtInference(private val env: OrtEnvironment, private val session:
     /** A model exported without an input (an older export without `qtype`, say) simply does not get it. */
     private val inputs = session.inputNames
 
+    /** The outputs asked for: the risk output only from a model that has it (not laya-approvals-ml-v1). */
+    private val outputs: Set<String> = buildSet {
+        add(ModelTensors.LOGITS)
+        add(ModelTensors.ACT)
+        add(ModelTensors.POOLED)
+        if (ModelTensors.RISK in session.outputNames) add(ModelTensors.RISK)
+    }
+
     override fun run(input: PackedInput): RawOutput {
         val tensors = LinkedHashMap<String, OnnxTensor>()
         try {
@@ -55,14 +63,20 @@ private class OrtInference(private val env: OrtEnvironment, private val session:
                 OnnxTensor.createTensor(env, bytes, input.markerShape, OnnxJavaType.BOOL)
             }
             add(ModelTensors.QTYPE) { OnnxTensor.createTensor(env, LongBuffer.wrap(input.qtype), input.batchShape) }
-            return session.run(tensors, setOf(ModelTensors.LOGITS, ModelTensors.ACT, ModelTensors.POOLED)).use { result ->
+            return session.run(tensors, outputs).use { result ->
                 fun read(name: String): RawTensor {
                     val tensor = result.get(name).orElseThrow { IllegalStateException("the model has no output $name") } as OnnxTensor
                     val buffer = tensor.floatBuffer
                     val values = FloatArray(buffer.remaining()).also { buffer.get(it) }
                     return RawTensor(values, tensor.info.shape)
                 }
-                RawOutput(read(ModelTensors.LOGITS), read(ModelTensors.ACT), read(ModelTensors.POOLED))
+                RawOutput(
+                    read(ModelTensors.LOGITS),
+                    read(ModelTensors.ACT),
+                    read(ModelTensors.POOLED),
+                    // Asked for, so it must come back: a missing one throws rather than reading as "no risk".
+                    if (ModelTensors.RISK in outputs) read(ModelTensors.RISK) else null,
+                )
             }
         } finally {
             tensors.values.forEach { it.close() }
