@@ -122,6 +122,19 @@ under (no `raw.githubusercontent.com`, storage buckets or chat webhooks). Every 
 of a download that is run must be a known installer. Paths are placed after lexical normalization (`/tmp/../home` is
 `/home`). What a validator cannot place counts as not safe.
 
+**Agent fields only add.** No string the agent controls can lower a class or remove a hold:
+- The views combine by the cumulative max (so the higher `P(catastrophic)` wins). The class shown is never below what
+  any one view gave on its own, and a tripwire or an uncertain reading holds whichever text produced it.
+- Names only ever escalate. A host is "local" only when it is this computer. "Production" is the one environment read
+  off a name; "staging", "dev" or "test" never are, whether in a host, a workspace, a var file or a variable such as
+  `ENV=test`. Terraform's environment is read from every word of the line.
+- The default branch: the desktop's fact adds a branch to the long-lived names, never removes one.
+- A file's name cannot make a secret a sample (`.env.example` and `*.pub` count as secret files).
+- The hook's working folder (`In:`) only adds: relative paths deleted from a home directory, the root or a system
+  folder are uncertain, not "inside the project".
+- The topic is read for holds only, and a prose question never adds a phrase.
+- Commit messages, question lines and details are never read for anything that could lower the risk.
+
 **One reading.** A desktop question's commands are read in the texts the guard reads for its rules and certainty
 (`connector::desktop::ask_texts`: the detail after a reported rule, the topic's rule, and the question's command
 when it says something the detail does not), with the same tokenizer; a question that names another command than

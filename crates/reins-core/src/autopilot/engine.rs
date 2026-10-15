@@ -825,7 +825,9 @@ impl Engine {
                 (gates::class_stats(&refs, &s.class_key), profile.0.profile.manual.get(&s.class_key).copied())
             };
             let (may_approve, may_deny) = gates::unlocked(&stats, manual.map(|locked| !locked));
-            let level = readable.map_or(RiskLevel::Catastrophic, |p| risk::level(p, false));
+            let view_max = judged.risk_view_max;
+            let level = readable
+                .map_or(RiskLevel::Catastrophic, |p| risk::level(p, false).max(view_max.unwrap_or(RiskLevel::Benign)));
             let paused = match self.ap_overnight_paused(&subject.connection_id, level, now)? {
                 Some(why) => Some(why),
                 None => (!self.ap_rate_ok(&subject.connection_id, now)?).then_some("unusual volume"),
@@ -857,7 +859,9 @@ impl Engine {
             };
             let catastrophic = matches!(decision, overnight::Gate::Hold(overnight::Hold::Catastrophic(_)));
             s.risk = Some(RiskNote {
-                level: readable.map_or(RiskLevel::Catastrophic, |p| risk::level(p, catastrophic)),
+                level: readable.map_or(RiskLevel::Catastrophic, |p| {
+                    risk::level(p, catastrophic).max(view_max.unwrap_or(RiskLevel::Benign))
+                }),
                 probs: readable.unwrap_or([0.0; 4]),
                 why: held.clone().or_else(|| tripwire.clone()).or_else(|| first_line.clone()).unwrap_or_default(),
                 held: held.is_some(),
@@ -915,7 +919,7 @@ impl Engine {
         if let Some(p) = readable {
             // Manual and Auto show the risk; nothing is decided on it.
             s.risk = Some(RiskNote {
-                level: risk::level(p, tripwire.is_some()),
+                level: risk::level(p, tripwire.is_some()).max(judged.risk_view_max.unwrap_or(RiskLevel::Benign)),
                 probs: p,
                 why: tripwire.clone().or_else(|| first_line.clone()).unwrap_or_default(),
                 held: false,
@@ -1047,6 +1051,8 @@ impl Engine {
         let full = passes.get(full_at).cloned().unwrap_or_else(|| facts.clone());
         // The neutral view's risk joins the two-pass rule; a view without a risk leaves none (held in Overnight).
         let neutral_risk = neutral.map(|_| passes.last().and_then(|p| p.risk));
+        // The highest class any view gives on its own (the shown class is never below it).
+        let risk_view_max = passes.iter().filter_map(|p| p.risk).map(|p| risk::level(p, false)).max();
         self.ap_train_if_due(profile, &model_id, now).await;
         let dim = facts.pooled.len();
         let rows: Vec<&MemoryRow> =
@@ -1093,6 +1099,7 @@ impl Engine {
                 ),
                 risk_declared: risk_config.is_some(),
                 risk_threshold: risk_config.and_then(model::RiskConfig::overnight_threshold),
+                risk_view_max,
             },
             probs,
         ))

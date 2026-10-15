@@ -110,6 +110,7 @@ mod tests {
                 risk: None,
                 risk_declared: false,
                 risk_threshold: None,
+                risk_view_max: None,
             }),
             verdict: Verdict::Ask,
             reason: String::new(),
