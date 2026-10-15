@@ -8379,6 +8379,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "gpui_tokio",
+ "image",
  "ksni",
  "log",
  "objc2 0.6.4",
