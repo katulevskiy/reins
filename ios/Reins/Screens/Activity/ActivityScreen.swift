@@ -418,6 +418,7 @@ struct SyncNoticeRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button("OK") { Task { await model.dismissSyncNotice() } }
                 .buttonStyle(SignalButtonStyle(.soft, size: .small))
+                .fixedSize()
         }
         .padding(.top, 14)
         .padding(.bottom, 12)
