@@ -1525,6 +1525,9 @@ class AppFlowTest {
         tap("service:gmail")
         awaitTag("reconnect:work@gmail.com")
         assertFalse(has("reconnect:me@gmail.com"))
+        // What happened, in amber (as on iOS); "Allow again" is only the button beside it.
+        rule.onNodeWithTag("consentStatus:work@gmail.com", useUnmergedTree = true).assertTextEquals("Token expired")
+        assertEquals(1, rule.onAllNodes(hasText("Allow again"), useUnmergedTree = true).fetchSemanticsNodes().size)
         tap("removeAccount:work@gmail.com")
         rule.onAllNodes(hasText("Remove")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitCore { core.removedAccounts.isNotEmpty() }

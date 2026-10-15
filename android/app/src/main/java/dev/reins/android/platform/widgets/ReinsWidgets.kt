@@ -61,6 +61,8 @@ private val Paper = ColorProvider(RColors.Light.paperRaised, RColors.Dark.paperR
 private val Ink = ColorProvider(RColors.Light.ink, RColors.Dark.ink)
 private val InkMeta = ColorProvider(RColors.Light.inkMeta, RColors.Dark.inkMeta)
 private val Violet = ColorProvider(RColors.Light.violet, RColors.Dark.violet)
+/** Lockdown's warn colour (amber), as on Trust's field. */
+private val Amber = ColorProvider(RColors.Light.kindWarn, RColors.Dark.kindWarn)
 private val Sunken = ColorProvider(RColors.Light.paperSunken, RColors.Dark.paperSunken)
 private val OnField = ColorProvider(Color.White, Color.White)
 private val OnField2 = ColorProvider(Color.White.copy(alpha = 0.82f), Color.White.copy(alpha = 0.82f))
@@ -140,7 +142,7 @@ fun WaitingWidgetContent(model: WaitingWidgetModel, open: Intent) {
 }
 
 /**
- * Autopilot: the mode in the serif (violet for Auto), how much it decided today, and Lock down, which only takes power
+ * Autopilot: the mode in the serif (violet for Auto, amber for Lockdown), how much it decided today, and Lock down, which only takes power
  * away; the rest opens Trust.
  */
 @Composable
@@ -150,7 +152,7 @@ fun AutopilotWidgetContent(model: AutopilotWidgetModel, open: Intent) {
         Spacer(GlanceModifier.height(6.dp))
         Text(
             model.name,
-            style = TextStyle(color = if (model.mode == AutopilotMode.AUTO) Violet else Ink, fontSize = 30.sp, fontFamily = FontFamily.Serif),
+            style = TextStyle(color = when (model.mode) { AutopilotMode.AUTO -> Violet; AutopilotMode.LOCKDOWN -> Amber; else -> Ink }, fontSize = if (model.name.length > 6) 21.sp else 30.sp, fontFamily = FontFamily.Serif),
             maxLines = 1,
         )
         Text(model.line, style = TextStyle(color = InkMeta, fontSize = 12.sp), maxLines = 1)
