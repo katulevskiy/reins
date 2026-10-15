@@ -138,6 +138,10 @@ pub struct RunRequest {
     /// A person asked for the output raw.
     pub no_redact: bool,
     pub purpose: Option<String>,
+    /// `reins secrets get`: nothing runs; the one variable of the one environment asked for is written to the caller's
+    /// stdout, for a person only, asked on the phone every time ([`SecretsService::print`]).
+    #[serde(default)]
+    pub print: bool,
 }
 
 // ---- the caller -------------------------------------------------------------------------------------------------
@@ -376,6 +380,9 @@ async fn handle(
         return Ok(());
     }
     let runner = runner_for(cred.pid(), &req, info);
+    if req.print {
+        return print_value(stream, stdio, &req, &runner, service).await;
+    }
     match prepare(&req, &runner, service, &stdio).await {
         Ok(prepared) => run_child(stream, stdio, prepared).await,
         Err(e) => {
@@ -516,6 +523,74 @@ async fn prepare(req: &RunRequest, runner: &str, service: &SecretsService, stdio
     })
 }
 
+/// `reins secrets get`: the value goes to the caller's stdout (nothing runs), when the caller is a person and the phone
+/// approves. The command the phone shows is made here, not taken from the request.
+async fn print_value(
+    mut stream: UnixStream,
+    stdio: Stdio,
+    req: &RunRequest,
+    runner: &str,
+    service: &SecretsService,
+) -> Result<(), String> {
+    let asked = async {
+        checked(req)?;
+        if runner != reins_proto::desktop::PERSON {
+            return Err(
+                "reins secrets get is for a person at their own terminal; an agent runs its command with reins run"
+                    .to_owned(),
+            );
+        }
+        let (ask, name) = match req.asks.as_slice() {
+            [ask] => match ask.fields.as_deref() {
+                Some([name]) => (ask, name.clone()),
+                _ => return Err("reins secrets get prints one variable".to_owned()),
+            },
+            _ => return Err("reins secrets get prints one variable".to_owned()),
+        };
+        if !req.vars.is_empty() || !req.whole.is_empty() || req.no_redact {
+            return Err("reins secrets get prints one variable".to_owned());
+        }
+        let lease = LeaseRequest {
+            project: ask.project.clone(),
+            env: ask.env.clone(),
+            fields: Some(vec![name.clone()]),
+            program: "reins".to_owned(),
+            args: vec![
+                "secrets".to_owned(),
+                "get".to_owned(),
+                EnvRef::new(&ask.project, &ask.env)?.var(&name).to_string(),
+            ],
+            root: req.root.clone(),
+            runner: runner.to_owned(),
+            lease_secs: crate::secrets::MIN_LEASE_SECS,
+            purpose: req.purpose.clone(),
+            confirm_always: true,
+            print: true,
+            typed: None,
+            aliases: Vec::new(),
+            path_check: None,
+            exec_env: String::new(),
+        };
+        service.print(&lease, teller(&stdio.stderr)).await.map_err(|r| r.message().to_owned())
+    };
+    match asked.await {
+        Ok(value) => {
+            let tty = rustix::termios::isatty(&stdio.stdout);
+            let mut out = tokio::fs::File::from_std(std::fs::File::from(stdio.stdout));
+            let mut text = Zeroizing::new(String::with_capacity(value.len() + 1));
+            text.push_str(&value);
+            if tty {
+                text.push('\n');
+            }
+            let written = out.write_all(text.as_bytes()).await.and(out.flush().await);
+            drop(out);
+            stream.write_all(&[EXIT, u8::from(written.is_err())]).await.ok();
+        }
+        Err(e) => send_error(&mut stream, &e).await,
+    }
+    Ok(())
+}
+
 async fn run_child(mut stream: UnixStream, stdio: Stdio, p: Prepared) -> Result<(), String> {
     let mut cmd = tokio::process::Command::new(&p.program);
     cmd.args(&p.args).current_dir(&p.cwd).env_clear().envs(p.env.iter().map(|(k, v)| (k, v))).process_group(0);
@@ -613,6 +688,7 @@ mod tests {
             whole: vec![],
             no_redact: false,
             purpose: None,
+            print: false,
         }
     }
 

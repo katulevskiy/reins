@@ -324,6 +324,31 @@ impl SecretsService {
         Ok(out)
     }
 
+    /// `reins secrets get`: one value for a person to print. Asked on the phone every time (it never covers this with a
+    /// permission), never held: the value goes straight to the caller's stdout.
+    pub async fn print(
+        &self,
+        req: &LeaseRequest,
+        tell: Option<crate::phone::Tell>,
+    ) -> Result<Zeroizing<String>, Refusal> {
+        check(req).map_err(Refusal::Unavailable)?;
+        let name = match req.fields.as_deref() {
+            Some([name]) if req.print && req.runner == reins_proto::desktop::PERSON => name.clone(),
+            _ => return Err(Refusal::Unavailable("A value is printed for a person only, one at a time.".to_owned())),
+        };
+        let phone = self.phone.phone()?;
+        let entry = Entry::new(Kind::Secrets, &format!("{}/{name}, to print", req.item()))
+            .source(Some("reins secrets get"))
+            .detail(Some(&format!("In: {}", req.root)));
+        let journal = self.phone.journal().clone();
+        let mut released =
+            awaiting(&journal, entry, tell, self.phone.timeout(), release_env(&phone, req, None)).await?;
+        match released.values.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, value)) => Ok(std::mem::take(value)),
+            None => Err(Refusal::Unavailable("The phone's answer does not hold the variable asked for.".to_owned())),
+        }
+    }
+
     /// A control route under [`PREFIX`] (the token was checked).
     pub fn handle(&self, method: &Method, path: &str, body: &[u8]) -> Response<Body> {
         let json = |value: &dyn erased::Json| match value.to_vec() {

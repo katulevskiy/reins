@@ -61,7 +61,7 @@ rpassword = "7.5.4"
 
 # The user id, signals and the non-dumpable flag. Windows has none of these; see src/win.rs for what it does instead.
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.4", features = ["process", "net"] }
+rustix = { version = "1.1.4", features = ["process", "net", "termios"] }
 
 [dev-dependencies]
 # No reins-core / reins-e2e here, even for tests: they are AGPL-3.0 and this crate is Apache-2.0. The test that

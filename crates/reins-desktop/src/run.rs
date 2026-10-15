@@ -496,6 +496,7 @@ fn run_request(
         whole: plan.whole.iter().map(|e| (e.project.clone(), e.env.clone())).collect(),
         no_redact,
         purpose: plan.purpose.clone(),
+        print: false,
     })
 }
 

@@ -250,7 +250,7 @@ pub(crate) async fn check_phone_key(phone: &Phone, paths: &Paths, given: Option<
 
 /// The value to save: piped in on stdin, or typed at the terminal without echo. Read into a buffer that is wiped and
 /// never grows (so no copy is left behind).
-fn read_value(name: &str, field: &str, kind: ItemKind) -> Result<Zeroizing<String>, String> {
+pub(crate) fn read_value(name: &str, field: &str, kind: ItemKind) -> Result<Zeroizing<String>, String> {
     let mut value = if std::io::stdin().is_terminal() {
         if kind == ItemKind::Ssh {
             return Err("pipe the private key in: reins vault add NAME --kind ssh < ~/.ssh/id_ed25519".to_owned());
