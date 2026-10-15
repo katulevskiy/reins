@@ -78,6 +78,8 @@ fun HoldButton(
     height: Dp = 54.dp,
     done: Boolean = false,
     doneTitle: String = title,
+    /** Draws a hold in progress at this fill, untouchable (the gallery's "Keep holding"). */
+    previewProgress: Float? = null,
     onConfirm: () -> Unit,
 ) {
     val c = LocalColors.current
@@ -86,7 +88,9 @@ fun HoldButton(
     val progress = remember { mutableFloatStateOf(0f) }
     var holding by remember { mutableStateOf(false) }
     val confirm by rememberUpdatedState(onConfirm)
-    val active = enabled && !busy && !done
+    val active = enabled && !busy && !done && previewProgress == null
+    val shownHolding = holding || previewProgress != null
+    val fraction = { previewProgress ?: progress.floatValue }
     val danger = tint == c.danger
     val wash = if (danger) c.dangerWash else tint.copy(alpha = 0.13f)
     val fill = if (danger) c.dangerFill2 else tint.copy(alpha = 0.28f)
@@ -100,7 +104,7 @@ fun HoldButton(
             .background(if (done) tint else wash)
             // The fill that sweeps across while held: read while drawing, so a frame of the hold redraws, nothing more.
             .drawBehind {
-                val p = progress.floatValue
+                val p = fraction()
                 if (p > 0f && !done) drawRect(fill, size = Size(size.width * p, size.height))
             }
             // One node with its title, so TalkBack reads the button by name and tests find its text by its tag.
@@ -156,8 +160,8 @@ fun HoldButton(
                     GlyphIcon(Glyph.Check, fg, size = 20.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                holding -> {
-                    HoldRing(progress, fg, fill)
+                shownHolding -> {
+                    HoldRing(fraction, fg, fill)
                     Spacer(Modifier.width(10.dp))
                 }
                 icon != null -> {
@@ -168,7 +172,7 @@ fun HoldButton(
             RText(
                 when {
                     done -> doneTitle
-                    holding -> "Keep holding"
+                    shownHolding -> "Keep holding"
                     else -> title
                 },
                 RType.button,
@@ -237,12 +241,12 @@ internal fun holdTickGap(fraction: Float): Long = (260 - 190 * fraction.coerceIn
 
 /** The small ring beside "Keep holding": a track in the fill colour, the progress in the ink. */
 @Composable
-private fun HoldRing(progress: MutableFloatState, color: Color, track: Color) {
+private fun HoldRing(progress: () -> Float, color: Color, track: Color) {
     Canvas(Modifier.size(20.dp)) {
         val stroke = size.width * 3f / 36f
         val inset = size.width * 4f / 36f
         val arc = Size(size.width - inset * 2, size.height - inset * 2)
         drawArc(track, 0f, 360f, false, Offset(inset, inset), arc, style = Stroke(stroke))
-        drawArc(color, -90f, 360f * progress.floatValue, false, Offset(inset, inset), arc, style = Stroke(stroke, cap = StrokeCap.Round))
+        drawArc(color, -90f, 360f * progress(), false, Offset(inset, inset), arc, style = Stroke(stroke, cap = StrokeCap.Round))
     }
 }
