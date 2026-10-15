@@ -47,6 +47,20 @@ type Sample = (
     i64,
 );
 
+/// The approved command: a chain of eight, one of them a recursive delete.
+const COMMAND_WHAT: &str = "Claude Code wants to run: cd /tmp/sigwork && rm -rf jarx && mkdir jarx && cd jarx && unzip \
+     -q -o ~/Android/Sdk/platforms/android-37.0/android.jar 'android/app/Notification$Builder.class' \
+     'android/service/quicksettings/*' && javap -cp . 'android.app.Notification$Builder' | grep -i \"promot\\|CriticalText\"; \
+     javap -cp . android.service.quicksettings.Tile | grep -i \"subtitle\\|STATE\"; javap -cp . \
+     android.service.quicksettings.TileService | grep -i \"ACTION\\|startActivityAndCollapse\"";
+const COMMAND_DETAIL: &str = "Rule: Recursive deletes · rm -r\nMatched: rm -rf jarx\nGroup: deletes (destructive)\n\n\
+     Command:\ncd /tmp/sigwork && rm -rf jarx && mkdir jarx && cd jarx && unzip -q -o \
+     ~/Android/Sdk/platforms/android-37.0/android.jar 'android/app/Notification$Builder.class' \
+     'android/service/quicksettings/*' && javap -cp . 'android.app.Notification$Builder' | grep -i \"promot\\|CriticalText\"; \
+     javap -cp . android.service.quicksettings.Tile | grep -i \"subtitle\\|STATE\"; javap -cp . \
+     android.service.quicksettings.TileService | grep -i \"ACTION\\|startActivityAndCollapse\"\n\nIn: \
+     /home/dana/code/reins";
+
 const SAMPLES: &[Sample] = &[
     (
         40,
@@ -55,7 +69,8 @@ const SAMPLES: &[Sample] = &[
         Some("command:git push --force*"),
         "Claude Code wants to run: git push --force origin main",
         Some(
-            "Command:\ngit push --force origin main\n\nIn: ~/code/acme-web\nRule: git push --force* (Rewriting git history)",
+            "Rule: Rewriting git history · git push --force*\nMatched: git push --force origin main\nGroup: git-history \
+             (destructive)\n\nCommand:\ngit push --force origin main\n\nIn: /home/dana/code/acme-web",
         ),
         Outcome::Waiting,
         Decider::Phone,
@@ -79,20 +94,20 @@ const SAMPLES: &[Sample] = &[
         Kind::Command,
         Some("Claude Code"),
         Some("command:rm -r"),
-        "Claude Code wants to run: rm -rf /",
-        Some("Command:\nrm -rf /\n\nIn: ~/code/acme-web\nRule: rm -r (Recursive deletes)"),
-        Outcome::Denied,
+        COMMAND_WHAT,
+        Some(COMMAND_DETAIL),
+        Outcome::Approved,
         Decider::Phone,
-        Some("Denied on your phone."),
-        6,
+        None,
+        2,
     ),
     (
         23 * 60,
         Kind::Git,
         Some("git"),
         Some("github.com/acme/web"),
-        "push to acme/web (main)",
-        Some("3 commits to main\nfeat: checkout page\nfix: totals rounding\nchore: bump deps"),
+        "push to github.com/acme/web: checkout-page (3 commits)",
+        Some("Ref: checkout-page · new branch\nChanges: +32 −10 · 6 files"),
         Outcome::Approved,
         Decider::Phone,
         None,
@@ -104,7 +119,7 @@ const SAMPLES: &[Sample] = &[
         None,
         Some("anthropic"),
         "the key for API anthropic",
-        Some("Codex calls https://api.anthropic.com through Reins\nSecret: vault:Anthropic/api key\nLease: 900 s"),
+        Some("Requests to api.anthropic.com through the Reins proxy\nSecret: vault:Anthropic/api key\nLease: 900 s"),
         Outcome::TimedOut,
         Decider::Phone,
         Some("No answer from your phone in time."),
@@ -127,8 +142,11 @@ const SAMPLES: &[Sample] = &[
         Kind::File,
         Some("Claude Code"),
         Some("file:.env"),
-        "Claude Code wants to read .env",
-        Some("File: ~/code/acme-web/.env\nRule: .env files"),
+        "Claude Code wants to read /home/dana/code/acme-web/.env",
+        Some(
+            "Rule: .env files · .env\nMatched: /home/dana/code/acme-web/.env\nGroup: env-files\n\nFiles:\n\
+             /home/dana/code/acme-web/.env\n\nIn: /home/dana/code/acme-web",
+        ),
         Outcome::Approved,
         Decider::Phone,
         None,
@@ -164,7 +182,10 @@ const SAMPLES: &[Sample] = &[
         Some("Gemini CLI"),
         Some("command:git push origin feature/*"),
         "Gemini CLI wants to run: git push origin feature/login",
-        Some("Command:\ngit push origin feature/login\n\nAllowed by your rule: git push origin feature/*"),
+        Some(
+            "Rule: Your rule · git push origin feature/*\nMatched: git push origin feature/login\n\nCommand:\ngit push \
+             origin feature/login\n\nIn: /home/dana/code/acme-web",
+        ),
         Outcome::Allowed,
         Decider::Settings,
         None,
@@ -187,8 +208,8 @@ const SAMPLES: &[Sample] = &[
         Kind::Git,
         Some("git"),
         Some("github.com/acme/api"),
-        "push to acme/api (release/2.4)",
-        Some("1 commit to release/2.4\nfix: rate limit headers"),
+        "push to github.com/acme/api: release/2.4 (1 commit)",
+        Some("Ref: release/2.4\nChanges: +12 −4 · 2 files"),
         Outcome::Denied,
         Decider::Phone,
         Some("Denied on your phone."),
