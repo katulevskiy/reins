@@ -807,7 +807,7 @@ struct BypassLiveViews {
                     .monospacedDigit()
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .frame(width: size * (state.until.timeIntervalSinceNow >= 3_600 ? 3.3 : 2.25), alignment: .leading)
+                    .frame(width: size * (state.until.timeIntervalSinceNow >= 3_600 ? 3.0 : 2.0), alignment: .leading)
                 Text("left").font(RFont.fixedSerif(size * 0.5, italic: true)).foregroundStyle(color)
             }
         }
