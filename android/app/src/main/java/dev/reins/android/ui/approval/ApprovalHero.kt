@@ -246,7 +246,7 @@ private fun HeroPills(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
         s != null && s.judged && !s.floor -> {
             { AutopilotPill(s) { nav.overlay = ApprovalOverlay.Autopilot; feedback.play(Event.Open) } }
         }
-        model != null && model.state != ModelState.INSTALLED && s?.floor != true -> {
+        model != null && !AutopilotText.modelUsable(model) && s?.floor != true -> {
             { DownloadPill(ui, viewModel::downloadModel) }
         }
         s != null && s.floor -> {

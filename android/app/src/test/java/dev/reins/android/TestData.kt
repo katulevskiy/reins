@@ -632,7 +632,8 @@ object TestData {
         error: String? = null,
         runtimeReady: Boolean = true,
         risk: Boolean = false,
-    ) = ModelStatus(state, "laya-approvals-base-v1", "Laya approvals (base)", "1", size, downloaded, error, runtimeReady, risk)
+        update: Boolean = false,
+    ) = ModelStatus(state, "laya-approvals-base-v1", "Laya approvals (base)", "1", size, downloaded, error, runtimeReady, risk, update)
 
     fun risk(
         level: dev.reins.core.RiskLevel = dev.reins.core.RiskLevel.SEVERE,

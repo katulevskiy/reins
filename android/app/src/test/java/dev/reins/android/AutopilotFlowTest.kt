@@ -442,6 +442,48 @@ class AutopilotFlowTest : FlowHarness() {
         assertTrue(heard.played(Event.Revoked))
     }
 
+    @Test
+    fun anOlderModelShowsUpdateWhichDownloadsTheNewerOneOnWifi() {
+        core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, update = true)
+        openAutopilot()
+        awaitTag("updateModel")
+        assertFalse("Update replaces Ready", showsText("Ready"))
+        awaitTag("statScored")
+        tap("updateModel")
+        awaitText("Waiting")
+        val request = WorkManager.getInstance(context).getWorkInfosForUniqueWork(WorkModelDownloads.NAME).get().single()
+        assertEquals(NetworkType.UNMETERED, request.constraints.requiredNetworkType)
+        assertEquals("the core downloads nothing before the network is there", 0, core.downloads.get())
+        runDownloadJob()
+        awaitCore { core.downloads.get() == 1 }
+        awaitText("Ready")
+        awaitGone("updateModel")
+        assertFalse(core.model.update)
+    }
+
+    @Test
+    fun whileTheUpdateDownloadsTheRowShowsHowFarAndTheOlderModelStillScores() {
+        core.model = TestData.modelStatus(ModelState.DOWNLOADING, downloaded = 120_000_000u, size = 412_000_000u, update = true)
+        openAutopilot()
+        awaitText("29%")
+        awaitTag("statScored")
+        assertFalse("no offer to get the model while the older one still works", has("getScore"))
+    }
+
+    @Test
+    fun theModelDetailsSayWhatTheUpdateBringsAndStartIt() {
+        core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, update = true)
+        openAutopilot()
+        tap("openModel")
+        awaitText("rates risk, which Overnight needs", substring = true)
+        tap("updateModelDetails")
+        awaitText("Waiting for Wi-Fi")
+        runDownloadJob()
+        awaitCore { core.downloads.get() == 1 }
+        rule.waitUntil(10_000) { !showsText("rates risk, which Overnight needs", substring = true) }
+        awaitGone("updateModelDetails")
+    }
+
     // ---- profiles ---------------------------------------------------------------------------------------------------
 
     @Test

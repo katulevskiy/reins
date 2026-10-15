@@ -92,7 +92,6 @@ import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
-import dev.reins.core.ModelState
 import dev.reins.core.OvernightRisky
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -201,7 +200,7 @@ fun AutopilotQuick(
                     ),
             ) {
                 val s = settings ?: return@AnimatedVisibility
-                val modelReady = s.model.state == ModelState.INSTALLED
+                val modelReady = AutopilotText.modelUsable(s.model)
                 when (style) {
                     QuickStyle.Slider -> SliderCard(s, modelReady, onSet, stop, onMore, onDismiss, askBypass, askOvernight)
                     else -> MenuCard(s, modelReady, onSet, stop, onMore, onDismiss, askBypass, askOvernight)

@@ -48,7 +48,6 @@ import dev.reins.android.design.Screen
 import dev.reins.android.design.SectionLabel
 import dev.reins.android.design.SelectChip
 import dev.reins.android.ui.common.untrusted
-import dev.reins.core.ModelState
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 
@@ -66,7 +65,7 @@ fun TryItScreen(viewModel: AutopilotViewModel, initialProfileId: String?, onBack
     var example by rememberSaveable { mutableStateOf(AutopilotText.examples.first().title) }
     var profileId by rememberSaveable { mutableStateOf(initialProfileId) }
     val profile = ui.profiles.firstOrNull { it.id == profileId } ?: ui.profiles.firstOrNull { it.isDefault }
-    val modelReady = (ui.model ?: settings?.model)?.state == ModelState.INSTALLED
+    val modelReady = AutopilotText.modelUsable(ui.model ?: settings?.model)
     LaunchedEffect(Unit) { viewModel.clearEvaluation() }
 
     Screen(title = "Try it", subtitle = profile?.let { untrusted(it.name) }, onBack = onBack) {

@@ -328,8 +328,25 @@ fn class_of_text(text: &str) -> (String, bool) {
 impl Engine {
     // ---- the model -------------------------------------------------------------------------------------------------
 
+    /// The models this build trusts, the one a download installs first.
+    fn ap_models(&self) -> Vec<KnownModel> {
+        if self.cfg.models.is_empty() {
+            model::KNOWN_MODELS.to_vec()
+        } else {
+            self.cfg.models.clone()
+        }
+    }
+
+    /// The model a download installs: the newest this build trusts.
+    fn ap_default(&self) -> KnownModel {
+        self.ap_models()[0].clone()
+    }
+
+    /// The model in use: the first trusted one installed (an older one keeps working until the newer is downloaded),
+    /// else the one a download installs.
     fn ap_known(&self) -> KnownModel {
-        self.cfg.models.first().cloned().unwrap_or_else(|| model::KNOWN_MODELS[0].clone())
+        let models = self.ap_models();
+        models.iter().find(|m| model::installed(&self.data_dir, m)).cloned().unwrap_or_else(|| models[0].clone())
     }
 
     fn ap_installed(&self) -> bool {
@@ -1637,8 +1654,16 @@ impl Engine {
     pub fn model_status(&self) -> ModelStatus {
         let runtime = lock(&self.autopilot.runtime).is_some();
         let installed = self.ap_installed();
-        let mut status = self.autopilot.download.status(&self.ap_known(), installed, runtime);
-        status.risk = installed && model::rates_risk(&self.data_dir, &self.ap_known());
+        let (known, default) = (self.ap_known(), self.ap_default());
+        // while a download runs, it is the newest that is reported
+        let shown = if self.autopilot.download.running.load(Ordering::SeqCst) {
+            &default
+        } else {
+            &known
+        };
+        let mut status = self.autopilot.download.status(shown, installed, runtime);
+        status.risk = installed && model::rates_risk(&self.data_dir, &known);
+        status.update = installed && known.id != default.id;
         status
     }
 
@@ -1678,9 +1703,17 @@ impl Engine {
         *lock(&state.error) = None;
         state.done.store(0, Ordering::SeqCst);
         self.ap_unload();
-        let known = self.ap_known();
+        let known = self.ap_default();
         let result =
             model::download(&self.http, &self.cfg.models_base, &self.data_dir, &known, progress.as_ref(), state).await;
+        if result.is_ok() {
+            // the older trusted packages make room for it
+            for older in self.ap_models().iter().skip(1).filter(|m| model::installed(&self.data_dir, m)) {
+                if let Err(e) = model::remove(&self.data_dir, &older.id) {
+                    log::warn!("Autopilot could not remove an older model: {e}");
+                }
+            }
+        }
         if let Err(e) = &result {
             *lock(&state.error) = Some(e.to_string());
         }

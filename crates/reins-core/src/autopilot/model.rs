@@ -71,29 +71,55 @@ impl KnownModel {
 /// unverified is installed.
 const PLACEHOLDER_SHA256: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
-/// The models this build accepts, the first being the one `download_model` installs.
-pub const KNOWN_MODELS: &[KnownModel] = &[KnownModel {
-    id: Cow::Borrowed("laya-approvals-ml-v1"),
-    label: Cow::Borrowed("Laya approvals"),
-    version: Cow::Borrowed("1"),
-    files: Cow::Borrowed(&[
-        KnownFile {
-            name: Cow::Borrowed(MODEL_FILE),
-            sha256: Cow::Borrowed("c90c4b7bc51609b799bbb5c27ebceddc089e5ac13e6cd08dff2756e2a4f1c727"),
-            size: 336_774_982,
-        },
-        KnownFile {
-            name: Cow::Borrowed(TOKENIZER_FILE),
-            sha256: Cow::Borrowed("609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"),
-            size: 34_363_188,
-        },
-        KnownFile {
-            name: Cow::Borrowed(CONFIG_FILE),
-            sha256: Cow::Borrowed("0fa399a2b85ce30a2eb937c427adf3b187592f02af61973d7b9dbc39e6b30ce2"),
-            size: 989,
-        },
-    ]),
-}];
+/// The models this build accepts, the first being the one `download_model` installs. An older one already installed
+/// keeps working until the first is downloaded (`Engine::ap_known`).
+pub const KNOWN_MODELS: &[KnownModel] = &[
+    // approvals and risk (Overnight): tools/laya/MODEL_CARD.md, "laya-approvals-ml-v2"
+    KnownModel {
+        id: Cow::Borrowed("laya-approvals-ml-v2"),
+        label: Cow::Borrowed("Laya approvals and risk"),
+        version: Cow::Borrowed("2"),
+        files: Cow::Borrowed(&[
+            KnownFile {
+                name: Cow::Borrowed(MODEL_FILE),
+                sha256: Cow::Borrowed("f84efce3db931f136562dc57060f2bd7154a471ba1415974ff6e4ed1c318afad"),
+                size: 336_786_417,
+            },
+            KnownFile {
+                name: Cow::Borrowed(TOKENIZER_FILE),
+                sha256: Cow::Borrowed("609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"),
+                size: 34_363_188,
+            },
+            KnownFile {
+                name: Cow::Borrowed(CONFIG_FILE),
+                sha256: Cow::Borrowed("f13633d037e29b3e4a6cf31580211e23ab46605f264e16a46922539c43908fbd"),
+                size: 1247,
+            },
+        ]),
+    },
+    KnownModel {
+        id: Cow::Borrowed("laya-approvals-ml-v1"),
+        label: Cow::Borrowed("Laya approvals"),
+        version: Cow::Borrowed("1"),
+        files: Cow::Borrowed(&[
+            KnownFile {
+                name: Cow::Borrowed(MODEL_FILE),
+                sha256: Cow::Borrowed("c90c4b7bc51609b799bbb5c27ebceddc089e5ac13e6cd08dff2756e2a4f1c727"),
+                size: 336_774_982,
+            },
+            KnownFile {
+                name: Cow::Borrowed(TOKENIZER_FILE),
+                sha256: Cow::Borrowed("609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"),
+                size: 34_363_188,
+            },
+            KnownFile {
+                name: Cow::Borrowed(CONFIG_FILE),
+                sha256: Cow::Borrowed("0fa399a2b85ce30a2eb937c427adf3b187592f02af61973d7b9dbc39e6b30ce2"),
+                size: 989,
+            },
+        ]),
+    },
+];
 
 /// `laya_config.json`.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -279,6 +305,7 @@ impl DownloadState {
             ModelState::NotInstalled
         };
         ModelStatus {
+            update: false,
             state,
             id: known.id.to_string(),
             label: known.label.to_string(),

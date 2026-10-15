@@ -4,9 +4,9 @@ import Foundation
 ///
 /// Launch arguments: `-signedout` starts signed out (any password signs in; an email containing "2fa" also needs a
 /// code; creating an account works like signing in), `-demoArrive` makes a new request arrive about 6 s after launch,
-/// `-demoNoModel` starts with the Autopilot model not downloaded. Any pairing code pairs a desktop app, except those
-/// starting with "BBBB", which have expired. "Continue" (passwordless sign-in) makes a new account; `-demoLocked` finds
-/// one whose keys are on another phone instead (the recovery code is `DemoData.recoveryCode`; asking the other phone
+/// `-demoNoModel` starts with the Autopilot model not downloaded, `-demoOldModel` with an older one that has an update.
+/// Any pairing code pairs a desktop app, except those starting with "BBBB", which have expired. "Continue"
+/// (passwordless sign-in) makes a new account; `-demoLocked` finds one whose keys are on another phone instead (the recovery code is `DemoData.recoveryCode`; asking the other phone
 /// works after two polls, `-demoJoinDenied` refuses; resetting the vault starts it over as a new account).
 /// `-demoJoin` has another phone ask this one for the keys.
 /// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
@@ -28,6 +28,7 @@ enum DemoCore {
             signedIn: !args.contains("-signedout"),
             arriveAfter: args.contains("-demoArrive") ? 6 : nil,
             modelInstalled: !args.contains("-demoNoModel"),
+            modelOutdated: args.contains("-demoOldModel"),
             keysLocked: args.contains("-demoLocked"),
             joinWaiting: args.contains("-demoJoin"),
             approvalElsewhere: otherPhone,
@@ -126,12 +127,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     private let syncCap: Double
 
     init(
-        signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, syncCap: Double = 5, keysLocked: Bool = false,
-        joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false
+        signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, modelOutdated: Bool = false, syncCap: Double = 5,
+        keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false
     ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
-        var s = State(model: modelInstalled ? DemoData.model(.installed) : DemoData.model(.notInstalled))
+        var s = State(model: modelInstalled ? DemoData.model(.installed, update: modelOutdated) : DemoData.model(.notInstalled))
         s.session = signedIn ? SessionInfo(serverUrl: DemoData.server, email: DemoData.email) : nil
         s.pending = seeded.items
         s.views = seeded.views
@@ -1450,10 +1451,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func modelStatus() async -> ModelStatus { locked { $0.model } }
 
-    /// Reports progress over about four seconds, then the model is installed. Cancelling leaves it not installed.
+    /// Reports progress over about four seconds, then the model is installed. Cancelling leaves it not installed (or
+    /// the older model in place). An update, like the real core's, installs the newer model (which rates risk).
     func downloadModel(progress: DownloadProgress) async throws -> ModelStatus {
         let total = DemoData.modelSize
-        locked { $0.model = DemoData.model(.downloading) }
+        let updating = locked { $0.model.state == .installed && $0.model.update }
+        locked { $0.model = DemoData.model(.downloading, update: updating) }
         progress.progress(downloaded: 0, total: total)
         let steps: UInt64 = 16
         do {
@@ -1464,11 +1467,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 progress.progress(downloaded: done, total: total)
             }
         } catch {
-            locked { $0.model = DemoData.model(.notInstalled) }
+            locked { $0.model = updating ? DemoData.model(.installed, update: true) : DemoData.model(.notInstalled) }
             throw error
         }
         return locked { s in
-            s.model = DemoData.model(.installed)
+            s.model = DemoData.model(.installed, risk: updating)
             return s.model
         }
     }

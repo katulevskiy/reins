@@ -485,6 +485,16 @@ object AutopilotText {
     /** The icons offered for a profile. */
     val icons = listOf("🙂", "💼", "🏠", "🧪", "🚀", "🔒", "🌙", "🎓")
 
+    /** The model can score now: installed, or an older one still in use while its update downloads. */
+    fun modelUsable(m: ModelStatus?): Boolean =
+        m != null && (m.state == ModelState.INSTALLED || (m.state == ModelState.DOWNLOADING && m.update))
+
+    /** An older model is installed and a newer one can be downloaded. */
+    fun modelUpdatable(m: ModelStatus?): Boolean = m != null && m.state == ModelState.INSTALLED && m.update
+
+    /** Under the model's details when a newer one is there to download. */
+    const val MODEL_UPDATE_LINE = "A newer model is available: it also rates risk, which Overnight needs."
+
     /** The model card's state line. */
     fun modelState(m: ModelStatus, waitingForNetwork: Boolean, wifiOnly: Boolean): String = when {
         m.state == ModelState.DOWNLOADING -> "Downloading · " + progressText(m)
