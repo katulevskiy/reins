@@ -117,6 +117,21 @@ final class ActivityFormatTests: XCTestCase {
         let auto = DemoData.entry(6, at: at, action: "read", outcome: "released", detail: "", decidedBy: "autopilot", autopilot: DemoData.note(pApprove: 0.96))
         XCTAssertEqual(EntryOutcome.text(auto), "Allowed by Autopilot · 96%")
         XCTAssertEqual(EntryOutcome.whyTitle(auto), "Why Autopilot allowed it")
+        let overnight = DemoData.entry(7, at: at, action: "write", outcome: "sent", detail: "", decidedBy: "overnight", autopilot: DemoData.note(mode: .overnight))
+        XCTAssertEqual(EntryText.mark(overnight), .overnight)
+        XCTAssertEqual(EntryOutcome.text(overnight), "Allowed by Overnight")
+        XCTAssertEqual(EntryOutcome.symbol(overnight), "moon.stars.fill")
+        XCTAssertEqual(EntryOutcome.whyTitle(overnight), "Why Autopilot allowed it")
+        XCTAssertEqual(EntryOutcome.text(DemoData.entry(8, at: at, action: "write", outcome: "denied", detail: "", decidedBy: "overnight")), "Denied by Overnight")
+    }
+
+    func testTheHistoryListsARiskAboveLowOrOneOvernightHeld() {
+        XCTAssertFalse(RiskLook.listed(nil), "no rating, nothing shown")
+        XCTAssertFalse(RiskLook.listed(RiskView(level: .benign, pCatastrophic: 0, why: "", held: false)))
+        XCTAssertTrue(RiskLook.listed(RiskView(level: .benign, pCatastrophic: 0, why: "", held: true)))
+        XCTAssertTrue(RiskLook.listed(RiskView(level: .severe, pCatastrophic: 0.1, why: "force push", held: false)))
+        XCTAssertEqual(ApprovalRecord.of(DemoData.activity(1_700_000_000).first { $0.id == 13 }!).risk?.level, .severe,
+                       "an entry shown with its approval keeps the risk")
     }
 
     func testHistoryIsGroupedByDay() {

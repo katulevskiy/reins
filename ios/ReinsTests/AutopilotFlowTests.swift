@@ -146,6 +146,137 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertNil(s.bypassSince)
     }
 
+    // MARK: Overnight
+
+    func testOvernightIsConfirmedByTheOwnerThenRunsAndStopsBackToTheModeItInterrupted() async throws {
+        await start()
+        OvernightReturn.forget(nil)
+        await ap.setMode(.auto)
+        await ap.startOvernight(minutes: 480)
+        XCTAssertEqual(owner.asked, ["Turn on Overnight for every AI"])
+        XCTAssertEqual(model.autopilot?.mode, .overnight)
+        let until = try XCTUnwrap(model.autopilot?.overnightUntil)
+        XCTAssertEqual(Double(until) - Date().timeIntervalSince1970, 8 * 3_600, accuracy: 5)
+        XCTAssertNotNil(model.autopilot?.overnightSince)
+        XCTAssertTrue(feedback.lastWas(.autopilotOn), "felt as more autonomy")
+        XCTAssertEqual(ap.modeOf("c1"), .overnight, "a global Overnight covers an AI on Auto")
+        await ap.stopOvernight()
+        XCTAssertEqual(model.autopilot?.mode, .auto, "back to Auto, which it interrupted")
+        XCTAssertNil(model.autopilot?.overnightUntil)
+        XCTAssertTrue(feedback.lastWas(.autopilotOff))
+        XCTAssertNil(ap.error)
+    }
+
+    func testARefusedOvernightChangesNothing() async {
+        await start()
+        owner.answer = false
+        await ap.startOvernight(minutes: nil)
+        await ap.setMode(.overnight)
+        await ap.startOvernight(connectionId: "c1", minutes: 60, label: "Claude")
+        XCTAssertEqual(owner.asked.count, 3, "picking Overnight as a mode asks the owner too")
+        XCTAssertEqual(model.autopilot?.mode, .manual)
+        XCTAssertEqual(ap.modeOf("c1"), .auto)
+        XCTAssertNil(model.autopilot?.overnightUntil)
+    }
+
+    func testOvernightCanRunUntilTurnedOff() async throws {
+        await start()
+        let before = Int64(Date().timeIntervalSince1970)
+        await ap.startOvernight(minutes: nil)
+        XCTAssertEqual(model.autopilot?.mode, .overnight)
+        XCTAssertEqual(model.autopilot?.overnightUntil, AutopilotText.untilOff)
+        let since = try XCTUnwrap(model.autopilot?.overnightSince)
+        XCTAssertGreaterThanOrEqual(since, before)
+        await ap.stopOvernight()
+        XCTAssertNotEqual(model.autopilot?.mode, .overnight)
+    }
+
+    func testAnAIsOwnOvernightStopsBackToItsOwnMode() async {
+        await start()
+        OvernightReturn.forget("c1")
+        await ap.startOvernight(connectionId: "c1", minutes: 60, label: "Claude")
+        XCTAssertEqual(owner.asked, ["Turn on Overnight for Claude"])
+        XCTAssertEqual(ap.modeOf("c1"), .overnight)
+        XCTAssertEqual(model.autopilot?.mode, .manual, "every other AI is as it was")
+        await ap.stopOvernight("c1")
+        XCTAssertEqual(ap.modeOf("c1"), .auto)
+        XCTAssertNil(model.autopilot?.connections.first { $0.connectionId == "c1" }?.overnightUntil)
+    }
+
+    func testStoppingABypassOverAnOvernightLetsTheOvernightCarryOn() async throws {
+        await start()
+        OvernightReturn.forget(nil)
+        await ap.setMode(.auto)
+        await ap.startOvernight(minutes: 120)
+        let end = try XCTUnwrap(model.autopilot?.overnightUntil)
+        await ap.startBypass(minutes: 15)
+        XCTAssertEqual(model.autopilot?.mode, .bypass, "a bypass goes over it")
+        await ap.stopBypass()
+        XCTAssertEqual(model.autopilot?.mode, .overnight)
+        let resumed = try XCTUnwrap(model.autopilot?.overnightUntil)
+        XCTAssertEqual(Double(resumed), Double(end), accuracy: 60, "until its own end")
+        await ap.stopOvernight()
+        XCTAssertEqual(model.autopilot?.mode, .auto, "and it still returns to what it interrupted")
+    }
+
+    func testWhatOvernightDoesWithWhatIsTooRiskyIsASetting() async throws {
+        await start()
+        XCTAssertEqual(model.autopilot?.overnightWhenRisky, .wait, "it waits for the user by default")
+        await ap.setOvernightWhenRisky(.deny)
+        XCTAssertEqual(model.autopilot?.overnightWhenRisky, .deny)
+        let read = try await core.autopilotSettings()
+        XCTAssertEqual(read.overnightWhenRisky, .deny)
+        XCTAssertTrue(owner.asked.isEmpty, "a stricter or looser hold needs no owner check: Overnight itself had one")
+    }
+
+    func testTheOptimisticOvernightMatchesTheCoresRules() {
+        var s = AutopilotSettings(
+            mode: .auto, baseMode: .auto, bypassUntil: nil, bypassSince: nil, overnightWhenRisky: .wait, defaultProfileId: "p", wifiOnly: true,
+            model: ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true),
+            connections: []
+        )
+        func mode(_ id: String) -> AutopilotMode? { s.connections.first { $0.connectionId == id }?.mode }
+        s.applyMode(.manual, minutes: 0, connectionId: "kept", now: 1_000)
+        s.applyMode(.auto, minutes: 0, connectionId: "own", now: 1_000)
+        s.applyOvernight(minutes: 60, connectionId: nil, now: 1_000)
+        XCTAssertEqual(s.mode, .overnight)
+        XCTAssertEqual(s.overnightUntil, 1_000 + 3_600)
+        XCTAssertEqual(s.overnightSince, 1_000)
+        XCTAssertEqual(mode("kept"), .manual, "a global Overnight never loosens an AI kept on Manual")
+        XCTAssertEqual(mode("own"), .overnight)
+        s.applyBypass(minutes: 15, connectionId: nil, now: 1_000)
+        XCTAssertEqual(s.mode, .bypass, "a bypass goes over it")
+        s.applyBypassEnd(connectionId: nil, now: 1_100)
+        XCTAssertEqual(s.mode, .overnight, "and it carries on after")
+        s.applyMode(.auto, minutes: 0, connectionId: nil, now: 1_200)
+        XCTAssertEqual(s.mode, .auto)
+        XCTAssertNil(s.overnightUntil)
+        XCTAssertNil(s.overnightSince)
+        s.applyOvernight(minutes: nil, connectionId: "kept", now: 1_300)
+        XCTAssertEqual(mode("kept"), .overnight, "an AI's own Overnight applies whatever it was kept on")
+        XCTAssertEqual(s.connections.first { $0.connectionId == "kept" }?.overnightUntil, AutopilotText.untilOff)
+        s.applyMode(.lockdown, minutes: 0, connectionId: nil, now: 1_400)
+        XCTAssertEqual(mode("kept"), .lockdown, "a global lockdown beats it")
+    }
+
+    func testOvernightRemembersTheModeItInterruptedForStop() throws {
+        let suite = "overnight-return-test"
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        d.removePersistentDomain(forName: suite)
+        defer { d.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(OvernightReturn.mode(nil, defaults: d), .manual, "every AI goes back to the default")
+        XCTAssertNil(OvernightReturn.mode("c1", defaults: d), "an AI goes back to following every AI")
+        OvernightReturn.remember(.auto, connectionId: nil, defaults: d)
+        OvernightReturn.remember(.overnight, connectionId: nil, defaults: d)
+        XCTAssertEqual(OvernightReturn.mode(nil, defaults: d), .auto, "a restart keeps what it first interrupted")
+        OvernightReturn.remember(.manual, connectionId: "c1", defaults: d)
+        XCTAssertEqual(OvernightReturn.mode("c1", defaults: d), .manual)
+        OvernightReturn.remember(.lockdown, connectionId: "c1", defaults: d)
+        XCTAssertNil(OvernightReturn.mode("c1", defaults: d), "never back to a lockdown it ended")
+        OvernightReturn.forget(nil, defaults: d)
+        XCTAssertEqual(OvernightReturn.mode(nil, defaults: d), .manual)
+    }
+
     func testLockdownDeniesWhatWaitsAndEndsBackToThePickedMode() async {
         await start()
         let waiting = model.pending.filter { $0.kind == .request }.count

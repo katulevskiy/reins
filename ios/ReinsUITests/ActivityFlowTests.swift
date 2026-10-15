@@ -73,7 +73,7 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(pill.waitForExistence(timeout: 10))
         pill.tap()
         XCTAssertTrue(element(app, "autopilotQuick").waitForExistence(timeout: 3), "the menu drops from the pill")
-        for id in ["quick:MANUAL", "quick:AUTO", "quick:BYPASS", "quick:LOCKDOWN", "quickMore"] {
+        for id in ["quick:MANUAL", "quick:AUTO", "quick:OVERNIGHT", "quick:BYPASS", "quick:LOCKDOWN", "quickMore"] {
             XCTAssertTrue(element(app, id).exists, "the menu has \(id)")
         }
         XCTAssertFalse(element(app, "modeHero").exists, "the page waits for Autopilot settings")
@@ -108,6 +108,30 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(element(app, "confirmBypass").waitForExistence(timeout: 5), "the shared bypass sheet")
         XCTAssertTrue(element(app, "bypass:custom").exists, "with its custom lengths")
         shot(app, "activity-quick-bypass-sheet")
+    }
+
+    /// Overnight from the menu opens its own sheet: its lengths, what to do with what is too risky, the hold.
+    func testTheQuickMenuOffersOvernight() {
+        let app = launch()
+        let pill = element(app, "modePill")
+        XCTAssertTrue(pill.waitForExistence(timeout: 10))
+        pill.tap()
+        element(app, "quick:OVERNIGHT").tap()
+        XCTAssertTrue(element(app, "confirmOvernight").waitForExistence(timeout: 5), "the Overnight sheet")
+        XCTAssertTrue(element(app, "overnight:custom").exists, "with its custom lengths")
+        XCTAssertTrue(element(app, "whenRisky").exists, "and what to do with what is too risky")
+        shot(app, "activity-quick-overnight-sheet")
+    }
+
+    /// A request the model rated shows its risk, and that Overnight held it.
+    func testARatedRequestShowsItsRiskAndThatOvernightHeldIt() {
+        let app = launch("reins://item?kind=request&id=req10")
+        XCTAssertTrue(element(app, "approvalSheet").waitForExistence(timeout: 10))
+        let risk = element(app, "risk")
+        XCTAssertTrue(risk.waitForExistence(timeout: 5))
+        XCTAssertTrue(risk.label.contains("Risk: severe"))
+        XCTAssertTrue(element(app, "riskHeld").exists, "held by Overnight")
+        shot(app, "activity-sheet-risk")
     }
 
     func testTheDockOffersHowLongAndApprovingClosesTheScreen() {
