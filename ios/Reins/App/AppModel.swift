@@ -137,6 +137,9 @@ final class AppModel {
     private(set) var approvalDevice = false
     /// Why registering this phone as the approval device failed, until it succeeds.
     var registrationError: String?
+    /// A problem syncing with the account's other phone (from the core), a banner on Activity until dismissed. Sync
+    /// never keeps the app on the welcome screen: this banner is all it shows.
+    var syncNotice: String?
     /// The account was made without a master password and this phone keeps its secret: Settings offers the recovery
     /// code.
     private(set) var recoveryCodeAvailable = false
@@ -253,6 +256,7 @@ final class AppModel {
             recoveryToRecord = code.flatMap { RecoveryRecord.confirmed(server: info.serverUrl, code: $0) ? nil : $0 }
             passkeyOffer = offerPasskey && recoveryToRecord != nil
             recoveryLoadError = recoveryFailure
+            if let notice = await core.accountSyncNotice(), epoch == accountEpoch { syncNotice = notice }
             onSignedIn?()
             await refreshPending()
             await refreshConnections()
@@ -291,6 +295,7 @@ final class AppModel {
         passkeyOffer = false
         passkeyDeclined = false
         recoveryLoadError = nil
+        syncNotice = nil
         onboarding = false
         autopilot = nil
         sheet = nil
@@ -332,6 +337,24 @@ final class AppModel {
                 registrationError = error.userMessage
             }
         }
+    }
+
+    /// The sync banner's OK.
+    func dismissSyncNotice() async {
+        syncNotice = nil
+        try? await core.dismissAccountSyncNotice()
+    }
+
+    /// A sign-in whose account opened although the call reported a problem with it afterwards (an account sync
+    /// conflict from a core before the merge): the phone is signed in, so it goes on signed in and the problem becomes
+    /// the sync banner. Never an error on the welcome screen whose Continue only repeats it. False: not that case.
+    func finishSignedInDespite(_ error: Error) async -> Bool {
+        guard let failure = error as? CoreError, case .ServiceNeedsAttention = failure,
+              let info = await core.session() else { return false }
+        let keys = (try? await core.accountKeys()) ?? .unlocked
+        await finishSso(SsoOutcome(session: info, keys: keys))
+        syncNotice = error.userMessage
+        return true
     }
 
     /// "Continue" came back. A new account (its keys were just made) or one this phone can open goes on like a password

@@ -1,5 +1,7 @@
 package dev.reins.android.ui.signin
 
+import androidx.compose.ui.unit.sp
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,18 +44,27 @@ fun PasskeyOfferScreen(viewModel: VaultPasskeysViewModel, passkeys: PasskeyPromp
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     Screen(title = null, modifier = Modifier.testTag("passkeyOffer")) {
         Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Spacer(Modifier.height(64.dp))
-            Box(
-                Modifier.size(64.dp).background(c.accentSoft, RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center,
-            ) { GlyphIcon(Glyph.ShieldCheck, c.accent, size = 32.dp) }
-            Spacer(Modifier.height(6.dp))
-            RText("Protect your vault with a passkey", RType.sans(28f, FontWeight.SemiBold, lineHeight = 34f), c.text)
-            RText(
-                "Unlocks your vault on a new phone. Your password manager keeps it.",
-                RType.sans(16f, lineHeight = 22f),
-                c.secondary,
+            // On paper, not a field (iOS-Arrival 03): nothing waits on an AI here. The pink kind tile says it is an
+            // account matter.
+            Spacer(Modifier.height(56.dp))
+            dev.reins.android.design.KindTile(dev.reins.android.design.Field.Accounts, Glyph.Key, size = 44.dp)
+            dev.reins.android.design.AskText(
+                "Protect your vault with a passkey",
+                c.ink,
+                Modifier.padding(top = 6.dp),
+                target = "with a passkey",
+                style = RType.serif(38f, 42f),
+                minSize = 30.sp,
             )
+            RText(
+                "It unlocks your vault on a new phone, without your other phone or a recovery code. Your password manager keeps it.",
+                RType.sans(16f, lineHeight = 22f),
+                c.ink2,
+            )
+            Column(Modifier.padding(top = 6.dp)) {
+                OfferLine(Glyph.Check, "Works with your password manager")
+                OfferLine(Glyph.Lock, "Reins keeps only a sealed copy of the key")
+            }
             Spacer(Modifier.height(20.dp))
             ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "passkeyError") }
             CapsuleButton(
@@ -78,5 +89,18 @@ fun PasskeyOfferScreen(viewModel: VaultPasskeysViewModel, passkeys: PasskeyPromp
             )
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+@Composable
+private fun OfferLine(glyph: Glyph, text: String) {
+    val c = LocalColors.current
+    androidx.compose.foundation.layout.Row(
+        Modifier.padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        GlyphIcon(glyph, c.ink2, size = 16.dp)
+        RText(text, RType.meta, c.ink2)
     }
 }

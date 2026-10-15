@@ -181,7 +181,7 @@ private fun CommitRow(commit: GitCommitView, modifier: Modifier, onOpen: () -> U
                     Modifier
                 },
             )
-            .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
+            .padding(top = 12.dp, bottom = 12.dp)
             .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -254,7 +254,7 @@ internal fun FilesPage(view: ApprovalView, refIndex: Int) {
 
 @Composable
 private fun NotListed(text: String, tag: String) {
-    RText(text, RType.sans(13.5f), LocalColors.current.tertiary, Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp).testTag(tag))
+    RText(text, RType.sans(13.5f), LocalColors.current.tertiary, Modifier.fillMaxWidth().padding(vertical = 13.dp).testTag(tag))
 }
 
 /** A file: its path (the folder dimmed), lines added and removed; a commit's file opens to its diff. */
@@ -279,7 +279,7 @@ private fun FileRow(file: GitFileView, tag: String, expandable: Boolean) {
                         Modifier
                     },
                 )
-                .padding(start = 16.dp, end = 14.dp, top = 12.dp, bottom = 12.dp)
+                .padding(top = 12.dp, bottom = 12.dp)
                 .testTag(tag)
                 .semantics(mergeDescendants = true) {},
             verticalAlignment = Alignment.CenterVertically,

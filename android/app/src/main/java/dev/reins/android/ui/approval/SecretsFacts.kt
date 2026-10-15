@@ -86,6 +86,8 @@ internal fun EnvReleaseFacts(r: EnvReleaseView, ui: ApprovalUi, viewModel: Appro
         tag = "envRelease",
         borderTint = if (warning != null) c.warning.copy(alpha = 0.4f) else null,
         rows = buildList<@Composable () -> Unit> {
+            // A program outside its usual place is the first thing said, in full.
+            if (warning != null) add { ProgramWarning(warning, untrusted(r.program)) }
             add {
                 FactRow("By", untrusted(r.runnerLabel), valueTag = "envRunner") {
                     Icon(
@@ -97,13 +99,12 @@ internal fun EnvReleaseFacts(r: EnvReleaseView, ui: ApprovalUi, viewModel: Appro
                 }
             }
             add {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp)) {
+                Column(Modifier.fillMaxWidth().padding(vertical = 13.dp)) {
                     RText("Command", RType.sans(13f, FontWeight.Medium), c.tertiary, maxLines = 1)
                     // In full, however long: it is what runs with the values.
                     RText(untrusted(r.command), RType.mono(14f, FontWeight.Medium).copy(lineHeight = 20.sp), c.text, Modifier.padding(top = 6.dp).testTag("envCommand"), ltr = true)
                 }
             }
-            if (warning != null) add { ProgramWarning(warning, untrusted(r.program)) }
             add { FactRow("Env", "${untrusted(r.project)} · ${untrusted(r.env)}", valueTag = "envWhere") }
             add { Variables(r) }
             add { FactRow("Folder", untrusted(r.root), mono = true, valueTag = "envRoot", maxLines = 2) }
@@ -124,10 +125,10 @@ internal fun EnvReleaseFacts(r: EnvReleaseView, ui: ApprovalUi, viewModel: Appro
 @Composable
 private fun ProgramWarning(warning: String, program: String) {
     val c = LocalColors.current
-    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp).testTag("envProgramWarning")) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag("envProgramWarning")) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            WarnTag(warning, c.warning, Modifier.testTag("envWarning"))
-            Spacer(Modifier.weight(1f))
+            WarnLine(warning, Modifier.weight(1f).testTag("envWarning"))
+            Spacer(Modifier.width(8.dp))
             HelpDot("programWarning", "The program that would get the values is not the usual one. Check its path before you approve.", size = 28.dp)
         }
         RText(program, RType.mono(13f).copy(lineHeight = 18.sp), c.warning, Modifier.padding(top = 8.dp).testTag("envProgram"), ltr = true)
@@ -144,7 +145,7 @@ private fun Variables(r: EnvReleaseView) {
         FactRow("Variables", "Every variable", valueTag = "envVariables", valueColor = c.warning)
         return
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp)) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 13.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             RText("Variables", RType.sans(13f, FontWeight.Medium), c.tertiary, Modifier.weight(1f), maxLines = 1)
             RText(r.variables.size.toString(), RType.mono(13f, FontWeight.Medium), c.tertiary, Modifier.testTag("envVariableCount"), maxLines = 1)
@@ -196,7 +197,7 @@ private fun AlwaysAsk(r: EnvReleaseView, ui: ApprovalUi, viewModel: ApprovalView
     FactGroup(
         tag = "envAlwaysAsk",
         rows = listOf {
-            Row(Modifier.fillMaxWidth().defaultMinSize(minHeight = 54.dp).padding(start = 18.dp, end = 14.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().defaultMinSize(minHeight = 54.dp).padding(top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 RText("Ask every time", RType.sans(15.5f, FontWeight.Medium), c.text, Modifier.weight(1f), maxLines = 1)
                 HelpDot("alwaysAsk", "Every run with ${untrusted(r.project)} · ${untrusted(r.env)} waits for you. Nothing is remembered.", size = 28.dp)
                 Spacer(Modifier.width(10.dp))
@@ -215,7 +216,7 @@ internal fun CheckDigits(check: String, tag: String) {
     FactGroup(
         borderTint = c.accent.copy(alpha = 0.35f),
         rows = listOf {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RText("Check digits", RType.sans(13.5f, FontWeight.Medium), c.tertiary, maxLines = 1)
                     Spacer(Modifier.width(6.dp))
@@ -251,7 +252,7 @@ internal fun SecretsStoreFacts(store: SecretsStoreView) {
             rows = store.ssh.mapIndexed { i, key ->
                 {
                     val c = LocalColors.current
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Key, null, Modifier.size(17.dp), tint = c.accent)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
@@ -284,7 +285,7 @@ private fun StoreEnvRow(i: Int, e: EnvStoreView) {
                 open = !open
                 feedback.play(Event.expand(open))
             }
-            .padding(horizontal = 18.dp, vertical = 13.dp)
+            .padding(vertical = 13.dp)
             .testTag("storeEnv:$i"),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -359,7 +360,7 @@ private fun Names(label: String, names: List<String>, tag: String) {
 @Composable
 private fun TokenRow(t: TokenStoreView, tag: String, avatar: Dp = 34.dp) {
     val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).testTag(tag), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag(tag), verticalAlignment = Alignment.CenterVertically) {
         ServiceAvatar(t.service, size = avatar)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

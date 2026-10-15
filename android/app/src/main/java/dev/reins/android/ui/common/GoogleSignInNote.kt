@@ -15,13 +15,17 @@ import dev.reins.android.design.RType
  */
 const val GOOGLE_APP_VERIFIED = false
 
-/** What adding a Google account looks like, said before the button so Google's screens surprise no one. */
+/**
+ * What adding a Google account looks like, said before the button so Google's screens surprise no one: a short line
+ * with the way through behind its (?).
+ */
 @Composable
 fun GoogleSignInNote(modifier: Modifier = Modifier) {
-    val text = if (GOOGLE_APP_VERIFIED) {
-        ""
-    } else {
-        "If Google says it hasn't verified this app: Advanced, then Go to Reins."
-    }
-    if (text.isNotEmpty()) RText(text, RType.sans(13f, lineHeight = 18f), LocalColors.current.tertiary, modifier.padding(horizontal = 16.dp).testTag("googleSignInNote"))
+    if (GOOGLE_APP_VERIFIED) return
+    dev.reins.android.design.InlineHelp(
+        "Google's warning",
+        "If Google says it hasn't verified this app: Advanced, then Go to Reins.",
+        modifier.padding(horizontal = 16.dp).testTag("googleSignInNote"),
+        label = "Google may warn you first",
+    )
 }

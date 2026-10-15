@@ -13,7 +13,7 @@ import dev.reins.core.GitRefView
 data class Span(val text: String, val bold: Boolean = false)
 
 /** The hero's colour: what kind of thing is asked. */
-enum class HeroTone { Write, Search, Send, Grant, Danger }
+enum class HeroTone { Write, Search, Send, Grant, Accounts, Danger }
 
 /** The Signal field of a hero tone. */
 val HeroTone.field: dev.reins.android.design.Field
@@ -21,6 +21,7 @@ val HeroTone.field: dev.reins.android.design.Field
         HeroTone.Write, HeroTone.Send -> dev.reins.android.design.Field.Push
         HeroTone.Search -> dev.reins.android.design.Field.Read
         HeroTone.Grant -> dev.reins.android.design.Field.Grant
+        HeroTone.Accounts -> dev.reins.android.design.Field.Accounts
         HeroTone.Danger -> dev.reins.android.design.Field.Delete
     }
 
@@ -44,7 +45,9 @@ fun deletes(view: ApprovalView): Boolean =
 
 fun heroTone(view: ApprovalView): HeroTone = when {
     destructive(view) -> HeroTone.Danger
-    view.kind == ApprovalKind.GRANT || view.kind == ApprovalKind.ACCOUNTS -> HeroTone.Grant
+    view.kind == ApprovalKind.GRANT -> HeroTone.Grant
+    // Seeing your accounts changes what an AI knows of them: the pink accounts field.
+    view.kind == ApprovalKind.ACCOUNTS -> HeroTone.Accounts
     view.kind == ApprovalKind.SEND -> HeroTone.Send
     view.kind == ApprovalKind.SEARCH || view.kind == ApprovalKind.READ || view.kind == ApprovalKind.FETCH -> HeroTone.Search
     view.action == "send" -> HeroTone.Send

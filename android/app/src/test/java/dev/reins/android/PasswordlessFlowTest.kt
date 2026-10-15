@@ -147,6 +147,49 @@ class PasswordlessFlowTest : FlowHarness() {
         assertFalse(container.state.deviceReplaced.value)
     }
 
+    // ---- Account sync never keeps the phone out ------------------------------------------------------------------------
+
+    /**
+     * The user's dead end: the account opened, then the core reported a sync conflict with the other phone (cores before
+     * the merge did). The phone goes on signed in and the conflict is the sync banner, never a red box on the welcome
+     * screen whose Continue only repeats it.
+     */
+    @Test
+    fun aSyncConflictAtSignInNeverLeavesThePhoneOnTheWelcomeScreen() {
+        val conflict = "This account has unsynced changes on this phone and newer changes on another phone. Its local data was preserved."
+        core.ssoKeys = AccountKeys.UNLOCKED
+        tapContinue()
+        core.ssoFinishErrorAfterSignIn = CoreException.ServiceNeedsAttention(conflict)
+        relaunch(callbackIntent())
+        recordRecovery()
+        awaitTag("setup")
+        assertFalse(has("welcome"))
+        assertFalse(has("signInError"))
+        assertEquals(conflict, container.state.syncNotice.value)
+        awaitCore { core.registrations.size == 1 }
+    }
+
+    /** What the core says about sync is a banner on Activity with an OK, and nothing more. */
+    @Test
+    fun aSyncNoticeIsABannerThatOkDismisses() {
+        val notice = "Synced with your other phone. A backup of this phone's changes is kept."
+        core.session = dev.reins.core.SessionInfo(server, "me@example.com")
+        core.syncNotice = notice
+        launch()
+        awaitTag("syncNotice")
+        awaitText(notice)
+        assertFalse(has("welcome"))
+        tap("dismissSyncNotice")
+        awaitGone("syncNotice")
+        awaitCore { core.syncNoticeDismissals.get() == 1 }
+        assertNull(container.state.syncNotice.value)
+        // Gone for good: the next start shows nothing.
+        relaunch(Intent(context, MainActivity::class.java))
+        awaitTag("activityList")
+        settle()
+        assertFalse(has("syncNotice"))
+    }
+
     // ---- "Continue" --------------------------------------------------------------------------------------------------
 
     @Test
@@ -278,7 +321,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("joinCode")
         rule.onNodeWithTag("joinCode").assertTextEquals("482 193")
         assertEquals(listOf(Build.MODEL), core.joinBegins.toList())
-        assertTrue(showsText("Check that your other phone shows"))
+        assertTrue(showsText("Approve this one only if your other phone shows the same code."))
         assertTrue(core.registrations.isEmpty())
         repeat(3) { pollOnce() }
         recordRecovery()
@@ -377,7 +420,8 @@ class PasswordlessFlowTest : FlowHarness() {
         while (nextStarted() != null) { /* the first sign-in's page */ }
         tap("resetVault")
         awaitTag("confirmReset")
-        tap("confirmReset")
+        // Starting over is held, never tapped.
+        hold("confirmReset")
         rule.waitUntil(10_000) { container.ssoSignIn.pending()?.purpose == SsoPurpose.Reset }
     }
 
@@ -481,13 +525,14 @@ class PasswordlessFlowTest : FlowHarness() {
     @Test
     fun approvingAnotherPhoneAsksForBiometricsFirst() {
         openJoin()
-        rule.onNodeWithTag("joinTitle").assertTextEquals("Add Pixel 9?")
+        rule.onNodeWithTag("joinTitle").assertTextEquals("Add a phone to your account")
+        rule.onNodeWithTag("joinDevice").assertTextEquals("“Pixel 9”")
         rule.onNodeWithTag("joinCode").assertTextEquals("482 193")
         tap("approve")
         awaitCore { core.joinAnswers.isNotEmpty() }
         assertEquals("join1" to true, core.joinAnswers.single())
         assertEquals(1, prompts.get())
-        awaitText("Pixel 9 can open your account now. It approves from now on once it's set up.")
+        awaitText("“Pixel 9” can open your account now. It approves from now on once it's set up.")
         assertFalse(has("sheet"))
     }
 
@@ -539,7 +584,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("recoveryCodeSheet")
         assertEquals(2, prompts.get())
         assertTrue(showsText("ABCD EFGH IJKL MNOP", substring = true))
-        assertTrue(showsText("Write it down", substring = true))
+        assertTrue(showsText("Write down your recovery code", substring = true))
         tap("recoveryCode")
         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
         assertEquals(FakeCore.RECOVERY_CODE, clip?.getItemAt(0)?.text?.toString())

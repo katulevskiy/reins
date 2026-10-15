@@ -56,6 +56,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import dev.reins.android.design.AskText
+import dev.reins.android.design.ButtonSize
+import dev.reins.android.design.MenuItem
+import dev.reins.android.design.SignalButton
+import dev.reins.android.design.SignalMenu
 import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.autopilot.AutopilotText.BypassUnit
 import dev.reins.android.design.ButtonStyle
@@ -73,7 +79,7 @@ import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.settings.BottomSheet
 import dev.reins.android.ui.settings.HelpIcon
-import dev.reins.android.ui.settings.settingsCard
+import dev.reins.android.design.hairlineBelow
 import dev.reins.core.AutopilotMode
 import dev.reins.core.OvernightRisky
 
@@ -230,29 +236,33 @@ private fun BoxScope.TimedSheets(
     }
 
     BottomSheet(open, null, onClose = onClose, tag = kind.tag("Sheet")) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(56.dp).clip(RoundedCornerShape(18.dp)).background(tint.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
-                Icon(kind.icon, null, Modifier.size(30.dp), tint = tint)
+        // The heaviest decision in the app (iOS-Autopilot 01): the mode's solid tile, an italic question, the lengths,
+        // and a hold that surges.
+        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+            Box(Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(tint), contentAlignment = Alignment.Center) {
+                Icon(kind.icon, null, Modifier.size(26.dp), tint = Color.White)
             }
-            RText(
+            AskText(
                 title,
-                RType.sans(22f, FontWeight.SemiBold),
-                c.text,
-                Modifier.padding(top = 14.dp).testTag(kind.tag("Title")),
-                maxLines = 2,
-                align = TextAlign.Center,
+                c.ink,
+                Modifier.padding(top = 16.dp).semantics(mergeDescendants = true) {}.testTag(kind.tag("Title")),
+                target = title.substringAfter(' ', "").takeIf { it.isNotEmpty() },
+                style = RType.serif(32f, 36f),
+                minSize = 26.sp,
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RText(line, RType.sans(14f), c.secondary, Modifier.testTag(kind.tag("SheetLine")), maxLines = 2)
+            Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                RText(line, RType.sans(15f, lineHeight = 20f), c.ink, Modifier.weight(1f, fill = false).testTag(kind.tag("SheetLine")), maxLines = 2)
                 HelpIcon(help, helpTopic) { help = it }
             }
+            // Overnight's line already says what still reaches you.
+            if (kind == TimedKind.Bypass) RText(stillAsks, RType.meta, c.inkMeta, Modifier.padding(top = 2.dp), maxLines = 2)
             HelpText(helpText, help, Modifier.padding(bottom = 6.dp).testTag(kind.tag("Help")))
         }
         LengthSegments(
             kind,
             minutes = minutes,
             custom = custom,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 18.dp),
             onPreset = { m ->
                 minutes = m
                 custom = false
@@ -263,22 +273,15 @@ private fun BoxScope.TimedSheets(
             },
         )
         extra()
-        Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CapsuleButton("Cancel", Modifier.weight(1f).testTag(kind.action("cancel")), style = ButtonStyle.Secondary, onClick = onClose)
-            HoldButton(
-                kind.hold(untilOff = minutes == null),
-                tint,
-                Modifier.weight(if (minutes == null) 2.4f else 1.35f).testTag(kind.action("confirm")),
-                // The longer label takes the icon's room.
-                icon = if (minutes == null) null else Icons.Rounded.Fingerprint,
-                height = 50.dp,
-            ) { start(minutes) }
+        HoldButton(
+            kind.hold(untilOff = minutes == null),
+            tint,
+            Modifier.padding(start = 24.dp, end = 24.dp, top = 20.dp).fillMaxWidth().testTag(kind.action("confirm")),
+            icon = Icons.Rounded.Fingerprint,
+        ) { start(minutes) }
+        Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
+            SignalButton("Cancel", Modifier.testTag(kind.action("cancel")), style = ButtonStyle.Ghost, size = ButtonSize.Small, onClick = onClose)
         }
-        RText("Hold for a second", RType.sans(12f), c.tertiary, Modifier.fillMaxWidth().padding(top = 8.dp), align = TextAlign.Center)
     }
 
     BottomSheet(open && moreOpen, kind.forTitle, onClose = {
@@ -287,7 +290,7 @@ private fun BoxScope.TimedSheets(
         custom = true
         moreOpen = false
     }, tag = kind.tag("ForSheet")) {
-        Column(Modifier.padding(horizontal = 16.dp).settingsCard(c)) {
+        Column(Modifier.padding(horizontal = 24.dp)) {
             AutopilotText.bypassMoreMinutes.forEach { m ->
                 LongerRow(Longer.Preset(m) == longer, kind.tag("For:$m"), { longer = Longer.Preset(m) }) {
                     RText(AutopilotText.lengthLabel(m), RType.sans(15.5f), c.text, Modifier.weight(1f), maxLines = 1)
@@ -311,7 +314,7 @@ private fun BoxScope.TimedSheets(
         val untilOff = longer == Longer.UntilOff
         Column(
             Modifier
-                .padding(start = 16.dp, end = 16.dp, top = 12.dp)
+                .padding(start = 24.dp, end = 24.dp, top = 12.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(24.dp))
                 .background(tint.copy(alpha = if (untilOff) 0.08f else 0.04f))
@@ -329,7 +332,7 @@ private fun BoxScope.TimedSheets(
         AnimatedVisibility(untilOff, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             Row(
                 Modifier
-                    .padding(start = 16.dp, end = 16.dp, top = 10.dp)
+                    .padding(start = 24.dp, end = 24.dp, top = 10.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .background(tint.copy(alpha = 0.10f))
@@ -348,8 +351,7 @@ private fun BoxScope.TimedSheets(
         HoldButton(
             kind.hold(untilOff),
             tint,
-            Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth().testTag(kind.action("confirm", "For")),
-            height = 50.dp,
+            Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp).fillMaxWidth().testTag(kind.action("confirm", "For")),
         ) { start(longerMinutes) }
     }
 }
@@ -359,7 +361,7 @@ private fun BoxScope.TimedSheets(
 private fun LengthSegments(kind: TimedKind, minutes: UInt?, custom: Boolean, modifier: Modifier, onPreset: (UInt) -> Unit, onCustom: () -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
-    Row(modifier.fillMaxWidth().height(44.dp).clip(CircleShape).background(c.controlFill).padding(4.dp)) {
+    Row(modifier.fillMaxWidth().height(46.dp).clip(CircleShape).background(c.paperSunken).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         AutopilotText.bypassMinutes.forEach { m ->
             val on = !custom && minutes == m
             Segment(on, Modifier.weight(1f).testTag(kind.tag("Length:$m")), onClick = {
@@ -367,7 +369,7 @@ private fun LengthSegments(kind: TimedKind, minutes: UInt?, custom: Boolean, mod
                     onPreset(m)
                     feedback.play(Event.Selection)
                 }
-            }) { RText(AutopilotText.lengthLabel(m), RType.sans(14f, if (on) FontWeight.SemiBold else FontWeight.Medium), if (on) c.text else c.secondary, maxLines = 1) }
+            }) { RText(AutopilotText.lengthLabel(m), RType.sans(14f, FontWeight.Medium), if (on) c.ink else c.ink2, maxLines = 1) }
         }
         val untilOff = custom && minutes == null
         val fg = when {
@@ -389,12 +391,13 @@ private fun LengthSegments(kind: TimedKind, minutes: UInt?, custom: Boolean, mod
 @Composable
 private fun Segment(on: Boolean, modifier: Modifier, onClick: () -> Unit, content: @Composable () -> Unit) {
     val c = LocalColors.current
-    val bg by animateColorAsState(if (on) (if (c.dark) Color.White.copy(alpha = 0.12f) else Color.White) else Color.Transparent, label = "segment")
+    val bg by animateColorAsState(if (on) c.paperRaised else c.paperRaised.copy(alpha = 0f), label = "segment")
     Row(
         modifier
             .fillMaxHeight()
             .clip(CircleShape)
             .background(bg)
+            .then(if (on) Modifier.border(1.dp, c.rule, CircleShape) else Modifier)
             .pressable(shape = CircleShape, dim = 0.7f, onClick = onClick)
             .semantics {
                 selected = on
@@ -420,7 +423,7 @@ private fun LongerRow(
         Modifier
             .fillMaxWidth()
             .height(60.dp)
-            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp)) {
+            .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp)) {
                 if (!selected) feedback.play(Event.Selection)
                 onClick()
             }
@@ -429,7 +432,8 @@ private fun LongerRow(
                 role = Role.RadioButton
             }
             .testTag(tag)
-            .padding(start = 18.dp, end = 16.dp),
+            .hairlineBelow(c.rule)
+            .padding(start = 4.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         content()
@@ -441,7 +445,7 @@ private fun LongerRow(
 @Composable
 private fun Stepper(kind: TimedKind, value: Int, max: Int, onChange: (Int) -> Unit) {
     val c = LocalColors.current
-    Row(Modifier.height(36.dp).clip(RoundedCornerShape(11.dp)).background(c.controlFill), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.height(36.dp).clip(RoundedCornerShape(11.dp)).background(c.paperSunken), verticalAlignment = Alignment.CenterVertically) {
         StepButton(Icons.Rounded.Remove, "Fewer", value > 1, kind.tag("Stepper-")) { onChange(value - 1) }
         RText("$value", RType.mono(15f, FontWeight.Medium), c.text, Modifier.width(30.dp).testTag(kind.tag("Count")), maxLines = 1, align = TextAlign.Center)
         StepButton(Icons.Rounded.Add, "More", value < max, kind.tag("Stepper+")) { onChange(value + 1) }
@@ -471,7 +475,7 @@ private fun UnitMenu(kind: TimedKind, unit: BypassUnit, onPick: (BypassUnit) -> 
             Modifier
                 .height(36.dp)
                 .clip(RoundedCornerShape(11.dp))
-                .background(c.controlFill)
+                .background(c.paperSunken)
                 .pressable(shape = RoundedCornerShape(11.dp)) { open = true }
                 .testTag(kind.tag("Unit"))
                 .padding(start = 11.dp, end = 6.dp),
@@ -480,17 +484,16 @@ private fun UnitMenu(kind: TimedKind, unit: BypassUnit, onPick: (BypassUnit) -> 
             RText(unit.label, RType.sans(14.5f, FontWeight.SemiBold), c.text, maxLines = 1)
             Icon(Icons.Rounded.KeyboardArrowDown, null, Modifier.size(16.dp), tint = c.secondary)
         }
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            BypassUnit.entries.forEach { u ->
-                DropdownMenuItem(
-                    text = { Text(u.label) },
-                    modifier = Modifier.testTag(kind.tag("Unit:${u.name}")),
-                    onClick = {
-                        open = false
-                        onPick(u)
-                    },
-                )
-            }
-        }
+        SignalMenu(
+            expanded = open,
+            onDismiss = { open = false },
+            items = BypassUnit.entries.map { u ->
+                MenuItem(u.label, selected = u == unit, tag = kind.tag("Unit:${u.name}")) {
+                    open = false
+                    onPick(u)
+                }
+            },
+            width = 180.dp,
+        )
     }
 }

@@ -984,10 +984,14 @@ fun SignalDialog(
     destructive: Boolean = false,
     italic: String? = null,
     cancelLabel: String = "Cancel",
+    /** The answer button's test tag. */
+    confirmTag: String? = null,
+    /** A glyph on a small tile above the title (And-Outside 05). */
+    glyph: Glyph? = null,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         DialogFeedback()
-        SignalDialogPanel(title, text, confirmLabel, onConfirm, onDismiss, Modifier.padding(horizontal = 24.dp), destructive, italic, cancelLabel)
+        SignalDialogPanel(title, text, confirmLabel, onConfirm, onDismiss, Modifier.padding(horizontal = 24.dp), destructive, italic, cancelLabel, confirmTag, glyph)
     }
 }
 
@@ -1003,6 +1007,8 @@ fun SignalDialogPanel(
     destructive: Boolean = false,
     italic: String? = null,
     cancelLabel: String = "Cancel",
+    confirmTag: String? = null,
+    glyph: Glyph? = null,
 ) {
     val c = LocalColors.current
     val shape = RoundedCornerShape(28.dp)
@@ -1010,12 +1016,22 @@ fun SignalDialogPanel(
         modifier.fillMaxWidth().shadow(24.dp, shape, ambientColor = Color(0x590A0A14), spotColor = Color(0x590A0A14)).clip(shape).background(c.paperRaised).border(1.dp, c.rule, shape).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        if (glyph != null) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
+                GlyphIcon(glyph, c.ink2, size = 18.dp)
+            }
+        }
         androidx.compose.foundation.text.BasicText(askString(title, italic), style = RType.serif(28f, 30f, -0.01f).copy(color = c.ink))
         RText(text, RType.body, c.ink2)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SignalButton(cancelLabel, Modifier.weight(1f), style = ButtonStyle.Outline, onClick = onDismiss)
-            SignalButton(confirmLabel, Modifier.weight(1f), style = if (destructive) ButtonStyle.DangerWash else ButtonStyle.Inverse, onClick = onConfirm)
+            SignalButton(
+                confirmLabel,
+                Modifier.weight(1f).then(if (confirmTag != null) Modifier.testTag(confirmTag) else Modifier),
+                style = if (destructive) ButtonStyle.DangerWash else ButtonStyle.Inverse,
+                onClick = onConfirm,
+            )
         }
     }
 }

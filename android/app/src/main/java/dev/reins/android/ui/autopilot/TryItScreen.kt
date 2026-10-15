@@ -5,6 +5,19 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
+import dev.reins.android.design.AskText
+import dev.reins.android.design.LabelText
+import dev.reins.android.design.RoundIconButton
+import dev.reins.android.design.SignalButton
+import dev.reins.android.design.SignalChip
+import dev.reins.android.ui.main.HeaderInsets
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -68,58 +81,55 @@ fun TryItScreen(viewModel: AutopilotViewModel, initialProfileId: String?, onBack
     val modelReady = AutopilotText.modelUsable(ui.model ?: settings?.model)
     LaunchedEffect(Unit) { viewModel.clearEvaluation() }
 
-    Screen(title = "Try it", subtitle = profile?.let { untrusted(it.name) }, onBack = onBack) {
-        dev.reins.android.design.InlineHelp(
-            "Try it",
-            "A request as Autopilot reads it: the facts first, then what the AI wrote. Edit anything; nothing is kept.",
-            Modifier.padding(horizontal = 16.dp),
-            label = "Nothing is kept",
-        )
-        if (!modelReady) {
-            Banner(
-                "Download the model first.",
-                Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
-                BannerKind.Warning,
-                tag = "tryNoModel",
+    // A sandbox for the rules (iOS-Autopilot 05): examples, the request as Autopilot reads it, and its verdict.
+    Column(Modifier.fillMaxSize().background(c.paper).verticalScroll(rememberScrollState()).windowInsetsPadding(HeaderInsets)) {
+        Column(Modifier.padding(horizontal = 22.dp)) {
+            RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.padding(top = 8.dp).testTag("back"), onClick = onBack)
+            AskText("Try it", c.ink, Modifier.padding(top = 16.dp).semantics { heading() }, target = "it", style = RType.serif(40f, 44f), minSize = 32.sp)
+            RText(
+                (profile?.let { untrusted(it.name) + " · " } ?: "") + "Edit anything; nothing is kept.",
+                RType.meta,
+                c.inkMeta,
+                Modifier.padding(top = 4.dp),
+                maxLines = 1,
             )
         }
-
-        SectionLabel("Examples")
+        if (!modelReady) {
+            Banner("Download the model first.", Modifier.padding(start = 22.dp, end = 22.dp, top = 12.dp), BannerKind.Warning, tag = "tryNoModel")
+        }
         Row(
-            Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            Modifier.padding(top = 16.dp).horizontalScroll(rememberScrollState()).padding(horizontal = 22.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             AutopilotText.examples.forEach { e ->
-                SelectChip(e.title, example == e.title, Modifier.testTag("example:${e.title}")) {
+                SignalChip(e.title, example == e.title, Modifier.testTag("example:${e.title}")) {
                     example = e.title
                     text = e.situation
                     viewModel.clearEvaluation()
                 }
             }
         }
-
         if (ui.profiles.size > 1) {
-            SectionLabel("Profile")
+            LabelText("Profile", c.inkMeta, Modifier.padding(start = 22.dp, top = 18.dp, bottom = 8.dp))
             Row(
-                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 22.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 ui.profiles.forEach { p ->
-                    SelectChip("${AutopilotText.profileIcon(p)}  ${untrusted(p.name)}", p.id == profile?.id, Modifier.testTag("tryProfile:${p.id}")) {
+                    SignalChip(untrusted(p.name), p.id == profile?.id, Modifier.testTag("tryProfile:${p.id}")) {
                         profileId = p.id
                         viewModel.clearEvaluation()
                     }
                 }
             }
         }
-
-        SectionLabel("The request")
         Box(
             Modifier
-                .padding(horizontal = 16.dp)
+                .padding(start = 22.dp, end = 22.dp, top = 14.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
-                .background(c.elevated)
+                .background(c.paperRaised)
+                .border(1.dp, c.rule, RoundedCornerShape(18.dp))
                 .padding(14.dp),
         ) {
             BasicTextField(
@@ -128,23 +138,19 @@ fun TryItScreen(viewModel: AutopilotViewModel, initialProfileId: String?, onBack
                     text = it.take(4_000)
                     example = ""
                 },
-                Modifier.fillMaxWidth().defaultMinSize(minHeight = 180.dp).testTag("situation"),
-                textStyle = RType.mono(13f).copy(color = c.text, lineHeight = androidx.compose.ui.unit.TextUnit(19f, androidx.compose.ui.unit.TextUnitType.Sp)),
-                cursorBrush = SolidColor(c.accent),
+                Modifier.fillMaxWidth().defaultMinSize(minHeight = 160.dp).testTag("situation"),
+                textStyle = RType.mono(13f).copy(color = c.ink, lineHeight = androidx.compose.ui.unit.TextUnit(19f, androidx.compose.ui.unit.TextUnitType.Sp)),
+                cursorBrush = SolidColor(c.violet),
             )
         }
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-            CapsuleButton(
+        Column(Modifier.padding(horizontal = 22.dp, vertical = 14.dp)) {
+            SignalButton(
                 "Ask Autopilot",
                 Modifier.fillMaxWidth().testTag("evaluate"),
-                style = ButtonStyle.Accent,
-                busy = ui.evaluating,
-                enabled = text.isNotBlank(),
-                glyph = Glyph.Sparkle,
+                enabled = text.isNotBlank() && !ui.evaluating,
             ) { viewModel.evaluate(profile?.id, text) }
             ui.error?.let { Banner(it, Modifier.padding(top = 12.dp), BannerKind.Error, tag = "tryError") }
         }
-
         AnimatedVisibility(
             ui.evaluation != null,
             enter = fadeIn() + slideInVertically(spring(dampingRatio = 0.85f, stiffness = 400f)) { it / 6 },
@@ -162,10 +168,11 @@ private fun VerdictCard(s: SuggestionView) {
     val tint = if (s.judged) verdictTint(s.verdict, c) else c.tertiary
     Column(
         Modifier
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = 22.dp)
             .fillMaxWidth()
             .clip(RoundedCornerShape(22.dp))
-            .background(c.elevated)
+            .background(c.paperRaised)
+            .border(1.dp, c.rule, RoundedCornerShape(22.dp))
             .padding(18.dp)
             .testTag("verdict"),
     ) {
@@ -175,14 +182,25 @@ private fun VerdictCard(s: SuggestionView) {
             }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Caption("Autopilot would")
-                RText(
-                    if (s.judged) AutopilotText.verdictWord(s.verdict) else "Leave it to you",
-                    RType.sans(26f, FontWeight.SemiBold),
-                    tint,
-                    Modifier.padding(top = 2.dp).testTag("verdictWord"),
-                    maxLines = 1,
-                )
+                LabelText("Autopilot would", c.inkMeta)
+                // "Deny 91%": the word in the serif, its sureness in italic.
+                Row(verticalAlignment = Alignment.Bottom) {
+                    RText(
+                        if (s.judged) AutopilotText.verdictWord(s.verdict) else "Leave it to you",
+                        RType.serif(32f, 36f),
+                        tint,
+                        Modifier.padding(top = 2.dp).testTag("verdictWord"),
+                        maxLines = 1,
+                    )
+                    if (s.judged) {
+                        RText(
+                            " " + AutopilotText.percent(if (s.verdict == Verdict.DENY) s.pDeny else s.pApprove),
+                            RType.serif(28f, 34f, italic = true),
+                            tint,
+                            maxLines = 1,
+                        )
+                    }
+                }
                 if (s.judged) RText("${AutopilotText.percent(s.confidence)} confident", RType.sans(13.5f), c.secondary, maxLines = 1)
             }
         }
@@ -197,7 +215,7 @@ private fun VerdictCard(s: SuggestionView) {
             RText(untrusted(s.reason), RType.sans(14.5f, lineHeight = 20f), c.text, Modifier.padding(top = 16.dp).testTag("verdictReason"))
         }
         if (s.neighbours.isNotEmpty()) {
-            Caption("Like these decisions of yours", Modifier.padding(top = 16.dp, bottom = 2.dp))
+            LabelText("Like these decisions of yours", c.inkMeta, Modifier.padding(top = 16.dp, bottom = 2.dp))
             s.neighbours.forEach { NeighbourRow(it) }
         }
         AutopilotText.suggestionNotes(s).forEach { note ->

@@ -1,5 +1,8 @@
 package dev.reins.android.ui.signin
 
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.browser.auth.AuthTabIntent
@@ -72,17 +75,17 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, passkeys: PasskeyPro
     }
     Screen(title = null, modifier = Modifier.testTag("unlock")) {
         Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Spacer(Modifier.height(64.dp))
-            Box(
-                Modifier.size(64.dp).background(c.accentSoft, RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center,
-            ) { GlyphIcon(Glyph.Lock, c.accent, size = 32.dp) }
-            Spacer(Modifier.height(6.dp))
-            RText(
+            // Three ways in, one screen (iOS-Arrival 05): paper, the question in the serif.
+            Spacer(Modifier.height(48.dp))
+            dev.reins.android.design.AskText(
                 if (takeover) "Another phone approves for you" else "Your account is on another phone",
-                RType.sans(28f, FontWeight.SemiBold, lineHeight = 34f),
-                c.text,
+                c.ink,
+                Modifier.semantics { heading() },
+                target = if (takeover) "approves for you" else "another phone",
+                style = RType.serif(40f, 44f),
+                minSize = 30.sp,
             )
+            RText(email, RType.value, c.inkMeta, maxLines = 1, ltr = true)
             RText(
                 when {
                     takeover -> OTHER_APPROVAL_DEVICE
@@ -92,7 +95,7 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, passkeys: PasskeyPro
                         "Signed in as $email. Approve from your other phone, or enter your recovery code."
                 },
                 RType.sans(16f, lineHeight = 22f),
-                c.secondary,
+                c.ink2,
                 Modifier.testTag(if (takeover) "takeoverText" else "unlockText"),
             )
             Spacer(Modifier.height(20.dp))
@@ -162,32 +165,31 @@ private fun Choose(viewModel: UnlockViewModel, ui: UnlockUi, takeover: Boolean, 
 @Composable
 private fun Asking(viewModel: UnlockViewModel, ui: UnlockUi) {
     val c = LocalColors.current
+    RText("Approve this one only if your other phone shows the same code.", RType.sans(15f, lineHeight = 21f), c.ink2)
     Column(
         Modifier
             .fillMaxWidth()
-            .background(c.accent.copy(alpha = 0.09f), RoundedCornerShape(22.dp))
-            .border(1.5.dp, c.accent.copy(alpha = 0.55f), RoundedCornerShape(22.dp))
-            .padding(20.dp),
+            .background(c.paperRaised, RoundedCornerShape(22.dp))
+            .border(1.dp, c.rule, RoundedCornerShape(22.dp))
+            .padding(vertical = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        RText("Check that your other phone shows", RType.sans(15f, lineHeight = 21f), c.secondary)
         RText(
             ui.code.orEmpty(),
-            RType.mono(44f, FontWeight.SemiBold).copy(letterSpacing = 2.sp),
-            c.text,
+            RType.serif(52f, 56f).copy(letterSpacing = 3.sp),
+            c.ink,
             Modifier.testTag("joinCode"),
             maxLines = 1,
             ltr = true,
         )
     }
     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Spinner(c.secondary, size = 22.dp)
+        Spinner(c.inkMeta, size = 20.dp)
         Spacer(Modifier.width(12.dp))
         RText(
-            "Approve on your other phone.",
+            "Waiting for your other phone",
             RType.sans(14.5f, lineHeight = 20f),
-            c.secondary,
+            c.ink2,
             Modifier.weight(1f),
         )
     }
@@ -204,8 +206,7 @@ private fun Reset(viewModel: UnlockViewModel, ui: UnlockUi, open: (String) -> Bo
     Column(
         Modifier
             .fillMaxWidth()
-            .background(c.danger.copy(alpha = 0.07f), RoundedCornerShape(22.dp))
-            .border(1.5.dp, c.danger.copy(alpha = 0.4f), RoundedCornerShape(22.dp))
+            .background(c.dangerWash, RoundedCornerShape(22.dp))
             .padding(20.dp)
             .testTag("resetText"),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -213,7 +214,7 @@ private fun Reset(viewModel: UnlockViewModel, ui: UnlockUi, open: (String) -> Bo
         Row(verticalAlignment = Alignment.CenterVertically) {
             GlyphIcon(Glyph.Warning, c.danger, size = 20.dp)
             Spacer(Modifier.width(10.dp))
-            RText("Start over with an empty vault", RType.sans(17f, FontWeight.SemiBold, lineHeight = 22f), c.text)
+            RText("Start over with an empty vault", RType.serif(24f, 28f), c.ink)
         }
         RText(
             "Deletes the vault: items, integrations, grants and activity. Other phones sign out; AIs connect again. Can't be undone.",
@@ -232,12 +233,12 @@ private fun Reset(viewModel: UnlockViewModel, ui: UnlockUi, open: (String) -> Bo
         )
     }
     ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "unlockError") }
-    CapsuleButton(
-        "Sign in again and reset",
+    dev.reins.android.design.HoldButton(
+        "Hold to reset",
+        c.danger,
         Modifier.fillMaxWidth().testTag("confirmReset"),
-        style = ButtonStyle.Destructive,
+        icon = null,
         busy = ui.busy,
-        glyph = Glyph.Trash,
     ) { viewModel.resetVault(open) }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
         TextLink("Back", "resetBack", enabled = !ui.busy, onClick = viewModel::back)

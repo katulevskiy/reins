@@ -1,0 +1,276 @@
+package dev.reins.android.ui.approval
+
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.testTag
+import androidx.compose.ui.semantics.text
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import dev.reins.android.design.AskText
+import dev.reins.android.design.Field
+import dev.reins.android.design.FieldHeaderShape
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.LabelText
+import dev.reins.android.design.LocalColors
+import dev.reins.android.design.LocalReduceMotion
+import dev.reins.android.design.Motion
+import dev.reins.android.design.RColors
+import dev.reins.android.design.RText
+import dev.reins.android.design.RType
+import dev.reins.android.design.askString
+import dev.reins.android.design.fieldSurface
+import dev.reins.android.design.pressable
+import dev.reins.android.ui.main.HeaderInsets
+
+// The ask as a field (Reins Signal, And-Core 02, iOS-Approve, iOS-Kinds, iOS-Connect): a solid colour that runs into the
+// top of the screen, with who asks and how long it waits, the label line, the ask in the serif with its target in
+// italic, and one verdict line. It slides down from the top (320 ms, ease out); the ask follows 60 ms later.
+
+/**
+ * A field at the top of an ask. [top] is the row beside the close button (the asker, the timer); [verdict] the one
+ * line under the ask. Under Reduce Motion it appears without sliding.
+ */
+@Composable
+fun AskField(
+    field: Field,
+    label: String,
+    ask: String,
+    target: String?,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    askTag: String = "what",
+    closeGlyph: Glyph = Glyph.ArrowBack,
+    closeLabel: String = "Back",
+    top: @Composable RowScope.() -> Unit = {},
+    verdict: (@Composable () -> Unit)? = null,
+    below: (@Composable ColumnScope.() -> Unit)? = null,
+    /** Shared by the screen so the field slides in once, not each time a drill-in comes back. */
+    entered: MutableTransitionState<Boolean>? = null,
+) {
+    val c = LocalColors.current
+    val reduce = LocalReduceMotion.current
+    val own = remember { MutableTransitionState(false).apply { targetState = true } }
+    val shown = entered ?: own
+    AnimatedVisibility(shown, modifier, enter = Motion.fieldEnter(reduce)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .fieldSurface(field, FieldHeaderShape)
+                .windowInsetsPadding(HeaderInsets)
+                .padding(start = 22.dp, end = 22.dp, top = 4.dp, bottom = 22.dp)
+                .testTag("hero"),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FieldButton(closeGlyph, closeLabel, Modifier.testTag("closeSheet"), onClick = onClose)
+                top()
+            }
+            LabelText(label, c.onField2, Modifier.padding(top = 30.dp).testTag("fieldLabel"))
+            AnimatedVisibility(shown, enter = fadeIn(tween(if (reduce) Motion.REDUCED_MS else 240, delayMillis = if (reduce) 0 else Motion.ASK_DELAY_MS))) {
+                // A slash never ends a line ("octo/ app"); what is read out (and tested) is the ask as written.
+                AskText(
+                    noBreakAfterSlash(ask),
+                    c.onField,
+                    Modifier.padding(top = 10.dp).fillMaxWidth().clearAndSetSemantics {
+                        testTag = askTag
+                        text = androidx.compose.ui.text.AnnotatedString(ask)
+                    },
+                    target = target?.let(::noBreakAfterSlash),
+                    style = RType.ask.copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading),
+                )
+            }
+            if (verdict != null) Box(Modifier.padding(top = 14.dp)) { verdict() }
+            below?.invoke(this)
+        }
+    }
+}
+
+/**
+ * Drilled in: the field shrinks to a band that keeps its colour, the ask in one line and the timer, so the ask is
+ * never lost.
+ */
+@Composable
+fun AskBand(field: Field, ask: String, target: String?, onBack: () -> Unit, modifier: Modifier = Modifier, timer: @Composable () -> Unit = {}) {
+    val c = LocalColors.current
+    Row(
+        modifier
+            .fillMaxWidth()
+            .fieldSurface(field, FieldHeaderShape)
+            .windowInsetsPadding(HeaderInsets)
+            .padding(start = 18.dp, end = 22.dp, top = 2.dp, bottom = 14.dp)
+            .testTag("askBand"),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FieldButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), size = 32.dp, onClick = onBack)
+        androidx.compose.foundation.text.BasicText(
+            askString(ask, target),
+            Modifier.weight(1f),
+            style = RType.serif(17f, 22f).copy(color = c.onField),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        timer()
+    }
+}
+
+/** A round button on a field: the white wash with a white glyph. */
+@Composable
+fun FieldButton(glyph: Glyph, label: String, modifier: Modifier = Modifier, size: Dp = 36.dp, onClick: () -> Unit) {
+    val c = LocalColors.current
+    Box(
+        modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(c.onFieldWash)
+            .pressable(shape = CircleShape, label = label, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) { GlyphIcon(glyph, c.onField, size = size * 0.5f) }
+}
+
+/** Who asks, in the field's top row: their mark on a white disc, the name and where from. */
+@Composable
+fun RowScope.AskWho(name: String, host: String?, avatar: @Composable () -> Unit) {
+    val c = LocalColors.current
+    // The mark on its white disc, the same in both themes.
+    CompositionLocalProvider(LocalColors provides RColors.Light) { avatar() }
+    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+        RText(name, RType.sans(14.5f, FontWeight.Medium), c.onField, Modifier.weight(1f, fill = false), maxLines = 1)
+        if (!host.isNullOrBlank()) RText(" · $host", RType.sans(14.5f, FontWeight.Medium), c.onField2, maxLines = 1)
+    }
+}
+
+/** The verdict line on a field: a glyph (or a ring) and a few words in on-field-2; a tap opens its detail. */
+@Composable
+fun FieldVerdict(
+    text: String,
+    modifier: Modifier = Modifier,
+    glyph: Glyph? = null,
+    ring: Float? = null,
+    maxLines: Int = 2,
+    chevron: Boolean = false,
+    textTag: String? = null,
+    onClick: (() -> Unit)? = null,
+    onOverflow: (Boolean) -> Unit = {},
+) {
+    val c = LocalColors.current
+    Row(
+        modifier
+            .then(if (onClick != null) Modifier.clip(CircleShape).pressable(shape = CircleShape, label = text, onClick = onClick) else Modifier)
+            .semantics(mergeDescendants = true) {},
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when {
+            ring != null -> dev.reins.android.design.Ring(ring, c.onField, c.onField.copy(alpha = 0.3f), 16.dp)
+            glyph != null -> GlyphIcon(glyph, c.onField2, size = 16.dp)
+        }
+        androidx.compose.material3.Text(
+            text,
+            Modifier.weight(1f, fill = false).then(if (textTag != null) Modifier.testTag(textTag) else Modifier),
+            color = c.onField2,
+            style = RType.sans(14.5f, lineHeight = 19f),
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { onOverflow(it.hasVisualOverflow) },
+        )
+        if (chevron) GlyphIcon(Glyph.ChevronRight, c.onField2, size = 14.dp)
+    }
+}
+
+/** The decision bar at the bottom of an ask: paper, a hairline on top, above the navigation bar. */
+@Composable
+fun AskDock(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val c = LocalColors.current
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(c.paper)
+            .drawBehind { drawLine(c.rule, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx()) }
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 18.dp)
+            .testTag("dock"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content,
+    )
+}
+
+/** Deny (outline) and the action (inverse, with the fingerprint), for an ask without a chooser (pair, join, a file). */
+@Composable
+fun AskButtons(
+    action: String,
+    onDeny: () -> Unit,
+    onApprove: () -> Unit,
+    busy: Boolean,
+    actionEnabled: Boolean = true,
+    deny: String = "Deny",
+) {
+    val c = LocalColors.current
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        dev.reins.android.design.SignalButton(deny, Modifier.weight(1f).testTag("deny"), style = dev.reins.android.design.ButtonStyle.Outline, enabled = !busy, onClick = onDeny)
+        dev.reins.android.design.SignalButton(
+            action,
+            Modifier.weight(1.35f).testTag("approve"),
+            enabled = !busy && actionEnabled,
+            leading = { if (busy) dev.reins.android.design.Spinner(c.onInverse, size = 18.dp) else GlyphIcon(Glyph.Fingerprint, c.onInverse, size = 20.dp) },
+            onClick = onApprove,
+        )
+    }
+}
+
+/** An ask that is still loading, or failed to load: a close button on paper, the spinner or what went wrong. */
+@Composable
+fun AskLoading(loading: Boolean, error: String?, onClose: () -> Unit, errorTag: String? = null) {
+    val c = LocalColors.current
+    Column(Modifier.fillMaxWidth().windowInsetsPadding(HeaderInsets).padding(start = 18.dp, end = 18.dp, top = 4.dp)) {
+        dev.reins.android.design.RoundIconButton(Glyph.Close, "Close", Modifier.testTag("closeSheet"), onClick = onClose)
+        Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (loading) dev.reins.android.design.Spinner(c.inkMeta, size = 32.dp)
+            error?.let { dev.reins.android.design.Banner(it, Modifier.padding(top = 24.dp), dev.reins.android.design.BannerKind.Error, tag = errorTag) }
+        }
+    }
+}
+
+/** [text] with a word joiner after each slash, so a path or a repo ("octo/app") is never split at its slash. */
+internal fun noBreakAfterSlash(text: String): String = text.replace("/", "/⁠")
+
+/** A timer on a field: the ring draining each second, a white pill with red digits in the last 15 s. Its own clock. */
+@Composable
+fun FieldTimer(createdAt: Long, waitUntil: Long?) {
+    if (waitUntil == null) return
+    val now = dev.reins.android.design.rememberNowState(1_000, untilMillis = waitUntil * 1000)
+    val left = (waitUntil - now.value / 1000).coerceAtLeast(0)
+    Box(Modifier.testTag("waitLine")) { dev.reins.android.design.TimerPill(left, (waitUntil - createdAt).coerceAtLeast(1)) }
+}

@@ -11,11 +11,14 @@ mod audit;
 mod desktop;
 mod grants;
 mod mcp;
+mod merge;
 mod pending;
 mod protected;
 mod snapshot;
 pub(crate) use protected::Owner;
 mod secrets;
+mod sync;
+pub(crate) use sync::Pulled;
 
 use std::fmt;
 use std::fs;
@@ -80,6 +83,70 @@ CREATE TABLE IF NOT EXISTS handled (id TEXT PRIMARY KEY, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS connection_prefs (connection_id TEXT PRIMARY KEY, icon TEXT);
 CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB NOT NULL);
 ";
+/// The records whose removal is a security decision (a permission, a connected account or its token, a paired
+/// computer's key, an MCP server, an approved target), with their primary keys: each removal leaves a tombstone, so
+/// that no merge, import or restore brings the record back (see `merge.rs` and `sync.rs`).
+pub(crate) const GUARDED: &[(&str, &[&str])] = &[
+    ("grants", &["id"]),
+    ("accounts", &["service", "account"]),
+    ("secrets", &["service", "account"]),
+    ("desktop_keys", &["connection_id"]),
+    ("mcp_servers", &["id"]),
+    ("autopilot_targets", &["key"]),
+];
+/// A tombstone is a `meta` row `app.tombstone.<table>:<JSON array of the key>` holding when the record was removed:
+/// in `meta`, which every version syncs, rather than a table of its own that older versions would refuse. Adding the
+/// record again (on purpose) removes its tombstone. Tombstones are kept for [`TOMBSTONE_HORIZON_SECS`]; a phone whose
+/// merge base is older than that cannot rely on them and keeps only what the server also has.
+pub(crate) const TOMBSTONE_PREFIX: &str = "app.tombstone.";
+pub(crate) const TOMBSTONE_HORIZON_SECS: i64 = 180 * 86_400;
+
+fn tombstone_key_sql(table: &str, key: &[&str], row: &str) -> String {
+    let parts = key.iter().map(|k| format!("{row}.\"{k}\"")).collect::<Vec<_>>().join(", ");
+    format!("'{TOMBSTONE_PREFIX}{table}:' || json_array({parts})")
+}
+/// The triggers that keep the tombstones. Removed while an import replaces rows (nobody removed those).
+fn tombstone_triggers() -> String {
+    use std::fmt::Write as _;
+    let device_secrets = snapshot::DEVICE_SECRETS.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(",");
+    let mut sql = String::new();
+    for (table, key) in GUARDED {
+        // An installation key is this phone's own: its removal is no one else's business (nor in the synced state).
+        let (when, when_new) = if *table == "secrets" {
+            (
+                format!("WHEN old.service NOT IN ({device_secrets})"),
+                format!("WHEN new.service NOT IN ({device_secrets})"),
+            )
+        } else if *table == "grants" {
+            // A grant's id is never given out again: nothing clears its tombstone (an import replacing rows has the
+            // triggers off anyway).
+            (String::new(), "WHEN 0".to_owned())
+        } else {
+            (String::new(), String::new())
+        };
+        write!(
+            sql,
+            "CREATE TRIGGER IF NOT EXISTS tombstone_{table} AFTER DELETE ON {table} {when} BEGIN
+                 INSERT OR REPLACE INTO meta (key, value) VALUES ({}, CAST(strftime('%s', 'now') AS INTEGER));
+             END;
+             CREATE TRIGGER IF NOT EXISTS untombstone_{table} AFTER INSERT ON {table} {when_new} BEGIN
+                 DELETE FROM meta WHERE key = {};
+             END;",
+            tombstone_key_sql(table, key, "old"),
+            tombstone_key_sql(table, key, "new"),
+        )
+        .expect("writing to a String");
+    }
+    sql
+}
+fn drop_tombstone_triggers(conn: &Connection) -> Result<(), rusqlite::Error> {
+    for (table, _) in GUARDED {
+        conn.execute_batch(&format!(
+            "DROP TRIGGER IF EXISTS tombstone_{table}; DROP TRIGGER IF EXISTS untombstone_{table};"
+        ))?;
+    }
+    Ok(())
+}
 
 /// Columns and tables added after the first release, applied once each (`PRAGMA user_version`). A table added to
 /// [`SCHEMA`] needs one here too: a sealed database restored from disk keeps the tables it was written with.
@@ -218,24 +285,42 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
     // Standing answers to the desktop app's questions were keyed by the topic the computer chose (`file:.env`,
     // `command:make deploy`), which covered every later question with that topic. They are now keyed by exactly the
     // file, command or question, on that computer; the old, broader ones are dropped rather than honoured.
-    "
+    DROP_TOPIC_DESKTOP_GRANTS,
+];
+const DROP_TOPIC_DESKTOP_GRANTS: &str = "
 DELETE FROM grants WHERE json_extract(grant_json, '$.scope.action') = 'service'
     AND json_extract(grant_json, '$.scope.service') = 'desktop';
-",
-];
+";
+/// The schema version [`migrate`] brings a database to.
+#[expect(clippy::cast_possible_wrap, reason = "ten-odd migrations")]
+const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64 + 1;
+/// The rewrites among [`MIGRATIONS`] that apply to data from another phone too, which may run an older version: an
+/// account state it uploaded is brought up to date with these before it is compared, merged or imported (see
+/// `sync.rs`), so that it can neither bring back what a migration dropped nor look like a change of this phone's.
+/// Each is idempotent. A migration that rewrites rows (rather than adding tables or columns) adds its rewrite here.
+const DATA_FIXUPS: &str = DROP_TOPIC_DESKTOP_GRANTS;
 
 /// Brings a connection to the current schema, whatever wrote it: a new database, a legacy file, or a sealed copy
 /// restored from disk (written by this version, an older one, or another process).
 fn prepare(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(SCHEMA)?;
+    // A migration's rewrites are no one's removals: no tombstones (a copy sealed earlier has the triggers already).
+    // What a migration drops cannot come back either way: `DATA_FIXUPS` drops it again from every snapshot read.
+    drop_tombstone_triggers(conn)?;
     migrate(conn)?;
+    // After the migrations: the tables they add need to exist.
+    conn.execute_batch(&tombstone_triggers())?;
     conn.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
     Ok(())
 }
 
+fn schema_version(conn: &Connection) -> Result<i64, CoreError> {
+    Ok(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?)
+}
+
 fn migrate(conn: &Connection) -> Result<(), CoreError> {
     // A database that was never versioned (0) is the first release's schema (1).
-    let mut version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?.max(1);
+    let mut version = schema_version(conn)?.max(1);
     for (index, sql) in MIGRATIONS.iter().enumerate() {
         if version == i64::try_from(index + 1).unwrap_or(i64::MAX) {
             version += 1;
@@ -659,6 +744,25 @@ pub(crate) mod tests {
             server_url: "https://rw.example.com".to_owned(),
             email: "me@example.com".to_owned(),
             refresh_token: Zeroizing::new("REFRESH-TOKEN-SECRET".to_owned()),
+        }
+    }
+
+    /// An Activity entry, as approving a search writes it.
+    pub(crate) fn audit_record() -> AuditRecord {
+        AuditRecord {
+            seq: 0,
+            at: 5,
+            connection_id: "c1".to_owned(),
+            connection_label: "ChatGPT".to_owned(),
+            action: "search".to_owned(),
+            outcome: "released".to_owned(),
+            detail: "2 messages".to_owned(),
+            grant_id: None,
+            service: "gmail".to_owned(),
+            account: None,
+            count: 2,
+            info: AuditInfo::default(),
+            op: String::new(),
         }
     }
 

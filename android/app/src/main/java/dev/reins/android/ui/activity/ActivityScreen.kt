@@ -115,6 +115,7 @@ fun ActivityScreen(
     val seen by state.seenActivityId.collectAsStateWithLifecycle()
     val replaced by state.deviceReplaced.collectAsStateWithLifecycle()
     val registrationError by state.registrationError.collectAsStateWithLifecycle()
+    val syncNotice by state.syncNotice.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
     var filter by rememberSaveable { mutableStateOf(HistoryFilter.All) }
     var ai by rememberSaveable { mutableStateOf<String?>(null) }
@@ -176,7 +177,8 @@ fun ActivityScreen(
         if (!notifications.enabled) add(Warning("notificationsOff", "Reins · Notifications", "Notifications are off", "off", "Turn on", "turnOnNotifications", notifications::request))
         if (!screenLock.set) add(Warning("screenLockOff", "Reins · Screen lock", "No screen lock", "lock", "Set one", "setScreenLock", screenLock::openSettings))
     }
-    val headerCount = (if (warnings.isEmpty()) 0 else 1) + 1 + (if (notice != null) 1 else 0) + (if (filtersOpen) 1 else 0) + 1
+    val headerCount = (if (warnings.isEmpty()) 0 else 1) + 1 + (if (notice != null) 1 else 0) + (if (syncNotice != null) 1 else 0) +
+        (if (filtersOpen) 1 else 0) + 1
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
     var positioned by remember { mutableStateOf(false) }
@@ -229,6 +231,13 @@ fun ActivityScreen(
                 }
             }
             notice?.let { item(key = "notice") { NoticeRow(it, onDismissNotice) } }
+            // What the core says about syncing with the account's other phone (#101): a soft row with the sync glyph and
+            // OK, which dismisses it in the core. Sync never keeps anyone out; this row is all it shows.
+            syncNotice?.let {
+                item(key = "syncNotice") {
+                    NoticeRow(it, { scope.launch { container.dismissSyncNotice() } }, glyph = Glyph.Refresh, tag = "syncNotice", okTag = "dismissSyncNotice", maxLines = 3)
+                }
+            }
             if (filtersOpen) {
                 item(key = "filters") {
                     FilterRow(filter, ai, connections, Modifier.padding(top = 14.dp), onSelect = { filter = it }, onAi = { ai = it })
@@ -342,16 +351,23 @@ private fun WarnField(warnings: List<Warning>, detail: String?) {
 
 /** A line about something that just happened, on paper, with OK. */
 @Composable
-private fun NoticeRow(text: String, onDismiss: () -> Unit) {
+private fun NoticeRow(
+    text: String,
+    onDismiss: () -> Unit,
+    glyph: Glyph = Glyph.Info,
+    tag: String = "notice",
+    okTag: String = "dismissNotice",
+    maxLines: Int = 4,
+) {
     val c = LocalColors.current
     Row(
-        Modifier.padding(horizontal = 24.dp).padding(top = 14.dp).fillMaxWidth().hairlineBelow(c.rule).padding(bottom = 12.dp).testTag("notice"),
+        Modifier.padding(horizontal = 24.dp).padding(top = 14.dp).fillMaxWidth().hairlineBelow(c.rule).padding(bottom = 12.dp).testTag(tag),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GlyphIcon(Glyph.Info, c.violet, size = 18.dp)
-        RText(text, RType.sans(14f), c.ink, Modifier.weight(1f), maxLines = 4)
-        SignalButton("OK", Modifier.testTag("dismissNotice"), style = ButtonStyle.Soft, size = ButtonSize.Compact, onClick = onDismiss)
+        GlyphIcon(glyph, c.violet, size = 18.dp)
+        RText(text, RType.sans(14f), c.ink, Modifier.weight(1f), maxLines = maxLines)
+        SignalButton("OK", Modifier.testTag(okTag), style = ButtonStyle.Soft, size = ButtonSize.Compact, onClick = onDismiss)
     }
 }
 

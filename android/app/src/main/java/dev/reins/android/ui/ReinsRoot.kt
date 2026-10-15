@@ -277,21 +277,18 @@ private fun SignedInContent(
                 onStart = { minutes -> autopilot.startOvernight(minutes, authenticator = authenticator) },
                 onClose = { timedSheet = null },
             )
-            // A request is decided full screen; the rest are sheets over the app.
-            FullScreenHost(sheet as? SheetTarget.Approval, onClose = app::closeSheet) { target ->
-                ApprovalScreen(
-                    viewModel = viewModel(key = "approval:${target.id}") { ApprovalViewModel(container, target.id) },
-                    authenticator = authenticator,
-                    onDone = app::closeSheet,
-                    onOpenAutopilot = {
-                        app.closeSheet()
-                        app.selectTab(Tab.Trust)
-                    },
-                )
-            }
-            SheetHost(sheet?.takeIf { it !is SheetTarget.Approval }, onClose = app::closeSheet) { target ->
+            // Every ask is a field over the whole app: a request, a pairing, a new phone, a file.
+            FullScreenHost(sheet, onClose = app::closeSheet) { target ->
                 when (target) {
-                    is SheetTarget.Approval -> Unit
+                    is SheetTarget.Approval -> ApprovalScreen(
+                        viewModel = viewModel(key = "approval:${target.id}") { ApprovalViewModel(container, target.id) },
+                        authenticator = authenticator,
+                        onDone = app::closeSheet,
+                        onOpenAutopilot = {
+                            app.closeSheet()
+                            app.selectTab(Tab.Trust)
+                        },
+                    )
                     is SheetTarget.Pairing -> PairingSheet(
                         viewModel = viewModel(key = "pairing:${target.id}") { PairingViewModel(container, target.id) },
                         authenticator = authenticator,

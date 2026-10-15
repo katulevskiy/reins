@@ -48,11 +48,13 @@ def raw_to_der(raw):
 class FakeAsc:
     """The endpoints the script uses. `builds` is the app's builds; a build becomes VALID after `processing` polls."""
 
-    def __init__(self, builds=(), groups=(), review_error=None, processing=1, encryption=None):
+    def __init__(self, builds=(), groups=(), review_error=None, processing=1, encryption=None, reviews=()):
         self.calls = []
         self.builds = [dict(b) for b in builds]
         self.groups = list(groups)
         self.review_error = review_error
+        # The app's beta review submissions, as the API lists them.
+        self.reviews = list(reviews)
         self.processing = processing
         self.encryption = encryption
         self.localizations = []
@@ -79,6 +81,8 @@ class FakeAsc:
             return {"data": self.localizations}
         if path.endswith("/buildBetaDetail"):
             return {"data": {"attributes": {"externalBuildState": "READY_FOR_BETA_SUBMISSION"}}}
+        if path.startswith("betaAppReviewSubmissions?"):
+            return {"data": self.reviews}
         if path == "betaAppReviewSubmissions" and self.review_error:
             raise tf.AscError(*self.review_error)
         return {}
@@ -249,6 +253,31 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
     fake = FakeAsc([build], GROUPS, review_error=(403, "forbidden"), processing=0)
     code, out, err = run(finish, fake, env)
     check(code == 1 and "HTTP 403" in err, err)
+
+    # Apple takes few review submissions a day: none while a build went to review in the last 24 hours, a notice
+    # instead; the build still goes to its groups.
+    def submitted(hours_ago):
+        at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_ago)
+        return {"id": "sub-1", "attributes": {"submittedDate": at.isoformat(timespec="seconds")}}
+
+    fake = FakeAsc([build], GROUPS, processing=0, reviews=[submitted(2)])
+    code, out, err = run(finish, fake, env | {"GITHUB_ACTIONS": "true"})
+    check(code == 0 and ("POST", "betaAppReviewSubmissions") not in fake.routes(), fake.routes())
+    check("::notice::Not submitted for beta app review: a build went to review 2 h ago" in err, err)
+    check("::warning::" not in err, err)
+    check(("POST", "betaGroups/228ac7ac-1/relationships/builds") in fake.routes(), "still in the external group")
+    fake = FakeAsc([build], GROUPS, processing=0, reviews=[submitted(30)])
+    code, out, err = run(finish, fake, env)
+    check(code == 0 and ("POST", "betaAppReviewSubmissions") in fake.routes(), "a day later it goes to review")
+
+    # Apple's own daily limit is a notice, not a warning.
+    limit = (422, "Submission limit has been reached.", "ENTITY_UNPROCESSABLE.SUBMISSION_LIMIT_REACHED")
+    fake = FakeAsc([build], GROUPS, review_error=limit, processing=0)
+    code, out, err = run(finish, fake, env | {"GITHUB_ACTIONS": "true"})
+    check(code == 0 and "::notice::Beta app review takes no more submissions today" in err, err)
+    check("::warning::" not in err, err)
+    check(tf.parse_time("2026-10-15T00:15:57-07:00") == 1_792_048_557 and tf.parse_time(None) is None
+          and tf.parse_time("soon") is None, "App Store Connect times")
 
     # A build that failed processing fails; one never processed times out.
     class Invalid(FakeAsc):

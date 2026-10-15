@@ -128,7 +128,7 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                fail(e.userMessage())
+                if (signedInDespite(e)) _ui.value = SignInUi() else fail(e.userMessage())
             }
         }
     }
@@ -186,9 +186,35 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                fail(e.userMessage())
+                if (signedInDespite(e)) _ui.value = SignInUi() else fail(e.userMessage())
             }
         }
+    }
+
+    /**
+     * A sign-in whose account opened although the call reported a problem with it afterwards (an account sync conflict
+     * from a core before the merge): the phone is signed in, so it goes on signed in and the problem becomes the sync
+     * banner on Activity. Never a red box on the welcome screen whose Continue only repeats it.
+     */
+    private suspend fun signedInDespite(e: Exception): Boolean {
+        if (e !is CoreException.ServiceNeedsAttention) return false
+        val info = try {
+            container.core.session()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Exception) {
+            null
+        } ?: return false
+        val keys = try {
+            container.core.accountKeys()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Exception) {
+            AccountKeys.UNLOCKED
+        }
+        container.finishSsoSignIn(SsoOutcome(info, keys))
+        container.state.setSyncNotice(e.userMessage())
+        return true
     }
 }
 

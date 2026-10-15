@@ -158,6 +158,8 @@ class PolishFlowTest : FlowHarness() {
         rule.onNodeWithTag("conn:c1").assertIsNotSelected()
         tap("scope:all")
         rule.onNodeWithTag("scope:all").assertIsSelected()
-        rule.onNodeWithTag("scope:specific").assertIsNotSelected()
+        // All mail takes the place of the address box.
+        awaitTag("allMailNote")
+        assertFalse(has("parties"))
     }
 }

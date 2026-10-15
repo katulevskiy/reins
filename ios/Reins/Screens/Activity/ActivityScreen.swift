@@ -171,6 +171,13 @@ struct ActivityScreen: View {
             }
             .accessibilityIdentifier("replacedBanner")
         }
+        if let notice = model.syncNotice {
+            CompactBanner(text: notice, symbol: "arrow.triangle.2.circlepath", button: "OK") {
+                Task { await model.dismissSyncNotice() }
+            }
+            .padding(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+            .accessibilityIdentifier("syncNoticeBanner")
+        }
         if model.registrationError != nil {
             CompactBanner(
                 text: "Not your approval phone yet", symbol: "exclamationmark.triangle.fill", tint: Palette.danger, button: "Retry",

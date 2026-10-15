@@ -7,6 +7,7 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.quotedName
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.BlobView
 import kotlin.coroutines.cancellation.CancellationException
@@ -48,7 +49,7 @@ class UploadViewModel(private val container: AppContainer, private val id: Strin
         _ui.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             try {
-                when (authenticator.authenticate("Approve the file", view.connectionLabel)) {
+                when (authenticator.authenticate("Approve the file", quotedName(view.connectionLabel))) {
                     AuthResult.Success -> {
                         container.feedback.play(Event.UploadApproved)
                         answer(true)
