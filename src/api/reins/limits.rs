@@ -283,6 +283,23 @@ pub static MEMBER_PROPOSALS: LazyLock<RateLimit<(String, String)>> = LazyLock::n
     )
 });
 
+/// Handover requests of one phone (key: user id and device id): each wakes the primary.
+pub static HANDOVER_REQUESTS: LazyLock<RateLimit<(String, String)>> = LazyLock::new(|| {
+    let per_hour = CONFIG.reins_handover_requests_per_hour();
+    RateLimit::with_period(
+        if per_hour == 0 {
+            0
+        } else {
+            3600 / u64::from(per_hour).max(1)
+        },
+        per_hour,
+    )
+});
+
+/// Alert pushes to an account's primary for viewers' proposals and brakes (key: user id): one per half minute; the
+/// rest reach it by its poll (`log_head`), unannounced.
+pub static PRIMARY_ALERTS: LazyLock<RateLimit<String>> = LazyLock::new(|| RateLimit::with_period(30, 1));
+
 /// Roster appends of one account (key: user id).
 pub static ROSTER_CHANGES: LazyLock<RateLimit<String>> = LazyLock::new(|| {
     let per_hour = CONFIG.reins_roster_changes_per_hour();
@@ -308,6 +325,8 @@ pub fn retain_recent() {
     MEMBER_OP_REQUESTS.retain_recent();
     MEMBER_PROPOSALS.retain_recent();
     ROSTER_CHANGES.retain_recent();
+    HANDOVER_REQUESTS.retain_recent();
+    PRIMARY_ALERTS.retain_recent();
     JOIN_CREATIONS.retain_recent();
 }
 

@@ -9,13 +9,21 @@ use reins_proto::{
     desktop::encode_key,
     enroll::{EnrollChallenge, Transcript, commitment, encode_nonce},
     oplog::{Checkpoint, Heartbeat, Op, OpClass},
-    roster::{Member, RosterEntry, RosterReason},
+    roster::{Member, RosterEntry, RosterReason, recovery_wrap_hash},
 };
 use reqwest::StatusCode;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{Value, json};
 
-use crate::harness::{PASSWORD_HASH, Phone, Server, client};
+use crate::harness::{Options, PASSWORD_HASH, Phone, Server, between, client};
+
+/// The recovery wrap the tests' rosters start with (opaque bytes to the server), and the one a recovery brings.
+const WRAP: &str = "d3JhcA";
+const NEW_WRAP: &str = "bmV3IHdyYXA";
+
+fn wrap_hash(wrap: &str) -> String {
+    recovery_wrap_hash(wrap).expect("base64url")
+}
 
 /// A phone's keys: its device signing key, and a stand-in for its box key (32 bytes the server only relays).
 struct Keys {
@@ -83,7 +91,11 @@ struct Account {
 
 impl Account {
     async fn new(email: &str) -> Self {
-        let server = Server::start().await;
+        Self::new_with(email, Options::default()).await
+    }
+
+    async fn new_with(email: &str, options: Options) -> Self {
+        let server = Server::start_with(options).await;
         let primary = server.phone(email).await;
         primary.register_device().await;
         Self::with_roster(server, primary).await
@@ -94,10 +106,17 @@ impl Account {
         let pk = keys(1);
         let owner = owner(50);
         let e1 = signed(
-            RosterEntry::genesis(&user, member(&primary, &pk, "iPhone"), public(&owner), encode_key(&[60; 32]), 1),
+            RosterEntry::genesis(
+                &user,
+                member(&primary, &pk, "iPhone"),
+                public(&owner),
+                encode_key(&[60; 32]),
+                wrap_hash(WRAP),
+                1,
+            ),
             &owner,
         );
-        let (status, body) = primary.post("/roster", &json!({"entry": e1, "recovery_wrap": "d3JhcA"})).await;
+        let (status, body) = primary.post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP})).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["epoch"], 1);
         Self {
@@ -143,6 +162,7 @@ impl Account {
             primary_sign_pub: self.pk.sign_pub.clone(),
             owner_pub: public(&self.owner),
             epoch: self.current().epoch,
+            expires_at: chrono_now() + 120,
         };
         let (status, body) =
             viewer.post(&format!("/joins/{id}/reveal"), &json!({"v": 1, "nonce": encode_nonce(&nj)})).await;
@@ -174,6 +194,7 @@ impl Account {
             primary_sign_pub: &self.pk.sign_pub,
             owner_pub: &challenge.owner_pub,
             epoch: challenge.epoch,
+            expires_at: challenge.expires_at,
             joiner_nonce: nj,
             primary_nonce: np,
         };
@@ -183,7 +204,11 @@ impl Account {
         assert_eq!(status, StatusCode::OK, "{body}");
         self.chain.push(entry);
         let answer = json!({"v": 1, "approve": true, "sealed": "U0VBTEVE"});
-        assert_eq!(self.primary.post(&format!("/joins/{id}/response"), &answer).await.0, StatusCode::NO_CONTENT);
+        // With a roster, a join's answer carries the primary's signature too.
+        let (status, body) = self.primary.post(&format!("/joins/{id}/response"), &answer).await;
+        assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "signature_required"));
+        let signed = signed_for(self, AnswerKind::Join, &id, &answer);
+        assert_eq!(self.primary.post(&format!("/joins/{id}/response"), &signed).await.0, StatusCode::NO_CONTENT);
     }
 
     fn op(&self, author: &Phone, k: &Keys, counter: u64, class: OpClass) -> Op {
@@ -213,25 +238,30 @@ async fn roster_create_enroll_handover_and_recovery() {
     let a = server.phone("rosa@example.com").await;
     a.register_device().await;
     let (status, body) = a.get("/roster").await;
-    assert_eq!((status, body), (StatusCode::OK, json!({"entries": [], "recovery_wrap": null})), "no roster yet");
+    assert_eq!((status, body), (StatusCode::OK, json!({"entries": []})), "no roster yet");
     // Only the approval device creates the roster.
     let stranger = server.second_device("rosa@example.com").await;
     let sk = keys(9);
     let user = account_of(&a);
     let own = owner(70);
     let e1 = signed(
-        RosterEntry::genesis(&user, member(&stranger, &sk, "Other"), public(&own), encode_key(&[1; 32]), 1),
+        RosterEntry::genesis(
+            &user,
+            member(&stranger, &sk, "Other"),
+            public(&own),
+            encode_key(&[1; 32]),
+            wrap_hash(WRAP),
+            1,
+        ),
         &own,
     );
-    let (status, body) = stranger.post("/roster", &json!({"entry": e1, "recovery_wrap": "d3JhcA"})).await;
+    let (status, body) = stranger.post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP})).await;
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_approval_device"));
 
     let mut acct = Account::with_roster(server, a).await;
     let (_, roster) = acct.primary.get("/roster").await;
-    assert_eq!(
-        (roster["entries"].as_array().map(Vec::len), roster["recovery_wrap"].as_str()),
-        (Some(1), Some("d3JhcA"))
-    );
+    assert_eq!(roster["entries"].as_array().map(Vec::len), Some(1));
+    assert!(roster.get("recovery_wrap").is_none(), "the wrap is not handed out with the roster");
     // The legacy state is read-only now.
     let (status, body) = acct.primary.put("/account-state", &json!({"revision": 0, "ciphertext": "c2VhbGVk"})).await;
     assert_eq!((status, error(&body)), (StatusCode::GONE, "legacy_retired"));
@@ -304,6 +334,7 @@ async fn roster_create_enroll_handover_and_recovery() {
         )
         .expect("next");
     e4.owner_pub = public(&new_owner);
+    e4.recovery_wrap_hash = wrap_hash(NEW_WRAP);
     let e4 = signed(e4, &acct.owner);
     let (status, body) = c.post("/roster", &json!({"entry": e4})).await;
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "proof_required"));
@@ -313,7 +344,15 @@ async fn roster_create_enroll_handover_and_recovery() {
     let (status, body) = c.post("/roster", &json!({"entry": forged, "master_password_hash": PASSWORD_HASH})).await;
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "bad_signature"), "the old owner key signs a recovery");
     let (status, body) = c.post("/roster", &json!({"entry": e4, "master_password_hash": PASSWORD_HASH})).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "a recovery brings its new wrap");
+    let with_old = json!({"entry": e4, "master_password_hash": PASSWORD_HASH, "recovery_wrap": WRAP});
+    let (status, body) = c.post("/roster", &with_old).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "not the wrap the entry names");
+    let recovery = json!({"entry": e4, "master_password_hash": PASSWORD_HASH, "recovery_wrap": NEW_WRAP});
+    let (status, body) = c.post("/roster", &recovery).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, wrap) = c.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
+    assert_eq!(wrap, json!({"epoch": 4, "recovery_wrap": NEW_WRAP}), "the recovery replaced the wrap");
     acct.chain.push(e4);
     assert_eq!(c.get("/pending?wait=0").await.0, StatusCode::OK);
     assert_eq!(error(&b.get("/pending?wait=0").await.1), "not_approval_device");
@@ -417,8 +456,11 @@ async fn ops_are_checked_against_the_roster() {
 
 #[tokio::test]
 async fn sync_long_polls_wake_on_ops_heartbeats_and_waiting_items() {
-    let mut acct = Account::new("sam@example.com").await;
-    let tokens = acct.server.connect_ai(&acct.primary, "sam@example.com", Some("Claude")).await;
+    let server = Server::start().await;
+    let phone = server.phone("sam@example.com").await;
+    phone.register_device().await;
+    let tokens = server.connect_ai(&phone, "sam@example.com", Some("Claude")).await;
+    let mut acct = Account::with_roster(server, phone).await;
     let b = acct.server.second_device("sam@example.com").await;
     let bk = keys(2);
     acct.enroll(&b, &bk, "Pixel").await;
@@ -568,7 +610,7 @@ async fn a_legacy_account_is_unaffected() {
     let phone = server.phone("leo@example.com").await;
     phone.register_device().await;
     let tokens = server.connect_ai(&phone, "leo@example.com", Some("Claude")).await;
-    assert_eq!(phone.get("/roster").await.1, json!({"entries": [], "recovery_wrap": null}));
+    assert_eq!(phone.get("/roster").await.1, json!({"entries": []}));
     // The poll looks as it always did.
     assert_eq!(phone.get("/pending?wait=0").await.1, json!({"requests": [], "pairings": []}));
     // The account state is written as before.
@@ -593,9 +635,14 @@ async fn a_legacy_account_is_unaffected() {
 
 /// The primary's signed answer to request `id`.
 fn signed_answer(acct: &Account, id: &str, answer: &Value) -> Value {
+    signed_for(acct, AnswerKind::Request, id, answer)
+}
+
+/// The primary's signed answer to item `id` of `kind`.
+fn signed_for(acct: &Account, kind: AnswerKind, id: &str, answer: &Value) -> Value {
     let bytes = serde_json::to_vec(answer).unwrap();
     let epoch = acct.current().epoch;
-    let message = answer_message(&acct.user, AnswerKind::Request, id, epoch, &bytes);
+    let message = answer_message(&acct.user, kind, id, epoch, &bytes);
     json!({"v": 1, "epoch": epoch, "answer": encode_payload(&bytes), "sig": sig(&acct.pk.sign, &message)})
 }
 
@@ -610,4 +657,187 @@ async fn mcp_tool(url: String, token: String) -> Value {
 
 fn chrono_now() -> i64 {
     i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap()
+}
+
+#[tokio::test]
+async fn pairing_answers_need_the_primarys_signature_once_there_is_a_roster() {
+    let acct = Account::new("pia@example.com").await;
+    let client_id = acct.server.register_client().await;
+    let wait_url = acct.server.start_authorization(&client_id, "pia@example.com").await;
+    let html = client().get(&wait_url).send().await.unwrap().text().await.unwrap();
+    let code: u8 = between(&html, "aria-label=\"code\">", "<").parse().unwrap();
+    let (_, pending) = acct.primary.get("/pending?wait=5").await;
+    let id = pending["pairings"][0]["id"].as_str().expect("pairing").to_owned();
+    let approve = json!({"v": 1, "approved": true, "chosen_code": code, "label": "Claude"});
+    let (status, body) = acct.primary.post(&format!("/pairings/{id}/response"), &approve).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "signature_required"));
+    let wrong_kind = signed_for(&acct, AnswerKind::Request, &id, &approve);
+    let (status, body) = acct.primary.post(&format!("/pairings/{id}/response"), &wrong_kind).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "bad_signature"), "signed for a request, not a pairing");
+    let (status, body) = acct
+        .primary
+        .post(&format!("/pairings/{id}/response"), &signed_for(&acct, AnswerKind::Pairing, &id, &approve))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["connection_id"].is_string(), "{body}");
+}
+
+#[tokio::test]
+async fn the_recovery_wrap_is_bound_to_the_roster_and_given_only_with_a_proof() {
+    let mut acct = Account::new("wren@example.com").await;
+    let other = acct.server.second_device("wren@example.com").await;
+    let (status, body) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": "wrong"})).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "wrong_proof"));
+    let (status, body) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
+    assert_eq!((status, body), (StatusCode::OK, json!({"epoch": 1, "recovery_wrap": WRAP})));
+    // Only a rewrap (or a recovery) replaces it, and with the wrap the entry names.
+    let b = acct.server.second_device("wren@example.com").await;
+    acct.enroll(&b, &keys(2), "Pixel").await;
+    let mut rewrap = acct
+        .current()
+        .successor(RosterReason::Rewrap, acct.current().primary.clone(), acct.current().viewers.clone(), 5)
+        .expect("next");
+    rewrap.recovery_wrap_hash = wrap_hash(NEW_WRAP);
+    let rewrap = signed(rewrap, &acct.owner);
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": rewrap})).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "a rewrap carries the wrap");
+    let (status, body) = b.post("/roster", &json!({"entry": rewrap, "recovery_wrap": NEW_WRAP})).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_approval_device"), "the primary rewraps");
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": rewrap, "recovery_wrap": NEW_WRAP})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    acct.chain.push(rewrap);
+    let (_, wrap) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
+    assert_eq!(wrap, json!({"epoch": 3, "recovery_wrap": NEW_WRAP}));
+    // Any other entry carrying a wrap is refused.
+    let removal = signed(
+        acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 6).expect("next"),
+        &acct.owner,
+    );
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": removal, "recovery_wrap": WRAP})).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"));
+}
+
+#[tokio::test]
+async fn viewers_cannot_fill_the_log_and_the_primary_keeps_writing() {
+    let options = Options {
+        env: vec![("REINS_MEMBER_LOG_MAX_OPS", "2".to_owned())],
+        ..Options::default()
+    };
+    let mut acct = Account::new_with("finn@example.com", options).await;
+    let b = acct.server.second_device("finn@example.com").await;
+    let bk = keys(2);
+    acct.enroll(&b, &bk, "Pixel").await;
+    // A restriction is small; a proposal is at most 16 KiB.
+    let mut big = acct.op(&b, &bk, 1, OpClass::Restrictive);
+    big.body = encode_payload(&[7u8; 2048]);
+    big.sig = sig(&bk.sign, &big.signing_bytes().unwrap());
+    assert_eq!(error(&post_ops(&b, &[big]).await.1), "bad_request");
+    let mut proposal = acct.op(&b, &bk, 1, OpClass::Proposal);
+    proposal.body = encode_payload(&vec![7u8; 17 * 1024]);
+    proposal.sig = sig(&bk.sign, &proposal.signing_bytes().unwrap());
+    assert_eq!(error(&post_ops(&b, &[proposal]).await.1), "bad_request");
+    // The viewer's share is two ops.
+    let (status, body) =
+        post_ops(&b, &[acct.op(&b, &bk, 1, OpClass::Restrictive), acct.op(&b, &bk, 2, OpClass::Restrictive)]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = post_ops(&b, &[acct.op(&b, &bk, 3, OpClass::Restrictive)]).await;
+    assert_eq!((status, error(&body)), (StatusCode::CONFLICT, "log_full"));
+    // The primary is not held back by it.
+    let (status, body) = post_ops(&acct.primary, &[acct.op(&acct.primary, &acct.pk, 1, OpClass::Primary)]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn other_devices_cannot_hide_requests_from_the_primary() {
+    let mut acct = Account::new("hana@example.com").await;
+    let b = acct.server.second_device("hana@example.com").await;
+    acct.enroll(&b, &keys(2), "Pixel").await;
+    let c = acct.server.second_device("hana@example.com").await;
+    let (_, created) =
+        c.post("/joins", &json!({"v": 1, "device_name": "Tablet", "public_key": encode_key(&[4; 32])})).await;
+    let join = created["id"].as_str().unwrap().to_owned();
+    let (status, body) = b.get(&format!("/joins/{join}")).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_approval_device"));
+    let (_, handover) = b.post("/handovers", &json!({"v": 1})).await;
+    let handover = handover["id"].as_str().unwrap().to_owned();
+    assert_eq!(error(&c.get(&format!("/handovers/{handover}")).await.1), "not_approval_device");
+    // The primary still gets both, as new.
+    let (_, pending) = acct.primary.get("/pending?wait=0").await;
+    assert_eq!(pending["joins"][0]["id"].as_str(), Some(join.as_str()), "{pending}");
+    assert_eq!(pending["handovers"][0]["id"].as_str(), Some(handover.as_str()), "{pending}");
+}
+
+#[tokio::test]
+async fn handover_requests_are_limited_per_phone() {
+    let options = Options {
+        env: vec![("REINS_HANDOVER_REQUESTS_PER_HOUR", "2".to_owned())],
+        ..Options::default()
+    };
+    let mut acct = Account::new_with("ida@example.com", options).await;
+    let b = acct.server.second_device("ida@example.com").await;
+    acct.enroll(&b, &keys(2), "Pixel").await;
+    for _ in 0..2 {
+        assert_eq!(b.post("/handovers", &json!({"v": 1})).await.0, StatusCode::OK);
+    }
+    let (status, body) = b.post("/handovers", &json!({"v": 1})).await;
+    assert_eq!((status, error(&body)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    // The replacement left one request, which the primary sees once.
+    let (_, pending) = acct.primary.get("/pending?wait=0").await;
+    assert_eq!(pending["handovers"].as_array().map(Vec::len), Some(1));
+}
+
+#[tokio::test]
+async fn small_order_keys_and_spent_enrollments_are_refused() {
+    let server = Server::start().await;
+    let a = server.phone("ugo@example.com").await;
+    a.register_device().await;
+    let user = account_of(&a);
+    let own = owner(70);
+    let mut weak = member(&a, &keys(1), "iPhone");
+    weak.sign_pub = encode_key(&[0; 32]);
+    let e1 = signed(RosterEntry::genesis(&user, weak, public(&own), encode_key(&[1; 32]), wrap_hash(WRAP), 1), &own);
+    let (status, body) = a.post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP})).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "a small-order signing key");
+
+    let mut acct = Account::with_roster(server, a).await;
+    let b = acct.server.second_device("ugo@example.com").await;
+    let bk = keys(2);
+    acct.enroll(&b, &bk, "Pixel").await;
+    let removal = signed(
+        acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 5).expect("next"),
+        &acct.owner,
+    );
+    assert_eq!(acct.primary.post("/roster", &json!({"entry": removal})).await.0, StatusCode::OK);
+    acct.chain.push(removal);
+    // Listing b again needs a new enrollment: the one it went through bound the earlier entry.
+    let again = signed(
+        acct.current()
+            .successor(RosterReason::Enroll, acct.current().primary.clone(), vec![member(&b, &bk, "Pixel")], 6)
+            .expect("next"),
+        &acct.owner,
+    );
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": again})).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "{body}");
+}
+
+#[tokio::test]
+async fn a_removed_viewer_stops_syncing_at_once() {
+    let mut acct = Account::new("max@example.com").await;
+    let b = acct.server.second_device("max@example.com").await;
+    acct.enroll(&b, &keys(2), "Pixel").await;
+    let (_, first) = b.get("/sync?wait=0").await;
+    let path = format!("/sync?after=0&seen={}&wait=20", first["cursor"].as_str().unwrap());
+    let removal = signed(
+        acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 5).expect("next"),
+        &acct.owner,
+    );
+    let start = Instant::now();
+    let remove = async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        acct.primary.post("/roster", &json!({"entry": removal})).await.0
+    };
+    let ((status, body), removed) = tokio::join!(b.get(&path), remove);
+    assert_eq!(removed, StatusCode::OK);
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_a_member"));
+    assert!(start.elapsed() < Duration::from_secs(10), "at once, not at the end of the wait");
 }

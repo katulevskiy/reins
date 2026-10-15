@@ -14,10 +14,12 @@ use crate::{
     api::EmptyResult,
     db::{
         DbConn, DbConnInner,
-        schema::{reins_checkpoints, reins_members, reins_ops, reins_rosters},
+        schema::{reins_checkpoints, reins_devices, reins_members, reins_ops, reins_rosters},
     },
     error::MapResult,
 };
+
+use super::{DeviceId, ReinsDevice, UserId};
 
 pub const ROLE_PRIMARY: &str = "primary";
 pub const ROLE_VIEWER: &str = "viewer";
@@ -73,6 +75,8 @@ pub struct ReinsOpRow {
     pub user_uuid: String,
     pub seq: i64,
     pub author: String,
+    /// The author's signing key when it wrote the op (a counter is unique per key).
+    pub sign_pub: String,
     pub counter: i64,
     /// The signed `Op`, JSON.
     pub op: String,
@@ -129,6 +133,25 @@ pub struct LogLimits {
     pub max_bytes: i64,
 }
 
+impl LogLimits {
+    /// What authors other than the primary may fill: all but a tenth, so the primary's ops always fit.
+    #[must_use]
+    pub const fn without_reserve(self) -> Self {
+        Self {
+            max_ops: self.max_ops - self.max_ops / 10,
+            max_bytes: self.max_bytes - self.max_bytes / 10,
+        }
+    }
+}
+
+/// What one append may use: the account's log, and for an author other than the primary its own share.
+#[derive(Clone, Copy, Debug)]
+pub struct OpsQuota {
+    pub log: LogLimits,
+    /// `None` for the primary; else the most ops and bytes of this author the log may hold.
+    pub author: Option<LogLimits>,
+}
+
 pub struct ReinsRoster;
 
 impl ReinsRoster {
@@ -143,21 +166,16 @@ impl ReinsRoster {
 
     /// Appends `row` if its epoch is the next one, with the members it lists (every other member becomes
     /// [`ROLE_REMOVED`]). Without a recovery wrap of its own, `row` keeps the previous one; older rows lose theirs and
-    /// any bundle.
-    pub async fn append(row: ReinsRosterRow, listed: Vec<Listed>, now: i64, conn: &DbConn) -> Result<(), WriteError> {
-        conn.run(move |c| q_append(c, row, &listed, now)).await
-    }
-
-    pub async fn set_recovery_wrap(user: &str, epoch: i64, wrap: &str, conn: &DbConn) -> EmptyResult {
-        conn.run(move |c| {
-            diesel::update(
-                reins_rosters::table.filter(reins_rosters::user_uuid.eq(user)).filter(reins_rosters::epoch.eq(epoch)),
-            )
-            .set(reins_rosters::recovery_wrap.eq(Some(wrap)))
-            .execute(c)
-        })
-        .await
-        .map_res("Error saving the Reins recovery wrap")
+    /// any bundle. `move_role`: the approval role (`reins_devices`) moves to this new primary in the same transaction,
+    /// with its member row's device key and push token; the approval device it replaced is returned.
+    pub async fn append(
+        row: ReinsRosterRow,
+        listed: Vec<Listed>,
+        move_role: Option<String>,
+        now: i64,
+        conn: &DbConn,
+    ) -> Result<Option<ReinsDevice>, WriteError> {
+        conn.run(move |c| q_append(c, row, &listed, move_role.as_deref(), now)).await
     }
 
     pub async fn clear_bundle(user: &str, conn: &DbConn) -> EmptyResult {
@@ -274,10 +292,11 @@ impl ReinsOps {
         conn.run(move |c| q_state(c, user)).await.map_res("Error reading the Reins log")
     }
 
-    /// The op `author` stored with `counter`, if it is still kept.
+    /// The op `author` stored with `counter` under the signing key `sign_pub`, if it is still kept.
     pub async fn find(
         user: &str,
         author: &str,
+        sign_pub: &str,
         counter: i64,
         conn: &DbConn,
     ) -> Result<Option<ReinsOpRow>, crate::Error> {
@@ -285,6 +304,7 @@ impl ReinsOps {
             reins_ops::table
                 .filter(reins_ops::user_uuid.eq(user))
                 .filter(reins_ops::author.eq(author))
+                .filter(reins_ops::sign_pub.eq(sign_pub))
                 .filter(reins_ops::counter.eq(counter))
                 .first::<ReinsOpRow>(c)
                 .optional()
@@ -309,16 +329,18 @@ impl ReinsOps {
 
     /// Stores `ops` of `author` (counters ascending, the first above `expected_last`) under the next `seq`s.
     /// [`WriteError::Conflict`] when the author's stored counter is no longer `expected_last`.
+    #[allow(clippy::too_many_arguments, reason = "an append is described by this many independent facts")]
     pub async fn append(
         user: &str,
         author: &str,
+        sign_pub: &str,
         expected_last: i64,
         ops: Vec<(i64, String)>,
-        limits: LogLimits,
+        quota: OpsQuota,
         now: i64,
         conn: &DbConn,
     ) -> Result<Vec<i64>, WriteError> {
-        conn.run(move |c| q_append_ops(c, user, author, expected_last, &ops, limits, now)).await
+        conn.run(move |c| q_append_ops(c, user, (author, sign_pub), expected_last, &ops, quota, now)).await
     }
 
     /// Stores a checkpoint at a `seq` above the latest one, keeps the latest two and drops the ops up to the older.
@@ -351,7 +373,13 @@ fn q_latest(c: &mut DbConnInner, user: &str) -> QueryResult<Option<ReinsRosterRo
         .optional()
 }
 
-fn q_append(c: &mut DbConnInner, mut row: ReinsRosterRow, listed: &[Listed], now: i64) -> Result<(), WriteError> {
+fn q_append(
+    c: &mut DbConnInner,
+    mut row: ReinsRosterRow,
+    listed: &[Listed],
+    move_role: Option<&str>,
+    now: i64,
+) -> Result<Option<ReinsDevice>, WriteError> {
     c.transaction::<_, WriteError, _>(|c| {
         let previous = q_latest(c, &row.user_uuid)?;
         if row.epoch != previous.as_ref().map_or(1, |p| p.epoch + 1) {
@@ -433,7 +461,27 @@ fn q_append(c: &mut DbConnInner, mut row: ReinsRosterRow, listed: &[Listed], now
                 }
             }
         }
-        Ok(())
+        let Some(device) = move_role else {
+            return Ok(None);
+        };
+        let member: ReinsMember = reins_members::table
+            .filter(reins_members::user_uuid.eq(&user))
+            .filter(reins_members::device_uuid.eq(device))
+            .first(c)?;
+        let user_id = UserId::from(user.clone());
+        let previous =
+            reins_devices::table.filter(reins_devices::user_uuid.eq(&user_id)).first::<ReinsDevice>(c).optional()?;
+        diesel::delete(reins_devices::table.filter(reins_devices::user_uuid.eq(&user_id))).execute(c)?;
+        diesel::insert_into(reins_devices::table)
+            .values(ReinsDevice {
+                user_uuid: user_id,
+                device_uuid: DeviceId::from(device.to_owned()),
+                fcm_token: member.fcm_token,
+                updated_at: now,
+                key_hash: member.key_hash,
+            })
+            .execute(c)?;
+        Ok(previous)
     })
 }
 
@@ -470,10 +518,10 @@ fn q_state(c: &mut DbConnInner, user: &str) -> QueryResult<LogState> {
 fn q_append_ops(
     c: &mut DbConnInner,
     user: &str,
-    author: &str,
+    (author, sign_pub): (&str, &str),
     expected_last: i64,
     ops: &[(i64, String)],
-    limits: LogLimits,
+    quota: OpsQuota,
     now: i64,
 ) -> Result<Vec<i64>, WriteError> {
     let Some(last) = ops.last().map(|(counter, _)| *counter) else {
@@ -491,12 +539,24 @@ fn q_append_ops(
         if moved != 1 {
             return Err(WriteError::Conflict);
         }
-        let sizes: Vec<i32> = reins_ops::table.filter(reins_ops::user_uuid.eq(user)).select(reins_ops::size).load(c)?;
+        let stored: Vec<(String, i32)> = reins_ops::table
+            .filter(reins_ops::user_uuid.eq(user))
+            .select((reins_ops::author, reins_ops::size))
+            .load(c)?;
         let adding: i64 = ops.iter().map(|(_, op)| i64::try_from(op.len()).unwrap_or(i64::MAX)).sum();
-        let count = i64::try_from(sizes.len()).unwrap_or(i64::MAX);
-        let bytes: i64 = sizes.iter().map(|s| i64::from(*s)).sum();
         let added = i64::try_from(ops.len()).unwrap_or(i64::MAX);
-        if count.saturating_add(added) > limits.max_ops || bytes.saturating_add(adding) > limits.max_bytes {
+        let fits = |limits: LogLimits, mine: bool| {
+            let rows = stored.iter().filter(|(a, _)| !mine || a == author);
+            let (count, bytes) = rows.fold((0i64, 0i64), |(n, b), (_, size)| (n + 1, b + i64::from(*size)));
+            count.saturating_add(added) <= limits.max_ops && bytes.saturating_add(adding) <= limits.max_bytes
+        };
+        // The primary may fill the whole log; anyone else only its own share, and never the primary's reserve.
+        let log = if quota.author.is_some() {
+            quota.log.without_reserve()
+        } else {
+            quota.log
+        };
+        if !fits(log, false) || quota.author.is_some_and(|share| !fits(share, true)) {
             return Err(WriteError::Full);
         }
         let head = q_state(c, user)?.head;
@@ -508,6 +568,7 @@ fn q_append_ops(
                     user_uuid: user.to_owned(),
                     seq,
                     author: author.to_owned(),
+                    sign_pub: sign_pub.to_owned(),
                     counter: *counter,
                     op: op.clone(),
                     size: i32::try_from(op.len()).unwrap_or(i32::MAX),
@@ -576,27 +637,34 @@ mod tests {
         }
     }
 
-    const LIMITS: LogLimits = LogLimits {
-        max_ops: 5,
-        max_bytes: 1000,
+    const LIMITS: OpsQuota = OpsQuota {
+        log: LogLimits {
+            max_ops: 5,
+            max_bytes: 1000,
+        },
+        author: None,
     };
+
+    fn q_append_t(c: &mut DbConnInner, row: ReinsRosterRow, listed: &[Listed], now: i64) -> Result<(), WriteError> {
+        q_append(c, row, listed, None, now).map(drop)
+    }
 
     #[test]
     fn the_roster_appends_only_the_next_epoch_and_tracks_members() {
         let mut c = super::super::reins_device::test_db();
-        assert!(matches!(q_append(&mut c, roster_row("u1", 2), &[], 1), Err(WriteError::Conflict)));
-        q_append(&mut c, roster_row("u1", 1), &[listed("p", ROLE_PRIMARY, "kp")], 1).unwrap();
-        assert!(matches!(q_append(&mut c, roster_row("u1", 1), &[], 2), Err(WriteError::Conflict)), "a replay");
-        q_append(&mut c, roster_row("u1", 2), &[listed("p", ROLE_PRIMARY, "kp"), listed("v", ROLE_VIEWER, "kv")], 2)
+        assert!(matches!(q_append_t(&mut c, roster_row("u1", 2), &[], 1), Err(WriteError::Conflict)));
+        q_append_t(&mut c, roster_row("u1", 1), &[listed("p", ROLE_PRIMARY, "kp")], 1).unwrap();
+        assert!(matches!(q_append_t(&mut c, roster_row("u1", 1), &[], 2), Err(WriteError::Conflict)), "a replay");
+        q_append_t(&mut c, roster_row("u1", 2), &[listed("p", ROLE_PRIMARY, "kp"), listed("v", ROLE_VIEWER, "kv")], 2)
             .unwrap();
         let rows = q_entries(&mut c, "u1").unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!((rows[0].recovery_wrap.as_deref(), rows[0].bundle.as_deref()), (None, None), "older rows forget");
         assert_eq!(rows[1].recovery_wrap.as_deref(), Some("wrap"), "the wrap carries over");
         // A handover: v primary, p viewer; then a removal of p.
-        q_append(&mut c, roster_row("u1", 3), &[listed("v", ROLE_PRIMARY, "kv"), listed("p", ROLE_VIEWER, "kp")], 3)
+        q_append_t(&mut c, roster_row("u1", 3), &[listed("v", ROLE_PRIMARY, "kv"), listed("p", ROLE_VIEWER, "kp")], 3)
             .unwrap();
-        q_append(&mut c, roster_row("u1", 4), &[listed("v", ROLE_PRIMARY, "kv")], 4).unwrap();
+        q_append_t(&mut c, roster_row("u1", 4), &[listed("v", ROLE_PRIMARY, "kv")], 4).unwrap();
         let members: Vec<ReinsMember> = reins_members::table.order(reins_members::device_uuid).load(&mut c).unwrap();
         assert_eq!(
             members.iter().map(|m| (m.device_uuid.as_str(), m.role.as_str())).collect::<Vec<_>>(),
@@ -609,13 +677,13 @@ mod tests {
     #[test]
     fn ops_take_the_next_seqs_counters_move_once_and_checkpoints_drop_old_ops() {
         let mut c = super::super::reins_device::test_db();
-        q_append(&mut c, roster_row("u1", 1), &[listed("p", ROLE_PRIMARY, "kp")], 1).unwrap();
+        q_append_t(&mut c, roster_row("u1", 1), &[listed("p", ROLE_PRIMARY, "kp")], 1).unwrap();
         let ops = |from: i64, n: i64| (from..from + n).map(|i| (i, format!("op{i}"))).collect::<Vec<_>>();
-        assert_eq!(q_append_ops(&mut c, "u1", "p", 0, &ops(1, 2), LIMITS, 1).unwrap(), [1, 2]);
-        assert!(matches!(q_append_ops(&mut c, "u1", "p", 0, &ops(1, 1), LIMITS, 1), Err(WriteError::Conflict)));
-        assert!(matches!(q_append_ops(&mut c, "u1", "x", 0, &ops(1, 1), LIMITS, 1), Err(WriteError::Conflict)));
-        assert_eq!(q_append_ops(&mut c, "u1", "p", 2, &ops(3, 2), LIMITS, 1).unwrap(), [3, 4]);
-        assert!(matches!(q_append_ops(&mut c, "u1", "p", 4, &ops(5, 2), LIMITS, 1), Err(WriteError::Full)));
+        assert_eq!(q_append_ops(&mut c, "u1", ("p", "kp"), 0, &ops(1, 2), LIMITS, 1).unwrap(), [1, 2]);
+        assert!(matches!(q_append_ops(&mut c, "u1", ("p", "kp"), 0, &ops(1, 1), LIMITS, 1), Err(WriteError::Conflict)));
+        assert!(matches!(q_append_ops(&mut c, "u1", ("x", "kx"), 0, &ops(1, 1), LIMITS, 1), Err(WriteError::Conflict)));
+        assert_eq!(q_append_ops(&mut c, "u1", ("p", "kp"), 2, &ops(3, 2), LIMITS, 1).unwrap(), [3, 4]);
+        assert!(matches!(q_append_ops(&mut c, "u1", ("p", "kp"), 4, &ops(5, 2), LIMITS, 1), Err(WriteError::Full)));
         let cp = |seq: i64| ReinsCheckpointRow {
             user_uuid: "u1".to_owned(),
             seq,
@@ -644,6 +712,102 @@ mod tests {
         let left: Vec<i64> = reins_ops::table.select(reins_ops::seq).order(reins_ops::seq).load(&mut c).unwrap();
         assert_eq!(left, [3, 4], "ops up to the older checkpoint are gone");
         // The space freed lets the author write again, numbered after the head.
-        assert_eq!(q_append_ops(&mut c, "u1", "p", 4, &ops(5, 1), LIMITS, 1).unwrap(), [5]);
+        assert_eq!(q_append_ops(&mut c, "u1", ("p", "kp"), 4, &ops(5, 1), LIMITS, 1).unwrap(), [5]);
+    }
+
+    #[test]
+    fn the_role_moves_with_the_roster_in_one_transaction() {
+        let mut c = super::super::reins_device::test_db();
+        q_append_t(&mut c, roster_row("u1", 1), &[listed("p", ROLE_PRIMARY, "kp")], 1).unwrap();
+        q_append_t(&mut c, roster_row("u1", 2), &[listed("p", ROLE_PRIMARY, "kp"), listed("v", ROLE_VIEWER, "kv")], 2)
+            .unwrap();
+        let handover = [listed("v", ROLE_PRIMARY, "kv"), listed("p", ROLE_VIEWER, "kp")];
+        assert!(q_append(&mut c, roster_row("u1", 3), &handover, Some("v"), 3).unwrap().is_none());
+        let approval: ReinsDevice = reins_devices::table.first(&mut c).unwrap();
+        assert_eq!((approval.device_uuid.to_string(), approval.key_hash.as_deref()), ("v".to_owned(), Some("kh-v")));
+        // A losing compare-and-swap moves nothing.
+        let back = [listed("p", ROLE_PRIMARY, "kp"), listed("v", ROLE_VIEWER, "kv")];
+        assert!(matches!(q_append(&mut c, roster_row("u1", 3), &back, Some("p"), 4), Err(WriteError::Conflict)));
+        let approval: ReinsDevice = reins_devices::table.first(&mut c).unwrap();
+        assert_eq!(approval.device_uuid.to_string(), "v");
+        let previous = q_append(&mut c, roster_row("u1", 4), &back, Some("p"), 5).unwrap().unwrap();
+        assert_eq!(previous.device_uuid.to_string(), "v");
+    }
+
+    #[test]
+    fn viewers_get_a_share_of_the_log_and_never_the_primarys_reserve() {
+        let mut c = super::super::reins_device::test_db();
+        q_append_t(&mut c, roster_row("u1", 1), &[listed("p", ROLE_PRIMARY, "kp")], 1).unwrap();
+        q_append_t(&mut c, roster_row("u1", 2), &[listed("p", ROLE_PRIMARY, "kp"), listed("v", ROLE_VIEWER, "kv")], 2)
+            .unwrap();
+        q_append_t(
+            &mut c,
+            roster_row("u1", 3),
+            &[listed("p", ROLE_PRIMARY, "kp"), listed("v", ROLE_VIEWER, "kv"), listed("w", ROLE_VIEWER, "kw")],
+            3,
+        )
+        .unwrap();
+        let quota = |author: Option<i64>| OpsQuota {
+            log: LogLimits {
+                max_ops: 10,
+                max_bytes: 10_000,
+            },
+            author: author.map(|n| LogLimits {
+                max_ops: n,
+                max_bytes: 10_000,
+            }),
+        };
+        let one = |i: i64| vec![(i, format!("op{i}"))];
+        // v's share is 3 ops.
+        for i in 1..=3 {
+            q_append_ops(&mut c, "u1", ("v", "kv"), i - 1, &one(i), quota(Some(3)), 1).unwrap();
+        }
+        assert!(matches!(
+            q_append_ops(&mut c, "u1", ("v", "kv"), 3, &one(4), quota(Some(3)), 1),
+            Err(WriteError::Full)
+        ));
+        // w fills up to 9 of 10 (a tenth is the primary's), then stops.
+        for i in 1..=6 {
+            q_append_ops(&mut c, "u1", ("w", "kw"), i - 1, &one(i), quota(Some(100)), 1).unwrap();
+        }
+        assert!(matches!(
+            q_append_ops(&mut c, "u1", ("w", "kw"), 6, &one(7), quota(Some(100)), 1),
+            Err(WriteError::Full)
+        ));
+        // The primary still writes.
+        q_append_ops(&mut c, "u1", ("p", "kp"), 0, &one(1), quota(None), 1).unwrap();
+    }
+
+    #[test]
+    fn a_counter_is_unique_per_signing_key() {
+        let mut c = super::super::reins_device::test_db();
+        q_append_t(&mut c, roster_row("u1", 1), &[listed("p", ROLE_PRIMARY, "kp")], 1).unwrap();
+        let one = vec![(1, "op1".to_owned())];
+        q_append_ops(&mut c, "u1", ("p", "kp"), 0, &one, LIMITS, 1).unwrap();
+        // The phone enrolls again with a new key: its counter starts over, and the old op stays the old key's.
+        q_append_t(&mut c, roster_row("u1", 2), &[listed("p", ROLE_PRIMARY, "kp2")], 2).unwrap();
+        q_append_ops(&mut c, "u1", ("p", "kp2"), 0, &one, LIMITS, 2).unwrap();
+        let rows: Vec<(String, i64)> = reins_ops::table
+            .filter(reins_ops::author.eq("p"))
+            .filter(reins_ops::counter.eq(1))
+            .select((reins_ops::sign_pub, reins_ops::seq))
+            .order(reins_ops::seq)
+            .load(&mut c)
+            .unwrap();
+        assert_eq!(rows, [("kp".to_owned(), 1), ("kp2".to_owned(), 2)]);
+        // The same (author, key, counter) twice is refused by the index itself.
+        let dup = diesel::insert_into(reins_ops::table)
+            .values(ReinsOpRow {
+                user_uuid: "u1".to_owned(),
+                seq: 9,
+                author: "p".to_owned(),
+                sign_pub: "kp2".to_owned(),
+                counter: 1,
+                op: "x".to_owned(),
+                size: 1,
+                created_at: 3,
+            })
+            .execute(&mut c);
+        assert!(matches!(dup, Err(DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _))));
     }
 }

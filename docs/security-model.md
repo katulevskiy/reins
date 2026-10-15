@@ -154,26 +154,43 @@ design: `reins-designs/phone-roles/phone-roles-and-live-sync.md`). The roster is
 signed by the account's owner key; the server appends one only when the signature verifies against the current owner
 key and its epoch is the next one (a compare-and-swap: a rollback, a replay or a fork is refused with
 `epoch_conflict`). What each reason may change is fixed (`reins_proto::roster::check_successor`): only a recovery
-replaces the owner key, and it removes the old primary. The approval role follows the roster's primary and moves only
-with a `handover` (appended by the primary) or a `recovery` (the master password hash, counted with the takeover
-proofs); `PUT /device` no longer moves it by a proof. Every member is bound to the device key it enrolled with, and a
-new viewer only through an enrollment join that went through the commit-then-reveal exchange
-(`reins_proto::enroll`): its six digits cover both phones' keys and two fresh nonces, each side fixed before it sees
-the other's, so a server that swaps keys has one chance in a million per attempt instead of an offline search. With a
+replaces the owner key, and it removes the old primary. Signing and owner keys must be canonical Ed25519 points not of
+small order. The approval role is the roster's primary: every approval-only call checks the caller against the member
+row the latest entry made primary (with its enrolled device key), and the role moves in the same transaction as the
+entry that moves it, a `handover` (appended by the primary) or a `recovery` (the master password hash, counted with
+the takeover proofs); `PUT /device` no longer moves it by a proof. Every member is bound to the device key it enrolled
+with, and a new viewer only through an enrollment join that went through the commit-then-reveal exchange
+(`reins_proto::enroll`; one join lists the phone in one entry, the primary cannot approve it before the reveal, and the
+challenge expires within 5 minutes): its six digits cover both phones' keys and two fresh nonces, each side fixed
+before it sees the other's, so a server that swaps keys has one chance in a million per attempt instead of an offline
+search. Each entry signs the hash of the recovery wrap in force; only a recovery or a `rewrap` (a changed master
+password) brings a new one, and the server hands the wrap out only with the master password hash (counted). With a
 roster:
 
-- A4 answers must carry the primary's Ed25519 signature over the account, the request id, the epoch and the answer's
-  hash (`SignedAnswer`); an unsigned or misdirected answer is refused.
+- Answers to requests (A4), pairings (A6) and joins must carry the primary's Ed25519 signature over the account, the
+  kind, the item's id, the epoch and the answer's hash (`SignedAnswer`); an unsigned or misdirected answer is refused.
+- Requests, joins and handover requests are marked seen only when the approval device looks: another device of the
+  account cannot take them off the primary's list.
 - Ops are signed by their author; the server checks the author's role in the roster (never what the op claims), the
   class (`primary` only from the primary, `proposal` from any member, `restrictive` from any member and late from the
   previous primary), the signature, a strictly rising counter per author and the size limits. Phones check it again,
   open the body (sealed with the envelope as associated data) and apply a restrictive op only if it carries one of the
   typed restrictions (revoke a grant, Lockdown, stop Bypass), which can only tighten.
 - Viewers read the waiting list, connections and the log; they approve, deny, pair and remove nothing. A stolen viewer
-  can propose (inert until the primary keeps it) and pull the brake (Lockdown); the primary removes it.
-- Limits are per phone (op uploads, proposals), per account (roster changes, ops and bytes the log holds, at most 3
-  open join requests) or per IP address (join requests, `REINS_JOIN_RATELIMIT_*`), never one for the whole server.
-  Join requests expire after 10 minutes and are dropped on the next request and by the scheduled purge.
+  can propose (inert until the primary keeps it) and pull the brake (Lockdown). It also holds the account secret (a
+  viewer keeps it, as decided for the design), so whoever has it unlocked can enter the recovery code from it and
+  take the primary role with a recovery: the old primary is told by push, and the remedy is the same as for a stolen
+  primary (recover back from another phone, then reset the vault and change the sign-in methods). The primary removes
+  a stolen viewer; a removed viewer's open sync poll ends at once.
+- Op bodies are capped per class (64 KiB for the primary, 16 KiB for a proposal, 1 KiB for a restriction). A phone
+  other than the primary (a viewer, or a replaced primary) may hold only its own share of the account's log
+  (`REINS_MEMBER_LOG_*`) and never the tenth kept for the primary, so it cannot fill the log and stop the primary's
+  ops; checkpoints are never counted. Alert pushes to the primary for viewers' ops come at most once per half
+  minute.
+- Limits are per phone (op uploads, proposals, handover requests, log share), per account (roster changes, ops and
+  bytes the log holds, at most 3 open join requests) or per IP address (join requests, `REINS_JOIN_RATELIMIT_*`), never
+  one for the whole server. Join requests expire after 10 minutes and are dropped on the next request and by the
+  scheduled purge. A handover request that replaces a phone's waiting one is not pushed again.
 
 **Signing a device out** (Settings → Devices, `DELETE /reins/api/devices/{id}`). Only the approval device may do it,
 not to itself, and with the master password hash of the recovery code or master password typed then (counted with
@@ -463,11 +480,11 @@ Details: [autopilot.md](autopilot.md).
   until it registers again; its first registration with a device key keeps that key.
 - On an account made with a master password, the approval device has no account secret to send, so "add another
   phone" cannot approve there; the new phone proves itself with the master password.
-- Phone roles, server stage: pairing (A6) and join answers are not yet required to carry the primary's signature
-  (only A4 answers are); the legacy "add another phone" join still compares six digits over the new phone's key
-  alone, which a server able to try about a million key pairs could match (enrollment as a viewer uses the
-  commit-then-reveal exchange instead); the recovery wrap can be replaced by the primary without a signature; a
-  recovery is not emailed (the hosted server sends no email), only pushed to the old primary.
+- Phone roles, server stage: the legacy "add another phone" join (accounts without a roster) still compares six
+  digits over the new phone's key alone, which a server able to try about a million key pairs could match
+  (enrollment as a viewer uses the commit-then-reveal exchange instead); a recovery is not emailed (the hosted server
+  sends no email), only pushed to the old primary; with the account secret on every viewer, an unlocked stolen viewer
+  can recover to primary (above).
 - Hooks are pattern-based (above).
 - Autopilot's model was trained and evaluated on synthetic data ([model card](../tools/laya/MODEL_CARD.md)).
 

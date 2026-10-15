@@ -6,10 +6,10 @@
 //! An account without a roster is a legacy account: nothing here changes how it works. `GET /reins/api/roster`
 //! answers an empty list then (404 means a server without phone roles).
 //!
-//! - `GET /reins/api/roster` (any signed-in device of the account): the chain and the recovery wrap.
-//! - `POST /reins/api/roster`: the next entry. `create` from the approval device, `enroll`/`remove`/`handover` from
-//!   the primary, `recovery` from the device it makes primary, with the master password hash.
-//! - `PUT /reins/api/roster/recovery-wrap` (the primary).
+//! - `GET /reins/api/roster` (any signed-in device of the account): the chain.
+//! - `POST /reins/api/roster`: the next entry. `create` from the approval device, `enroll`/`remove`/`handover`/
+//!   `rewrap` from the primary, `recovery` from the device it makes primary, with the master password hash.
+//! - `POST /reins/api/roster/recovery-wrap` (any device of the account, with the master password hash): the wrap.
 //! - `PUT /reins/api/member` (a member): its push token.
 //! - `POST /reins/api/handovers` (a viewer), `GET /reins/api/handovers/<id>`, `POST /reins/api/handovers/<id>/response`
 //!   (the primary, to deny), `GET`/`DELETE /reins/api/handover-bundle` (the primary a handover named).
@@ -26,8 +26,9 @@ use reins_proto::{
     pairing::{PushKind, PushMessage},
     roster::{
         HandoverAnswer, HandoverBundle, HandoverCreated, HandoverRequest, HandoverState, HandoverStatus,
-        MAX_BUNDLE_CHARS, MAX_RECOVERY_WRAP_CHARS, Member, MemberRegistration, NewHandover, RecoveryWrapUpdate, Roster,
-        RosterAppend, RosterAppended, RosterEntry, RosterError, RosterReason, verify_step,
+        MAX_BUNDLE_CHARS, MAX_RECOVERY_WRAP_CHARS, Member, MemberRegistration, NewHandover, RecoveryWrap,
+        RecoveryWrapRequest, Roster, RosterAppend, RosterAppended, RosterEntry, RosterError, RosterReason,
+        recovery_wrap_hash, verify_step,
     },
 };
 use rocket::{Data, Route, State, http::Status, serde::json::Json};
@@ -56,7 +57,7 @@ pub fn routes() -> Vec<Route> {
     routes![
         get_roster,
         post_roster,
-        put_recovery_wrap,
+        post_recovery_wrap,
         put_member,
         post_handover,
         get_handover,
@@ -178,12 +179,8 @@ pub fn open_signed_answer(
 
 #[get("/reins/api/roster")]
 async fn get_roster(headers: Headers, conn: DbConn) -> PhoneResult<Json<Roster>> {
-    let user = user_key(&headers);
-    let rows = ReinsRoster::entries(&user, &conn).await.map_err(|e| internal(&e))?;
-    let recovery_wrap = rows.last().and_then(|r| r.recovery_wrap.clone());
     Ok(Json(Roster {
-        entries: chain(&user, &conn).await?,
-        recovery_wrap,
+        entries: chain(&user_key(&headers), &conn).await?,
     }))
 }
 
@@ -197,28 +194,30 @@ fn roster_error(e: &RosterError) -> rocket::response::status::Custom<Json<reins_
     }
 }
 
+fn bad_roster(message: impl Into<String>) -> rocket::response::status::Custom<Json<reins_proto::device::ApiError>> {
+    api_err(Status::BadRequest, codes::BAD_ROSTER, message)
+}
+
 fn check_payload(field: &str, value: &str, max: usize) -> PhoneResult<()> {
     if value.is_empty() || value.len() > max || reins_proto::canon::decode_payload(value).is_none() {
-        return Err(api_err(
-            Status::BadRequest,
-            codes::BAD_ROSTER,
-            format!("{field} must be 1 to {max} characters of base64url"),
-        ));
+        return Err(bad_roster(format!("{field} must be 1 to {max} characters of base64url")));
     }
     Ok(())
 }
 
 /// The next roster entry. Who may append what:
 ///
-/// - `create` (no roster yet): the approval device, naming itself primary, with a recovery wrap;
-/// - `enroll`, `remove`, `handover`: the current primary; a new viewer must have enrolled through a join from its
-///   device ([`super::join::JoinHub::enrollment_binding`]), and a handover carries the sealed bundle;
+/// - `create` (no roster yet): the approval device, naming itself primary;
+/// - `enroll`, `remove`, `handover`, `rewrap`: the current primary; a new viewer must have enrolled through a join
+///   from its device ([`super::join::JoinHub::take_enrollment_binding`], spent by this entry), and a handover carries
+///   the sealed bundle;
 /// - `recovery`: the device the entry makes primary, with the master password hash (counted like takeover proofs).
 ///
-/// The entry must verify against the owner key (`verify_step`) and name the next epoch; a concurrent append makes the
-/// later one fail with 409 `epoch_conflict`. When the primary changes, the approval role moves with it, unanswered
-/// requests, pairings and joins go to the new primary, the old one is told by push (`replaced`) and the new one too
-/// (`handover`).
+/// `create`, `recovery` and `rewrap` carry the recovery wrap the entry names by hash; the others none. The entry
+/// must verify against the owner key (`verify_step`) and name the next epoch; a concurrent append makes the later one
+/// fail with 409 `epoch_conflict`. When the primary changes, the approval role moves in the same transaction as the
+/// append; then unanswered requests, pairings and joins go to the new primary, and the old one is told by push
+/// (`replaced`) and the new one too (`handover`).
 #[post("/reins/api/roster", data = "<data>")]
 async fn post_roster(
     data: Data<'_>,
@@ -233,7 +232,7 @@ async fn post_roster(
         .map_err(|e| bad_request(format!("invalid body: {e}")))?;
     let entry = append.entry;
     if entry.account != user {
-        return Err(api_err(Status::BadRequest, codes::BAD_ROSTER, "The entry names another account"));
+        return Err(bad_roster("The entry names another account"));
     }
     let entries = chain(&user, &conn).await?;
     let prev = entries.last();
@@ -256,42 +255,25 @@ async fn post_roster(
         (RosterReason::Create, None) => {
             require_approval_device(&headers, &key, &conn).await?;
             if entry.primary.device_id != caller {
-                return Err(api_err(
-                    Status::BadRequest,
-                    codes::BAD_ROSTER,
-                    "The approval device creates the roster as its primary",
-                ));
+                return Err(bad_roster("The approval device creates the roster as its primary"));
             }
             if caller_key.is_none() {
                 return Err(bad_request("Creating a roster needs the device key header"));
-            }
-            if append.recovery_wrap.is_none() {
-                return Err(api_err(Status::BadRequest, codes::BAD_ROSTER, "A new roster carries the recovery wrap"));
             }
         }
         (_, None) => return Err(no_roster()),
         (RosterReason::Recovery, Some(_)) => {
             if entry.primary.device_id != caller {
-                return Err(api_err(
-                    Status::BadRequest,
-                    codes::BAD_ROSTER,
-                    "A recovery makes the device asking primary",
-                ));
+                return Err(bad_roster("A recovery makes the device asking primary"));
             }
             if caller_key.is_none() {
                 return Err(bad_request("A recovery needs the device key header"));
             }
             check_recovery_proof(&headers, append.master_password_hash.as_deref())?;
         }
-        (_, Some(prev)) => {
+        (_, Some(_)) => {
+            // The roster's primary, with its enrolled device key (`require_approval_device` checks the roster).
             require_approval_device(&headers, &key, &conn).await?;
-            if prev.primary.device_id != caller {
-                return Err(api_err(
-                    Status::Forbidden,
-                    codes::NOT_APPROVAL_DEVICE,
-                    "Only the primary changes the roster",
-                ));
-            }
         }
     }
     // Counted once the caller may make this change, so another device of the account cannot spend the budget.
@@ -301,46 +283,57 @@ async fn post_roster(
     verify_step(prev, &entry, ed25519_verify).map_err(|e| roster_error(&e))?;
     match (entry.reason, &append.bundle) {
         (RosterReason::Handover, Some(bundle)) => check_payload("bundle", bundle, MAX_BUNDLE_CHARS)?,
-        (RosterReason::Handover, None) => {
-            return Err(api_err(Status::BadRequest, codes::BAD_ROSTER, "A handover carries the sealed bundle"));
-        }
-        (_, Some(_)) => return Err(api_err(Status::BadRequest, codes::BAD_ROSTER, "Only a handover carries a bundle")),
+        (RosterReason::Handover, None) => return Err(bad_roster("A handover carries the sealed bundle")),
+        (_, Some(_)) => return Err(bad_roster("Only a handover carries a bundle")),
         (_, None) => {}
     }
-    if let Some(wrap) = &append.recovery_wrap {
-        check_payload("recovery_wrap", wrap, MAX_RECOVERY_WRAP_CHARS)?;
+    let new_wrap = matches!(entry.reason, RosterReason::Create | RosterReason::Recovery | RosterReason::Rewrap);
+    match (&append.recovery_wrap, new_wrap) {
+        (Some(wrap), true) => {
+            check_payload("recovery_wrap", wrap, MAX_RECOVERY_WRAP_CHARS)?;
+            if recovery_wrap_hash(wrap).as_deref() != Some(entry.recovery_wrap_hash.as_str()) {
+                return Err(bad_roster("The recovery wrap is not the one the entry names"));
+            }
+        }
+        (None, true) => {
+            return Err(bad_roster("A create, recovery or rewrap entry carries its new recovery wrap"));
+        }
+        (Some(_), false) => return Err(bad_roster("Only a create, recovery or rewrap entry carries a recovery wrap")),
+        (None, false) => {}
     }
 
-    // Bind each member to a device key.
+    // Bind each member to a device key. A new viewer spends the enrollment it went through.
     let members = ReinsMember::all(&user, &conn).await.map_err(|e| internal(&e))?;
     let now = now_unix();
     let mut listed = Vec::new();
+    let mut spent: Vec<String> = Vec::new();
     for (role, member) in
         std::iter::once((ROLE_PRIMARY, &entry.primary)).chain(entry.viewers.iter().map(|v| (ROLE_VIEWER, v)))
     {
         let kept = members
             .iter()
-            .find(|m| m.device_uuid == member.device_id && m.sign_pub == member.sign_pub && m.is_current());
-        let key_hash = if member.device_id == caller
-            && matches!(entry.reason, RosterReason::Create | RosterReason::Recovery)
-        {
-            caller_key.clone()
-        } else if kept.is_some() {
-            None
-        } else {
-            let bound = HUB.joins.enrollment_binding(&user, &member.device_id, &member.box_pub, &member.sign_pub, now);
-            if bound.is_none() {
-                return Err(api_err(
-                    Status::BadRequest,
-                    codes::BAD_ROSTER,
-                    format!(
-                        "{} has not enrolled from its device: a new member needs an enrollment join with these keys that went through the challenge and the reveal",
+            .any(|m| m.device_uuid == member.device_id && m.sign_pub == member.sign_pub && m.is_current());
+        let key_hash =
+            if member.device_id == caller && matches!(entry.reason, RosterReason::Create | RosterReason::Recovery) {
+                caller_key.clone()
+            } else if kept {
+                None
+            } else {
+                let Some((join, bound)) =
+                    HUB.joins.take_enrollment_binding(&user, &member.device_id, &member.box_pub, &member.sign_pub, now)
+                else {
+                    for join in &spent {
+                        HUB.joins.release_binding(join);
+                    }
+                    return Err(bad_roster(format!(
+                        "{} has not enrolled from its device: a new member needs an enrollment join with these keys \
+                     that went through the challenge and the reveal",
                         member.device_id
-                    ),
-                ));
-            }
-            bound
-        };
+                    )));
+                };
+                spent.push(join);
+                Some(bound)
+            };
         listed.push(Listed {
             device_uuid: member.device_id.clone(),
             role,
@@ -360,23 +353,27 @@ async fn post_roster(
         bundle: append.bundle,
         created_at: now,
     };
-    match ReinsRoster::append(row, listed, now, &conn).await {
-        Ok(()) => {}
-        Err(WriteError::Conflict | WriteError::Retry) => {
-            return Err(api_err(
-                Status::Conflict,
-                codes::EPOCH_CONFLICT,
-                "The roster changed meanwhile; fetch it again",
-            ));
+    let primary_moved = prev.is_some_and(|p| p.primary.device_id != entry.primary.device_id);
+    let move_role = primary_moved.then(|| entry.primary.device_id.clone());
+    let replaced = match ReinsRoster::append(row, listed, move_role, now, &conn).await {
+        Ok(replaced) => replaced,
+        Err(e) => {
+            for join in &spent {
+                HUB.joins.release_binding(join);
+            }
+            return Err(match e {
+                WriteError::Conflict | WriteError::Retry => {
+                    api_err(Status::Conflict, codes::EPOCH_CONFLICT, "The roster changed meanwhile; fetch it again")
+                }
+                WriteError::Full => bad_request("roster full"),
+                WriteError::Db(e) => internal(&e),
+            });
         }
-        Err(WriteError::Full) => return Err(bad_request("roster full")),
-        Err(WriteError::Db(e)) => return Err(internal(&e)),
-    }
+    };
     info!("Reins: roster of user {user} is at epoch {} ({})", entry.epoch, entry.reason.as_str());
 
-    let primary_moved = prev.is_some_and(|p| p.primary.device_id != entry.primary.device_id);
     if primary_moved {
-        move_approval_role(&headers, &entry, now, &conn, pool.inner()).await?;
+        announce_new_primary(&headers, &entry, replaced, now, &conn, pool.inner()).await?;
     }
     HUB.live.bump(&user);
     // Every other member learns of the new epoch on its next poll; wake the viewers too.
@@ -396,35 +393,24 @@ async fn post_roster(
     }))
 }
 
-/// The roster's new primary takes the approval role: its member row's device key and push token become the
-/// approval device's, waiting items are handed to it, the old approval device is told (`replaced`) and the new one
-/// too (`handover`, with the id of the request it made, if any).
-async fn move_approval_role(
+/// After the role moved (with the append): waiting items go to the new primary, the old approval device is told
+/// (`replaced`) and the new one too (`handover`, with the id of the request it made, if any).
+async fn announce_new_primary(
     headers: &Headers,
     entry: &RosterEntry,
+    replaced: Option<ReinsDevice>,
     now: i64,
     conn: &DbConn,
     pool: &DbPool,
 ) -> PhoneResult<()> {
     let user = user_key(headers);
-    let member = ReinsMember::find(&user, &entry.primary.device_id, conn)
-        .await
-        .map_err(|e| internal(&e))?
-        .ok_or_else(|| internal(&crate::Error::new("The new primary has no member row", "")))?;
-    let row = ReinsDevice {
-        user_uuid: headers.user.uuid.clone(),
-        device_uuid: entry.primary.device_id.clone().into(),
-        fcm_token: member.fcm_token.clone(),
-        updated_at: now,
-        key_hash: member.key_hash.clone(),
-    };
-    let previous = row.replace(conn).await.map_err(|e| internal(&e))?;
+    let member = ReinsMember::find(&user, &entry.primary.device_id, conn).await.map_err(|e| internal(&e))?;
     HUB.relay.requeue(&user);
     HUB.pairings.requeue(&user);
     HUB.joins.requeue(&user);
     HUB.handovers.requeue(&user);
     let handover_id = HUB.handovers.complete(&user, &entry.primary.device_id, entry.epoch, now);
-    if let Some(old) = previous.filter(|old| old.device_uuid.to_string() != entry.primary.device_id) {
+    if let Some(old) = replaced.filter(|old| old.device_uuid.to_string() != entry.primary.device_id) {
         push::spawn_push(
             pool.clone(),
             headers.user.uuid.clone(),
@@ -438,7 +424,7 @@ async fn move_approval_role(
     push::spawn_push(
         pool.clone(),
         headers.user.uuid.clone(),
-        member.fcm_token,
+        member.and_then(|m| m.fcm_token),
         PushMessage {
             t: PushKind::Handover,
             id: handover_id.unwrap_or_else(|| entry.epoch.to_string()),
@@ -450,7 +436,7 @@ async fn move_approval_role(
     Ok(())
 }
 
-/// A recovery's proof: the master password hash of the recovery code or master password, counted against the
+/// A proof that the caller knows the recovery code or master password: its master password hash, counted against the
 /// account like takeover proofs.
 fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()> {
     let user = user_key(headers);
@@ -458,7 +444,7 @@ fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()
         return Err(api_err(
             Status::Forbidden,
             codes::PROOF_REQUIRED,
-            "A recovery needs the recovery code or master password",
+            "This needs the recovery code or master password",
         ));
     };
     if let Err(wait) = super::limits::DEVICE_PROOFS.check(&user) {
@@ -468,23 +454,25 @@ fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()
         return Ok(());
     }
     super::limits::DEVICE_PROOFS.fail(&user);
-    warn!("Reins: a wrong proof to recover the primary role of user {user}");
+    warn!("Reins: a wrong recovery proof for user {user}");
     Err(api_err(Status::Forbidden, codes::WRONG_PROOF, "That is neither the recovery code nor the master password"))
 }
 
-/// The primary re-wraps the owner seed and view key (the master password changed).
-#[put("/reins/api/roster/recovery-wrap", data = "<data>")]
-async fn put_recovery_wrap(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
-    require_approval_device(&headers, &key, &conn).await?;
-    let user = user_key(&headers);
-    let latest = ReinsRoster::latest(&user, &conn).await.map_err(|e| internal(&e))?.ok_or_else(no_roster)?;
-    let update: RecoveryWrapUpdate = serde_json::from_slice(&read_body_limited(data, 16 * 1024).await?)
+/// The recovery wrap the latest entry names, for a phone about to recover: only with the master password hash
+/// (wrong ones count with the takeover proofs). The wrap opens only with the master key, but it is not handed to any
+/// device of the account that merely asks.
+#[post("/reins/api/roster/recovery-wrap", data = "<data>")]
+async fn post_recovery_wrap(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<RecoveryWrap>> {
+    let request: RecoveryWrapRequest = serde_json::from_slice(&read_body_limited(data, 4096).await?)
         .map_err(|e| bad_request(format!("invalid body: {e}")))?;
-    check_payload("recovery_wrap", &update.recovery_wrap, MAX_RECOVERY_WRAP_CHARS)?;
-    ReinsRoster::set_recovery_wrap(&user, latest.epoch, &update.recovery_wrap, &conn)
-        .await
-        .map_err(|e| internal(&e))?;
-    Ok(Status::NoContent)
+    let latest =
+        ReinsRoster::latest(&user_key(&headers), &conn).await.map_err(|e| internal(&e))?.ok_or_else(no_roster)?;
+    check_recovery_proof(&headers, Some(&request.master_password_hash))?;
+    let recovery_wrap = latest.recovery_wrap.ok_or_else(not_found)?;
+    Ok(Json(RecoveryWrap {
+        epoch: u64::try_from(latest.epoch).unwrap_or(0),
+        recovery_wrap,
+    }))
 }
 
 /// A member's push token (viewers get `sync` pushes with it).
@@ -542,10 +530,13 @@ impl HandoverHub {
         self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A new request of `device` (replacing its earlier one); `None` when the account has
-    /// [`MAX_HANDOVERS_PER_USER`] open.
-    pub fn create(&self, user: &str, device: &str, name: &str, now: i64) -> Option<HandoverCreated> {
+    /// A new request of `device` (replacing its earlier one), and whether it replaced a waiting one (the primary was
+    /// told of that already); `None` when the account has [`MAX_HANDOVERS_PER_USER`] open.
+    pub fn create(&self, user: &str, device: &str, name: &str, now: i64) -> Option<(HandoverCreated, bool)> {
         let mut entries = self.lock();
+        let replaced = entries
+            .values()
+            .any(|e| e.user == user && e.device == device && e.status == HandoverStatus::Waiting && e.expires_at > now);
         entries.retain(|_, e| e.expires_at > now && !(e.user == user && e.device == device));
         if entries.values().filter(|e| e.user == user).count() >= MAX_HANDOVERS_PER_USER {
             return None;
@@ -572,10 +563,13 @@ impl HandoverHub {
         );
         drop(entries);
         self.signal.notify();
-        Some(HandoverCreated {
-            id,
-            expires_at,
-        })
+        Some((
+            HandoverCreated {
+                id,
+                expires_at,
+            },
+            replaced,
+        ))
     }
 
     fn waiting<'a>(
@@ -607,7 +601,9 @@ impl HandoverHub {
         out
     }
 
-    pub fn view(&self, user: &str, device: &str, id: &str, now: i64) -> Option<HandoverView> {
+    /// The request as `device` may see it: its own state, or (only when `approver`, the caller already checked to be
+    /// the primary) the request, which is then marked seen. Nobody else learns of it or changes it.
+    pub fn view(&self, user: &str, device: &str, id: &str, now: i64, approver: bool) -> Option<HandoverView> {
         let mut entries = self.lock();
         let entry = entries.get_mut(id).filter(|e| e.user == user)?;
         if entry.device == device {
@@ -620,6 +616,9 @@ impl HandoverHub {
                 status,
                 epoch: entry.epoch,
             }));
+        }
+        if !approver {
+            return None;
         }
         entry.delivered = true;
         (entry.status == HandoverStatus::Waiting && entry.expires_at > now)
@@ -692,16 +691,20 @@ async fn post_handover(
     }
     let _: NewHandover = parse_versioned(&read_body_limited(data, 4096).await?)?;
     let user = user_key(&headers);
+    if let Err(wait) = super::limits::HANDOVER_REQUESTS.check(&(user.clone(), member.device_uuid.clone())) {
+        return Err(rate_limited("too many handover requests from this phone", wait));
+    }
     let entries = chain(&user, &conn).await?;
     let name = entries
         .last()
         .and_then(|e| e.member(&member.device_uuid))
         .map_or_else(|| "A phone".to_owned(), |m| m.name.clone());
-    let created = HUB
+    let (created, replaced) = HUB
         .handovers
         .create(&user, &member.device_uuid, &name, now_unix())
         .ok_or_else(|| api_err(Status::TooManyRequests, codes::RATE_LIMITED, "Too many open handover requests"))?;
-    if let Some(approval) = ReinsDevice::find_by_user(&headers.user.uuid, &conn).await {
+    // A request that replaced this phone's waiting one is not pushed again.
+    if !replaced && let Some(approval) = ReinsDevice::find_by_user(&headers.user.uuid, &conn).await {
         push::spawn_push(
             pool.inner().clone(),
             headers.user.uuid.clone(),
@@ -723,16 +726,14 @@ async fn get_handover(
     key: DeviceKey,
     conn: DbConn,
 ) -> PhoneResult<Json<serde_json::Value>> {
-    let view = HUB
-        .handovers
-        .view(&user_key(&headers), &headers.device.uuid.to_string(), id, now_unix())
-        .ok_or_else(not_found)?;
+    // Authorized before anything is marked seen: a viewer must not take a request from the primary's list.
+    let approval = require_approval_device(&headers, &key, &conn).await;
+    let view =
+        HUB.handovers.view(&user_key(&headers), &headers.device.uuid.to_string(), id, now_unix(), approval.is_ok());
     match view {
-        HandoverView::Requester(state) => Ok(Json(serde_json::to_value(state).unwrap_or_default())),
-        HandoverView::Approver(request) => {
-            require_approval_device(&headers, &key, &conn).await?;
-            Ok(Json(serde_json::to_value(request).unwrap_or_default()))
-        }
+        Some(HandoverView::Requester(state)) => Ok(Json(serde_json::to_value(state).unwrap_or_default())),
+        Some(HandoverView::Approver(request)) => Ok(Json(serde_json::to_value(request).unwrap_or_default())),
+        None => Err(approval.err().unwrap_or_else(not_found)),
     }
 }
 
@@ -816,9 +817,18 @@ mod tests {
     #[test]
     fn handover_requests_wait_for_the_primary_and_end_with_the_roster() {
         let hub = HandoverHub::new(Arc::new(ItemSignal::new()));
-        let created = hub.create("u1", "viewer", "Pixel", 100).unwrap();
-        let again = hub.create("u1", "viewer", "Pixel", 101).unwrap();
-        assert!(hub.view("u1", "viewer", &created.id, 101).is_none(), "a device's new request replaces its old one");
+        let (created, replaced) = hub.create("u1", "viewer", "Pixel", 100).unwrap();
+        assert!(!replaced);
+        let (again, replaced) = hub.create("u1", "viewer", "Pixel", 101).unwrap();
+        assert!(replaced, "the primary was told of the first one; the replacement is not pushed again");
+        assert!(
+            hub.view("u1", "viewer", &created.id, 101, false).is_none(),
+            "a device's new request replaces its old one"
+        );
+        // Only an approver marks it seen.
+        assert!(hub.view("u1", "someone", &again.id, 101, false).is_none());
+        assert_eq!(hub.take_undelivered("u1", 101).len(), 1, "a viewer's look did not take it");
+        hub.requeue("u1");
         assert!(hub.create("u1", "v2", "b", 101).is_some() && hub.create("u1", "v3", "c", 101).is_some());
         assert!(hub.create("u1", "v4", "d", 101).is_none(), "a few per account");
         assert!(hub.create("u2", "v4", "d", 101).is_some(), "per account, not for the server");
@@ -827,7 +837,7 @@ mod tests {
         assert!(hub.take_undelivered("u1", 102).is_empty());
         assert_eq!(hub.complete("u1", "viewer", 4, 103).as_deref(), Some(again.id.as_str()));
         assert_eq!(
-            hub.view("u1", "viewer", &again.id, 103),
+            hub.view("u1", "viewer", &again.id, 103, false),
             Some(HandoverView::Requester(HandoverState {
                 status: HandoverStatus::Done,
                 epoch: Some(4)
@@ -851,7 +861,8 @@ mod tests {
             sign_pub: encode_key(&[n; 32]),
             box_pub: encode_key(&[n + 50; 32]),
         };
-        let e1 = RosterEntry::genesis("acct", m("p", 1), encode_key(&[9; 32]), encode_key(&[8; 32]), 1);
+        let e1 =
+            RosterEntry::genesis("acct", m("p", 1), encode_key(&[9; 32]), encode_key(&[8; 32]), "00".repeat(32), 1);
         let e2 = e1.successor(RosterReason::Enroll, m("p", 1), vec![m("v", 2)], 2).unwrap();
         let e3 = e2.successor(RosterReason::Handover, m("v", 2), vec![m("p", 1)], 3).unwrap();
         let chain = [e1, e2, e3];

@@ -28,6 +28,7 @@ use std::{
 
 use reins_proto::{
     PROTOCOL_VERSION,
+    answer::AnswerKind,
     device::codes,
     enroll::{EnrollChallenge, EnrollReveal, check_commitment, parse_nonce},
     join::{
@@ -76,6 +77,8 @@ struct Entry {
     approved_at: Option<i64>,
     /// The approval was spent on a takeover.
     takeover_used: bool,
+    /// Enrolling: a roster entry listed the phone on the strength of this join (one join binds one entry).
+    bound: bool,
     /// Enrolling: the approval device's challenge, once posted.
     challenge: Option<EnrollChallenge>,
 }
@@ -190,6 +193,7 @@ impl JoinHub {
                 approved_at: None,
                 takeover_used: false,
                 challenge: None,
+                bound: false,
             },
         );
         drop(entries);
@@ -215,7 +219,9 @@ impl JoinHub {
         out
     }
 
-    pub fn view(&self, user: &str, device: &str, id: &str, now: i64) -> Option<View> {
+    /// The request as `device` may see it: its own state, or (only when `approver`, the caller already checked to be
+    /// the approval device) the request, which is then marked seen. Nobody else learns of it or changes it.
+    pub fn view(&self, user: &str, device: &str, id: &str, now: i64, approver: bool) -> Option<View> {
         let mut entries = self.lock();
         let entry = entries.get_mut(id).filter(|e| e.user == user)?;
         if entry.expires_at <= now {
@@ -231,9 +237,11 @@ impl JoinHub {
                 sealed: entry.sealed.clone(),
                 challenge: entry.challenge.clone(),
             }))
-        } else {
+        } else if approver {
             entry.delivered = true;
             (entry.status == JoinStatus::Waiting).then(|| View::Approver(entry.request.clone()))
+        } else {
+            None
         }
     }
 
@@ -243,6 +251,11 @@ impl JoinHub {
             entries.get_mut(id).filter(|e| e.user == user && e.expires_at > now).ok_or(AnswerError::NotFound)?;
         if entry.status != JoinStatus::Waiting {
             return Err(AnswerError::AlreadyAnswered);
+        }
+        if answer.approve && entry.request.commitment.is_some() && entry.request.reveal.is_none() {
+            return Err(AnswerError::Invalid(
+                "an enrollment is approved only after the challenge and the reveal".to_owned(),
+            ));
         }
         if answer.approve {
             let sealed = answer
@@ -303,7 +316,7 @@ impl JoinHub {
 
     /// Enrollment step 2: the approval device's challenge, once, to a waiting enrollment that has none.
     pub fn challenge(&self, user: &str, id: &str, challenge: EnrollChallenge, now: i64) -> Result<(), StepError> {
-        challenge.validate().map_err(|e| StepError::Invalid(e.to_string()))?;
+        challenge.validate(now).map_err(|e| StepError::Invalid(e.to_string()))?;
         let mut entries = self.lock();
         let entry = entries.get_mut(id).filter(|e| e.user == user && e.expires_at > now).ok_or(StepError::NotFound)?;
         if entry.request.commitment.is_none() || entry.status != JoinStatus::Waiting || entry.challenge.is_some() {
@@ -324,6 +337,9 @@ impl JoinHub {
         if entry.challenge.is_none() || entry.request.reveal.is_some() || entry.status != JoinStatus::Waiting {
             return Err(StepError::OutOfOrder("the nonce is revealed once, after the challenge"));
         }
+        if entry.challenge.as_ref().is_some_and(|c| now >= c.expires_at) {
+            return Err(StepError::OutOfOrder("the challenge expired; ask again"));
+        }
         let (Some(commitment), Some(sign_pub), Some(nonce)) =
             (&entry.request.commitment, &entry.request.sign_pub, parse_nonce(&reveal.nonce))
         else {
@@ -340,29 +356,39 @@ impl JoinHub {
         Ok(())
     }
 
-    /// The device key a roster may bind `device` to as a new viewer with these keys: that of an enrollment join of
-    /// `device` that went through the challenge and the reveal and was not denied.
-    pub fn enrollment_binding(
+    /// Spends the enrollment of `device` with these keys on one roster entry: a join of `device` that went through the
+    /// challenge and the reveal, was not denied and bound no entry yet. Returns the join's id (to release it if the
+    /// entry is not stored after all) and the device key it was asked with.
+    pub fn take_enrollment_binding(
         &self,
         user: &str,
         device: &str,
         box_pub: &str,
         sign_pub: &str,
         now: i64,
-    ) -> Option<String> {
-        self.lock()
-            .values()
-            .find(|e| {
-                e.user == user
-                    && e.device == device
-                    && e.expires_at > now
-                    && matches!(e.status, JoinStatus::Waiting | JoinStatus::Approved)
-                    && e.request.public_key == box_pub
-                    && e.request.sign_pub.as_deref() == Some(sign_pub)
-                    && e.challenge.is_some()
-                    && e.request.reveal.is_some()
-            })
-            .and_then(|e| e.key_hash.clone())
+    ) -> Option<(String, String)> {
+        let mut entries = self.lock();
+        let (id, entry) = entries.iter_mut().find(|(_, e)| {
+            e.user == user
+                && e.device == device
+                && e.expires_at > now
+                && !e.bound
+                && matches!(e.status, JoinStatus::Waiting | JoinStatus::Approved)
+                && e.request.public_key == box_pub
+                && e.request.sign_pub.as_deref() == Some(sign_pub)
+                && e.challenge.is_some()
+                && e.request.reveal.is_some()
+        })?;
+        let key_hash = entry.key_hash.clone()?;
+        entry.bound = true;
+        Some((id.clone(), key_hash))
+    }
+
+    /// The roster entry that took this binding was not stored: the join may bind another.
+    pub fn release_binding(&self, id: &str) {
+        if let Some(e) = self.lock().get_mut(id) {
+            e.bound = false;
+        }
     }
 
     /// Waiting requests of `user`, without marking them seen (what a viewer shows).
@@ -444,14 +470,13 @@ async fn post_join(
 
 #[get("/reins/api/joins/<id>")]
 async fn get_join(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<serde_json::Value>> {
-    let view =
-        HUB.joins.view(&user_key(&headers), &headers.device.uuid.to_string(), id, now_unix()).ok_or_else(not_found)?;
+    // Authorized before anything is marked seen: another device must not take a request from the approval device.
+    let approval = require_approval_device(&headers, &key, &conn).await;
+    let view = HUB.joins.view(&user_key(&headers), &headers.device.uuid.to_string(), id, now_unix(), approval.is_ok());
     match view {
-        View::Requester(state) => Ok(Json(serde_json::to_value(state).unwrap_or_default())),
-        View::Approver(request) => {
-            require_approval_device(&headers, &key, &conn).await?;
-            Ok(Json(serde_json::to_value(request).unwrap_or_default()))
-        }
+        Some(View::Requester(state)) => Ok(Json(serde_json::to_value(state).unwrap_or_default())),
+        Some(View::Approver(request)) => Ok(Json(serde_json::to_value(request).unwrap_or_default())),
+        None => Err(approval.err().unwrap_or_else(not_found)),
     }
 }
 
@@ -499,8 +524,16 @@ async fn post_join_response(
     conn: DbConn,
 ) -> PhoneResult<Status> {
     require_approval_device(&headers, &key, &conn).await?;
-    let answer: JoinAnswer = parse_versioned(&read_body_limited(data, MAX_BODY_BYTES).await?)?;
-    HUB.joins.answer(&user_key(&headers), id, &answer, now_unix()).map_err(|e| match e {
+    let user = user_key(&headers);
+    let entries = super::roles::chain(&user, &conn).await?;
+    let body = read_body_limited(data, MAX_BODY_BYTES).await?;
+    // With a roster the answer carries the primary's signature, like A4.
+    let answer: JoinAnswer = if entries.is_empty() {
+        parse_versioned(&body)?
+    } else {
+        parse_versioned(&super::roles::open_signed_answer(&user, AnswerKind::Join, id, &body, &entries)?)?
+    };
+    HUB.joins.answer(&user, id, &answer, now_unix()).map_err(|e| match e {
         AnswerError::NotFound => not_found(),
         AnswerError::AlreadyAnswered => super::device_api::already_answered(),
         AnswerError::Invalid(m) => bad_request(m),
@@ -541,10 +574,10 @@ mod tests {
         assert_eq!(seen[0].device_name, "Pixel 9");
         assert!(hub.take_undelivered("u1", 101).is_empty());
         assert!(hub.take_undelivered("u2", 101).is_empty());
-        assert!(hub.view("u2", "x", &created.id, 101).is_none());
-        assert!(matches!(hub.view("u1", "approver", &created.id, 101), Some(View::Approver(_))));
+        assert!(hub.view("u2", "x", &created.id, 101, true).is_none());
+        assert!(matches!(hub.view("u1", "approver", &created.id, 101, true), Some(View::Approver(_))));
         assert_eq!(
-            hub.view("u1", "new-phone", &created.id, 101),
+            hub.view("u1", "new-phone", &created.id, 101, true),
             Some(View::Requester(JoinState {
                 status: JoinStatus::Waiting,
                 sealed: None,
@@ -560,7 +593,7 @@ mod tests {
         hub.answer("u1", &created.id, &approve, 102).unwrap();
         assert_eq!(hub.answer("u1", &created.id, &approve, 103), Err(AnswerError::AlreadyAnswered));
         assert_eq!(
-            hub.view("u1", "new-phone", &created.id, 103),
+            hub.view("u1", "new-phone", &created.id, 103, true),
             Some(View::Requester(JoinState {
                 status: JoinStatus::Approved,
                 sealed: Some("SEALED".to_owned()),
@@ -568,7 +601,7 @@ mod tests {
             }))
         );
         // Answered: the approval device no longer gets it.
-        assert!(hub.view("u1", "approver", &created.id, 103).is_none());
+        assert!(hub.view("u1", "approver", &created.id, 103, true).is_none());
     }
 
     #[test]
@@ -611,7 +644,7 @@ mod tests {
         let hub = hub();
         let first = hub.create("u1", "d1", None, &new_join("a"), 100).unwrap();
         let again = hub.create("u1", "d1", None, &new_join("a"), 101).unwrap();
-        assert!(hub.view("u1", "d1", &first.id, 101).is_none(), "a device's new request replaces its old one");
+        assert!(hub.view("u1", "d1", &first.id, 101, true).is_none(), "a device's new request replaces its old one");
         hub.create("u1", "d2", None, &new_join("b"), 101).unwrap();
         hub.create("u1", "d3", None, &new_join("c"), 101).unwrap();
         assert_eq!(hub.create("u1", "d4", None, &new_join("d"), 101), Err(JoinError::Full));
@@ -622,7 +655,7 @@ mod tests {
         assert!(matches!(hub.create("u2", "d1", None, &bad, 101), Err(JoinError::Invalid(_))));
         let late = again.expires_at;
         assert_eq!(
-            hub.view("u1", "d1", &again.id, late),
+            hub.view("u1", "d1", &again.id, late, true),
             Some(View::Requester(JoinState {
                 status: JoinStatus::Expired,
                 sealed: None,
@@ -642,7 +675,7 @@ mod tests {
         };
         assert!(matches!(hub.answer("u1", &again.id, &no_secret, 105), Err(AnswerError::Invalid(_))));
         hub.purge(late + 10_000);
-        assert!(hub.view("u1", "d1", &again.id, late).is_none());
+        assert!(hub.view("u1", "d1", &again.id, late, true).is_none());
     }
 
     #[test]
@@ -681,20 +714,41 @@ mod tests {
             primary_sign_pub: encode_key(&[2; 32]),
             owner_pub: encode_key(&[3; 32]),
             epoch: 1,
+            expires_at: 300,
         };
         assert!(matches!(hub.reveal("u1", "viewer", &created.id, reveal(nonce), 101), Err(StepError::OutOfOrder(_))));
-        assert_eq!(hub.enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 101), None);
+        assert_eq!(hub.take_enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 101), None);
         hub.challenge("u1", &created.id, challenge.clone(), 101).unwrap();
         assert!(matches!(hub.challenge("u1", &created.id, challenge, 101), Err(StepError::OutOfOrder(_))));
         assert!(matches!(hub.reveal("u1", "other", &created.id, reveal(nonce), 102), Err(StepError::NotFound)));
         assert!(matches!(hub.reveal("u1", "viewer", &created.id, reveal([6; 32]), 102), Err(StepError::Invalid(_))));
+        let early = JoinAnswer {
+            v: 1,
+            approve: true,
+            sealed: Some("SEALED".to_owned()),
+        };
+        assert!(
+            matches!(hub.answer("u1", &created.id, &early, 102), Err(AnswerError::Invalid(_))),
+            "no approval before the reveal"
+        );
+        assert!(
+            matches!(hub.reveal("u1", "viewer", &created.id, reveal(nonce), 300), Err(StepError::OutOfOrder(_))),
+            "not after the challenge expired"
+        );
         hub.reveal("u1", "viewer", &created.id, reveal(nonce), 102).unwrap();
         assert!(matches!(hub.reveal("u1", "viewer", &created.id, reveal(nonce), 102), Err(StepError::OutOfOrder(_))));
-        // Bound to the key that asked, for exactly these keys and this device.
-        assert_eq!(hub.enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 103).as_deref(), Some("kv"));
-        assert_eq!(hub.enrollment_binding("u1", "viewer", &box_pub, &encode_key(&[7; 32]), 103), None);
-        assert_eq!(hub.enrollment_binding("u1", "other", &box_pub, &sign_pub, 103), None);
-        assert_eq!(hub.enrollment_binding("u2", "viewer", &box_pub, &sign_pub, 103), None);
+        // Bound to the key that asked, for exactly these keys and this device, once.
+        assert_eq!(hub.take_enrollment_binding("u1", "viewer", &box_pub, &encode_key(&[7; 32]), 103), None);
+        assert_eq!(hub.take_enrollment_binding("u1", "other", &box_pub, &sign_pub, 103), None);
+        assert_eq!(hub.take_enrollment_binding("u2", "viewer", &box_pub, &sign_pub, 103), None);
+        let (join, key) = hub.take_enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 103).unwrap();
+        assert_eq!((join.as_str(), key.as_str()), (created.id.as_str(), "kv"));
+        assert_eq!(hub.take_enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 103), None, "spent");
+        hub.release_binding(&join);
+        assert!(hub.take_enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 103).is_some(), "released");
+        hub.release_binding(&join);
+        // Another device of the account does not see it, nor mark it seen.
+        assert_eq!(hub.view("u1", "someone", &created.id, 103, false), None);
         // The approval device sees it again, with the nonce; viewers see it without taking it.
         assert!(hub.take_undelivered("u1", 103)[0].reveal.is_some());
         assert_eq!(hub.peek_waiting("u1", 103).len(), 1);
@@ -707,7 +761,7 @@ mod tests {
             sealed: None,
         };
         hub.answer("u1", &created.id, &deny, 104).unwrap();
-        assert_eq!(hub.enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 104), None, "not once denied");
+        assert_eq!(hub.take_enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 104), None, "not once denied");
         assert_eq!(hub.answered_ids("u1"), [created.id]);
     }
 }

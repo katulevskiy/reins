@@ -74,7 +74,8 @@ flowchart TB
 | `GET /reins/api/joins/<id>`, `POST /reins/api/joins/<id>/response` | the approval device | as the rest of `/reins/api/*` |
 | `POST /reins/api/joins/<id>/challenge`, `POST /reins/api/joins/<id>/reveal` | the approval device, then the phone enrolling as a viewer | as above, for each side; once each, in that order ([phone roles](#phone-roles-and-live-sync)) |
 | `GET /reins/api/roster` | any phone of the account | Vaultwarden login token; an empty list until the account has a roster (404: a server without phone roles) |
-| `POST /reins/api/roster`, `PUT /reins/api/roster/recovery-wrap`, `GET`/`DELETE /reins/api/handover-bundle`, `PUT /reins/api/checkpoint`, `POST /reins/api/heartbeat` | the primary (a recovery: the phone it makes primary) | approval device, plus the owner key's or primary's signature; a recovery brings the master password hash |
+| `POST /reins/api/roster`, `GET`/`DELETE /reins/api/handover-bundle`, `PUT /reins/api/checkpoint`, `POST /reins/api/heartbeat` | the primary (a recovery: the phone it makes primary) | the roster's primary with its enrolled device key, plus the owner key's or primary's signature; a recovery brings the master password hash |
+| `POST /reins/api/roster/recovery-wrap` | a phone about to recover | Vaultwarden login token and the master password hash (counted like takeover proofs) |
 | `GET /reins/api/sync`, `POST /reins/api/ops`, `POST /reins/api/ack`, `GET /reins/api/checkpoint`, `PUT /reins/api/member`, `POST /reins/api/handovers`, `GET /reins/api/connections` | roster members (the primary and viewers) | Vaultwarden login token and the device key the member enrolled with; ops are checked against the roster and their author's signature |
 | `PUT`/`POST`/`GET /reins/blob/<secret>` | whoever holds the link (AI, curl) | the unguessable link itself, single-purpose, expiring |
 | `/identity/connect/authorize`, `/identity/connect/oidc-signin`, `/identity/connect/token` (`authorization_code`) | the phone apps' "Continue", through the browser | SSO (WorkOS AuthKit on the hosted server), PKCE S256 end to end |
@@ -258,8 +259,10 @@ with `GET /reins/api/roster` (404: an older server).
 5. **Recovery.** A viewer or a fresh phone appends a `recovery` entry signed with the old owner key (from the recovery
    wrap) introducing a new one, with the master password hash; the role moves the same way.
 
-Once the account has a roster, A4 answers are `SignedAnswer`s verified against the primary's key, `PUT
-/account-state` answers 410 (reads still work for older apps), and `PUT /device` registers only the roster's primary.
+Once the account has a roster, the approval device is the roster's primary (with its enrolled device key), answers
+to requests, pairings and joins are `SignedAnswer`s verified against its key, `PUT /account-state` answers 410 (reads
+still work for older apps), and `PUT /device` registers only the roster's primary. A changed master password is a
+`rewrap` entry carrying the new recovery wrap.
 
 ### Autopilot
 

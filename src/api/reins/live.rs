@@ -46,8 +46,8 @@ use crate::{
     db::{
         DbConn, DbPool,
         models::{
-            LogLimits, ROLE_PRIMARY, ROLE_VIEWER, ReinsCheckpointRow, ReinsDevice, ReinsMember, ReinsOps, ReinsRoster,
-            WriteError,
+            LogLimits, OpsQuota, ROLE_PRIMARY, ROLE_VIEWER, ReinsCheckpointRow, ReinsDevice, ReinsMember, ReinsOps,
+            ReinsRoster, WriteError,
         },
     },
 };
@@ -133,10 +133,21 @@ fn refused(
     api_err(status, code, format!("op {i}: {message}"))
 }
 
-fn log_limits() -> LogLimits {
-    LogLimits {
+/// What an append of `member` may use of its account's log: the whole of it for the primary; for anyone else its own
+/// share, and never the tenth kept for the primary (so a viewer, or a replaced primary, cannot fill the log and stop
+/// the primary's ops; checkpoints are never counted).
+fn quota(member: &ReinsMember) -> OpsQuota {
+    let log = LogLimits {
         max_ops: i64::from(CONFIG.reins_account_log_max_ops()),
         max_bytes: i64::try_from(CONFIG.reins_account_log_max_bytes()).unwrap_or(i64::MAX),
+    };
+    let share = LogLimits {
+        max_ops: i64::from(CONFIG.reins_member_log_max_ops()),
+        max_bytes: i64::try_from(CONFIG.reins_member_log_max_bytes()).unwrap_or(i64::MAX),
+    };
+    OpsQuota {
+        log,
+        author: (member.role != ROLE_PRIMARY).then_some(share),
     }
 }
 
@@ -196,7 +207,8 @@ async fn post_ops(
                 return Err(refused(codes::COUNTER_REPLAY, i, "an old counter after new ones"));
             }
             // A retry of an op stored before (its answer was lost) is answered with its seq; anything else is a replay.
-            let stored = ReinsOps::find(&user, &author, counter, &conn).await.map_err(|e| internal(&e))?;
+            let stored =
+                ReinsOps::find(&user, &author, &member.sign_pub, counter, &conn).await.map_err(|e| internal(&e))?;
             match stored.filter(|row| serde_json::from_str::<Op>(&row.op).is_ok_and(|o| o == *op)) {
                 Some(row) => retried.push(u64::try_from(row.seq).unwrap_or(0)),
                 None => {
@@ -226,8 +238,17 @@ async fn post_ops(
         let mut attempts = 0;
         loop {
             attempts += 1;
-            match ReinsOps::append(&user, &author, member.last_counter, rows.clone(), log_limits(), now_unix(), &conn)
-                .await
+            match ReinsOps::append(
+                &user,
+                &author,
+                &member.sign_pub,
+                member.last_counter,
+                rows.clone(),
+                quota(&member),
+                now_unix(),
+                &conn,
+            )
+            .await
             {
                 Ok(seqs) => break seqs,
                 Err(WriteError::Retry) if attempts < 5 => {}
@@ -242,7 +263,7 @@ async fn post_ops(
                     return Err(api_err(
                         Status::Conflict,
                         codes::LOG_FULL,
-                        "The account's log is full; the primary writes a checkpoint first",
+                        "The account's log, or this phone's share of it, is full; the primary writes a checkpoint first",
                     ));
                 }
                 Err(WriteError::Db(e)) => return Err(internal(&e)),
@@ -263,7 +284,8 @@ async fn post_ops(
 }
 
 /// Pushes `sync` to the other members: viewers (an alert when an op asked), and the primary when the author is not it
-/// and wrote a proposal or a restriction (an alert: it may have to decide).
+/// and wrote a proposal or a restriction (an alert: it may have to decide; at most one per half minute per account,
+/// [`super::limits::PRIMARY_ALERTS`], the rest reach it by its poll).
 async fn wake_members(
     headers: &Headers,
     author: &str,
@@ -286,6 +308,7 @@ async fn wake_members(
     let author_is_primary = members.iter().any(|m| m.role == ROLE_PRIMARY && m.device_uuid == author);
     if brake_or_proposal
         && !author_is_primary
+        && super::limits::PRIMARY_ALERTS.check(&user).is_ok()
         && let Some(approval) = ReinsDevice::find_by_user(&headers.user.uuid, conn).await
     {
         push::spawn_push(pool.clone(), headers.user.uuid.clone(), approval.fcm_token, PushMessage::sync(head, true));
@@ -324,9 +347,27 @@ fn cursor(
     reins_proto::canon::hex32(&reins_proto::canon::sha256(&c.finish()))[..32].to_owned()
 }
 
-/// The sync answer, and the time the primary's heartbeat was taken (part of the cursor).
-async fn snapshot(user: &str, after: u64, pool: &DbPool) -> PhoneResult<(SyncResponse, Option<i64>)> {
+/// Who is polling: the account, the device and the device key hash it called with.
+struct Poller {
+    user: String,
+    device: String,
+    key_hash: Option<String>,
+}
+
+/// The sync answer, and the time the primary's heartbeat was taken (part of the cursor). The poller must still be a
+/// current member with its enrolled device key: checked on every reload, so a member removed while it waits is
+/// answered `not_a_member` at once.
+async fn snapshot(poller: &Poller, after: u64, pool: &DbPool) -> PhoneResult<(SyncResponse, Option<i64>)> {
+    let user = poller.user.as_str();
     let conn = pool.get().await.map_err(|e| internal(&e))?;
+    let member = ReinsMember::find(user, &poller.device, &conn).await.map_err(|e| internal(&e))?;
+    let still = member.is_some_and(|m| {
+        m.is_current()
+            && matches!((&m.key_hash, &poller.key_hash), (Some(kept), Some(given)) if crate::crypto::ct_eq(kept, given))
+    });
+    if !still {
+        return Err(api_err(Status::Forbidden, codes::NOT_A_MEMBER, "This device is no longer a member of the roster"));
+    }
     let latest = ReinsRoster::latest(user, &conn)
         .await
         .map_err(|e| internal(&e))?
@@ -409,13 +450,18 @@ async fn get_sync(
         .try_enter(&headers.device.uuid.to_string())
         .ok_or_else(|| too_many_running("too many long-polls of this device are open"))?;
     let user = user_key(&headers);
+    let poller = Poller {
+        user: user.clone(),
+        device: headers.device.uuid.to_string(),
+        key_hash: key.hash().map(str::to_owned),
+    };
     let after = after.unwrap_or(0);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(u64::from(clamp_wait(wait.as_deref())));
     let mut live = HUB.live.subscribe(&user);
     let mut items = HUB.signal.subscribe();
     live.borrow_and_update();
     items.borrow_and_update();
-    let (mut response, mut heartbeat_at) = snapshot(&user, after, pool.inner()).await?;
+    let (mut response, mut heartbeat_at) = snapshot(&poller, after, pool.inner()).await?;
     loop {
         if !response.ops.is_empty()
             || seen.as_deref() != Some(response.cursor.as_str())
@@ -431,7 +477,7 @@ async fn get_sync(
                     tokio::time::sleep_until(deadline).await;
                 }
                 live.borrow_and_update();
-                (response, heartbeat_at) = snapshot(&user, after, pool.inner()).await?;
+                (response, heartbeat_at) = snapshot(&poller, after, pool.inner()).await?;
             }
             changed = items.changed() => {
                 if changed.is_err() {

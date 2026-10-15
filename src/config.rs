@@ -597,6 +597,12 @@ make_config! {
         reins_member_proposals_per_hour: u32, false, def,  20;
         /// Roster changes per account per hour |> POST /reins/api/roster appends (enroll, remove, handover, recovery) per account per hour. 0 disables the limit.
         reins_roster_changes_per_hour: u32,  false,  def,   30;
+        /// Ops kept per viewer |> Ops one phone other than the primary (a viewer, or a replaced primary) may have in its account's log; the primary's own ops and checkpoints never count against it, and a tenth of the account's log is always kept free for them.
+        reins_member_log_max_ops:    u32,    false,  def,    200;
+        /// Op bytes kept per viewer |> Bytes of ops one phone other than the primary may have in its account's log.
+        reins_member_log_max_bytes:  u64,    false,  def,    1024 * 1024;
+        /// Handover requests per phone per hour |> POST /reins/api/handovers ("Decide on this phone") one viewer may make per hour; each wakes the primary. 0 disables the limit.
+        reins_handover_requests_per_hour: u32, false, def,   6;
         /// Ops kept per account |> Ops one account's log may hold between checkpoints; then uploads are refused (409 log_full) until the primary writes a checkpoint.
         reins_account_log_max_ops:   u32,    false,  def,    10_000;
         /// Op bytes kept per account |> Bytes of ops one account's log may hold between checkpoints.

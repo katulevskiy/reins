@@ -460,6 +460,7 @@ table! {
         user_uuid -> Text,
         seq -> BigInt,
         author -> Text,
+        sign_pub -> Text,
         counter -> BigInt,
         op -> Text,
         size -> Integer,

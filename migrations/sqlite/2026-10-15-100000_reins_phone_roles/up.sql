@@ -38,6 +38,7 @@ CREATE TABLE reins_ops (
     user_uuid  TEXT    NOT NULL REFERENCES users (uuid) ON DELETE CASCADE,
     seq        BIGINT  NOT NULL,
     author     TEXT    NOT NULL,
+    sign_pub   TEXT    NOT NULL,
     counter    BIGINT  NOT NULL,
     op         TEXT    NOT NULL,
     size       INTEGER NOT NULL,
@@ -45,7 +46,9 @@ CREATE TABLE reins_ops (
     PRIMARY KEY (user_uuid, seq)
 );
 
-CREATE INDEX idx_reins_ops_author ON reins_ops (user_uuid, author, counter);
+-- An author's counter is unique per signing key: a phone that enrolls again with a new key starts over, and a lookup
+-- by (author, key, counter) never finds another key's op.
+CREATE UNIQUE INDEX idx_reins_ops_author ON reins_ops (user_uuid, author, sign_pub, counter);
 
 -- The primary's sealed, signed snapshots (the latest two).
 CREATE TABLE reins_checkpoints (

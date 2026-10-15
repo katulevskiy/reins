@@ -42,7 +42,10 @@ use crate::{
     auth::{ClientIp, Headers},
     db::{
         DbConn, DbPool,
-        models::{Device, DeviceId, ReinsConnection, ReinsDevice, ReinsDeviceSignout, ReinsMember, ReinsSsoSession},
+        models::{
+            Device, DeviceId, ROLE_PRIMARY, ReinsConnection, ReinsDevice, ReinsDeviceSignout, ReinsMember, ReinsRoster,
+            ReinsSsoSession,
+        },
     },
 };
 
@@ -202,17 +205,31 @@ pub fn is_caller(row: &ReinsDevice, headers: &Headers, key: &DeviceKey) -> bool 
         }
 }
 
+/// The caller is the account's approval device. With a roster (phone roles), that is the roster's primary: the
+/// member whose role the latest entry made `primary` (stored with that entry, in one transaction), calling with the
+/// device key it enrolled with. Without one, the registered approval device ([`is_caller`]).
 pub async fn require_approval_device(headers: &Headers, key: &DeviceKey, conn: &DbConn) -> PhoneResult<()> {
-    match ReinsDevice::find_by_user(&headers.user.uuid, conn).await {
-        Some(device) if is_caller(&device, headers, key) => {
-            HUB.presence.seen(&user_key(headers), now_unix());
-            Ok(())
-        }
-        _ => Err(api_err(
+    let user = user_key(headers);
+    let roster = ReinsRoster::latest(&user, conn).await.map_err(|e| internal(&e))?;
+    let approves = if roster.is_some() {
+        ReinsMember::find(&user, &headers.device.uuid.to_string(), conn).await.map_err(|e| internal(&e))?.is_some_and(
+            |m| {
+                m.role == ROLE_PRIMARY
+                    && matches!((&m.key_hash, key.hash()), (Some(kept), Some(given)) if crate::crypto::ct_eq(kept, given))
+            },
+        )
+    } else {
+        ReinsDevice::find_by_user(&headers.user.uuid, conn).await.is_some_and(|device| is_caller(&device, headers, key))
+    };
+    if approves {
+        HUB.presence.seen(&user, now_unix());
+        Ok(())
+    } else {
+        Err(api_err(
             Status::Forbidden,
             codes::NOT_APPROVAL_DEVICE,
             "This device is not the Reins approval device; register it with PUT /reins/api/device",
-        )),
+        ))
     }
 }
 
@@ -404,7 +421,20 @@ async fn post_pairing_response(
     conn: DbConn,
 ) -> PhoneResult<Json<PairingResult>> {
     require_approval_device(&headers, &key, &conn).await?;
-    let response: PairingResponse = parse_versioned(&read_body(data).await?)?;
+    let entries = super::roles::chain(&user_key(&headers), &conn).await?;
+    let body = read_body(data).await?;
+    // With a roster the answer carries the primary's signature, like A4.
+    let response: PairingResponse = if entries.is_empty() {
+        parse_versioned(&body)?
+    } else {
+        parse_versioned(&super::roles::open_signed_answer(
+            &user_key(&headers),
+            AnswerKind::Pairing,
+            id,
+            &body,
+            &entries,
+        )?)?
+    };
     let pairing_id = PairingId::from(id);
     let answered = HUB.pairings.answer(&user_key(&headers), &pairing_id, &response);
     HUB.live.bump(&user_key(&headers));

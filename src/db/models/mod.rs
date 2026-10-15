@@ -44,7 +44,7 @@ pub use self::reins_client::ReinsClient;
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;
 pub use self::reins_roster::{
-    Listed, LogLimits, ROLE_PRIMARY, ROLE_VIEWER, ReinsCheckpointRow, ReinsMember, ReinsOps, ReinsRoster,
+    Listed, LogLimits, OpsQuota, ROLE_PRIMARY, ROLE_VIEWER, ReinsCheckpointRow, ReinsMember, ReinsOps, ReinsRoster,
     ReinsRosterRow, WriteError,
 };
 pub use self::reins_vault_passkey::ReinsVaultPasskey;
