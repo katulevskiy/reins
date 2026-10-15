@@ -16,11 +16,11 @@ struct AutopilotGroup<Content: View>: View {
             } else if let header {
                 SectionHeader(header).padding(.horizontal, 12)
             }
+            // Hairlines, never cards: a rule above and below, and between the rows (`RowDivider`).
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
+                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
             if let footer { GroupFooter(footer).padding(.horizontal, 12) }
         }
     }
@@ -31,7 +31,7 @@ struct RowDivider: View {
     var inset: CGFloat = 16
 
     var body: some View {
-        Rectangle().fill(Palette.hairline).frame(height: 0.5).padding(.leading, inset)
+        Rectangle().fill(Palette.rule).frame(height: 1).padding(.leading, inset)
     }
 }
 
