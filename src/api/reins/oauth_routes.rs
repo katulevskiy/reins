@@ -34,7 +34,7 @@ use super::{
         parse_registration, parse_token_request, redirect_host, registration_response, success_redirect,
         token_response, validate_authorize, verify_client_assertion,
     },
-    oauth_state::{AuthSession, JtiError, OAUTH, StartedPairing},
+    oauth_state::{AuthSession, OAUTH, StartedPairing},
     outbound, pages,
     pairing::{PairingClient, PairingStatus, sanitize_client_name},
     push,
@@ -345,15 +345,8 @@ async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, conn: DbCo
         client_auth,
         pairing: None,
     };
-    match OAUTH.create_session(session) {
-        Ok(id) => Flow::Page(Status::Ok, pages::email_form_page(&form.0, &form.1, &id, None, form.2.as_deref())),
-        Err(_) => error_flow(
-            pages::at::AUTHORIZE,
-            Status::ServiceUnavailable,
-            "Server busy",
-            "Please try again in a few minutes.",
-        ),
-    }
+    let id = OAUTH.create_session(session);
+    Flow::Page(Status::Ok, pages::email_form_page(&form.0, &form.1, &id, None, form.2.as_deref()))
 }
 
 /// The user (and approval device) an email address stands for, if a real pairing is possible.
@@ -496,21 +489,13 @@ fn authorize_wait(session: &str) -> Flow {
                 code_challenge: session.request.code_challenge.clone(),
                 client_auth: session.client_auth,
             };
-            match OAUTH.issue_code(code) {
-                Ok(token) => Flow::Redirect(success_redirect(
-                    &session.request.redirect_uri,
-                    &token,
-                    session.request.state.as_deref(),
-                    &iss,
-                )),
-                Err(_) => Flow::Redirect(error_redirect(
-                    &session.request.redirect_uri,
-                    "server_error",
-                    "The server is busy, please try again.",
-                    session.request.state.as_deref(),
-                    &iss,
-                )),
-            }
+            let token = OAUTH.issue_code(code);
+            Flow::Redirect(success_redirect(
+                &session.request.redirect_uri,
+                &token,
+                session.request.state.as_deref(),
+                &iss,
+            ))
         }
         Some(PairingStatus::Rejected) => {
             OAUTH.take_session(session);
@@ -675,17 +660,15 @@ async fn verify_client(
     verify_with_client_keys(client_id, jwks, *alg, assertion).await.map(Some)
 }
 
-/// Step 2: burns the verified assertion's `jti` (in `client_id`'s own share of the replay memory). A replay fails.
+/// Step 2, right before the grant is used up: burns the verified assertion's `jti`; a replay fails. The grant itself
+/// is single-use (codes, and refresh tokens, which rotate), which is what stops an assertion from working twice;
+/// the `jti` memory also keeps one assertion from serving two grants.
 fn record_assertion(client_id: &str, verified: Option<&VerifiedAssertion>) -> Result<(), OAuthError> {
-    let Some(verified) = verified else {
-        return Ok(());
-    };
-    match OAUTH.use_assertion(client_id, &verified.jti) {
-        Ok(()) => Ok(()),
-        Err(JtiError::Replayed) => Err(OAuthError::invalid_client("the client assertion was already used")),
-        Err(JtiError::Full) => {
-            Err(OAuthError::new(503, "temporarily_unavailable", "the server is busy, try again in a few minutes"))
+    match verified {
+        Some(verified) if !OAUTH.use_assertion(client_id, &verified.jti) => {
+            Err(OAuthError::invalid_client("the client assertion was already used"))
         }
+        _ => Ok(()),
     }
 }
 

@@ -13,7 +13,9 @@ pub struct Full;
 pub struct TtlMap<K, V> {
     ttl: Duration,
     capacity: usize,
-    entries: HashMap<K, (Instant, V)>,
+    /// Expiry, insertion number (orders entries inserted at the same instant), value.
+    entries: HashMap<K, (Instant, u64, V)>,
+    inserted: u64,
 }
 
 impl<K: Eq + Hash, V> TtlMap<K, V> {
@@ -22,6 +24,7 @@ impl<K: Eq + Hash, V> TtlMap<K, V> {
             ttl,
             capacity,
             entries: HashMap::new(),
+            inserted: 0,
         }
     }
 
@@ -31,8 +34,13 @@ impl<K: Eq + Hash, V> TtlMap<K, V> {
         if self.entries.len() >= self.capacity && !self.entries.contains_key(&key) {
             return Err(Full);
         }
-        self.entries.insert(key, (Instant::now() + self.ttl, value));
+        self.put(key, value);
         Ok(())
+    }
+
+    fn put(&mut self, key: K, value: V) {
+        self.inserted += 1;
+        self.entries.insert(key, (Instant::now() + self.ttl, self.inserted, value));
     }
 
     /// Inserts or replaces `key`; when the map is full, the entry closest to expiring (the oldest) makes room. Only
@@ -43,52 +51,52 @@ impl<K: Eq + Hash, V> TtlMap<K, V> {
     {
         self.purge();
         if self.entries.len() >= self.capacity && !self.entries.contains_key(&key) {
-            let oldest = self.entries.iter().min_by_key(|(_, (expires, _))| *expires).map(|(k, _)| k.clone());
+            let oldest = self.entries.iter().min_by_key(|(_, (expires, n, _))| (*expires, *n)).map(|(k, _)| k.clone());
             if let Some(oldest) = oldest {
                 self.entries.remove(&oldest);
             }
         }
         if self.capacity > 0 {
-            self.entries.insert(key, (Instant::now() + self.ttl, value));
+            self.put(key, value);
         }
     }
 
     pub fn get(&self, key: &K) -> Option<&V> {
         let now = Instant::now();
-        self.entries.get(key).filter(|(expires, _)| now < *expires).map(|(_, v)| v)
+        self.entries.get(key).filter(|(expires, _, _)| now < *expires).map(|(_, _, v)| v)
     }
 
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         let now = Instant::now();
-        self.entries.get_mut(key).filter(|(expires, _)| now < *expires).map(|(_, v)| v)
+        self.entries.get_mut(key).filter(|(expires, _, _)| now < *expires).map(|(_, _, v)| v)
     }
 
     pub fn remove(&mut self, key: &K) -> Option<V> {
-        let (expires, value) = self.entries.remove(key)?;
+        let (expires, _, value) = self.entries.remove(key)?;
         (Instant::now() < expires).then_some(value)
     }
 
     /// Live values, in unspecified order.
     pub fn values(&self) -> impl Iterator<Item = &V> {
         let now = Instant::now();
-        self.entries.values().filter(move |(expires, _)| now < *expires).map(|(_, v)| v)
+        self.entries.values().filter(move |(expires, _, _)| now < *expires).map(|(_, _, v)| v)
     }
 
     /// Live values, mutable, in unspecified order.
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
         let now = Instant::now();
-        self.entries.values_mut().filter(move |(expires, _)| now < *expires).map(|(_, v)| v)
+        self.entries.values_mut().filter(move |(expires, _, _)| now < *expires).map(|(_, _, v)| v)
     }
 
     pub fn purge(&mut self) {
         let now = Instant::now();
-        self.entries.retain(|_, (expires, _)| now < *expires);
+        self.entries.retain(|_, (expires, _, _)| now < *expires);
     }
 
     /// Drops every entry `keep` says no to (and the expired ones).
     pub fn retain(&mut self, mut keep: impl FnMut(&V) -> bool) {
         let now = Instant::now();
-        self.entries.retain(|_, (expires, value)| now < *expires && keep(value));
+        self.entries.retain(|_, (expires, _, value)| now < *expires && keep(value));
     }
 
     /// Number of live entries.
@@ -146,6 +154,12 @@ mod tests {
         assert_eq!((m.get(&"a"), m.get(&"b"), m.get(&"c")), (None, Some(&2), Some(&3)));
         m.insert_evicting("b", 20);
         assert_eq!((m.get(&"b"), m.get(&"c"), m.len()), (Some(&20), Some(&3), 2), "replacing evicts nothing");
+        // Inserted at the same instant: still the first one goes first.
+        let mut same = TtlMap::new(Duration::from_secs(10), 2);
+        for i in 0..5 {
+            same.insert_evicting(i, i);
+        }
+        assert_eq!((same.get(&2), same.get(&3), same.get(&4)), (None, Some(&3), Some(&4)));
         let mut none = TtlMap::new(Duration::from_secs(10), 0);
         none.insert_evicting("a", 1);
         assert!(none.is_empty());
