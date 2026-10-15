@@ -1,23 +1,21 @@
 //! Hold to confirm, as on the phone: for what cannot be undone with a click ("Until I resume", disconnecting this
-//! computer). Pressing starts a fill that sweeps across in [`HOLD`] with a small ring and "Keep holding"; letting go
-//! early (or Esc) cancels; holding to the end does it.
+//! computer, shredding originals). Pressing starts a fill that sweeps across in [`HOLD`] (1200 ms) with a small ring
+//! and "Keep holding"; letting go early (or Esc) cancels and the fill drains in 180 ms; holding to the end does it.
+//! The fill follows the time held, frame by frame ([`kit::hold::Press`]), so Reduce Motion never shortens it.
 
-use std::time::Duration;
+use std::time::Instant;
 
 use gpui::{
-    Animation, AnimationExt as _, Context, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, SharedString, Stateful, Styled as _, div, px, relative,
+    Context, Div, ElementId, InteractiveElement as _, MouseButton, SharedString, Stateful, Styled as _, Window,
 };
 
-use super::Root;
-use super::icons::{Icon, icon};
-use super::parts::ring;
+use super::icons::Icon;
+use super::{Root, kit};
 use crate::model::Model;
 use crate::pause::PauseFor;
 use crate::theme::Palette;
-
-/// How long a hold takes.
-pub const HOLD: Duration = Duration::from_millis(2000);
+pub use crate::theme::motion::HOLD;
+use kit::hold::{HoldLook, Press};
 
 /// What a hold does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,13 +26,16 @@ pub enum Held {
     Disconnect,
     /// Delete for good the originals a secrets import sent to the trash.
     PurgeOriginals,
+    /// The gallery's hold button (does nothing).
+    Gallery,
 }
 
-/// A hold in progress: what, and which press (a new press starts the fill again).
+/// A hold in progress or draining: what, which press (a new press starts the fill again), and how far.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Hold {
     pub what: Held,
     pub press: u64,
+    pub state: Press,
 }
 
 impl Root {
@@ -44,11 +45,12 @@ impl Root {
         self.hold = Some(Hold {
             what,
             press,
+            state: Press::Holding(Instant::now()),
         });
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(HOLD).await;
             let _gone = this.update(cx, |this, cx| {
-                if this.hold.is_some_and(|h| h.press == press) {
+                if this.hold.is_some_and(|h| h.press == press && h.state.holding()) {
                     this.hold = None;
                     this.held(what, cx);
                 }
@@ -58,9 +60,12 @@ impl Root {
         cx.notify();
     }
 
-    /// Let go: a hold that did not reach the end does nothing.
+    /// Let go: a hold that did not reach the end does nothing, and its fill drains.
     pub(super) fn hold_cancel(&mut self, cx: &mut Context<'_, Self>) {
-        if self.hold.take().is_some() {
+        if let Some(h) = &mut self.hold
+            && h.state.holding()
+        {
+            h.state = h.state.release(Instant::now());
             cx.notify();
         }
     }
@@ -73,13 +78,25 @@ impl Root {
             }
             Held::Disconnect => self.model.update(cx, Model::sign_out),
             Held::PurgeOriginals => self.model.update(cx, Model::purge_originals),
+            Held::Gallery => self.gallery_held = true,
         }
         cx.notify();
     }
 
-    /// The press being held for `what`, if one is.
-    pub(super) fn holding(&self, what: Held) -> Option<u64> {
-        self.hold.filter(|h| h.what == what).map(|h| h.press)
+    /// How full the fill for `what` is now, while held or draining.
+    pub(super) fn hold_progress(&self, what: Held) -> Option<f32> {
+        self.hold.filter(|h| h.what == what).and_then(|h| h.state.progress(Instant::now()))
+    }
+
+    /// Draws the next frame while a fill moves; forgets a drain that has emptied.
+    pub(super) fn hold_frame(&mut self, window: &Window) {
+        if let Some(h) = self.hold {
+            if h.state.progress(Instant::now()).is_some() {
+                window.request_animation_frame();
+            } else {
+                self.hold = None;
+            }
+        }
     }
 
     /// Makes `area` the place to hold for `what`.
@@ -90,61 +107,21 @@ impl Root {
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| this.hold_cancel(cx)))
     }
 
-    /// The red button held to confirm: `label` with `idle` before it; while held, the fill and "Keep holding".
+    /// The red button held to confirm (38 px): `label` with `idle` before it; while held, the fill and "Keep
+    /// holding".
+    #[allow(clippy::too_many_arguments, reason = "a button's parts")]
     pub(super) fn hold_button(
         &self,
         id: impl Into<ElementId>,
         what: Held,
         idle: Icon,
         label: impl Into<SharedString>,
+        done: impl Into<SharedString>,
         pal: Palette,
         cx: &Context<'_, Self>,
     ) -> Stateful<Div> {
-        let fg = pal.on_danger();
-        let b = div()
-            .id(id.into())
-            .relative()
-            .overflow_hidden()
-            .flex()
-            .items_center()
-            .justify_center()
-            .h(px(38.0))
-            .rounded(px(11.0))
-            .bg(pal.danger)
-            .text_color(fg)
-            .text_size(px(13.0))
-            .font_weight(FontWeight::SEMIBOLD)
-            .whitespace_nowrap();
-        let b = Self::hold_area(b, what, cx);
-        match self.holding(what) {
-            Some(press) => b.child(fill(press, gpui::black().opacity(0.22))).child(
-                div()
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(7.0))
-                    .child(progress_ring(press, fg, 16.0))
-                    .child("Keep holding"),
-            ),
-            None => b.child(div().flex().items_center().gap(px(7.0)).child(icon(idle, 14.0, fg)).child(label.into())),
-        }
+        let look = self.hold_progress(what).map_or(HoldLook::Idle, HoldLook::Filling);
+        let b = kit::hold_button(id, idle.glyph(), label, done, look, 38.0, pal);
+        Self::hold_area(b, what, cx)
     }
-}
-
-/// The fill that sweeps across while a press is held.
-pub fn fill(press: u64, color: gpui::Hsla) -> impl IntoElement {
-    div().absolute().left_0().top_0().bottom_0().w(px(0.0)).bg(color).with_animation(
-        SharedString::from(format!("hold-fill-{press}")),
-        Animation::new(HOLD),
-        |el, t| el.w(relative(t)),
-    )
-}
-
-/// The small ring that fills while a press is held.
-pub fn progress_ring(press: u64, color: gpui::Hsla, side: f32) -> impl IntoElement {
-    div().size(px(side)).flex_none().with_animation(
-        SharedString::from(format!("hold-ring-{press}")),
-        Animation::new(HOLD),
-        move |el, t| el.child(ring(t, color, color.opacity(0.25), side, 2.0)),
-    )
 }
