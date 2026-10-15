@@ -13,6 +13,13 @@ struct ExpiredGrantsScreen: View {
     var body: some View {
         let ended = ended
         List {
+            VStack(alignment: .leading, spacing: 4) {
+                PageHeader(title: "Ended") { EmptyView() }
+                Text("Resume any of these as it was, or let them go.")
+                    .textRole(.body)
+                    .foregroundStyle(Palette.ink2)
+            }
+            .plainRow(EdgeInsets(top: 0, leading: 24, bottom: 8, trailing: 24))
             if let error {
                 FormBanner(text: error)
                     .accessibilityIdentifier("resumeError")
@@ -33,21 +40,21 @@ struct ExpiredGrantsScreen: View {
                     onResume: { resuming = GrantPick(grant) },
                     onDelete: { deleting = grant }
                 )
-                .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1).padding(.horizontal, 24) }
                 .contextMenu {
                     Button { tapped { model.push(.grantDetail(grant.id)) } } label: { Label("Open", systemImage: "key.horizontal") }
                     Button { tapped { resuming = GrantPick(grant) } } label: { Label("Resume", systemImage: "arrow.clockwise") }
                     Button(role: .destructive) { tapped { deleting = grant } } label: { Label("Delete for good", systemImage: "trash") }
                 }
-                .plainRow(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
+                .plainRow(EdgeInsets())
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .contentMargins(.vertical, 12, for: .scrollContent)
+        .contentMargins(.bottom, 12, for: .scrollContent)
         .accessibilityIdentifier("expiredList")
         .pageBackground()
-        .navigationTitle("Ended")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $resuming) { pick in
             let grant = pick.grant

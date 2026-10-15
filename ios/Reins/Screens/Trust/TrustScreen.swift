@@ -7,6 +7,7 @@ import SwiftUI
 struct TrustScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Autopilot's.
     @State private var ap = AutopilotModel()
     @State private var bypassAsk = false
@@ -20,6 +21,9 @@ struct TrustScreen: View {
 
     private var running: [GrantView] { model.grants.filter(\.active).sorted { $0.createdAt > $1.createdAt } }
     private var endedCount: Int { model.grants.filter { !$0.active }.count }
+
+    /// A bypass, an Overnight or a lockdown running: the field on top.
+    private var runningMode: TrustRunning? { ap.settings.flatMap(TrustRunning.of) }
 
     var body: some View {
         List {
@@ -50,9 +54,23 @@ struct TrustScreen: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .contentMargins(.bottom, 24, for: .scrollContent)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let running = runningMode, let s = ap.settings {
+                TrustRunningField(
+                    running: running, settings: s, top: 0,
+                    onStopBypass: { Task { await ap.stopBypass() } },
+                    onStopOvernight: { Task { await ap.stopOvernight() } },
+                    onEndLockdown: { Task { await ap.endLockdown() } }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(Motion.of(.smooth(duration: 0.32), reduce: reduceMotion), value: runningMode)
         .pageBackground()
         .navigationTitle("Trust")
         .rootNavigationBar()
+        // White status bar text on a running mode's field.
+        .toolbarColorScheme(runningMode == nil ? nil : .dark, for: .navigationBar)
         .refreshable {
             feedback.play(.refresh)
             await model.refreshPending()
@@ -63,6 +81,18 @@ struct TrustScreen: View {
             ap.bind(model)
             await ap.refresh()
             await ap.loadStats()
+            #if DEBUG
+            // `-openSheet bypass|overnight|model` (screenshots): open that sheet at launch.
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-openSheet"), i + 1 < args.count {
+                switch args[i + 1] {
+                case "bypass": bypassAsk = true
+                case "overnight": overnightAsk = true
+                case "model": modelOpen = true
+                default: break
+                }
+            }
+            #endif
         }
         .task(id: [ap.settings?.bypassUntil, ap.settings?.overnightUntil]) {
             // The core ends a bypass or an Overnight when it is read after its time; read it then, so the screen moves
@@ -125,30 +155,30 @@ struct TrustScreen: View {
 
     @ViewBuilder
     private func autopilot(_ s: AutopilotSettings) -> some View {
-        if let mood = TrustText.mood(ap.modelReady ? ap.stats : nil) {
-            Text(mood)
-                .textRole(.mood)
-                .foregroundStyle(Palette.ink2)
-                .accessibilityIdentifier("trustMood")
-                .plainRow(EdgeInsets(top: 0, leading: 24, bottom: 4, trailing: 24))
+        Text(TrustText.decided(model.activity, now: Timers.nowSeconds()))
+            .textRole(.mood)
+            .foregroundStyle(Palette.ink2)
+            .accessibilityIdentifier("trustMood")
+            .plainRow(EdgeInsets(top: 0, leading: 24, bottom: 4, trailing: 24))
+        if let running = runningMode {
+            runningList(running, s)
         }
         VStack(alignment: .leading, spacing: 8) {
-            // "Mode" with its (?) right beside the word; what the modes do opens under it.
-            HelpHeader(title: "Mode", help: AutopilotText.modeHelp, id: "mode")
-                .padding(.horizontal, 12)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("modeHeader")
+            // "Mode" with its (?) right beside the word; what the modes do opens under it. While a bypass or an Overnight
+            // runs, the field above has the mode.
+            if runningMode == nil || runningMode == .lockdown {
+                HelpHeader(title: "Mode", help: AutopilotText.modeHelp, id: "mode")
+                    .padding(.horizontal, 12)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("modeHeader")
+            }
             ModeHero(
                 settings: s,
                 modelReady: ap.modelReady,
                 onPick: { mode in if mode != s.mode { Task { await ap.setMode(mode) } } },
                 onBypass: { bypassAsk = true },
                 onOvernight: { overnightAsk = true },
-                onLockdown: { Task { await ap.setMode(.lockdown) } },
-                onEndLockdown: { Task { await ap.endLockdown() } },
-                onStopBypass: { Task { await ap.stopBypass() } },
-                onStopOvernight: { Task { await ap.stopOvernight() } },
-                onWhenRisky: { risky in Task { await ap.setOvernightWhenRisky(risky) } }
+                onLockdown: { Task { await ap.setMode(.lockdown) } }
             )
         }
         .plainRow(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
@@ -163,10 +193,7 @@ struct TrustScreen: View {
 
         Group {
             if ap.modelReady {
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader("This week").padding(.horizontal, 12)
-                    WeekStats(stats: ap.stats)
-                }
+                WeekStats(stats: ap.stats).padding(.horizontal, 8)
             } else if let m = ap.model {
                 ModelOffer(ap: ap, model: m, onDownload: download)
             }
@@ -295,6 +322,30 @@ struct TrustScreen: View {
         }
     }
 
+    /// What the running mode decided ("During this bypass"), and what Overnight does with what is too risky.
+    @ViewBuilder
+    private func runningList(_ running: TrustRunning, _ s: AutopilotSettings) -> some View {
+        if case .overnight = running {
+            WhenRiskyPicker(selected: s.overnightWhenRisky) { risky in Task { await ap.setOvernightWhenRisky(risky) } }
+                .plainRow(EdgeInsets(top: 16, leading: 16, bottom: 4, trailing: 16))
+        }
+        let entries = running.entries(model.activity, settings: s)
+        if !entries.isEmpty {
+            PageSectionHeader(running.listTitle) { EmptyView() }
+                .padding(.top, 14)
+                .plainRow(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 8))
+            ForEach(entries, id: \.id) { entry in
+                Button {
+                    model.show(.activityDetail(entry.id), in: .activity)
+                } label: {
+                    HistoryRow(entry: entry)
+                }
+                .buttonStyle(.plain)
+                .plainRow(EdgeInsets())
+            }
+        }
+    }
+
     /// A menu or swipe item: its action, then the default tap (the page or dialog it opens has the sound).
     private func tapped(_ action: () -> Void) {
         action()
@@ -304,6 +355,20 @@ struct TrustScreen: View {
 
 /// What Trust says in words.
 enum TrustText {
+    /// The mood line under the title: what Autopilot (or Overnight) decided today ("Autopilot decided 9 things today.").
+    static func decided(_ entries: [ActivityEntry], now: Int64) -> String {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(now)))
+        let n = entries.filter {
+            ["autopilot", "overnight"].contains($0.decidedBy) && calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.at))) == today
+        }.count
+        switch n {
+        case 0: return "Autopilot decided nothing yet today."
+        case 1: return "Autopilot decided 1 thing today."
+        default: return "Autopilot decided \(n) things today."
+        }
+    }
+
     /// The mood line under the title: what Autopilot did this week, when its model runs ("Autopilot scored 87 requests
     /// this week."); nil without numbers.
     static func mood(_ stats: AutopilotStats?) -> String? {

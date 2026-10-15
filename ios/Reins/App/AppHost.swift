@@ -85,11 +85,23 @@ final class AppHost {
                 await model.handle(link)
             }
             #if DEBUG
-            // `-show sounds`: open Settings > Sounds & haptics at launch (screenshots, manual checks); `-show grants`
-            // (or another section) opens that tab.
+            // `-show sounds`: open Settings > Sounds & haptics at launch (screenshots, manual checks); `-show trust`
+            // (or another section) opens that tab; `-show grant:<id>`, `profile:<id>`, `tryit`, `ended`, `newgrant` open
+            // a Trust page.
             if let i = args.firstIndex(of: "-show"), i + 1 < args.count {
-                if args[i + 1] == "sounds" {
+                let value = args[i + 1]
+                if value == "sounds" {
                     model.show(.sounds, in: .settings)
+                } else if value.hasPrefix("grant:") {
+                    model.show(.grantDetail(String(value.dropFirst("grant:".count))), in: .trust)
+                } else if value.hasPrefix("profile:") {
+                    model.show(.autopilotProfile(String(value.dropFirst("profile:".count))), in: .trust)
+                } else if value == "tryit" {
+                    model.show(.tryIt(nil), in: .trust)
+                } else if value == "ended" {
+                    model.show(.expiredGrants, in: .trust)
+                } else if value == "newgrant" {
+                    model.show(.newGrant(token: 1), in: .trust)
                 } else if let section = AppSection(rawValue: args[i + 1]) {
                     model.select(section)
                 }

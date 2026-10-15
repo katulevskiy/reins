@@ -28,11 +28,17 @@ struct ResumeSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(untrusted(grant.summary))
-                        .font(RFont.sans(16, .medium))
-                        .foregroundStyle(Palette.text)
+                    // "Extend *for*": the sheet's title in the serif, one italic word; what it is for under it.
+                    AskText([AskText.Run(text: extending ? "Extend " : "Resume "), AskText.Run(text: "for", target: true)], role: .sheetTitle)
+                        .foregroundStyle(Palette.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(verbatim: untrusted(grant.summary))
+                        .textRole(.body)
+                        .foregroundStyle(Palette.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
                     durations
-                        .padding(.top, 16)
+                        .padding(.top, 20)
 
                     if extending {
                         if draft.moreOpen { customTime.transition(.opacity.combined(with: .move(edge: .top))) }
@@ -45,29 +51,29 @@ struct ResumeSheet: View {
                         FormBanner(text: error).padding(.top, 14).accessibilityIdentifier("resumeInvalid")
                     }
                 }
-                .padding(.horizontal, 22)
-                .padding(.top, 4)
+                .padding(.horizontal, 24)
+                .padding(.top, 28)
                 .padding(.bottom, 20)
                 .animation(.smooth(duration: 0.25), value: draft.moreOpen)
             }
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     Button("Cancel") { dismiss() }
-                        .buttonStyle(DockButtonStyle(kind: .neutral, height: 50))
+                        .buttonStyle(SignalButtonLook(kind: .outline))
                     Button(action: confirm) {
                         Label(extending ? "Extend" : "Resume", systemImage: BiometricSymbol.name)
                     }
-                    .buttonStyle(DockButtonStyle(kind: .light, height: 50))
+                    .buttonStyle(SignalButtonLook(kind: .inverse))
                     .accessibilityIdentifier("confirmResume")
                 }
+                .frame(height: 54)
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
                 .padding(.bottom, 12)
                 .background(Palette.background.opacity(0.001))
             }
-            .navigationTitle(extending ? "Extend for" : "Resume for")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             .background(Palette.background.ignoresSafeArea())
         }
         .presentationDetents([.medium, .large], selection: $detent)
@@ -148,14 +154,15 @@ struct ResumeSheet: View {
             if draft.moreOpen { detent = .large }
         } label: {
             HStack {
-                Text("More options").font(RFont.sans(15.5, .medium))
+                Text("More options").font(TextRole.row.font())
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
+                GlyphIcon(.chevronRight, size: 14)
+                    .foregroundStyle(Palette.inkMeta)
                     .rotationEffect(.degrees(draft.moreOpen ? 90 : 0))
             }
-            .foregroundStyle(Palette.accent)
-            .padding(.vertical, 12)
+            .foregroundStyle(Palette.ink)
+            .padding(.vertical, 14)
+            .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -241,9 +248,9 @@ struct ResumeSheet: View {
 
     private func label(_ text: String) -> some View {
         Text(text)
-            .font(RFont.sans(13, .semibold))
-            .foregroundStyle(Palette.secondary)
-            .padding(.top, 16)
+            .textRole(.label)
+            .foregroundStyle(Palette.inkMeta)
+            .padding(.top, 18)
             .padding(.bottom, 8)
     }
 

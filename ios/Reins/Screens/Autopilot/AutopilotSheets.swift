@@ -16,11 +16,11 @@ struct AutopilotGroup<Content: View>: View {
             } else if let header {
                 SectionHeader(header).padding(.horizontal, 12)
             }
+            // Hairlines, never cards: a rule above and below, and between the rows (`RowDivider`).
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
+                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
             if let footer { GroupFooter(footer).padding(.horizontal, 12) }
         }
     }
@@ -31,7 +31,7 @@ struct RowDivider: View {
     var inset: CGFloat = 16
 
     var body: some View {
-        Rectangle().fill(Palette.hairline).frame(height: 0.5).padding(.leading, inset)
+        Rectangle().fill(Palette.rule).frame(height: 1).padding(.leading, inset)
     }
 }
 
@@ -121,12 +121,20 @@ enum TimedMode: Hashable {
     var more: [UInt32] { self == .bypass ? AutopilotText.bypassMoreMinutes : AutopilotText.overnightMoreMinutes }
 
     /// "Bypass every AI?", "Overnight for Claude?".
-    func title(who: String?) -> String {
+    func title(who: String?) -> String { let t = titleRuns(who: who); return t.lead + t.italic }
+
+    /// The question in the serif: its lead, and what it is for in italic ("Bypass *every AI?*"). An AI's name is one
+    /// short clean line.
+    func titleRuns(who: String?) -> (lead: String, italic: String) {
+        let whom = who.map { untrustedName($0, limit: 40) }.flatMap { $0.isEmpty ? nil : $0 } ?? "every AI"
         switch self {
-        case .bypass: who.map { "Bypass \(untrusted($0))?" } ?? "Bypass every AI?"
-        case .overnight: "\(AutopilotText.overnightName) for \(who.map(untrusted) ?? "every AI")?"
+        case .bypass: return ("Bypass ", "\(whom)?")
+        case .overnight: return ("\(AutopilotText.overnightName) for ", "\(whom)?")
         }
     }
+
+    /// Its solid tile's colour: the field it runs as (red for a bypass, violet for Overnight).
+    var field: FieldKind { self == .bypass ? .delete : .grant }
 
     /// The title of its Custom sheet.
     var forTitle: String { self == .bypass ? "Bypass for" : "\(AutopilotText.overnightName) for" }
@@ -193,15 +201,17 @@ struct WhenRiskyPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(AutopilotText.whenRiskyTitle)
-                .font(RFont.sans(13.5, .medium))
-                .foregroundStyle(Palette.secondary)
+                .textRole(.meta)
+                .foregroundStyle(Palette.ink2)
                 .padding(.horizontal, 4)
-            Segments(items: [
-                SegmentItem(id: OvernightRisky.wait, title: AutopilotText.whenRiskyWait, identifier: "whenRisky:wait"),
-                SegmentItem(id: OvernightRisky.deny, title: AutopilotText.whenRiskyDeny, identifier: "whenRisky:deny"),
-            ], selected: selected) { pick in
-                if pick != selected { onPick(pick) }
-            }
+            Chooser([
+                Chooser.Segment(id: "whenRisky:wait", title: AutopilotText.whenRiskyWait, selected: selected == .wait) {
+                    if selected != .wait { onPick(.wait) }
+                },
+                Chooser.Segment(id: "whenRisky:deny", title: AutopilotText.whenRiskyDeny, selected: selected == .deny) {
+                    if selected != .deny { onPick(.deny) }
+                },
+            ])
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
@@ -239,62 +249,46 @@ struct TimedModeSheet<Extra: View>: View {
         }
     }
 
-    private var items: [SegmentItem<Pick>] {
-        let presets = kind.presets.map { m in
-            SegmentItem(id: Pick.preset(m), title: AutopilotText.lengthLabel(minutes: m), identifier: kind.id("bypass:\(m)"))
-        }
-        let off = custom == .untilOff
-        return presets + [SegmentItem(
-            id: Pick.custom, title: custom?.label ?? "Custom", symbol: off ? "infinity" : nil, chevron: true,
-            tint: off ? kind.tint : nil, identifier: kind.id("bypass:custom")
-        )]
-    }
-
     var body: some View {
         ScrollView {
-            VStack(spacing: 0) {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(kind.tint.opacity(0.16))
-                    .frame(width: 56, height: 56)
-                    .overlay {
-                        Image(systemName: kind.symbol)
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(kind.tint)
-                    }
+            VStack(alignment: .leading, spacing: 0) {
+                // The heaviest decision in the app: the mode's solid tile, the question in the serif.
+                Image(systemName: kind.symbol)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(Palette.onField)
+                    .frame(width: 52, height: 52)
+                    .fieldBackground(kind.field, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .accessibilityHidden(true)
-                Text(kind.title(who: who))
-                    .font(RFont.sans(22, .semibold))
-                    .foregroundStyle(Palette.text)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 14)
+                let title = kind.titleRuns(who: who)
+                AskText([AskText.Run(text: title.lead), AskText.Run(text: title.italic, target: true)], role: .sheetTitle)
+                    .foregroundStyle(Palette.ink)
+                    .padding(.top, 16)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(title.lead + title.italic)
                     .accessibilityAddTraits(.isHeader)
-                HelpLine(text: line, help: help, alignment: .center)
-                    .padding(.top, 6)
-                Segments(items: items, selected: pick) { choice in
-                    if choice == .custom {
-                        choosing = true
-                    } else {
-                        picked = choice
-                    }
-                }
-                .padding(.top, 18)
-                extra
-                HStack(spacing: 10) {
-                    Button("Cancel") { dismiss() }
-                        .buttonStyle(CapsuleButtonStyle(kind: .secondary, height: 50))
-                        .accessibilityIdentifier(kind.id("cancelBypass"))
-                    HoldButton(title: kind.holdTitle(length), symbol: kind.symbol, height: 50) { confirm(length) }
-                        .layoutPriority(1)
-                        .accessibilityIdentifier(kind.id("confirmBypass"))
-                }
-                .padding(.top, 20)
-                Text(HoldButton.hint)
-                    .font(RFont.sans(12))
-                    .foregroundStyle(Palette.tertiary)
+                HelpLine(text: line, help: help, alignment: .leading)
                     .padding(.top, 8)
+                Chooser(kind.presets.map { m in
+                    Chooser.Segment(id: kind.id("bypass:\(m)"), title: AutopilotText.lengthLabel(minutes: m), selected: pick == .preset(m)) {
+                        picked = .preset(m)
+                    }
+                } + [Chooser.Segment(id: kind.id("bypass:custom"), title: custom?.label ?? "Custom", selected: pick == .custom, more: true) {
+                    choosing = true
+                }])
+                .padding(.top, 20)
+                extra
+                HoldButton(title: kind.holdTitle(length), tint: kind.tint, symbol: kind.symbol) { confirm(length) }
+                    .accessibilityIdentifier(kind.id("confirmBypass"))
+                    .padding(.top, 22)
+                Button("Cancel") { dismiss() }
+                    .font(RFont.sans(15, .medium))
+                    .foregroundStyle(Palette.ink2)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityIdentifier(kind.id("cancelBypass"))
+                    .padding(.top, 4)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 24)
+            .padding(.horizontal, 24)
+            .padding(.top, 28)
             .padding(.bottom, 16)
         }
         .scrollBounceBehavior(.basedOnSize)
