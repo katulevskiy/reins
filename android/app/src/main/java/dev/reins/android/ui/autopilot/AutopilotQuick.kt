@@ -94,6 +94,7 @@ import dev.reins.android.feedback.play
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.ModelState
+import dev.reins.core.OvernightRisky
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -137,8 +138,8 @@ object QuickStyles {
 
 /**
  * The compact Autopilot switcher, rising from the round button at the bottom right. A tap outside or Back closes it;
- * "More" opens the full page. Lockdown is one tap (it only takes power away); Bypass opens the bypass sheet (how long,
- * then a hold), and [onBypass] gets its minutes (null: until turned off).
+ * "More" opens the full page. Lockdown is one tap (it only takes power away); Bypass and Overnight open their sheets
+ * (how long, then a hold), and [onBypass] / [onOvernight] get the minutes (null: until turned off).
  */
 @Composable
 fun AutopilotQuick(
@@ -150,16 +151,25 @@ fun AutopilotQuick(
     onMore: () -> Unit,
     onDismiss: () -> Unit,
     onBypass: (UInt?) -> Unit = {},
+    onOvernight: (UInt?) -> Unit = {},
+    onStopOvernight: () -> Unit = {},
+    onWhenRisky: (OvernightRisky) -> Unit = {},
 ) {
     val c = LocalColors.current
     val shown = remember { MutableTransitionState(false) }
     var bypassSheet by remember { mutableStateOf(false) }
+    var overnightSheet by remember { mutableStateOf(false) }
     shown.targetState = open && settings != null
-    if (!shown.currentState && !shown.targetState && shown.isIdle && !bypassSheet) return
+    if (!shown.currentState && !shown.targetState && shown.isIdle && !bypassSheet && !overnightSheet) return
     val askBypass = {
         bypassSheet = true
         onDismiss()
     }
+    val askOvernight = {
+        overnightSheet = true
+        onDismiss()
+    }
+    val stop = { kind: TimedKind -> if (kind == TimedKind.Bypass) onStopBypass() else onStopOvernight() }
     BackHandler(enabled = open, onBack = onDismiss)
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(shown, enter = fadeIn(tween(120)), exit = fadeOut(tween(120))) {
@@ -194,12 +204,21 @@ fun AutopilotQuick(
                 val s = settings ?: return@AnimatedVisibility
                 val modelReady = s.model.state == ModelState.INSTALLED
                 when (style) {
-                    QuickStyle.Slider -> SliderCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss, askBypass)
-                    else -> MenuCard(s, modelReady, onSet, onStopBypass, onMore, onDismiss, askBypass)
+                    QuickStyle.Slider -> SliderCard(s, modelReady, onSet, stop, onMore, onDismiss, askBypass, askOvernight)
+                    else -> MenuCard(s, modelReady, onSet, stop, onMore, onDismiss, askBypass, askOvernight)
                 }
             }
         }
         BypassSheets(bypassSheet, who = null, onStart = onBypass, onClose = { bypassSheet = false })
+        OvernightSheets(
+            overnightSheet,
+            who = null,
+            risky = settings?.overnightWhenRisky ?: OvernightRisky.WAIT,
+            ratesRisk = settings?.model?.risk == true,
+            onRisky = onWhenRisky,
+            onStart = onOvernight,
+            onClose = { overnightSheet = false },
+        )
     }
 }
 
@@ -207,21 +226,23 @@ fun AutopilotQuick(
 
 /**
  * The quick menu, dropped from the header's mode pill: Manual and Auto side by side (the one in force outlined in its
- * colour), Bypass and Lock down under them, then the Autopilot page. A running bypass is the Bypass button itself
- * ("Bypass on · 8:12", tap to stop), and a lockdown the Lock down button: there is no other Stop.
+ * colour), Overnight under them, then Bypass and Lock down, then the Autopilot page. A running bypass or Overnight is
+ * its button itself ("Bypass on · 8:12", tap to stop), and a lockdown the Lock down button: there is no other Stop.
  */
 @Composable
 private fun MenuCard(
     s: AutopilotSettings,
     modelReady: Boolean,
     onSet: (AutopilotMode, UInt?) -> Unit,
-    onStopBypass: () -> Unit,
+    onStop: (TimedKind) -> Unit,
     onMore: () -> Unit,
     onDismiss: () -> Unit,
     onAskBypass: () -> Unit,
+    onAskOvernight: () -> Unit,
 ) {
     val c = LocalColors.current
     val bypass = s.mode == AutopilotMode.BYPASS
+    val overnight = s.mode == AutopilotMode.OVERNIGHT
     val lockdown = s.mode == AutopilotMode.LOCKDOWN
     val shape = RoundedCornerShape(22.dp)
     Column(
@@ -240,7 +261,7 @@ private fun MenuCard(
                 QuickModeCard(
                     mode,
                     selected = s.mode == mode,
-                    quiet = bypass || lockdown,
+                    quiet = bypass || overnight || lockdown,
                     line = if (needs) "Needs the model" else AutopilotText.heroLine(mode),
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                 ) {
@@ -249,18 +270,42 @@ private fun MenuCard(
                 }
             }
         }
+        if (overnight) {
+            val until = s.overnightUntil
+            QuickStateButton(
+                title = "${AutopilotText.OVERNIGHT} on",
+                until = until?.takeUnless { AutopilotText.isUntilOff(it) },
+                hint = "Tap to stop",
+                background = c.night,
+                foreground = onTimed(TimedKind.Overnight, c),
+                modifier = Modifier.padding(top = 8.dp).fillMaxWidth().testTag("quick:OVERNIGHT"),
+                clockTag = "quickOvernightLeft",
+            ) {
+                onStop(TimedKind.Overnight)
+                onDismiss()
+            }
+        } else {
+            QuickButton(
+                AutopilotText.OVERNIGHT,
+                OvernightIcon,
+                c.night.copy(alpha = 0.13f),
+                c.night,
+                Modifier.padding(top = 8.dp).fillMaxWidth().testTag("quick:OVERNIGHT"),
+                onClick = onAskOvernight,
+            )
+        }
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (bypass) {
                 val until = s.bypassUntil
                 QuickStateButton(
-                    title = if (until == null || AutopilotText.isUntilOff(until)) "Bypass on" else null,
+                    title = "Bypass on",
                     until = until?.takeUnless { AutopilotText.isUntilOff(it) },
                     hint = "Tap to stop",
                     background = c.danger,
-                    foreground = if (c.dark) Color(0xFF2A0606) else Color.White,
+                    foreground = onTimed(TimedKind.Bypass, c),
                     modifier = Modifier.weight(1f).testTag("quick:BYPASS"),
                 ) {
-                    onStopBypass()
+                    onStop(TimedKind.Bypass)
                     onDismiss()
                 }
             } else {
@@ -337,15 +382,16 @@ private fun QuickModeCard(mode: AutopilotMode, selected: Boolean, quiet: Boolean
     }
 }
 
-/** A button of the menu that is also a state: "Bypass on · 8:12" over "Tap to stop". */
+/** A button of the menu that is also a state: "Bypass on · 8:12" ([title] and the time left) over "Tap to stop". */
 @Composable
 private fun QuickStateButton(
-    title: String?,
+    title: String,
     until: Long?,
     hint: String,
     background: Color,
     foreground: Color,
     modifier: Modifier,
+    clockTag: String = "quickBypassLeft",
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(14.dp)
@@ -361,9 +407,9 @@ private fun QuickStateButton(
     ) {
         if (until != null) {
             val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
-            RText("Bypass on · ${AutopilotText.clock(until, now)}", RType.sans(14f, FontWeight.SemiBold), foreground, Modifier.testTag("quickBypassLeft"), maxLines = 1)
+            RText("$title · ${AutopilotText.clock(until, now)}", RType.sans(14f, FontWeight.SemiBold), foreground, Modifier.testTag(clockTag), maxLines = 1)
         } else {
-            RText(title.orEmpty(), RType.sans(14f, FontWeight.SemiBold), foreground, maxLines = 1)
+            RText(title, RType.sans(14f, FontWeight.SemiBold), foreground, maxLines = 1)
         }
         RText(hint, RType.sans(11f, FontWeight.Medium), foreground.copy(alpha = 0.75f), maxLines = 1)
     }
@@ -380,10 +426,11 @@ private fun SliderCard(
     s: AutopilotSettings,
     modelReady: Boolean,
     onSet: (AutopilotMode, UInt?) -> Unit,
-    onStopBypass: () -> Unit,
+    onStop: (TimedKind) -> Unit,
     onMore: () -> Unit,
     onDismiss: () -> Unit,
     onAskBypass: () -> Unit,
+    onAskOvernight: () -> Unit,
 ) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
@@ -408,11 +455,12 @@ private fun SliderCard(
         scope.launch { pos.animateTo(index.toFloat(), spring(dampingRatio = 0.7f, stiffness = 600f)) }
         val mode = modes[index]
         when {
-            // Turning a bypass on is held to confirm on its sheet; the thumb goes back to the mode in force meanwhile.
-            mode == AutopilotMode.BYPASS && s.mode != AutopilotMode.BYPASS -> {
+            // Turning a bypass or Overnight on is held to confirm on its sheet; the thumb goes back to the mode in
+            // force meanwhile.
+            AutopilotText.isTimed(mode) && s.mode != mode -> {
                 detent = current
                 scope.launch { pos.animateTo(current.toFloat(), spring(dampingRatio = 0.75f, stiffness = 500f)) }
-                onAskBypass()
+                if (mode == AutopilotMode.BYPASS) onAskBypass() else onAskOvernight()
             }
             mode != s.mode -> {
                 onSet(mode, null)
@@ -442,7 +490,7 @@ private fun SliderCard(
                 val needs = !modelReady && AutopilotText.needsModel(shown)
                 RText(if (needs) "Needs the model" else AutopilotText.line(shown), RType.sans(13f), c.secondary, maxLines = 1)
             }
-            if (s.mode == AutopilotMode.BYPASS && s.bypassUntil != null) BypassLeft(s.bypassUntil!!)
+            running(s)?.let { TimeLeft(it.kind, it.until) }
         }
         Spacer(Modifier.height(18.dp))
         RiskTrack(at, tint, risk, modes, detent, onMove = { index ->
@@ -453,7 +501,12 @@ private fun SliderCard(
         }, onDrag = { value -> scope.launch { pos.snapTo(value) } }, onRelease = ::land)
         if (s.mode == AutopilotMode.BYPASS) {
             QuickButton("Stop bypass", null, c.danger.copy(alpha = 0.12f), c.danger, Modifier.padding(top = 14.dp).fillMaxWidth().testTag("quickStopBypass")) {
-                onStopBypass()
+                onStop(TimedKind.Bypass)
+                onDismiss()
+            }
+        } else if (s.mode == AutopilotMode.OVERNIGHT) {
+            QuickButton("Stop ${AutopilotText.OVERNIGHT}", null, c.night.copy(alpha = 0.13f), c.night, Modifier.padding(top = 14.dp).fillMaxWidth().testTag("quickStopOvernight")) {
+                onStop(TimedKind.Overnight)
                 onDismiss()
             }
         }
@@ -608,14 +661,16 @@ private fun QuickButton(title: String, icon: ImageVector?, background: Color, fo
     }
 }
 
-/** A running bypass's time left, ticking. */
+/** A running bypass's or Overnight's time left, ticking, in its colour. */
 @Composable
-private fun BypassLeft(until: Long) {
+private fun TimeLeft(kind: TimedKind, until: Long) {
     val c = LocalColors.current
+    val tint = kind.tint(c)
+    val tag = if (kind == TimedKind.Bypass) "quickBypassLeft" else "quickOvernightLeft"
     if (AutopilotText.isUntilOff(until)) {
-        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.AllInclusive, "No end", Modifier.size(18.dp).testTag("quickBypassLeft"), tint = c.danger)
+        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.AllInclusive, "No end", Modifier.size(18.dp).testTag(tag), tint = tint)
         return
     }
     val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
-    RText(AutopilotText.clock(until, now), RType.mono(13f, FontWeight.SemiBold), c.danger, Modifier.testTag("quickBypassLeft"), maxLines = 1)
+    RText(AutopilotText.clock(until, now), RType.mono(13f, FontWeight.SemiBold), tint, Modifier.testTag(tag), maxLines = 1)
 }

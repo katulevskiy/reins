@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -25,8 +26,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AllInclusive
-import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Fingerprint
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Warning
@@ -45,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -61,6 +63,7 @@ import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.HelpText
 import dev.reins.android.design.HoldButton
 import dev.reins.android.design.LocalColors
+import dev.reins.android.design.RColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.design.pressable
@@ -71,6 +74,8 @@ import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.settings.BottomSheet
 import dev.reins.android.ui.settings.HelpIcon
 import dev.reins.android.ui.settings.settingsCard
+import dev.reins.core.AutopilotMode
+import dev.reins.core.OvernightRisky
 
 /** What the "Bypass for" sheet has picked. */
 private sealed interface Longer {
@@ -80,14 +85,123 @@ private sealed interface Longer {
 }
 
 /**
+ * The modes turned on for a while after a hold and the owner's check, which share these sheets. Each has its own
+ * colour, icon, words and test tags (Bypass keeps the tags it always had).
+ */
+enum class TimedKind(val mode: AutopilotMode, private val tag: String) {
+    Bypass(AutopilotMode.BYPASS, "bypass"),
+    Overnight(AutopilotMode.OVERNIGHT, "overnight"),
+    ;
+
+    private val cap get() = tag.replaceFirstChar(Char::uppercaseChar)
+
+    /** "bypassSheet", "overnightLength:15", … */
+    fun tag(part: String): String = tag + part
+
+    /** "confirmBypass", "cancelOvernight", … */
+    fun action(verb: String, suffix: String = ""): String = verb + cap + suffix
+
+    val warningTag: String get() = if (this == Bypass) "untilOffWarning" else tag("UntilOffWarning")
+
+    fun tint(c: RColors): Color = modeTint(mode, c)
+
+    val icon: ImageVector get() = modeIcon(mode)
+
+    fun hold(untilOff: Boolean): String = when (this) {
+        Bypass -> if (untilOff) "Hold to bypass until off" else "Hold to bypass"
+        Overnight -> if (untilOff) "Hold to start until off" else "Hold to start"
+    }
+
+    /** The second sheet's title: "Bypass for", "Overnight for". */
+    val forTitle: String get() = "${AutopilotText.name(mode)} for"
+}
+
+/**
  * Turning a bypass on, from the Autopilot page, an AI's page or the quick menu: how long (15 min, 1 hour, 1 day, or
  * Custom, which opens "Bypass for": 4 hours, 1 week, a number of the user's own, or until turned off), then a hold.
  * [who] names the AI for a bypass of one; null is every AI. [onStart] gets the minutes, or null for until turned off.
  */
 @Composable
 fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit, onClose: () -> Unit) {
+    TimedSheets(
+        TimedKind.Bypass,
+        open,
+        title = if (who == null) "Bypass every AI?" else "Bypass ${untrusted(who)}?",
+        line = "Approved without asking. Sent means sent.",
+        helpTopic = "what bypass still asks",
+        helpText = AutopilotText.BYPASS_HELP,
+        untilOffTitle = "Everything is approved without asking until you stop it.",
+        stillAsks = AutopilotText.BYPASS_STILL_ASKS,
+        onStart = onStart,
+        onClose = onClose,
+    )
+}
+
+/**
+ * Turning Overnight on, like a bypass ([BypassSheets]: how long, a hold, then the owner's check), with what it does to
+ * a request too risky to decide ([risky], changed at once with [onRisky]). Its (?) says what it weighs, or, when the
+ * model does not rate risk ([ratesRisk] false), that it decides like Auto.
+ */
+@Composable
+fun BoxScope.OvernightSheets(
+    open: Boolean,
+    who: String?,
+    risky: OvernightRisky,
+    ratesRisk: Boolean,
+    onRisky: (OvernightRisky) -> Unit,
+    onStart: (UInt?) -> Unit,
+    onClose: () -> Unit,
+) {
+    val c = LocalColors.current
+    TimedSheets(
+        TimedKind.Overnight,
+        open,
+        title = AutopilotText.overnightTitle(who),
+        line = AutopilotText.overnightLine(risky),
+        helpTopic = AutopilotText.OVERNIGHT,
+        helpText = AutopilotText.overnightHelp(ratesRisk),
+        untilOffTitle = "Decides for you until you stop it.",
+        stillAsks = AutopilotText.overnightStillAsks(risky),
+        onStart = onStart,
+        onClose = onClose,
+    ) {
+        RText(
+            AutopilotText.WHEN_RISKY,
+            RType.sans(13f, FontWeight.Medium),
+            c.secondary,
+            Modifier.padding(start = 22.dp, end = 22.dp, top = 16.dp, bottom = 8.dp),
+            maxLines = 1,
+        )
+        Segmented(
+            AutopilotText.whenRiskyChoices,
+            risky,
+            AutopilotText::whenRiskyLabel,
+            Modifier.padding(horizontal = 16.dp).testTag("overnightRisky"),
+            tag = { "overnightRisky:${it.name}" },
+            onSelect = onRisky,
+        )
+    }
+}
+
+/** The sheets of a [TimedKind]: how long and a hold, then "… for" with longer lengths and no end. */
+@Composable
+private fun BoxScope.TimedSheets(
+    kind: TimedKind,
+    open: Boolean,
+    title: String,
+    line: String,
+    helpTopic: String,
+    helpText: String,
+    untilOffTitle: String,
+    stillAsks: String,
+    onStart: (UInt?) -> Unit,
+    onClose: () -> Unit,
+    /** Under the lengths, before the hold (Overnight's setting). */
+    extra: @Composable ColumnScope.() -> Unit = {},
+) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
+    val tint = kind.tint(c)
     // The length picked in the first sheet; [custom] when it came from "Bypass for" (then shown in its segment).
     var minutes by remember { mutableStateOf<UInt?>(60u) }
     var custom by remember { mutableStateOf(false) }
@@ -115,26 +229,27 @@ fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit,
         onStart(m)
     }
 
-    BottomSheet(open, null, onClose = onClose, tag = "bypassSheet") {
+    BottomSheet(open, null, onClose = onClose, tag = kind.tag("Sheet")) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(56.dp).clip(RoundedCornerShape(18.dp)).background(c.danger.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Bolt, null, Modifier.size(30.dp), tint = c.danger)
+            Box(Modifier.size(56.dp).clip(RoundedCornerShape(18.dp)).background(tint.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+                Icon(kind.icon, null, Modifier.size(30.dp), tint = tint)
             }
             RText(
-                if (who == null) "Bypass every AI?" else "Bypass ${untrusted(who)}?",
+                title,
                 RType.sans(22f, FontWeight.SemiBold),
                 c.text,
-                Modifier.padding(top = 14.dp).testTag("bypassTitle"),
+                Modifier.padding(top = 14.dp).testTag(kind.tag("Title")),
                 maxLines = 2,
                 align = TextAlign.Center,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                RText("Approved without asking. Sent means sent.", RType.sans(14f), c.secondary, maxLines = 2)
-                HelpIcon(help, "what bypass still asks") { help = it }
+                RText(line, RType.sans(14f), c.secondary, Modifier.testTag(kind.tag("SheetLine")), maxLines = 2)
+                HelpIcon(help, helpTopic) { help = it }
             }
-            HelpText(AutopilotText.BYPASS_HELP, help, Modifier.padding(bottom = 6.dp))
+            HelpText(helpText, help, Modifier.padding(bottom = 6.dp).testTag(kind.tag("Help")))
         }
         LengthSegments(
+            kind,
             minutes = minutes,
             custom = custom,
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
@@ -147,16 +262,17 @@ fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit,
                 moreOpen = true
             },
         )
+        extra()
         Row(
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 18.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CapsuleButton("Cancel", Modifier.weight(1f).testTag("cancelBypass"), style = ButtonStyle.Secondary, onClick = onClose)
+            CapsuleButton("Cancel", Modifier.weight(1f).testTag(kind.action("cancel")), style = ButtonStyle.Secondary, onClick = onClose)
             HoldButton(
-                if (minutes == null) "Hold to bypass until off" else "Hold to bypass",
-                c.danger,
-                Modifier.weight(if (minutes == null) 2.4f else 1.35f).testTag("confirmBypass"),
+                kind.hold(untilOff = minutes == null),
+                tint,
+                Modifier.weight(if (minutes == null) 2.4f else 1.35f).testTag(kind.action("confirm")),
                 // The longer label takes the icon's room.
                 icon = if (minutes == null) null else Icons.Rounded.Fingerprint,
                 height = 50.dp,
@@ -165,26 +281,26 @@ fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit,
         RText("Hold for 2 seconds", RType.sans(12f), c.tertiary, Modifier.fillMaxWidth().padding(top = 8.dp), align = TextAlign.Center)
     }
 
-    BottomSheet(open && moreOpen, "Bypass for", onClose = {
+    BottomSheet(open && moreOpen, kind.forTitle, onClose = {
         // Closing keeps the pick: it shows in the Custom segment of the first sheet.
         minutes = longerMinutes
         custom = true
         moreOpen = false
-    }, tag = "bypassForSheet") {
+    }, tag = kind.tag("ForSheet")) {
         Column(Modifier.padding(horizontal = 16.dp).settingsCard(c)) {
             AutopilotText.bypassMoreMinutes.forEach { m ->
-                LongerRow(Longer.Preset(m) == longer, "bypassFor:$m", { longer = Longer.Preset(m) }) {
+                LongerRow(Longer.Preset(m) == longer, kind.tag("For:$m"), { longer = Longer.Preset(m) }) {
                     RText(AutopilotText.lengthLabel(m), RType.sans(15.5f), c.text, Modifier.weight(1f), maxLines = 1)
                 }
             }
-            LongerRow(longer == Longer.Own, "bypassFor:own", { longer = Longer.Own }) {
+            LongerRow(longer == Longer.Own, kind.tag("For:own"), { longer = Longer.Own }) {
                 RText("Custom", RType.sans(15.5f), c.text, Modifier.weight(1f), maxLines = 1)
-                Stepper(count, unit.max) {
+                Stepper(kind, count, unit.max) {
                     count = it
                     longer = Longer.Own
                 }
                 Spacer(Modifier.width(6.dp))
-                UnitMenu(unit) {
+                UnitMenu(kind, unit) {
                     unit = it
                     count = count.coerceAtMost(it.max)
                     longer = Longer.Own
@@ -198,14 +314,14 @@ fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit,
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(24.dp))
-                .background(c.danger.copy(alpha = if (untilOff) 0.08f else 0.04f))
-                .border(1.dp, c.danger.copy(alpha = 0.32f), RoundedCornerShape(24.dp)),
+                .background(tint.copy(alpha = if (untilOff) 0.08f else 0.04f))
+                .border(1.dp, tint.copy(alpha = 0.32f), RoundedCornerShape(24.dp)),
         ) {
-            LongerRow(untilOff, "bypassFor:untilOff", { longer = Longer.UntilOff }, tint = c.danger) {
-                Icon(Icons.Rounded.AllInclusive, null, Modifier.size(22.dp), tint = c.danger)
+            LongerRow(untilOff, kind.tag("For:untilOff"), { longer = Longer.UntilOff }, tint = tint) {
+                Icon(Icons.Rounded.AllInclusive, null, Modifier.size(22.dp), tint = tint)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    RText("Until I turn it off", RType.sans(15.5f, FontWeight.SemiBold), c.danger, maxLines = 1)
+                    RText("Until I turn it off", RType.sans(15.5f, FontWeight.SemiBold), tint, maxLines = 1)
                     RText("No end time", RType.sans(12.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
                 }
             }
@@ -216,37 +332,37 @@ fun BoxScope.BypassSheets(open: Boolean, who: String?, onStart: (UInt?) -> Unit,
                     .padding(start = 16.dp, end = 16.dp, top = 10.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(c.danger.copy(alpha = 0.10f))
-                    .border(1.dp, c.danger.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
+                    .background(tint.copy(alpha = 0.10f))
+                    .border(1.dp, tint.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
                     .padding(horizontal = 14.dp, vertical = 12.dp)
-                    .testTag("untilOffWarning"),
+                    .testTag(kind.warningTag),
             ) {
-                Icon(Icons.Rounded.Warning, null, Modifier.padding(top = 1.dp).size(18.dp), tint = c.danger)
+                Icon(if (kind == TimedKind.Bypass) Icons.Rounded.Warning else Icons.Rounded.Info, null, Modifier.padding(top = 1.dp).size(18.dp), tint = tint)
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    RText("Everything is approved without asking until you stop it.", RType.sans(13.5f, FontWeight.SemiBold, lineHeight = 19f), c.danger)
-                    RText(AutopilotText.BYPASS_STILL_ASKS, RType.sans(13.5f, lineHeight = 19f), c.secondary)
+                    RText(untilOffTitle, RType.sans(13.5f, FontWeight.SemiBold, lineHeight = 19f), tint)
+                    RText(stillAsks, RType.sans(13.5f, lineHeight = 19f), c.secondary)
                 }
             }
         }
         HoldButton(
-            if (untilOff) "Hold to bypass until off" else "Hold to bypass",
-            c.danger,
-            Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth().testTag("confirmBypassFor"),
+            kind.hold(untilOff),
+            tint,
+            Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp).fillMaxWidth().testTag(kind.action("confirm", "For")),
             height = 50.dp,
         ) { start(longerMinutes) }
     }
 }
 
-/** 15 min | 1 hour | 1 day | Custom ▾, the custom value shown in its segment once picked (red when it has no end). */
+/** 15 min | 1 hour | 1 day | Custom ▾, the custom value shown in its segment once picked (in the mode's colour when it has no end). */
 @Composable
-private fun LengthSegments(minutes: UInt?, custom: Boolean, modifier: Modifier, onPreset: (UInt) -> Unit, onCustom: () -> Unit) {
+private fun LengthSegments(kind: TimedKind, minutes: UInt?, custom: Boolean, modifier: Modifier, onPreset: (UInt) -> Unit, onCustom: () -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
     Row(modifier.fillMaxWidth().height(44.dp).clip(CircleShape).background(c.controlFill).padding(4.dp)) {
         AutopilotText.bypassMinutes.forEach { m ->
             val on = !custom && minutes == m
-            Segment(on, Modifier.weight(1f).testTag("bypassLength:$m"), onClick = {
+            Segment(on, Modifier.weight(1f).testTag(kind.tag("Length:$m")), onClick = {
                 if (!on) {
                     onPreset(m)
                     feedback.play(Event.Selection)
@@ -255,11 +371,11 @@ private fun LengthSegments(minutes: UInt?, custom: Boolean, modifier: Modifier, 
         }
         val untilOff = custom && minutes == null
         val fg = when {
-            untilOff -> c.danger
+            untilOff -> kind.tint(c)
             custom -> c.text
             else -> c.secondary
         }
-        Segment(custom, Modifier.weight(1.25f).testTag("bypassLength:custom"), onClick = onCustom) {
+        Segment(custom, Modifier.weight(1.25f).testTag(kind.tag("Length:custom")), onClick = onCustom) {
             if (untilOff) {
                 Icon(Icons.Rounded.AllInclusive, null, Modifier.size(15.dp), tint = fg)
                 Spacer(Modifier.width(3.dp))
@@ -323,12 +439,12 @@ private fun LongerRow(
 
 /** − 3 + : a number of the user's own. */
 @Composable
-private fun Stepper(value: Int, max: Int, onChange: (Int) -> Unit) {
+private fun Stepper(kind: TimedKind, value: Int, max: Int, onChange: (Int) -> Unit) {
     val c = LocalColors.current
     Row(Modifier.height(36.dp).clip(RoundedCornerShape(11.dp)).background(c.controlFill), verticalAlignment = Alignment.CenterVertically) {
-        StepButton(Icons.Rounded.Remove, "Fewer", value > 1, "bypassStepper-") { onChange(value - 1) }
-        RText("$value", RType.mono(15f, FontWeight.Medium), c.text, Modifier.width(30.dp).testTag("bypassCount"), maxLines = 1, align = TextAlign.Center)
-        StepButton(Icons.Rounded.Add, "More", value < max, "bypassStepper+") { onChange(value + 1) }
+        StepButton(Icons.Rounded.Remove, "Fewer", value > 1, kind.tag("Stepper-")) { onChange(value - 1) }
+        RText("$value", RType.mono(15f, FontWeight.Medium), c.text, Modifier.width(30.dp).testTag(kind.tag("Count")), maxLines = 1, align = TextAlign.Center)
+        StepButton(Icons.Rounded.Add, "More", value < max, kind.tag("Stepper+")) { onChange(value + 1) }
     }
 }
 
@@ -347,7 +463,7 @@ private fun StepButton(icon: androidx.compose.ui.graphics.vector.ImageVector, la
 
 /** minutes / hours / days / weeks. */
 @Composable
-private fun UnitMenu(unit: BypassUnit, onPick: (BypassUnit) -> Unit) {
+private fun UnitMenu(kind: TimedKind, unit: BypassUnit, onPick: (BypassUnit) -> Unit) {
     val c = LocalColors.current
     var open by remember { mutableStateOf(false) }
     Box {
@@ -357,7 +473,7 @@ private fun UnitMenu(unit: BypassUnit, onPick: (BypassUnit) -> Unit) {
                 .clip(RoundedCornerShape(11.dp))
                 .background(c.controlFill)
                 .pressable(shape = RoundedCornerShape(11.dp)) { open = true }
-                .testTag("bypassUnit")
+                .testTag(kind.tag("Unit"))
                 .padding(start = 11.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -368,7 +484,7 @@ private fun UnitMenu(unit: BypassUnit, onPick: (BypassUnit) -> Unit) {
             BypassUnit.entries.forEach { u ->
                 DropdownMenuItem(
                     text = { Text(u.label) },
-                    modifier = Modifier.testTag("bypassUnit:${u.name}"),
+                    modifier = Modifier.testTag(kind.tag("Unit:${u.name}")),
                     onClick = {
                         open = false
                         onPick(u)

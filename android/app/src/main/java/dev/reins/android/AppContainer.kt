@@ -3,6 +3,7 @@ package dev.reins.android
 import android.content.Context
 import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.autopilot.ModelDownloads
+import dev.reins.android.autopilot.OvernightReturns
 import dev.reins.android.autopilot.OnnxModelRuntime
 import dev.reins.android.autopilot.WorkModelDownloads
 import dev.reins.android.core.CoreProvider
@@ -369,6 +370,15 @@ class AppContainer(private val context: Context) {
         return settings
     }
 
+    /** What Stop returns each Overnight to, remembered as it starts. */
+    val overnightReturns: OvernightReturns by lazy { OvernightReturns(context) }
+
+    /** Ends the Overnight of every AI ([connectionId] null) or of one: it goes back to the mode it interrupted. */
+    suspend fun stopOvernight(connectionId: String?) {
+        core.setAutopilotMode(connectionId, overnightReturns.stopMode(connectionId), null)
+        overnightReturns.stopped(connectionId)
+    }
+
     /** Ends every bypass now (the bypass notification's Stop): each goes back to the mode it interrupted. */
     suspend fun stopBypasses() {
         val settings = refreshAutopilot() ?: return
@@ -556,6 +566,7 @@ class AppContainer(private val context: Context) {
             GrantReminders.sync(context, emptyList())
             BypassEndWorker.schedule(context, null)
             notifier.showBypass(null)
+            overnightReturns.clear()
             context.getSystemService(android.app.NotificationManager::class.java).cancelAll()
             mcpSignIn.clear()
         }
