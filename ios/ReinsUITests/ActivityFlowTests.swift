@@ -10,7 +10,7 @@ final class ActivityFlowTests: XCTestCase {
     private func launch(_ link: String? = nil, extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         // A frozen clock keeps the countdowns still, so the app goes idle between steps.
-        app.launchArguments = ["-demo", "-noPopup", "-freezeTime", String(Int(Date().timeIntervalSince1970))] + extra + (link.map { ["-open", $0] } ?? [])
+        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities", "-freezeTime", String(Int(Date().timeIntervalSince1970))] + extra + (link.map { ["-open", $0] } ?? [])
         app.launch()
         // The first launch of a run can race xcodebuild still installing the app, which then comes up again without
         // these arguments (on the real sign-in screen): once, launch it again, and say so in the log. The demo shows

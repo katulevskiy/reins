@@ -9,7 +9,7 @@ final class SoundsScreenUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         // From the default settings: a run cut short can leave the Sounds switch off for the next one.
-        app.launchArguments = ["-demo", "-noPopup", "-resetFeedback", "-show", "sounds"]
+        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities", "-resetFeedback", "-show", "sounds"]
         app.launch()
     }
 

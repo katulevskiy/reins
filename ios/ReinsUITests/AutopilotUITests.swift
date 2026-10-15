@@ -11,7 +11,7 @@ final class AutopilotUITests: XCTestCase {
     }
 
     private func launch(_ extra: [String] = []) {
-        app.launchArguments = ["-demo", "-noPopup"] + extra
+        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities"] + extra
         app.launch()
         let tab = app.tabBars.buttons["Autopilot"].firstMatch
         if tab.waitForExistence(timeout: 10) {

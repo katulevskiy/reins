@@ -36,7 +36,21 @@ final class LiveActivityController {
         #endif
     }
 
-    static var enabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
+    static var enabled: Bool {
+        !offForTests(ProcessInfo.processInfo.arguments, debug: isDebug) && ActivityAuthorizationInfo().areActivitiesEnabled
+    }
+
+    /// UI tests that are not about Live Activities pass `-noLiveActivities`: none is started, so the widget extension
+    /// (which draws them) is not launched while the test runs. Only a Debug build listens.
+    nonisolated static func offForTests(_ arguments: [String], debug: Bool) -> Bool {
+        debug && arguments.contains("-noLiveActivities")
+    }
+
+    #if DEBUG
+    private static let isDebug = true
+    #else
+    private static let isDebug = false
+    #endif
 
     /// Starting needs the app in front; `inactive` counts (the moment the scene comes up or Control Center is open).
     static var canStart: Bool { enabled && UIApplication.shared.applicationState != .background }
