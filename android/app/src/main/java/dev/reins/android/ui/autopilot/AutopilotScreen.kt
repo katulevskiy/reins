@@ -103,179 +103,417 @@ import dev.reins.core.ModelStatus
 import dev.reins.core.ProfileView
 import kotlin.math.roundToInt
 
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.semantics.text
+import dev.reins.android.design.ButtonSize
+import androidx.compose.ui.draw.drawBehind
+import dev.reins.android.design.Field
+import dev.reins.android.design.FieldHeader
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.HairlineRow
+import dev.reins.android.design.LabelText
+import dev.reins.android.design.Pill
+import dev.reins.android.design.SignalButton
+import dev.reins.android.design.askString
+import dev.reins.android.design.hairlineBelow
+
+// Autopilot's part of Trust (Reins Signal, iOS-Trust / And-Core 03): the mode tiles with Lock down, Overnight and
+// Bypass, this week's numbers, the profiles, the on-device model and Try it. Each is a section Trust composes; the
+// sheets they open live in [AutopilotSheets]. The view model and every lambda are the Autopilot tab's, unchanged.
+
+/** Which of Autopilot's sheets and dialogs are open; Trust keeps one for its sections. */
+@androidx.compose.runtime.Stable
+class AutopilotSheetsState {
+    var bypass by mutableStateOf(false)
+    var overnight by mutableStateOf(false)
+    var model by mutableStateOf(false)
+    var deleteModel by mutableStateOf(false)
+    var newProfile by mutableStateOf(false)
+
+    /** A sheet covers the page: the tab bar steps aside. */
+    val covered: Boolean get() = bypass || overnight || model
+}
+
+/** The global bypass in force, else the global Overnight; null when neither is. */
+internal data class Running(val kind: TimedKind, val until: Long, val since: Long?)
+
+internal fun running(s: AutopilotSettings): Running? = when {
+    s.mode == AutopilotMode.BYPASS && s.bypassUntil != null -> Running(TimedKind.Bypass, s.bypassUntil!!, s.bypassSince)
+    s.mode == AutopilotMode.OVERNIGHT && s.overnightUntil != null -> Running(TimedKind.Overnight, s.overnightUntil!!, s.overnightSince)
+    else -> null
+}
+
+/** The field a running bypass, Overnight or lockdown puts at the top of Trust: bypass and lockdown red, Overnight violet. */
+fun trustField(s: AutopilotSettings?): Field? = when {
+    s == null -> null
+    running(s)?.kind == TimedKind.Overnight -> Field.Grant
+    running(s) != null || s.mode == AutopilotMode.LOCKDOWN -> Field.Delete
+    else -> null
+}
+
 /**
- * The Autopilot tab: the mode (Manual or Auto, then Bypass and Lock down), this week in numbers, the model that runs
- * on this phone, and the profiles that learn from the user's answers.
+ * A running bypass, Overnight or lockdown as a field at the top of Trust: what runs ("Bypass is on"), how long it has
+ * left (its own clock), what it does, and the one way out.
  */
 @Composable
-fun AutopilotScreen(
-    viewModel: AutopilotViewModel,
-    /** Null at the root of the Autopilot tab. */
-    onBack: (() -> Unit)?,
-    onProfile: (String) -> Unit,
-    onTryIt: () -> Unit,
-    state: AppState? = null,
-    /** A sheet is up: the tab bar steps aside so the sheet's buttons are not under it. */
-    onCovered: (Boolean) -> Unit = {},
-    /** The phone owner's check, before a bypass starts. */
-    authenticator: Authenticator,
-) {
+fun TrustRunningField(s: AutopilotSettings, onStop: (TimedKind) -> Unit, onEndLockdown: () -> Unit) {
     val c = LocalColors.current
-    val ui by viewModel.ui.collectAsStateWithLifecycle()
-    LaunchedEffect(viewModel) { viewModel.showingAutopilot() }
-    val settings by viewModel.settings.collectAsStateWithLifecycle()
-    val connections = state?.connections?.collectAsStateWithLifecycle()?.value.orEmpty()
-    var bypassOpen by remember { mutableStateOf(false) }
-    var overnightOpen by remember { mutableStateOf(false) }
-    var modelOpen by remember { mutableStateOf(false) }
-    var deleteAsk by remember { mutableStateOf(false) }
-    var newProfile by remember { mutableStateOf(false) }
-    var modeHelp by rememberSaveable { mutableStateOf(false) }
-    val model = ui.model ?: settings?.model
-    val modelReady = AutopilotText.modelUsable(model)
-    val covered = bypassOpen || overnightOpen || modelOpen
-    LaunchedEffect(covered) { onCovered(covered) }
-    DisposableEffect(Unit) { onDispose { onCovered(false) } }
-
-    Box(Modifier.fillMaxSize()) {
-        SettingsPage(title = "Autopilot", onBack = onBack) {
-            val s = settings
-            if (s == null) {
-                Spacer(Modifier.height(40.dp))
-                return@SettingsPage
-            }
-            ModeHeader(modeHelp, onHelp = { modeHelp = it })
-            ModeHero(
-                s,
-                modelReady,
-                onPick = { mode -> if (mode != s.mode) viewModel.setMode(mode) },
-                onBypass = { bypassOpen = true },
-                onOvernight = { overnightOpen = true },
-                onLockdown = { viewModel.setMode(AutopilotMode.LOCKDOWN) },
-                onEndLockdown = { viewModel.setMode(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL) },
-                onStop = { kind -> if (kind == TimedKind.Bypass) viewModel.stopBypass() else viewModel.stopOvernight() },
-            )
-            Column(Modifier.padding(horizontal = 16.dp)) {
-                ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "autopilotError") }
-                ui.notice?.let { Banner(it, Modifier.padding(top = 10.dp), tag = "autopilotNotice") }
-            }
-
-            if (model != null && !modelReady) {
-                GetScoreCard(model, ui.job, s.wifiOnly, onDownload = viewModel::download, onPause = viewModel::cancelDownload)
-            } else {
-                SectionHeader("This week")
-                StatTiles(
-                    listOf(
-                        Stat("${ui.stats?.scored ?: "—"}", "requests scored", tag = "statScored"),
-                        Stat(AutopilotText.share(ui.stats?.matched), "matched you", c.success, tag = "statMatched"),
-                        Stat("${ui.stats?.kindsOnAuto ?: "—"}", "kinds on Auto", tag = "statKinds"),
-                    ),
-                )
-            }
-
-            SettingsGroup(gap = 12.dp) {
-                SettingsRow(
-                    "On-device model",
-                    Modifier.testTag("openModel"),
-                    icon = Icons.Rounded.Memory,
-                    tint = c.read,
-                    valueContent = { ModelValue(model, ui.job, onUpdate = viewModel::download) },
-                ) { modelOpen = true }
-                SettingsRow(
-                    "Try it",
-                    Modifier.testTag("openTryIt"),
-                    icon = Icons.Rounded.Science,
-                    tint = c.send,
-                    value = if (modelReady) null else "after download",
-                    onClick = onTryIt,
-                )
-            }
-
-            SectionHeader("Profiles", trailing = {
-                Row(
-                    Modifier.clip(CircleShape).pressable(shape = CircleShape) { newProfile = true }.testTag("newProfile").padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Rounded.Add, null, Modifier.size(16.dp), tint = c.accent)
-                    Spacer(Modifier.width(3.dp))
-                    RText("New", RType.sans(14f, FontWeight.Medium), c.accent, maxLines = 1)
-                }
-            })
-            Column(Modifier.padding(horizontal = 16.dp).settingsCard(c)) {
-                val labels = connections.map { it.id to it.label }
-                ui.profiles.forEach { profile ->
-                    ProfileRow(profile, AutopilotText.profileLine(profile, AutopilotText.profileAis(profile, s, labels))) { onProfile(profile.id) }
-                }
-            }
-            Spacer(Modifier.height(if (onBack == null) 24.dp else 32.dp))
+    val field = trustField(s) ?: return
+    val run = running(s)
+    FieldHeader(field, Modifier.testTag("trustField")) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            LabelText("Autopilot · ${AutopilotText.name(s.mode)}", c.onField2, Modifier.weight(1f))
+            if (run != null) FieldClock(run.kind, run.until)
         }
-
-        BypassSheets(bypassOpen, who = null, onStart = { minutes -> viewModel.startBypass(minutes, authenticator = authenticator) }, onClose = { bypassOpen = false })
-        OvernightSheets(
-            overnightOpen,
-            who = null,
-            risky = settings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
-            ratesRisk = model?.risk == true,
-            onRisky = { viewModel.setOvernightWhenRisky(it, authenticator) },
-            onStart = { minutes -> viewModel.startOvernight(minutes, authenticator = authenticator) },
-            onClose = { overnightOpen = false },
+        androidx.compose.foundation.text.BasicText(
+            askString("${AutopilotText.name(s.mode)} is on", "is on"),
+            Modifier.testTag("heroMode"),
+            style = RType.sheetTitle.copy(color = c.onField),
         )
-        BottomSheet(modelOpen, "On-device model", onClose = { modelOpen = false }, tag = "modelSheet") {
-            ModelDetails(
-                model,
-                job = ui.job,
-                wifiOnly = settings?.wifiOnly ?: true,
-                onDownload = viewModel::download,
-                onCancel = viewModel::cancelDownload,
-                onDelete = { deleteAsk = true },
-                onWifiOnly = viewModel::setWifiOnly,
+        if (run != null) {
+            RunningLine(run.kind, run.until, run.since, c.onField2)
+        } else {
+            RText("Everything that would ask is denied.", RType.sans(14.5f), c.onField2, maxLines = 2)
+        }
+        if (run != null) {
+            SignalButton(
+                if (run.kind == TimedKind.Bypass) "Stop bypass" else "Stop ${AutopilotText.OVERNIGHT}",
+                Modifier.padding(top = 4.dp).testTag(run.kind.action("stop")),
+                style = dev.reins.android.design.ButtonStyle.OnFieldWhite,
+                size = ButtonSize.Small,
+            ) { onStop(run.kind) }
+        } else {
+            SignalButton(
+                "End lockdown",
+                Modifier.padding(top = 4.dp).testTag("endLockdown"),
+                style = dev.reins.android.design.ButtonStyle.OnFieldWhite,
+                size = ButtonSize.Small,
+                glyph = Glyph.LockOpen,
+                onClick = onEndLockdown,
             )
         }
     }
+}
 
-    if (deleteAsk) {
-        ConfirmDialog(
+/** A timed mode's time left on its field: a white ring and m:ss, or the infinity sign without an end. Its own clock. */
+@Composable
+private fun FieldClock(kind: TimedKind, until: Long) {
+    val c = LocalColors.current
+    if (AutopilotText.isUntilOff(until)) {
+        GlyphIcon(Glyph.Infinity, c.onField, modifier = Modifier.semantics { contentDescription = "${AutopilotText.name(kind.mode)} until you stop it" }.testTag(kind.tag("UntilOff")), size = 20.dp)
+        return
+    }
+    val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        dev.reins.android.design.Ring(AutopilotText.bypassFraction(until, null, now), c.onField, c.onField.copy(alpha = 0.25f), 18.dp)
+        RText(AutopilotText.clock(until, now), RType.mono(13.5f), c.onField, Modifier.testTag(kind.tag("Clock")), maxLines = 1, ltr = true)
+    }
+}
+
+/** "Approving without asking", or "On until you stop it · 2 days so far" (its own clock, so only it recomposes). */
+@Composable
+private fun RunningLine(kind: TimedKind, until: Long, since: Long?, color: Color) {
+    val now = rememberNowMillis(60_000) / 1000
+    RText(AutopilotText.runningLine(kind.mode, until, since, now), RType.sans(14.5f), color, Modifier.testTag(kind.tag("Line")), maxLines = 2)
+}
+
+/**
+ * The mode tiles: Manual and Auto side by side (the one in force ringed), then Lock down and Bypass, and Overnight.
+ * While a bypass or an Overnight runs, the field above has them; a lockdown keeps the tiles to pick what follows it.
+ */
+@Composable
+fun AutopilotModes(
+    s: AutopilotSettings,
+    modelReady: Boolean,
+    onPick: (AutopilotMode) -> Unit,
+    onBypass: () -> Unit,
+    onOvernight: () -> Unit,
+    onLockdown: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (running(s) != null) return
+    val lockdown = s.mode == AutopilotMode.LOCKDOWN
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(AutopilotMode.MANUAL, AutopilotMode.AUTO).forEach { mode ->
+                val needs = !modelReady && AutopilotText.needsModel(mode)
+                ModeTile(
+                    mode,
+                    selected = s.mode == mode,
+                    dimmed = needs,
+                    line = if (needs) "Needs the model" else AutopilotText.line(mode).let { if (mode == AutopilotMode.MANUAL) "You decide, with a hint" else it },
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                ) { onPick(mode) }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SignalButton(
+                if (lockdown) "Locked down" else "Lock down",
+                Modifier.weight(1f).testTag("mode:LOCKDOWN"),
+                style = dev.reins.android.design.ButtonStyle.Soft,
+                size = ButtonSize.Small,
+                glyph = Glyph.Lock,
+                enabled = !lockdown,
+                onClick = onLockdown,
+            )
+            SignalButton(
+                "Bypass…",
+                Modifier.weight(1f).testTag("mode:BYPASS"),
+                style = dev.reins.android.design.ButtonStyle.DangerWash,
+                size = ButtonSize.Small,
+                glyph = Glyph.Autopilot,
+                onClick = onBypass,
+            )
+        }
+        val c = LocalColors.current
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(CircleShape)
+                .background(c.violet.copy(alpha = 0.12f))
+                .pressable(shape = CircleShape, label = AutopilotText.OVERNIGHT, onClick = onOvernight)
+                .testTag("mode:OVERNIGHT"),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            GlyphIcon(Glyph.Moon, c.violet, size = 18.dp)
+            RText("${AutopilotText.OVERNIGHT}…", RType.sans(14.5f, FontWeight.SemiBold), c.violet, maxLines = 1)
+        }
+    }
+}
+
+/** Manual or Auto as a tile: its glyph, its name in the serif, what it does; the one in force has a 2 dp ring. */
+@Composable
+private fun ModeTile(mode: AutopilotMode, selected: Boolean, dimmed: Boolean, line: String, modifier: Modifier, onClick: () -> Unit) {
+    val c = LocalColors.current
+    val shape = RoundedCornerShape(22.dp)
+    val accent = if (mode == AutopilotMode.AUTO) c.violet else c.ink
+    val edge by animateColorAsState(if (selected) accent else c.rule, label = "modeEdge")
+    Column(
+        modifier
+            .graphicsLayer { alpha = if (dimmed) 0.5f else 1f }
+            .clip(shape)
+            .background(c.paperRaised)
+            .border(if (selected) 2.dp else 1.dp, edge, shape)
+            .pressable(shape = shape, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                this.selected = selected
+                role = Role.RadioButton
+            }
+            .testTag("mode:${mode.name}")
+            .padding(14.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            GlyphIcon(if (mode == AutopilotMode.AUTO) Glyph.Autopilot else Glyph.Person, if (mode == AutopilotMode.AUTO) c.violet else c.ink, size = 20.dp)
+            Spacer(Modifier.weight(1f))
+            if (selected && mode == AutopilotMode.AUTO) GlyphIcon(Glyph.Check, c.violet, size = 18.dp)
+        }
+        RText(AutopilotText.name(mode), RType.serif(26f, 30f), c.ink, Modifier.padding(top = 8.dp), maxLines = 1)
+        RText(line, RType.meta, c.inkMeta, maxLines = 3)
+    }
+}
+
+/** One number of a strip, with what it counts. */
+internal data class Stat(val value: String, val label: String, val color: Color? = null, val suffix: String? = null, val tag: String? = null)
+
+/** Three numbers side by side between two hairlines, in the serif; they roll when they change. */
+@Composable
+internal fun StatTiles(stats: List<Stat>, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    Row(
+        modifier
+            .fillMaxWidth()
+            .drawBehind { drawLine(c.rule, androidx.compose.ui.geometry.Offset(0f, 0.5f), androidx.compose.ui.geometry.Offset(size.width, 0.5f), 1.dp.toPx()) }
+            .hairlineBelow(c.rule)
+            .padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        stats.forEach { stat ->
+            Column(
+                Modifier
+                    .weight(1f)
+                    .semantics(mergeDescendants = true) { text = AnnotatedString(stat.value + (stat.suffix ?: "")) }
+                    .then(if (stat.tag != null) Modifier.testTag(stat.tag) else Modifier),
+            ) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    dev.reins.android.design.RollingNumber(stat.value, RType.serif(36f, 36f), stat.color ?: c.ink)
+                    stat.suffix?.let { RText(it, RType.serif(22f, 26f), c.inkMeta, Modifier.padding(start = 2.dp), maxLines = 1) }
+                }
+                RText(stat.label, RType.meta, c.inkMeta, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** This week's numbers, or (without a usable model) getting it. Its error and notice lines above. */
+@Composable
+fun AutopilotWeek(viewModel: AutopilotViewModel, s: AutopilotSettings) {
+    val c = LocalColors.current
+    val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val model = ui.model ?: s.model
+    ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "autopilotError") }
+    ui.notice?.let { Banner(it, Modifier.padding(top = 10.dp), tag = "autopilotNotice") }
+    if (!AutopilotText.modelUsable(model)) {
+        GetScoreCard(model, ui.job, s.wifiOnly, onDownload = viewModel::download, onPause = viewModel::cancelDownload)
+    } else {
+        StatTiles(
+            listOf(
+                Stat("${ui.stats?.scored ?: "—"}", "scored this week", tag = "statScored"),
+                Stat(AutopilotText.share(ui.stats?.matched), "matched you", c.success, tag = "statMatched"),
+                Stat("${ui.stats?.kindsOnAuto ?: "—"}", "kinds on Auto", tag = "statKinds"),
+            ),
+            Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+/** A section's label in mono capitals, with something at its end ("Ended", "New"). */
+@Composable
+fun TrustLabel(text: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
+    val c = LocalColors.current
+    Row(modifier.fillMaxWidth().heightIn(min = 22.dp).semantics { heading() }, verticalAlignment = Alignment.CenterVertically) {
+        LabelText(text, c.inkMeta, Modifier.weight(1f))
+        trailing?.invoke()
+    }
+}
+
+/** A quiet word at the end of a section's label that opens something ("Ended", "New"). */
+@Composable
+fun LabelLink(text: String, tag: String, glyph: Glyph? = null, onClick: () -> Unit) {
+    val c = LocalColors.current
+    Row(
+        Modifier.clip(CircleShape).pressable(shape = CircleShape, label = text, onClick = onClick).testTag(tag).padding(horizontal = 6.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        glyph?.let { GlyphIcon(it, c.ink2, size = 14.dp) }
+        RText(text, RType.sans(13f), c.ink2, maxLines = 1)
+    }
+}
+
+/** The profiles: each one's glyph, name, who it learns from, and Default. */
+@Composable
+fun ProfilesSection(viewModel: AutopilotViewModel, s: AutopilotSettings, connections: List<dev.reins.core.ConnectionView>, sheets: AutopilotSheetsState, onProfile: (String) -> Unit) {
+    val ui by viewModel.ui.collectAsStateWithLifecycle()
+    TrustLabel("Profiles", Modifier.padding(top = 26.dp, bottom = 2.dp)) { LabelLink("New", "newProfile", Glyph.Plus) { sheets.newProfile = true } }
+    val labels = connections.map { it.id to it.label }
+    ui.profiles.forEach { profile ->
+        ProfileRow(profile, AutopilotText.profileLine(profile, AutopilotText.profileAis(profile, s, labels))) { onProfile(profile.id) }
+    }
+}
+
+/** The on-device model (Ready, Update, how far its download is) and Try it. */
+@Composable
+fun ModelRows(viewModel: AutopilotViewModel, s: AutopilotSettings, sheets: AutopilotSheetsState, onTryIt: () -> Unit) {
+    val c = LocalColors.current
+    val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val model = ui.model ?: s.model
+    val modelReady = AutopilotText.modelUsable(model)
+    TrustLabel("Autopilot", Modifier.padding(top = 26.dp, bottom = 2.dp))
+    HairlineRow(
+        "On-device model",
+        Modifier.testTag("openModel"),
+        leading = { PlainTile(Glyph.Chip) },
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ModelValue(model, ui.job, onUpdate = viewModel::download)
+                GlyphIcon(Glyph.ChevronRight, c.inkFaint, modifier = Modifier.padding(start = 6.dp), size = 14.dp)
+            }
+        },
+    ) { sheets.model = true }
+    HairlineRow(
+        "Try it",
+        Modifier.testTag("openTryIt"),
+        leading = { PlainTile(Glyph.Flask) },
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!modelReady) RText("after download", RType.sans(14.5f), c.inkMeta, maxLines = 1)
+                GlyphIcon(Glyph.ChevronRight, c.inkFaint, modifier = Modifier.padding(start = 6.dp), size = 14.dp)
+            }
+        },
+        onClick = onTryIt,
+    )
+}
+
+/** A monochrome tile: nothing here asks anything (38 dp, radius 11, the sunken paper). */
+@Composable
+fun PlainTile(glyph: Glyph, size: androidx.compose.ui.unit.Dp = 38.dp) {
+    val c = LocalColors.current
+    Box(Modifier.size(size).clip(RoundedCornerShape(if (size >= 38.dp) 11.dp else 10.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
+        GlyphIcon(glyph, c.ink, size = size * 0.53f)
+    }
+}
+
+/**
+ * Autopilot's sheets over Trust: Bypass and Overnight (held to start), the model's details, deleting the model, and
+ * a new profile.
+ */
+@Composable
+fun BoxScope.AutopilotSheets(viewModel: AutopilotViewModel, sheets: AutopilotSheetsState, authenticator: Authenticator, onProfile: (String) -> Unit) {
+    val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val model = ui.model ?: settings?.model
+    BypassSheets(sheets.bypass, who = null, onStart = { minutes -> viewModel.startBypass(minutes, authenticator = authenticator) }, onClose = { sheets.bypass = false })
+    OvernightSheets(
+        sheets.overnight,
+        who = null,
+        risky = settings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
+        ratesRisk = model?.risk == true,
+        onRisky = { viewModel.setOvernightWhenRisky(it, authenticator) },
+        onStart = { minutes -> viewModel.startOvernight(minutes, authenticator = authenticator) },
+        onClose = { sheets.overnight = false },
+    )
+    BottomSheet(sheets.model, "On-device model", onClose = { sheets.model = false }, tag = "modelSheet") {
+        ModelDetails(
+            model,
+            job = ui.job,
+            wifiOnly = settings?.wifiOnly ?: true,
+            onDownload = viewModel::download,
+            onCancel = viewModel::cancelDownload,
+            onDelete = { sheets.deleteModel = true },
+            onWifiOnly = viewModel::setWifiOnly,
+        )
+    }
+    if (sheets.deleteModel) {
+        dev.reins.android.design.SignalDialog(
             title = "Delete the model?",
             text = "Manual asks without hints and Auto pauses until you download it again.",
             confirmLabel = "Delete",
+            destructive = true,
             onConfirm = {
-                deleteAsk = false
-                modelOpen = false
+                sheets.deleteModel = false
+                sheets.model = false
                 viewModel.deleteModel()
             },
-            onDismiss = { deleteAsk = false },
+            onDismiss = { sheets.deleteModel = false },
         )
     }
-    if (newProfile) {
+    if (sheets.newProfile) {
         ProfileDialog(
             title = "New profile",
             initialName = "",
             initialIcon = AutopilotText.icons[2],
             confirmLabel = "Create",
             onConfirm = { name, icon ->
-                newProfile = false
+                sheets.newProfile = false
                 viewModel.createProfile(name, icon, onProfile)
             },
-            onDismiss = { newProfile = false },
+            onDismiss = { sheets.newProfile = false },
         )
     }
 }
 
-/** "Mode" with its (?) right beside the word, and what the modes do under them when it is open. */
-@Composable
-private fun ModeHeader(open: Boolean, onHelp: (Boolean) -> Unit) {
-    val c = LocalColors.current
-    Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, bottom = 4.dp).testTag("modeHeader")) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RText("Mode", RType.sans(14f, FontWeight.Medium), c.accent, Modifier.semantics { heading() }, maxLines = 1)
-            Spacer(Modifier.width(2.dp))
-            dev.reins.android.ui.settings.HelpIcon(open, "Mode", onHelp)
-        }
-        dev.reins.android.design.HelpText(AutopilotText.MODE_HELP, open, Modifier.padding(bottom = 8.dp).testTag("modeHelp"))
-    }
+/** What reads on a timed mode's solid colour: near black on the light dark-mode tints, white on the others. */
+internal fun onTimed(kind: TimedKind, c: dev.reins.android.design.RColors): Color = when {
+    !c.dark -> Color.White
+    kind == TimedKind.Bypass -> Color(0xFF2A0606)
+    else -> Color(0xFF0E1230)
 }
 
-/** A section's name in the accent colour, with something at its end ("+ New"). */
+/** A section's name in the accent colour, with something at its end ("+ New"), on the pages Trust opens. */
 @Composable
 internal fun SectionHeader(text: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
     val c = LocalColors.current
@@ -288,232 +526,6 @@ internal fun SectionHeader(text: String, modifier: Modifier = Modifier, trailing
     }
 }
 
-/** A bypass or an Overnight in force: which, its end ([AutopilotText.UNTIL_OFF] without one) and its start. */
-internal data class Running(val kind: TimedKind, val until: Long, val since: Long?)
-
-/** The global bypass in force, else the global Overnight; null when neither is. */
-internal fun running(s: AutopilotSettings): Running? = when {
-    s.mode == AutopilotMode.BYPASS && s.bypassUntil != null -> Running(TimedKind.Bypass, s.bypassUntil!!, s.bypassSince)
-    s.mode == AutopilotMode.OVERNIGHT && s.overnightUntil != null -> Running(TimedKind.Overnight, s.overnightUntil!!, s.overnightSince)
-    else -> null
-}
-
-/**
- * The mode, large. Manual and Auto side by side (the one in force tinted), then Overnight, then Bypass and Lock down.
- * During a bypass it turns red, during an Overnight night indigo: its countdown (or, without an end, how long it has
- * run) and Stop now. During a lockdown it turns amber and Lock down reads End lockdown.
- */
-@Composable
-private fun ModeHero(
-    s: AutopilotSettings,
-    modelReady: Boolean,
-    onPick: (AutopilotMode) -> Unit,
-    onBypass: () -> Unit,
-    onOvernight: () -> Unit,
-    onLockdown: () -> Unit,
-    onEndLockdown: () -> Unit,
-    onStop: (TimedKind) -> Unit,
-) {
-    val c = LocalColors.current
-    val run = running(s)
-    val lockdown = s.mode == AutopilotMode.LOCKDOWN
-    val tint = when {
-        run != null -> run.kind.tint(c)
-        lockdown -> c.warning
-        else -> null
-    }
-    val shape = RoundedCornerShape(28.dp)
-    Box(
-        Modifier
-            .padding(horizontal = 12.dp)
-            .fillMaxWidth()
-            .clip(shape)
-            .background(if (c.dark) Color(0xFF121215) else c.elevated)
-            .then(if (tint != null) Modifier.background(tint.copy(alpha = 0.12f)) else Modifier)
-            .border(1.dp, tint?.copy(alpha = 0.32f) ?: if (c.dark) Color(0xFF1C1C20) else c.hairline, shape)
-            .testTag("modeHero"),
-    ) {
-        AnimatedContent(
-            run?.kind,
-            transitionSpec = { (fadeIn(tween(220)) + scaleIn(spring(dampingRatio = 0.8f, stiffness = 400f), initialScale = 0.97f)) togetherWith fadeOut(tween(120)) },
-            label = "hero",
-        ) { kind ->
-            Column(Modifier.fillMaxWidth().padding(18.dp)) {
-                if (kind != null) {
-                    val r = running(s)?.takeIf { it.kind == kind } ?: return@Column
-                    val color = kind.tint(c)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TimedClock(kind, r.until, r.since)
-                        Spacer(Modifier.width(16.dp))
-                        Column(Modifier.weight(1f)) {
-                            RText(AutopilotText.name(kind.mode), RType.sans(22f, FontWeight.SemiBold), color, Modifier.testTag("heroMode"), maxLines = 1)
-                            RunningLine(kind, r.until, r.since)
-                        }
-                    }
-                    PillButton(
-                        if (kind == TimedKind.Bypass) "Stop bypass" else "Stop ${AutopilotText.OVERNIGHT}",
-                        Modifier.padding(top = 14.dp).fillMaxWidth().testTag(kind.action("stop")),
-                        background = color,
-                        foreground = onTimed(kind, c),
-                        height = 46.dp,
-                        textSize = 15f,
-                        onClick = { onStop(kind) },
-                    )
-                } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
-                        listOf(AutopilotMode.MANUAL, AutopilotMode.AUTO).forEach { mode ->
-                            val needs = !modelReady && AutopilotText.needsModel(mode)
-                            ModeCard(
-                                mode,
-                                selected = s.mode == mode,
-                                dimmed = needs,
-                                line = if (needs) "Needs the model" else AutopilotText.heroLine(mode),
-                                modifier = Modifier.weight(1f).fillMaxHeight(),
-                            ) { onPick(mode) }
-                        }
-                    }
-                    PillButton(
-                        AutopilotText.OVERNIGHT,
-                        Modifier.padding(top = 10.dp).fillMaxWidth().testTag("mode:OVERNIGHT"),
-                        icon = OvernightIcon,
-                        background = c.night.copy(alpha = 0.13f),
-                        foreground = c.night,
-                        onClick = onOvernight,
-                    )
-                    Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PillButton(
-                            "Bypass",
-                            Modifier.weight(1f).testTag("mode:BYPASS"),
-                            icon = Icons.Rounded.Bolt,
-                            background = c.danger.copy(alpha = 0.12f),
-                            foreground = c.danger,
-                            onClick = onBypass,
-                        )
-                        if (lockdown) {
-                            PillButton(
-                                "End lockdown",
-                                Modifier.weight(1f).testTag("endLockdown"),
-                                icon = Icons.Rounded.LockOpen,
-                                background = c.warning.copy(alpha = 0.16f),
-                                foreground = c.warning,
-                                onClick = onEndLockdown,
-                            )
-                        } else {
-                            PillButton(
-                                "Lock down",
-                                Modifier.weight(1f).testTag("mode:LOCKDOWN"),
-                                icon = Icons.Rounded.Lock,
-                                background = if (c.dark) Color.White.copy(alpha = 0.06f) else c.controlFill,
-                                foreground = c.text,
-                                onClick = onLockdown,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** Manual or Auto: its tile, name and what it does; the one in force has a tinted edge and wash. */
-@Composable
-private fun ModeCard(mode: AutopilotMode, selected: Boolean, dimmed: Boolean, line: String, modifier: Modifier, onClick: () -> Unit) {
-    val c = LocalColors.current
-    val tint = modeTint(mode, c)
-    val shape = RoundedCornerShape(20.dp)
-    val edge by animateColorAsState(if (selected) tint else if (c.dark) Color(0xFF26262B) else c.hairline, label = "modeEdge")
-    val wash by animateColorAsState(if (selected) tint.copy(alpha = if (c.dark) 0.09f else 0.07f) else if (c.dark) Color(0xFF0D0D0F) else c.background, label = "modeWash")
-    Column(
-        modifier
-            .graphicsLayer { alpha = if (dimmed) 0.5f else 1f }
-            .clip(shape)
-            .background(wash)
-            .border(1.5.dp, edge, shape)
-            .pressable(shape = shape, onClick = onClick)
-            .semantics(mergeDescendants = true) {
-                this.selected = selected
-                role = Role.RadioButton
-            }
-            .testTag("mode:${mode.name}")
-            .padding(14.dp),
-    ) {
-        Box(Modifier.size(40.dp).clip(RoundedCornerShape(13.dp)).background(tint.copy(alpha = 0.17f)), contentAlignment = Alignment.Center) {
-            Icon(modeIcon(mode), null, Modifier.size(22.dp), tint = tint)
-        }
-        RText(AutopilotText.name(mode), RType.sans(17f, FontWeight.SemiBold), c.text, Modifier.padding(top = 10.dp), maxLines = 1)
-        RText(line, RType.sans(12.5f, lineHeight = 17f), c.tertiary, Modifier.padding(top = 3.dp), maxLines = 3)
-    }
-}
-
-/** What reads on a timed mode's solid colour: near black on the light dark-mode tints, white on the others. */
-internal fun onTimed(kind: TimedKind, c: dev.reins.android.design.RColors): Color = when {
-    !c.dark -> Color.White
-    kind == TimedKind.Bypass -> Color(0xFF2A0606)
-    else -> Color(0xFF0E1230)
-}
-
-/**
- * A timed mode's ring in its colour: the share left with m:ss in it, or a full ring around an infinity sign when it
- * has no end. Tags "bypassClock" / "overnightClock" and "bypassUntilOff" / "overnightUntilOff".
- */
-@Composable
-fun TimedClock(kind: TimedKind, until: Long, since: Long?, size: androidx.compose.ui.unit.Dp = 76.dp) {
-    val c = LocalColors.current
-    val color = kind.tint(c)
-    if (AutopilotText.isUntilOff(until)) {
-        Box(
-            Modifier
-                .size(size)
-                .clip(CircleShape)
-                .border(5.dp, color, CircleShape)
-                .semantics { contentDescription = "${AutopilotText.name(kind.mode)} until you stop it" }
-                .testTag(kind.tag("UntilOff")),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.AllInclusive, null, Modifier.size(size * 0.4f), tint = color) }
-        return
-    }
-    val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
-    ProgressRing(AutopilotText.bypassFraction(until, since, now), color, size = size, stroke = 5.dp) {
-        RText(AutopilotText.clock(until, now), RType.mono(if (until - now < 3_600) 16f else 13f, FontWeight.SemiBold), color, Modifier.testTag(kind.tag("Clock")), maxLines = 1)
-    }
-}
-
-/** "Approving without asking", or "On until you stop it · 2 days so far" (its own clock, so only it recomposes). */
-@Composable
-private fun RunningLine(kind: TimedKind, until: Long, since: Long?) {
-    val c = LocalColors.current
-    val now = rememberNowMillis(60_000) / 1000
-    RText(AutopilotText.runningLine(kind.mode, until, since, now), RType.sans(13.5f), c.secondary, Modifier.padding(top = 3.dp).testTag(kind.tag("Line")), maxLines = 2)
-}
-
-/** One number of a strip, with what it counts. */
-internal data class Stat(val value: String, val label: String, val color: Color? = null, val suffix: String? = null, val tag: String? = null)
-
-/** Three numbers side by side. */
-@Composable
-internal fun StatTiles(stats: List<Stat>, modifier: Modifier = Modifier) {
-    val c = LocalColors.current
-    Row(modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        stats.forEach { stat ->
-            Column(
-                Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(if (c.dark) Color(0xFF121215) else c.elevated)
-                    .border(1.dp, if (c.dark) Color(0xFF1C1C20) else c.hairline, RoundedCornerShape(20.dp))
-                    .semantics(mergeDescendants = true) {}
-                    .then(if (stat.tag != null) Modifier.testTag(stat.tag) else Modifier)
-                    .padding(12.dp),
-            ) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    RText(stat.value, RType.sans(22f, FontWeight.SemiBold), stat.color ?: c.text, maxLines = 1)
-                    stat.suffix?.let { RText(it, RType.sans(15f), c.tertiary, Modifier.padding(start = 3.dp, bottom = 2.dp), maxLines = 1) }
-                }
-                RText(stat.label, RType.sans(11.5f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
-            }
-        }
-    }
-}
 
 /** The model row's value: Ready, Update (a tap downloads the newer model), how far the download is, or Download. */
 @Composable
@@ -557,20 +569,20 @@ private fun GetScoreCard(model: ModelStatus, job: DownloadJob, wifiOnly: Boolean
     val shape = RoundedCornerShape(24.dp)
     Column(
         Modifier
-            .padding(start = 12.dp, end = 12.dp, top = 12.dp)
+            .padding(top = 12.dp)
             .fillMaxWidth()
             .clip(shape)
-            .background(c.search.copy(alpha = 0.08f))
-            .border(1.dp, c.search.copy(alpha = 0.26f), shape)
-            .padding(16.dp)
+            .background(c.paperRaised)
+            .border(1.dp, c.rule, shape)
+            .padding(14.dp)
             .testTag("getScore"),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconPlate(Icons.Rounded.Memory, c.search)
+            PlainTile(Glyph.Chip)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                RText("Get Autopilot's score", RType.sans(16f, FontWeight.SemiBold), c.text, maxLines = 1)
-                RText("${AutopilotText.modelSize(model)} · runs on this phone", RType.sans(13f), c.tertiary, Modifier.padding(top = 2.dp), maxLines = 1)
+                RText("Get Autopilot's score", RType.row, c.ink, maxLines = 1)
+                RText("${AutopilotText.modelSize(model)} · runs on this phone", RType.meta, c.inkMeta, maxLines = 1)
             }
         }
         if (downloading || waiting) {
@@ -592,12 +604,11 @@ private fun GetScoreCard(model: ModelStatus, job: DownloadJob, wifiOnly: Boolean
             if (model.state == ModelState.FAILED) {
                 RText(AutopilotText.modelError(model.error), RType.sans(13f), c.danger, Modifier.padding(top = 10.dp).testTag("getModelError"))
             }
-            PillButton(
+            SignalButton(
                 if (model.state == ModelState.FAILED) "Try again" else "Download",
                 Modifier.padding(top = 12.dp).fillMaxWidth().testTag("getModel"),
-                icon = Icons.Rounded.Download,
-                background = c.search,
-                foreground = if (c.dark) Color(0xFF04172F) else Color.White,
+                size = ButtonSize.Small,
+                glyph = Glyph.Download,
                 onClick = onDownload,
             )
         }
@@ -607,23 +618,43 @@ private fun GetScoreCard(model: ModelStatus, job: DownloadJob, wifiOnly: Boolean
 @Composable
 private fun ProfileRow(profile: ProfileView, line: String, onClick: () -> Unit) {
     val c = LocalColors.current
-    SettingsRow(
-        untrusted(profile.name),
-        Modifier.testTag("profile:${profile.id}"),
-        subtitle = line,
-        subtitleTag = "profileLine:${profile.id}",
-        leading = { ProfileTile(profile, 40.dp) },
-        onClick = onClick,
-    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .hairlineBelow(c.rule)
+            .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick)
+            .semantics(mergeDescendants = true) {}
+            .testTag("profile:${profile.id}")
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ProfileTile(profile, 38.dp)
+        Column(Modifier.weight(1f)) {
+            RText(untrusted(profile.name), RType.row, c.ink, maxLines = 1)
+            RText(line, RType.meta, c.inkMeta, Modifier.testTag("profileLine:${profile.id}"), maxLines = 2)
+        }
+        if (profile.isDefault) Pill("Default", c.violet)
+    }
 }
 
-/** A profile's emoji on a rounded tile. */
+/** A profile's glyph on a monochrome tile (the icon it keeps is shown as its glyph). */
 @Composable
 fun ProfileTile(profile: ProfileView, size: androidx.compose.ui.unit.Dp) {
-    val c = LocalColors.current
-    Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.3f)).background(if (c.dark) Color(0xFF232327) else c.controlFill), contentAlignment = Alignment.Center) {
-        RText(AutopilotText.profileIcon(profile), RType.sans(size.value * 0.45f), c.text, maxLines = 1)
-    }
+    PlainTile(profileGlyph(AutopilotText.profileIcon(profile)), size)
+}
+
+/** The glyph shown for a profile's icon: the icons it can keep are drawn as glyphs, never as emoji. */
+fun profileGlyph(icon: String?): Glyph = when (icon) {
+    "💼" -> Glyph.Briefcase
+    "🏠" -> Glyph.Home
+    "🧪" -> Glyph.Flask
+    "🚀" -> Glyph.Rocket
+    "🔒" -> Glyph.Lock
+    "🌙" -> Glyph.Moon
+    "🎓" -> Glyph.Star
+    else -> Glyph.Person
 }
 
 /** The on-device model: what it is, whether it is here, getting it and removing it (set-up's card). */
@@ -814,7 +845,7 @@ fun ProfileDialog(
                             .pressable(shape = CircleShape) { icon = e }
                             .testTag("icon:$e"),
                         contentAlignment = Alignment.Center,
-                    ) { RText(e, RType.sans(17f), c.text) }
+                    ) { GlyphIcon(profileGlyph(e), if (on) c.violet else c.ink, size = 18.dp) }
                 }
             }
             Spacer(Modifier.height(22.dp))
