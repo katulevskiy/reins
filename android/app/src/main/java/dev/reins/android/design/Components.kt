@@ -69,6 +69,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
@@ -345,7 +346,9 @@ fun CircleIconButton(
     Box(
         modifier
             .size(size)
-            .glass(c, CircleShape, 6.dp)
+            .clip(CircleShape)
+            .background(c.paperRaised)
+            .border(1.dp, c.rule, CircleShape)
             .pressable(shape = CircleShape, label = label, onClick = onClick)
             .semantics { if (label != null) contentDescription = label },
         contentAlignment = Alignment.Center,
@@ -369,13 +372,13 @@ fun SelectChip(
 ) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
-    val shape = RoundedCornerShape(12.dp)
+    val shape = CircleShape
     Row(
         modifier
             .height(38.dp)
             .clip(shape)
-            .background(if (selected) c.accent.copy(alpha = if (c.dark) 0.18f else 0.12f) else Color.Transparent)
-            .border(if (selected) 1.5.dp else 1.dp, if (selected) c.accent else chipEdge(c), shape)
+            .background(if (selected) c.inverse else c.paperRaised)
+            .then(if (selected) Modifier else Modifier.border(1.dp, c.rule, shape))
             .pressable(shape = shape) {
                 onClick()
                 feedback.play(Event.Selection)
@@ -388,11 +391,7 @@ fun SelectChip(
             leading()
             Spacer(Modifier.width(8.dp))
         }
-        RText(title, RType.sans(14f, FontWeight.SemiBold), if (selected) c.text else c.secondary, maxLines = 1)
-        if (selected) {
-            Spacer(Modifier.width(6.dp))
-            GlyphIcon(Glyph.Check, if (c.dark) Color(0xFFA99BFA) else c.accent, size = 14.dp, weight = 2.4f)
-        }
+        RText(title, RType.sans(14f, FontWeight.Medium), if (selected) c.onInverse else c.ink, maxLines = 1)
     }
 }
 
@@ -407,7 +406,7 @@ fun Tag(title: String, modifier: Modifier = Modifier, tint: Color? = null, mono:
         modifier
             .height(26.dp)
             .clip(CircleShape)
-            .background(tint?.copy(alpha = 0.1f) ?: c.controlFill)
+            .background(tint?.copy(alpha = 0.13f) ?: c.paperSunken)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -456,10 +455,10 @@ fun LargeTitle(title: String, modifier: Modifier = Modifier, actions: @Composabl
         modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(start = 20.dp, end = 12.dp, top = 22.dp, bottom = 6.dp),
+            .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RText(title, RType.sans(30f, FontWeight.SemiBold), c.text, Modifier.weight(1f), maxLines = 1)
+        RText(title, RType.title, c.ink, Modifier.weight(1f).semantics { heading() }, maxLines = 1)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = actions)
     }
 }
@@ -475,9 +474,18 @@ fun Screen(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalColors.current
-    Column(modifier.fillMaxSize().background(c.background).imePadding()) {
-        if (title != null) {
-            if (onBack == null) LargeTitle(title, actions = actions) else TopBar(title, subtitle, onBack, actions = actions)
+    Column(modifier.fillMaxSize().background(c.paper).imePadding()) {
+        if (title != null && onBack == null) {
+            LargeTitle(title, actions = actions)
+        } else if (onBack != null) {
+            Row(
+                Modifier.fillMaxWidth().windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(start = 22.dp, end = 22.dp, top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+                Spacer(Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = actions)
+            }
         } else {
             Spacer(Modifier.windowInsetsPadding(WindowInsets.statusBars))
         }
@@ -487,8 +495,14 @@ fun Screen(
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .windowInsetsPadding(WindowInsets.navigationBars),
-            content = content,
-        )
+        ) {
+            if (title != null && onBack != null) {
+                RText(title, RType.title, c.ink, Modifier.padding(start = 22.dp, end = 22.dp, top = 14.dp).semantics { heading() }, maxLines = 2)
+                if (!subtitle.isNullOrEmpty()) RText(subtitle, RType.meta, c.inkMeta, Modifier.padding(start = 22.dp, end = 22.dp, top = 4.dp), maxLines = 2)
+                Spacer(Modifier.height(8.dp))
+            }
+            content()
+        }
     }
 }
 
@@ -553,8 +567,8 @@ fun SwitchRow(
             Spacer(Modifier.width(14.dp))
         }
         Column(dim.weight(1f)) {
-            RText(title, RType.sans(16f, FontWeight.Medium), c.text, maxLines = 2)
-            if (!subtitle.isNullOrEmpty()) RText(subtitle, RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 4)
+            RText(title, RType.row, c.ink, maxLines = 2)
+            if (!subtitle.isNullOrEmpty()) RText(subtitle, RType.meta, c.inkMeta, Modifier.padding(top = 2.dp), maxLines = 4)
         }
         Spacer(Modifier.width(10.dp))
         Toggle(checked, enabled = enabled, onChange = onChange)
@@ -623,8 +637,8 @@ fun ListRow(
     Row(
         modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 52.dp)
-            .then(if (onClick != null) Modifier.pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp), onClick = onClick) else Modifier)
+            .defaultMinSize(minHeight = 56.dp)
+            .then(if (onClick != null) Modifier.pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick) else Modifier)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -633,9 +647,9 @@ fun ListRow(
             Spacer(Modifier.width(14.dp))
         }
         Column(Modifier.weight(1f)) {
-            RText(title, RType.sans(16f, FontWeight.Medium), if (destructive) c.danger else c.text, maxLines = 2)
+            RText(title, RType.row, if (destructive) c.danger else c.ink, maxLines = 2)
             if (!subtitle.isNullOrEmpty()) {
-                RText(subtitle, RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 4, ltr = ltrSubtitle)
+                RText(subtitle, RType.meta, c.inkMeta, Modifier.padding(top = 2.dp), maxLines = 4, ltr = ltrSubtitle)
             }
         }
         if (trailing != null) {
@@ -662,19 +676,14 @@ fun Group(
 ) {
     val c = LocalColors.current
     var help by rememberSaveable { mutableStateOf(false) }
-    Column(modifier.padding(horizontal = 16.dp)) {
+    Column(modifier.padding(horizontal = 6.dp)) {
         if (header != null || footer != null) {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 22.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                RText(
-                    header?.uppercase().orEmpty(),
-                    RType.sans(12.5f, FontWeight.Medium).copy(letterSpacing = 0.6.sp),
-                    c.secondary,
-                    Modifier.weight(1f),
-                )
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 22.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                LabelText(header.orEmpty(), c.inkMeta, Modifier.weight(1f))
                 if (footer != null) HelpButton(help, header ?: "this") { help = it }
             }
         }
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.elevated), content = content)
+        Column(Modifier.fillMaxWidth(), content = content)
         if (footer != null) HelpText(footer, help, Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp))
     }
 }
@@ -730,18 +739,13 @@ fun HelpText(text: String, open: Boolean, modifier: Modifier = Modifier) {
 
 @Composable
 fun Hairline(modifier: Modifier = Modifier, inset: Dp = 16.dp) {
-    Box(modifier.fillMaxWidth().padding(start = inset).height(0.75.dp).background(LocalColors.current.hairline))
+    Box(modifier.fillMaxWidth().padding(start = inset).height(1.dp).background(LocalColors.current.rule))
 }
 
 /** Section title above a list. */
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier) {
-    RText(
-        text.uppercase(),
-        RType.sans(12.5f, FontWeight.Medium).copy(letterSpacing = 0.6.sp),
-        LocalColors.current.secondary,
-        modifier.padding(start = 32.dp, top = 22.dp, bottom = 8.dp),
-    )
+    LabelText(text, LocalColors.current.inkMeta, modifier.padding(start = 22.dp, top = 22.dp, bottom = 8.dp))
 }
 
 /** Empty-state block: glyph, title, detail. */
@@ -819,7 +823,7 @@ fun RTextField(
     Box(
         modifier
             .fillMaxWidth()
-            .background(c.controlFill, RoundedCornerShape(14.dp))
+            .background(c.paperSunken, RoundedCornerShape(14.dp))
             .padding(horizontal = 14.dp, vertical = 13.dp),
     ) {
         if (value.isEmpty()) RText(placeholder, style, c.tertiary, maxLines = 1)
@@ -837,7 +841,7 @@ fun RTextField(
     }
 }
 
-/** A modal question in the app's own chrome. */
+/** A modal question in the app's own chrome: the Signal dialog (a serif question, Cancel and the answer). */
 @Composable
 fun ConfirmDialog(
     title: String,
@@ -847,27 +851,7 @@ fun ConfirmDialog(
     onDismiss: () -> Unit,
     destructive: Boolean = true,
 ) {
-    val c = LocalColors.current
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        DialogFeedback()
-        Column(
-            Modifier.padding(horizontal = 28.dp).fillMaxWidth().glass(c, RoundedCornerShape(26.dp), 16.dp).padding(22.dp),
-        ) {
-            RText(title, RType.sans(19f, FontWeight.SemiBold), c.text)
-            Spacer(Modifier.height(8.dp))
-            RText(text, RType.sans(15f, lineHeight = 21f), c.secondary)
-            Spacer(Modifier.height(22.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CapsuleButton("Cancel", Modifier.weight(1f), style = ButtonStyle.Secondary, onClick = onDismiss)
-                CapsuleButton(
-                    confirmLabel,
-                    Modifier.weight(1f),
-                    style = if (destructive) ButtonStyle.Destructive else ButtonStyle.Primary,
-                    onClick = onConfirm,
-                )
-            }
-        }
-    }
+    SignalDialog(title, text, confirmLabel, onConfirm, onDismiss, destructive = destructive)
 }
 
 /** The expressive Material loader, tinted for the surface it sits on. */
@@ -879,7 +863,8 @@ fun Spinner(tint: Color, modifier: Modifier = Modifier, size: Dp = 20.dp) {
 /** A card-shaped surface for list items. */
 @Composable
 fun Card(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(LocalColors.current.elevated), content = content)
+    val c = LocalColors.current
+    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.paperRaised).border(1.dp, c.rule, RoundedCornerShape(18.dp)), content = content)
 }
 
 /**

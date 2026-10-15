@@ -63,6 +63,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.fillMaxHeight
+import dev.reins.android.design.hairlineBelow
 import dev.reins.android.design.HelpText
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RColors
@@ -75,15 +77,13 @@ import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.SheetOpenFeedback
 import dev.reins.android.feedback.play
 
-// The pieces Settings and a connection's page are built from: a back arrow over a large title, cards of rows with a
-// round tonal icon each (no dividers), accent section headers, status chips and pill buttons.
+// The pieces Settings, Connections and their pages are built from (Reins Signal): a round back button over a serif
+// title, groups of hairline rows on paper with a monochrome glyph tile each, mono labels over groups, status words and
+// pill buttons.
 
-/** The card behind a group of rows. */
-internal fun Modifier.settingsCard(c: RColors, radius: Dp = 24.dp): Modifier = this
-    .fillMaxWidth()
-    .clip(RoundedCornerShape(radius))
-    .background(if (c.dark) Color(0xFF121215) else c.elevated)
-    .border(1.dp, if (c.dark) Color(0xFF1B1B1F) else c.hairline, RoundedCornerShape(radius))
+/** What a group of rows sits on: the paper itself (Signal has no cards); kept so callers keep their layout. */
+@Suppress("UNUSED_PARAMETER")
+internal fun Modifier.settingsCard(c: RColors, radius: Dp = 24.dp): Modifier = this.fillMaxWidth()
 
 /** A page: the back arrow when pushed ([onBack]; none at the root of a tab), an optional large [title], and content that scrolls under them. */
 @Composable
@@ -94,16 +94,13 @@ fun SettingsPage(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalColors.current
-    Column(modifier.fillMaxSize().background(c.background).imePadding()) {
+    Column(modifier.fillMaxSize().background(c.paper).imePadding()) {
         if (onBack != null) {
             Row(
-                Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).height(56.dp).padding(start = 6.dp, end = 8.dp),
+                Modifier.fillMaxWidth().windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(start = 22.dp, end = 22.dp, top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    Modifier.size(44.dp).pressable(shape = CircleShape, label = "Back", onClick = onBack).semantics { contentDescription = "Back" }.testTag("back"),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, Modifier.size(24.dp), tint = c.text) }
+                dev.reins.android.design.RoundIconButton(dev.reins.android.design.Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
             }
         } else {
             Spacer(Modifier.windowInsetsPadding(WindowInsets.statusBars))
@@ -118,10 +115,10 @@ fun SettingsPage(
             if (title != null) {
                 RText(
                     title,
-                    RType.sans(30f, FontWeight.SemiBold),
-                    c.text,
-                    Modifier.padding(start = 20.dp, end = 20.dp, top = if (onBack == null) 22.dp else 4.dp, bottom = 16.dp).semantics { heading() },
-                    maxLines = 1,
+                    RType.title,
+                    c.ink,
+                    Modifier.padding(start = 22.dp, end = 22.dp, top = if (onBack == null) 22.dp else 14.dp, bottom = 12.dp).semantics { heading() },
+                    maxLines = 2,
                 )
             }
             content()
@@ -146,18 +143,18 @@ fun SettingsGroup(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalColors.current
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Column(modifier.fillMaxWidth().padding(horizontal = 22.dp)) {
         if (header != null) {
             Row(
-                Modifier.fillMaxWidth().padding(start = 6.dp, top = gap, bottom = if (help != null) 0.dp else 8.dp).defaultMinSize(minHeight = 20.dp),
+                Modifier.fillMaxWidth().padding(top = gap + 4.dp, bottom = if (help != null) 0.dp else 4.dp).defaultMinSize(minHeight = 20.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // The (?) right beside the words it explains.
-                RText(header, RType.sans(14f, FontWeight.Medium), c.accent, Modifier.weight(1f, fill = false).semantics { heading() }, maxLines = 1)
+                dev.reins.android.design.LabelText(header, c.inkMeta, Modifier.weight(1f, fill = false).semantics { heading() })
                 if (help != null) HelpIcon(helpOpen, header, onHelp)
                 Spacer(Modifier.weight(1f))
             }
-            if (help != null) HelpText(help, helpOpen, Modifier.padding(start = 6.dp, end = 6.dp, bottom = 8.dp))
+            if (help != null) HelpText(help, helpOpen, Modifier.padding(bottom = 8.dp))
         } else {
             Spacer(Modifier.height(gap))
         }
@@ -186,8 +183,11 @@ fun HelpIcon(open: Boolean, topic: String, onToggle: (Boolean) -> Unit) {
 /** The round tonal plate a row's icon sits on. */
 @Composable
 fun IconPlate(icon: ImageVector, tint: Color, modifier: Modifier = Modifier, size: Dp = 40.dp) {
-    Box(modifier.size(size).clip(CircleShape).background(tint.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-        Icon(icon, null, Modifier.size(size * 0.55f), tint = tint)
+    // A monochrome tile: the glyph in ink (red for what removes), never a coloured disc.
+    val c = LocalColors.current
+    val ink = if (tint == c.danger) c.danger else c.ink2
+    Box(modifier.size(size * 0.85f).clip(RoundedCornerShape(10.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
+        Icon(icon, null, Modifier.size(size * 0.45f), tint = ink)
     }
 }
 
@@ -217,20 +217,21 @@ fun SettingsRow(
     Row(
         modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 64.dp)
-            .then(if (onClick != null) Modifier.pressable(highlight = c.controlFill, shape = RoundedCornerShape(0.dp), onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .defaultMinSize(minHeight = 56.dp)
+            .hairlineBelow(c.rule)
+            .then(if (onClick != null) Modifier.pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick) else Modifier)
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when {
             leading != null -> leading()
             icon != null -> IconPlate(icon, if (destructive) c.danger else tint)
         }
-        if (leading != null || icon != null) Spacer(Modifier.width(14.dp))
+        if (leading != null || icon != null) Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            RText(title, RType.sans(16.5f, FontWeight.Medium), titleColor ?: if (destructive) c.danger else c.text, maxLines = 1)
+            RText(title, RType.row, titleColor ?: if (destructive) c.danger else c.ink, maxLines = 1)
             if (!subtitle.isNullOrEmpty()) {
-                RText(subtitle, RType.sans(13f), c.tertiary, Modifier.padding(top = 2.dp).testTag(subtitleTag ?: "rowDetail"), maxLines = 1, ltr = true)
+                RText(subtitle, RType.meta, c.inkMeta, Modifier.padding(top = 2.dp).testTag(subtitleTag ?: "rowDetail"), maxLines = 1, ltr = true)
             }
         }
         if (valueContent != null) {
@@ -238,14 +239,14 @@ fun SettingsRow(
             valueContent()
         } else if (value != null) {
             Spacer(Modifier.width(10.dp))
-            RText(value, if (monoValue) RType.mono(14f) else RType.sans(15f), c.secondary, maxLines = 1, ltr = monoValue)
+            RText(value, if (monoValue) RType.value else RType.sans(15f), c.ink2, maxLines = 1, ltr = monoValue)
         }
         if (busy) {
             Spacer(Modifier.width(8.dp))
             Spinner(c.secondary, size = 18.dp)
         } else if (chevron && onClick != null) {
             Spacer(Modifier.width(6.dp))
-            Icon(Icons.Rounded.ChevronRight, null, Modifier.size(20.dp), tint = c.tertiary)
+            dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.ChevronRight, c.inkMeta, size = 16.dp)
         }
     }
 }
@@ -264,9 +265,9 @@ fun StatusChip(text: String, icon: ImageVector, tone: ChipTone, modifier: Modifi
     Row(
         modifier
             .semantics(mergeDescendants = true) {}
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (tone == ChipTone.Plain) c.controlFill else fg.copy(alpha = 0.12f))
-            .padding(start = 9.dp, end = 12.dp, top = 7.dp, bottom = 7.dp),
+            .clip(CircleShape)
+            .background(if (tone == ChipTone.Plain) c.paperSunken else fg.copy(alpha = 0.13f))
+            .padding(start = 9.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, Modifier.size(15.dp), tint = fg)
@@ -334,24 +335,20 @@ fun <T> ConnectedButtons(
 ) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
-    Row(modifier.fillMaxWidth().height(40.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    Row(modifier.fillMaxWidth().height(46.dp).clip(CircleShape).background(c.paperSunken).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         options.forEachIndexed { i, option ->
             val on = selected(option)
             val first = i == 0
             val last = i == options.lastIndex
-            val shape = RoundedCornerShape(
-                topStart = if (first) 20.dp else 6.dp,
-                bottomStart = if (first) 20.dp else 6.dp,
-                topEnd = if (last) 20.dp else 6.dp,
-                bottomEnd = if (last) 20.dp else 6.dp,
-            )
-            val bg by animateColorAsState(if (on) c.accent.copy(alpha = if (c.dark) 0.24f else 0.16f) else c.controlFill, label = "segBg")
+            val shape = CircleShape
+            val bg by animateColorAsState(if (on) c.paperRaised else c.paperRaised.copy(alpha = 0f), label = "segBg")
             Row(
                 Modifier
                     .weight(1f)
-                    .height(40.dp)
+                    .fillMaxHeight()
                     .clip(shape)
                     .background(bg)
+                    .then(if (on) Modifier.border(1.dp, c.rule, shape) else Modifier)
                     .pressable(shape = shape, dim = 0.7f) {
                         if (!on) {
                             onSelect(option)
@@ -370,7 +367,7 @@ fun <T> ConnectedButtons(
                     Icon(vector, null, Modifier.size(16.dp), tint = tint)
                     Spacer(Modifier.width(4.dp))
                 }
-                RText(label(option), RType.sans(14f, FontWeight.SemiBold), if (on) c.text else c.secondary, maxLines = 1)
+                RText(label(option), RType.sans(14f, FontWeight.Medium), if (on) c.ink else c.ink2, maxLines = 1)
             }
         }
     }
@@ -409,7 +406,7 @@ fun BoxScope.BottomSheet(open: Boolean, title: String?, onClose: () -> Unit, tag
             Modifier
                 .fillMaxWidth()
                 .clip(shape)
-                .background(if (c.dark) Color(0xFF19191C) else c.elevated)
+                .background(c.paperRaised)
                 .border(0.75.dp, c.glassEdge, shape)
                 // Taps on the sheet stay on it (a gesture, not a click: a click would merge the rows into one node
                 // for screen readers).
@@ -423,7 +420,7 @@ fun BoxScope.BottomSheet(open: Boolean, title: String?, onClose: () -> Unit, tag
             }
             if (title != null) {
                 Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 10.dp, top = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RText(title, RType.sans(18f, FontWeight.SemiBold), c.text, Modifier.weight(1f), maxLines = 1)
+                    RText(title, RType.serif(26f, 30f), c.ink, Modifier.weight(1f).semantics { heading() }, maxLines = 2)
                     Box(
                         Modifier.size(44.dp).pressable(shape = CircleShape, label = "Close", onClick = dismiss).semantics { contentDescription = "Close" }.testTag("closeSheet"),
                         contentAlignment = Alignment.Center,
