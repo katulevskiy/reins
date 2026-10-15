@@ -88,6 +88,9 @@ class ApprovalViewModel(
     private val _ui = MutableStateFlow(ApprovalUi())
     val ui: StateFlow<ApprovalUi> = _ui.asStateFlow()
 
+    /** The core's reading of this waiting request (its label), from the list; null when it has none or left it. */
+    fun pendingLabel(): dev.reins.core.RequestLabel? = container.state.pending.value.firstOrNull { it.id == requestId }?.label
+
     /** The user changed the draft (a tick, a period): a fresh read of the request keeps it. */
     @Volatile private var touched = false
 

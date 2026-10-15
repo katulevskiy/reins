@@ -10,6 +10,7 @@ import dev.reins.core.GitPushView
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
 import dev.reins.core.RequestLabel
+import java.text.Normalizer
 
 // How a request is written (design/signal/ASK-TEXT.md), in one place for every surface: the waiting field, waiting
 // cards, Activity rows, entry pages, notifications and widgets. Screens never put the sentence together themselves.
@@ -21,16 +22,34 @@ import dev.reins.core.RequestLabel
 //   full     the whole command                          a wrapped mono fact row, never cut
 //
 // Waiting requests are present tense and start with the verb (the asker is shown apart); decided ones are past tense
-// ("Claude Code pushed 3 commits to …"), and a refused one says what was asked ("Asked to push …"). Everything that
-// came from outside goes through [untrusted]; nothing that is approved is shortened.
+// ("Claude Code pushed 3 commits to …") only when they were carried out, and say what was asked otherwise.
+//
+// What may reach the serif or the kind line (a security rule, ASK-TEXT.md and the desktop review):
+// - The verb, the counts, the kind and the badge's colour come from the core's structured fields (its label, the
+//   approval view's kinds and fields), never from the AI's or a server's own words, and never from matching the ask.
+// - Commands are never parsed here: the core and the guard read them. The mono line shows the guard's own match, else
+//   the whole command; the full command is a fact row.
+// - Every target is checked before it is set: cleaned of hidden characters and line breaks, NFC, and anything that can
+//   pass for something else (letters of two scripts, look-alike letters, compatibility forms, a host that is not
+//   ASCII, a repository name the core would refuse, a path that climbs out with "..") leaves the serif: the sentence
+//   falls back to its generic words and the mono line shows the raw form, escaped.
+// - Nothing is shortened here; a long target is cut only where it is drawn, and the page shows it whole.
 
-/** When the request is told: still waiting, done, or refused (denied, failed). */
+/**
+ * What kind of value a target is, for the look-alike rule ([lookalikeFlag]). An [Identifier] (a host, a repository,
+ * a file or folder, a branch, an MCP server) is normally ASCII: any letter that can pass for another leaves the
+ * serif. A [Name] (a person, a contact, a chat, free words) may be wholly Cyrillic, Greek, CJK…: only a name that
+ * mixes scripts is flagged; one in a single script is shown as it is.
+ */
+enum class ValueKind { Identifier, Name }
+
+/** When the request is told: still waiting, done, or refused (denied, failed, timed out). */
 enum class Tense { Waiting, Done, Refused }
 
 /**
  * A request in words. [target] is a part of [text] (or null), set in italic; [details] is the mono line under the
- * sentence; [full] the whole command for a wrapped mono fact row. [provider] and [action] pick its icon
- * ([dev.reins.android.design.IntegrationIcon]).
+ * sentence (a flag about the target first, when there is one); [full] the whole command for a wrapped mono fact row.
+ * [provider] and [action] pick its icon ([IntegrationIcon]) and come from the core's fields.
  */
 data class AskSentence(
     val kind: String,
@@ -42,7 +61,10 @@ data class AskSentence(
     val action: String = "",
 )
 
-/** The sentence before its tense: [head] starts with the verb and runs up to the [target]; [after] follows it. */
+/**
+ * The sentence before its tense: [head] starts with the verb and runs up to the [target]; [after] follows it. [stand]
+ * is what the sentence says instead of the target when the target cannot be shown ("a repository", "a file").
+ */
 private data class Phrase(
     val head: String,
     val target: String? = null,
@@ -51,13 +73,16 @@ private data class Phrase(
     val full: String? = null,
     /** Told as it is in any tense: a question from the computer, an access that ended. */
     val question: Boolean = false,
+    val stand: String? = null,
+    /** What kind of value [target] (or a question's words) is: an identifier unless said otherwise. */
+    val kind: ValueKind = ValueKind.Identifier,
 )
 
 // ---- from the core's label (waiting cards, rows, notifications, widgets) -------------------------------------------
 
 /**
- * A request from the core's [RequestLabel]. [cwd] (where a command ran), [full] (the whole command), [matched] (the
- * part a rule matched) and [git] (the push) add what the label leaves out.
+ * A request from the core's [RequestLabel]. [cwd] (where a command ran, as the core kept it), [full] (the whole
+ * command), [matched] (the guard's own match) and [git] (the push) add what the label leaves out.
  */
 fun askSentence(
     label: RequestLabel,
@@ -67,64 +92,61 @@ fun askSentence(
     full: String? = null,
     matched: String? = null,
     git: GitPushView? = null,
+    uncertain: Boolean = false,
 ): AskSentence {
     val provider = label.provider
     val action = label.action
-    val lead = oneLine(untrusted(label.lead))
-    val subject = untrusted(label.subject)
-    val tail = oneLine(untrusted(label.tail))
+    val lead = serifLine(label.lead)
+    val subject = untrusted(label.subject).trim()
+    val tail = serifLine(label.tail)
     val phrase = when {
-        provider == "terminal" -> commandPhrase(untrusted(full?.takeIf { it.isNotBlank() } ?: label.subject), cwd, matched)
-        provider == "file" -> filePhrase(lead.ifBlank { "Read" }, subject, moreOf(tail))
-        provider == "secrets" && subject.isNotEmpty() -> Phrase(withSpace(lead), program(subject), details = subject, full = subject)
-        provider == "ssh" && subject.isNotEmpty() -> Phrase("Sign in to a server", details = subject)
-        provider.startsWith("mcp:") -> mcpPhrase(oneLine(subject), tail.removePrefix("on ").trim())
-        provider == "desktop" && action == "ask" -> Phrase(lead, question = true)
+        provider == "terminal" -> commandPhrase(untrusted(full?.takeIf { it.isNotBlank() } ?: label.subject), cwd, matched, uncertain)
+        provider == "file" -> filePhrase(lead.ifBlank { "Read" }, subject, tail)
+        provider == "secrets" && subject.isNotEmpty() -> Phrase("${dropPreposition(lead)} for a command", details = subject, full = subject)
+        provider == "ssh" && subject.isNotEmpty() -> Phrase("Sign in to a server", details = hostLine(subject))
+        provider.startsWith("mcp:") -> mcpPhrase(subject, tail.removePrefix("on ").trim(), host = null)
+        provider == "desktop" && action == "ask" -> Phrase(lead, question = true, kind = ValueKind.Name)
         action == "push" || (action == "delete" && GIT_DELETE.matches(lead)) -> gitPhrase(lead, subject, git)
-        provider == "gmail" && action == "send" -> sendPhrase(subject, moreOf(tail))
-        lead.startsWith("Share a file") -> if (subject.isEmpty()) Phrase("Share a file") else Phrase("Share ", whole(subject))
-        lead.endsWith(":") -> Phrase(if (subject.isEmpty()) lead.removeSuffix(":") else "$lead ${oneLine(subject)}")
+        provider == "gmail" && action == "send" -> sendPhrase(listOf(subject), moreOf(tail))
+        lead.startsWith("Share a file") -> if (subject.isEmpty()) Phrase("Share a file") else Phrase("Share ", subject, stand = "a file")
+        lead.endsWith(":") -> if (subject.isEmpty()) Phrase(lead.removeSuffix(":")) else Phrase("$lead ", subject, question = true, stand = "", kind = ValueKind.Name)
         subject.isEmpty() -> Phrase(joinTail(lead, tail))
-        else -> subjectPhrase(lead, subject, label.code, tail)
+        else -> subjectPhrase(lead, subject, label.code, tail, if (provider in NAME_PROVIDERS) ValueKind.Name else ValueKind.Identifier)
     }
     return phrase.told(tense, who, kindOf(provider, action), provider, action)
 }
 
-/** A waiting request: from its approval view when it has been read, else from its label. */
+/** A waiting request: from its approval view when it has been read (with the core's label), else from its label. */
 fun askSentence(item: PendingItem, view: ApprovalView? = null, tense: Tense = Tense.Waiting): AskSentence = when (item.kind) {
-    PendingKind.PAIRING -> AskSentence("Reins · Connect", "Connect ${quotedName(item.connectionLabel)}", null, provider = "desktop", action = "pair")
-    PendingKind.JOIN -> AskSentence("Reins · New phone", "Add ${quotedName(item.connectionLabel)} to your account", null, provider = "desktop", action = "join")
+    PendingKind.PAIRING -> AskSentence("Reins · Connect", "Connect ${quotedName(serifLine(item.connectionLabel))}", null, provider = "desktop", action = "pair")
+    PendingKind.JOIN -> AskSentence("Reins · New phone", "Add ${quotedName(serifLine(item.connectionLabel))} to your account", null, provider = "desktop", action = "join")
     PendingKind.BLOB -> {
-        // The file's name: the core's label, else what the title says after "share a file: ".
-        val name = whole(item.label?.subject?.takeIf { it.isNotBlank() } ?: item.title.substringAfter("share a file: ", ""))
-        if (name.isEmpty()) AskSentence("Reins · File", "Share a file", null, provider = "files", action = "send")
-        else AskSentence("Reins · File", "Share $name", name, provider = "files", action = "send")
+        // The file's name from the core's label; without one, the generic words.
+        val name = item.label?.subject?.takeIf { it.isNotBlank() }
+        val phrase = if (name == null) Phrase("Share a file") else Phrase("Share ", untrusted(name), stand = "a file")
+        phrase.told(tense, null, "Reins · File", "files", "send")
     }
     else -> when {
-        view != null -> askSentence(view, tense)
+        view != null -> askSentence(view, tense, label = item.label)
         item.label != null -> askSentence(item.label!!, tense)
         else -> legacyPending(item, tense)
     }
 }
 
-/** A waiting request from before labels, without its view: what its title and subtitle say. */
+/** A waiting request from before labels, without its view: what its kind and service say. */
 private fun legacyPending(item: PendingItem, tense: Tense): AskSentence {
-    val s = dev.reins.android.ui.activity.pendingSentence(item, null)
-    val plain = s.plain
-    val text = when {
-        plain.startsWith("Wants to ") -> plain.removePrefix("Wants to ")
-        plain.startsWith("Asks for ") -> "Ask for " + plain.removePrefix("Asks for ")
-        else -> plain
-    }
-    val bold = s.parts.filter { it.bold }
-    val target = bold.lastOrNull()?.text?.takeIf { bold.size >= 2 && it.isNotBlank() }
-    val at = target?.let { text.lastIndexOf(it) } ?: -1
-    val phrase = when {
-        target == null || at < 0 -> Phrase(text)
-        looksMachine(target) -> Phrase(joinTail(dropPreposition(text.substring(0, at)), text.substring(at + target.length).trim()), details = target)
-        else -> Phrase(text.substring(0, at), target, text.substring(at + target.length))
-    }
     val (svc, a) = legacyAction(item.service, item.action, item.op)
+    val count = item.count.toInt()
+    val mail = item.op.isEmpty() && svc == "gmail"
+    val phrase = when {
+        svc.startsWith(dev.reins.android.design.MCP_PREFIX) -> mcpPhrase(untrusted(item.op), serviceName(svc), host = null)
+        a == "grant" -> Phrase("Ask for access")
+        a == "accounts" -> Phrase("See your accounts")
+        mail && a == "search" -> untrusted(item.subtitle).takeIf { it.isNotBlank() }?.let { forPhrase("Search Gmail for", it) } ?: Phrase("Search Gmail")
+        mail && a == "read" -> Phrase("Read ${plural(count.coerceAtLeast(1), "email")}")
+        mail && a == "send" -> Phrase(if (count > 1) "Send an email to $count people" else "Send an email")
+        else -> Phrase(operationTitle(item.action, count, item.service, untrusted(item.opTitle), item.op))
+    }
     return phrase.told(tense, null, "${serviceName(svc)} · ${kindWord(a, svc)}", svc, a)
 }
 
@@ -156,91 +178,93 @@ fun askSentence(entry: ActivityEntry, who: String? = null): AskSentence {
         val request = entry.request
         return askSentence(label, tense, who, cwd = request?.cwd, full = request?.full?.takeIf { label.provider == "terminal" })
     }
-    return legacy(entry.service, entry.action, entry.count.toInt(), entry.opTitle, entry.op, tense, "", entry)
+    return legacy(entry, tense)
 }
 
 // ---- from the approval view (the waiting field, an entry's page) ----------------------------------------------------
 
-/** A request from what its approval shows: the richest form (branches, the rule's match, the folder). */
-fun askSentence(view: ApprovalView, tense: Tense = Tense.Waiting, who: String? = null): AskSentence {
+/**
+ * A request from what its approval shows: the branches, the guard's match, the store. A desktop question is read
+ * through the core's [label] (its reading of the command or the files); without it, it is told as asked. [cwd] is
+ * where a command ran, as the core kept it.
+ */
+fun askSentence(
+    view: ApprovalView,
+    tense: Tense = Tense.Waiting,
+    who: String? = null,
+    label: RequestLabel? = null,
+    cwd: String? = null,
+): AskSentence {
     val git = view.git
     val ask = view.ask
     val mcp = view.mcp
     val purchase = view.purchase
     val service = view.service.ifBlank { "gmail" }
+    if (ask != null) {
+        // The core read the question (its label); the phone never re-reads the command or the files.
+        return when {
+            label != null && (label.provider == "terminal" || label.provider == "file") ->
+                askSentence(label, tense, who, cwd = cwd, matched = ask.rule?.matched, uncertain = ask.uncertain)
+            else -> Phrase(untrusted(ask.question), question = true, kind = ValueKind.Name).told(tense, who, viewKind(view), "desktop", "ask")
+        }
+    }
     val (phrase, provider, action) = when {
         git != null -> {
-            val repo = untrusted(git.repo)
             val refs = git.refs
+            val deletes = refs.isNotEmpty() && refs.all { it.change == "delete" }
             val lead = when {
-                refs.isNotEmpty() && refs.all { it.change == "delete" } ->
-                    if (refs.size == 1) "Delete ${refs[0].kind} ${untrusted(refs[0].shortName)} from" else "Delete ${refs.size} refs from"
-                refs.isNotEmpty() && refs.all { it.kind == "tag" } ->
-                    if (refs.size == 1) "Push tag ${untrusted(refs[0].shortName)} to" else "Push ${refs.size} tags to"
+                deletes -> if (refs.size == 1) "Delete a ${if (refs[0].kind == "tag") "tag" else "branch"} from" else "Delete ${refs.size} refs from"
+                refs.isNotEmpty() && refs.all { it.kind == "tag" } -> if (refs.size == 1) "Push a tag to" else "Push ${refs.size} tags to"
                 else -> {
                     val commits = refs.filter { it.change != "delete" }.sumOf { it.commitCount.toInt() }
                     val verb = if (refs.any { it.force }) "Force-push" else "Push"
                     if (commits == 0) "$verb to" else "$verb ${plural(commits, "commit")} to"
                 }
             }
-            val deletes = refs.isNotEmpty() && refs.all { it.change == "delete" }
-            Triple(gitPhrase(lead, repo, git), view.service, if (deletes) "delete" else "push")
-        }
-        ask != null -> {
-            val hook = hookOf(ask.question, ask.detail)
-            when {
-                hook?.command != null -> Triple(
-                    // The match is the guard's own (the rule's), never a guess from the text.
-                    commandPhrase(untrusted(hook.command), hook.cwd, ask.rule?.matched, uncertain = ask.uncertain),
-                    "terminal",
-                    if (ask.destructive) "delete" else "run",
-                )
-                hook != null && hook.files.isNotEmpty() -> Triple(
-                    filePhrase(
-                        if (ask.uncertain) null else when (hook.write) { true -> "Change"; false -> "Read"; null -> null },
-                        untrusted(hook.files[0]),
-                        hook.files.size - 1,
-                    ),
-                    "file",
-                    if (hook.write == false) "read" else "write",
-                )
-                else -> Triple(Phrase(untrusted(ask.question), question = true), "desktop", "ask")
-            }
+            val names = refs.joinToString(", ") { serifLine(it.shortName) }.ifEmpty { null }
+            val details = if (deletes || refs.all { it.kind == "tag" }) names else pushDetails(git)
+            Triple(repoPhrase(lead, untrusted(git.repo), details), view.service, if (deletes) "delete" else "push")
         }
         view.secrets != null -> {
             val s = view.secrets!!
-            val command = untrusted(s.command)
+            val command = untrusted(s.command).trim()
             val what = "Use ${plural(s.items.size, "secret")}"
-            Triple(if (command.isEmpty()) Phrase(what) else Phrase("$what for ", program(command), details = command, full = command), "secrets", "secrets")
+            Triple(if (command.isEmpty()) Phrase(what) else Phrase("$what for a command", details = command, full = command), "secrets", "secrets")
         }
         view.envRelease != null -> {
             val r = view.envRelease!!
             val where = "${untrusted(r.project)} · ${untrusted(r.env)}"
-            val names = r.variables.joinToString(", ") { untrusted(it) }.ifEmpty { null }
+            val names = r.variables.joinToString(", ") { serifLine(it) }.ifEmpty { null }
             val phrase = when {
-                r.print -> Phrase(if (r.variables.size == 1) "Print a value from " else "Print ${plural(r.variables.size, "value")} from ", where, details = names)
-                r.allVariables -> Phrase("Use every variable of ", where)
-                else -> Phrase("Use ${plural(r.variables.size, "variable")} of ", where, details = names)
+                r.print -> Phrase(if (r.variables.size == 1) "Print a value from " else "Print ${plural(r.variables.size, "value")} from ", where, details = names, stand = "a project")
+                r.allVariables -> Phrase("Use every variable of ", where, stand = "a project")
+                else -> Phrase("Use ${plural(r.variables.size, "variable")} of ", where, details = names, stand = "a project")
             }
             Triple(phrase, "secrets", "secrets")
         }
         view.secretsStore != null -> Triple(Phrase("Save ${plural(view.secretsStore!!.total.toInt(), "secret")} in your ", "vault"), "vault", "write")
         view.tokenStore != null -> Triple(Phrase("Save a ", "${serviceName(view.tokenStore!!.service)} token"), "vault", "write")
-        view.ssh != null -> Triple(Phrase("Sign in to a server", details = untrusted(dev.reins.android.ui.approval.sshTarget(view.ssh!!.host, view.ssh!!.hostKey))), "ssh", "secrets")
+        view.ssh != null -> Triple(Phrase("Sign in to a server", details = hostLine(dev.reins.android.ui.approval.sshTarget(view.ssh!!.host, view.ssh!!.hostKey))), "ssh", "secrets")
         purchase != null -> {
-            // The store is its domain, as Reins read it from the checkout; the merchant's name is the page's own words.
-            // The one host set in the serif: here it is the thing the money goes to.
-            Triple(Phrase("Pay ${purchase.total} at ", oneLine(untrusted(purchase.domain))), "payments", "pay")
+            // The store is its domain as Reins read it from the checkout (the merchant's name is the page's own words),
+            // in ASCII: a host with other letters is shown in punycode, its raw form under it.
+            val host = asciiHost(untrusted(purchase.domain))
+            val phrase = if (host == null) {
+                Phrase("Pay ${serifLine(purchase.total)} at a store", details = "Store: ${rawForm(untrusted(purchase.domain))}")
+            } else {
+                Phrase("Pay ${serifLine(purchase.total)} at ", host.ascii, details = host.flag, stand = "a store")
+            }
+            Triple(phrase, "payments", "pay")
         }
         mcp != null -> {
             val action = if (mcp.destructive) "delete" else if (mcp.readOnly) "read" else "write"
-            Triple(mcpPhrase(oneLine(untrusted(mcp.tool)), oneLine(untrusted(mcp.serverName))), view.service.ifBlank { "mcp:" }, action)
+            Triple(mcpPhrase(untrusted(mcp.tool), untrusted(mcp.serverName), host = urlHost(mcp.serverUrl)), view.service.ifBlank { "mcp:" }, action)
         }
         view.kind == ApprovalKind.GRANT -> Triple(Phrase(if (view.grant?.action == "send") "Send emails without asking" else "Read emails without asking"), service, "grant")
         view.kind == ApprovalKind.ACCOUNTS -> Triple(Phrase("See your ${serviceName(service)} addresses"), service, "accounts")
         view.kind == ApprovalKind.SEND -> {
-            val to = view.email?.let { it.to + it.cc }.orEmpty()
-            Triple(sendPhrase(to.firstOrNull()?.let(::untrusted).orEmpty(), (to.size - 1).coerceAtLeast(0)), service, "send")
+            val to = view.email?.let { it.to + it.cc }.orEmpty().map(::untrusted)
+            Triple(sendPhrase(to.take(1), (to.size - 1).coerceAtLeast(0)), service, "send")
         }
         view.kind == ApprovalKind.SEARCH || view.kind == ApprovalKind.READ -> {
             val n = view.messages.size
@@ -264,64 +288,60 @@ fun askSentence(view: ApprovalView, tense: Tense = Tense.Waiting, who: String? =
                 deletes && title.startsWith("Delete ") -> {
                     // "Delete the repository *octo/old-api*": the noun stays roman, the thing is the target.
                     val noun = title.removePrefix("Delete ").removePrefix("a ").removePrefix("an ").removePrefix("the ").removePrefix("${serviceName(view.service)} ")
-                    Phrase("Delete the $noun ", target)
+                    Phrase("Delete the $noun ", target, stand = "one")
                 }
-                else -> Phrase("$title in ", target)
+                else -> Phrase("$title in ", target, stand = "a place")
             }
             Triple(phrase, view.service, actionOfView(view, deletes))
         }
     }
-    val kind = when {
-        ask != null && provider != "desktop" -> kindOf(provider, action)
-        else -> viewKind(view)
-    }
-    return phrase.told(tense, who, kind, provider, action)
+    return phrase.told(tense, who, viewKind(view), provider, action)
 }
 
 // ---- the parts ------------------------------------------------------------------------------------------------------
 
 /**
- * "Run a command in *reins*", the guard's match and "and 2 more commands" in mono, the whole command in full. [uncertain]
- * (the phone could not read it with certainty): the generic sentence, and the whole command under it.
+ * A command: "Run a command in *reins*" (the folder only as the core kept it), the guard's own match in mono with "and
+ * more" when the command holds more, else the whole command; the full command is a fact row. The phone never splits a
+ * command: only the core and the guard read it. [uncertain]: the generic words and the whole command.
  */
-private fun commandPhrase(command: String, cwd: String?, matched: String?, uncertain: Boolean = false): Phrase {
+private fun commandPhrase(command: String, cwd: String?, matched: String?, uncertain: Boolean): Phrase {
     val whole = command.trim().ifEmpty { null }
     if (uncertain) return Phrase("Run a command", details = whole, full = whole)
+    val m = matched?.let(::untrusted)?.trim()?.takeIf { it.isNotEmpty() && whole != null && whole.contains(it) }
+    val line = when {
+        m == null -> whole
+        m == whole -> m
+        else -> "$m and more"
+    }
     val folder = cwd?.let(::folderName)
-    val line = commandLine(command, matched)
-    return Phrase(
-        if (folder != null) "Run a command in " else "Run a command",
-        folder,
-        details = line.ifEmpty { null },
-        full = whole,
-    )
+    return Phrase(if (folder != null) "Run a command in " else "Run a command", folder, details = line, full = whole, stand = "")
 }
 
-/**
- * "Read *.env*", "Change *a.pem* and 1 more file"; the path in mono. [verb] null: it is not known whether the files are
- * read or changed, so the sentence says neither.
- */
-private fun filePhrase(verb: String?, path: String, more: Int): Phrase {
+/** "Read *.env* and 1 more"; the path in mono. A path that climbs out ("a/../b") names no file: "Read a file". */
+private fun filePhrase(verb: String, path: String, tail: String): Phrase {
     val p = path.trim()
-    if (verb == null) return Phrase("Use ${plural(more + 1, "file")}", details = if (more > 0) "$p and $more more" else p.ifEmpty { null })
-    if (p.isEmpty()) return Phrase("$verb ${if (more > 0) plural(more + 1, "file") else "a file"}")
-    return Phrase("$verb ", fileName(p), if (more > 0) " and $more more ${if (more == 1) "file" else "files"}" else "", details = p)
+    val name = fileName(p)
+    val after = if (tail.isEmpty()) "" else " $tail"
+    if (name == null) return Phrase("$verb a file$after", details = p.ifEmpty { null }?.let(::oneLine))
+    return Phrase("$verb ", name, after, details = oneLine(p), stand = "a file")
 }
 
 /**
- * A tool of an MCP server: "Use a tool on *Linear*", the tool in mono. The verb is never the tool's own title: that is
- * the server's words, not what Reins knows the call does.
+ * A tool of an MCP server: "Use a tool on *Linear*", the tool's name (and the server's host) in mono. The verb is never
+ * the tool's own title: that is the server's words, not what Reins knows the call does.
  */
-private fun mcpPhrase(tool: String, server: String): Phrase {
-    val on = server.ifBlank { null }
-    return Phrase(if (on != null) "Use a tool on " else "Use a tool", on, details = tool.ifBlank { null })
+private fun mcpPhrase(tool: String, server: String, host: String?): Phrase {
+    val on = server.trim().ifBlank { null }
+    val details = listOfNotNull(serifLine(tool).ifEmpty { null }, host?.let { hostLine(it) }).joinToString(" · ").ifEmpty { null }
+    return Phrase(if (on != null) "Use a tool on " else "Use a tool", on, details = details, stand = "a server")
 }
 
-private val GIT_DELETE = Regex("^Delete (branch|tag|\\d+ refs) .*from$|^Delete \\d+ refs from$")
+private val GIT_DELETE = Regex("^Delete (branch|tag) .+ from$|^Delete \\d+ refs from$")
 
-/** A push or a deletion on a repository: the repository is the target, branches and tags go to the mono line. */
+/** A push or a deletion from the core's label: the repository is the target, branches and tags go to the mono line. */
 private fun gitPhrase(lead: String, repo: String, git: GitPushView?): Phrase {
-    val names = git?.refs?.joinToString(", ") { untrusted(it.shortName) }?.ifEmpty { null }
+    val names = git?.refs?.joinToString(", ") { serifLine(it.shortName) }?.ifEmpty { null }
     val one = Regex("^Delete (branch|tag) (.+) from$").find(lead)
     val tag = Regex("^Push tag (.+) to$").find(lead)
     val (head, details) = when {
@@ -330,7 +350,18 @@ private fun gitPhrase(lead: String, repo: String, git: GitPushView?): Phrase {
         lead.startsWith("Delete ") || lead.endsWith(" tags to") -> lead to names
         else -> lead to pushDetails(git)
     }
-    return if (repo.isBlank()) Phrase(dropPreposition(head), details = details) else Phrase("$head ", repo, details = details)
+    return repoPhrase(head, repo, details)
+}
+
+/**
+ * "Push 3 commits to *octo/app*": the repository as the core accepts one (`owner/name` of ASCII letters, digits, `-`,
+ * `_` and `.`, no `..`); anything else is "a repository" with its raw form in mono.
+ */
+private fun repoPhrase(head: String, repo: String, details: String?): Phrase {
+    val r = repo.trim()
+    if (r.isEmpty()) return Phrase(dropPreposition(head), details = details)
+    if (!repoOk(r)) return Phrase("$head a repository", details = listOfNotNull("Repository: ${rawForm(r)}", details).joinToString("\n"))
+    return Phrase("$head ", r, details = details, stand = "a repository")
 }
 
 /** Where a push goes, in mono: "feature/x · new branch", "main", "feature/x and 1 more". */
@@ -338,91 +369,113 @@ fun pushDetails(git: GitPushView?): String? {
     val refs = git?.refs?.filter { it.change != "delete" }.orEmpty()
     val first = refs.firstOrNull() ?: return null
     val name = buildString {
-        append(untrusted(first.shortName))
+        append(serifLine(first.shortName))
         if (first.change == "create") append(if (first.kind == "tag") " · new tag" else " · new branch")
     }
     return if (refs.size > 1) "$name and ${refs.size - 1} more" else name
 }
 
 /**
- * An email: "Send an email", or "to 3 people", and the recipients as written in mono. The name in "Dana <dana@…>" is
- * the AI's own words, so it is never the target: the address below is what the mail goes to.
+ * An email: "Send an email", or "to 3 people", and the recipients as written in mono (an address's host in punycode).
+ * The name in "Dana <dana@…>" is the AI's own words, so it is never the target.
  */
-private fun sendPhrase(to: String, more: Int): Phrase {
-    val first = oneLine(to).trim()
-    if (first.isEmpty()) return Phrase("Send an email")
+private fun sendPhrase(to: List<String>, more: Int): Phrase {
+    val first = to.firstOrNull()?.let(::addressLine)?.ifEmpty { null } ?: return Phrase("Send an email")
     val n = more + 1
     return Phrase(if (n == 1) "Send an email" else "Send an email to $n people", details = first + if (more > 0) " and $more more" else "")
 }
 
 /** "Read 2 emails from *Stripe*" (the sender's name, as the mail says it), the address under it; a bare address is mono. */
 private fun personPhrase(lead: String, from: String): Phrase {
-    val name = oneLine(dev.reins.android.ui.approval.displayName(from)).trim()
+    val name = dev.reins.android.ui.approval.displayName(from).trim()
     val address = if ('<' in from) from.substringAfter('<').substringBefore('>').trim() else from.trim()
+    val line = addressLine(address).ifEmpty { null }
     return when {
-        name.isBlank() || looksMachine(name) -> Phrase(dropPreposition(lead), details = address)
-        else -> Phrase("$lead ", name, details = address.takeIf { it.isNotEmpty() && it != name })
+        name.isBlank() || looksMachine(name) -> Phrase(dropPreposition(lead), details = line)
+        else -> Phrase("$lead ", name, details = line?.takeIf { it != serifLine(name) }, stand = "a sender", kind = ValueKind.Name)
     }
 }
 
 /** A label's subject: a human one is the target; a command, URL, path or address moves to the mono line. */
-private fun subjectPhrase(lead: String, subject: String, code: Boolean, tail: String): Phrase {
+private fun subjectPhrase(lead: String, subject: String, code: Boolean, tail: String, kind: ValueKind): Phrase {
     if ('<' in subject && '>' in subject && !code) return personPhrase(lead, subject).copy(after = spaced(tail))
     if (code || looksMachine(subject)) {
-        return Phrase(joinTail(dropPreposition(lead), tail), details = subject, full = if (code && '\n' in subject) subject else null)
+        return Phrase(joinTail(dropPreposition(lead), tail), details = oneLine(subject), full = if (code && '\n' in subject) subject.trim() else null)
     }
-    return Phrase(withSpace(lead), oneLine(subject), spaced(tail))
+    return Phrase(withSpace(lead), subject, spaced(tail), stand = "", kind = kind)
 }
 
-/** An entry or a request from before labels: built from what the operation is called. */
-private fun legacy(service: String, action: String, count: Int, opTitle: String, op: String, tense: Tense, subtitle: String, entry: ActivityEntry? = null): AskSentence {
-    val svc = service.ifBlank { "gmail" }
-    val kind = ActionKind.of(action)
-    val mail = op.isEmpty() && svc == "gmail"
-    val info = entry?.info
+/** Integrations whose subjects are people, chats, events or words (a chat's name, a contact): [ValueKind.Name]. */
+private val NAME_PROVIDERS = setOf("telegram", "sms", "gmail", "gcontacts", "device_contacts", "gcalendar", "device_calendar")
+
+/** An entry from before labels: built from what the operation is called and what the core kept of it. */
+private fun legacy(entry: ActivityEntry, tense: Tense): AskSentence {
+    val svc = entry.service.ifBlank { "gmail" }
+    val kind = ActionKind.of(entry.action)
+    val count = entry.count.toInt()
+    val mail = entry.op.isEmpty() && svc == "gmail"
+    val info = entry.info
     val phrase = when {
         kind == ActionKind.Grant -> {
             // Told as it ended, in any tense: "Got access: …", "Asked for access: …".
-            val summary = info?.grantSummary?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { ": ${oneLine(it)}" }.orEmpty()
-            val head = when {
-                tense == Tense.Waiting -> "Ask for access"
-                entry?.outcome == "granted" -> "Got access"
-                else -> "Asked for access"
-            }
-            Phrase(head + summary, question = true)
+            val head = if (entry.outcome == "granted") "Got access" else "Asked for access"
+            val summary = info.grantSummary?.let(::untrusted)?.takeIf { it.isNotBlank() }
+            if (summary == null) Phrase(head, question = true) else Phrase("$head: ", summary, question = true, stand = "", kind = ValueKind.Name)
         }
-        mail && kind == ActionKind.Search -> info?.query?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { forPhrase("Search Gmail for", it) } ?: Phrase("Search Gmail")
+        svc.startsWith(dev.reins.android.design.MCP_PREFIX) -> mcpPhrase(untrusted(entry.op), serviceName(svc), host = null)
+        mail && kind == ActionKind.Search -> info.query?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { forPhrase("Search Gmail for", it) } ?: Phrase("Search Gmail")
         mail && kind == ActionKind.Read -> {
-            val from = info?.messages?.map { untrusted(it.from) }?.distinctBy { dev.reins.android.ui.approval.displayName(it) }?.singleOrNull()
+            val from = info.messages.map { untrusted(it.from) }.distinctBy { dev.reins.android.ui.approval.displayName(it) }.singleOrNull()
             val lead = "Read ${plural(count.coerceAtLeast(1), "email")}"
             if (from != null) personPhrase("$lead from", from) else Phrase(lead)
         }
         mail && kind == ActionKind.Send -> {
-            val to = info?.email?.let { it.to + it.cc }.orEmpty()
-            sendPhrase(to.firstOrNull()?.let(::untrusted).orEmpty(), (to.size - 1).coerceAtLeast(0))
+            val to = info.email?.let { it.to + it.cc }.orEmpty().map(::untrusted)
+            sendPhrase(to.take(1), (to.size - 1).coerceAtLeast(0))
         }
-        else -> {
-            val title = operationTitle(action, count, service, untrusted(opTitle), op)
-            val where = if (svc.startsWith(dev.reins.android.design.MCP_PREFIX)) "" else subtitle
-            if (where.isNotBlank() && !looksMachine(where) && !where.equals(title, ignoreCase = true)) Phrase("$title in ", where) else Phrase(title)
-        }
+        else -> Phrase(operationTitle(entry.action, count, entry.service, untrusted(entry.opTitle), entry.op))
     }
-    val a = legacyAction(svc, action, op).second
+    val a = legacyAction(svc, entry.action, entry.op).second
     return phrase.told(tense, null, "${serviceName(svc)} · ${kindWord(a, svc)}", svc, a)
 }
 
-/** Puts the tense on: present from the verb; past, with [who] first when given; refused as what was asked. */
+/**
+ * Puts the tense on: present from the verb; past, with [who] first when given; refused as what was asked. The target
+ * is checked here, once, for every surface: one that can pass for something else leaves the serif for its stand-in
+ * words, and the mono line says why with the raw form.
+ */
 private fun Phrase.told(tense: Tense, who: String?, kind: String, provider: String, action: String): AskSentence {
-    val target = target?.trim()?.takeIf { it.isNotEmpty() }
-    val body = (head + (target ?: "") + after).replace(Regex(" {2,}"), " ").trim()
-    val name = who?.let { untrustedName(it) }?.takeIf { it.isNotEmpty() }
+    val raw = target?.let { untrusted(it).trim() }?.takeIf { it.isNotEmpty() }
+    val shown = raw?.let(::serifLine)
+    val flag = raw?.let { lookalikeFlag(it, this.kind) }
+    val target = if (flag == null) shown else null
+    val body = when {
+        target != null -> head + target + after
+        raw != null && !stand.isNullOrEmpty() -> head + stand + after
+        // No stand-in: the words before the target, without the word that led to it ("in", "to", ":").
+        raw != null -> dropPreposition(head.trimEnd().removeSuffix(":")) + after
+        else -> head + after
+    }.let(::serifLine)
+    val questionFlag = if (question && target == null && raw == null) lookalikeFlag(body, this.kind) else null
+    // The asker's display name is a name: left out only when it mixes scripts.
+    val name = who?.let { untrustedName(serifLine(it)) }?.takeIf { it.isNotEmpty() && lookalikeFlag(it, ValueKind.Name) == null }
     val text = when {
+        questionFlag != null -> if (tense == Tense.Waiting) "Answer a question from your computer" else "A question from your computer"
         question -> body
         tense == Tense.Waiting -> body.replaceFirstChar { it.uppercase() }
         tense == Tense.Done -> pastTense(body).let { if (name != null) "$name ${lowerVerb(it)}" else it.replaceFirstChar { c -> c.uppercase() } }
         else -> (if (name != null) "$name asked to " else "Asked to ") + lowerVerb(body)
     }
-    return AskSentence(kind, text, target?.takeIf { it in text }, details?.trim()?.ifEmpty { null }, full, provider, action)
+    val lines = listOfNotNull(flag, questionFlag, details?.let(::cleanLines)?.ifEmpty { null })
+    return AskSentence(
+        cleanKind(kind),
+        serifLine(text),
+        target?.takeIf { it in text },
+        lines.joinToString("\n").ifEmpty { null },
+        full?.let { untrusted(it).trim() }?.ifEmpty { null },
+        provider,
+        action,
+    )
 }
 
 // ---- words ----------------------------------------------------------------------------------------------------------
@@ -451,7 +504,7 @@ fun pastTense(phrase: String): String {
 /** The verb in lower case, a name that starts the phrase ("GitHub …") kept. */
 private fun lowerVerb(s: String): String = if (s.length > 1 && s[1].isUpperCase()) s else s.replaceFirstChar { it.lowercase() }
 
-/** The kind line: what it touches, then what it does ("GitHub · Push", "Terminal · Run"). */
+/** The kind line from the core's provider and action: what it touches, then what it does ("GitHub · Push"). */
 fun kindOf(provider: String, action: String): String = "${providerTitle(provider)} · ${kindWord(action, provider)}"
 
 private fun providerTitle(provider: String): String = when (provider) {
@@ -476,14 +529,22 @@ private fun kindWord(action: String, provider: String): String = when (action) {
     "accounts" -> "Accounts"
     "ask" -> "Asks"
     "pay" -> "Buy"
-    else -> action.replaceFirstChar { it.uppercase() }
+    else -> "Change"
 }
 
-/** The approval view's kind line ("GitHub · Push", "Payments · Buy", "Vault · Secrets"). */
+/** The kind line, checked like a target: a server's name that can pass for another becomes "MCP server". */
+private fun cleanKind(kind: String): String {
+    val where = kind.substringBefore(" · ")
+    val what = kind.substringAfter(" · ", "")
+    val safe = serifLine(where).takeIf { it.isNotEmpty() && lookalikeFlag(it, ValueKind.Identifier) == null } ?: "Service"
+    return if (what.isEmpty()) safe else "$safe · $what"
+}
+
+/** The approval view's kind line from its kinds and fields ("GitHub · Push", "Payments · Buy", "Vault · Secrets"). */
 private fun viewKind(view: ApprovalView): String {
     val mcp = view.mcp
     val where = when {
-        mcp != null -> untrustedName(mcp.serverName)
+        mcp != null -> untrustedName(mcp.serverName).let { if (it.isEmpty() || lookalikeFlag(it, ValueKind.Identifier) != null) "MCP server" else it }
         view.purchase != null -> "Payments"
         view.ask != null -> "Computer"
         view.secrets != null || dev.reins.android.ui.approval.isSecretsMove(view) -> "Vault"
@@ -524,7 +585,7 @@ private fun actionOfView(view: ApprovalView, deletes: Boolean): String = when {
     else -> "write"
 }
 
-/** The Signal field of a request's action: its badge's colour. */
+/** The Signal field of a request's action (the core's): its badge's colour. */
 fun actionField(action: String): Field = when (action) {
     "read", "search", "ask" -> Field.Read
     "delete", "pay" -> Field.Delete
@@ -532,6 +593,122 @@ fun actionField(action: String): Field = when (action) {
     "secrets", "accounts" -> Field.Accounts
     "pair", "join" -> Field.Pair
     else -> Field.Push
+}
+
+// ---- what may pass for something else -------------------------------------------------------------------------------
+
+/** A line for the serif or the kind line: hidden characters out, one line, NFC, single spaces. */
+fun serifLine(s: String): String = Normalizer.normalize(oneLine(untrusted(s)), Normalizer.Form.NFC).replace(Regex(" {2,}"), " ").trim()
+
+/** The mono line: each line cleaned the same way, line breaks kept between them. */
+private fun cleanLines(s: String): String = s.lines().map(::serifLine).filter { it.isNotEmpty() }.joinToString("\n")
+
+/**
+ * Why [s] cannot be set in the serif, with its raw form ("Look-alike letters: p[U+0430]ypal"), or null when it can.
+ * Any [kind]: letters of scripts that do not go together (Latin with a Cyrillic letter; Latin, Han, kana and Hangul go
+ * together as Unicode TR39 allows). An [ValueKind.Identifier] also: a letter known to pass for a Latin one (Cyrillic
+ * а, Greek ο, … even when the whole name is in that script) or a compatibility form (fullwidth, mathematical).
+ * (Accents NFC composes are fine: the sentence is set in NFC.)
+ */
+fun lookalikeFlag(s: String, kind: ValueKind = ValueKind.Identifier): String? {
+    val t = oneLine(untrusted(s)).trim()
+    if (t.isEmpty()) return null
+    val nfc = Normalizer.normalize(t, Normalizer.Form.NFC)
+    val flagged = when (kind) {
+        ValueKind.Name -> mixedScripts(nfc)
+        ValueKind.Identifier -> mixedScripts(nfc) || nfc.any { it in CONFUSABLE } || Normalizer.normalize(nfc, Normalizer.Form.NFKC) != nfc
+    }
+    return if (flagged) "Look-alike letters: ${rawForm(t)}" else null
+}
+
+/** The CJK scripts, which TR39 lets a name mix with each other and with Latin (Japanese, Chinese, Korean names). */
+private val CJK = setOf(
+    Character.UnicodeScript.HAN, Character.UnicodeScript.HIRAGANA, Character.UnicodeScript.KATAKANA,
+    Character.UnicodeScript.HANGUL, Character.UnicodeScript.BOPOMOFO,
+)
+
+/**
+ * Letters of scripts that do not go together (Common and Inherited marks aside). Latin with the CJK scripts, and the
+ * CJK scripts with each other, go together (TR39's highly restrictive level); anything else mixed does not.
+ */
+fun mixedScripts(s: String): Boolean {
+    val scripts = mutableSetOf<Character.UnicodeScript>()
+    var i = 0
+    while (i < s.length) {
+        val cp = s.codePointAt(i)
+        i += Character.charCount(cp)
+        if (!Character.isLetter(cp)) continue
+        val script = Character.UnicodeScript.of(cp)
+        if (script != Character.UnicodeScript.COMMON && script != Character.UnicodeScript.INHERITED) scripts += script
+    }
+    val other = scripts - CJK - Character.UnicodeScript.LATIN
+    return when {
+        other.isEmpty() -> false // Latin, CJK, or Latin with CJK
+        else -> scripts.size > 1 // one other script alone is fine; with anything else it is mixed
+    }
+}
+
+/** Letters of other scripts that pass for Latin ones (the common Cyrillic, Greek and Armenian look-alikes). */
+private val CONFUSABLE: Set<Char> = (
+    "аеорсуххіјѕԁһӏԛԝүАВЕКМНОРСТУХІЈЅԌ" + // Cyrillic
+        "αβεικνορτυχΑΒΕΖΗΙΚΜΝΟΡΤΥΧ" + // Greek
+        "օսոհցաԱՍՕ" // Armenian
+    ).toSet()
+
+/** The raw form for the mono line: ASCII as it is, anything else as [U+XXXX]. */
+fun rawForm(s: String): String = buildString {
+    var i = 0
+    while (i < s.length) {
+        val cp = s.codePointAt(i)
+        i += Character.charCount(cp)
+        if (cp in 0x20..0x7E) appendCodePoint(cp) else append("[U+%04X]".format(cp))
+    }
+}
+
+/** A host in ASCII: [ascii] (punycode for one with other letters) and a [flag] with its raw form when it was converted. */
+data class AsciiHost(val ascii: String, val flag: String?)
+
+private val HOST_ASCII = Regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\\.?(:\\d{1,5})?$")
+
+/** [host] as ASCII (IDNA to punycode); null when it is not a host at all. */
+fun asciiHost(host: String): AsciiHost? {
+    val h = oneLine(host).trim().trimEnd('.')
+    if (h.isEmpty()) return null
+    val port = Regex(":(\\d{1,5})$").find(h)?.value.orEmpty()
+    val name = h.removeSuffix(port)
+    val ascii = try {
+        java.net.IDN.toASCII(Normalizer.normalize(name, Normalizer.Form.NFC), java.net.IDN.USE_STD3_ASCII_RULES or java.net.IDN.ALLOW_UNASSIGNED).lowercase()
+    } catch (_: Exception) {
+        return null
+    }
+    if (!HOST_ASCII.matches(ascii + port)) return null
+    val changed = ascii != name.lowercase()
+    return AsciiHost(ascii + port, if (changed) "Not ASCII, shown as punycode: ${rawForm(name)}" else null)
+}
+
+/** A host for the mono line: ASCII or punycode, with its raw form when it was converted or is not a host. */
+private fun hostLine(host: String): String {
+    val h = untrusted(host).trim()
+    val a = asciiHost(h) ?: return rawForm(oneLine(h))
+    return listOfNotNull(a.ascii, a.flag?.let { "($it)" }).joinToString(" ")
+}
+
+/** The host of a URL, or null. */
+private fun urlHost(url: String): String? = runCatching { java.net.URI(untrusted(url).trim()).host }.getOrNull()?.takeIf { it.isNotBlank() }
+
+/**
+ * An address for the mono line ("Dana <dana@acme.dev>"): cleaned, its host in punycode when it has other letters (the
+ * raw form after it), the name as written.
+ */
+fun addressLine(address: String): String {
+    val a = serifLine(address)
+    val at = a.lastIndexOf('@')
+    if (at < 0) return a
+    val end = a.indexOf('>', at).takeIf { it > 0 } ?: a.length
+    val host = a.substring(at + 1, end)
+    val ascii = asciiHost(host) ?: return rawForm(a)
+    val shown = a.substring(0, at + 1) + ascii.ascii + a.substring(end)
+    return if (ascii.flag != null) "$shown (${ascii.flag})" else shown
 }
 
 // ---- machine values -------------------------------------------------------------------------------------------------
@@ -551,90 +728,34 @@ private val OPERATOR = Regex("(^|\\s)[A-Za-z_]+:\\S")
 
 /** "Search Gmail for *invoice*"; a query of operators goes to the mono line ("Search Gmail", `from:bank`). */
 private fun forPhrase(lead: String, value: String): Phrase =
-    if (looksMachine(value)) Phrase(dropPreposition(lead), details = value) else Phrase("$lead ", oneLine(value))
+    if (looksMachine(value)) Phrase(dropPreposition(lead), details = oneLine(value)) else Phrase("$lead ", value, stand = "something", kind = ValueKind.Name)
 
-/** The commands of a command line: split at `&&`, `||`, `;` and new lines. */
-fun commandParts(command: String): List<String> =
-    command.replace(Regex("[ \\t]*\\\\\\r?\\n\\s*"), " ").split(Regex("&&|\\|\\||;|\n")).map { it.trim() }.filter { it.isNotEmpty() }
-
-/** Quotes, a subshell, a here-document or a variable: where `;` and `&&` may not split commands. */
-private val UNSURE_SPLIT = Regex("[\"'`]|\\$\\(|<<|\\$\\{")
-
-/**
- * "rm -rf jarx and 2 more commands": the part the guard matched (its own match, else the first command) and how many
- * more there are. A line the phone cannot split with certainty (quotes, subshells) is shown whole, without a count.
- */
-fun commandLine(command: String, matched: String?): String {
-    val whole = command.trim()
-    if (UNSURE_SPLIT.containsMatchIn(whole)) return whole
-    val parts = commandParts(command)
-    if (parts.isEmpty()) return whole
-    val m = matched?.trim()?.takeIf { it.isNotEmpty() && command.contains(it) }
-    val shown = m ?: parts.first()
-    val covered = if (m == null) 1 else parts.count { m.contains(it) || it.contains(m) }.coerceAtLeast(1)
-    val more = parts.size - covered
-    return if (more > 0) "$shown and $more more ${if (more == 1) "command" else "commands"}" else shown
+/** A repository as the core accepts one (`connector/git.rs`, `repo_ok` with nesting): checked the same way here. */
+fun repoOk(repo: String): Boolean {
+    val parts = repo.split('/')
+    return parts.size in 2..20 && repo.length <= 250 && !repo.contains("..") &&
+        parts.all { p -> p.isNotEmpty() && p.length <= 100 && p != "." && p != ".." && p.all { it.isAsciiLetterOrDigit() || it == '-' || it == '_' || it == '.' } }
 }
 
-/** The folder a command ran in, by its name ("/home/dana/dev/reins" → "reins"); null for none or the home folder. */
-fun folderName(cwd: String): String? {
-    val t = whole(cwd).trimEnd('/', '\\')
-    val name = t.substringAfterLast('/').substringAfterLast('\\')
-    return name.takeIf { it.isNotEmpty() && it != "~" }
-}
-
-/** The program a command starts ("FOO=1 ./scripts/deploy.sh --prod" → "deploy.sh"). */
-fun program(command: String): String? {
-    val word = command.trim().split(Regex("\\s+")).firstOrNull { it.isNotEmpty() && '=' !in it && it != "sudo" } ?: return null
-    return whole(word.substringAfterLast('/')).ifEmpty { null }
-}
-
-private fun fileName(path: String): String = whole(path.trimEnd('/').substringAfterLast('/').ifEmpty { path })
+private fun Char.isAsciiLetterOrDigit() = this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
 
 /**
- * A target as given, on one line, cleaned and never shortened: a long one is cut only where it is drawn, and the page
- * shows it whole.
+ * The folder a command ran in, by its name ("/home/dana/dev/reins" → "reins"); null for none, the home folder, or a
+ * path that climbs ("…/reins/../other"), which names no folder with certainty.
  */
-private fun whole(s: String): String = oneLine(untrusted(s)).trim()
+fun folderName(cwd: String): String? = lastName(cwd)?.takeIf { it != "~" }
 
-/**
- * What a desktop question holds, read back from its detail's own blocks ("Command:", "Files:", "In:", "Rule:"), as
- * the core does. [write]: the files are changed (true) or read (false); null when the question does not say.
- */
-data class Hook(val command: String?, val files: List<String>, val write: Boolean?, val cwd: String?, val rule: String?)
+/** A file's name from its path; null for a path that climbs or ends without one. */
+private fun fileName(path: String): String? = lastName(path)
 
-/**
- * Only the detail's blocks are read: a question without them stays the question, told as asked. Nothing is taken from
- * the question's words but whether files are read or changed.
- */
-fun hookOf(question: String, detail: String?): Hook? {
-    var d = detail.orEmpty()
-    // A hook's own rule lines come first ("Rule: label · pattern", "Matched: …", "Group: …").
-    if (d.startsWith("Rule: ") && d.substringBefore('\n').contains(" · ")) {
-        d = d.lines().dropWhile { it.startsWith("Rule: ") || it.startsWith("Matched: ") || it.startsWith("Group: ") }.joinToString("\n")
-    }
-    val at = d.lastIndexOf("\n\nIn: ").takeIf { it >= 0 } ?: d.lastIndexOf("\nRule: ").takeIf { it >= 0 }
-    val body = if (at != null) d.substring(0, at) else d
-    val tail = if (at != null) d.substring(at) else ""
-    var cwd: String? = null
-    var rule: String? = null
-    tail.lines().forEach { l ->
-        if (l.startsWith("In: ")) cwd = l.removePrefix("In: ").trim()
-        if (l.startsWith("Rule: ")) rule = l.removePrefix("Rule: ").trim()
-    }
-    val command = body.takeIf { it.startsWith("Command:\n") }?.removePrefix("Command:\n")?.trimEnd()?.takeIf { it.isNotBlank() }
-    val files = body.takeIf { it.startsWith("Files:\n") }?.removePrefix("Files:\n")?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
-    if (command == null && files.isEmpty()) return null
-    val q = oneLine(question)
-    val write = when {
-        " wants to change " in q && " wants to read " !in q -> true
-        " wants to read " in q && " wants to change " !in q -> false
-        else -> null
-    }
-    return Hook(command, files, write, cwd?.ifEmpty { null }, rule?.ifEmpty { null })
+private fun lastName(path: String): String? {
+    val t = oneLine(untrusted(path)).trim()
+    val segments = t.split('/', '\\')
+    if (segments.any { it == ".." || it == "." }) return null
+    return segments.lastOrNull { it.isNotEmpty() }
 }
 
-private fun oneLine(s: String): String = s.replace('\n', ' ').replace('\t', ' ')
+private fun oneLine(s: String): String = s.replace('\n', ' ').replace('\t', ' ').replace('\r', ' ')
 
 private fun plural(n: Int, one: String) = if (n == 1) "1 $one" else "$n ${one}s"
 

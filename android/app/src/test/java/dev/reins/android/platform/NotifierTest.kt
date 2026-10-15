@@ -75,7 +75,7 @@ class NotifierTest {
         notifier.itemPending(TestData.pending("req2", "write", 1u, service = "desktop", op = "ask").copy(label = TestData.label("terminal", "run", "Run", "rm -rf build && make", code = true)))
         val run = shadowOf(manager).allNotifications.first { it.extras.getCharSequence("android.title").toString() == "Run a command" }
         val text = run.extras.getCharSequence("android.text") as android.text.Spanned
-        assertEquals("rm -rf build and 1 more command", text.toString())
+        assertEquals("rm -rf build && make", text.toString())
         assertEquals(1, text.getSpans(0, text.length, android.text.style.TypefaceSpan::class.java).size)
         assertEquals("Claude", run.extras.getCharSequence("android.subText").toString())
     }
@@ -93,7 +93,7 @@ class NotifierTest {
         notifier.createChannels()
         notifier.itemPending(TestData.blobItem())
         val posted = shadowOf(manager).allNotifications.single()
-        assertEquals("Share report.csv", posted.extras.getCharSequence("android.title").toString())
+        assertEquals("Share a file", posted.extras.getCharSequence("android.title").toString())
         assertEquals("Claude", posted.extras.getCharSequence("android.text").toString())
         val intent = shadowOf(posted.contentIntent).savedIntent
         assertEquals(AppNotifier.ACTION_OPEN_ITEM, intent.action)
