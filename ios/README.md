@@ -154,6 +154,7 @@ unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1)
 | `-open reins://...` | Opens a link at launch (`simctl openurl` stops at a prompt) |
 | `-freezeTime <unix seconds>` | Stops the clocks, for screenshots |
 | `-hinge bent\|closed\|flat` | Forces a fold posture (the Simulator cannot fold from a script) |
+| `-noLiveActivities` | Starts no Live Activity, so the widget extension stays asleep (UI tests other than the notification ones); Debug only |
 | `-askNotifications`, `-notifierSamples`, `-logNotifications` | Notification permission, sample notifications in the background, a log of scheduled ones |
 | `-resetNotifications`, `-resetFeedback` | Start clean on a reused simulator: no delivered notifications or leftover Live Activities; the default sounds and haptics |
 | `-widgetGallery <page>`, `-gallery`, `-show sounds\|<tab>` | Widget views, avatars, the Sounds screen or a tab (`grants`, `autopilot`, `settings`) |
