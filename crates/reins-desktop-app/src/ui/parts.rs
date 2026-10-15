@@ -252,11 +252,6 @@ pub fn small(b: Stateful<Div>) -> Stateful<Div> {
     b.h(px(28.0)).px(px(12.0)).text_size(px(12.5))
 }
 
-/// A bigger button, for the one thing a screen is for (the desktop's 38 px).
-pub fn big(b: Stateful<Div>) -> Stateful<Div> {
-    b.h(px(38.0)).px(px(18.0)).text_size(px(14.0))
-}
-
 pub fn link(id: impl Into<ElementId>, label: impl Into<SharedString>, pal: Palette) -> Stateful<Div> {
     div()
         .id(id.into())
