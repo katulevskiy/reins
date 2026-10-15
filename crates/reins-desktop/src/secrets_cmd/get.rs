@@ -72,6 +72,7 @@ pub async fn print(paths: &Paths, var: &VarRef, cwd: &Path, root: &Path) -> Resu
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unused_async, reason = "the same signature as on Unix, where the daemon is asked")]
 pub async fn print(_paths: &Paths, _var: &VarRef, _cwd: &Path, _root: &Path) -> Result<(), String> {
     Err("reins secrets get is not available on Windows yet".to_owned())
 }
