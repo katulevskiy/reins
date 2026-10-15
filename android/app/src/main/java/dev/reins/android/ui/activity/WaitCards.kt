@@ -93,15 +93,8 @@ private suspend fun <T> quietly(block: suspend () -> T): T? = try {
     null
 }
 
-fun toneColor(tone: Tone, c: RColors): Color = when (tone) {
-    Tone.Search -> c.search
-    Tone.Read -> c.read
-    Tone.Write -> c.send
-    Tone.Danger -> c.danger
-    Tone.Grant -> c.accent
-    Tone.Pair -> c.pair
-    Tone.Other -> c.secondary
-}
+/** A tone's colour on paper: its Signal field's kind ink, or ink-2 for [Tone.Other]. */
+fun toneColor(tone: Tone, c: RColors): Color = tone.field?.kindInk(c) ?: c.ink2
 
 /** A sentence with its key nouns in the text colour and the rest quieter. */
 @Composable

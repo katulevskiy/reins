@@ -15,6 +15,15 @@ data class Span(val text: String, val bold: Boolean = false)
 /** The hero's colour: what kind of thing is asked. */
 enum class HeroTone { Write, Search, Send, Grant, Danger }
 
+/** The Signal field of a hero tone. */
+val HeroTone.field: dev.reins.android.design.Field
+    get() = when (this) {
+        HeroTone.Write, HeroTone.Send -> dev.reins.android.design.Field.Push
+        HeroTone.Search -> dev.reins.android.design.Field.Read
+        HeroTone.Grant -> dev.reins.android.design.Field.Grant
+        HeroTone.Danger -> dev.reins.android.design.Field.Delete
+    }
+
 /** The small badge on the service's tile: the action. */
 enum class Badge { Pen, Search, Read, List, Send, Trash, Shield, People, Key, Terminal, Question, Cart }
 

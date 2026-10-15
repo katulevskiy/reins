@@ -93,13 +93,8 @@ import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 import dev.reins.android.ui.autopilot.RiskChip
 
-fun toneColor(tone: HeroTone, c: RColors): Color = when (tone) {
-    HeroTone.Write -> c.send
-    HeroTone.Search -> c.search
-    HeroTone.Send -> c.send
-    HeroTone.Grant -> c.accent
-    HeroTone.Danger -> c.danger
-}
+/** The hero's colour on paper: its Signal field's kind ink. */
+fun toneColor(tone: HeroTone, c: RColors): Color = tone.field.kindInk(c)
 
 fun badgeIcon(badge: Badge): ImageVector = when (badge) {
     Badge.Pen -> Icons.Rounded.Edit
