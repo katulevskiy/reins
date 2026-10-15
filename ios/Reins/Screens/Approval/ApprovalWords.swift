@@ -10,7 +10,7 @@ struct SentenceSpan: Equatable {
 }
 
 /// The hero's colour: what kind of thing is asked.
-enum HeroTone { case write, search, send, grant, danger }
+enum HeroTone { case write, search, send, grant, accounts, danger }
 
 /// The small badge on the service's tile: the action.
 enum HeroBadge {
@@ -56,9 +56,10 @@ enum ApprovalWords {
     }
 
     static func tone(_ view: ApprovalView) -> HeroTone {
-        if destructive(view) { return .danger }
+        if held(view) { return .danger }
         switch view.kind {
-        case .grant, .accounts: return .grant
+        case .grant: return .grant
+        case .accounts: return .accounts
         case .send: return .send
         case .search, .read, .fetch: return .search
         case .write:
@@ -312,39 +313,75 @@ enum ApprovalWords {
         return DangerTag(label: label, id: "guardRule", help: help, destructive: rule.destructive, symbol: "shield.lefthalf.filled")
     }
 
-    static func dangerTag(_ view: ApprovalView) -> DangerTag? {
+    /// The first of `dangerTags`: what a single line has room for.
+    static func dangerTag(_ view: ApprovalView) -> DangerTag? { dangerTags(view).first }
+
+    /// Every warning the request carries, the most serious kinds first. The approval shows each one, never only the
+    /// first: a force push with hidden characters says both.
+    static func dangerTags(_ view: ApprovalView) -> [DangerTag] {
+        var tags: [DangerTag] = []
         if let ask = view.ask {
-            if let rule = ask.rule { return ruleTag(rule, everyTime: view.noStanding, unread: ask.uncertain) }
-            if ask.uncertain && !ask.destructive {
-                return DangerTag(
+            if let rule = ask.rule { tags.append(ruleTag(rule, everyTime: view.noStanding, unread: ask.uncertain)) }
+            if let rule = ask.rule, rule.reported {
+                tags.append(DangerTag(
+                    label: "Your computer's rule", id: "ruleReported",
+                    help: "Your computer says this matched one of its rules; this phone doesn't know the rule.",
+                    destructive: false, symbol: "desktopcomputer"
+                ))
+            }
+            if ask.uncertain {
+                tags.append(DangerTag(
                     label: "Couldn't read this", id: "askUncertain",
                     help: "This phone couldn't read the command for sure, so it's asked every time.",
                     destructive: false, symbol: "questionmark.circle"
-                )
+                ))
             }
         }
         if let git = view.git {
             if let i = git.refs.firstIndex(where: { $0.force && !$0.forceUnknown }) {
-                return DangerTag(label: "Rewrites history", id: "forceWarning:\(i)", help: "This push replaces commits that are already there. What they held is lost on the server.")
+                tags.append(DangerTag(label: "Rewrites history", id: "forceWarning:\(i)", help: "This push replaces commits that are already there. What they held is lost on the server."))
             }
             if let i = git.refs.firstIndex(where: \.forceUnknown) {
-                return DangerTag(label: "History not checked", id: "forceUnknown:\(i)", help: "Reins could not check that this push only adds commits, so it is treated as one that rewrites history.")
+                tags.append(DangerTag(label: "History not checked", id: "forceUnknown:\(i)", help: "Reins could not check that this push only adds commits, so it is treated as one that rewrites history."))
             }
             if git.refs.contains(where: { r in r.commits.contains(where: \.hiddenChars) || r.files.contains(where: \.hiddenChars) }) {
-                return DangerTag(label: "Hidden characters", id: "hiddenChars", help: hiddenHelp)
+                tags.append(DangerTag(label: "Hidden characters", id: "hiddenChars", help: hiddenHelp))
+            }
+            if let branch = defaultBranchPush(git) {
+                tags.append(DangerTag(
+                    label: "To the default branch \(branch)", id: "defaultBranch",
+                    help: "This push goes to the branch the repository builds and ships from, not to a branch of its own.",
+                    destructive: false, symbol: "arrow.triangle.branch"
+                ))
             }
         }
         if let mcp = view.mcp, mcp.destructive {
-            return DangerTag(label: "Destructive", id: "mcpDestructive", help: "The server marks this tool as destructive. It is asked for every time and can never be allowed in advance.")
+            tags.append(DangerTag(label: "Destructive", id: "mcpDestructive", help: "The server marks this tool as destructive. It is asked for every time and can never be allowed in advance."))
         }
-        if destructive(view) {
-            return DangerTag(
+        // What can't be undone, unless a red tag already says why it always asks ("rewrites history", a destructive
+        // tool): the field would say the same thing twice.
+        if destructive(view) && !tags.contains(where: \.destructive) {
+            tags.append(DangerTag(
                 label: "Can't be undone",
                 id: "onceWarning",
                 help: deletes(view) ? "Removes it for good. Autopilot never allows this; you're always asked." : "This reaches far or can't be undone. It's asked every time and never remembered."
-            )
+            ))
         }
-        return nil
+        return tags
+    }
+
+    /// The default branch a push updates or creates (not one it deletes, which is "Can't be undone"): the repository's
+    /// own default when the core knows it, else main, master or trunk.
+    static func defaultBranchPush(_ git: GitPushView) -> String? {
+        let defaults = git.defaultBranch.map { $0.isEmpty ? [] : [$0] } ?? ["main", "master", "trunk"]
+        return git.refs.first { $0.kind != "tag" && $0.change != "delete" && defaults.contains($0.shortName) }.map { untrusted($0.shortName) }
+    }
+
+    /// Held, not tapped: a request that can't be undone, or that carries a red warning (a force push, unchecked
+    /// history, hidden characters, a destructive tool, a destructive guard rule), or a payment: money can't come back.
+    /// It is approved by holding, asked every time, and never remembered.
+    static func held(_ view: ApprovalView) -> Bool {
+        view.purchase != nil || destructive(view) || dangerTags(view).contains(where: \.destructive)
     }
 
     static let hiddenHelp = "Invisible characters can make code read unlike what it does. They show as \u{FFFD} here."

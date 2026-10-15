@@ -1,13 +1,34 @@
 import Foundation
 
-/// Text that came from outside the app (senders, subjects, snippets, client names). Bidirectional controls are
-/// removed so it cannot reorder what is shown around it, and other control characters become spaces.
+/// Text that came from outside the app (senders, subjects, snippets, client names, commands). Bidirectional controls and
+/// every other invisible format character (zero-width spaces and joiners, the byte-order mark, soft hyphens, tag
+/// characters) are removed so it cannot reorder or hide what is shown around it; other control characters become
+/// spaces. Never cut: what the user approves (a command, its arguments, a recipient, a path) is shown whole. Names and
+/// labels that should stay short use `untrustedName`.
 func untrusted(_ text: String) -> String {
-    untrustedLine(text).trimmingCharacters(in: .whitespacesAndNewlines)
+    cleaned(text, showHidden: false).trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// `untrusted` for a line whose leading spaces matter (a line of code in a diff): nothing is trimmed.
+/// `untrusted` for a line whose leading spaces matter (a line of code in a diff): nothing is trimmed, and an invisible
+/// format character shows as U+FFFD, so it can be seen rather than silently change what the line reads as.
+/// Bidirectional controls are still removed.
 func untrustedLine(_ text: String) -> String {
+    cleaned(text, showHidden: true)
+}
+
+/// A name or label from outside (an AI's or a device's name, a host): `untrusted`, on one line (line breaks and tabs
+/// become spaces, runs of spaces one), and at most `limit` characters, ending in "…" when longer. Only for names and
+/// titles, never for anything approved.
+func untrustedName(_ text: String, limit: Int = 64) -> String {
+    let flat = untrusted(text)
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+    guard flat.count > limit, limit > 1 else { return flat }
+    return String(flat.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…"
+}
+
+private func cleaned(_ text: String, showHidden: Bool) -> String {
     var out = String.UnicodeScalarView()
     for scalar in text.unicodeScalars {
         switch scalar.value {
@@ -18,7 +39,11 @@ func untrustedLine(_ text: String) -> String {
         case 0x00...0x1F, 0x7F...0x9F, 0x2028, 0x2029:
             out.append(" ")
         default:
-            out.append(scalar)
+            if scalar.properties.generalCategory == .format {
+                if showHidden { out.append("\u{FFFD}") }
+            } else {
+                out.append(scalar)
+            }
         }
     }
     return String(out)
@@ -191,4 +216,97 @@ func entryTitle(label: String, action: String, count: Int, service: String, outc
         what = operationTitle(action: action, count: count, service: service, title: title, op: op)
     }
     return "\(untrusted(label)): \(what)"
+}
+
+/// A host as ASCII: each label with characters beyond ASCII becomes its punycode ("bücher.de" → "xn--bcher-kva.de"),
+/// so a look-alike domain shows what it really is.
+func asciiHost(_ host: String) -> String {
+    host.split(separator: ".", omittingEmptySubsequences: false).map { label -> String in
+        let scalars = Array(label.lowercased().unicodeScalars)
+        guard scalars.contains(where: { !$0.isASCII }), let encoded = punycode(scalars) else { return String(label) }
+        return "xn--" + encoded
+    }.joined(separator: ".")
+}
+
+/// An address with its domain as ASCII: "Anna <anna@bücher.de>" → "Anna <anna@xn--bcher-kva.de>".
+func asciiAddress(_ address: String) -> String {
+    guard let at = address.lastIndex(of: "@") else { return address }
+    let rest = address[address.index(after: at)...]
+    let end = rest.firstIndex(where: { $0 == ">" || $0 == " " }) ?? rest.endIndex
+    return String(address[...at]) + asciiHost(String(rest[..<end])) + String(rest[end...])
+}
+
+/// RFC 3492 punycode of one label's scalars; nil if it would overflow.
+private func punycode(_ input: [Unicode.Scalar]) -> String? {
+    let base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700
+    func digit(_ d: Int) -> Character { Character(Unicode.Scalar(UInt8(d < 26 ? d + 97 : d + 22))) }
+    func adapt(_ delta: Int, _ points: Int, _ first: Bool) -> Int {
+        var delta = first ? delta / damp : delta / 2
+        delta += delta / points
+        var k = 0
+        while delta > ((base - tMin) * tMax) / 2 {
+            delta /= base - tMin
+            k += base
+        }
+        return k + (base - tMin + 1) * delta / (delta + skew)
+    }
+    var output = String(input.filter(\.isASCII).map(Character.init))
+    let basic = output.count
+    var handled = basic
+    if basic > 0 { output.append("-") }
+    var n = 128, delta = 0, bias = 72
+    while handled < input.count {
+        guard let m = input.map({ Int($0.value) }).filter({ $0 >= n }).min() else { break }
+        let (step, overflow) = (m - n).multipliedReportingOverflow(by: handled + 1)
+        guard !overflow else { return nil }
+        delta += step
+        n = m
+        for scalar in input {
+            let c = Int(scalar.value)
+            if c < n { delta += 1 }
+            if c == n {
+                var q = delta
+                var k = base
+                while true {
+                    let t = k <= bias ? tMin : k >= bias + tMax ? tMax : k - bias
+                    if q < t { break }
+                    output.append(digit(t + (q - t) % (base - t)))
+                    q = (q - t) / (base - t)
+                    k += base
+                }
+                output.append(digit(q))
+                bias = adapt(delta, handled + 1, handled == basic)
+                delta = 0
+                handled += 1
+            }
+        }
+        delta += 1
+        n += 1
+    }
+    return output
+}
+
+/// The raw form of a name that mixes letters of different scripts ("octo/аpp" with a Cyrillic "а" →
+/// "octo/\u{430}pp"), so a look-alike shows what it is; nil for a name in one script.
+func mixedScriptRaw(_ text: String) -> String? {
+    enum Script { case latin, greek, cyrillic, armenian, fullwidth, other }
+    func script(_ s: Unicode.Scalar) -> Script? {
+        guard s.properties.isAlphabetic else { return nil }
+        switch s.value {
+        case 0x41...0x5A, 0x61...0x7A, 0xC0...0x24F, 0x1E00...0x1EFF: return .latin
+        case 0x370...0x3FF, 0x1F00...0x1FFF: return .greek
+        case 0x400...0x52F, 0x1C80...0x1C8F, 0x2DE0...0x2DFF, 0xA640...0xA69F: return .cyrillic
+        case 0x530...0x58F: return .armenian
+        case 0xFF21...0xFF3A, 0xFF41...0xFF5A: return .fullwidth
+        default: return .other
+        }
+    }
+    let scripts = Set(text.unicodeScalars.compactMap(script))
+    guard scripts.count > 1 else { return nil }
+    return rawForm(text)
+}
+
+/// A value as its code points show it: ASCII as it is, anything else escaped ("octo/\u{430}pp").
+func rawForm(_ text: String) -> String {
+    text.unicodeScalars.map { $0.isASCII ? String($0) : "\\u{\(String($0.value, radix: 16))}" }.joined()
 }

@@ -14,6 +14,10 @@ struct EnvReleaseFacts: View {
         let warning = release.programWarning.map(untrusted).flatMap { $0.isEmpty ? nil : $0 }
         VStack(alignment: .leading, spacing: 10) {
             FactGroup(border: warning == nil ? nil : Palette.warning.opacity(0.4)) {
+                // The program not being where it usually is comes first, before anything else about the release.
+                if let warning {
+                    ProgramWarningRow(warning: warning, program: untrusted(release.program))
+                }
                 FactRow(key: "Who", value: untrusted(release.runnerLabel), valueId: "envWho") {
                     if release.agent { TintTag(text: "Agent", tint: Palette.send).accessibilityIdentifier("envAgent") }
                 }
@@ -31,12 +35,9 @@ struct EnvReleaseFacts: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 13)
-                if let warning {
-                    ProgramWarningRow(warning: warning, program: untrusted(release.program))
-                }
-                FactRow(key: "Env", value: "\(untrusted(release.project)) · \(untrusted(release.env))", mono: true, valueId: "envName", lines: 2)
+                FactRow(key: "Env", value: "\(untrusted(release.project)) · \(untrusted(release.env))", mono: true, valueId: "envName")
                 variables
-                FactRow(key: "In", value: untrusted(release.root), mono: true, valueId: "envRoot", lines: 3)
+                FactRow(key: "In", value: untrusted(release.root), mono: true, valueId: "envRoot")
                 if release.print {
                     FactRow(key: "Value", value: "Printed", valueId: "envLease", tint: Palette.warning)
                 } else {
@@ -57,7 +58,7 @@ struct EnvReleaseFacts: View {
         if release.allVariables {
             FactRow(key: "Variables", value: "Every variable", valueId: "envVariables")
         } else if names.count <= 6 {
-            FactRow(key: names.count == 1 ? "Variable" : "Variables", value: names.joined(separator: ", "), mono: true, valueId: "envVariables", lines: 4)
+            FactRow(key: names.count == 1 ? "Variable" : "Variables", value: names.joined(separator: ", "), mono: true, valueId: "envVariables")
         } else {
             DrillRow(
                 title: "\(names.count) variables", id: "envVariables",
@@ -227,7 +228,7 @@ struct SecretsStoreFacts: View {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 10) {
                                 Image(systemName: "key.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.accent)
-                                Text(untrusted(key.name)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text).lineLimit(2)
+                                Text(untrusted(key.name)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text)
                             }
                             Text(untrusted(key.fingerprint))
                                 .font(RFont.mono(12.5))
@@ -268,8 +269,7 @@ private struct EnvStoreRow: View {
                 Text("\(untrusted(env.project)) · \(untrusted(env.env))")
                     .font(RFont.sans(15.5, .semibold))
                     .foregroundStyle(Palette.text)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: true)
                 if env.newEnv { TintTag(text: "New", tint: Palette.success) }
                 Spacer(minLength: 6)
                 Counts(
@@ -281,7 +281,7 @@ private struct EnvStoreRow: View {
                 Text(changes)
                     .font(RFont.mono(12.5))
                     .foregroundStyle(Palette.secondary)
-                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
                     .environment(\.layoutDirection, .leftToRight)
                     .textSelection(.enabled)
             }
@@ -302,13 +302,12 @@ private struct TokenRow: View {
             ServiceAvatar(service: token.service, size: 34)
             VStack(alignment: .leading, spacing: 2) {
                 Text(serviceName(token.service)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
-                Text(untrusted(token.host)).font(RFont.mono(12.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
+                Text(untrusted(token.host)).font(RFont.mono(12.5)).foregroundStyle(Palette.tertiary)
                     .environment(\.layoutDirection, .leftToRight)
                 if !token.scopes.isEmpty {
                     Text(token.scopes.map(untrusted).joined(separator: ", "))
                         .font(RFont.mono(12.5))
                         .foregroundStyle(Palette.secondary)
-                        .lineLimit(3)
                         .environment(\.layoutDirection, .leftToRight)
                 }
             }

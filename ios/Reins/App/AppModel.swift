@@ -256,7 +256,9 @@ final class AppModel {
             recoveryToRecord = code.flatMap { RecoveryRecord.confirmed(server: info.serverUrl, code: $0) ? nil : $0 }
             passkeyOffer = offerPasskey && recoveryToRecord != nil
             recoveryLoadError = recoveryFailure
-            if let notice = await core.accountSyncNotice(), epoch == accountEpoch { syncNotice = notice }
+            // Against the epoch of the session just set: signing in bumps it, so the one from before never matches.
+            let signedIn = accountEpoch
+            if let notice = await core.accountSyncNotice(), signedIn == accountEpoch { syncNotice = notice }
             onSignedIn?()
             await refreshPending()
             await refreshConnections()

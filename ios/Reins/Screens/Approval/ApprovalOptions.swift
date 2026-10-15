@@ -302,7 +302,7 @@ private struct ScopeOptions: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Anything like this").font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.warning)
                             Text("\(untrusted(quick.allowWhat)), by \(untrusted(view.connectionLabel))")
-                                .font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary).lineLimit(2)
+                                .font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
                                 .accessibilityIdentifier("allowWhat")
                         }
                     }
@@ -370,7 +370,7 @@ private struct ScopeOptions: View {
                         vm.draft.likeThis = false
                         vm.draft.resources = toggleResource(vm.draft.resources, r.id, on: on)
                     }) {
-                        Text(untrusted(r.label)).font(RFont.sans(15.5)).foregroundStyle(Palette.text).lineLimit(2)
+                        Text(untrusted(r.label)).font(RFont.sans(15.5)).foregroundStyle(Palette.text)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -395,7 +395,7 @@ private struct ScopeOptions: View {
                         }
                     )) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(address).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
+                            Text(untrusted(address)).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
                             Text(wide ? "Anyone at @\(domainOf(address))" : "This address only").font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
                         }
                     }
@@ -426,7 +426,7 @@ private struct ScopeOptions: View {
                         CheckRow(checked: vm.draft.senderAddresses.contains(address), onChange: { on in
                             if on { vm.draft.senderAddresses.insert(address) } else { vm.draft.senderAddresses.remove(address) }
                         }) {
-                            Text(address).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
+                            Text(untrusted(address)).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
@@ -480,7 +480,6 @@ private struct SecretsScopeOptions: View {
                         Text(untrusted(option.label))
                             .font(RFont.mono(14, .medium))
                             .foregroundStyle(option.prefix ? Palette.warning : Palette.text)
-                            .lineLimit(3)
                             .environment(\.layoutDirection, .leftToRight)
                     }
                 }

@@ -1,8 +1,8 @@
 import LocalAuthentication
 import SwiftUI
 
-/// A request that waits for the user, full screen (the Android app's ApprovalScreen): who asks and how long it waits at
-/// the top, a hero that says what in one sentence with Autopilot's score, the facts below (long lists folded into
+/// A request that waits for the user, full screen (the Android app's ApprovalScreen): the field at the top says who
+/// asks, how long it waits, what in one sentence, every warning and Autopilot's score; the facts below (long lists folded into
 /// pages), and the dock at the bottom with how long to remember it and Deny / Approve. Approving asks for Face ID,
 /// Touch ID or the passcode first; denying never does.
 struct ApprovalSheet: View {
@@ -55,6 +55,8 @@ enum ApprovalOverlay: String, Identifiable {
 final class ApprovalNav {
     var path: [ApprovalPage] = []
     var overlay: ApprovalOverlay?
+    /// The risk's reason did not fit the field's two lines, so it is the first fact and the field says only its word.
+    var riskInFacts = false
 }
 
 private struct ApprovalScreen: View {
@@ -79,11 +81,11 @@ private struct ApprovalScreen: View {
                 let sideBySide = geo.size.width >= geo.size.height
                 let layout = sideBySide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
                 layout {
-                    pages
+                    pages(top: geo.safeAreaInsets.top)
                         .frame(width: sideBySide ? geo.size.width / 2 : nil, height: sideBySide ? nil : geo.size.height / 2)
                     VStack(spacing: 16) {
                         Spacer(minLength: 0)
-                        Text(ApprovalWords.sentence(view).map(\.text).joined())
+                        Text(AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label).text)
                             .font(RFont.sans(22, .semibold))
                             .foregroundStyle(Palette.text)
                             .lineLimit(3)
@@ -95,7 +97,7 @@ private struct ApprovalScreen: View {
                     .background(Palette.elevated.opacity(0.5))
                 }
             } else {
-                pages.safeAreaInset(edge: .bottom, spacing: 0) { dock }
+                pages(top: geo.safeAreaInsets.top).safeAreaInset(edge: .bottom, spacing: 0) { dock }
             }
         }
         .background(Palette.background.ignoresSafeArea())
@@ -131,14 +133,19 @@ private struct ApprovalScreen: View {
         .accessibilityContainer("approvalSheet")
     }
 
-    private var pages: some View {
+    /// `top`: the status bar's height, which the field runs under (the main page's scroll ignores it and the field
+    /// keeps its content below).
+    private func pages(top: CGFloat) -> some View {
         NavigationStack(path: $nav.path) {
             ScrollView {
-                MainPage(vm: vm, view: view, autopilot: autopilot, gone: gone).padding(.bottom, 20)
+                MainPage(vm: vm, view: view, autopilot: autopilot, gone: gone, top: top).padding(.bottom, 20)
             }
+            .ignoresSafeArea(edges: .top)
+            .scrollEdgeEffectHidden(true, for: .top)
             .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .top, spacing: 0) { AgentBar(view: view) }
             .toolbar(.hidden, for: .navigationBar)
+            // White status bar text on the field.
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .background(Palette.background.ignoresSafeArea())
             .navigationDestination(for: ApprovalPage.self) { page in
                 ScrollView {
@@ -146,11 +153,7 @@ private struct ApprovalScreen: View {
                         .padding(.bottom, 20)
                 }
                 .background(Palette.background.ignoresSafeArea())
-                .navigationTitle(Self.title(view, page))
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) { ApprovalTimerPill(view: view) }
-                }
+                .fieldBand(view, title: Self.title(view, page), ask: AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label).text)
             }
         }
     }
@@ -182,7 +185,7 @@ extension ApprovalPage {
         case let .commits(ref): return refs.indices.contains(ref) ? ApprovalWords.commits(Int(refs[ref].commitCount)) : ""
         case let .commit(ref, index):
             guard refs.indices.contains(ref), refs[ref].commits.indices.contains(index) else { return "" }
-            return refs[ref].commits[index].shortSha
+            return untrusted(refs[ref].commits[index].shortSha)
         case let .files(ref): return refs.indices.contains(ref) ? ApprovalWords.files(Int(refs[ref].filesChanged)) : ""
         case let .text(title, _, _, _): return title
         }
@@ -199,83 +202,27 @@ extension ApprovalPage {
     }
 }
 
-/// Close, the agent ("Claude Code · laptop") and the time it still waits.
-private struct AgentBar: View {
-    var view: ApprovalView
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let host = findConnection(model.connections, id: view.connectionId, label: view.connectionLabel).map { untrusted($0.clientHost) }
-        HStack(spacing: 10) {
-            GlassIconButton(symbol: "xmark", size: 36, label: "Close") { model.closeSheet() }
-                .accessibilityIdentifier("closeSheet")
-            HStack(spacing: 9) {
-                ConnectionIcon(connectionId: view.connectionId, label: view.connectionLabel, size: 28)
-                (Text(untrusted(view.connectionLabel)).foregroundStyle(Palette.text)
-                    + Text(host.map { $0.isEmpty ? "" : " · \($0)" } ?? "").font(RFont.sans(15, .medium)).foregroundStyle(Palette.tertiary))
-                    .font(RFont.sans(15, .semibold))
+extension View {
+    /// A drill-in's bar as the field's band: the field's colour, the page's title with the ask beside it in one line,
+    /// and the timer. The system bar stays, so the back button and the edge swipe work as anywhere.
+    func fieldBand(_ view: ApprovalView, title: String, ask: String) -> some View {
+        navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(ApprovalWords.tone(view).field.fill, for: .navigationBar)
+            .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 0) {
+                        Text(verbatim: title).font(RFont.sans(15, .semibold)).foregroundStyle(Palette.onField)
+                        Text(verbatim: ask).font(RFont.serif(13)).foregroundStyle(Palette.onField2)
+                    }
                     .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
-            ApprovalTimerPill(view: view)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 6)
-        .padding(.bottom, 10)
-        .background(Palette.background)
-    }
-}
-
-/// The time the AI still waits: a ring that empties and the seconds, red in the last 15; "Stopped" once it gave up
-/// (its (?) says approving still works).
-struct ApprovalTimerPill: View {
-    var view: ApprovalView
-    @State private var lateHelp = false
-
-    var body: some View {
-        UrgencyClock(createdAt: view.createdAt, waitUntil: view.waitUntil) { urgency in
-            if let u = urgency {
-                if u.stale {
-                    Button {
-                        lateHelp = true
-                    } label: {
-                        Label("Stopped", systemImage: "timer")
-                            .font(RFont.sans(14, .semibold))
-                            .foregroundStyle(Palette.secondary)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 7)
-                            .background(Palette.controlFill, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("lateBanner")
-                    .popover(isPresented: $lateHelp) {
-                        HelpText(text: "\(untrusted(view.connectionLabel)) stopped waiting. You can still approve; then ask it to try again.")
-                    }
-                } else {
-                    HStack(spacing: 7) {
-                        ZStack {
-                            Circle().stroke(u.urgent ? Palette.danger.opacity(0.22) : Palette.controlFill, lineWidth: 2.5)
-                            Circle()
-                                .trim(from: 0, to: u.fraction)
-                                .stroke(u.urgent ? Palette.danger : Palette.secondary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                                .rotationEffect(.degrees(-90))
-                        }
-                        .frame(width: 16, height: 16)
-                        Text(ApprovalWords.seconds(u.remainingSeconds))
-                            .font(RFont.sans(14, .semibold))
-                            .monospacedDigit()
-                            .foregroundStyle(u.urgent ? Palette.danger : Palette.secondary)
-                    }
-                    .padding(.leading, 9)
-                    .padding(.trailing, 11)
-                    .padding(.vertical, 7)
-                    .background(u.urgent ? Palette.danger.opacity(0.13) : Palette.controlFill, in: Capsule())
                     .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("waitLine")
+                    .accessibilityIdentifier("askBand")
                 }
+                ToolbarItem(placement: .topBarTrailing) { FieldTimer(view: view) }
             }
-        }
     }
 }
 
@@ -300,6 +247,8 @@ struct HelpDot: View {
     var id: String
     var text: String
     var size: CGFloat = 32
+    /// On a field: the white wash and a white mark.
+    var onField = false
     @State private var open = false
     @Environment(\.feedback) private var feedback
 
@@ -310,9 +259,9 @@ struct HelpDot: View {
         } label: {
             Image(systemName: "questionmark.circle")
                 .font(.system(size: size * 0.56, weight: .medium))
-                .foregroundStyle(open ? Palette.text : Palette.secondary)
+                .foregroundStyle(onField ? Palette.onField : open ? Palette.text : Palette.secondary)
                 .frame(width: size, height: size)
-                .background(open ? Palette.text.opacity(0.18) : Palette.controlFill, in: Circle())
+                .background(onField ? Palette.onFieldWash : open ? Palette.text.opacity(0.18) : Palette.controlFill, in: Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("More about this")

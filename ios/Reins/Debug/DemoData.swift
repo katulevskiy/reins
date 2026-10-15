@@ -383,6 +383,32 @@ enum DemoData {
             ])
         ), "\(desktop) wants to push tags with git", "octo/app · v1.2.0")
 
+        // `-demoPay` (screenshots): a purchase, held to pay. Off by default so the waiting count stays as tests expect.
+        if ProcessInfo.processInfo.arguments.contains("-demoPay") {
+            var buy = view(
+                "req60", conn: "c1", label: "Claude", kind: .write, action: "write", service: "pay", account: nil,
+                createdAt: now - 30, waitUntil: now + 300, op: "purchase", preview: ["Buy 2 items at Acme Supply"], opTitle: "Buy at acme.com"
+            )
+            buy.purchase = PurchaseView(
+                merchant: "Acme Supply", domain: "acme.com", merchantUrl: "https://acme.com", checkoutUrl: "https://acme.com/checkout",
+                checkoutHost: "acme.com",
+                items: [
+                    PurchaseLineView(name: "USB-C cable, 2 m", details: "Braided", quantity: 2, unitPrice: "$9.99", lineTotal: "$19.98", url: nil),
+                    PurchaseLineView(name: "Laptop stand", details: nil, quantity: 1, unitPrice: "$34.00", lineTotal: "$34.00", url: nil),
+                ],
+                subtotal: "$53.98", shipping: "$4.99", tax: "$4.32", discount: nil, total: "$63.29", totalMinor: 6_329, currency: "USD",
+                note: "You asked for a second cable and a stand for the desk.",
+                methods: [PaymentMethodView(
+                    id: "virtual_card", kind: "virtual_card", name: "Privacy.com card", brand: nil, last4: "4242", expiry: "04/29",
+                    detail: "A new card for this purchase, capped at $63.29", enabled: true, unavailable: nil
+                )],
+                methodId: "virtual_card", ships: true, addresses: [], addressId: nil,
+                warnings: ["acme.com is new for this AI"], budgetLines: ["Claude spent $40.00 of $200.00 in the last 30 days"],
+                limitMethods: [], delivery: nil
+            )
+            add(buy, "Claude wants to buy at acme.com", "Acme Supply · $63.29")
+        }
+
         // A tool of an MCP server.
         add(view(
             "req30", conn: "c5", label: "Cursor", kind: .write, action: "write", service: "mcp:linear", account: nil,
@@ -472,6 +498,11 @@ enum DemoData {
             ],
             print: false, alwaysAsk: false, alwaysAskSet: false
         )
+        // `-demoProgramWarning` (tests, screenshots): the program is not where it usually is.
+        if ProcessInfo.processInfo.arguments.contains("-demoProgramWarning") {
+            envRelease.envRelease?.program = "/tmp/x/npm"
+            envRelease.envRelease?.programWarning = "npm is not where it usually is"
+        }
         add(envRelease, "\(desktop) wants to use a project's secrets on the computer", "web · dev")
 
         var store = view(
