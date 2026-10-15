@@ -13,8 +13,21 @@ struct Held {
     uncertain: usize,
 }
 
+thread_local! {
+    static SEEN: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Every command of the hostile pass (and its look-alikes), for the test that the guard and this module read the
+/// same segments.
+pub(super) fn fixtures() -> Vec<String> {
+    SEEN.with(|s| s.borrow_mut().clear());
+    every_tripwire_is_held_however_it_is_disguised();
+    SEEN.with(|s| s.borrow().clone())
+}
+
 /// Each command must be held; returns how.
 fn all_held(tripwire: &str, commands: &[&str]) -> Held {
+    SEEN.with(|s| s.borrow_mut().extend(commands.iter().map(|c| (*c).to_owned())));
     let mut held = Held::default();
     for cmd in commands {
         let c = command_context(cmd);

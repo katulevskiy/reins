@@ -109,9 +109,23 @@ Steering in a name can then lower neither the class nor the hold: the view witho
 with it. A model or runtime that returns no risk for the third view leaves no risk at all (Overnight holds).
 
 A database dropped or emptied (`DROP`, `TRUNCATE`, `FLUSHALL`, `dropDatabase`, or an MCP tool named so, or the SQL a
-query tool runs) on a host not known to be local is a tripwire: a production-looking host, or one whose name says
-nothing, and for an MCP tool, arguments that name no host at all. Local, development and staging hosts, and a
-command line without a host (the local socket), are left to the model.
+query tool runs) on any host but this computer is a tripwire, staging and development ones included, and for an MCP
+tool, arguments that name no host at all. Only a loopback host (below) and a command line without a host (the local
+socket) are left to the model.
+
+**Allow-lists match exactly.** What can lower the risk is matched against the normalized value, never by prefix,
+suffix or substring. Hosts are parsed as hosts: a URL with a URL parser (`ssh://localhost@evil` is `evil`), a
+`user@host:port` spec without its user and port. "This computer" is exactly `localhost`, or an address in
+127.0.0.0/8 or `::1` checked as a number; `localhost.evil.com`, `127.0.0.1.nip.io` and names that only say "local" or
+"dev" are not. The known upload hosts and installers are a short exact list, with none anyone can publish or receive
+under (no `raw.githubusercontent.com`, storage buckets or chat webhooks). Every sink of a line counts, and every host
+of a download that is run must be a known installer. Paths are placed after lexical normalization (`/tmp/../home` is
+`/home`). What a validator cannot place counts as not safe.
+
+**One reading.** A desktop question's commands are read in the texts the guard reads for its rules and certainty
+(`connector::desktop::ask_texts`: the detail after a reported rule, the topic's rule, and the question's command
+when it says something the detail does not), with the same tokenizer; a question that names another command than
+its detail is held. A test feeds every hostile fixture through both readings and compares the segments.
 
 ## 5. Model architecture
 
