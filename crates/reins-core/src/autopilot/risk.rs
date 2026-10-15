@@ -747,7 +747,13 @@ pub fn ask_context(ask: &AskView) -> (Option<HookWhat>, Context) {
         None => {}
     }
     let read = hook_texts(ask);
-    if read.question_command {
+    // the question's own command, when it is the detail's but for spacing, says nothing else (both are read anyway)
+    let same = |q: &str| match &what {
+        Some(HookWhat::Command(body)) => text::one_line(q) == text::one_line(shown_command(body)),
+        _ => false,
+    };
+    let question = ask.question.split_once(" wants to run: ").map_or("", |(_, c)| c);
+    if read.question_command && !same(question) {
         context.doubt("the question and its detail name different commands");
     }
     let rule = ask.topic.as_deref().and_then(|t| t.split_once(':')).map(|(_, rule)| rule);
@@ -2640,6 +2646,9 @@ mod tests {
         let c = read_all(&ask("Claude Code wants to run: make test", "Command:\nls", "command:ls"));
         assert!(matches!(c.outcome(), Outcome::Uncertain(_)), "{c:?}");
         let c = read_all(&ask("Claude Code wants to run: ls", "Command:\nls", "command:ls"));
+        assert_eq!(c.outcome(), Outcome::Read, "{c:?}");
+        // the same command but for spacing is no other command
+        let (_, c) = ask_context(&ask("Claude Code wants to run: make  test", "Command:\nmake test", "command:make"));
         assert_eq!(c.outcome(), Outcome::Read, "{c:?}");
     }
 
