@@ -1,3 +1,4 @@
+import AppIntents
 import XCTest
 @testable import Reins
 
@@ -49,5 +50,17 @@ final class GlanceSignalTests: XCTestCase {
     func testAnUnknownFieldNameIsNotTrusted() {
         XCTAssertEqual(Glance.field("lavender", kind: .request), .push)
         XCTAssertEqual(Glance.field("delete", kind: .request), .delete)
+    }
+}
+
+/// The Mode control's intent only opens Reins on Autopilot: nothing it could act on, nothing it changes.
+final class ShowAutopilotIntentTests: XCTestCase {
+    func testItTakesNoParameters() {
+        XCTAssertTrue(Mirror(reflecting: ShowAutopilotIntent()).children.isEmpty, "a parameter would be something it could act on")
+    }
+
+    func testItOpensTheAppOnAutopilot() {
+        XCTAssertEqual(ShowAutopilotIntent.link, .autopilot)
+        XCTAssertEqual("\(ShowAutopilotIntent.supportedModes)", "\(IntentModes.foreground(.immediate))")
     }
 }
