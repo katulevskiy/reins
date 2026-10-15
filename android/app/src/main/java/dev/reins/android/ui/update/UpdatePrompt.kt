@@ -111,10 +111,11 @@ fun UpdatePrompt(status: UpdateStatus, onInstall: () -> Unit, onLater: () -> Uni
 
 /** Before Android's "install unknown apps" screen: why it is needed and what to turn on. */
 @Composable
-fun InstallPermissionDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit) {
+fun InstallPermissionDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit, version: String? = null) {
     dev.reins.android.design.SignalDialog(
         title = "Allow updates",
-        text = "Android asks once. Turn on “Allow from this source”.",
+        text = "Android asks once. Turn on “Allow from this source”" + (version?.let { " and Reins $it installs." } ?: "."),
+        glyph = dev.reins.android.design.Glyph.Download,
         confirmLabel = "Allow",
         onConfirm = onOpenSettings,
         onDismiss = onDismiss,
@@ -144,6 +145,10 @@ fun InstallPermissionHost(updates: UpdateController) {
     val state by updates.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     if (state.askPermission) {
-        InstallPermissionDialog(onOpenSettings = { updates.openPermissionSettings(context) }, onDismiss = updates::dismissPermission)
+        InstallPermissionDialog(
+            onOpenSettings = { updates.openPermissionSettings(context) },
+            onDismiss = updates::dismissPermission,
+            version = state.status.release?.versionName,
+        )
     }
 }

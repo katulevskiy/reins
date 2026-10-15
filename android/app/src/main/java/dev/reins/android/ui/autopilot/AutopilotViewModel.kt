@@ -242,6 +242,27 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
+     * Ends Lockdown for [mode] after the owner's check: it loosens, so it asks first, wherever it is ended from (the
+     * Trust field, a Quick Settings tile opening Trust). Without a pass Lockdown stays.
+     */
+    fun endLockdown(mode: AutopilotMode, authenticator: Authenticator) {
+        viewModelScope.launch {
+            val result = try {
+                authenticator.authenticate("End lockdown", "Requests can be answered again")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                AuthResult.Cancelled
+            }
+            when (result) {
+                AuthResult.Success -> setMode(mode)
+                AuthResult.Cancelled -> Unit
+                AuthResult.Unavailable -> _ui.update { it.copy(error = "Set a screen lock or fingerprint on this phone to end Lockdown.") }
+            }
+        }
+    }
+
+    /**
      * Holding the button proves intent, not identity: the phone's owner is checked before a bypass turns on. Without a
      * pass nothing changes; without a screen lock at all it says so. (Overnight's check is asked by the core itself.)
      */

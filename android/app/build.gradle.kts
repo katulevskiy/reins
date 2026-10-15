@@ -365,11 +365,13 @@ dependencies {
     implementation(libs.jna) { artifact { type = "aar" } }
     // Autopilot's model runs on the phone (the core does everything else; see autopilot/OnnxModelRuntime).
     implementation(libs.onnxruntime.android)
+    implementation(libs.glance.appwidget)
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
     testImplementation(libs.work.testing)
     testImplementation(libs.robolectric)
+    testImplementation(libs.glance.appwidget.testing)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(platform(libs.compose.bom))
