@@ -1318,19 +1318,17 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("polish-new-grant")
     }
 
-    /** Autopilot during a bypass: Mode (?) on one line, Stop bypass without an icon; then the help open. */
+    /** Trust during a bypass: the red field with the time left and Stop now; the mode tiles step aside while it runs. */
     @Test
     fun polishAutopilotBypass() {
         core.model = installed
         core.apGlobal = FakeCore.ApRow(bypassUntil = now + 8 * 60 + 12, bypassSince = now - 60 * 7)
         launch()
         tap("tabTrust")
-        await("modeHero")
+        await("bypassClock")
+        await("stopBypass")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("polish-autopilot-bypass")
-        tap("help:Mode")
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
-        shoot("polish-autopilot-mode-help")
     }
 
     /** The count on the Activity tab with many new entries, seen from another tab. */
@@ -1489,8 +1487,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.model = installed
         launch()
         top()
-        await("filter:automatic")
-        tap("filter:automatic")
+        // The filters open from the history's header; Autopilot lists whatever was decided without you.
+        click("filters")
+        click("filter:autopilot")
         await("entry:7")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("76-activity-automatic")
@@ -1850,8 +1849,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.suggestions["req3"] = agSuggestion("req3", dev.reins.core.Verdict.ASK, 0.62f)
         launch()
         top()
+        // The stack shows its top card's buttons only; the others wait behind it.
         await("allow:req1")
-        await("unsure:req3")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("android-activity-manual")
     }
