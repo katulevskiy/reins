@@ -1,6 +1,7 @@
 import AuthenticationServices
 import Contacts
 import EventKit
+import os
 import UIKit
 
 /// What the integration screens need from the platform layer: Google's sign-in, this phone's permissions, and the
@@ -73,6 +74,12 @@ extension AppModel {
 @MainActor
 final class SystemIntegrations: IntegrationsPlatform {
     static let shared = SystemIntegrations()
+
+    init() {
+        if !GoogleConfig.current.isConfigured {
+            Logger(subsystem: "com.reins2fa.app", category: "google").error("\(GoogleConfig.developerSetup, privacy: .public)")
+        }
+    }
 
     var googleConfigured: Bool { GoogleSignIn.shared.isConfigured }
 
