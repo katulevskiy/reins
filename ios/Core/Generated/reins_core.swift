@@ -10579,6 +10579,11 @@ public struct ModelStatus: Equatable, Hashable {
      * The model rates risk, which Overnight needs (without it Overnight decides like Auto).
      */
     public var risk: Bool
+    /**
+     * The installed model is an older one this build still trusts; `download_model` installs the newer one (and
+     * then removes the older).
+     */
+    public var update: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10597,7 +10602,11 @@ public struct ModelStatus: Equatable, Hashable {
          */runtimeReady: Bool, 
         /**
          * The model rates risk, which Overnight needs (without it Overnight decides like Auto).
-         */risk: Bool = false) {
+         */risk: Bool = false, 
+        /**
+         * The installed model is an older one this build still trusts; `download_model` installs the newer one (and
+         * then removes the older).
+         */update: Bool = false) {
         self.state = state
         self.id = id
         self.label = label
@@ -10607,6 +10616,7 @@ public struct ModelStatus: Equatable, Hashable {
         self.error = error
         self.runtimeReady = runtimeReady
         self.risk = risk
+        self.update = update
     }
 
     
@@ -10633,7 +10643,8 @@ public struct FfiConverterTypeModelStatus: FfiConverterRustBuffer {
                 downloadedBytes: FfiConverterUInt64.read(from: &buf), 
                 error: FfiConverterOptionString.read(from: &buf), 
                 runtimeReady: FfiConverterBool.read(from: &buf), 
-                risk: FfiConverterBool.read(from: &buf)
+                risk: FfiConverterBool.read(from: &buf), 
+                update: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -10647,6 +10658,7 @@ public struct FfiConverterTypeModelStatus: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.error, into: &buf)
         FfiConverterBool.write(value.runtimeReady, into: &buf)
         FfiConverterBool.write(value.risk, into: &buf)
+        FfiConverterBool.write(value.update, into: &buf)
     }
 }
 

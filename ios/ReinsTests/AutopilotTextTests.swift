@@ -3,9 +3,10 @@ import XCTest
 
 /// Autopilot's words (the Android app's `AutopilotTextTest`).
 final class AutopilotTextTests: XCTestCase {
-    private func model(_ state: ModelState = .notInstalled, downloaded: UInt64 = 0, size: UInt64 = 0, error: String? = nil) -> ModelStatus {
+    private func model(_ state: ModelState = .notInstalled, downloaded: UInt64 = 0, size: UInt64 = 0, error: String? = nil,
+                       update: Bool = false) -> ModelStatus {
         ModelStatus(state: state, id: "laya-approvals-base-v1", label: "Laya approvals (base)", version: "1", sizeBytes: size,
-                    downloadedBytes: downloaded, error: error, runtimeReady: true)
+                    downloadedBytes: downloaded, error: error, runtimeReady: true, update: update)
     }
 
     private func settings(bypass: Int64? = nil, since: Int64? = nil, connections: [ConnectionAutopilot] = []) -> AutopilotSettings {
@@ -240,6 +241,17 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertEqual(AutopilotText.modelState(model(), waitingForNetwork: true, wifiOnly: false), "Waiting for a connection")
         XCTAssertEqual(AutopilotText.modelState(model(.installed, size: 1), waitingForNetwork: false, wifiOnly: true), "Installed · ready")
         XCTAssertNil(AutopilotText.fraction(downloaded: 5, total: 0))
+    }
+
+    func testAnOlderModelOffersAnUpdateAndStillScoresWhileItComes() {
+        XCTAssertTrue(AutopilotText.modelUpdatable(model(.installed, update: true)))
+        XCTAssertFalse(AutopilotText.modelUpdatable(model(.installed)))
+        XCTAssertFalse(AutopilotText.modelUpdatable(model(.downloading, update: true)))
+        XCTAssertTrue(AutopilotText.modelUsable(model(.installed, update: true)))
+        XCTAssertTrue(AutopilotText.modelUsable(model(.downloading, update: true)), "the older model scores until the newer one is in")
+        XCTAssertFalse(AutopilotText.modelUsable(model(.downloading)), "a first download has nothing to score with yet")
+        XCTAssertFalse(AutopilotText.modelUsable(nil))
+        XCTAssertTrue(AutopilotText.modelUpdateLine.contains("Overnight"))
     }
 
     func testTheExamplesUseTheSituationFormat() {

@@ -233,6 +233,30 @@ fn repeats(question: &str, rest: &str) -> bool {
     said.is_some_and(|said| !said.is_empty() && text::one_line(rest).contains(said))
 }
 
+/// The texts the phone reads a desktop question's commands in, for the guard's rules and certainty ([`read_ask`]),
+/// and for Overnight's reading of the same question (`autopilot::risk`): the detail after a reported rule, the
+/// topic's rule, and the question's command when the question says something the detail does not
+/// (`question_command`).
+pub struct AskTexts<'a> {
+    pub texts: Vec<&'a str>,
+    pub question_command: bool,
+}
+
+pub fn ask_texts<'a>(topic: Option<&'a str>, question: &'a str, detail: &'a str) -> AskTexts<'a> {
+    let rest = reported_rule(detail).map_or(detail, |(_, rest)| rest);
+    let mut texts = vec![rest];
+    texts.extend(topic.and_then(|t| t.split_once(':')).map(|(_, rule)| rule));
+    let command = question.split_once(" wants to run: ").map(|(_, c)| c).filter(|c| !c.ends_with('…'));
+    let question_command = !repeats(question, rest) && command.is_some();
+    if question_command {
+        texts.extend(command);
+    }
+    AskTexts {
+        texts,
+        question_command,
+    }
+}
+
 /// Reads a desktop question.
 ///
 /// The phone reads everything the question carries with its own copy of the guard's built-in rules
@@ -245,17 +269,13 @@ pub fn read_ask(topic: Option<&str>, question: &str, detail: &str) -> AskReading
         None => (None, detail),
     };
     let header = &detail[..detail.len() - rest.len()];
-    let mut texts = vec![rest];
-    texts.extend(topic.and_then(|t| t.split_once(':')).map(|(_, rule)| rule));
+    // A question that says something else: its command is read (it counts toward certainty), else it is searched.
+    let read = ask_texts(topic, question, detail);
     let mut fragments = vec![header];
-    if !repeats(question, rest) {
-        // A question that says something else: searched (a hook's command line counts toward certainty).
-        match question.split_once(" wants to run: ") {
-            Some((_, command)) if !command.ends_with('…') => texts.push(command),
-            _ => fragments.push(question),
-        }
+    if !repeats(question, rest) && !read.question_command {
+        fragments.push(question);
     }
-    let reading = reins_policy::guard::read(&texts, &fragments);
+    let reading = reins_policy::guard::read(&read.texts, &fragments);
     // The words of a destructive command, read where a shell runs them: not in the source a heredoc feeds Python, nor
     // in the question line when it only repeats the command.
     let said_question = if repeats(question, rest) {

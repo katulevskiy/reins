@@ -220,7 +220,7 @@ private struct HeroPills: View {
                 nav.overlay = .autopilot
                 feedback.play(.open)
             }
-        } else if let model = autopilot.model, model.state != .installed, vm.suggestion?.floor != true {
+        } else if let model = autopilot.model, !AutopilotText.modelUsable(model), vm.suggestion?.floor != true {
             DownloadPill(autopilot: autopilot, model: model)
         } else if let s = vm.suggestion, s.floor {
             Button {

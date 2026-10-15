@@ -10,6 +10,7 @@ import dev.reins.core.OvernightRisky
 import dev.reins.core.RiskLevel
 import dev.reins.core.Verdict
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -303,6 +304,18 @@ class AutopilotTextTest {
         assertEquals("Downloading · 103 MB of 412 MB", AutopilotText.modelState(downloading, waitingForNetwork = false, wifiOnly = true))
         assertEquals(0.25f, AutopilotText.fraction(downloading)!!, 0.001f)
         assertEquals("Waiting for Wi-Fi", AutopilotText.modelState(TestData.modelStatus(), waitingForNetwork = true, wifiOnly = true))
+    }
+
+    @Test
+    fun `an older model offers an update and still scores while it comes`() {
+        assertTrue(AutopilotText.modelUpdatable(TestData.modelStatus(ModelState.INSTALLED, update = true)))
+        assertFalse(AutopilotText.modelUpdatable(TestData.modelStatus(ModelState.INSTALLED)))
+        assertFalse(AutopilotText.modelUpdatable(TestData.modelStatus(ModelState.DOWNLOADING, update = true)))
+        assertTrue(AutopilotText.modelUsable(TestData.modelStatus(ModelState.INSTALLED, update = true)))
+        assertTrue("the older model scores until the newer one is in", AutopilotText.modelUsable(TestData.modelStatus(ModelState.DOWNLOADING, update = true)))
+        assertFalse("a first download has nothing to score with yet", AutopilotText.modelUsable(TestData.modelStatus(ModelState.DOWNLOADING)))
+        assertFalse(AutopilotText.modelUsable(null))
+        assertTrue(AutopilotText.MODEL_UPDATE_LINE.contains("Overnight"))
     }
 
     @Test

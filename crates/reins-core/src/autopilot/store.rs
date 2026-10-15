@@ -121,6 +121,9 @@ pub struct Judged {
     /// That package's Overnight threshold, when it names a valid one.
     #[serde(default)]
     pub risk_threshold: Option<f32>,
+    /// The highest class any view (facts, full, neutral) gave on its own: the class shown is never below it.
+    #[serde(default)]
+    pub risk_view_max: Option<super::types::RiskLevel>,
 }
 
 /// How a request was finally decided.

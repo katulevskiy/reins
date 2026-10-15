@@ -59,7 +59,11 @@ final class AutopilotModel {
         return m
     }
 
-    var modelReady: Bool { settings?.model.state == .installed }
+    /// Installed, or an older model still scoring while its update downloads.
+    var modelReady: Bool { AutopilotText.modelUsable(model) }
+
+    /// An older model is installed and a newer one can be downloaded ("Update" on the model's row).
+    var modelUpdatable: Bool { AutopilotText.modelUpdatable(model) }
 
     var downloadJob: DownloadJob {
         _ = bound

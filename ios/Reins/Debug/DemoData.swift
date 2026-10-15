@@ -756,10 +756,14 @@ enum DemoData {
 
     // ---- Autopilot ------------------------------------------------------------------------------------------------
 
-    static func model(_ state: ModelState, downloaded: UInt64 = 0, error: String? = nil) -> ModelStatus {
+    /// `update`: an older model is installed and a newer one can be downloaded.
+    static func model(
+        _ state: ModelState, downloaded: UInt64 = 0, error: String? = nil, risk: Bool = false, update: Bool = false
+    ) -> ModelStatus {
         ModelStatus(
             state: state, id: "laya-approvals-base-v1", label: "Laya approvals (base)", version: "1",
-            sizeBytes: state == .notInstalled ? 0 : modelSize, downloadedBytes: downloaded, error: error, runtimeReady: true
+            sizeBytes: state == .notInstalled ? 0 : modelSize, downloadedBytes: downloaded, error: error, runtimeReady: true,
+            risk: risk, update: update
         )
     }
 
