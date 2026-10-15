@@ -38,7 +38,29 @@ struct SettingsScreen: View {
             feedback.play(.refresh)
         }
         .task { await model.refreshConnections() }
+        #if DEBUG
+        .sheet(item: $debugSheet) { sheet in
+            switch sheet {
+            case .delete: DeleteAccountSheet(email: "dana@acme.dev") { debugSheet = nil }
+            case .recovery: RecoveryCodeSheet(code: "K7QD-2MZR-9XHT-P4WE-B8NC-6JVL-T3FA-Y5GU-M1RS-Q9KD-H2LP-W7EZ-C4XN", required: true) { debugSheet = nil }
+            }
+        }
+        .onAppear {
+            // `-openSheet delete|recovery` (screenshots): open that sheet at launch.
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-openSheet"), i + 1 < args.count { debugSheet = DebugSheet(rawValue: args[i + 1]) }
+        }
+        #endif
     }
+
+    #if DEBUG
+    private enum DebugSheet: String, Identifiable {
+        case delete, recovery
+        var id: String { rawValue }
+    }
+
+    @State private var debugSheet: DebugSheet?
+    #endif
 }
 
 // MARK: Account
