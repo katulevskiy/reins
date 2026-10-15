@@ -158,6 +158,9 @@ final class ApprovalFieldTests: XCTestCase {
 
     func testADestructiveToolCannotBeUndone() {
         XCTAssertEqual(line(lines(mcp(destructive: true)), "mcpDestructive")?.text, "Always asks · can't be undone")
+        var asked = mcp(destructive: true)
+        asked.noStanding = true
+        XCTAssertEqual(lines(asked).filter { $0.text == "Always asks · can't be undone" }.count, 1, "said once")
     }
 
     func testADeleteCannotBeUndone() {

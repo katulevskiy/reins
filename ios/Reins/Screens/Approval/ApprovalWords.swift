@@ -358,7 +358,9 @@ enum ApprovalWords {
         if let mcp = view.mcp, mcp.destructive {
             tags.append(DangerTag(label: "Destructive", id: "mcpDestructive", help: "The server marks this tool as destructive. It is asked for every time and can never be allowed in advance."))
         }
-        if destructive(view) {
+        // What can't be undone, unless a red tag already says why it always asks ("rewrites history", a destructive
+        // tool): the field would say the same thing twice.
+        if destructive(view) && !tags.contains(where: \.destructive) {
             tags.append(DangerTag(
                 label: "Can't be undone",
                 id: "onceWarning",

@@ -49,7 +49,7 @@ final class ApprovalFieldUITests: XCTestCase {
         XCTAssertTrue(element(app, "what").label.hasPrefix("Push 2 commits to"))
         assertShown(app, "forceWarning:0", says: "rewrites history")
         assertShown(app, "defaultBranch", says: "default branch main")
-        assertShown(app, "onceWarning", says: "can't be undone")
+        XCTAssertFalse(element(app, "onceWarning").exists, "the red line already says why it always asks")
         XCTAssertFalse(element(app, "suggestion").exists, "nothing invites a tap on what is held")
         XCTAssertTrue(element(app, "noStanding").exists, "asked every time")
         shot(app, "field-force-push")
