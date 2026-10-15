@@ -27,12 +27,14 @@ use super::{
     limits::{self, rate_limited_text, retry_secs},
     now_unix,
     oauth::{
-        self, AuthCode, AuthorizeFailure, ClientInfo, OAuthError, TokenGrant, canonical_mcp_url, check_code_redemption,
-        device_authorization_response, error_redirect, is_cimd_client_id, issuer, parse_client_metadata,
-        parse_device_authorization, parse_form, parse_registration, parse_token_request, redirect_host,
-        registration_response, success_redirect, token_response, validate_authorize,
+        self, AssertionError, AuthCode, AuthMethod, AuthorizeFailure, ClientAuth, ClientInfo, JwksSource, OAuthError,
+        TokenGrant, TokenRequest, VerifiedAssertion, assertion_audiences, canonical_mcp_url, check_code_redemption,
+        device_authorization_response, error_redirect, is_cimd_client_id, is_loopback_cimd_client_id, issuer,
+        parse_client_assertion, parse_client_metadata, parse_device_authorization, parse_form, parse_jwks,
+        parse_registration, parse_token_request, redirect_host, registration_response, success_redirect,
+        token_response, validate_authorize, verify_client_assertion,
     },
-    oauth_state::{AuthSession, OAUTH, StartedPairing},
+    oauth_state::{AuthSession, JtiError, OAUTH, StartedPairing},
     outbound, pages,
     pairing::{PairingClient, PairingStatus, sanitize_client_name},
     push,
@@ -158,31 +160,50 @@ async fn read_limited(data: Data<'_>, limit: u64) -> Option<Vec<u8>> {
     bytes.is_complete().then(|| bytes.into_inner())
 }
 
-/// Fetches a Client ID Metadata Document (Decision 25): through the outbound guard (https, public addresses only, checked
-/// again on every resolved address), no redirects, size-capped. Anyone may name any URL here, so it is the same guard
-/// as for the phone's requests, independent of `HTTP_REQUEST_BLOCK_NON_GLOBAL_IPS`.
-async fn fetch_client_metadata(client_id: &str) -> Result<ClientInfo, String> {
-    let mut response = outbound::get_once(client_id, "application/json", CIMD_TIMEOUT)
+/// Fetches a small JSON document a client names (its Client ID Metadata Document, Decision 25, or its `jwks_uri`):
+/// through the outbound guard (https, public addresses only, checked again on every resolved address), no redirects,
+/// at most `limit` bytes. Anyone may name any URL here, so it is the same guard as for the phone's requests,
+/// independent of `HTTP_REQUEST_BLOCK_NON_GLOBAL_IPS`.
+async fn fetch_document(url: &str, limit: usize, what: &str) -> Result<Vec<u8>, String> {
+    let mut response = outbound::get_once(url, "application/json", CIMD_TIMEOUT)
         .await
-        .map_err(|e| format!("could not fetch the client metadata document: {e}"))?;
+        .map_err(|e| format!("could not fetch the {what}: {e}"))?;
     if response.status().is_redirection() {
-        return Err("the client metadata document URL redirected".to_owned());
+        return Err(format!("the {what} URL redirected"));
     }
     if !response.status().is_success() {
-        return Err(format!("the client metadata document answered {}", response.status()));
+        return Err(format!("the {what} answered {}", response.status()));
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|e| format!("could not read the client metadata: {e}"))? {
-        if body.len() + chunk.len() > oauth::MAX_CLIENT_METADATA_BYTES {
-            return Err("the client metadata document is too large".to_owned());
+    while let Some(chunk) = response.chunk().await.map_err(|e| format!("could not read the {what}: {e}"))? {
+        if body.len() + chunk.len() > limit {
+            return Err(format!("the {what} is too large"));
         }
         body.extend_from_slice(&chunk);
     }
+    Ok(body)
+}
+
+async fn fetch_client_metadata(client_id: &str) -> Result<ClientInfo, String> {
+    let body = fetch_document(client_id, oauth::MAX_CLIENT_METADATA_BYTES, "client metadata document").await?;
     parse_client_metadata(client_id, &body)
 }
 
+/// A client's key set from its `jwks_uri`, fetched under the same guard and cached for a few minutes.
+async fn fetch_jwks(jwks_uri: &str) -> Result<jsonwebtoken::jwk::JwkSet, OAuthError> {
+    let fetched = fetch_document(jwks_uri, oauth::MAX_JWKS_BYTES, "client's JWKS").await.and_then(|b| parse_jwks(&b));
+    let set = fetched.map_err(OAuthError::invalid_client)?;
+    OAUTH.cache_jwks(jwks_uri, set.clone());
+    Ok(set)
+}
+
+/// A `client_id` that names a metadata document (in the test mode also `http://` on loopback, for mock servers).
+fn is_metadata_client_id(client_id: &str) -> bool {
+    is_cimd_client_id(client_id) || (outbound::allow_loopback() && is_loopback_cimd_client_id(client_id))
+}
+
 async fn resolve_client(client_id: &str, conn: &DbConn) -> Result<ClientInfo, String> {
-    if is_cimd_client_id(client_id) {
+    if is_metadata_client_id(client_id) {
         if let Some(cached) = OAUTH.cached_client(client_id) {
             return Ok(cached);
         }
@@ -195,6 +216,8 @@ async fn resolve_client(client_id: &str, conn: &DbConn) -> Result<ClientInfo, St
         redirect_uris: client.redirect_uri_list(),
         client_id: client.client_id,
         client_name: client.client_name,
+        // Dynamic registration accepts public clients only.
+        auth: ClientAuth::None,
     })
 }
 
@@ -307,6 +330,7 @@ async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, conn: DbCo
             "The desktop app key is not valid.",
         );
     };
+    let client_auth = client.auth.method();
     let pairing_client = PairingClient {
         client_id: client.client_id,
         client_name: sanitize_client_name(&client.client_name),
@@ -318,6 +342,7 @@ async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, conn: DbCo
     let session = AuthSession {
         request,
         client: pairing_client,
+        client_auth,
         pairing: None,
     };
     match OAUTH.create_session(session) {
@@ -469,6 +494,7 @@ fn authorize_wait(session: &str) -> Flow {
                 client_id: session.request.client_id.clone(),
                 redirect_uri: session.request.redirect_uri.clone(),
                 code_challenge: session.request.code_challenge.clone(),
+                client_auth: session.client_auth,
             };
             match OAUTH.issue_code(code) {
                 Ok(token) => Flow::Redirect(success_redirect(
@@ -521,8 +547,16 @@ async fn device_authorization(data: Data<'_>, ip: ClientIp, conn: DbConn) -> Jso
     };
     let client = match resolve_client(&request.client_id, &conn).await {
         Ok(c) => c,
-        Err(e) => return oauth_error(&OAuthError::new(401, "invalid_client", e)),
+        Err(e) => return oauth_error(&OAuthError::invalid_client(e)),
     };
+    // The device flow is for public clients: a client with keys signs in through the authorize flow.
+    if client.auth.method() != AuthMethod::None {
+        return oauth_error(&OAuthError::new(
+            400,
+            "unauthorized_client",
+            "the device flow is only for public clients; this client authenticates with private_key_jwt",
+        ));
+    }
     // What the phone shows under the name, as for the authorize flow: the host the client registered.
     let client_host = client.redirect_uris.first().map(|uri| redirect_host(uri)).unwrap_or_default();
     let pairing_client = PairingClient {
@@ -569,7 +603,79 @@ async fn poll_device_code(device_code: &str, client_id: &str, conn: &DbConn) -> 
             let connection = ReinsConnection::find_by_uuid_and_user(&connection.0, &user, conn)
                 .await
                 .ok_or_else(|| OAuthError::invalid_grant("the connection no longer exists"))?;
-            issue_tokens(&connection, conn).await
+            issue_tokens(&connection, AuthMethod::None, conn).await
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Client authentication (RFC 7523 private_key_jwt)
+// ---------------------------------------------------------------------------------------
+
+/// Verifies `assertion` with the client's keys. A key set from `jwks_uri` comes from the cache when it can; an
+/// unknown `kid` in a cached set fetches it once more (rate-limited per URI) in case the client rotated its keys.
+async fn verify_with_client_keys(
+    client_id: &str,
+    jwks: &JwksSource,
+    alg: Option<jsonwebtoken::Algorithm>,
+    assertion: &str,
+) -> Result<VerifiedAssertion, OAuthError> {
+    let audiences = assertion_audiences(&CONFIG.domain());
+    let verify = |set: &jsonwebtoken::jwk::JwkSet| {
+        verify_client_assertion(assertion, client_id, set, alg, &audiences, now_unix())
+    };
+    match jwks {
+        JwksSource::Inline(set) => verify(set).map_err(AssertionError::into_oauth),
+        JwksSource::Uri(uri) => {
+            let (set, fresh) = match OAUTH.cached_jwks(uri) {
+                Some(set) => (set, false),
+                None => (fetch_jwks(uri).await?, true),
+            };
+            match verify(&set) {
+                Err(AssertionError::UnknownKey) if !fresh && OAUTH.may_refetch_jwks(uri) => {
+                    verify(&fetch_jwks(uri).await?).map_err(AssertionError::into_oauth)
+                }
+                result => result.map_err(AssertionError::into_oauth),
+            }
+        }
+    }
+}
+
+/// Client authentication at the token and revocation endpoints. `required` is the method bound to the grant (the
+/// authorization code or refresh token): a public client must not send an assertion, and a `private_key_jwt` client
+/// must send one that verifies against its current keys, with a `jti` never seen before.
+async fn authenticate_client(
+    client_id: &str,
+    required: AuthMethod,
+    assertion: Option<&str>,
+    conn: &DbConn,
+) -> Result<(), OAuthError> {
+    let assertion = match (required, assertion) {
+        (AuthMethod::None, None) => return Ok(()),
+        (AuthMethod::None, Some(_)) => {
+            return Err(OAuthError::invalid_client("this client is public and must not send a client assertion"));
+        }
+        (AuthMethod::PrivateKeyJwt, None) => {
+            return Err(OAuthError::invalid_client(
+                "this client authenticates with private_key_jwt: client_assertion is required",
+            ));
+        }
+        (AuthMethod::PrivateKeyJwt, Some(assertion)) => assertion,
+    };
+    let client = resolve_client(client_id, conn).await.map_err(OAuthError::invalid_client)?;
+    let ClientAuth::PrivateKeyJwt {
+        jwks,
+        alg,
+    } = &client.auth
+    else {
+        return Err(OAuthError::invalid_client("the client does not declare private_key_jwt"));
+    };
+    let verified = verify_with_client_keys(client_id, jwks, *alg, assertion).await?;
+    match OAUTH.use_assertion(client_id, &verified.jti) {
+        Ok(()) => Ok(()),
+        Err(JtiError::Replayed) => Err(OAuthError::invalid_client("the client assertion was already used")),
+        Err(JtiError::Full) => {
+            Err(OAuthError::new(503, "temporarily_unavailable", "the server is busy, try again in a few minutes"))
         }
     }
 }
@@ -578,13 +684,18 @@ async fn poll_device_code(device_code: &str, client_id: &str, conn: &DbConn) -> 
 // Token endpoint
 // ---------------------------------------------------------------------------------------
 
-/// Issues a rotated access/refresh pair for `connection`.
-async fn issue_tokens(connection: &ReinsConnection, conn: &DbConn) -> Result<Value, OAuthError> {
+/// Issues a rotated access/refresh pair for `connection`; the refresh token remembers how the client authenticated.
+async fn issue_tokens(
+    connection: &ReinsConnection,
+    client_auth: AuthMethod,
+    conn: &DbConn,
+) -> Result<Value, OAuthError> {
     let refresh = random_token();
     let row = ReinsRefreshToken {
         token_hash: hash_token(&refresh),
         connection_uuid: connection.uuid.clone(),
         expires_at: now_unix() + REFRESH_TOKEN_SECS,
+        client_auth: client_auth.as_str().to_owned(),
     };
     if let Err(e) = row.save(conn).await {
         error!("Reins refresh token could not be stored: {e:?}");
@@ -595,8 +706,9 @@ async fn issue_tokens(connection: &ReinsConnection, conn: &DbConn) -> Result<Val
     Ok(token_response(&access, &refresh))
 }
 
-async fn exchange(grant: TokenGrant, conn: &DbConn) -> Result<Value, OAuthError> {
-    match grant {
+async fn exchange(request: TokenRequest, conn: &DbConn) -> Result<Value, OAuthError> {
+    let assertion = request.client_assertion.as_deref();
+    match request.grant {
         TokenGrant::AuthorizationCode {
             code,
             redirect_uri,
@@ -606,35 +718,48 @@ async fn exchange(grant: TokenGrant, conn: &DbConn) -> Result<Value, OAuthError>
             let issued =
                 OAUTH.redeem_code(&code).ok_or_else(|| OAuthError::invalid_grant("unknown, used or expired code"))?;
             check_code_redemption(&issued, &client_id, &redirect_uri, &code_verifier)?;
+            // The client the code was issued to, authenticating the way it did when it started the flow.
+            authenticate_client(&issued.client_id, issued.client_auth, assertion, conn).await?;
             let user = UserId::from(issued.user_uuid.clone());
             let connection = ReinsConnection::find_by_uuid_and_user(&issued.connection_uuid, &user, conn)
                 .await
                 .ok_or_else(|| OAuthError::invalid_grant("the connection no longer exists"))?;
-            issue_tokens(&connection, conn).await
+            issue_tokens(&connection, issued.client_auth, conn).await
         }
         TokenGrant::RefreshToken {
             refresh_token,
             client_id,
         } => {
-            let row = ReinsRefreshToken::take(&hash_token(&refresh_token), now_unix(), conn)
+            let invalid = || OAuthError::invalid_grant("the refresh token is invalid or expired");
+            let token_hash = hash_token(&refresh_token);
+            let row = ReinsRefreshToken::find(&token_hash, conn)
                 .await
-                .ok_or_else(|| OAuthError::invalid_grant("the refresh token is invalid or expired"))?;
+                .filter(|row| now_unix() < row.expires_at)
+                .ok_or_else(invalid)?;
             let connection = ReinsConnection::find_by_uuid(&row.connection_uuid, conn)
                 .await
                 .ok_or_else(|| OAuthError::invalid_grant("the connection no longer exists"))?;
             if client_id.is_some_and(|c| c != connection.client_id) {
                 return Err(OAuthError::invalid_grant("the refresh token belongs to another client"));
             }
-            issue_tokens(&connection, conn).await
+            // Authenticated before the token is used up, so a request without the client's key cannot burn it.
+            let client_auth = AuthMethod::from_stored(&row.client_auth);
+            authenticate_client(&connection.client_id, client_auth, assertion, conn).await?;
+            ReinsRefreshToken::take(&token_hash, now_unix(), conn).await.ok_or_else(invalid)?;
+            issue_tokens(&connection, client_auth, conn).await
         }
         TokenGrant::DeviceCode {
             device_code,
             client_id,
-        } => poll_device_code(&device_code, &client_id, conn).await,
+        } => {
+            // Only public clients get device codes (`device_authorization`).
+            authenticate_client(&client_id, AuthMethod::None, assertion, conn).await?;
+            poll_device_code(&device_code, &client_id, conn).await
+        }
     }
 }
 
-/// RFC 6749 token endpoint (form-encoded, public clients, PKCE).
+/// RFC 6749 token endpoint (form-encoded, PKCE; public clients and RFC 7523 `private_key_jwt` clients).
 #[post("/reins/oauth/token", data = "<data>")]
 async fn token(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
     if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
@@ -643,11 +768,11 @@ async fn token(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
     let Some(body) = read_limited(data, MAX_FORM_BYTES).await else {
         return oauth_error(&OAuthError::invalid_request("request body too large"));
     };
-    let grant = match parse_token_request(&parse_form(&body), &mcp_url()) {
-        Ok(g) => g,
+    let request = match parse_token_request(&parse_form(&body), &mcp_url()) {
+        Ok(r) => r,
         Err(e) => return oauth_error(&e),
     };
-    match exchange(grant, &conn).await {
+    match exchange(request, &conn).await {
         Ok(tokens) => JsonResponse(Status::Ok, tokens),
         Err(e) => oauth_error(&e),
     }
@@ -657,6 +782,10 @@ async fn token(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
 /// token of that grant dies with it (the phone's list of connections drops it too). `client_id`, when given, must be
 /// the connection's client. Always 200, also for a token that is unknown, expired or already revoked (RFC 7009 2.2),
 /// so the answer tells nobody whether a guessed token existed.
+///
+/// Client authentication: a refresh token of a `private_key_jwt` client is revoked only with a valid client
+/// assertion of that client; any assertion that is sent is verified (a public client sending one is refused), and a
+/// failure is 401 `invalid_client` with nothing revoked. An access token alone is enough for public clients, as before.
 #[post("/reins/oauth/revoke", data = "<data>")]
 async fn revoke(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
     if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
@@ -669,13 +798,29 @@ async fn revoke(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
     let Some(token) = form.get("token").map(String::as_str).filter(|t| !t.is_empty() && t.len() <= 4096) else {
         return oauth_error(&OAuthError::invalid_request("`token` is required"));
     };
-    let connection = match ReinsRefreshToken::find(&hash_token(token), &conn).await {
-        Some(row) => ReinsConnection::find_by_uuid(&row.connection_uuid, &conn).await,
-        None => super::mcp_routes::authenticate(Some(&format!("Bearer {token}")), &conn).await.ok(),
+    let assertion = match parse_client_assertion(&form) {
+        Ok(a) => a,
+        Err(e) => return oauth_error(&e),
+    };
+    let (connection, bound) = match ReinsRefreshToken::find(&hash_token(token), &conn).await {
+        Some(row) => (
+            ReinsConnection::find_by_uuid(&row.connection_uuid, &conn).await,
+            AuthMethod::from_stored(&row.client_auth),
+        ),
+        None => (super::mcp_routes::authenticate(Some(&format!("Bearer {token}")), &conn).await.ok(), AuthMethod::None),
     };
     if let Some(connection) = connection {
         let client_ok = form.get("client_id").is_none_or(|c| *c == connection.client_id);
         if client_ok {
+            // A sent assertion is always checked: as `private_key_jwt` for the connection's client.
+            let required = if assertion.is_some() {
+                AuthMethod::PrivateKeyJwt
+            } else {
+                bound
+            };
+            if let Err(e) = authenticate_client(&connection.client_id, required, assertion.as_deref(), &conn).await {
+                return oauth_error(&e);
+            }
             match connection.delete(&conn).await {
                 Ok(()) => info!("Reins connection {} revoked by its client", connection.uuid),
                 Err(e) => {

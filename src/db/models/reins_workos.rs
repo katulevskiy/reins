@@ -432,6 +432,7 @@ mod tests {
                 token_hash: format!("hash-{user}"),
                 connection_uuid: conn.uuid.clone(),
                 expires_at: 99,
+                client_auth: "none".to_owned(),
             };
             diesel::insert_into(reins_refresh_tokens::table).values(&token).execute(&mut c).unwrap();
             q_save_session(
@@ -474,6 +475,7 @@ mod tests {
                 token_hash: format!("hash-{user}"),
                 connection_uuid: conn.uuid.clone(),
                 expires_at: 99,
+                client_auth: "none".to_owned(),
             };
             diesel::insert_into(reins_refresh_tokens::table).values(&token).execute(&mut c).unwrap();
         }
