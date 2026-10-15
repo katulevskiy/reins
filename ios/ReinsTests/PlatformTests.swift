@@ -329,6 +329,14 @@ final class PlatformTests: XCTestCase {
         XCTAssertTrue(GoogleConfig(clientId: "1-a.apps.googleusercontent.com", redirectScheme: "com.googleusercontent.apps.1-a").isConfigured)
     }
 
+    /// A build without a Google client tells the user so in one line; the setup steps are only logged.
+    func testWithoutAGoogleClientTheUserReadsNoSetupSteps() {
+        for text in [GoogleConfig.setupMessage, GoogleAuthError.notConfigured.errorDescription ?? ""] {
+            XCTAssertEqual(text, "Google sign-in isn't available in this build.")
+        }
+        XCTAssertTrue(GoogleConfig.developerSetup.contains("REINS_GOOGLE_CLIENT_ID"))
+    }
+
     func testTheGoogleRequestUsesPkceAndChecksItsAnswer() throws {
         let config = GoogleConfig(clientId: "1-a.apps.googleusercontent.com", redirectScheme: "com.googleusercontent.apps.1-a")
         // RFC 7636 appendix B.

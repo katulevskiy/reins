@@ -23,7 +23,11 @@ struct GoogleConfig: Equatable {
 
     var redirectURI: String { "\(redirectScheme):/oauth2redirect" }
 
-    static let setupMessage =
+    /// What the user reads when this build has no Google client. The setup steps are for whoever builds the app
+    /// (`developerSetup`, logged, never shown).
+    static let setupMessage = "Google sign-in isn't available in this build."
+
+    static let developerSetup =
         "Google access needs setup: create an iOS OAuth client in Google Cloud, put its client id and reversed client id in REINS_GOOGLE_CLIENT_ID and REINS_GOOGLE_REDIRECT_SCHEME, and enable the Gmail, Calendar and People APIs."
 
     static let authorizeURL = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!

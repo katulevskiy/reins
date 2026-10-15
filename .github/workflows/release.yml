@@ -1530,7 +1530,7 @@ jobs:
   #     (ReinsNotifications)
   #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID, APPLE_TEAM_ID  the App Store Connect API key "Reins CI"
   # Repository variables: TESTFLIGHT_EXTERNAL_GROUP_ID (the external group's id: two groups are named "Testers"),
-  # TESTFLIGHT_INTERNAL_GROUPS (default Internal), IOS_GOOGLE_CLIENT_ID (optional: Gmail, Calendar, Contacts).
+  # TESTFLIGHT_INTERNAL_GROUPS (default Internal), IOS_GOOGLE_CLIENT_ID (required: Gmail, Calendar, Contacts).
   ios-testflight:
     name: TestFlight upload
     needs: [plan, publish]
@@ -1799,8 +1799,9 @@ jobs:
           with open(f"{directory}/ExportOptions.plist", "wb") as handle:
               plistlib.dump(options, handle)
           PY
-      # The app's own settings (Telegram's application credentials, as the APK has them; the Google iOS client,
-      # optional) go into the archive's xcconfig here, so the archive step has no secret in its environment.
+      # The app's own settings (Telegram's application credentials, as the APK has them; the Google iOS client) go into
+      # the archive's xcconfig here, so the archive step has no secret in its environment. Without them the build
+      # would ship with Gmail, Calendar, Contacts or Telegram broken, so the job stops instead.
       - name: App settings
         if: steps.number.outputs.uploaded != 'true'
         env:
@@ -1813,20 +1814,22 @@ jobs:
           umask 077
           dir="$RUNNER_TEMP/ios-signing"
           [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::No build number"; exit 1; }
+          [[ -n "${TELEGRAM_API_ID:-}" && -n "${TELEGRAM_API_HASH:-}" ]] || {
+            echo "::error::The TELEGRAM_API_ID / TELEGRAM_API_HASH secrets are not set: this build could not connect Telegram."
+            exit 1
+          }
+          [[ "${GOOGLE_CLIENT_ID:-}" == *.apps.googleusercontent.com ]] || {
+            echo "::error::The IOS_GOOGLE_CLIENT_ID variable is not an iOS OAuth client id (…apps.googleusercontent.com): Gmail, Calendar and Contacts could not sign in."
+            exit 1
+          }
           {
             echo "#include \"$dir/signing.xcconfig\""
             echo "REINS_VERSION = $VERSION"
             echo "REINS_BUILD_NUMBER = $BUILD_NUMBER"
-            if [[ -n "${TELEGRAM_API_ID:-}" && -n "${TELEGRAM_API_HASH:-}" ]]; then
-              echo "REINS_TELEGRAM_API_ID = $TELEGRAM_API_ID"
-              echo "REINS_TELEGRAM_API_HASH = $TELEGRAM_API_HASH"
-            else
-              echo "::warning::TELEGRAM_API_ID / TELEGRAM_API_HASH are not set: this build cannot connect Telegram." >&2
-            fi
-            if [[ -n "${GOOGLE_CLIENT_ID:-}" ]]; then
-              echo "REINS_GOOGLE_CLIENT_ID = $GOOGLE_CLIENT_ID"
-              echo "REINS_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.${GOOGLE_CLIENT_ID%.apps.googleusercontent.com}"
-            fi
+            echo "REINS_TELEGRAM_API_ID = $TELEGRAM_API_ID"
+            echo "REINS_TELEGRAM_API_HASH = $TELEGRAM_API_HASH"
+            echo "REINS_GOOGLE_CLIENT_ID = $GOOGLE_CLIENT_ID"
+            echo "REINS_GOOGLE_REDIRECT_SCHEME = com.googleusercontent.apps.${GOOGLE_CLIENT_ID%.apps.googleusercontent.com}"
           } > "$dir/release.xcconfig"
       # What the archive's build phases and packages could reach: the keychain (its key non-extractable), the profiles
       # (public) and the settings. No certificate file, password file or API key.
