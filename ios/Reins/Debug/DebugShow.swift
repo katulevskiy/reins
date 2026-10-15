@@ -1,6 +1,6 @@
 #if DEBUG
 /// `-show <place>` at launch (screenshots, manual checks): a tab (`activity`, `trust`, `connections`, `settings`) or a
-/// page in it: `sounds`, `devices`, `passkeys`, `appearance`, `vault`, `vaultAdd`, `vaultItem:<id>`, `connection:<id>`,
+/// page in it: `sounds`, `devices`, `passkeys`, `appearance`, `vault`, `vaultAdd`, `vaultItem:<id>`, `vaultNew:<kind>`, `connection:<id>`,
 /// `gmail`, `service:<id>`, `mcp:<id>`, `grant:<id>`, `profile:<id>`, `tryit`, `ended`, `newgrant`, and `tour` (its page
 /// from `-tourPage <n>`, 0 to 4).
 @MainActor
@@ -15,6 +15,7 @@ enum DebugShow {
         case "vault": model.show(.vault, in: .connections)
         case "vaultAdd": model.show(.vaultAdd, in: .connections)
         case "vaultItem": model.show(.vaultItem(id), in: .connections)
+        case "vaultNew": model.show(.vaultEdit(id: nil, newItem: NewVaultItem(rawValue: id) ?? .login), in: .connections)
         case "connection": model.show(.connection(id), in: .connections)
         case "gmail": model.show(.gmail, in: .connections)
         case "service": model.show(.service(id), in: .connections)

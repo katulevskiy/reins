@@ -154,17 +154,15 @@ private struct AddAccountControls: View {
         switch service.kind {
         case "google":
             VStack(alignment: .leading, spacing: 10) {
-                if !ServiceCopy.googleSignInNote.isEmpty {
-                    Text(ServiceCopy.googleSignInNote)
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("googleSignInNote")
-                }
                 ActionButton(title: "Add account", symbol: "plus", busy: accounts.busy) {
                     Task { await accounts.addGoogle() }
                 }
                 .accessibilityIdentifier("addAccount")
+                // Google's unverified-app screen, and the way past it, behind a (?).
+                if !ServiceCopy.googleSignInNote.isEmpty {
+                    GroupFooter(ServiceCopy.googleSignInNote)
+                        .accessibilityIdentifier("googleSignInNote")
+                }
             }
         case "device":
             if service.accounts.isEmpty {
@@ -185,8 +183,8 @@ private struct AddAccountControls: View {
                     ActionButton(title: "Open the vault", symbol: "key.horizontal") { model.push(.vault) }
                         .accessibilityIdentifier("openVault")
                     Text("See, add and change your API keys, logins and SSH keys. reins run, the API proxy and the SSH agent use them by name.")
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.secondary)
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.ink2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -203,8 +201,8 @@ private struct AddAccountControls: View {
             TelegramLogin(accounts: accounts)
         default:
             Text("This kind of integration cannot be added here.")
-                .font(RFont.sans(14))
-                .foregroundStyle(Palette.secondary)
+                .textRole(.body)
+                .foregroundStyle(Palette.ink2)
         }
     }
 }
@@ -216,11 +214,14 @@ private struct AddAccountControls: View {
 private struct GitHubConnect: View {
     var accounts: AccountsModel
     @Environment(\.openURL) private var openURL
-    @State private var opened = false
     @State private var manual = false
 
     var body: some View {
-        ActionButton(title: "Chosen repositories", symbol: "key.fill", enabled: !accounts.busy) {
+        Text("Add an account")
+            .textRole(.label)
+            .foregroundStyle(Palette.inkMeta)
+            .accessibilityAddTraits(.isHeader)
+        ActionButton(title: "Chosen repositories", enabled: !accounts.busy) {
             open(GitHubToken.fineGrainedURL())
         }
         .accessibilityIdentifier("openGithub")
@@ -233,10 +234,9 @@ private struct GitHubConnect: View {
                 "Chosen repositories: a fine-grained token, only for the repositories you pick (no gists or notifications).\n\n" +
                 "Everything: a classic token for every repository, plus gists and notifications."
         )
-        if opened {
-            CopiedTokenButton(busy: accounts.busy, looksLikeToken: GitHubToken.looksLikeToken, hostName: "GitHub") { token in
-                Task { await accounts.addSecret(token) }
-            }
+        // Fewer steps to a token: the paste box is always there, for a token copied on GitHub just now or before.
+        CopiedTokenButton(busy: accounts.busy, looksLikeToken: GitHubToken.looksLikeToken, hostName: "GitHub") { token in
+            Task { await accounts.addSecret(token) }
         }
         if !manual {
             ActionButton(title: "I already have a token", kind: .ghost, enabled: !accounts.busy) { manual = true }
@@ -249,7 +249,6 @@ private struct GitHubConnect: View {
     }
 
     private func open(_ url: String) {
-        opened = true
         if let u = URL(string: url) { openURL(u) }
     }
 }
@@ -299,11 +298,16 @@ private struct CopiedTokenButton: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Text("Copied the token on \(hostName)? Paste it here and it connects.")
-                    .font(RFont.sans(14, .medium))
-                    .foregroundStyle(Palette.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Copied the token on \(hostName)?")
+                        .textRole(.row)
+                        .foregroundStyle(Palette.ink)
+                    Text("Paste it here and it connects. It's kept encrypted on this phone.")
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 PasteButton(payloadType: String.self) { strings in
                     Task { @MainActor in
                         let text = strings.first?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -318,17 +322,18 @@ private struct CopiedTokenButton: View {
                     }
                 }
                 .buttonBorderShape(.capsule)
-                .tint(Palette.accent)
+                .tint(Palette.inverse)
                 .disabled(busy)
                 .accessibilityIdentifier("useCopied")
             }
             .padding(.leading, 16)
             .padding(.trailing, 10)
-            .padding(.vertical, 10)
-            .background(Palette.accentSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.vertical, 12)
+            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
             if wrong {
                 Text("That is not a \(hostName) token. Copy it again on \(hostName), or type it in below.")
-                    .font(RFont.sans(13))
+                    .textRole(.meta)
                     .foregroundStyle(Palette.danger)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 4)
@@ -351,6 +356,7 @@ private struct Steps: View {
 /// Phone number → code → (password): the same steps as signing in to Telegram anywhere else.
 private struct TelegramLogin: View {
     var accounts: AccountsModel
+    @Environment(\.feedback) private var feedback
     @State private var phone = ""
     @State private var code = ""
     @State private var password = ""
@@ -378,15 +384,20 @@ private struct TelegramLogin: View {
             .accessibilityIdentifier("sendCode")
         case let .code(number):
             Steps("Telegram sent a code to \(number). It arrives in the Telegram app on your other devices, or as a text.")
-            InputWell {
-                TextField("Login code", text: Binding(get: { code }, set: { code = TelegramStep.cleanCode($0) }))
-                    .font(RFont.mono(20, .medium))
-                    .keyboardType(.numberPad)
-                    .textContentType(.oneTimeCode)
-                    .focused($focus, equals: .code)
-                    .disabled(busy)
-                    .accessibilityIdentifier("code")
+            DigitBoxes(code: code, focused: focus == .code) {
+                TextField("Login code", text: Binding(get: { code }, set: { new in
+                    let clean = TelegramStep.cleanCode(new)
+                    // Each digit ticks as it lands.
+                    if clean.count > code.count { feedback.play(.detent, step: clean.count) }
+                    code = clean
+                }))
+                .keyboardType(.numberPad)
+                .textContentType(.oneTimeCode)
+                .focused($focus, equals: .code)
+                .disabled(busy)
+                .accessibilityIdentifier("code")
             }
+            .onTapGesture { focus = .code }
             .onAppear { focus = .code }
             ActionButton(title: "Sign in", busy: busy, enabled: TelegramStep.codeReady(code)) {
                 let sent = code
@@ -422,5 +433,40 @@ private struct TelegramLogin: View {
         let sent = password
         password = ""
         Task { await accounts.loginPassword(sent) }
+    }
+}
+
+/// Telegram's code, one field per digit (five, more if more are typed): the digits typed so far, the next box ringed.
+/// The real field sits invisible underneath, so typing, pasting and the keyboard's code suggestion all work as usual.
+private struct DigitBoxes<Field: View>: View {
+    var code: String
+    var focused: Bool
+    @ViewBuilder var field: Field
+
+    var body: some View {
+        let digits = Array(code)
+        let count = max(5, digits.count)
+        ZStack {
+            field
+                .foregroundStyle(.clear)
+                .tint(.clear)
+                .opacity(0.02)
+            HStack(spacing: 8) {
+                ForEach(0..<count, id: \.self) { i in
+                    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    let next = i == digits.count && focused
+                    Text(i < digits.count ? String(digits[i]) : " ")
+                        .font(RFont.serif(34))
+                        .foregroundStyle(Palette.ink)
+                        .frame(maxWidth: 56, minHeight: 62)
+                        .frame(maxWidth: .infinity)
+                        .background(Palette.paperRaised, in: shape)
+                        .overlay(shape.strokeBorder(next ? Palette.ink : Palette.rule, lineWidth: next ? 1.5 : 1))
+                        .animation(.easeOut(duration: 0.12), value: digits.count)
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 }
