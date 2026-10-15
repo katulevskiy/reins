@@ -323,4 +323,13 @@ final class AutopilotTextTests: XCTestCase {
                        "A connection paired less than 10 minutes ago cannot be put in bypass.")
         XCTAssertEqual(AutopilotModel.sentence("Done."), "Done.")
     }
+
+    func testAProfilesIconIsAGlyphNeverAnEmoji() {
+        // The stored values stay Android's; each is drawn as its glyph, an unknown one as a person.
+        XCTAssertEqual(AutopilotText.icons.map(AutopilotText.profileGlyph), [.person, .briefcase, .home, .flask, .rocket, .lock, .moon, .star])
+        XCTAssertEqual(AutopilotText.profileGlyph("🦄"), .person)
+        XCTAssertEqual(AutopilotText.profileGlyph(nil), .person)
+        XCTAssertEqual(AutopilotText.profileIconName("💼"), "Work")
+        XCTAssertEqual(Set(AutopilotText.icons.map(AutopilotText.profileGlyph)).count, AutopilotText.icons.count, "each icon its own glyph")
+    }
 }

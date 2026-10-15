@@ -41,7 +41,7 @@ struct TryItScreen: View {
                 if ap.profiles.count > 1 {
                     chips("Profile") {
                         ForEach(ap.profiles, id: \.id) { p in
-                            AutopilotChip(title: "\(AutopilotText.profileIcon(p))  \(untrusted(p.name))", selected: p.id == profile?.id, identifier: "tryProfile:\(p.id)") {
+                            AutopilotChip(title: untrustedName(p.name, limit: 40), selected: p.id == profile?.id, identifier: "tryProfile:\(p.id)") {
                                 chosenProfile = p.id
                                 ap.clearEvaluation()
                             }
