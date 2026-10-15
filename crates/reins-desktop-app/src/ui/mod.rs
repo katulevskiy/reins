@@ -507,10 +507,10 @@ impl Render for Root {
                             .flex_col()
                             .items_center()
                             .justify_start()
-                            .gap(px(28.0))
-                            .px(px(32.0))
+                            .gap(px(20.0))
+                            .px(px(40.0))
                             .pt(px(WELCOME_TOP))
-                            .pb(px(28.0))
+                            .pb(px(36.0))
                             .child(parts::step_indicator(stage, pal))
                             .child(div().w_full().max_w(px(stage_width(stage))).child(body)),
                     ),
@@ -521,12 +521,9 @@ impl Render for Root {
 }
 
 /// The welcome flow's space above the step indicator.
-const WELCOME_TOP: f32 = 40.0;
+const WELCOME_TOP: f32 = 24.0;
 
-/// How wide a step of the welcome flow is: the pairing has the QR code beside the steps.
-fn stage_width(stage: Stage) -> f32 {
-    match stage {
-        Stage::Pair => 660.0,
-        Stage::Tools | Stage::TurnOn | Stage::Done => 560.0,
-    }
+/// How wide a step of the welcome flow is (`Desk-Setup.png`: a 580 px window, 40 px either side).
+fn stage_width(_stage: Stage) -> f32 {
+    500.0
 }

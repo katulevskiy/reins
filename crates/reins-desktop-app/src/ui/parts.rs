@@ -13,7 +13,6 @@ use gpui::{
 use super::icons::{Glyph, Mark, avatar, glyph};
 use super::story::Words;
 use super::{Data, Root};
-use crate::model::Step;
 use crate::theme::text::tracked;
 use crate::theme::{MONO, Palette, SERIF, SignalText as _, Tone, motion};
 use crate::welcome::Stage;
@@ -57,12 +56,6 @@ pub fn tile(i: Glyph, color: Hsla, side: f32) -> Div {
 /// A kind tile of `tone` (a neutral one is `paper-sunken` under `ink`).
 pub fn tone_tile(i: Glyph, tone: Tone, pal: Palette, side: f32) -> Div {
     super::kit::kind_tile(i, tone, side, pal)
-}
-
-/// What was a solid square of colour (a setting of "This computer"): Signal colours only what needs a decision, so
-/// a neutral tile, `ink` on `paper-sunken`.
-pub fn solid_tile(i: Glyph, _tone: Tone, pal: Palette, side: f32) -> Div {
-    tone_tile(i, Tone::Neutral, pal, side)
 }
 
 /// A logo (an AI tool, a git host, an API): a brand's mark in a white circle, an icon in a neutral tile.
@@ -199,8 +192,6 @@ pub fn page_header(title: &'static str, help: Option<Stateful<Div>>) -> Div {
 pub enum Btn {
     /// Soft: `paper-sunken`.
     Plain,
-    /// `violet-fill`: connect, start.
-    Accent,
     /// `inverse`: continue, resume, confirm.
     Primary,
 }
@@ -211,7 +202,6 @@ impl Btn {
     pub fn look(self) -> super::kit::Look {
         match self {
             Self::Plain => super::kit::Look::Soft,
-            Self::Accent => super::kit::Look::Violet,
             Self::Primary => super::kit::Look::Inverse,
         }
     }
@@ -279,6 +269,20 @@ pub fn link(id: impl Into<ElementId>, label: impl Into<SharedString>, pal: Palet
         .child(label.into())
 }
 
+/// A quiet link (`Desk-Setup.png`'s "Use the browser", "Undo"): `ink-2`, underlined, `size` px.
+pub fn quiet_link(id: impl Into<ElementId>, label: impl Into<SharedString>, size: f32, pal: Palette) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .text_size(px(size))
+        .text_color(pal.ink_2())
+        .underline()
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(|s| s.text_color(pal.ink()))
+        .active(|s| s.opacity(super::kit::button::PRESSED))
+        .child(label.into())
+}
+
 /// A row of a card: 50 px at least, a hairline above all but the first.
 pub fn row(pal: Palette, first: bool) -> Div {
     div()
@@ -305,27 +309,6 @@ pub fn row_text(title: impl Into<SharedString>, under: Option<AnyElement>, pal: 
         .when_some(under, |c, u| {
             c.child(div().text_size(px(12.0)).line_height(px(16.0)).text_color(pal.ink_meta()).min_w(px(0.0)).child(u))
         })
-}
-
-/// A switch: `violet-fill` on, `paper-sunken` off.
-pub fn toggle(on: bool, pal: Palette) -> Div {
-    let knob = div().size(px(17.0)).rounded_full().bg(gpui::white()).shadow_sm();
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .w(px(36.0))
-        .h(px(21.0))
-        .px(px(2.0))
-        .rounded_full()
-        .bg(if on {
-            pal.violet_fill()
-        } else {
-            pal.paper_sunken()
-        })
-        .when(!on && pal.dark, |t| t.border_1().border_color(pal.rule_2()))
-        .when_else(on, Div::justify_end, Div::justify_start)
-        .child(knob)
 }
 
 /// A dot that breathes (35% to 100%, still under Reduce Motion): something waits.
@@ -695,21 +678,6 @@ pub fn empty(text: impl Into<SharedString>, pal: Palette) -> Div {
     div().px(px(14.0)).py(px(16.0)).child(caption(text, pal).text_color(pal.ink_meta()))
 }
 
-/// A step of "Turn on Reins" as it goes: a breathing dot, a check, or a cross, and what happened.
-pub fn step_line(label: &str, step: &Step, pal: Palette, first: bool) -> Div {
-    let (mark, detail): (AnyElement, String) = match step {
-        Step::Running => (
-            waiting_dot(SharedString::from(format!("step-{label}")), pal.violet(), 8.0).into_any_element(),
-            String::new(),
-        ),
-        Step::Done(d) => (glyph(Glyph::CircleCheck, 18.0, pal.success).into_any_element(), d.clone()),
-        Step::Failed(e) => (glyph(Glyph::CircleClose, 18.0, pal.danger).into_any_element(), e.clone()),
-    };
-    row(pal, first)
-        .child(div().flex().flex_none().items_center().justify_center().size(px(30.0)).child(mark))
-        .child(row_text(label.to_owned(), (!detail.is_empty()).then(|| detail.into_any_element()), pal))
-}
-
 /// The QR code that opens Activity in the phone app.
 pub fn phone_qr(pal: Palette) -> Div {
     card(pal)
@@ -735,25 +703,27 @@ pub fn phone_qr(pal: Palette) -> Div {
         )
 }
 
-/// The welcome flow's steps: "1 Pair — 2 AI tools — 3 Turn on — Done", the ones behind ticked.
+/// The welcome flow's steps (`Desk-Setup.png`): "1 Pair — 2 AI tools — 3 Turn on — ✓ Done". Behind: ink dots with a
+/// check; here: an ink ring; ahead: a hairline ring. Numbers in mono.
 pub fn step_indicator(current: Stage, pal: Palette) -> Div {
-    let mut bar = div().flex().items_center().justify_center().gap(px(12.0));
+    let mut bar = div().flex().items_center().justify_center().gap(px(8.0));
     for (i, stage) in Stage::ALL.into_iter().enumerate() {
-        let behind = stage < current || current == Stage::Done;
+        let behind = stage < current || (current == Stage::Done && stage != Stage::Done);
         let here = stage == current;
         if i > 0 {
-            bar = bar.child(div().w(px(36.0)).h(px(1.5)).rounded_full().bg(if stage <= current {
-                pal.violet_fill()
-            } else {
-                pal.rule_2()
-            }));
+            bar = bar.child(div().flex_none().w(px(28.0)).h(px(1.5)).bg(pal.rule_2()));
         }
+        let (ink, ring) = if behind {
+            (pal.paper(), None)
+        } else if here {
+            (pal.ink(), Some(pal.ink()))
+        } else {
+            (pal.ink_meta(), Some(pal.rule_2()))
+        };
+        // Behind, and Done itself: a check; the rest their number.
         let mark: AnyElement = match stage.number() {
-            _ if behind || (here && stage == Stage::Done) => {
-                glyph(Glyph::Check, 12.0, pal.on_field()).into_any_element()
-            }
-            Some(n) => n.to_string().into_any_element(),
-            None => div().into_any_element(),
+            Some(n) if !behind => n.to_string().into_any_element(),
+            _ => glyph(Glyph::Check, 12.0, ink).into_any_element(),
         };
         let circle = div()
             .flex()
@@ -762,22 +732,14 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
             .justify_center()
             .size(px(22.0))
             .rounded_full()
-            .text_size(px(11.5))
-            .font_weight(FontWeight::SEMIBOLD)
-            .when_else(
-                behind || (here && stage == Stage::Done),
-                |c| c.bg(pal.violet_fill()),
-                |c| {
-                    c.border(px(1.5)).when_else(
-                        here,
-                        |c| c.border_color(pal.violet()).bg(pal.violet().opacity(0.13)).text_color(pal.violet()),
-                        |c| c.border_color(pal.rule_2()).text_color(pal.ink_meta()),
-                    )
-                },
-            )
+            .font_family(MONO)
+            .text_size(px(11.0))
+            .text_color(ink)
+            .when_some(ring, |c, r| c.border(px(1.5)).border_color(r))
+            .when(behind, |c| c.bg(pal.ink()))
             .child(mark);
         bar = bar.child(
-            div().flex().items_center().gap(px(8.0)).child(circle).child(
+            div().flex().flex_none().items_center().gap(px(8.0)).child(circle).child(
                 // One weight for every label: a bolder current step would widen the bar and shift it sideways.
                 div()
                     .text_size(px(12.5))
@@ -794,22 +756,23 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
     bar
 }
 
-/// The sentence a screen of the welcome flow is about, centred, in the serif with its target in italic; and a (?).
+/// The sentence a screen of the welcome flow is about: the serif at 40/42, centred, its target in italic; and a (?).
 pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette) -> Div {
     div()
         .flex()
         .items_center()
         .justify_center()
         .gap(px(8.0))
+        .mt(px(6.0))
         .child(
             div()
                 .font_family(SERIF)
-                .text_size(px(32.0))
-                .line_height(px(36.0))
+                .text_size(px(40.0))
+                .line_height(px(42.0))
                 .font_weight(FontWeight::NORMAL)
                 .text_color(pal.ink())
                 .text_center()
-                .child(sentence(words, pal)),
+                .child(italic(words)),
         )
         .when_some(help, ParentElement::child)
 }
