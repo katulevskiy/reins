@@ -13,21 +13,32 @@ import os
 ///
 /// Latency: the engine starts lazily (the first touch or cue) and then stays running while the user is touching the
 /// app (`WarmPolicy`), so the tap that sounds finds the output awake; after a quiet spell it stops and costs nothing.
-/// Interruptions, route and configuration changes stop the engine; the next cue starts it again.
+/// Interruptions stop the engine and the next cue starts it again. The graph is built once, by the first cue, and
+/// again only after a configuration change or a media-services reset, once things settle (`rebuildDelayMs`).
+///
+/// A sound never holds the app up. The audio server can stop answering (a simulator's often does): every call into it
+/// then blocks, and Core Audio may give up. So while the sound queue is stuck in such a call, or after the engine
+/// failed to start (`SoundHealth`), sounds are skipped at once and tried again later, silently. A system-sound fallback
+/// would go through the same server, so there is none.
 final class SoundPlayer: @unchecked Sendable {
+    static let rebuildDelayMs = 500
+
     private let queue = DispatchQueue(label: "com.reins2fa.app.sounds", qos: .userInteractive)
     private let log = Logger(subsystem: "com.reins2fa.app", category: "feedback")
     private let clock: () -> Int64
     private let warm: WarmPolicy
+    private let health = SoundHealth()
 
     private var buffers: [String: AVAudioPCMBuffer] = [:]
     private var format: AVAudioFormat?
     private var engine: AVAudioEngine?
+    private var builtOnce = false
     private var players: [AVAudioPlayerNode] = []
     private var speeds: [AVAudioUnitVarispeed] = []
     private var pool = VoicePool(count: FeedbackGate.maxVoices)
     private var sessionReady = false
     private var idleCheck: DispatchWorkItem?
+    private var rebuild: DispatchWorkItem?
     private var observers: [NSObjectProtocol] = []
 
     init(clock: @escaping () -> Int64 = feedbackClock) {
@@ -41,9 +52,14 @@ final class SoundPlayer: @unchecked Sendable {
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
-    /// Starts `cue` at `volume` (0...1) and `rate`; returns at once. `done` reports, on the sound queue, whether it
-    /// sounded (false while the files are still loading or the engine cannot start).
+    /// Starts `cue` at `volume` (0...1) and `rate`; returns at once. `done` reports whether it sounded: on the sound
+    /// queue, or at once on the caller's thread when the sound is skipped (`SoundHealth`). False while the files are
+    /// still loading or the engine cannot start.
     func play(_ cue: Cue, volume: Float, rate: Float, priority: Int, done: (@Sendable (Bool) -> Void)? = nil) {
+        guard health.canTry(now: clock()) else {
+            done?(false)
+            return
+        }
         queue.async {
             let ok = self.start(cue, volume: volume, rate: rate, priority: priority)
             done?(ok)
@@ -53,6 +69,7 @@ final class SoundPlayer: @unchecked Sendable {
     /// A finger went down somewhere in the app: wake the output now so it is running by the time the tap sounds.
     func touchDown() {
         warm.touch()
+        guard health.canTry(now: clock()) else { return }
         queue.async {
             guard self.engine?.isRunning != true else { return }
             _ = self.ensureRunning()
@@ -94,48 +111,70 @@ final class SoundPlayer: @unchecked Sendable {
 
     // MARK: Engine
 
+    /// A call into the audio server, which may block: `play` sees from any thread when one has not come back.
+    private func audioCall<T>(_ body: () throws -> T) rethrows -> T {
+        health.begin(now: clock())
+        defer { health.end() }
+        return try body()
+    }
+
     private func configureSession() {
         guard !sessionReady else { return }
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.ambient, mode: .default, options: [])
-            // The shortest buffer the hardware allows: a tap should be heard within a few milliseconds.
-            try? session.setPreferredIOBufferDuration(0.005)
-            try session.setActive(true)
+            try audioCall {
+                try session.setCategory(.ambient, mode: .default, options: [])
+                // The shortest buffer the hardware allows: a tap should be heard within a few milliseconds.
+                try? session.setPreferredIOBufferDuration(0.005)
+                try session.setActive(true)
+            }
             sessionReady = true
         } catch {
             log.error("audio session: \(error.localizedDescription)")
         }
     }
 
-    private func buildGraph() -> AVAudioEngine? {
-        if let engine { return engine }
-        guard let format else { return nil }
+    /// Builds the graph: by the first cue, then only from `scheduleRebuild`.
+    private func buildGraph() {
+        guard let format else { return }
+        builtOnce = true
         let engine = AVAudioEngine()
-        for _ in 0..<FeedbackGate.maxVoices {
-            let player = AVAudioPlayerNode()
-            let speed = AVAudioUnitVarispeed()
-            engine.attach(player)
-            engine.attach(speed)
-            engine.connect(player, to: speed, format: format)
-            engine.connect(speed, to: engine.mainMixerNode, format: format)
-            players.append(player)
-            speeds.append(speed)
+        var players: [AVAudioPlayerNode] = []
+        var speeds: [AVAudioUnitVarispeed] = []
+        audioCall {
+            for _ in 0..<FeedbackGate.maxVoices {
+                let player = AVAudioPlayerNode()
+                let speed = AVAudioUnitVarispeed()
+                engine.attach(player)
+                engine.attach(speed)
+                engine.connect(player, to: speed, format: format)
+                // The main mixer reaches the output, and the audio server with it.
+                engine.connect(speed, to: engine.mainMixerNode, format: format)
+                players.append(player)
+                speeds.append(speed)
+            }
         }
         self.engine = engine
-        return engine
+        self.players = players
+        self.speeds = speeds
     }
 
     /// Whether the engine runs after the call.
     private func ensureRunning() -> Bool {
         configureSession()
-        guard let engine = buildGraph() else { return false }
+        if engine == nil && !builtOnce { buildGraph() }
+        guard let engine else { return false }
         if !engine.isRunning {
             do {
-                engine.prepare()
-                try engine.start()
+                try audioCall {
+                    engine.prepare()
+                    try engine.start()
+                }
                 pool.reset()
+                health.started()
             } catch {
+                // Not again until the backoff has passed.
+                health.failed(now: clock())
                 log.error("audio engine did not start: \(error.localizedDescription)")
                 return false
             }
@@ -165,9 +204,29 @@ final class SoundPlayer: @unchecked Sendable {
         idleCheck?.cancel()
         idleCheck = nil
         guard let engine, engine.isRunning else { return }
-        players.forEach { $0.stop() }
-        engine.stop()
+        audioCall {
+            players.forEach { $0.stop() }
+            engine.stop()
+        }
         pool.reset()
+    }
+
+    /// After a configuration change or a media-services reset: the graph is built again once the changes settle, so a
+    /// burst of notifications rebuilds it once, and never while a sound waits.
+    private func scheduleRebuild() {
+        rebuild?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.rebuild = nil
+            self.stopEngine()
+            self.engine = nil
+            self.players = []
+            self.speeds = []
+            self.pool.reset()
+            self.buildGraph()
+        }
+        rebuild = item
+        queue.asyncAfter(deadline: .now() + .milliseconds(Self.rebuildDelayMs), execute: item)
     }
 
     /// Stops the engine once nothing has wanted sound for `WarmPolicy.idleMs`.
@@ -203,9 +262,12 @@ final class SoundPlayer: @unchecked Sendable {
         // Headphones in or out, a Bluetooth speaker: the output's format may have changed and the engine stopped.
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil) { [weak self] _ in
             guard let self else { return }
-            self.queue.async { self.pool.reset() }
+            self.queue.async {
+                self.pool.reset()
+                self.scheduleRebuild()
+            }
         })
-        // The media server restarted: every object made before is invalid.
+        // The media server restarted: every object made before is invalid. Sounds wait for the rebuild.
         observers.append(center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil) { [weak self] _ in
             guard let self else { return }
             self.queue.async {
@@ -214,7 +276,20 @@ final class SoundPlayer: @unchecked Sendable {
                 self.speeds = []
                 self.pool.reset()
                 self.sessionReady = false
+                self.scheduleRebuild()
             }
         })
     }
+
+    #if DEBUG
+    /// Tests: the sound queue inside an audio call that does not come back (the audio server not answering) until
+    /// `release` is signalled.
+    func simulateStuckAudioCall(until release: DispatchSemaphore) {
+        health.begin(now: clock())
+        queue.async {
+            release.wait()
+            self.health.end()
+        }
+    }
+    #endif
 }
