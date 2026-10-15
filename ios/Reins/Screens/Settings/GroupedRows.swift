@@ -81,14 +81,14 @@ struct InfoRow<Trailing: View>: View {
     var title: String
     var subtitle: String?
     var symbol: String?
-    var tint: Color = Palette.secondary
+    var tint: Color = Palette.ink2
     /// Addresses and URLs read left to right whatever the language.
     var ltrSubtitle = false
     @ViewBuilder var trailing: Trailing
     @Environment(\.layoutDirection) private var direction
 
     init(
-        title: String, subtitle: String? = nil, symbol: String? = nil, tint: Color = Palette.secondary, ltrSubtitle: Bool = false,
+        title: String, subtitle: String? = nil, symbol: String? = nil, tint: Color = Palette.ink2, ltrSubtitle: Bool = false,
         @ViewBuilder trailing: () -> Trailing
     ) {
         self.title = title
@@ -126,7 +126,7 @@ struct InfoRow<Trailing: View>: View {
 }
 
 extension InfoRow where Trailing == EmptyView {
-    init(_ title: String, subtitle: String? = nil, symbol: String? = nil, tint: Color = Palette.secondary, ltrSubtitle: Bool = false) {
+    init(_ title: String, subtitle: String? = nil, symbol: String? = nil, tint: Color = Palette.ink2, ltrSubtitle: Bool = false) {
         self.init(title: title, subtitle: subtitle, symbol: symbol, tint: tint, ltrSubtitle: ltrSubtitle) { EmptyView() }
     }
 }
@@ -213,7 +213,7 @@ struct RowValue: View {
     var body: some View {
         Text(text)
             .font(mono ? RFont.mono(14) : RFont.sans(15))
-            .foregroundStyle(Palette.secondary)
+            .foregroundStyle(Palette.ink2)
             .lineLimit(1)
     }
 }
@@ -294,7 +294,7 @@ struct Chevron: View {
     var body: some View {
         Image(systemName: "chevron.right")
             .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Palette.tertiary)
+            .foregroundStyle(Palette.inkMeta)
             .accessibilityHidden(true)
     }
 }
@@ -319,7 +319,7 @@ struct HelpHeader: View {
                 } label: {
                     Image(systemName: "questionmark.circle")
                         .font(.system(size: 16, weight: .regular))
-                        .foregroundStyle(open ? Palette.accent : Palette.tertiary)
+                        .foregroundStyle(open ? Palette.violet : Palette.inkMeta)
                         .frame(width: 32, height: 28)
                         .contentShape(Rectangle())
                 }
@@ -331,7 +331,7 @@ struct HelpHeader: View {
             if open {
                 Text(help)
                     .font(RFont.sans(13))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .fixedSize(horizontal: false, vertical: true)
                     .textCase(nil)
                     .transition(.opacity)

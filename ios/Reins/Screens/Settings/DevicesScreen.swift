@@ -136,7 +136,7 @@ struct DevicesScreen: View {
                             connection.lastUsedAt.map { "used \(TimeText.relative($0))" } ?? "never used",
                         ].compactMap { $0 }.joined(separator: " · "),
                         symbol: "laptopcomputer",
-                        tint: Palette.secondary,
+                        tint: Palette.ink2,
                         id: "deviceComputer:\(connection.id)"
                     ) { model.push(.connection(connection.id)) }
                 }

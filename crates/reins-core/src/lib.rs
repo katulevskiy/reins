@@ -15,6 +15,7 @@ mod account_sync;
 pub mod api;
 pub mod approval;
 pub mod autopilot;
+pub mod avatar;
 pub mod blob;
 pub mod connector;
 pub mod crypto;
@@ -65,6 +66,10 @@ pub use types::{
     EmailContent, EmailView, GitCommitView, GitFileView, GitPushView, GitRefView, GmailStatus, GrantRequestView,
     GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem, PendingKind, QuickApproval, ResourceView,
     ServiceView, SessionInfo, StandingGrant, StartingPolicy,
+};
+pub use types::{
+    ActivityConnection, ActivityCursor, ActivityDecider, ActivityFacets, ActivityField, ActivityHighlight, ActivityHit,
+    ActivityOutcome, ActivityPage, ActivityQuery, ActivitySnippet, ActivityStamp,
 };
 pub use types::{
     AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,

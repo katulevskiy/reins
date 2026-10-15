@@ -38,9 +38,9 @@ enum RequestLabelLook {
     /// else the brand's own.
     static func providerTint(_ provider: String) -> Color {
         switch provider {
-        case "secrets": Palette.send
-        case "ssh": Palette.read
-        case "terminal", "file", "desktop": Palette.text
+        case "secrets": Palette.kindPush
+        case "ssh": Palette.kindRead
+        case "terminal", "file", "desktop": Palette.ink
         default: serviceColor(providerAsset(provider) ?? provider)
         }
     }
@@ -65,14 +65,14 @@ enum RequestLabelLook {
     /// violet for a push, blue for a search, the accent for a permission, grey for a question.
     static func actionTint(_ action: String) -> Color {
         switch action {
-        case "read": Palette.read
+        case "read": Palette.kindRead
         case "delete": Palette.danger
         case "secrets": Palette.warning
         case "push": violet
-        case "grant": Palette.accent
-        case "search": Palette.search
-        case "ask": Palette.secondary
-        default: Palette.send
+        case "grant": Palette.violet
+        case "search": Palette.kindRead
+        case "ask": Palette.ink2
+        default: Palette.kindPush
         }
     }
 
@@ -107,7 +107,7 @@ enum RequestLabelLook {
 struct ProviderTile: View {
     var label: RequestLabel
     var size: CGFloat = 40
-    var ring: Color = Palette.background
+    var ring: Color = Palette.paper
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: size * 0.3, style: .continuous)
@@ -163,17 +163,19 @@ struct LabelText: View {
     var label: RequestLabel
     var size: CGFloat = 15
     var lines: Int? = 2
-    var color: Color = Palette.text
+    var color: Color = Palette.ink
+    var terms: [String] = []
 
     var body: some View {
-        Text(Self.attributed(label, size: size, color: color))
+        Text(Self.attributed(label, size: size, color: color, terms: terms))
             .lineSpacing(size * 0.18)
             .lineLimit(lines)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(RequestLabelLook.plain(label))
     }
 
-    static func attributed(_ label: RequestLabel, size: CGFloat, color: Color) -> AttributedString {
+    /// `terms`: the words a search found, set apart in the cleaned title where a word starts with one.
+    static func attributed(_ label: RequestLabel, size: CGFloat, color: Color, terms: [String] = []) -> AttributedString {
         let lead = untrusted(label.lead)
         let subject = untrusted(label.subject)
         var out = AttributedString(lead + (!lead.isEmpty && !subject.isEmpty ? " " : ""))
@@ -187,6 +189,7 @@ struct LabelText: View {
         tail.font = RFont.sans(size, .medium)
         out += tail
         out.foregroundColor = color
+        TitleHighlight.apply(&out, terms: terms)
         return out
     }
 }
@@ -203,7 +206,7 @@ struct PendingTile: View {
         ProviderTile(label: label, size: size)
             .overlay(alignment: .bottomLeading) {
                 ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: avatar)
-                    .overlay(Circle().strokeBorder(Palette.background, lineWidth: 2.5).padding(-2.5))
+                    .overlay(Circle().strokeBorder(Palette.paper, lineWidth: 2.5).padding(-2.5))
                     .offset(x: -size * 0.14, y: size * 0.14)
             }
             .padding(.leading, size * 0.14)

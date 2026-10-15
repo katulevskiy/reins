@@ -68,17 +68,60 @@ import dev.reins.android.ui.main.MoodStyle
 import dev.reins.android.ui.main.RootHeader
 import dev.reins.android.ui.main.mood
 import dev.reins.core.PendingItem
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.IntOffset
+import dev.reins.android.state.ActivitySearch
+import dev.reins.core.ActivityCursor
+import dev.reins.core.ActivityDecider
+import dev.reins.core.ActivityEntry
+import dev.reins.core.ActivityFacets
+import dev.reins.core.ActivityHit
+import dev.reins.core.ActivityQuery
+import dev.reins.core.ActivitySnippet
+import dev.reins.core.ReinsCoreInterface
+import java.time.ZoneId
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** One row of the river as the list lays it out: a day's label, or an entry. */
+/** One row of the river as the list lays it out. */
 private sealed interface RiverItem {
-    data class Day(val label: String, val count: String?) : RiverItem
+    val key: String
 
-    data class Entry(val entry: dev.reins.core.ActivityEntry, val index: Int) : RiverItem
+    /** A day that opens and closes (browsing). */
+    data class Day(val day: DayCount, val label: String, val open: Boolean) : RiverItem {
+        override val key get() = "d:${day.day}"
+    }
+
+    /** A day's label over search results; the first carries how many were found. */
+    data class Label(val day: Long, val label: String, val total: Int?) : RiverItem {
+        override val key get() = "l:$day"
+    }
+
+    /** An entry; [first]: the first of its day's (tagged "dayEntries:<day>"); [index]: its place among those shown. */
+    data class Entry(val entry: ActivityEntry, val index: Int, val day: Long, val first: Boolean, val snippet: ActivitySnippet? = null) : RiverItem {
+        override val key get() = "e:${entry.id}"
+    }
+
+    /** The end of what is loaded: drawing it reads the next page ([day] null: the search's). */
+    data class More(val day: Long?) : RiverItem {
+        override val key get() = "m:${day ?: "search"}"
+    }
 }
 
 /** Something broken that a warn field names: what it is, in a few words, and the one thing to do. */
@@ -86,8 +129,10 @@ private data class Warning(val tag: String, val label: String, val ask: String, 
 
 /**
  * The first tab (Reins Signal, iOS-Activity / And-Core 01): what waits, as a stack of cards in their field colours;
- * when nothing does, the pond and a mood line; then the river of what was decided, by day, newest first. When Reins is
- * broken (notifications off, no screen lock, another phone approves), a warn field runs into the top.
+ * when nothing does, the pond and a mood line; then the river of what was decided, by day, newest first: Today open,
+ * the days before it closed until tapped. Words in the search field or a filter turn the river into what matches,
+ * searched by the core on this phone. When Reins is broken (notifications off, no screen lock, another phone
+ * approves), a warn field runs into the top.
  */
 @Composable
 fun ActivityScreen(
@@ -117,29 +162,41 @@ fun ActivityScreen(
     val registrationError by state.registrationError.collectAsStateWithLifecycle()
     val syncNotice by state.syncNotice.collectAsStateWithLifecycle()
     val connections by state.connections.collectAsStateWithLifecycle()
-    var filter by rememberSaveable { mutableStateOf(HistoryFilter.All) }
-    var ai by rememberSaveable { mutableStateOf<String?>(null) }
-    var filtersOpen by rememberSaveable { mutableStateOf(false) }
+    val search by state.activitySearch.collectAsStateWithLifecycle()
+    val opened by state.activityDays.collectAsStateWithLifecycle()
+    var filtersShown by rememberSaveable { mutableStateOf(false) }
+    // The words as typed (the app state follows them; the search waits for a pause).
+    var text by remember { mutableStateOf(state.activitySearch.value.text) }
+    val filtersOpen = filtersShown || search.filtered
+    val searching = search.searching
     val details = rememberPendingDetails(container, pending, entries)
     val cards = remember(pending) { waitCards(pending) }
-    val shown = remember(entries, filter, ai) { entries.filter { filter.matches(it) && (ai == null || it.connectionId == ai) } }
     val nowSeconds = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
-    // The river, by day; Today carries its count.
-    val river = remember(shown, nowSeconds / 3_600, filter) {
-        buildList {
-            var day: Long? = null
-            val today = dayOf(nowSeconds)
-            shown.forEachIndexed { i, e ->
-                val d = dayOf(e.at)
-                if (d != day) {
-                    add(RiverItem.Day(dayLabel(e.at, nowSeconds), if (d == today) dayCount(shown.filter { dayOf(it.at) == d }, filter == HistoryFilter.Autopilot) else null))
-                    day = d
-                }
-                add(RiverItem.Entry(e, i))
-            }
-        }
+    val zone = ZoneId.systemDefault()
+    val today = localDay(nowSeconds, zone)
+    val river = rememberRiver(container, entries, search, zone)
+    // Who decided is Autopilot alone: each row shows Autopilot's share.
+    val showShare = search.deciders == setOf(ActivityDecider.AUTOPILOT)
+
+    // Browsing: the days (the core's stamps; until they are read, the entries at hand) and each open day's entries.
+    val byDay = remember(entries, zone) { entries.groupBy { localDay(it.at, zone) } }
+    val entryDays = remember(entries, zone) { daysOfEntries(entries, zone) }
+    val stamped = river.days
+    // A day that just began shows before the stamps are read again.
+    val days = remember(stamped, entryDays) {
+        stamped?.let { s -> (s + entryDays.filter { d -> s.none { it.day == d.day } }).sortedByDescending { it.day } } ?: entryDays
     }
-    val newMarkerAt = remember(shown, seen) { shown.indexOfLast { it.id > seen } }
+    val pages = river.pages.toMap()
+    val results = river.results
+    val rows: List<RiverItem> = remember(searching, results, days, today, opened, byDay, pages, zone) {
+        if (searching) searchRows(results, today, zone) else browseRows(days, today, opened, byDay, pages, zone)
+    }
+    val shown = remember(rows) { rows.mapNotNull { (it as? RiverItem.Entry)?.entry } }
+    val newMarkerAt = if (searching) -1 else shown.indexOfLast { it.id > seen }
+    // Open days read their entries (again when the activity changes).
+    val openDays = if (searching) emptyList() else days.filter { dayOpen(it.day, today, opened) }.map { it.day }
+    LaunchedEffect(openDays, river.version) { openDays.forEach { river.loadDay(it, zone) } }
+
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -177,23 +234,26 @@ fun ActivityScreen(
         if (!notifications.enabled) add(Warning("notificationsOff", "Reins · Notifications", "Notifications are off", "off", "Turn on", "turnOnNotifications", notifications::request))
         if (!screenLock.set) add(Warning("screenLockOff", "Reins · Screen lock", "No screen lock", "lock", "Set one", "setScreenLock", screenLock::openSettings))
     }
-    val headerCount = (if (warnings.isEmpty()) 0 else 1) + 1 + (if (notice != null) 1 else 0) + (if (syncNotice != null) 1 else 0) +
-        (if (filtersOpen) 1 else 0) + 1
+    // The items above the river, in the order the list lays them out.
+    val headerCount = (if (warnings.isEmpty()) 0 else 1) + 2 + (if (notice != null) 1 else 0) + (if (syncNotice != null) 1 else 0) +
+        (if (filtersOpen) 1 else 0) + (if (searching) 0 else 1)
 
     // Opening the tab lands where you stopped reading: at the oldest entry you have not seen, unless something is waiting.
     var positioned by remember { mutableStateOf(false) }
     LaunchedEffect(entries.isNotEmpty()) {
         if (positioned || entries.isEmpty()) return@LaunchedEffect
         positioned = true
+        if (searching) return@LaunchedEffect
         val oldestUnseen = shown.indexOfLast { it.id > seen }
         if (oldestUnseen > 2 && pending.isEmpty()) {
-            val at = river.indexOfFirst { it is RiverItem.Entry && it.index == oldestUnseen }
+            val at = rows.indexOfFirst { it is RiverItem.Entry && it.index == oldestUnseen }
             if (at >= 0) listState.scrollToItem((headerCount + at - 1).coerceAtLeast(0))
         }
     }
     // What is on screen counts as seen: scroll up to the newest and the badge clears. Recorded once the list comes to
-    // rest, not on every frame of a fling.
-    LaunchedEffect(shown) {
+    // rest, not on every frame of a fling. Search results are not the river: looking at them marks nothing.
+    LaunchedEffect(shown, searching) {
+        if (searching) return@LaunchedEffect
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.map { it.key } }.collectLatest { keys ->
             delay(SEEN_SETTLE_MS)
             val visible = keys.mapNotNull { (it as? String)?.takeIf { k -> k.startsWith("e:") }?.removePrefix("e:")?.toLongOrNull() }
@@ -227,7 +287,13 @@ fun ActivityScreen(
                     underField = warnings.isNotEmpty(),
                 ) {
                     modeChip()
-                    FilterButton(filtersOpen) { filtersOpen = !filtersOpen }
+                    FilterButton(filtersOpen) { filtersShown = !filtersOpen }
+                }
+            }
+            item(key = "search") {
+                SearchField(text, Modifier.padding(horizontal = 24.dp).padding(top = 14.dp)) {
+                    text = it
+                    state.setActivitySearch(state.activitySearch.value.copy(text = it))
                 }
             }
             notice?.let { item(key = "notice") { NoticeRow(it, onDismissNotice) } }
@@ -240,50 +306,78 @@ fun ActivityScreen(
             }
             if (filtersOpen) {
                 item(key = "filters") {
-                    FilterRow(filter, ai, connections, Modifier.padding(top = 14.dp), onSelect = { filter = it }, onAi = { ai = it })
+                    FilterRow(search, river.facets, connections, Modifier.padding(top = 12.dp)) { state.setActivitySearch(it) }
                 }
             }
-            item(key = "stack") {
-                Column(Modifier.padding(top = if (pending.isEmpty()) 0.dp else 18.dp)) {
-                    WaitingStack(
-                        cards,
-                        details,
-                        onReview = onOpenPending,
-                        onAnswer = { burst, approve ->
-                            answeredAt = System.currentTimeMillis()
-                            onAnswerBurst(burst, approve)
-                        },
-                    )
-                    AnimatedVisibility(
-                        pending.isEmpty() && loaded && filter == HistoryFilter.All && ai == null && !filtersOpen,
-                        enter = fadeIn(if (reduce) Motion.reduced() else Motion.fold(false)),
-                        exit = fadeOut(Motion.reduced()),
-                    ) {
-                        Quiet(connections.size, entries.isEmpty(), onConnectComputer, onConnectAi)
+            if (!searching) {
+                item(key = "stack") {
+                    Column(Modifier.padding(top = if (pending.isEmpty()) 0.dp else 18.dp)) {
+                        WaitingStack(
+                            cards,
+                            details,
+                            onReview = onOpenPending,
+                            onAnswer = { burst, approve ->
+                                answeredAt = System.currentTimeMillis()
+                                onAnswerBurst(burst, approve)
+                            },
+                        )
+                        AnimatedVisibility(
+                            pending.isEmpty() && loaded && !filtersOpen,
+                            enter = fadeIn(if (reduce) Motion.reduced() else Motion.fold(false)),
+                            exit = fadeOut(Motion.reduced()),
+                        ) {
+                            Quiet(connections.size, entries.isEmpty(), onConnectComputer, onConnectAi)
+                        }
                     }
                 }
             }
-            if (shown.isEmpty() && loaded && (filter != HistoryFilter.All || ai != null)) {
+            if (searching && results != null && !results.loading && results.hits.isEmpty()) {
                 item(key = "empty") {
-                    RText(
-                        "Nothing here.",
-                        MoodStyle,
-                        c.ink2,
-                        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 28.dp).testTag(if (filter == HistoryFilter.Autopilot) "noAutomatic" else "noFiltered"),
-                    )
+                    val tag = when {
+                        search.text.isNotBlank() -> "noResults"
+                        search.deciders == setOf(ActivityDecider.AUTOPILOT) -> "noAutomatic"
+                        else -> "noFiltered"
+                    }
+                    NothingFound(Modifier.testTag(tag))
                 }
-            } else {
-                river.forEach { row ->
-                    when (row) {
-                        is RiverItem.Day -> item(key = "d:${row.label}", contentType = "day") { DayLabel(row.label, row.count) }
-                        is RiverItem.Entry -> item(key = "e:${row.entry.id}", contentType = "entry") {
-                            Column {
-                                if (row.index == newMarkerAt) NewMarker()
-                                Box(Modifier.testTag("entry:${row.entry.id}")) {
-                                    RiverRow(row.entry, nowSeconds, landed = row.entry.id == landedId, showShare = filter == HistoryFilter.Autopilot) { onOpenEntry(row.entry.id) }
-                                }
+            }
+            val terms = results?.terms.orEmpty()
+            rows.forEach { row ->
+                when (row) {
+                    is RiverItem.Day -> item(key = row.key, contentType = "day") {
+                        DayHeader(row.day, row.label, row.open, Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = placement(reduce))) {
+                            state.setActivityDayOpen(row.day.day, !row.open)
+                        }
+                    }
+                    is RiverItem.Label -> item(key = row.key, contentType = "label") {
+                        DayLabel(
+                            row.label,
+                            row.total?.let { if (it == 1) "1 found" else "$it found" },
+                            if (row.total != null) Modifier.testTag("searchResults") else Modifier,
+                        )
+                    }
+                    is RiverItem.Entry -> item(key = row.key, contentType = "entry") {
+                        Column(
+                            Modifier
+                                .animateItem(fadeInSpec = fade(reduce), placementSpec = placement(reduce), fadeOutSpec = fade(reduce))
+                                .then(if (row.first && !searching) Modifier.testTag("dayEntries:${row.day}") else Modifier),
+                        ) {
+                            if (row.index == newMarkerAt) NewMarker()
+                            Box(Modifier.testTag("entry:${row.entry.id}")) {
+                                RiverRow(
+                                    row.entry,
+                                    nowSeconds,
+                                    landed = row.entry.id == landedId,
+                                    showShare = showShare,
+                                    terms = if (searching) terms else emptyList(),
+                                    snippet = row.snippet,
+                                ) { onOpenEntry(row.entry.id) }
                             }
                         }
+                    }
+                    is RiverItem.More -> item(key = row.key, contentType = "more") {
+                        LaunchedEffect(row) { if (row.day == null) river.loadMoreResults() else river.loadMoreDay(row.day) }
+                        Box(Modifier.fillMaxWidth().height(1.dp))
                     }
                 }
             }
@@ -308,6 +402,235 @@ fun ActivityScreen(
         }
     }
 }
+
+private fun fade(reduce: Boolean): FiniteAnimationSpec<Float> = if (reduce) Motion.reduced() else tween(Motion.FADE_MS * 2)
+
+private fun placement(reduce: Boolean): FiniteAnimationSpec<IntOffset>? = if (reduce) null else Motion.fold(false)
+
+/** The river while browsing: each day's header, then, when it is open, its entries and where the next page starts. */
+private fun browseRows(
+    days: List<DayCount>,
+    today: Long,
+    opened: Map<Long, Boolean>,
+    byDay: Map<Long, List<ActivityEntry>>,
+    pages: Map<Long, DayPage>,
+    zone: ZoneId,
+): List<RiverItem> = buildList {
+    var index = 0
+    for (d in days) {
+        val open = dayOpen(d.day, today, opened)
+        add(RiverItem.Day(d, dayTitle(d.day, today), open))
+        if (!open) continue
+        val page = pages[d.day]
+        // What the core read for the day, with what the app holds already (the newest arrive there first).
+        val dayEntries = (byDay[d.day].orEmpty() + page?.entries.orEmpty())
+            .distinctBy { it.id }
+            .filter { localDay(it.at, zone) == d.day }
+            .sortedWith(NEWEST_FIRST)
+        dayEntries.forEachIndexed { i, e -> add(RiverItem.Entry(e, index++, d.day, first = i == 0)) }
+        if (page?.next != null) add(RiverItem.More(d.day))
+    }
+}
+
+/** The search's results under their days' labels, the first with how many were found; then where the next page starts. */
+private fun searchRows(results: Results?, today: Long, zone: ZoneId): List<RiverItem> = buildList {
+    if (results == null) return@buildList
+    var day: Long? = null
+    results.hits.forEachIndexed { i, hit ->
+        val d = localDay(hit.entry.at, zone)
+        if (d != day) {
+            add(RiverItem.Label(d, dayTitle(d, today), if (day == null) results.total else null))
+            day = d
+        }
+        add(RiverItem.Entry(hit.entry, i, d, first = false, snippet = hit.snippet))
+    }
+    if (results.next != null) add(RiverItem.More(null))
+}
+
+private val NEWEST_FIRST = compareByDescending<ActivityEntry> { it.at }.thenByDescending { it.id }
+
+/** A day's entries as read so far, and where the next page starts (null: all read). */
+internal data class DayPage(val entries: List<ActivityEntry>, val next: ActivityCursor?, val version: Int)
+
+/** A search's results as read so far, for [search]; [loading] until its first page is in. */
+internal data class Results(
+    val search: ActivitySearch,
+    val hits: List<ActivityHit>,
+    val next: ActivityCursor?,
+    val total: Int,
+    val terms: List<String>,
+    val loading: Boolean = false,
+)
+
+/**
+ * What the river reads from the core: the days and their counts, each open day's entries page by page, the search's
+ * results and the filters' choices. Read again whenever the activity changes ([version]).
+ */
+@Stable
+internal class River(private val core: ReinsCoreInterface, private val scope: CoroutineScope) {
+    var version by mutableIntStateOf(0)
+    var days by mutableStateOf<List<DayCount>?>(null)
+    val pages = mutableStateMapOf<Long, DayPage>()
+    var results by mutableStateOf<Results?>(null)
+    var facets by mutableStateOf<ActivityFacets?>(null)
+    /** The version each day is being read for. */
+    private val reading = mutableMapOf<Long, Int>()
+    private val readingMore = mutableSetOf<Long>()
+    private var loadingMore = false
+
+    suspend fun loadDays(zone: ZoneId) {
+        quietly { core.activityStamps(ActivityQuery()) }?.let { days = daysOf(it, zone) }
+        quietly { core.activityFacets() }?.let { facets = it }
+    }
+
+    /** Reads [day]'s entries unless they are read for this [version]: as many as were read before, at least a page. */
+    suspend fun loadDay(day: Long, zone: ZoneId) {
+        val had = pages[day]
+        val v = version
+        if (had?.version == v || reading[day] == v) return
+        reading[day] = v
+        try {
+            val limit = (had?.entries?.size ?: 0).coerceIn(DAY_PAGE, PAGE_MAX)
+            val page = quietly { core.searchActivity(dayQuery(day, zone), null, limit.toUInt()) } ?: return
+            if (version == v) pages[day] = DayPage(page.hits.map { it.entry }, page.next, v)
+        } finally {
+            if (reading[day] == v) reading.remove(day)
+        }
+    }
+
+    fun loadMoreDay(day: Long) {
+        val had = pages[day] ?: return
+        val after = had.next ?: return
+        if (!readingMore.add(day)) return
+        scope.launch {
+            try {
+                val zone = ZoneId.systemDefault()
+                val page = quietly { core.searchActivity(dayQuery(day, zone), after, DAY_PAGE.toUInt()) } ?: return@launch
+                val now = pages[day] ?: return@launch
+                if (now.next != after) return@launch
+                pages[day] = now.copy(entries = (now.entries + page.hits.map { it.entry }).distinctBy { it.id }, next = page.next)
+            } finally {
+                readingMore.remove(day)
+            }
+        }
+    }
+
+    /** The first page of [search]'s results (as many as were read before when only the activity changed). */
+    suspend fun search(search: ActivitySearch, nowSeconds: Long, zone: ZoneId) {
+        val had = results?.takeIf { it.search == search }
+        // Until the new results are in, the ones before stay (marked as reading, so "Nothing found" waits too).
+        if (had == null) results = results?.copy(loading = true) ?: Results(search, emptyList(), null, 0, emptyList(), loading = true)
+        val limit = (had?.hits?.size ?: 0).coerceIn(SEARCH_PAGE, PAGE_MAX)
+        val page = quietly { core.searchActivity(search.query(nowSeconds, zone), null, limit.toUInt()) } ?: return
+        results = Results(search, page.hits, page.next, page.total.toInt(), page.terms)
+    }
+
+    fun loadMoreResults() {
+        val had = results ?: return
+        val after = had.next ?: return
+        if (loadingMore) return
+        loadingMore = true
+        scope.launch {
+            try {
+                val nowSeconds = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
+                val page = quietly { core.searchActivity(had.search.query(nowSeconds, ZoneId.systemDefault()), after, SEARCH_PAGE.toUInt()) } ?: return@launch
+                val now = results ?: return@launch
+                if (now.search != had.search || now.next != after) return@launch
+                results = now.copy(hits = (now.hits + page.hits).distinctBy { it.entry.id }, next = page.next)
+            } finally {
+                loadingMore = false
+            }
+        }
+    }
+
+    private companion object {
+        const val DAY_PAGE = 50
+        const val SEARCH_PAGE = 50
+        const val PAGE_MAX = 200
+    }
+}
+
+/**
+ * The river's reads, kept up to date: the days when the activity changes, and the search a moment after the words
+ * stop changing (a newer search cancels the one before).
+ */
+@Composable
+private fun rememberRiver(container: AppContainer, entries: List<ActivityEntry>, search: ActivitySearch, zone: ZoneId): River {
+    val scope = rememberCoroutineScope()
+    val river = remember { River(container.core, scope) }
+    LaunchedEffect(entries, zone) {
+        river.version++
+        river.loadDays(zone)
+    }
+    var lastText by remember { mutableStateOf(search.text) }
+    LaunchedEffect(search, river.version) {
+        if (!search.searching) {
+            river.results = null
+            lastText = search.text
+            return@LaunchedEffect
+        }
+        if (search.text != lastText) delay(SEARCH_DEBOUNCE_MS)
+        lastText = search.text
+        river.search(search, (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000, zone)
+    }
+    return river
+}
+
+/** The search field under the title: a sunken well, the search glyph, and a clear button once something is typed. */
+@Composable
+private fun SearchField(text: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+    val c = LocalColors.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val style = RType.sans(16f)
+    Row(
+        modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(14.dp)).background(c.paperSunken).padding(start = 14.dp, end = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlyphIcon(Glyph.Search, c.inkMeta, size = 18.dp)
+        Box(Modifier.weight(1f).padding(vertical = 11.dp)) {
+            if (text.isEmpty()) RText("Search", style, c.inkMeta, maxLines = 1)
+            BasicTextField(
+                text,
+                onChange,
+                Modifier.fillMaxWidth().testTag("activitySearch").semantics { contentDescription = "Search Activity" },
+                textStyle = style.copy(color = c.ink),
+                cursorBrush = SolidColor(c.violet),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+            )
+        }
+        if (text.isNotEmpty()) {
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .pressable(shape = CircleShape, label = "Clear search") { onChange("") }
+                    .semantics { contentDescription = "Clear search" }
+                    .testTag("activitySearchClear"),
+                contentAlignment = Alignment.Center,
+            ) { GlyphIcon(Glyph.CircleClose, c.inkMeta, size = 18.dp) }
+        }
+    }
+}
+
+/** A search or filters that match nothing. */
+@Composable
+private fun NothingFound(modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    Column(
+        modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        GlyphIcon(Glyph.Search, c.inkFaint, size = 28.dp)
+        RText("Nothing found", MoodStyle, c.ink2)
+    }
+}
+
+/** How long the words must stay still before they are searched. */
+private const val SEARCH_DEBOUNCE_MS = 200L
 
 /** The round filter button beside the mode chip: ink when the filters are open. */
 @Composable

@@ -23,18 +23,6 @@ final class ActivitySignalTests: XCTestCase {
         XCTAssertEqual(ActivityText.mood(waiting: 0, connections: 0), "All quiet. Nothing is connected yet.")
     }
 
-    func testTheDayCountsWhatWasAskedAndWhatAutopilotDecided() {
-        let now: Int64 = 1_800_000_000
-        let entries = [
-            DemoData.entry(1, at: now, action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
-            DemoData.entry(2, at: now, action: "read", outcome: "released", detail: ""),
-            DemoData.entry(3, at: now, action: "send", outcome: "denied", detail: ""),
-        ]
-        XCTAssertEqual(ActivityText.dayCount(entries), "3 asked · 1 by Autopilot")
-        XCTAssertEqual(ActivityText.dayCount(Array(entries.dropFirst())), "2 asked")
-        XCTAssertEqual(ActivityText.dayCount([]), "")
-    }
-
     func testAWaitingCardSaysItsKindAndAsksWithItsTargetInItalic() {
         let send = item(label: DemoData.requestLabel("gmail", "send", "Send an email to", "Anna Petrova"))
         XCTAssertEqual(ActivityText.label(send), "Gmail · Send")
@@ -71,17 +59,35 @@ final class ActivitySignalTests: XCTestCase {
     }
 
     func testWhatWasDoneReadsInThePast() {
-        XCTAssertEqual(ActivityText.past("Push 3 commits to"), "Pushed 3 commits to")
-        XCTAssertEqual(ActivityText.past("Send an email to"), "Sent an email to")
-        XCTAssertEqual(ActivityText.past("Read 2 emails from"), "Read 2 emails from")
-        XCTAssertEqual(ActivityText.past("Search"), "Searched")
-        XCTAssertEqual(ActivityText.past("Frobnicate the thing"), "Frobnicate the thing", "an unknown verb stays as asked")
+        XCTAssertEqual(AskLabels.past("Push 3 commits to"), "Pushed 3 commits to")
+        XCTAssertEqual(AskLabels.past("Send an email to"), "Sent an email to")
+        XCTAssertEqual(AskLabels.past("Read 2 emails from"), "Read 2 emails from")
+        XCTAssertEqual(AskLabels.past("Search"), "Searched")
+        XCTAssertEqual(AskLabels.past("Frobnicate the thing"), "Frobnicate the thing", "an unknown verb stays as asked")
         let pushed = DemoData.entry(1, at: 0, action: "write", outcome: "sent", detail: "", service: "github",
                                     requestLabel: DemoData.requestLabel("github", "push", "Push 3 commits to", "acme/web"))
         XCTAssertEqual(HistoryRow.title(pushed), "Pushed 3 commits to acme/web")
         let denied = DemoData.entry(2, at: 0, action: "write", outcome: "denied", detail: "", service: "github",
                                     requestLabel: DemoData.requestLabel("github", "delete", "Delete branch", "old/experiment"))
         XCTAssertEqual(HistoryRow.title(denied), "Asked to delete branch old/experiment", "what was denied says what was asked")
+    }
+
+    func testTwoJoinedVerbsBothGoIntoThePast() {
+        XCTAssertEqual(AskLabels.past("Create and push a branch"), "Created and pushed a branch")
+        XCTAssertEqual(AskLabels.past("Push and frobnicate"), "Pushed and frobnicate", "only a verb it knows changes")
+    }
+
+    func testAGitFetchIsOneVerbInEveryTense() {
+        func entry(_ outcome: String) -> ActivityEntry {
+            DemoData.entry(1, at: 0, action: "read", outcome: outcome, detail: "", service: "github",
+                           requestLabel: DemoData.requestLabel("github", "read", "Clone and fetch", "octo/app"))
+        }
+        XCTAssertEqual(HistoryRow.title(entry("released")), "Fetched octo/app", "never \"Cloned and fetch\"")
+        XCTAssertEqual(HistoryRow.title(entry("denied")), "Asked to fetch octo/app")
+        XCTAssertEqual(HistoryRow.title(entry("expired")), "Asked to fetch octo/app", "past tense only for what was carried out")
+        XCTAssertEqual(AskLabels.oneVerb("Clone and fetch octo/app"), "Fetch octo/app")
+        XCTAssertEqual(AskLabels.oneVerb("clone and fetch octo/app"), "fetch octo/app")
+        XCTAssertEqual(AskLabels.oneVerb("Clone octo/app"), "Clone octo/app")
     }
 
     func testTheRiversTilesAreTheKindsGlyphs() {
@@ -125,18 +131,10 @@ final class ActivitySignalTests: XCTestCase {
         XCTAssertEqual(FoldState.target(other, in: entries)?.id, 12, "else the connection's newest")
     }
 
-    func testTheRiverNarrowsToOneAIWithoutAskingTheCore() {
-        let entries = [
-            DemoData.entry(3, at: 0, conn: "c2", label: "ChatGPT", action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
-            DemoData.entry(2, at: 0, conn: "c1", label: "Claude", action: "send", outcome: "denied", detail: ""),
-            DemoData.entry(1, at: 0, conn: "c1", label: "Claude", action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
-        ]
-        XCTAssertEqual(ActivityText.filtered(entries, filter: .all, connection: "").map(\.id), [3, 2, 1])
-        XCTAssertEqual(ActivityText.filtered(entries, filter: .all, connection: "c1").map(\.id), [2, 1])
-        XCTAssertEqual(ActivityText.filtered(entries, filter: .autopilot, connection: "c1").map(\.id), [1], "both narrow")
-        XCTAssertEqual(ActivityText.ais(entries).map(\.id), ["c2", "c1"], "newest first, once each")
-        XCTAssertEqual(ActivityText.ais(entries).map(\.name), ["ChatGPT", "Claude"])
-        XCTAssertEqual(AnyAIChip.connection("ai:c1"), "c1")
-        XCTAssertEqual(AnyAIChip.connection("ai:"), "")
+    func testTheAIMenuRowsNameAConnectionOrAny() {
+        XCTAssertEqual(ActivityFilterBar.connection("ai:c1"), "c1")
+        XCTAssertEqual(ActivityFilterBar.connection("ai:"), "")
+        XCTAssertEqual(ActivityFilterBar.name(ActivityConnection(id: "c1", label: "Clau\u{202E}de\n")), "Claude")
+        XCTAssertEqual(ActivityFilterBar.name(ActivityConnection(id: "c1", label: "")), "Unnamed AI")
     }
 }

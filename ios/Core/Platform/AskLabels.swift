@@ -206,6 +206,7 @@ enum AskLabels {
     /// …" otherwise.
     static func told(_ line: AskLine, _ tense: AskTense, _ who: String?) -> AskLine {
         var line = line
+        line.lead = oneVerb(line.lead)
         let name = who.map { untrustedName($0) }.flatMap { $0.isEmpty || mixedScriptRaw($0) != nil ? nil : $0 }
         switch tense {
         case .waiting:
@@ -230,12 +231,26 @@ enum AskLabels {
         "answer": "Answered", "commit": "Committed", "ask": "Asked", "start": "Started", "end": "Ended", "clone": "Cloned", "pay": "Paid", "print": "Printed",
     ]
 
-    /// `lead` in the past: its first word, if it is a verb this knows.
+    /// One verb where the core's title has two for one act: a clone is a first fetch, so "Clone and fetch octo/app"
+    /// is "Fetch octo/app" (and "Fetched", "Asked to fetch").
+    static func oneVerb(_ lead: String) -> String {
+        let prefix = "clone and fetch"
+        guard lead.lowercased().hasPrefix(prefix) else { return lead }
+        let rest = lead.dropFirst(prefix.count)
+        return (lead.first?.isUppercase == true ? "Fetch" : "fetch") + rest
+    }
+
+    /// `lead` in the past: its first word, if it is a verb this knows, and a second verb joined to it by "and" too
+    /// ("Create and push" is "Created and pushed", never "Created and push").
     static func past(_ lead: String) -> String {
-        let space = lead.firstIndex(of: " ") ?? lead.endIndex
-        let first = String(lead[..<space])
-        guard let done = pastTense[first.lowercased()] else { return lead }
-        return done + lead[space...]
+        let words = lead.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+        guard let first = words.first, let done = pastTense[first.lowercased()] else { return lead }
+        var out = words
+        out[0] = done
+        if out.count > 2, out[1] == "and", let second = pastTense[out[2].lowercased()] {
+            out[2] = second.lowercased()
+        }
+        return out.joined(separator: " ")
     }
 
     /// The label line from the core's provider and action: "GitHub · Push", "Computer · Run".

@@ -351,6 +351,18 @@ As designed in `reins-designs/desktop-secrets.html`: grouped findings, risk chip
 ticks for dotenv files, a right panel with the count and **Then: Use them through Reins** (default) or **Keep local
 copies too**. CLI: `reins secrets import --select` opens an interactive picker, or takes `--all-suggested`.
 
+The desktop review is three steps. **1 Choose** (left, a virtualised list): groups with a tick for all, some or none; a
+repository's several `.env` files under one row; a risk nearly every file of a group has is said once on the group,
+the rest as icons on their rows. **2 Names** (right, scrolling on its own): only what needs the person shows, a project
+the vault already has from another folder as one row with **Merge / Keep both** (Keep both by default). When the vault's
+projects cannot be listed (the phone's key is not checked yet, the phone did not answer), that is one notice for the
+whole import, why behind its (?), with Retry; meanwhile every project gets a short suffix (`api-c063`), shown quietly,
+so nothing merges by mistake. Where each project goes and the variables two files set (grouped by the two files) fold
+under More. **3 Move** (always in view): the phone's key the first time, and one button that says what it does or what
+it waits for ("Enter phone key", "Check key · approve on phone", "Move 34 · approve on phone"). If the names the import
+settles against the vault at move time differ from the ones the review showed, nothing is sent and the review lists the
+vault again.
+
 ### 5.3 Import
 
 1. Group the selection: dotenv files by project (project name = the repo folder name, env = from the file name:

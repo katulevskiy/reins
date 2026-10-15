@@ -136,7 +136,9 @@ final class OnboardingTests: XCTestCase {
         try await core.answerPairing(pairingId: view.id, approve: true, chosenCode: view.choices.first, label: nil)
         let connections = try await core.connections()
         XCTAssertEqual(connections.count, before + 1)
-        XCTAssertEqual(connections.last?.label, "Reins desktop app on studio")
+        XCTAssertEqual(connections.last?.label, "studio", "a computer by its own name")
+        XCTAssertEqual(connections.last?.autoIcon, "macos", "and its platform's logo")
+        XCTAssertNotNil(connections.last?.blobatar)
     }
 
     func testAnExpiredCodeSaysToShowANewOne() async {

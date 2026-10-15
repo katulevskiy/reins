@@ -12,3 +12,8 @@ Gmail's brand colour. Gmail is a trademark of Google LLC.
 and `vault.svg` (the Bitwarden mark, for the Vaultwarden password vault) are from Simple Icons (CC0 1.0), unmodified. The
 marks are trademarks of their owners and are shown only to identify the service. `gcontacts.svg`, `device_calendar.svg`,
 `device_contacts.svg`, `sms.svg` and `mcp.svg` (an MCP server the user added) are plain glyphs drawn for Reins.
+
+`../platforms/macos.svg` (the Apple logo) and `linux.svg` (Tux) are from Simple Icons (CC0 1.0), unmodified;
+`windows.svg` is the Windows mark from simple-icons 9.21.0 (CC0 1.0), since removed from Simple Icons, unmodified. Apple
+and macOS are trademarks of Apple Inc., Windows of Microsoft Corporation, Linux of Linus Torvalds; the marks are shown
+only to identify a computer's platform.

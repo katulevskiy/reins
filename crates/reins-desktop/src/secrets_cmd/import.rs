@@ -297,7 +297,7 @@ pub async fn run(args: &ImportArgs, paths: &Paths, config: &Config) -> Result<Ve
     // A project the vault already has from another folder: a new name, unless the person merges on purpose (asked
     // here only; without a terminal choice, always the new name).
     if interactive {
-        for clash in ctx.plan(&report, &selected, &writer).await.clashes.into_iter().filter(|c| c.known) {
+        for clash in ctx.plan(&report, &selected, &writer).await.clashes {
             let from = clash.existing_origin.as_deref().unwrap_or("a folder without a git origin");
             let q = format!(
                 "{} already exists in your vault, from {from}. Merge this folder into it instead of naming it {}? [y/N] ",
@@ -315,12 +315,7 @@ pub async fn run(args: &ImportArgs, paths: &Paths, config: &Config) -> Result<Ve
             for line in plan.lines() {
                 eprintln!("  {line}");
             }
-            for line in plan
-                .clashes
-                .iter()
-                .map(secrets_import::Clash::line)
-                .chain(plan.conflicts.iter().map(secrets_import::Conflict::line))
-            {
+            for line in plan.notes() {
                 eprintln!("  ! {line}");
             }
             eprintln!(

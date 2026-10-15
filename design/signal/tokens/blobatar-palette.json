@@ -1,0 +1,18 @@
+{
+  "about": "A connection's blobatar keeps an index into colours and one into shapes (crates/reins-core/src/avatar.rs). Colours are OKLCH head colours, each well apart from the others and readable on the white and the dark avatar plate; shapes are blobatar gen2's, in its band order. The core and the Android and iOS apps check their copies against this file.",
+  "colours": [
+    { "name": "red", "l": 0.63, "c": 0.21, "h": 27.0 },
+    { "name": "orange", "l": 0.73, "c": 0.17, "h": 58.0 },
+    { "name": "yellow", "l": 0.85, "c": 0.165, "h": 95.0 },
+    { "name": "lime", "l": 0.8, "c": 0.19, "h": 130.0 },
+    { "name": "green", "l": 0.64, "c": 0.16, "h": 150.0 },
+    { "name": "teal", "l": 0.71, "c": 0.12, "h": 186.0 },
+    { "name": "sky", "l": 0.74, "c": 0.13, "h": 236.0 },
+    { "name": "blue", "l": 0.57, "c": 0.19, "h": 262.0 },
+    { "name": "purple", "l": 0.52, "c": 0.22, "h": 295.0 },
+    { "name": "violet", "l": 0.7, "c": 0.17, "h": 318.0 },
+    { "name": "pink", "l": 0.69, "c": 0.2, "h": 355.0 },
+    { "name": "slate", "l": 0.56, "c": 0.035, "h": 255.0 }
+  ],
+  "shapes": ["round", "organic", "boxy", "capsule", "nub", "cloud", "droplet", "hexagon", "sun", "triangle"]
+}

@@ -17,9 +17,9 @@ enum ModeLook {
 
     static func tint(_ mode: AutopilotMode) -> Color {
         switch mode {
-        case .manual: Palette.search
-        case .auto: Palette.accent
-        case .overnight: Palette.overnight
+        case .manual: Palette.kindRead
+        case .auto: Palette.violet
+        case .overnight: Palette.violet
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
@@ -111,8 +111,8 @@ enum EntryOutcome {
 
     static func tint(_ entry: ActivityEntry) -> Color {
         switch EntryText.mark(entry) {
-        case .auto, .grant: Palette.accent
-        case .overnight: Palette.overnight
+        case .auto, .grant: Palette.violet
+        case .overnight: Palette.violet
         case .bypass, .denied: Palette.danger
         case .lockdown, .failed: Palette.warning
         case .approved: Palette.success
@@ -170,7 +170,7 @@ enum RiskLook {
         switch level {
         case .benign: Palette.success
         case .risky: Palette.warning
-        case .severe: Palette.send
+        case .severe: Palette.kindPush
         case .catastrophic: Palette.danger
         }
     }
@@ -201,7 +201,7 @@ struct RiskChips: View {
             .truncationMode(.tail)
             .accessibilityIdentifier("risk")
         if risk.held {
-            let held = WarnTag(text: AutopilotText.heldLine, tint: Palette.overnight, symbol: AutopilotText.overnightSymbol)
+            let held = WarnTag(text: AutopilotText.heldLine, tint: Palette.violet, symbol: AutopilotText.overnightSymbol)
                 .accessibilityIdentifier("riskHeld")
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { level; held }
@@ -225,7 +225,7 @@ struct RiskLine: View {
             if risk.held {
                 Image(systemName: AutopilotText.overnightSymbol)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Palette.overnight)
+                    .foregroundStyle(Palette.violet)
                     .accessibilityLabel(AutopilotText.heldLine)
             }
         }
@@ -254,11 +254,11 @@ struct AutopilotWhyRow: View {
                 feedback.play(.expand(open))
             } label: {
                 HStack(spacing: 8) {
-                    Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text).lineLimit(1)
+                    Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.inkMeta)
                         .rotationEffect(.degrees(open ? 90 : 0))
                 }
                 .padding(.horizontal, 16)
@@ -283,7 +283,7 @@ struct AutopilotWhyRow: View {
             if note.pApprove > 0 || note.pDeny > 0 {
                 LikelihoodRow(label: "Approve", p: note.pApprove, color: Palette.success)
                 LikelihoodRow(label: "Deny", p: note.pDeny, color: Palette.danger)
-                LikelihoodRow(label: "Confidence", p: note.confidence, color: Palette.accent)
+                LikelihoodRow(label: "Confidence", p: note.confidence, color: Palette.violet)
             }
             // The decisions of yours it was like, counted here ("Like 11 pushes to feature branches of acme/web you
             // approved."), else the core's own reason.
@@ -296,15 +296,15 @@ struct AutopilotWhyRow: View {
                     Caption("Like these decisions of yours")
                     ForEach(Array(note.neighbours.enumerated()), id: \.offset) { _, line in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.tertiary)
-                            Text(untrusted(line)).font(RFont.sans(13.5)).foregroundStyle(Palette.secondary).lineLimit(2)
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.inkMeta)
+                            Text(untrusted(line)).font(RFont.sans(13.5)).foregroundStyle(Palette.ink2).lineLimit(2)
                         }
                     }
                 }
             }
             Text((["In \(ModeLook.name(note.mode))"] + [untrusted(note.profileName)].filter { !$0.isEmpty }.map { "profile \($0)" }).joined(separator: " · "))
                 .font(RFont.sans(12.5))
-                .foregroundStyle(Palette.tertiary)
+                .foregroundStyle(Palette.inkMeta)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 14)

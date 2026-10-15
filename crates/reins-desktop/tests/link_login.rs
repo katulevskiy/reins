@@ -45,7 +45,7 @@ async fn login_pairs_the_key_and_saves_a_private_session() {
     assert_ne!(params["redirect_uri"], "http://127.0.0.1/callback", "a real port, not the registered one");
     let names = mock.with(|s| s.client_names.clone());
     assert_eq!(names.len(), 1);
-    assert!(names[0].starts_with("Reins desktop app on "));
+    assert_eq!(names[0], reins_desktop::computer::client_name(), "the computer's own name and its platform");
 
     assert_eq!(logout(&app.paths), Ok(true));
     assert_eq!(logged_in_server(&app.paths), None);

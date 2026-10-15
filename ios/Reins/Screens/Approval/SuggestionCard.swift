@@ -9,7 +9,7 @@ struct AutopilotSheet: View {
 
     var body: some View {
         let s = suggestion
-        let tint = s.judged && !s.floor ? SuggestionText.verdictTint(s.verdict) : Palette.secondary
+        let tint = s.judged && !s.floor ? SuggestionText.verdictTint(s.verdict) : Palette.ink2
         let p = s.verdict == .deny ? s.pDeny : s.pApprove
         NavigationStack {
             ScrollView {
@@ -22,7 +22,7 @@ struct AutopilotSheet: View {
                         Text(s.floor ? "Always asked" : "Not scored").font(RFont.sans(26, .semibold)).foregroundStyle(tint)
                     }
                     if !s.reason.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Text(untrusted(s.reason)).font(RFont.sans(14.5)).foregroundStyle(Palette.secondary).lineLimit(3).padding(.top, 4)
+                        Text(untrusted(s.reason)).font(RFont.sans(14.5)).foregroundStyle(Palette.ink2).lineLimit(3).padding(.top, 4)
                     }
                     if let risk = s.risk {
                         RiskChips(risk: risk)
@@ -33,7 +33,7 @@ struct AutopilotSheet: View {
                         VStack(spacing: 12) {
                             LikelihoodRow(label: "Approve", p: s.pApprove, color: Palette.success)
                             LikelihoodRow(label: "Deny", p: s.pDeny, color: Palette.danger)
-                            LikelihoodRow(label: "Confidence", p: s.confidence, color: Palette.accent)
+                            LikelihoodRow(label: "Confidence", p: s.confidence, color: Palette.violet)
                         }
                         .padding(.top, 20)
                     }
@@ -41,7 +41,7 @@ struct AutopilotSheet: View {
                         Text("YOUR PAST DECISIONS")
                             .font(RFont.sans(12, .semibold))
                             .tracking(1)
-                            .foregroundStyle(Palette.tertiary)
+                            .foregroundStyle(Palette.inkMeta)
                             .padding(.top, 24)
                             .padding(.bottom, 4)
                         ForEach(Array(s.neighbours.prefix(4).enumerated()), id: \.offset) { i, n in
@@ -51,17 +51,17 @@ struct AutopilotSheet: View {
                     ForEach(SuggestionText.notes(s), id: \.self) { note in
                         Label(note, systemImage: "info.circle")
                             .font(RFont.sans(13.5))
-                            .foregroundStyle(Palette.secondary)
+                            .foregroundStyle(Palette.ink2)
                             .padding(.top, 12)
                     }
-                    Rectangle().fill(Palette.hairline).frame(height: 1).padding(.top, 14)
+                    Rectangle().fill(Palette.rule).frame(height: 1).padding(.top, 14)
                     Button(action: onSettings) {
                         HStack {
                             Text("Autopilot settings").font(RFont.sans(15, .medium))
                             Spacer()
                             Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold))
                         }
-                        .foregroundStyle(Palette.accent)
+                        .foregroundStyle(Palette.violet)
                         .padding(.vertical, 14)
                         .contentShape(Rectangle())
                     }
@@ -111,8 +111,8 @@ enum SuggestionText {
     }
 
     static func tint(_ s: SuggestionView) -> Color {
-        if s.floor { return Palette.secondary }
-        if !s.judged { return Palette.tertiary }
+        if s.floor { return Palette.ink2 }
+        if !s.judged { return Palette.inkMeta }
         return verdictTint(s.verdict)
     }
 
@@ -120,7 +120,7 @@ enum SuggestionText {
         switch v {
         case .approve: Palette.success
         case .deny: Palette.danger
-        case .ask: Palette.search
+        case .ask: Palette.kindRead
         }
     }
 
@@ -141,11 +141,11 @@ struct LikelihoodRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(label).font(RFont.sans(13.5, .medium)).foregroundStyle(Palette.secondary).frame(width: 92, alignment: .leading)
+            Text(label).font(RFont.sans(13.5, .medium)).foregroundStyle(Palette.ink2).frame(width: 92, alignment: .leading)
             ProgressView(value: Double(min(max(p, 0), 1)))
                 .tint(color)
                 .progressViewStyle(.linear)
-            Text(SuggestionText.percent(p)).font(RFont.mono(13, .medium)).foregroundStyle(Palette.text).frame(width: 44, alignment: .trailing)
+            Text(SuggestionText.percent(p)).font(RFont.mono(13, .medium)).foregroundStyle(Palette.ink).frame(width: 44, alignment: .trailing)
         }
         .accessibilityElement(children: .combine)
     }
@@ -163,14 +163,14 @@ struct NeighbourRow: View {
                 .frame(width: 22, height: 22)
                 .background(tint.opacity(0.14), in: Circle())
             VStack(alignment: .leading, spacing: 1) {
-                Text(untrusted(neighbour.label)).font(RFont.sans(14, .medium)).foregroundStyle(Palette.text).lineLimit(2)
+                Text(untrusted(neighbour.label)).font(RFont.sans(14, .medium)).foregroundStyle(Palette.ink).lineLimit(2)
                 Text("\(SuggestionText.pastVerdict(neighbour.verdict)) · \(TimeText.relative(neighbour.at))")
                     .font(RFont.sans(12))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Text("\(SuggestionText.percent(neighbour.similarity)) alike").font(RFont.mono(12, .medium)).foregroundStyle(Palette.secondary)
+            Text("\(SuggestionText.percent(neighbour.similarity)) alike").font(RFont.mono(12, .medium)).foregroundStyle(Palette.ink2)
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)

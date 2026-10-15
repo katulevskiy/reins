@@ -31,13 +31,13 @@ final class SignalFoundationTests: XCTestCase {
         assertColor(Palette.violetFill, 0x5B43E8, 0x5B43E8, "violet-fill")
         assertColor(Palette.danger, 0xB91C1C, 0xF87171, "danger")
         // The aliases screens still use until phase 2.
-        assertColor(Palette.background, 0xF6F6F8, 0x121215, "background → paper")
-        assertColor(Palette.text, 0x16151B, 0xEDEDF0, "text → ink")
-        assertColor(Palette.accent, 0x5B43E8, 0xA196FF, "accent → violet")
-        assertColor(Palette.search, 0x2563EB, 0x60A5FA, "search → kind-read")
-        assertColor(Palette.read, 0x2563EB, 0x60A5FA, "read → kind-read, no more teal")
-        assertColor(Palette.send, 0xC2410C, 0xFB923C, "send → kind-push")
-        assertColor(Palette.overnight, 0x5B43E8, 0xA196FF, "Overnight is violet")
+        assertColor(Palette.paper, 0xF6F6F8, 0x121215, "background → paper")
+        assertColor(Palette.ink, 0x16151B, 0xEDEDF0, "text → ink")
+        assertColor(Palette.violet, 0x5B43E8, 0xA196FF, "accent → violet")
+        assertColor(Palette.kindRead, 0x2563EB, 0x60A5FA, "search → kind-read")
+        assertColor(Palette.kindRead, 0x2563EB, 0x60A5FA, "read → kind-read, no more teal")
+        assertColor(Palette.kindPush, 0xC2410C, 0xFB923C, "send → kind-push")
+        assertColor(Palette.violet, 0x5B43E8, 0xA196FF, "Overnight is violet")
     }
 
     func testFieldsAreTheSameInBothThemes() {

@@ -113,7 +113,7 @@ final class OnboardingUITests: XCTestCase {
         tap("code:47")
         tap("approve")
         XCTAssertTrue(element("pairingSheet").waitForNonExistence(timeout: 8))
-        XCTAssertTrue(wait("computerConnected", 5).label.contains("Reins desktop app on studio"), "the computer just paired")
+        XCTAssertTrue(wait("computerConnected", 5).label.contains("studio is connected"), "the computer just paired, by its own name")
         shot("4-computer-connected")
 
         // On the same page: the /mcp address for Claude.ai or ChatGPT, copied.

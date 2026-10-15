@@ -118,6 +118,14 @@ impl DerefMut for StoreLock<'_> {
         self.conn.as_mut().and_then(|c| c.as_mut()).expect("open store lock")
     }
 }
+impl StoreLock<'_> {
+    /// Everything written under this lock so far went to the `temp` schema (this process's memory, never serialized):
+    /// there is nothing to seal and write, and the data others see has not changed. Only for a lock that has written
+    /// nothing else.
+    pub(super) fn temp_only(&mut self) {
+        self.changes = self.total_changes();
+    }
+}
 impl Drop for StoreLock<'_> {
     fn drop(&mut self) {
         let changed = self.total_changes() != self.changes;

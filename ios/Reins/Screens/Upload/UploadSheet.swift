@@ -130,7 +130,7 @@ private struct UploadContent: View {
                 FileCard(blob: view).padding(.horizontal, 16).padding(.vertical, 8)
                 Text("\(who) uploaded this file to your Reins server. If you approve, its download link works and \(who) can hand it to another tool. If you deny, the server deletes it. Either way it is gone at \(TimeText.dateTime(view.expiresAt)).")
                     .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
                 if let error = vm.error {
@@ -139,8 +139,8 @@ private struct UploadContent: View {
             }
         } recap: {
             VStack(alignment: .leading, spacing: 4) {
-                Text(who).font(RFont.sans(14, .medium)).foregroundStyle(Palette.secondary)
-                Text("Share \(untrusted(view.name))?").font(RFont.sans(22, .semibold)).foregroundStyle(Palette.text).lineLimit(3)
+                Text(who).font(RFont.sans(14, .medium)).foregroundStyle(Palette.ink2)
+                Text("Share \(untrusted(view.name))?").font(RFont.sans(22, .semibold)).foregroundStyle(Palette.ink).lineLimit(3)
             }
         } decision: {
             DecisionBar(

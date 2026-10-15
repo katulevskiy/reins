@@ -5,6 +5,7 @@
 pub mod answer;
 pub mod blob;
 pub mod canon;
+pub mod computer;
 pub mod connector;
 pub mod desktop;
 pub mod device;

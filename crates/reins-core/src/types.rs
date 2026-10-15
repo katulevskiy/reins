@@ -781,14 +781,28 @@ pub struct AccountView {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ConnectionView {
     pub id: String,
+    /// Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
+    /// name it was given (`avatar::shown_label`).
     pub label: String,
     pub client_host: String,
     pub created_at: i64,
     pub last_used_at: Option<i64>,
-    /// The icon the user picked (`None` = derived from the name by the app).
+    /// The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
+    /// ("macos", "windows", "linux") or "blob".
     pub icon: Option<String>,
     /// A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
     pub key_fingerprint: Option<String>,
+    /// What Auto shows: for a computer its platform's logo ("macos", "windows", "linux"), for an AI its provider's
+    /// ("claude", "grok", ...) when its name says which, else "blob" (its blobatar).
+    #[uniffi(default)]
+    pub auto_icon: String,
+    /// A computer's platform: "macos", "windows" or "linux"; `None` for an AI app or when not known.
+    #[uniffi(default)]
+    pub platform: Option<String>,
+    /// Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
+    /// changed by the user).
+    #[uniffi(default)]
+    pub blobatar: Option<crate::avatar::Blobatar>,
 }
 
 /// What a device signed in to the account is.
@@ -872,6 +886,152 @@ pub struct ActivityEntry {
     /// What it asked, in full; `None` for entries logged before it was kept (and for pairings, grants that ended, ...).
     #[uniffi(default)]
     pub request: Option<ActivityRequest>,
+}
+
+/// How an Activity entry ended, as search filters and day counts group it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ActivityOutcome {
+    /// Carried out: released, sent or granted.
+    Approved,
+    Denied,
+    /// Allowed but it failed.
+    Failed,
+}
+
+/// Who decided an Activity entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ActivityDecider {
+    /// The user, or a grant the user gave.
+    You,
+    /// Autopilot, in any of its modes (Overnight too).
+    Autopilot,
+    Bypass,
+    Lockdown,
+}
+
+/// A search of the Activity, run on this device only (never sent anywhere). Every filter left empty keeps everything;
+/// the filters combine (an entry must pass each one), the values within one filter are alternatives.
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityQuery {
+    /// Words to find, each as the start of a word (`inv` finds "invoice"; `alice@example.com` finds that address). In
+    /// the title, the agent and connection, addresses, email subjects and bodies kept, a push's repository, branches,
+    /// commits (subjects and ids), files and changes kept, commands, URLs, paths, and MCP tools and their arguments.
+    #[uniffi(default)]
+    pub text: String,
+    #[uniffi(default)]
+    pub outcomes: Vec<ActivityOutcome>,
+    #[uniffi(default)]
+    pub deciders: Vec<ActivityDecider>,
+    /// Integrations (`ActivityEntry.service`: "gmail", "github", "desktop", ...).
+    #[uniffi(default)]
+    pub services: Vec<String>,
+    /// Kinds (`ActivityEntry.action`: "search", "read", "send", "grant", "pair", "request", ...).
+    #[uniffi(default)]
+    pub actions: Vec<String>,
+    /// Connections (`ActivityEntry.connection_id`).
+    #[uniffi(default)]
+    pub connections: Vec<String>,
+    /// Logged at or after (Unix seconds).
+    #[uniffi(default)]
+    pub since: Option<i64>,
+    /// Logged before (Unix seconds).
+    #[uniffi(default)]
+    pub until: Option<i64>,
+}
+
+/// Where a page of results ends: pass it back for the next page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityCursor {
+    pub at: i64,
+    pub id: i64,
+}
+
+/// A piece of a snippet: shown as is, set apart when `hit` (it matches the search). The text is cleaned: one line, no
+/// control or bidi characters, invisible characters shown as U+FFFD; the pieces in order are the snippet.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityHighlight {
+    pub text: String,
+    pub hit: bool,
+}
+
+/// What part of an entry a snippet comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum ActivityField {
+    Title,
+    /// The agent, the connection or the account.
+    Agent,
+    /// An email address (from, to, cc).
+    Address,
+    /// An email's or message's subject.
+    Subject,
+    /// An email's body, a message's text, a search query, a note.
+    Body,
+    Repo,
+    Branch,
+    /// A commit: its id and subject.
+    Commit,
+    /// A file or folder path.
+    File,
+    /// A change line by line.
+    Diff,
+    Command,
+    Url,
+    /// Anything else the request held: a tool's name or arguments, why it was asked.
+    Request,
+}
+
+/// Where an entry matched outside its title, with the matching words set apart.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ActivitySnippet {
+    pub field: ActivityField,
+    pub spans: Vec<ActivityHighlight>,
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct ActivityHit {
+    pub entry: ActivityEntry,
+    /// `None` when the title, agent and connection already show every word searched (or nothing was).
+    pub snippet: Option<ActivitySnippet>,
+}
+
+/// One page of an Activity search, newest first.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct ActivityPage {
+    pub hits: Vec<ActivityHit>,
+    /// The next page starts after this; `None` on the last page.
+    pub next: Option<ActivityCursor>,
+    /// Entries matching, on every page.
+    pub total: u32,
+    /// The words searched as matched (lower case): set apart each word of a title that starts with one, as the
+    /// snippets do.
+    pub terms: Vec<String>,
+}
+
+/// An entry matching a search, as little as a day's header needs: when, and how it ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityStamp {
+    pub id: i64,
+    pub at: i64,
+    pub outcome: ActivityOutcome,
+    pub decider: ActivityDecider,
+}
+
+/// What the Activity holds, for the filters' choices.
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityFacets {
+    /// Integrations with entries, most used first.
+    pub services: Vec<String>,
+    /// Kinds with entries, most used first.
+    pub actions: Vec<String>,
+    /// Connections with entries, most recent first.
+    pub connections: Vec<ActivityConnection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ActivityConnection {
+    pub id: String,
+    /// Cleaned, one line.
+    pub label: String,
 }
 
 /// One message of a released search or read (headers only).
