@@ -43,7 +43,7 @@ enum PairWords {
         let computer = computer(view)
         return AskLine(
             kind: label(view), lead: computer ? "Connect a " : "Connect an ", target: computer ? "computer" : "AI app",
-            icon: RequestIcon.Spec(mark: .glyph(computer ? .laptop : .link), action: .plus, kind: .pair)
+            icon: AskIcon(mark: .glyph(computer ? .laptop : .link), action: .plus, kind: .pair)
         )
     }
 

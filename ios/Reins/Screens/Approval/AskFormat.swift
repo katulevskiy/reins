@@ -11,59 +11,14 @@ import Foundation
 // store wrote. Where reading is uncertain it is the generic sentence, with the full value on the mono line. Names go
 // through untrustedName(); a cut name is display-only, and the full value is in a fact row below.
 
-/// One request, written.
-struct AskLine: Equatable {
-    /// The label line: "GitHub · Push".
-    var kind: String
-    /// Roman, before the target: "Push 8 commits to ".
-    var lead: String
-    /// The only italic: "octo/app". Nil for a question asked in its own words.
-    var target: String?
-    /// Roman, after the target: " and 2 more".
-    var after = ""
-    /// Machine details, in mono under the sentence; never cut.
-    var mono: String?
-    /// The integration's mark and the action's badge.
-    var icon: RequestIcon.Spec
-
-    /// The sentence as it reads.
-    var text: String { lead + (target ?? "") + after }
-
-    /// The sentence as the serif's runs, the target in italic. A slash never ends a line ("octo/ app").
-    var runs: [AskText.Run] {
-        [AskText.Run(text: lead), AskText.Run(text: target ?? "", target: true), AskText.Run(text: after)]
-            .filter { !$0.text.isEmpty }
-            .map { AskText.Run(text: $0.text.replacingOccurrences(of: "/", with: "/\u{2060}"), target: $0.target) }
-    }
-}
-
 enum AskFormat {
     /// A request that waits, as its field writes it. `core`: the core's own label for it (what a question from the
     /// computer runs or touches, resolved by the core; never read again here). `computer`: the asking computer's name.
     static func waiting(_ view: ApprovalView, core: RequestLabel? = nil, computer: String? = nil) -> AskLine {
         let kind = label(view, core: core)
         let icon = self.icon(view, core: core)
-        /// `stand`: what the sentence says instead of a target that can pass for something else ("a repository"):
-        /// an identifier (a repository, a project, a server) that is not plain ASCII, or a name mixing scripts (a
-        /// Cyrillic "а" in "octo/аpp"). Its raw form, escaped, then leads the mono line.
         func line(_ lead: String, _ target: String?, _ after: String = "", mono: String? = nil, stand: String? = nil) -> AskLine {
-            var target = target
-            var lead = lead
-            var flag: String?
-            if let t = target, let stand {
-                // Reins' own separator ("web · dev") is not part of what is checked.
-                let own = t.replacingOccurrences(of: " · ", with: " ")
-                let lookalike = !own.unicodeScalars.allSatisfy(\.isASCII) || mixedScriptRaw(own) != nil
-                if lookalike {
-                    flag = "\(stand.split(separator: " ").last.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Name"): \(rawForm(t))"
-                    lead += stand
-                    target = nil
-                }
-            } else if let t = target, let raw = mixedScriptRaw(t) {
-                flag = "\(raw) · mixed scripts"
-            }
-            let mono = [flag, mono?.trimmingCharacters(in: .whitespacesAndNewlines)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
-            return AskLine(kind: kind, lead: lead, target: target, after: after, mono: mono.isEmpty ? nil : mono, icon: icon)
+            AskLine.make(kind: kind, lead: lead, target: target, after: after, mono: mono, stand: stand, icon: icon)
         }
         let service = serviceName(view.service.isEmpty ? "gmail" : view.service)
 
@@ -220,10 +175,10 @@ enum AskFormat {
     }
 
     /// The request's icon: the integration's mark (or a local glyph) and the action, in the request's field colour.
-    static func icon(_ view: ApprovalView, core: RequestLabel? = nil) -> RequestIcon.Spec {
+    static func icon(_ view: ApprovalView, core: RequestLabel? = nil) -> AskIcon {
         let field = ApprovalWords.tone(view).field
         let deletes = ApprovalWords.deletes(view)
-        func spec(_ mark: RequestIcon.Mark, _ action: Glyph) -> RequestIcon.Spec { RequestIcon.Spec(mark: mark, action: deletes ? .trash : action, kind: field) }
+        func spec(_ mark: AskIcon.Mark, _ action: Glyph) -> AskIcon { AskIcon(mark: mark, action: deletes ? .trash : action, kind: field) }
         if view.purchase != nil { return spec(.glyph(.card), .send) }
         if view.git != nil { return spec(.service(view.service.isEmpty ? "github" : view.service), .gitBranch) }
         if let ask = view.ask {
@@ -239,7 +194,7 @@ enum AskFormat {
         if view.secretsStore != nil { return spec(.service("vault"), .plus) }
         if view.tokenStore != nil { return spec(.glyph(.key), .plus) }
         if view.ssh != nil { return spec(.glyph(.key), .lockOpen) }
-        let mark = RequestIcon.Mark.service(ApprovalWords.service(view).isEmpty ? "gmail" : ApprovalWords.service(view))
+        let mark = AskIcon.Mark.service(ApprovalWords.service(view).isEmpty ? "gmail" : ApprovalWords.service(view))
         switch view.kind {
         case .grant: return spec(mark, .shieldCheck)
         case .accounts: return spec(mark, .person)

@@ -147,7 +147,8 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(c.userInfo[NotificationKey.link] as? String, "reins://item?kind=request&id=r1")
         XCTAssertEqual(NotificationText.title(item(action: "grant")), "Permission requested")
         XCTAssertEqual(NotificationText.title(item(.pairing)), "Connect an AI")
-        XCTAssertEqual(NotificationText.body(item(.pairing)), "Connect Gemini to Reins?\nme@gmail.com")
+        // The other side's name is quoted under Reins' own words, never the sentence.
+        XCTAssertEqual(NotificationText.body(item(.pairing)), "Connect to Reins\n“Claude”\nme@gmail.com")
         XCTAssertEqual(NotificationText.title(item(.blob)), "File to check")
         XCTAssertEqual(NotificationContent.pending(item(.blob), settings: FeedbackSettings()).categoryIdentifier, "blob")
     }

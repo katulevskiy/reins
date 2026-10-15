@@ -1082,14 +1082,8 @@ extension PendingItem {
 
     var expiresAt: Int64 { waitUntil ?? (createdAt + Self.answerWindow) }
 
-    /// "Claude: Search Gmail" (the core's `headline` is the sentence of what approving does).
-    var listTitle: String {
-        switch kind {
-        case .pairing, .join: untrusted(title)
-        case .blob: "\(untrusted(connectionLabel)): Share a file"
-        case .request: fullTitle(label: connectionLabel, action: action, count: Int(count), service: service, title: opTitle, op: op)
-        }
-    }
+    /// "Claude: Search Gmail for …" (ASK-TEXT; the core's `headline` is the sentence of what approving does).
+    var listTitle: String { AskLabels.listTitle(self) }
 
     var snapshotItem: Snapshot.Item {
         Snapshot.Item(

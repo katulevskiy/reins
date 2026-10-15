@@ -5,19 +5,7 @@ import SwiftUI
 /// questions), and the action as a round badge at its bottom-right corner, filled with the request's field colour and
 /// carrying a white glyph, ringed in the colour of what is behind it so it stands apart from the mark.
 struct RequestIcon: View {
-    enum Mark: Equatable {
-        /// A provider's logo: "github", "gmail", "mcp", "vault", …
-        case service(String)
-        case glyph(Glyph)
-    }
-
-    struct Spec: Equatable {
-        var mark: Mark
-        var action: Glyph
-        var kind: FieldKind
-    }
-
-    var spec: Spec
+    var spec: AskIcon
     var size: CGFloat = 40
     /// What the icon sits on, for the badge's ring: paper, or a field's own colour.
     var ring: Color = Palette.paper
@@ -35,7 +23,7 @@ struct RequestIcon: View {
             GlyphIcon(spec.action, size: badge * 0.56)
                 .foregroundStyle(Color.white)
                 .frame(width: badge, height: badge)
-                .background(spec.kind.fill, in: Circle())
+                .background(spec.kind?.fill ?? Palette.ink2, in: Circle())
                 .padding(2)
                 .background(ring, in: Circle())
                 .offset(x: badge * 0.3, y: badge * 0.3)
@@ -62,6 +50,18 @@ struct RequestIcon: View {
             }
         case let .glyph(glyph):
             GlyphIcon(glyph, size: size * 0.5).foregroundStyle(Palette.onFieldInk)
+        }
+    }
+}
+
+/// A sentence's runs in the serif at a row's size, its target in italic (river rows, lists).
+struct AskRunsText: View {
+    var runs: [AskText.Run]
+    var size: CGFloat
+
+    var body: some View {
+        runs.reduce(Text(verbatim: "")) { sentence, run in
+            Text("\(sentence)\(Text(verbatim: run.text).font(RFont.serif(size, italic: run.target)))")
         }
     }
 }
