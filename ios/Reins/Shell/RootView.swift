@@ -67,7 +67,7 @@ private struct LaunchPreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Activity").font(RFont.sans(34, .bold)).foregroundStyle(Palette.text).padding(.top, 12)
+            Text("Activity").textRole(.title).foregroundStyle(Palette.text).padding(.top, 12)
             let waiting = snapshot.waiting()
             if !waiting.isEmpty {
                 SectionHeader("Waiting for you").padding(.top, 8)
