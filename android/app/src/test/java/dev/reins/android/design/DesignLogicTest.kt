@@ -62,8 +62,12 @@ class DesignLogicTest {
     @Test
     fun `each kind of operation has its own colour`() {
         val c = RColors.Dark
-        val tints = listOf(ActionKind.Search, ActionKind.Read, ActionKind.Send, ActionKind.Pair).map { it.tint(c) }
-        assertEquals("search, read, send and connect must all differ", tints.size, tints.toSet().size)
+        val tints = listOf(ActionKind.Read, ActionKind.Send, ActionKind.Pair, ActionKind.Grant, ActionKind.Accounts).map { it.tint(c) }
+        assertEquals("read, send, connect, grant and accounts must all differ", tints.size, tints.toSet().size)
+        // Signal: reads and searches are one kind, the read field.
+        assertEquals(ActionKind.Read.tint(c), ActionKind.Search.tint(c))
+        assertEquals(Field.Read, ActionKind.Search.field)
+        assertEquals(Field.Push, ActionKind.Send.field)
         assertEquals(ActionKind.Grant, ActionKind.of("grant"))
         assertEquals(ActionKind.Other, ActionKind.of("something-new"))
     }
