@@ -194,6 +194,8 @@ struct EntryApprovalPage<Below: View>: View {
     var entry: ActivityEntry
     var vm: ApprovalModel
     var view: ApprovalView
+    /// A push's changes not kept here, loaded from GitHub on its commit page.
+    var diffs: PushDiffs? = nil
     @ViewBuilder var below: Below
     @State private var nav = ApprovalNav()
 
@@ -208,8 +210,9 @@ struct EntryApprovalPage<Below: View>: View {
             .padding(.bottom, 24)
         }
         .environment(nav)
+        .environment(diffs)
         .environment(\.approvalRecord, record)
-        .modifier(EntryPagesLevel(nav: nav, view: view, record: record, level: 0))
+        .modifier(EntryPagesLevel(nav: nav, view: view, record: record, diffs: diffs, level: 0))
         .accessibilityContainer("entryApproval")
     }
 }
@@ -220,6 +223,7 @@ private struct EntryPagesLevel: ViewModifier {
     var nav: ApprovalNav
     var view: ApprovalView
     var record: ApprovalRecord
+    var diffs: PushDiffs?
     var level: Int
 
     func body(content: Content) -> some View {
@@ -238,8 +242,9 @@ private struct EntryPagesLevel: ViewModifier {
             .navigationTitle(page.title(in: view))
             .navigationBarTitleDisplayMode(.inline)
             .environment(nav)
+            .environment(diffs)
             .environment(\.approvalRecord, record)
-            .modifier(EntryPagesLevel(nav: nav, view: view, record: record, level: level + 1))
+            .modifier(EntryPagesLevel(nav: nav, view: view, record: record, diffs: diffs, level: level + 1))
         }
     }
 }

@@ -76,6 +76,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         /// The approval each request decided here showed, by its Activity entry (the seeded history has none, like
         /// entries logged before the core kept them).
         var recorded: [Int64: ApprovalView] = [:]
+        /// `-demoSyncedPush`: the push entry 14 shows came from another device without its changes line by line; this
+        /// is the push with them, what "Load from GitHub" brings. `syncedFails`: GitHub cannot be reached.
+        var syncedPush: GitPushView?
+        var syncedFails = false
         var pairings: [String: PairingView] = [:]
         var blobs: [String: BlobView] = [:]
         var connections: [ConnectionView] = []
@@ -167,6 +171,22 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
             default: break
             }
+        }
+        if args.contains("-demoSyncedPush") || args.contains("-demoSyncedPushFails"), let push = s.views["req20"], let git = push.git,
+           let i = s.activity.firstIndex(where: { $0.id == 14 }) {
+            var kept = git
+            kept.refs = git.refs.map { ref in
+                var r = ref
+                r.files = r.files.map { f in var f = f; f.diff = []; return f }
+                r.commits = r.commits.map { c in var c = c; c.files = c.files.map { f in var f = f; f.diff = []; return f }; return c }
+                return r
+            }
+            var shown = push
+            shown.git = kept
+            s.recorded[14] = shown
+            s.activity[i].request?.git = kept
+            s.syncedPush = git
+            s.syncedFails = args.contains("-demoSyncedPushFails")
         }
         if joinWaiting {
             let join = DemoData.join(now)
@@ -711,13 +731,21 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 let diffs = git.refs.contains { r in
                     (r.files + r.commits.flatMap(\.files)).contains { !$0.diff.isEmpty }
                 }
-                return ActivityPush(git: git, diffs: diffs, diffsNotKept: false, thisDevice: true)
+                let synced = entryId == 14 && s.syncedPush != nil
+                return ActivityPush(git: git, diffs: diffs, diffsNotKept: synced, thisDevice: !synced)
             }
         }
     }
 
     func activityCommitChange(entryId: Int64, shortSha: String) async throws -> GitCommitView {
-        throw CoreError.Service(reason: "the demo has no GitHub connection")
+        try await latency(0.8)
+        return try locked { s in
+            guard !s.syncedFails else { throw CoreError.Service(reason: "GitHub did not answer. Check the connection and try again.") }
+            guard entryId == 14, let commit = s.syncedPush?.refs.flatMap(\.commits).first(where: { $0.shortSha == shortSha }) else {
+                throw CoreError.Service(reason: "the demo has no GitHub connection")
+            }
+            return commit
+        }
     }
 
     /// The core's search, in memory: every word a case-insensitive substring of the entry's text, the filters as the

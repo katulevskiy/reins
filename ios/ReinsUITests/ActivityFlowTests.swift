@@ -277,4 +277,37 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(element(app, "uploadSheet").waitForNonExistence(timeout: 5))
         XCTAssertFalse(element(app, "pending:blob_q3numbers").exists)
     }
+
+    // MARK: A push decided on another device
+
+    /// Opens a synced push's first commit: its changes were not kept on this iPhone, and Load from GitHub brings them.
+    private func openSyncedCommit(_ extra: String) -> XCUIApplication {
+        let app = launch("reins://activity?id=14", extra: [extra])
+        let commits = element(app, "gitCommits:0")
+        expectToAppear(commits, timeout: 15)
+        commits.tap()
+        let first = element(app, "gitCommit:0:0")
+        expectToAppear(first, timeout: 5)
+        first.tap()
+        expectToAppear(element(app, "diffNotKept"), timeout: 5)
+        return app
+    }
+
+    func testAPushFromAnotherDeviceLoadsItsDiffFromGitHub() {
+        let app = openSyncedCommit("-demoSyncedPush")
+        shot(app, "synced-not-kept")
+        element(app, "loadDiff").tap()
+        XCTAssertTrue(element(app, "diffNotKept").waitForNonExistence(timeout: 8), "loaded, the note goes")
+        element(app, "commitFile:0").tap()
+        expectToAppear(element(app, "commitFile:0:diff"), timeout: 5)
+        shot(app, "synced-loaded")
+    }
+
+    func testALoadThatFailsSaysWhyAndOffersRetry() {
+        let app = openSyncedCommit("-demoSyncedPushFails")
+        element(app, "loadDiff").tap()
+        expectToAppear(element(app, "retryDiff"), timeout: 8)
+        XCTAssertTrue(element(app, "diffLoadError").exists)
+        shot(app, "synced-retry")
+    }
 }
