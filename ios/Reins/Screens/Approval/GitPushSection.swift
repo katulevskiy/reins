@@ -70,7 +70,7 @@ struct CommitsPage: View {
             let ref = refs[refIndex]
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 0) {
-                    Text(untrusted(ref.shortName)).font(RFont.mono(13)).foregroundStyle(Palette.secondary).lineLimit(1)
+                    Text(untrusted(ref.shortName)).font(RFont.mono(13)).foregroundStyle(Palette.secondary)
                     if ref.filesChanged > 0 {
                         Button(" · \(ApprovalWords.files(Int(ref.filesChanged)))") { nav.path.append(.files(ref: refIndex)) }
                             .font(RFont.sans(13))
@@ -107,7 +107,7 @@ private struct CommitRow: View {
             feedback.play(.open)
         } label: {
             HStack(alignment: .center, spacing: 12) {
-                Text(commit.shortSha)
+                Text(untrusted(commit.shortSha))
                     .font(RFont.mono(12.5))
                     .foregroundStyle(Palette.tertiary)
                     .frame(width: 62, alignment: .leading)
@@ -245,8 +245,7 @@ private struct FileRow: View {
                     Image(systemName: "doc.text").font(.system(size: 14)).foregroundStyle(Palette.secondary)
                     (Text(path.0).foregroundStyle(Palette.tertiary) + Text(path.1).foregroundStyle(Palette.text))
                         .font(RFont.mono(13))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .environment(\.layoutDirection, .leftToRight)
                     if file.hiddenChars { WarnTag(text: "Hidden", tint: Palette.danger, small: true) }
@@ -282,7 +281,7 @@ private struct DiffBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
+            ScrollView(.horizontal, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in row(line) }
                 }

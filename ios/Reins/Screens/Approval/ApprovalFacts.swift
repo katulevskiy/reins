@@ -1,7 +1,8 @@
 import SwiftUI
 
-// The facts under the hero (the Android app's ApprovalFacts.kt): grouped cards of key and value rows, long content
-// folded into rows that open a page, by kind of request.
+// The facts under the field (the Android app's ApprovalFacts.kt): hairline rows of keys and values on paper, long
+// content folded into rows that open a page, by kind of request. What is approved (an address, a command, a path, a
+// host, a secret's name, a tool's arguments) wraps and is never cut; only labels and titles keep a line limit.
 
 /// The facts of the request, by kind.
 struct Facts: View {
@@ -43,28 +44,25 @@ struct Facts: View {
     }
 }
 
-// MARK: The grouped card
+// MARK: Hairline rows
 
-/// A grouped card of rows, with hairlines between them (each row brings its own when it is not the first).
+/// Rows on paper with a `rule` hairline under each (Signal lists: hairlines, never cards). The rows keep their own 18 pt
+/// inside, so their text sits at the 24 pt gutter. `border` tints the hairlines (a group with a warning).
 struct FactGroup<Content: View>: View {
     var border: Color?
     @ViewBuilder var content: Content
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
             Group(subviews: content) { rows in
-                ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-                    if i > 0 { Rectangle().fill(Palette.hairline).frame(height: 1) }
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     row
+                    Rectangle().fill(border ?? Palette.rule).frame(height: 1).padding(.horizontal, 18)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.elevated, in: shape)
-        .overlay(shape.strokeBorder(border ?? Palette.dynamic(0xE2E2E6, 0x1B1B1F), lineWidth: 1))
-        .clipShape(shape)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 6)
     }
 }
 
@@ -75,7 +73,8 @@ struct FactRow<Trailing: View>: View {
     var mono = false
     var valueId: String?
     var tint: Color?
-    var lines = 1
+    /// Nil: the value wraps and is never cut (what is approved). A limit only for what the AI says about it.
+    var lines: Int? = nil
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
@@ -85,7 +84,7 @@ struct FactRow<Trailing: View>: View {
                 .font(mono ? RFont.mono(14, .medium) : RFont.sans(15.5, .medium))
                 .foregroundStyle(tint ?? Palette.text)
                 .lineLimit(lines)
-                .truncationMode(mono ? .middle : .tail)
+                .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .accessibilityIdentifier(valueId ?? "")
@@ -100,7 +99,7 @@ struct FactRow<Trailing: View>: View {
 }
 
 extension FactRow where Trailing == EmptyView {
-    init(key: String, value: String, mono: Bool = false, valueId: String? = nil, tint: Color? = nil, lines: Int = 1) {
+    init(key: String, value: String, mono: Bool = false, valueId: String? = nil, tint: Color? = nil, lines: Int? = nil) {
         self.init(key: key, value: value, mono: mono, valueId: valueId, tint: tint, lines: lines) { EmptyView() }
     }
 }
@@ -301,9 +300,9 @@ private struct SendFacts: View {
     var body: some View {
         if let email = view.email {
             FactGroup {
-                FactRow(key: "To", value: email.to.map(untrusted).joined(separator: ", "), mono: true, lines: 3)
-                if !email.cc.isEmpty { FactRow(key: "Cc", value: email.cc.map(untrusted).joined(separator: ", "), mono: true, lines: 3) }
-                FactRow(key: "Subject", value: untrusted(email.subject), lines: 2)
+                FactRow(key: "To", value: email.to.map(untrusted).joined(separator: ", "), mono: true)
+                if !email.cc.isEmpty { FactRow(key: "Cc", value: email.cc.map(untrusted).joined(separator: ", "), mono: true) }
+                FactRow(key: "Subject", value: untrusted(email.subject))
                 Text(untrusted(email.body))
                     .font(RFont.sans(15))
                     .foregroundStyle(Palette.text)
@@ -399,7 +398,7 @@ private struct GrantFacts: View {
                 HelpDot(id: "grant", text: "Nothing is shared now. Requests that match are answered without asking until it ends. Revoke it any time in Grants.")
             }
             FactGroup(border: Palette.accent.opacity(0.35)) {
-                ForEach(Array(grant.lines.enumerated()), id: \.offset) { _, line in FactRow(key: "Only", value: untrusted(line), lines: 2) }
+                ForEach(Array(grant.lines.enumerated()), id: \.offset) { _, line in FactRow(key: "Only", value: untrusted(line)) }
                 FactRow(key: "For", value: ApprovalWords.period(grant.durationSecs) + (grant.maxUses.map { " · at most \($0) uses" } ?? ""))
                 FactRow(key: "Reach", value: reach, tint: tone)
                 if !grant.reason.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -435,12 +434,11 @@ private struct AccountsFacts: View {
                         TickBox(checked: ticked, enabled: !locked && !vm.readOnly)
                         HStack(spacing: 12) {
                             BlobAvatar(seed: address, size: 32)
-                            Text(address)
+                            Text(untrusted(address))
                                 .font(RFont.sans(15.5, .medium))
                                 .foregroundStyle(Palette.text)
                                 .strikethrough(!ticked, color: Palette.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         .opacity(ticked ? 1 : 0.42)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -485,7 +483,7 @@ private struct McpFacts: View {
                 let title = untrusted(call.title)
                 Text(title.isEmpty ? untrusted(call.tool) : title).font(RFont.sans(16, .semibold)).foregroundStyle(Palette.text)
                     .accessibilityIdentifier("mcpTool")
-                if call.title != call.tool { Text(untrusted(call.tool)).font(RFont.mono(12.5)).foregroundStyle(Palette.tertiary).lineLimit(1) }
+                if call.title != call.tool { Text(untrusted(call.tool)).font(RFont.mono(12.5)).foregroundStyle(Palette.tertiary) }
                 if !call.description.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text(untrusted(call.description)).font(RFont.sans(13.5)).foregroundStyle(Palette.secondary).lineLimit(3)
                 }
@@ -496,7 +494,7 @@ private struct McpFacts: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Arguments").font(RFont.sans(13, .medium)).foregroundStyle(Palette.tertiary)
                 let args = untrusted(call.argumentsJson)
-                Text(args.isEmpty ? "{}" : args).font(RFont.mono(13)).foregroundStyle(Palette.text).lineLimit(12)
+                Text(args.isEmpty ? "{}" : args).font(RFont.mono(13)).foregroundStyle(Palette.text)
                     .environment(\.layoutDirection, .leftToRight)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("mcpArguments")
@@ -517,7 +515,7 @@ private struct AskFacts: View {
         let topic = ask.topic.map(untrusted).flatMap { $0.isEmpty ? nil : $0 }
         if detail != nil || topic != nil {
             FactGroup {
-                if let detail { MonoBlock(text: detail, id: "askDetail", lines: 30) }
+                if let detail { MonoBlock(text: detail, id: "askDetail") }
                 if let topic { FactRow(key: "About", value: topic, mono: true, valueId: "askTopic") }
             }
             .accessibilityContainer("ask")
@@ -530,14 +528,14 @@ private struct SecretsFacts: View {
 
     var body: some View {
         FactGroup {
-            FactRow(key: "For", value: untrusted(secrets.command), mono: true, valueId: "secretsCommand", lines: 3)
+            FactRow(key: "For", value: untrusted(secrets.command), mono: true, valueId: "secretsCommand")
             if let purpose = secrets.purpose.map(untrusted), !purpose.isEmpty {
                 FactRow(key: "Says", value: "“\(purpose)”", lines: 2)
             }
             ForEach(Array(secrets.items.enumerated()), id: \.offset) { i, item in
                 HStack(spacing: 12) {
                     Image(systemName: "key.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.accent)
-                    Text(untrusted(item)).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.text).lineLimit(2)
+                    Text(untrusted(item)).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 18)
@@ -559,7 +557,7 @@ private struct SshFacts: View {
             FactRow(key: "Key", value: untrusted(ssh.keyName))
             MonoBlock(text: untrusted(ssh.keyFingerprint), id: "sshKey")
             if let hostKey = ssh.hostKey.map(untrusted), !hostKey.isEmpty {
-                FactRow(key: "Host key", value: hostKey, mono: true, valueId: "sshHostKey", lines: 3)
+                FactRow(key: "Host key", value: hostKey, mono: true, valueId: "sshHostKey")
             }
         }
         .accessibilityContainer("ssh")

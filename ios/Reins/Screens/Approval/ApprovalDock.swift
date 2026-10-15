@@ -161,7 +161,7 @@ private struct SecretsCommandNote: View {
             nav.overlay = .remember
         } label: {
             Label {
-                Text(command).font(RFont.mono(12.5, .medium)).lineLimit(1).truncationMode(.middle)
+                Text(command).font(RFont.mono(12.5, .medium)).fixedSize(horizontal: false, vertical: true)
             } icon: {
                 Image(systemName: "terminal").font(.system(size: 11.5, weight: .semibold))
             }
