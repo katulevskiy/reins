@@ -22,6 +22,7 @@ import dev.reins.core.ProfileView
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 import dev.reins.core.ActivityEntry
+import dev.reins.core.ActivityPush
 import dev.reins.core.ApprovalChoice
 import dev.reins.core.ApprovalKind
 import dev.reins.core.StandingGrant
@@ -31,6 +32,7 @@ import dev.reins.core.ConnectionView
 import dev.reins.core.DeviceView
 import dev.reins.core.CoreException
 import dev.reins.core.EmailContent
+import dev.reins.core.GitCommitView
 import dev.reins.core.GmailStatus
 import dev.reins.core.GrantView
 import dev.reins.core.JoinProgress
@@ -110,6 +112,14 @@ class FakeCore : ReinsCoreInterface {
     val entryApprovals = java.util.concurrent.ConcurrentHashMap<Long, ApprovalView>()
 
     override suspend fun activityApproval(entryId: Long): ApprovalView? = entryApprovals[entryId]
+
+    /** Pushes of entries, as `activityPush` returns them. */
+    val entryPushes = mutableMapOf<Long, ActivityPush>()
+
+    override suspend fun activityPush(entryId: Long): ActivityPush? = entryPushes[entryId]
+
+    override suspend fun activityCommitChange(entryId: Long, shortSha: String): GitCommitView =
+        throw CoreException.Service("No GitHub connection in tests.")
 
     /** Makes approving fail (after the sheet has already closed: the app answers in the background). */
     @Volatile var approveFailure: CoreException? = null

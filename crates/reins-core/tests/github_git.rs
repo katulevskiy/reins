@@ -609,6 +609,42 @@ async fn a_push_is_parked_with_what_it_does_and_answered_with_a_write_credential
     assert_eq!((kept_ref.commit_count, kept_ref.additions, kept_ref.deletions), (3, Some(10), Some(2)));
     assert_eq!(kept_ref.commits[0].files[0].diff.len(), 7, "a commit's lines, as the approval showed them");
     assert!(!format!("{kept:?}").contains(TOKEN));
+
+    // The push travels with the entry (for the account's other devices): refs, commits and files, without diff lines
+    // in the list; the entry's page has them from this device's own copy.
+    let listed = entry.request.as_ref().unwrap().git.as_ref().expect("kept with the entry when it was logged");
+    assert_eq!((listed.repo.as_str(), listed.refs[0].commit_count), ("me/app", 3));
+    assert_eq!(listed.refs[0].commits[0].files[0].path, "src/parse.rs");
+    assert!(listed.refs[0].commits[0].files[0].diff.is_empty());
+    let push = env.core.activity_push(entry.id).await.unwrap().expect("a push");
+    assert!(push.this_device && push.diffs && !push.diffs_not_kept);
+    assert_eq!(push.git.refs[0].commits[0].files[0].diff.len(), 7);
+
+    // A commit's change loaded from GitHub with the phone's own token: only a commit of that push.
+    Mock::given(method("GET"))
+        .and(path(format!("/repos/me/app/commits/{}", oid('2'))))
+        .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": oid('2'),
+            "commit": {"message": "Add tests\n\nmore", "author": {"name": "Ann", "email": "ann@example.com",
+                "date": "2026-10-01T10:00:00Z"}},
+            "stats": {"additions": 1, "deletions": 0},
+            "files": [{"filename": "tests/t.rs", "status": "added", "additions": 1, "deletions": 0,
+                "patch": "@@ -0,0 +1 @@\n+#[test] fn t() {}"}],
+        })))
+        .with_priority(1)
+        .mount(&env.github)
+        .await;
+    let logged = env.core.activity(50).await.unwrap().len();
+    let commit = env.core.activity_commit_change(entry.id, "2222222".to_owned()).await.unwrap();
+    assert_eq!((commit.short_sha.as_str(), commit.subject.as_str()), ("2222222", "Add tests"));
+    assert_eq!(commit.files[0].diff.len(), 2);
+    assert_eq!(commit.files[0].diff[1].kind, DiffLineKind::Add);
+    for not_ours in ["3333334", "zz", "123"] {
+        assert!(env.core.activity_commit_change(entry.id, not_ours.to_owned()).await.is_err(), "{not_ours}");
+    }
+    assert_eq!(env.core.activity(50).await.unwrap().len(), logged, "loading logs nothing and asks nothing");
+    assert!(waiting(&env).await.is_empty());
 }
 
 #[tokio::test]
@@ -688,8 +724,14 @@ async fn bypass_lets_a_force_push_and_a_deletion_through_at_once() {
     serve(&env, &[push("r1", &key, "git_push", &force), push("r2", &key, "git_push", &delete)], &[]).await;
     env.core.sync(0).await.unwrap();
     assert!(waiting(&env).await.is_empty(), "approved by the bypass");
-    let decided: Vec<String> = env.core.activity(5).await.unwrap().into_iter().map(|e| e.decided_by).collect();
-    assert_eq!(decided.iter().filter(|d| *d == "bypass").count(), 2, "{decided:?}");
+    let entries = env.core.activity(5).await.unwrap();
+    let decided: Vec<&str> = entries.iter().map(|e| e.decided_by.as_str()).collect();
+    assert_eq!(decided.iter().filter(|d| **d == "bypass").count(), 2, "{decided:?}");
+    // What a bypass decides keeps its push with the entry too, for the account's other devices.
+    for e in entries.iter().filter(|e| e.op == "git_push") {
+        let git = e.request.as_ref().and_then(|r| r.git.as_ref()).expect("the push is kept");
+        assert_eq!(git.refs.len(), 1);
+    }
 }
 
 #[tokio::test]

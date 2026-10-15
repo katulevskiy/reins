@@ -8,6 +8,7 @@
 
 mod accounts;
 mod audit;
+mod audit_push;
 mod desktop;
 mod grants;
 mod mcp;
@@ -34,6 +35,7 @@ pub use accounts::StoredAccount;
 pub use audit::{
     AUDIT_RETENTION, AuditAutopilot, AuditEmail, AuditInfo, AuditMessage, AuditRecord, AuditRequest, DETAIL_UNAVAILABLE,
 };
+pub use audit_push::{AuditPush, SYNCED_PUSH_MAX, SYNCED_PUSH_TARGET, has_diffs};
 pub use grants::StoredGrant;
 pub use mcp::{McpTool, SECRET_SERVICE as MCP_SECRET_SERVICE, SIGN_IN_SERVICE as MCP_SIGN_IN_SERVICE, StoredMcpServer};
 pub use pending::{HANDLED_RETENTION_SECS, PENDING_TTL_SECS, PendingRow};

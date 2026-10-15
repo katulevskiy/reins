@@ -516,7 +516,8 @@ impl ReinsCore {
         .await
     }
 
-    /// An Activity entry's request as its approval showed it (read-only; `None` for older entries).
+    /// An Activity entry's request as its approval showed it (read-only; `None` for older entries). On a device that
+    /// did not show it, a push still comes back, from the copy synced with the entry (`git` set, little else).
     pub async fn activity_approval(&self, entry_id: i64) -> Result<Option<ApprovalView>, CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
@@ -524,6 +525,39 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.activity_approval(entry_id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// An Activity entry's push, the best copy this device has: commits, files with lines added and removed, and the
+    /// changes line by line where kept (`ActivityPush.diffs`, `diffs_not_kept`). `None` when the entry is no push.
+    pub async fn activity_push(&self, entry_id: i64) -> Result<Option<crate::types::ActivityPush>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.activity_push(entry_id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// One commit of an Activity entry's push (`short_sha` from its `GitCommitView`), with its files and their changes
+    /// line by line, loaded from GitHub with this device's own connection: for a push whose changes were not kept
+    /// here. Only commits of that push; nothing is asked, logged or shown to an AI.
+    pub async fn activity_commit_change(
+        &self,
+        entry_id: i64,
+        short_sha: String,
+    ) -> Result<crate::types::GitCommitView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.activity_commit_change(entry_id, &short_sha).await }).await;
             runtime.finish(&engine, result)
         })
         .await
