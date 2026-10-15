@@ -118,8 +118,20 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun activityPush(entryId: Long): ActivityPush? = entryPushes[entryId]
 
-    override suspend fun activityCommitChange(entryId: Long, shortSha: String): GitCommitView =
-        throw CoreException.Service("No GitHub connection in tests.")
+    /** Commits `activityCommitChange` loads, by entry and short id; anything else fails as with no connection. */
+    val commitChanges = java.util.concurrent.ConcurrentHashMap<Pair<Long, String>, GitCommitView>()
+
+    /** The calls `activityCommitChange` got: (entry, short id). */
+    val commitChangeCalls = CopyOnWriteArrayList<Pair<Long, String>>()
+
+    /** Holds `activityCommitChange` until completed (to see it loading); null: answers at once. */
+    @Volatile var commitChangeGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
+    override suspend fun activityCommitChange(entryId: Long, shortSha: String): GitCommitView {
+        commitChangeCalls += entryId to shortSha
+        commitChangeGate?.await()
+        return commitChanges[entryId to shortSha] ?: throw CoreException.Service("GitHub is not connected")
+    }
 
     /** Makes approving fail (after the sheet has already closed: the app answers in the background). */
     @Volatile var approveFailure: CoreException? = null

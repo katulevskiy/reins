@@ -18,6 +18,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material3.Icon
@@ -55,6 +59,7 @@ import dev.reins.core.GitCommitView
 import dev.reins.core.GitFileView
 import dev.reins.core.GitPushView
 import dev.reins.core.GitRefView
+import kotlinx.coroutines.launch
 
 private const val HIDDEN_HELP = "Invisible characters can make code read unlike what it does. They show as � here."
 
@@ -168,7 +173,8 @@ internal fun CommitsPage(view: ApprovalView, refIndex: Int) {
 private fun CommitRow(commit: GitCommitView, modifier: Modifier, onOpen: () -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
-    val opens = commit.filesChanged != null
+    // An entry's commit opens even without its files: its page can load them.
+    val opens = commit.filesChanged != null || LocalApprovalRecord.current?.commits != null
     Row(
         modifier
             .fillMaxWidth()
@@ -207,12 +213,15 @@ private fun CommitRow(commit: GitCommitView, modifier: Modifier, onOpen: () -> U
 @Composable
 internal fun CommitPage(view: ApprovalView, refIndex: Int, index: Int) {
     val c = LocalColors.current
-    val commit = view.git?.refs?.getOrNull(refIndex)?.commits?.getOrNull(index) ?: return
+    val kept = view.git?.refs?.getOrNull(refIndex)?.commits?.getOrNull(index) ?: return
+    // An entry's commit loaded from the git host replaces the copy kept here; the short id stays the one approved.
+    val loader = LocalApprovalRecord.current?.commits
+    val commit = loader?.shown(kept) ?: kept
     Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 6.dp, bottom = 14.dp)) {
         RText(untrusted(commit.subject).ifEmpty { "(no message)" }, RType.sans(21f, FontWeight.SemiBold, lineHeight = 26f), c.text, Modifier.testTag("commitSubject"))
         Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val meta = listOfNotNull(untrusted(authorName(commit.author)), if (commit.date != 0L) relativeTime(commit.date) else null).joinToString(" · ")
-            RText(meta, RType.sans(13f), c.tertiary, Modifier.weight(1f, fill = false), maxLines = 1)
+            RText(meta, RType.sans(13f), c.tertiary, Modifier.weight(1f, fill = false))
             if (commit.additions != null || commit.deletions != null) {
                 RText("·", RType.sans(13f), c.tertiary)
                 Counts(commit.additions, commit.deletions, 12.5f)
@@ -225,6 +234,10 @@ internal fun CommitPage(view: ApprovalView, refIndex: Int, index: Int) {
                 HelpDot("hiddenCommit", HIDDEN_HELP)
             }
         }
+    }
+    val state = loader?.states?.get(kept.shortSha)
+    if (loader != null && state !is CommitLoad.Loaded && changesMissing(commit)) {
+        LoadChanges(loader, kept.shortSha, dev.reins.android.design.serviceName(view.service), state)
     }
     val files = commit.files
     if (commit.filesChanged == null) {
@@ -368,6 +381,62 @@ private fun DiffBlock(lines: List<DiffLineView>, cut: Boolean, modifier: Modifie
         }
         if (cut) {
             RText("More changes not shown", RType.sans(12.5f), c.tertiary, Modifier.padding(horizontal = 14.dp, vertical = 8.dp).testTag("diffCut"))
+        }
+    }
+}
+
+/**
+ * An entry's commit whose changes are not on this phone: says so, and loads them from the git host ([service]) through
+ * the phone's own connection. A spinner while it loads; "Couldn't load" with Retry (the core's words behind the (?)).
+ */
+@Composable
+private fun LoadChanges(loader: EntryCommits, shortSha: String, service: String, state: CommitLoad?) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val load = {
+        feedback.play(Event.Open)
+        scope.launch { loader.load(shortSha) }
+        Unit
+    }
+    Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, bottom = 10.dp).testTag("loadChanges"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            when (state) {
+                CommitLoad.Loading -> dev.reins.android.design.Spinner(c.secondary, size = 16.dp)
+                is CommitLoad.Failed -> Icon(Icons.Rounded.ErrorOutline, null, Modifier.size(17.dp), tint = c.warning)
+                else -> Icon(Icons.Rounded.CloudOff, null, Modifier.size(17.dp), tint = c.tertiary)
+            }
+            Spacer(Modifier.width(10.dp))
+            RText(
+                when (state) {
+                    CommitLoad.Loading -> "Loading from $service"
+                    is CommitLoad.Failed -> "Couldn't load"
+                    else -> "Diff not kept on this phone"
+                },
+                RType.sans(14f),
+                if (state is CommitLoad.Failed) c.text else c.secondary,
+                Modifier.weight(1f, fill = false).testTag("loadChangesText"),
+            )
+            if (state is CommitLoad.Failed && state.reason.isNotBlank()) {
+                Spacer(Modifier.width(8.dp))
+                HelpDot("loadChanges", untrusted(state.reason), size = 26.dp)
+            }
+        }
+        if (state != CommitLoad.Loading) {
+            val retry = state is CommitLoad.Failed
+            Row(
+                Modifier
+                    .clip(CircleShape)
+                    .background(c.accent.copy(alpha = 0.12f))
+                    .pressable(shape = CircleShape, label = if (retry) "Retry" else "Load from $service", onClick = load)
+                    .padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)
+                    .testTag(if (retry) "retryChanges" else "loadChangesAction"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(if (retry) Icons.Rounded.Refresh else Icons.Rounded.CloudDownload, null, Modifier.size(17.dp), tint = c.accent)
+                Spacer(Modifier.width(7.dp))
+                RText(if (retry) "Retry" else "Load from $service", RType.sans(14f, FontWeight.SemiBold), c.accent, maxLines = 1)
+            }
         }
     }
 }
