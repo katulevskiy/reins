@@ -77,8 +77,9 @@ impl Engine {
         }
         let state = read_state(response).await?;
         self.ensure_active()?;
+        // Newer: to merge. Older (the server lost what it had): uploaded over only when it is this account's state.
         let plain = match &state.ciphertext {
-            Some(ciphertext) if state.revision > self.store.sync_revision()? => {
+            Some(ciphertext) if state.revision != self.store.sync_revision()? => {
                 if ciphertext.len() > MAX_CIPHERTEXT_BYTES {
                     return Err(CoreError::storage("account state is too large"));
                 }
