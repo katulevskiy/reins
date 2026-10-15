@@ -123,9 +123,10 @@ enum NotificationText {
     /// does (the core's sentence), its detail (the account) and Autopilot's suggestion, one per line. The detail is not
     /// the notification's subtitle: iOS sets that in bold above the body, which would put it before what is asked.
     static func body(_ item: PendingItem) -> String {
-        let mono = line(item).mono ?? ""
-        let subtitle = untrusted(item.subtitle)
-        return [headline(item), mono, untrusted(item.headline), subtitle == mono ? "" : subtitle, item.suggestion.map(untrusted) ?? ""]
+        let subtitle = untrusted(item.subtitle).trimmingCharacters(in: .whitespacesAndNewlines)
+        // The details under the sentence, unless they are the summary that comes after the core's sentence anyway.
+        let mono = line(item).mono.flatMap { $0 == subtitle ? nil : $0 } ?? ""
+        return [headline(item), mono, untrusted(item.headline), subtitle, item.suggestion.map(untrusted) ?? ""]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
     }
