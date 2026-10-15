@@ -220,15 +220,7 @@ impl Root {
             kit::hold_button("g-hold-live", Glyph::Trash, "", "Deleted", HoldLook::Done, 38.0, pal)
                 .on_click(Self::on_view(cx, |this, _| this.gallery_held = false))
         } else {
-            self.hold_button(
-                "g-hold-live",
-                Held::Gallery,
-                super::icons::Icon::Trash,
-                "Hold to delete",
-                "Deleted",
-                pal,
-                cx,
-            )
+            self.hold_button("g-hold-live", Held::Gallery, Glyph::Trash, "Hold to delete", "Deleted", pal, cx)
         };
         panel("Hold · irreversible", pal)
             .child(live)

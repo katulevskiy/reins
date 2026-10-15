@@ -9,7 +9,7 @@ use gpui::{
 };
 
 use super::field::Field;
-use super::icons::{Icon, Mark, icon};
+use super::icons::{Glyph, Mark, glyph};
 use super::parts::{
     Btn, btn, caption, card, check_circle, chip_plain, help, link, stage, this_computer, waiting_dot, warning,
     welcome_title,
@@ -67,7 +67,7 @@ fn key_line(fingerprint: &str, pal: Palette) -> Div {
         .bg(pal.paper_sunken())
         .border_1()
         .border_color(pal.rule())
-        .child(icon(Icon::ShieldCheck, 18.0, pal.success))
+        .child(glyph(Glyph::Shield, 18.0, pal.success))
         .child(
             div()
                 .flex()
@@ -208,7 +208,7 @@ impl Root {
                     pal,
                     cx,
                 ));
-                let get_app = chip_plain(Some(Icon::Download), "Get the app", pal)
+                let get_app = chip_plain(Some(Glyph::Download), "Get the app", pal)
                     .id("get-app")
                     .cursor_pointer()
                     .hover(|s| s.text_color(pal.ink()))
@@ -264,7 +264,7 @@ impl Root {
             Pairing::Failed(e) => card(pal)
                 .child(
                     centred()
-                        .child(super::parts::tile(Icon::CircleX, pal.danger, 40.0))
+                        .child(super::parts::tile(Glyph::CircleClose, pal.danger, 40.0))
                         .child(div().text_size(px(15.0)).font_weight(FontWeight::MEDIUM).child("Pairing failed"))
                         .child(caption(e.clone(), pal).text_color(pal.danger).text_center().max_w(px(460.0)))
                         .child(
@@ -288,7 +288,7 @@ impl Root {
             .flex_col()
             .items_center()
             .gap(px(16.0))
-            .child(stage(Mark::Icon(Icon::Laptop), Mark::Icon(Icon::Smartphone), None, pal.violet(), 56.0, pal))
+            .child(stage(Mark::Glyph(Glyph::Laptop), Mark::Glyph(Glyph::Phone), None, pal.violet(), 56.0, pal))
             .child(welcome_title(
                 &pair_words(),
                 Some(help(

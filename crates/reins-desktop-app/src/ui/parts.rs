@@ -10,7 +10,7 @@ use gpui::{
     StyledText, anchored, canvas, deferred, div, point, px,
 };
 
-use super::icons::{Icon, Mark, avatar, icon};
+use super::icons::{Glyph, Mark, avatar, glyph};
 use super::story::Words;
 use super::{Data, Root};
 use crate::model::Step;
@@ -38,11 +38,11 @@ pub fn check_circle(side: f32, color: Hsla) -> Div {
         .size(px(side))
         .rounded_full()
         .bg(color.opacity(0.14))
-        .child(icon(Icon::Check, side * 0.5, color))
+        .child(glyph(Glyph::Check, side * 0.5, color))
 }
 
 /// A kind tile: an icon in `color` over `color` at 13% (a kind, a rule, a setting).
-pub fn tile(i: Icon, color: Hsla, side: f32) -> Div {
+pub fn tile(i: Glyph, color: Hsla, side: f32) -> Div {
     div()
         .flex()
         .flex_none()
@@ -51,17 +51,17 @@ pub fn tile(i: Icon, color: Hsla, side: f32) -> Div {
         .size(px(side))
         .rounded(px(side * 0.31))
         .bg(color.opacity(0.13))
-        .child(icon(i, side * 0.53, color))
+        .child(glyph(i, side * 0.53, color))
 }
 
 /// A kind tile of `tone` (a neutral one is `paper-sunken` under `ink`).
-pub fn tone_tile(i: Icon, tone: Tone, pal: Palette, side: f32) -> Div {
-    super::kit::kind_tile(i.glyph(), tone, side, pal)
+pub fn tone_tile(i: Glyph, tone: Tone, pal: Palette, side: f32) -> Div {
+    super::kit::kind_tile(i, tone, side, pal)
 }
 
 /// What was a solid square of colour (a setting of "This computer"): Signal colours only what needs a decision, so
 /// a neutral tile, `ink` on `paper-sunken`.
-pub fn solid_tile(i: Icon, _tone: Tone, pal: Palette, side: f32) -> Div {
+pub fn solid_tile(i: Glyph, _tone: Tone, pal: Palette, side: f32) -> Div {
     tone_tile(i, Tone::Neutral, pal, side)
 }
 
@@ -69,7 +69,7 @@ pub fn solid_tile(i: Icon, _tone: Tone, pal: Palette, side: f32) -> Div {
 pub fn logo(m: Mark, pal: Palette) -> Div {
     match m {
         Mark::Brand(b) => avatar(b, 30.0, pal),
-        Mark::Icon(i) => tone_tile(i, Tone::Neutral, pal, 30.0),
+        Mark::Glyph(i) => tone_tile(i, Tone::Neutral, pal, 30.0),
     }
 }
 
@@ -137,8 +137,8 @@ pub fn help_with(
         .cursor_pointer()
         .when_else(
             open,
-            |m| m.bg(pal.violet().opacity(0.12)).child(icon(Icon::CircleHelp, 16.0, pal.violet())),
-            |m| m.hover(|s| s.bg(pal.paper_sunken())).child(icon(Icon::CircleHelp, 16.0, pal.ink_faint())),
+            |m| m.bg(pal.violet().opacity(0.12)).child(glyph(Glyph::Help, 16.0, pal.violet())),
+            |m| m.hover(|s| s.bg(pal.paper_sunken())).child(glyph(Glyph::Help, 16.0, pal.ink_faint())),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             // A (?) often sits in a row that is itself a toggle: the click is the (?)'s alone.
@@ -248,13 +248,13 @@ pub fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, look: Btn, 
 /// [`btn`] with an icon before its label.
 pub fn btn_icon(
     id: impl Into<ElementId>,
-    i: Icon,
+    i: Glyph,
     label: impl Into<SharedString>,
     look: Btn,
     pal: Palette,
 ) -> Stateful<Div> {
     let (b, fg) = btn_frame(id, look, pal);
-    b.child(icon(i, 14.0, fg)).child(label.into())
+    b.child(glyph(i, 14.0, fg)).child(label.into())
 }
 
 /// A smaller [`btn`], for tiles and chips' rows.
@@ -334,8 +334,8 @@ pub fn waiting_dot(id: impl Into<ElementId>, color: Hsla, side: f32) -> impl Int
 }
 
 /// A chip: an icon and a few words, tinted with `color`.
-pub fn chip(i: Option<Icon>, label: impl Into<SharedString>, color: Hsla) -> Div {
-    chip_frame(i.is_some(), color).when_some(i, |c, i| c.child(icon(i, 13.0, color))).child(label.into())
+pub fn chip(i: Option<Glyph>, label: impl Into<SharedString>, color: Hsla) -> Div {
+    chip_frame(i.is_some(), color).when_some(i, |c, i| c.child(glyph(i, 13.0, color))).child(label.into())
 }
 
 fn chip_frame(lead: bool, color: Hsla) -> Div {
@@ -360,7 +360,7 @@ fn chip_frame(lead: bool, color: Hsla) -> Div {
 }
 
 /// A grey chip ("Asks next time", "By your rules").
-pub fn chip_plain(i: Option<Icon>, label: impl Into<SharedString>, pal: Palette) -> Div {
+pub fn chip_plain(i: Option<Glyph>, label: impl Into<SharedString>, pal: Palette) -> Div {
     chip(i, label, pal.ink_2()).bg(pal.paper_sunken())
 }
 
@@ -417,7 +417,7 @@ pub fn dots(color: Hsla, pal: Palette) -> Div {
 }
 
 /// One of the stage's squares: a logo or an icon, and maybe a badge on its corner.
-pub fn stage_tile(m: Mark, side: f32, badge: Option<(Icon, Hsla)>, behind: Hsla, pal: Palette) -> Div {
+pub fn stage_tile(m: Mark, side: f32, badge: Option<(Glyph, Hsla)>, behind: Hsla, pal: Palette) -> Div {
     div()
         .relative()
         .flex()
@@ -430,7 +430,7 @@ pub fn stage_tile(m: Mark, side: f32, badge: Option<(Icon, Hsla)>, behind: Hsla,
         .child(match m {
             // A logo sits in its white circle, so dark marks stay visible on dark paper.
             Mark::Brand(b) => avatar(b, side * 0.62, pal).border_0().into_any_element(),
-            Mark::Icon(_) => m.render(side * 0.5, pal.ink()),
+            Mark::Glyph(_) => m.render(side * 0.5, pal.ink()),
         })
         .when_some(badge, |t, (i, color)| {
             t.child(
@@ -446,13 +446,13 @@ pub fn stage_tile(m: Mark, side: f32, badge: Option<(Icon, Hsla)>, behind: Hsla,
                     .border_2()
                     .border_color(behind)
                     .bg(pal.paper_raised().blend(color.opacity(0.18)))
-                    .child(icon(i, 12.0, color)),
+                    .child(glyph(i, 12.0, color)),
             )
         })
 }
 
 /// Who → what: two squares and three dots between them, the last dot in `color`.
-pub fn stage(from: Mark, to: Mark, badge: Option<(Icon, Hsla)>, color: Hsla, side: f32, pal: Palette) -> Div {
+pub fn stage(from: Mark, to: Mark, badge: Option<(Glyph, Hsla)>, color: Hsla, side: f32, pal: Palette) -> Div {
     div()
         .flex()
         .flex_none()
@@ -686,7 +686,7 @@ pub fn warning(text: impl Into<SharedString>, pal: Palette) -> Div {
         .p(px(12.0))
         .bg(pal.warning.opacity(0.08))
         .border_color(pal.warning.opacity(0.3))
-        .child(icon(Icon::TriangleAlert, 16.0, pal.warning))
+        .child(glyph(Glyph::Warning, 16.0, pal.warning))
         .child(caption(text, pal).text_color(pal.ink()).flex_1().min_w(px(0.0)))
 }
 
@@ -702,8 +702,8 @@ pub fn step_line(label: &str, step: &Step, pal: Palette, first: bool) -> Div {
             waiting_dot(SharedString::from(format!("step-{label}")), pal.violet(), 8.0).into_any_element(),
             String::new(),
         ),
-        Step::Done(d) => (icon(Icon::CircleCheck, 18.0, pal.success).into_any_element(), d.clone()),
-        Step::Failed(e) => (icon(Icon::CircleX, 18.0, pal.danger).into_any_element(), e.clone()),
+        Step::Done(d) => (glyph(Glyph::CircleCheck, 18.0, pal.success).into_any_element(), d.clone()),
+        Step::Failed(e) => (glyph(Glyph::CircleClose, 18.0, pal.danger).into_any_element(), e.clone()),
     };
     row(pal, first)
         .child(div().flex().flex_none().items_center().justify_center().size(px(30.0)).child(mark))
@@ -730,7 +730,7 @@ pub fn phone_qr(pal: Palette) -> Div {
                 .gap(px(8.0))
                 .flex_1()
                 .min_w(px(0.0))
-                .child(icon(Icon::Smartphone, 16.0, pal.ink_2()))
+                .child(glyph(Glyph::Phone, 16.0, pal.ink_2()))
                 .child(caption("Scan to open Activity on your phone", pal)),
         )
 }
@@ -749,7 +749,9 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
             }));
         }
         let mark: AnyElement = match stage.number() {
-            _ if behind || (here && stage == Stage::Done) => icon(Icon::Check, 12.0, pal.on_field()).into_any_element(),
+            _ if behind || (here && stage == Stage::Done) => {
+                glyph(Glyph::Check, 12.0, pal.on_field()).into_any_element()
+            }
             Some(n) => n.to_string().into_any_element(),
             None => div().into_any_element(),
         };

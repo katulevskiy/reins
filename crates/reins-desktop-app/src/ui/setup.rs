@@ -10,7 +10,7 @@ use gpui::{
 use reins_desktop::harness::after_add_note;
 
 use super::connections::harness_mark;
-use super::icons::{Icon, Mark, icon};
+use super::icons::{Glyph, Mark, glyph};
 use super::parts::{
     Btn, big, btn, caption, card, chip, help, link, logo, row, row_text, solid_tile, stage, step_line, toggle, warning,
     welcome_title,
@@ -97,7 +97,7 @@ impl Root {
                         .text_color(pal.ink_meta())
                         .on_click(Self::on_model(cx, move |m, cx| m.undo_tool(h, cx))),
                     )
-                    .child(chip(Some(Icon::Check), "Connected", pal.success))
+                    .child(chip(Some(Glyph::Check), "Connected", pal.success))
                     .into_any_element()
             } else if r.installed {
                 let b = btn(SharedString::from(format!("connect-{}", h.id())), "Connect", Btn::Accent, pal);
@@ -195,7 +195,7 @@ impl Root {
 
         let body = if steps.is_empty() {
             let option = |id: &'static str,
-                          ic: Icon,
+                          ic: Glyph,
                           tone: Tone,
                           title: &'static str,
                           about: &'static str,
@@ -217,7 +217,7 @@ impl Root {
             card(pal)
                 .child(option(
                     "turn-service",
-                    Icon::Server,
+                    Glyph::Server,
                     Tone::Neutral,
                     "Background service",
                     "Hooks, git and API keys go through it. It starts again when you log in.",
@@ -225,7 +225,7 @@ impl Root {
                 ))
                 .child(option(
                     "turn-git",
-                    Icon::GitBranch,
+                    Glyph::GitBranch,
                     Tone::Neutral,
                     "Send git through Reins",
                     "Pushes to GitHub wait for your OK on your phone; agents never see your token.",
@@ -233,7 +233,7 @@ impl Root {
                 ))
                 .child(option(
                     "turn-login",
-                    Icon::Power,
+                    Glyph::Power,
                     Tone::Neutral,
                     "Open at login",
                     "The shield in the menu bar or tray shows that Reins is on.",
@@ -281,8 +281,8 @@ impl Root {
             .flex_col()
             .gap(px(16.0))
             .child(div().flex().justify_center().child(stage(
-                Mark::Icon(Icon::Laptop),
-                Mark::Icon(Icon::ShieldCheck),
+                Mark::Glyph(Glyph::Laptop),
+                Mark::Glyph(Glyph::Shield),
                 None,
                 pal.violet(),
                 56.0,
@@ -320,20 +320,20 @@ impl Root {
         let test_ok = matches!(&d.test, crate::health::Test::Ended(a, _) if !matches!(a, reins_desktop::ask::Answer::Unanswered(_)));
 
         let mut summary = card(pal);
-        let mut lines: Vec<(Icon, bool, String)> = vec![(
-            Icon::Smartphone,
+        let mut lines: Vec<(Glyph, bool, String)> = vec![(
+            Glyph::Phone,
             true,
             phone.map_or_else(|| "Paired with your phone".to_owned(), |p| format!("Paired with {p}")),
         )];
         lines.push(match tools {
-            Some(names) => (Icon::Cable, true, format!("{names} connected")),
-            None => (Icon::Cable, false, "No AI tool connected".to_owned()),
+            Some(names) => (Glyph::Link, true, format!("{names} connected")),
+            None => (Glyph::Link, false, "No AI tool connected".to_owned()),
         });
         if git {
-            lines.push((Icon::GitBranch, true, "git through Reins".to_owned()));
+            lines.push((Glyph::GitBranch, true, "git through Reins".to_owned()));
         }
         if login {
-            lines.push((Icon::Power, true, "Opens at login".to_owned()));
+            lines.push((Glyph::Power, true, "Opens at login".to_owned()));
         }
         for (i, (ic, ok, text)) in lines.into_iter().enumerate() {
             summary = summary.child(
@@ -349,7 +349,7 @@ impl Root {
                     ))
                     .child(div().flex_1().min_w(px(0.0)).font_weight(FontWeight::MEDIUM).child(text))
                     .child(if ok {
-                        icon(Icon::CircleCheck, 16.0, pal.success).into_any_element()
+                        glyph(Glyph::CircleCheck, 16.0, pal.success).into_any_element()
                     } else {
                         div().into_any_element()
                     }),
@@ -361,7 +361,7 @@ impl Root {
             .flex_col()
             .items_center()
             .gap(px(16.0))
-            .child(stage(Mark::Icon(Icon::Laptop), Mark::Icon(Icon::Smartphone), None, pal.success, 56.0, pal))
+            .child(stage(Mark::Glyph(Glyph::Laptop), Mark::Glyph(Glyph::Phone), None, pal.success, 56.0, pal))
             .child(welcome_title(
                 &words(&[("Reins is ", false), ("on", true)]),
                 Some(help("done", "Your phone now approves what your AI agents do on this computer.", d, pal, cx)),
@@ -383,7 +383,7 @@ impl Root {
                         .px(px(4.0))
                         .text_size(px(12.5))
                         .text_color(pal.warning)
-                        .child(icon(Icon::TriangleAlert, 14.0, pal.warning))
+                        .child(glyph(Glyph::Warning, 14.0, pal.warning))
                         .child("Restart the AI tools you connected to finish"),
                 )
             })

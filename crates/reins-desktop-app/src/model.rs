@@ -698,8 +698,12 @@ impl Model {
         let now = reins_desktop::now_unix();
         let session = self.snapshot.as_ref().and_then(|s| work::running(s.work_session.as_ref(), now));
         let phone = self.saved.phone.clone().unwrap_or_else(|| "Your phone".to_owned());
-        let (status, detail) =
-            crate::tray::status_lines(look, work::tray_line(look, status, session, now), &phone, self.pause().short(now));
+        let (status, detail) = crate::tray::status_lines(
+            look,
+            work::tray_line(look, status, session, now),
+            &phone,
+            self.pause().short(now),
+        );
         let shown = Shown {
             look,
             status,
