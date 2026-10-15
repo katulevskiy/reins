@@ -550,12 +550,24 @@ S.browser_fallback_url=https%3A%2F%2Fapp.reins2fa.com%2Fget;end\""
             ("reins/oauth/authorize.html", email_form_page("Claude", "claude.ai", "s", None, None)),
             (
                 "reins/oauth/authorize-key.html",
-                email_form_page("Reins desktop", "127.0.0.1", "s", Some("That email has no account"), Some("7712 0458")),
+                email_form_page(
+                    "Reins desktop",
+                    "127.0.0.1",
+                    "s",
+                    Some("That email has no account"),
+                    Some("7712 0458"),
+                ),
             ),
             ("reins/oauth/authorize/wait.html", wait_page("Claude", 42, None)),
             ("pair.html", pair_page(Some("WDJB-MJHT"), Platform::Other)),
             ("pair-none.html", pair_page(None, Platform::Other)),
-            ("identity/connect/authorize.html", error_page("No browser sign-in on this server", "This server signs in with an email and a master password. Close this page and, in the app, use Sign in or Create account.")),
+            (
+                "identity/connect/authorize.html",
+                error_page(
+                    "No browser sign-in on this server",
+                    "This server signs in with an email and a master password. Close this page and, in the app, use Sign in or Create account.",
+                ),
+            ),
             ("reins/signed-out.html", signed_out().0),
         ];
         for (path, html) in pages {
