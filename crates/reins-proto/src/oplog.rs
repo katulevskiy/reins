@@ -35,14 +35,19 @@ use crate::{
     validate::invalid,
 };
 
-/// Largest op body (decoded bytes).
+/// Largest op body (decoded bytes), for the primary's ops; see [`OpClass::max_body_bytes`].
 pub const MAX_OP_BODY_BYTES: usize = 64 * 1024;
+/// Largest body of a proposal (a connection, a credential or a vault item, sealed).
+pub const MAX_PROPOSAL_BODY_BYTES: usize = 16 * 1024;
+/// Largest body of a restrictive op (a typed [`Restriction`], sealed).
+pub const MAX_RESTRICTIVE_BODY_BYTES: usize = 1024;
 /// Ops in one `POST /ops`.
 pub const MAX_OPS_PER_BATCH: usize = 100;
 /// Ops in one `GET /sync` answer; `more` says when there are others after them.
 pub const MAX_SYNC_OPS: usize = 500;
-/// Largest checkpoint body (decoded bytes).
-pub const MAX_CHECKPOINT_BYTES: usize = 16 * 1024 * 1024;
+/// Largest checkpoint body (decoded bytes). Base64 and JSON make it about 11 MiB, under the 16 MiB `max_allowed_packet`
+/// MariaDB and older MySQL servers default to.
+pub const MAX_CHECKPOINT_BYTES: usize = 8 * 1024 * 1024;
 /// How often the primary posts a heartbeat while it polls (seconds); the server takes at most one per
 /// [`MIN_HEARTBEAT_SECS`].
 pub const HEARTBEAT_EVERY_SECS: i64 = 30;
@@ -68,6 +73,16 @@ pub enum OpClass {
 }
 
 impl OpClass {
+    /// The largest body of this class (decoded bytes): only the primary writes large records.
+    #[must_use]
+    pub const fn max_body_bytes(self) -> usize {
+        match self {
+            Self::Primary => MAX_OP_BODY_BYTES,
+            Self::Proposal => MAX_PROPOSAL_BODY_BYTES,
+            Self::Restrictive => MAX_RESTRICTIVE_BODY_BYTES,
+        }
+    }
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -137,7 +152,7 @@ impl Op {
         if self.counter == 0 {
             return Err(invalid("counter", "starts at 1"));
         }
-        body_hash("body", &self.body, MAX_OP_BODY_BYTES)?;
+        body_hash("body", &self.body, self.class.max_body_bytes())?;
         parse_sig(&self.sig).ok_or_else(|| invalid("sig", "must be 64 bytes, base64url without padding"))?;
         Ok(())
     }
@@ -775,6 +790,21 @@ mod tests {
         let mut resigned = base;
         resigned.sig = encode_sig(&fake_sign(&[1; 32], &bytes));
         assert_eq!(resigned.signing_bytes().unwrap(), bytes, "the signature is not signed");
+    }
+
+    #[test]
+    fn only_the_primary_writes_large_bodies() {
+        for (class, max) in [
+            (OpClass::Primary, MAX_OP_BODY_BYTES),
+            (OpClass::Proposal, MAX_PROPOSAL_BODY_BYTES),
+            (OpClass::Restrictive, MAX_RESTRICTIVE_BODY_BYTES),
+        ] {
+            let mut o = op("v", 1, class, 1);
+            o.body = encode_payload(&vec![0; max]);
+            o.validate().unwrap();
+            o.body = encode_payload(&vec![0; max + 1]);
+            assert!(o.validate().is_err(), "{class:?}");
+        }
     }
 
     #[test]

@@ -50,7 +50,13 @@ pub struct EnrollChallenge {
     /// The roster's owner key at `epoch`: what the joiner pins.
     pub owner_pub: String,
     pub epoch: u64,
+    /// Unix seconds after which the reveal (and a no-tap proof over this challenge) is refused; at most
+    /// [`MAX_CHALLENGE_SECS`] ahead.
+    pub expires_at: i64,
 }
+
+/// The longest a challenge may stay open (seconds).
+pub const MAX_CHALLENGE_SECS: i64 = 300;
 
 /// Step 3, the joiner's nonce (base64url, 32 bytes), and its proof when it enrolls without a tap.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,13 +79,21 @@ pub fn encode_nonce(nonce: &[u8; NONCE_BYTES]) -> String {
 }
 
 impl EnrollChallenge {
-    pub fn validate(&self) -> Result<(), ValidationError> {
+    /// The shape, the keys (strict Ed25519) and an expiry within [`MAX_CHALLENGE_SECS`] of `now`.
+    pub fn validate(&self, now: i64) -> Result<(), ValidationError> {
         crate::check_version(self.v)?;
         parse_nonce(&self.nonce).ok_or_else(|| invalid("nonce", "must be 32 bytes, base64url"))?;
-        decode_key(&self.primary_sign_pub).ok_or_else(|| invalid("primary_sign_pub", "must be 32 bytes"))?;
-        decode_key(&self.owner_pub).ok_or_else(|| invalid("owner_pub", "must be 32 bytes"))?;
+        for (field, key) in [("primary_sign_pub", &self.primary_sign_pub), ("owner_pub", &self.owner_pub)] {
+            let raw = decode_key(key).ok_or_else(|| invalid(field, "must be 32 bytes"))?;
+            if !crate::canon::strict_ed25519_key(&raw) {
+                return Err(invalid(field, "is a small-order or non-canonical Ed25519 key"));
+            }
+        }
         if self.epoch == 0 {
             return Err(invalid("epoch", "starts at 1"));
+        }
+        if self.expires_at <= now || self.expires_at > now.saturating_add(MAX_CHALLENGE_SECS) {
+            return Err(invalid("expires_at", format!("must be within {MAX_CHALLENGE_SECS} s from now")));
         }
         Ok(())
     }
@@ -139,14 +153,16 @@ pub struct Transcript<'a> {
     pub primary_sign_pub: &'a str,
     pub owner_pub: &'a str,
     pub epoch: u64,
+    /// The challenge's `expires_at`.
+    pub expires_at: i64,
     pub joiner_nonce: [u8; 32],
     pub primary_nonce: [u8; 32],
 }
 
 impl Transcript<'_> {
     /// The transcript's bytes (no context; each use adds its own): `account`, `join_id`, `device_id` (strings),
-    /// `box_pub`, `sign_pub`, `primary_sign_pub`, `owner_pub` (32 bytes each), `epoch` (u64), the joiner's then the
-    /// primary's nonce (32 bytes each).
+    /// `box_pub`, `sign_pub`, `primary_sign_pub`, `owner_pub` (32 bytes each), `epoch` (u64), `expires_at` (i64), the
+    /// joiner's then the primary's nonce (32 bytes each).
     fn write(&self, c: &mut Canon) -> Result<(), ValidationError> {
         let key = |field: &'static str, v: &str| decode_key(v).ok_or_else(|| invalid(field, "must be 32 bytes"));
         c.str(self.account)
@@ -157,6 +173,7 @@ impl Transcript<'_> {
             .key(&key("primary_sign_pub", self.primary_sign_pub)?)
             .key(&key("owner_pub", self.owner_pub)?)
             .u64(self.epoch)
+            .i64(self.expires_at)
             .key(&self.joiner_nonce)
             .key(&self.primary_nonce);
         Ok(())
@@ -212,9 +229,13 @@ pub fn make_proof(key: &[u8; 32], transcript: &Transcript<'_>) -> Result<String,
     Ok(encode_payload(&hmac_sha256(key, &transcript.proof_message()?)))
 }
 
-/// Whether `proof` is [`make_proof`]'s for `transcript`: exactly 32 bytes, compared in constant time.
+/// Whether `proof` is [`make_proof`]'s for `transcript`, checked at `now`: before the challenge expired, exactly 32
+/// bytes, compared in constant time.
 #[must_use]
-pub fn check_proof(key: &[u8; 32], transcript: &Transcript<'_>, proof: &str) -> bool {
+pub fn check_proof(key: &[u8; 32], transcript: &Transcript<'_>, proof: &str, now: i64) -> bool {
+    if now >= transcript.expires_at {
+        return false;
+    }
     let (Some(given), Ok(msg)) = (decode_payload(proof), transcript.proof_message()) else {
         return false;
     };
@@ -246,6 +267,7 @@ mod tests {
             primary_sign_pub: &keys[2],
             owner_pub: &keys[3],
             epoch: 2,
+            expires_at: 1_000,
             joiner_nonce: [nj; 32],
             primary_nonce: [np; 32],
         }
@@ -298,6 +320,9 @@ mod tests {
         let mut t = transcript(&k, 1, 2);
         t.epoch = 3;
         changed.push(t.code().unwrap());
+        let mut t = transcript(&k, 1, 2);
+        t.expires_at += 1;
+        changed.push(t.code().unwrap());
         // Six digits collide by chance one time in a million; these inputs are fixed, so the test is deterministic.
         assert!(changed.iter().all(|c| *c != base), "{base} {changed:?}");
     }
@@ -310,19 +335,20 @@ mod tests {
         let t = transcript(&k, 1, 2);
         let proof = make_proof(&key, &t).unwrap();
         assert_eq!(decode_payload(&proof).unwrap().len(), 32);
-        assert!(check_proof(&key, &t, &proof));
+        assert!(check_proof(&key, &t, &proof, 900));
+        assert!(!check_proof(&key, &t, &proof, 1_000), "not once the challenge expired");
         // Replayed to the next join (a new primary nonce, a new join id), or bound to other keys: refused.
-        assert!(!check_proof(&key, &transcript(&k, 1, 3), &proof));
+        assert!(!check_proof(&key, &transcript(&k, 1, 3), &proof, 900));
         let mut t2 = transcript(&k, 1, 2);
         t2.join_id = "j2";
-        assert!(!check_proof(&key, &t2, &proof));
+        assert!(!check_proof(&key, &t2, &proof, 900));
         let mut swapped = k.clone();
         swapped[1] = encode_key(&[9; 32]);
-        assert!(!check_proof(&key, &transcript(&swapped, 1, 2), &proof));
-        assert!(!check_proof(&proof_key(b"another key", "acct"), &t, &proof));
+        assert!(!check_proof(&key, &transcript(&swapped, 1, 2), &proof, 900));
+        assert!(!check_proof(&proof_key(b"another key", "acct"), &t, &proof, 900));
         // A truncated proof never verifies, even when its bytes are the right prefix.
         let short = encode_payload(&decode_payload(&proof).unwrap()[..16]);
-        assert!(!check_proof(&key, &t, &short));
+        assert!(!check_proof(&key, &t, &short, 900));
         let reveal = EnrollReveal {
             v: 1,
             nonce: encode_nonce(&[1; 32]),
@@ -340,13 +366,21 @@ mod tests {
             primary_sign_pub: k[2].clone(),
             owner_pub: k[3].clone(),
             epoch: 1,
+            expires_at: 200,
         };
-        ch.validate().unwrap();
+        ch.validate(100).unwrap();
+        assert!(ch.validate(200).is_err(), "expired");
+        assert!(ch.validate(200 - MAX_CHALLENGE_SECS - 1).is_err(), "too far ahead");
+        let weak = EnrollChallenge {
+            owner_pub: encode_key(&[0; 32]),
+            ..ch.clone()
+        };
+        assert!(weak.validate(100).is_err(), "a small-order owner key");
         let short = EnrollChallenge {
             nonce: encode_payload(&[1; 16]),
             ..ch
         };
-        assert!(short.validate().is_err(), "nonces are 32 bytes");
+        assert!(short.validate(100).is_err(), "nonces are 32 bytes");
         assert!(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"abc", b"ab"));
     }
 }
