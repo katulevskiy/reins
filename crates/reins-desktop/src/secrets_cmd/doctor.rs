@@ -2,7 +2,7 @@
 //! an environment and a variable that are in the vault (names from the phone, never a value); no plaintext `.env` file
 //! left in the project; the guard keeps agents' tools off `.env` files and has hooks in an AI tool; the daemon runs.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::manage::{Backend, Here, find_env};
 use crate::guard::GuardConfig;
@@ -32,9 +32,20 @@ pub fn plaintext_name(name: &str) -> bool {
         && !matches!(name, ".env.reins" | ".env.example" | ".env.sample" | ".env.template" | ".env.dist")
 }
 
-/// The plaintext dotenv files under `root`.
+/// `path` relative to `root`, its parts joined with `/` on every platform (as the report shows and compares it).
 #[must_use]
-pub fn plaintext(root: &Path) -> Vec<PathBuf> {
+pub fn relative(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The plaintext dotenv files under `root`, relative to it with `/` between parts.
+#[must_use]
+pub fn plaintext(root: &Path) -> Vec<String> {
     let mut found = Vec::new();
     let mut seen = 0;
     let mut stack = vec![(root.to_path_buf(), 0)];
@@ -56,7 +67,7 @@ pub fn plaintext(root: &Path) -> Vec<PathBuf> {
                     stack.push((entry.path(), depth + 1));
                 }
             } else if kind.is_file() && plaintext_name(&name) {
-                found.push(entry.path());
+                found.push(relative(root, &entry.path()));
             }
         }
     }
@@ -154,8 +165,7 @@ pub async fn run(here: &Here, backend: Option<&dyn Backend>, facts: &Facts) -> V
     if left.is_empty() {
         ok(true, "no plaintext .env files".to_owned());
     }
-    for p in &left {
-        let shown = p.strip_prefix(&root).unwrap_or(p).display().to_string();
+    for shown in &left {
         ok(false, format!("{shown}: plaintext values (reins secrets push {shown}, then delete it)"));
     }
     let guarded = facts.guard.check_file(".env").is_some() && facts.guard.check_file(".env.local").is_some();
@@ -196,9 +206,8 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, "A=1").unwrap();
         }
-        let found: Vec<String> =
-            plaintext(d).iter().map(|p| p.strip_prefix(d).unwrap().to_string_lossy().into_owned()).collect();
-        assert_eq!(found, [".env", ".env.local", "api/.env.production"]);
+        assert_eq!(plaintext(d), [".env", ".env.local", "api/.env.production"]);
+        assert_eq!(relative(Path::new("/p"), &Path::new("/p").join("a").join("b").join(".env")), "a/b/.env");
     }
 
     #[tokio::test]
