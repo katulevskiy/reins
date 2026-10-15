@@ -116,7 +116,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
     private fun await(tag: String) {
         rule.waitUntil(10_000) {
             settle()
-            rule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+            // A tag inside a merged row (a row's detail line) is found in the unmerged tree.
+            rule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() ||
+                rule.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -131,9 +133,10 @@ abstract class ScreenshotsBase(private val suffix: String) {
     }
 
     /** [dialogs]: also draws dialog windows (each over its dim), which live outside the activity's window. */
-    private fun shoot(name: String, dialogs: Boolean = false) {
+    private fun shoot(name: String, dialogs: Boolean = false, idle: Boolean = true) {
         val dir = System.getProperty("reins.screenshots")
-        rule.waitForIdle()
+        // A frame in the middle of an animation is taken as it is (the clock stopped), without waiting for idle.
+        if (idle) rule.waitForIdle()
         repeat(3) { settle() }
         var bitmap: android.graphics.Bitmap? = null
         scenario!!.onActivity { activity ->
@@ -146,11 +149,17 @@ abstract class ScreenshotsBase(private val suffix: String) {
                 @Suppress("UNCHECKED_CAST")
                 val roots = global.javaClass.getDeclaredField("mViews").apply { isAccessible = true }.get(global) as List<android.view.View>
                 roots.filter { it !== view && it.isShown && it.width > 0 }.forEach { root ->
-                    val dim = (root.layoutParams as? android.view.WindowManager.LayoutParams)?.dimAmount ?: 0f
-                    canvas.drawColor(android.graphics.Color.argb((dim * 255).toInt(), 0, 0, 0))
-                    // Dialogs are centred on screen (Robolectric does not lay their windows out).
+                    val lp = root.layoutParams as? android.view.WindowManager.LayoutParams
+                    val dims = lp != null && (lp.flags and android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0
                     canvas.save()
-                    canvas.translate((view.width - root.width) / 2f, (view.height - root.height) / 2f)
+                    if (dims || lp == null) {
+                        canvas.drawColor(android.graphics.Color.argb(((lp?.dimAmount ?: 0f) * 255).toInt(), 0, 0, 0))
+                        // Dialogs are centred on screen (Robolectric does not lay their windows out).
+                        canvas.translate((view.width - root.width) / 2f, (view.height - root.height) / 2f)
+                    } else {
+                        // A popup (a menu that grows from its trigger) sits where its position provider put it.
+                        canvas.translate(lp.x.toFloat(), lp.y.toFloat())
+                    }
                     root.draw(canvas)
                     canvas.restore()
                 }
@@ -222,6 +231,29 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun aprGit() {
         designApproval(pushView(), TestData.suggestion("req20", reason = "Like 4 pushes to this repo you approved"))
         shoot("android-approval-git")
+    }
+
+    /** A force push with hidden characters to the default branch, judged risky and held by Overnight: every line. */
+    @Test
+    fun aprWarnings() {
+        val ref = TestData.gitRef("main", force = true, commitCount = 2u, commits = listOf(TestData.designCommit().copy(hiddenChars = true)), filesChanged = 1u)
+        val view = pushView().copy(git = pushView().git!!.copy(refs = listOf(ref), defaultBranch = "main"), noStanding = true)
+        designApproval(
+            view,
+            TestData.suggestion("req20", mode = dev.reins.core.AutopilotMode.OVERNIGHT, risk = TestData.risk(dev.reins.core.RiskLevel.CATASTROPHIC, "rewrites main", held = true)),
+        )
+        shoot("sg-apr-warnings")
+    }
+
+    /** The Reins desktop app pairing: Reins' own ask, the name quoted on its row, the key's digits apart. */
+    @Test
+    fun pairingComputer() {
+        history()
+        core.pending = listOf(TestData.pairingItem("p1"))
+        core.pairing = PairingView("p1", "Reins desktop app on laptop", "laptop", byteArrayOf(7, 42, 88), 1_700_000_200, "4821 9930")
+        launch(link("pairing", "p1"))
+        await("keyFingerprint")
+        shoot("sg-pair-computer")
     }
 
     @Test
@@ -348,7 +380,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun grants() {
         history()
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         await("grant:g1")
         shoot("9-grants")
         tap("expiredHeader")
@@ -361,7 +393,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun grantDetail() {
         history()
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:g1")
         await("revoke")
         shoot("10-grant-detail")
@@ -383,7 +415,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun integrations() {
         history()
         launch()
-        tap("integrations")
+        tap("tabConnections")
         await("service:gmail")
         shoot("15-integrations")
         tap("service:gmail")
@@ -395,7 +427,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun newGrant() {
         history()
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         await("createGrant")
         shoot("11-new-grant")
@@ -423,7 +455,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("12-settings")
         rule.onNodeWithTag("pageEnd").performScrollTo()
         shoot("12b-settings-scrolled")
-        rule.onNodeWithTag("accountCard").performScrollTo()
+        // Connecting and a connection's page live on Connections now.
+        tap("tabConnections")
         tap("connect")
         await("sheetScanQr")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
@@ -465,7 +498,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         )
         launch()
         await("entry:6")
-        tap("integrations")
+        tap("tabConnections")
         await("service:vault")
         shoot("15-integrations")
         tap("service:telegram")
@@ -476,8 +509,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun telegramSignIn() {
         launch()
-        await("integrations")
-        tap("integrations")
+        await("tabConnections")
+        tap("tabConnections")
         tap("service:telegram")
         await("phone")
         shoot("17-telegram-signin")
@@ -632,8 +665,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun githubTokenPage() {
         launch()
-        await("integrations")
-        tap("integrations")
+        await("tabConnections")
+        tap("tabConnections")
         tap("service:github")
         await("openGithubClassic")
         shoot("26-github-token")
@@ -657,9 +690,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         history()
         mcpServers()
         launch()
-        tap("integrations")
+        tap("tabConnections")
         await("mcp:linear")
-        rule.onNodeWithTag("addMcp").performScrollTo()
         shoot("40-mcp-list")
         tap("mcp:linear")
         await("tool:export_project")
@@ -672,7 +704,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun mcpAdd() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
+        tap("connect")
         tap("addMcp")
         await("mcpUrl")
         shoot("42-mcp-add")
@@ -704,7 +737,6 @@ abstract class ScreenshotsBase(private val suffix: String) {
         mcpServers()
         openView(TestData.mcpCallView(destructive = true))
         await("mcpDestructive")
-        rule.onNodeWithTag("mcpDestructive").performScrollTo()
         shoot("44-mcp-call-destructive")
     }
 
@@ -840,7 +872,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.grants = listOf(TestData.secretsGrant(), TestData.grant("g1"))
         core.secretsRevokeAnswer = dev.reins.core.SecretsRevoked(1u, 1u, listOf("work-laptop"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:s1")
         await("revokeEverywhere")
         rule.onNodeWithTag("revokeEverywhere").performScrollTo()
@@ -859,8 +891,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun gitlabSignIn() {
         launch()
-        await("integrations")
-        tap("integrations")
+        await("tabConnections")
+        tap("tabConnections")
         tap("service:gitlab")
         await("openTokenPage")
         shoot("51-gitlab-token")
@@ -869,8 +901,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun bitbucketSignIn() {
         launch()
-        await("integrations")
-        tap("integrations")
+        await("tabConnections")
+        tap("tabConnections")
         tap("service:bitbucket")
         await("secret")
         shoot("52-bitbucket-token")
@@ -941,7 +973,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     private fun openAutopilot() {
         launch()
-        tap("tabAutopilot")
+        tap("tabTrust")
         await("mode:MANUAL")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
     }
@@ -999,7 +1031,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         // A 15-minute bypass with 8:12 to go.
         core.apGlobal = FakeCore.ApRow(bypassUntil = now + 8 * 60 + 12, bypassSince = now - 6 * 60 - 48)
         launch()
-        tap("tabAutopilot")
+        tap("tabTrust")
         await("bypassClock")
         frames()
         shoot("64-autopilot-bypass")
@@ -1014,7 +1046,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         top()
         await("modePill")
         shoot("64c-home-bypass-until-off-pill")
-        tap("tabAutopilot")
+        tap("tabTrust")
         await("bypassUntilOff")
         frames()
         shoot("64b-autopilot-bypass-until-off")
@@ -1030,14 +1062,12 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("modePill")
         shoot("66-home-bypass-pill")
         core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.LOCKDOWN)
-        tap("tabSettings")
-        tap("openAutopilot")
+        tap("tabTrust")
         await("endLockdown")
         rule.onNodeWithTag("endLockdown").performClick()
         await("mode:MANUAL")
         rule.onNodeWithTag("mode:AUTO").performClick()
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
-        pressBack()
         pressBack()
         top()
         await("modePill")
@@ -1045,47 +1075,21 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("66b-home-auto-pill")
     }
 
-    /** The compact switchers the round Autopilot button opens: the menu, then the risk slider. */
+    /** The mode chip's menu, grown from the chip (it replaces the old floating switcher), and Bypass from it. */
     @Test
     fun autopilotQuick() {
         automaticHistory()
         core.model = installed
-        val styles = dev.reins.android.ui.autopilot.QuickStyles
-        styles.set(context, dev.reins.android.ui.autopilot.QuickStyle.Menu)
-        try {
-            launch()
-            top()
-            tap("modePill")
-            await("autopilotQuick")
-            repeat(10) { rule.mainClock.advanceTimeBy(50) }
-            shoot("67-quick-menu")
-            tap("quick:BYPASS")
-            await("bypassSheet")
-            repeat(20) { rule.mainClock.advanceTimeBy(50) }
-            shoot("67b-quick-menu-bypass")
-            tap("cancelBypass")
-            repeat(20) { rule.mainClock.advanceTimeBy(50) }
-            styles.set(context, dev.reins.android.ui.autopilot.QuickStyle.Slider)
-            tap("modePill")
-            await("riskSlider")
-            repeat(10) { rule.mainClock.advanceTimeBy(50) }
-            shoot("68-quick-slider")
-            tap("detent:BYPASS")
-            await("bypassSheet")
-            repeat(20) { rule.mainClock.advanceTimeBy(50) }
-            shoot("68b-quick-slider-bypass")
-            tap("cancelBypass")
-            repeat(20) { rule.mainClock.advanceTimeBy(50) }
-            tap("modePill")
-            tap("detent:LOCKDOWN")
-            repeat(20) { rule.mainClock.advanceTimeBy(50) }
-            tap("modePill")
-            await("riskSlider")
-            repeat(20) { rule.mainClock.advanceTimeBy(50) }
-            shoot("68c-quick-slider-lockdown")
-        } finally {
-            styles.set(context, dev.reins.android.ui.autopilot.QuickStyle.DEFAULT)
-        }
+        launch()
+        top()
+        tap("modePill")
+        await("autopilotQuick")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("67-quick-menu", dialogs = true)
+        tap("quick:BYPASS")
+        await("bypassSheet")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("67b-quick-menu-bypass")
     }
 
     // ---- polish round 1 ----------------------------------------------------------------------------------------------
@@ -1210,7 +1214,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun polishNewGrant() {
         core.connections = listOf(TestData.connection("c1", "Claude Code"), TestData.connection("c2", "ChatGPT"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         await("conn:c1")
         tap("conn:c1")
@@ -1224,7 +1228,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.model = installed
         core.apGlobal = FakeCore.ApRow(bypassUntil = now + 8 * 60 + 12, bypassSince = now - 60 * 7)
         launch()
-        tap("tabAutopilot")
+        tap("tabTrust")
         await("modeHero")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("polish-autopilot-bypass")
@@ -1238,7 +1242,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun polishBadge() {
         core.activity = (1L..120L).map { TestData.entry(it, at = now - 120 + it) }
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         // Opening the app on Activity counted the newest as seen; from Grants, 120 are new.
         (context.applicationContext as ReinsApp).container.state.setSeenActivityId(0)
@@ -1407,10 +1411,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.model = installed
         core.apConnections["c1"] = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO, profileId = "work")
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         await("connectionMode")
-        rule.onNodeWithTag("connProfile:work").performScrollTo()
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("78-connection-autopilot")
     }
@@ -1531,21 +1534,12 @@ abstract class ScreenshotsBase(private val suffix: String) {
         if (rule.onAllNodes(hasTestTag("notificationsLater")).fetchSemanticsNodes().isNotEmpty()) tap("notificationsLater") else tap("setupNext")
         await("setupIntegrations")
         shoot("14b2-setup-integrations")
-        tap("setupNext")
-        await("setupRules")
-        shoot("14b25-setup-rules")
-        tap("setupNext")
-        await("setupAutopilot")
-        shoot("14b3-setup-autopilot")
-        tap("setupNext")
-        await("setupComputer")
-        shoot("14c-setup-computer")
         tap("typeCode")
         await("pairCode")
         shoot("14d-setup-type-code")
         tap("setupNext")
-        await("setupAi")
-        shoot("14e-setup-ai")
+        await("setupRules")
+        shoot("14b25-setup-rules")
         tap("setupNext")
         await("setupFinished")
         shoot("14f-setup-done")
@@ -1554,8 +1548,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun connectComputer() {
         launch()
-        tap("tabSettings")
-        tap("connectComputer")
+        tap("tabConnections")
+        tap("connect")
+        tap("sheetTypeCode")
         await("scanQr")
         shoot("14f-connect-computer")
     }
@@ -1606,7 +1601,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.resetVault()
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", now))
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:vault")
         await("openVault")
     }
@@ -1628,17 +1623,26 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     @Test
     fun vaultAdd() {
-        openVault()
-        tap("openVault")
-        tap("vaultAdd")
-        await("newItem:ApiKey")
-        shoot("97-vault-add")
-        tap("newItem:SshKey")
-        await("vaultName")
-        rule.onNodeWithTag("vaultName").performTextInput("Laptop")
-        tap("vaultGenerate")
-        await("sshMade")
-        shoot("98-vault-ssh-made")
+        // Making a key asks for the screen lock first: here it passes.
+        val biometrics = dev.reins.android.platform.AuthenticatorProvider.factory
+        dev.reins.android.platform.AuthenticatorProvider.factory = {
+            dev.reins.android.platform.Authenticator { _, _ -> dev.reins.android.platform.AuthResult.Success }
+        }
+        try {
+            openVault()
+            tap("openVault")
+            tap("vaultAdd")
+            await("newItem:ApiKey")
+            shoot("97-vault-add")
+            tap("newItem:SshKey")
+            await("vaultName")
+            rule.onNodeWithTag("vaultName").performTextInput("Laptop")
+            tap("vaultGenerate")
+            await("sshMade")
+            shoot("98-vault-ssh-made")
+        } finally {
+            dev.reins.android.platform.AuthenticatorProvider.factory = biometrics
+        }
     }
 
     @Test
@@ -1646,7 +1650,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         history()
         core.payments = TestData.paymentsOverview(enabled = false)
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:payments")
         await("paymentsEnable")
         shoot("100-payments-off")
@@ -1860,7 +1864,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun agGrantsList() {
         agGrants()
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         await("grant:g3")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("android-grants")
@@ -1878,7 +1882,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun agGrantDetail() {
         agGrants()
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:g2")
         await("extend")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
@@ -1893,7 +1897,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun agNewGrant() {
         agGrants()
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         await("createGrant")
         click("conn:c1")
@@ -1902,6 +1906,338 @@ abstract class ScreenshotsBase(private val suffix: String) {
         rule.waitForIdle()
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("android-grants-new")
+    }
+
+    // ---- Reins Signal, phase 2: the shell, Activity, Trust, Connections, Settings (sg-*) ----------------------------
+
+    /** The design's push, with two earlier pushes to feature branches of octo/app approved by you. */
+    private fun sgPushes() {
+        val push = TestData.designPushView().copy(requestId = "req1")
+        core.views["req1"] = push
+        val earlier = (20L..21L).map { id ->
+            TestData.entry(id, "write", "sent", 2u, at = now - 86_400 * 2 - id * 60).copy(connectionId = "c1", connectionLabel = "Claude Code", service = "github", account = "octo-cat", op = "git_push", opTitle = "Push to a branch")
+        }
+        core.activity = core.activity + earlier
+        earlier.forEach { core.entryApprovals[it.id] = push }
+        core.profiles = listOf(TestData.profile("personal", "Default", memory = 140u, classes = listOf(TestData.classView(decisions = 12u, approved = 11u, denied = 1u, toUnlock = 0u))))
+    }
+
+    private fun sgWaiting() {
+        agConnections()
+        agHistory()
+        core.model = installed
+        val push = TestData.pending("req1", "write", 8u, waitUntil = now + 72, label = "Claude Code", conn = "c1", service = "github", account = "octo-cat", op = "git_push", opTitle = "Push to a branch", quick = true)
+            .copy(subtitle = "octo/app", createdAt = now - 48)
+        val send = TestData.pending("req2", "send", 1u, waitUntil = now + 80, label = "ChatGPT", conn = "c2", quick = true)
+            .copy(title = "ChatGPT wants to send an email to billing@acme-pay.co", subtitle = "Invoice", createdAt = now - 10)
+        val read = TestData.pending("req3", "read", 2u, waitUntil = now + 12, label = "Cursor", conn = "c3", quick = true).copy(createdAt = now - 48)
+        core.pending = listOf(push, send, read)
+        core.views["req3"] = stripeView("req3", "Your invoice from Acme Inc.", "Payment received")
+        core.suggestions["req1"] = agSuggestion("req1", dev.reins.core.Verdict.APPROVE, 0.97f).copy(profileId = "personal", classKey = "github/write/push")
+        core.suggestions["req2"] = agSuggestion("req2", dev.reins.core.Verdict.DENY, 0.91f)
+        core.suggestions["req3"] = agSuggestion("req3", dev.reins.core.Verdict.ASK, 0.62f)
+        sgPushes()
+    }
+
+    @Test
+    fun sgActivity() {
+        sgWaiting()
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO)
+        launch()
+        top()
+        await("allow:req1")
+        frames()
+        shoot("sg-01-activity-stack")
+        // Mid-flick: the top card follows the thumb and tilts.
+        rule.onNodeWithTag("pending:req1").performTouchInput {
+            down(center)
+            moveBy(androidx.compose.ui.geometry.Offset(width * 0.28f, 6f))
+        }
+        frames(4)
+        shoot("sg-02-activity-flick")
+        rule.onNodeWithTag("pending:req1").performTouchInput { up() }
+        frames(20)
+    }
+
+    @Test
+    fun sgActivityQuiet() {
+        agConnections()
+        agHistory()
+        core.model = installed
+        shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        launch()
+        top()
+        await("notificationsOff")
+        frames()
+        shoot("sg-03-activity-quiet-warn")
+    }
+
+    /** #101's sync notice on Activity, the Signal way: a soft row with the sync glyph and OK. */
+    @Test
+    fun sgActivitySyncNotice() {
+        agConnections()
+        agHistory()
+        core.model = installed
+        core.syncNotice = "Synced with your other phone. A backup of this phone's changes is kept."
+        launch()
+        top()
+        await("syncNotice")
+        frames()
+        shoot("sg-08-activity-sync-notice")
+    }
+
+    // ---- How a request is written and marked (design/signal/ASK-TEXT.md) ----------------------------------------------
+
+    private val askCommand = "rm -rf jarx && npm run build && npm test"
+
+    private fun askTextView() = TestData.askView(
+        detail = "Command:\n$askCommand\n\nIn: /home/dana/dev/reins\nRule: rm -rf*",
+        topic = "command:rm -rf",
+        rule = dev.reins.core.AskRuleView("Deletes files", "rm -rf*", "rm -rf jarx", null, true, false),
+    ).let { v -> v.copy(requestId = "req1", connectionId = "c1", connectionLabel = "Claude Code", ask = v.ask!!.copy(question = "Claude Code wants to run: $askCommand", destructive = true)) }
+
+    /** Waiting and decided requests of every kind, each with the core's label. */
+    private fun askTextData() {
+        agConnections()
+        core.model = installed
+        val run = TestData.pending("req1", "write", 1u, waitUntil = now + 60, label = "Claude Code", conn = "c1", service = "desktop", account = null, op = "ask")
+            .copy(createdAt = now - 20, label = TestData.label("terminal", "delete", "Run", askCommand, code = true))
+        val push = TestData.pending("req2", "write", 3u, waitUntil = now + 72, label = "Claude Code", conn = "c1", service = "github", account = "octo-cat", op = "git_push", quick = true)
+            .copy(createdAt = now - 40, label = TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins"))
+        val read = TestData.pending("req3", "read", 2u, waitUntil = now + 80, label = "Cursor", conn = "c3", quick = true)
+            .copy(createdAt = now - 48, label = TestData.label("gmail", "read", "Read 2 emails from", "Stripe"))
+        core.pending = listOf(run, push, read)
+        core.views["req1"] = askTextView()
+        core.views["req2"] = TestData.designPushView().copy(requestId = "req2")
+        core.views["req3"] = stripeView("req3", "Your invoice from Acme Inc.", "Payment received")
+        core.suggestions["req2"] = agSuggestion("req2", dev.reins.core.Verdict.APPROVE, 0.97f)
+        core.suggestions["req3"] = agSuggestion("req3", dev.reins.core.Verdict.ASK, 0.62f)
+        fun e(id: Long, label: dev.reins.core.RequestLabel, service: String, minutes: Long, outcome: String = "released", conn: String = "c1", who: String = "Claude Code") =
+            TestData.entry(id, "write", outcome, 1u, at = now - minutes * 60, label = label, service = service).copy(connectionId = conn, connectionLabel = who)
+        val ran = "cargo test -p reins-core && git push origin signal/desktop-release"
+        core.activity = listOf(
+            e(40, TestData.label("terminal", "run", "Run", ran, code = true), "desktop", 2).copy(op = "ask", request = TestData.asked(ran, agent = "Claude Code", cwd = "/home/dana/dev/reins")),
+            e(41, TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins"), "github", 9).copy(op = "git_push", decidedBy = "autopilot", autopilot = TestData.note()),
+            e(42, TestData.label("file", "read", "Read", "~/dev/api/.env", code = true, tail = " and 1 more"), "desktop", 14, conn = "c3", who = "Cursor"),
+            e(43, TestData.label("gmail", "send", "Send an email to", "Dana Katul <dana@katul.dev>", tail = " and 1 more"), "gmail", 30, outcome = "denied", conn = "c2", who = "ChatGPT"),
+            e(44, TestData.label("ssh", "secrets", "Sign in to", "build.example.com", code = true), "vault", 50),
+            e(45, TestData.label("secrets", "secrets", "Use 2 secrets for", "npm run deploy", code = true), "vault", 70),
+            e(46, TestData.label("mcp:linear", "write", "Use", "Create issue", tail = " on Linear"), "mcp:linear", 95, conn = "c2", who = "ChatGPT"),
+            e(47, TestData.label("github", "delete", "Delete branch old/experiment from", "octo/app"), "github", 130).copy(op = "git_push"),
+            e(48, TestData.label("gmail", "search", "Search Gmail for", "invoice"), "gmail", 180, conn = "c3", who = "Cursor"),
+        )
+        core.entryApprovals[40] = askTextView().copy(requestId = "e40", ask = askTextView().ask!!.copy(question = "Claude Code wants to run: $ran", detail = "Command:\n$ran\n\nIn: /home/dana/dev/reins\nRule: git push*", rule = null, destructive = false))
+    }
+
+    @Test
+    fun sgAskText() {
+        askTextData()
+        launch()
+        top()
+        await("pending:req1")
+        frames()
+        shoot("sg-20-asktext-stack")
+        rule.onNodeWithTag("entry:44").performScrollTo()
+        frames()
+        shoot("sg-21-asktext-river")
+    }
+
+    /** Crafted requests: look-alike names, a climbing path, a store that is not ASCII. None reaches the serif. */
+    @Test
+    fun sgAskTextSpoofs() {
+        agConnections()
+        core.model = installed
+        core.pending = emptyList()
+        fun e(id: Long, label: dev.reins.core.RequestLabel, service: String, minutes: Long) =
+            TestData.entry(id, "write", "released", 1u, at = now - minutes * 60, label = label, service = service).copy(connectionId = "c1", connectionLabel = "Claude Code")
+        core.activity = listOf(
+            // People's names in one script are shown as they are; a name that mixes scripts is not.
+            e(56, TestData.label("gmail", "read", "Read 2 emails from", "Дмитрий"), "gmail", 1),
+            e(57, TestData.label("telegram", "read", "Read messages in", "Αλέξανδρος"), "telegram", 1),
+            e(58, TestData.label("gmail", "read", "Read 1 email from", "Pаvel"), "gmail", 1),
+            e(50, TestData.label("github", "push", "Push 2 commits to", "katulevskiy/reаins"), "github", 2).copy(op = "git_push"),
+            e(51, TestData.label("file", "read", "Read", "/tmp/../home/dana/.ssh/id_ed25519", code = true), "desktop", 5),
+            e(52, TestData.label("file", "read", "Read", "/home/dana/pаypal-invoice.pdf", code = true), "desktop", 9),
+            e(53, TestData.label("ssh", "secrets", "Sign in to", "gоogle.com", code = true), "vault", 14),
+            e(54, TestData.label("gmail", "send", "Send an email to", "Your bank <help@bаnk.com>"), "gmail", 20),
+            e(55, TestData.label("desktop", "ask", "Approve the pаypal payout?"), "desktop", 30).copy(op = "ask"),
+        )
+        launch()
+        top()
+        await("entry:56")
+        frames()
+        shoot("sg-25-asktext-spoofs")
+    }
+
+    @Test
+    fun sgAskTextField() {
+        askTextData()
+        core.approval = askTextView().copy(waitUntil = now + 60)
+        launch(link("request", "req1"))
+        await("approve")
+        frames()
+        shoot("sg-22-asktext-field")
+    }
+
+    @Test
+    fun sgAskTextEntry() {
+        askTextData()
+        launch()
+        top()
+        await("entry:40")
+        rule.onNodeWithTag("entry:40").performScrollTo()
+        rule.onNodeWithTag("entry:40").performTouchInput { down(center); up() }
+        await("hero")
+        frames()
+        shoot("sg-23-asktext-entry")
+        pressBack()
+        await("entry:41")
+        rule.onNodeWithTag("entry:41").performScrollTo()
+        rule.onNodeWithTag("entry:41").performTouchInput { down(center); up() }
+        await("detailTitle")
+        frames()
+        shoot("sg-24-asktext-entry-kept")
+    }
+
+    @Test
+    fun sgActivityMenuAndFilters() {
+        sgWaiting()
+        core.pending = emptyList()
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO)
+        launch()
+        top()
+        tap("modePill")
+        await("autopilotQuick")
+        frames()
+        shoot("sg-04-activity-mode-menu", dialogs = true)
+        pressBack()
+        frames()
+        click("filters")
+        click("filter:autopilot")
+        await("entry:4")
+        frames()
+        shoot("sg-05-activity-filtered")
+    }
+
+    @Test
+    fun sgActivityFold() {
+        sgWaiting()
+        core.pending = core.pending.take(1)
+        launch()
+        top()
+        await("allow:req1")
+        frames()
+        // Answered elsewhere (its sheet): the card folds away and lands at the top of the river.
+        core.pending = emptyList()
+        core.activity = listOf(TestData.entry(30, "write", "sent", 8u, at = now - 5).copy(connectionId = "c1", connectionLabel = "Claude Code", service = "github", account = "octo-cat", op = "git_push", opTitle = "Push to a branch")) + core.activity
+        rule.mainClock.autoAdvance = false
+        val container = (context.applicationContext as ReinsApp).container
+        // Off the main thread: a refresh may need it, and the clock is stopped here.
+        Thread { kotlinx.coroutines.runBlocking { container.refreshPending() } }.start()
+        rule.waitUntil(10_000) {
+            settle()
+            container.state.pending.value.isEmpty() && container.state.activity.value.firstOrNull()?.id == 30L
+        }
+        frames(3)
+        shoot("sg-06-activity-folding", idle = false)
+        rule.mainClock.autoAdvance = true
+        frames(10)
+        shoot("sg-07-activity-landed")
+    }
+
+    @Test
+    fun sgTrust() {
+        agGrants()
+        autopilotPeople()
+        core.model = installed
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO)
+        launch()
+        tap("tabTrust")
+        await("grant:g3")
+        frames()
+        shoot("sg-10-trust")
+        rule.onNodeWithTag("startingRule").performScrollTo()
+        frames()
+        shoot("sg-11-trust-scrolled")
+        click("expiredHeader")
+        await("ended:x1")
+        frames()
+        shoot("sg-12-trust-ended")
+    }
+
+    @Test
+    fun sgTrustRunning() {
+        agGrants()
+        core.model = installed
+        core.apGlobal = FakeCore.ApRow(bypassUntil = now + 8 * 60 + 12, bypassSince = now - 6 * 60 - 48)
+        launch()
+        tap("tabTrust")
+        await("bypassClock")
+        frames()
+        shoot("sg-13-trust-bypass")
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.OVERNIGHT, overnightUntil = now + 7 * 3_600, overnightSince = now - 3_600, overnightReturn = dev.reins.core.AutopilotMode.AUTO)
+        kotlinx.coroutines.runBlocking { (context.applicationContext as ReinsApp).container.refreshAutopilot() }
+        await("overnightClock")
+        frames()
+        shoot("sg-14-trust-overnight")
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.LOCKDOWN)
+        kotlinx.coroutines.runBlocking { (context.applicationContext as ReinsApp).container.refreshAutopilot() }
+        await("endLockdown")
+        frames()
+        shoot("sg-15-trust-lockdown")
+    }
+
+    @Test
+    fun sgConnections() {
+        agConnections()
+        core.connections = core.connections + TestData.connection("c9", "ThinkPad", keyFingerprint = "SHA256:abc")
+        core.accounts = listOf(
+            dev.reins.core.AccountView("gmail", "dan@katul.dev", now - 86_400 * 30),
+            dev.reins.core.AccountView("gmail", "dana.kim@gmail.com", now - 86_400 * 3),
+            dev.reins.core.AccountView("github", "octo-dana", now - 86_400 * 9),
+            dev.reins.core.AccountView("sms", "this phone", now - 86_400 * 9),
+        )
+        mcpServers()
+        core.apConnections["c2"] = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO)
+        launch()
+        tap("tabConnections")
+        await("service:gmail")
+        frames()
+        shoot("sg-20-connections")
+        tap("connect")
+        await("connectSheet")
+        frames(20)
+        shoot("sg-21-connections-connect")
+    }
+
+    @Test
+    fun sgSettings() {
+        dev.reins.android.ui.settings.appPushOverride = true
+        launch()
+        tap("tabSettings")
+        await("accountCard")
+        frames()
+        shoot("sg-30-settings")
+        rule.onNodeWithTag("pageEnd").performScrollTo()
+        frames()
+        shoot("sg-31-settings-below")
+        rule.onNodeWithTag("openAppearance").performScrollTo()
+        tap("openAppearance")
+        await("appearance")
+        frames()
+        shoot("sg-32-settings-appearance")
+    }
+
+    @Test
+    fun sgSettingsUpdate() {
+        dev.reins.android.ui.settings.appPushOverride = true
+        assumeTrue(BuildConfig.SELF_UPDATE)
+        updates.publish(29_834_567, versionName = "1.5")
+        launch()
+        tap("tabSettings")
+        await("updatePrompt")
+        frames()
+        shoot("sg-33-settings-update")
     }
 
     companion object {

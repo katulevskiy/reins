@@ -13,13 +13,8 @@ final class AutopilotUITests: XCTestCase {
     private func launch(_ extra: [String] = []) {
         app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities"] + extra
         app.launch()
-        let tab = app.tabBars.buttons["Autopilot"].firstMatch
-        if tab.waitForExistence(timeout: 10) {
-            tab.tap()
-        } else {
-            // A regular width: the sidebar.
-            app.buttons["Autopilot"].firstMatch.tap()
-        }
+        // Autopilot is part of Trust (a tab on a phone, the sidebar on a regular width).
+        XCTAssertTrue(app.openTab("trust"), "no Trust tab")
         _ = waitFor("modeHero")
     }
 
@@ -199,8 +194,10 @@ final class AutopilotUITests: XCTestCase {
         tap("downloadModel")
         waitFor("modelProgress")
         shot("autopilot-downloading")
-        waitFor("modelInstalled", timeout: 15)
-        waitFor("stat:scored")
+        // Installed: the week's numbers take the offer's place; the model's row is further down Trust, under the grants.
+        waitFor("stat:scored", timeout: 15)
+        scrollTo("modelInstalled")
+        waitFor("modelInstalled")
         tap("modelRow")
         waitFor("modelSheet")
         tap("deleteModel")
@@ -208,6 +205,8 @@ final class AutopilotUITests: XCTestCase {
         app.alerts.buttons["Delete"].tap()
         waitFor("downloadModelDetails")
         tap("closeModel")
+        app.swipeDown()
+        app.swipeDown()
         waitFor("downloadModel")
     }
 

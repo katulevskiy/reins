@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -76,6 +77,35 @@ fun ServiceTile(service: String, modifier: Modifier = Modifier, size: Dp = 44.dp
         when {
             mark != null -> Image(mark, service, Modifier.size(markSize), colorFilter = ColorFilter.tint(serviceTint(service, c)))
             fallback != null -> Icon(fallback, null, Modifier.size(size * 0.5f), tint = fallbackTint ?: c.secondary)
+        }
+    }
+}
+
+/**
+ * A service's mark on a white tile, the same in both themes (Signal `.svc`: 38 dp, radius 11, a hairline ring, the
+ * mark at 58 %). [dim] draws it at 55 % (an ended grant).
+ */
+@Composable
+fun BrandTile(service: String, modifier: Modifier = Modifier, size: Dp = 38.dp, dim: Boolean = false) {
+    val c = LocalColors.current
+    val context = LocalContext.current
+    val markSize = size * 0.58f
+    val px = with(LocalDensity.current) { markSize.roundToPx() }
+    val mark = remember(service, px) { if (service.isBlank()) null else SvgAssets.bitmap(context, "services/$service.svg", px)?.asImageBitmap() }
+    val shape = RoundedCornerShape(11.dp)
+    Box(
+        modifier
+            .size(size)
+            .graphicsLayer { alpha = if (dim) 0.55f else 1f }
+            .clip(shape)
+            .background(Color.White)
+            .border(1.dp, c.rule, shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (mark != null) {
+            Image(mark, service, Modifier.size(markSize), colorFilter = ColorFilter.tint(serviceTint(service, RColors.Light)))
+        } else {
+            GlyphIcon(Glyph.Link, Color(0xFF5F5E6B), size = markSize)
         }
     }
 }

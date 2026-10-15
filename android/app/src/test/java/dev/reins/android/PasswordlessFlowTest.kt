@@ -321,7 +321,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("joinCode")
         rule.onNodeWithTag("joinCode").assertTextEquals("482 193")
         assertEquals(listOf(Build.MODEL), core.joinBegins.toList())
-        assertTrue(showsText("Check that your other phone shows"))
+        assertTrue(showsText("Approve this one only if your other phone shows the same code."))
         assertTrue(core.registrations.isEmpty())
         repeat(3) { pollOnce() }
         recordRecovery()
@@ -420,7 +420,8 @@ class PasswordlessFlowTest : FlowHarness() {
         while (nextStarted() != null) { /* the first sign-in's page */ }
         tap("resetVault")
         awaitTag("confirmReset")
-        tap("confirmReset")
+        // Starting over is held, never tapped.
+        hold("confirmReset")
         rule.waitUntil(10_000) { container.ssoSignIn.pending()?.purpose == SsoPurpose.Reset }
     }
 
@@ -518,19 +519,20 @@ class PasswordlessFlowTest : FlowHarness() {
         Foreground.autoPopup = false
         launch()
         awaitTag("pending:join1")
-        rule.onNodeWithTag("sentence:join1", useUnmergedTree = true).assertTextContains("Pixel 9 wants to join", substring = true)
+        rule.onNodeWithTag("sentence:join1", useUnmergedTree = true).assertTextContains("Add “Pixel 9” to your account", substring = true)
     }
 
     @Test
     fun approvingAnotherPhoneAsksForBiometricsFirst() {
         openJoin()
-        rule.onNodeWithTag("joinTitle").assertTextEquals("Add Pixel 9?")
+        rule.onNodeWithTag("joinTitle").assertTextEquals("Add a phone to your account")
+        rule.onNodeWithTag("joinDevice").assertTextEquals("“Pixel 9”")
         rule.onNodeWithTag("joinCode").assertTextEquals("482 193")
         tap("approve")
         awaitCore { core.joinAnswers.isNotEmpty() }
         assertEquals("join1" to true, core.joinAnswers.single())
         assertEquals(1, prompts.get())
-        awaitText("Pixel 9 can open your account now. It approves from now on once it's set up.")
+        awaitText("“Pixel 9” can open your account now. It approves from now on once it's set up.")
         assertFalse(has("sheet"))
     }
 
@@ -582,7 +584,7 @@ class PasswordlessFlowTest : FlowHarness() {
         awaitTag("recoveryCodeSheet")
         assertEquals(2, prompts.get())
         assertTrue(showsText("ABCD EFGH IJKL MNOP", substring = true))
-        assertTrue(showsText("Write it down", substring = true))
+        assertTrue(showsText("Write down your recovery code", substring = true))
         tap("recoveryCode")
         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
         assertEquals(FakeCore.RECOVERY_CODE, clip?.getItemAt(0)?.text?.toString())

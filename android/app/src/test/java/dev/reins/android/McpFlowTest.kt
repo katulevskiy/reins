@@ -35,8 +35,14 @@ class McpFlowTest : FlowHarness() {
 
     private fun openIntegrations() {
         launch()
-        tap("integrations")
-        awaitTag("addMcp")
+        tap("tabConnections")
+        awaitTag("connect")
+    }
+
+    /** Connections' + opens "Connect something", whose last row adds an MCP server. */
+    private fun openAddMcp() {
+        tap("connect")
+        tap("addMcp")
     }
 
     // ---- the list -------------------------------------------------------------------------------------------------
@@ -51,10 +57,10 @@ class McpFlowTest : FlowHarness() {
         openIntegrations()
         awaitTag("mcp:linear")
         rule.onNodeWithTag("mcp:linear").assertTextContains("Linear")
-        rule.onNodeWithTag("mcp:linear").assertTextContains("mcp.linear.app", substring = true)
+        rule.onNodeWithTag("mcp:linear").assertTextContains("MCP", substring = true)
         rule.onNodeWithTag("mcp:linear").assertTextContains("4 tools", substring = true)
-        rule.onNodeWithTag("mcpStatus:linear").assertTextContains("Connected")
-        rule.onNodeWithTag("mcpStatus:notion").assertTextContains("Needs sign-in")
+        assertFalse("a working server needs no word", has("mcpStatus:linear"))
+        rule.onNodeWithTag("mcpStatus:notion").assertTextContains("Sign in")
         rule.onNodeWithTag("mcpStatus:broken").assertTextContains("Error")
         // The address is shown without its query, which could carry a key.
         assertFalse(showsText("secret", substring = true))
@@ -72,7 +78,7 @@ class McpFlowTest : FlowHarness() {
     fun aServerThatNeedsNoSignInIsAddedAndItsToolsAreShown() {
         core.mcpNextAdd = McpAddStep.Added(TestData.mcpServer())
         openIntegrations()
-        tap("addMcp")
+        openAddMcp()
         awaitTag("mcpUrl")
         rule.onNodeWithTag("mcpAddSubmit").assertIsNotEnabled()
         rule.onNodeWithTag("mcpUrl").performTextReplacement("https://mcp.linear.app/mcp")
@@ -88,7 +94,7 @@ class McpFlowTest : FlowHarness() {
     @Test
     fun anEmptyNameIsNotSent() {
         openIntegrations()
-        tap("addMcp")
+        openAddMcp()
         rule.onNodeWithTag("mcpUrl").performTextReplacement("  https://mcp.linear.app/mcp  ")
         tap("mcpAddSubmit")
         awaitCore { core.mcpAdds.isNotEmpty() }
@@ -98,7 +104,7 @@ class McpFlowTest : FlowHarness() {
     @Test
     fun aTokenAddsTheServerWithItAndTheFieldIsEmptied() {
         openIntegrations()
-        tap("addMcp")
+        openAddMcp()
         rule.onNodeWithTag("mcpUrl").performTextReplacement("https://mcp.example.com/mcp")
         rule.onNodeWithTag("mcpToken").performTextReplacement("tok_123")
         tap("mcpAddSubmit")
@@ -111,7 +117,7 @@ class McpFlowTest : FlowHarness() {
     fun aFailureIsShownInPlainWords() {
         core.mcpFailure = CoreException.Invalid("That address is not an MCP server")
         openIntegrations()
-        tap("addMcp")
+        openAddMcp()
         rule.onNodeWithTag("mcpUrl").performTextReplacement("https://example.com")
         tap("mcpAddSubmit")
         awaitTag("mcpError")
@@ -124,7 +130,7 @@ class McpFlowTest : FlowHarness() {
     fun aServerThatNeedsSignInOpensItsPageAndTheRedirectFinishesIt() {
         core.mcpNextAdd = McpAddStep.NeedsSignIn("linear", "https://linear.app/oauth/authorize?client_id=x&state=st4te")
         openIntegrations()
-        tap("addMcp")
+        openAddMcp()
         rule.onNodeWithTag("mcpUrl").performTextReplacement("https://mcp.linear.app/mcp")
         tap("mcpAddSubmit")
         awaitTag("mcpSigningIn")
@@ -145,7 +151,7 @@ class McpFlowTest : FlowHarness() {
     @Test
     fun aRedirectNobodyWaitsForIsIgnored() {
         launch(redirectIntent())
-        awaitTag("integrations")
+        awaitTag("tabConnections")
         settle()
         assertTrue(core.mcpSignIns.isEmpty())
     }
@@ -157,7 +163,7 @@ class McpFlowTest : FlowHarness() {
         launch(redirectIntent())
         awaitCore { core.mcpSignIns.size == 1 }
         relaunch(redirectIntent())
-        awaitTag("integrations")
+        awaitTag("tabConnections")
         settle()
         assertEquals(1, core.mcpSignIns.size)
     }
@@ -178,7 +184,7 @@ class McpFlowTest : FlowHarness() {
         core.mcp = listOf(TestData.mcpServer(status = "needs_sign_in", tools = emptyList()))
         container.mcpSignIn.begin("linear")
         launch(redirectIntent("https://evil.example.com/mcp-oauth?code=x"))
-        awaitTag("integrations")
+        awaitTag("tabConnections")
         settle()
         assertTrue(core.mcpSignIns.isEmpty())
         // The sign-in still waits for the real redirect.
@@ -222,7 +228,7 @@ class McpFlowTest : FlowHarness() {
     fun anAuthorizePageThatIsNotWebIsNeverOpened() {
         core.mcpNextAdd = McpAddStep.NeedsSignIn("linear", "intent://evil#Intent;end")
         openIntegrations()
-        tap("addMcp")
+        openAddMcp()
         rule.onNodeWithTag("mcpUrl").performTextReplacement("https://mcp.linear.app/mcp")
         tap("mcpAddSubmit")
         awaitTag("mcpError")
@@ -304,6 +310,6 @@ class McpFlowTest : FlowHarness() {
         core.pending = listOf(TestData.pending("req30", "write", 1u, service = "mcp:linear", account = null, op = "create_issue"))
         launch()
         awaitTag("pending:req30")
-        rule.onNodeWithTag("sentence:req30", useUnmergedTree = true).assertTextContains("Wants to create issue in Linear", substring = true)
+        rule.onNodeWithTag("sentence:req30", useUnmergedTree = true).assertTextContains("Use a tool on Linear", substring = true)
     }
 }

@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -107,6 +108,9 @@ import dev.reins.android.feedback.play
 enum class ButtonSize(val height: Dp, val padding: Dp, val text: Float, val glyph: Dp) {
     Large(54.dp, 22.dp, 16.5f, 20.dp),
     Small(40.dp, 16.dp, 14.5f, 18.dp),
+
+    /** The boards' 34 dp buttons inside rows and cards (Later · Install, Resume · Delete). */
+    Compact(34.dp, 12.dp, 13.5f, 16.dp),
 }
 
 /**
@@ -721,7 +725,7 @@ fun KeyValueRow(
 @Composable
 fun Pill(text: String, color: Color, modifier: Modifier = Modifier, glyph: Glyph? = null) {
     Row(
-        modifier.clip(CircleShape).background(color.copy(alpha = Field.TILE_ALPHA)).padding(horizontal = 8.dp, vertical = 4.dp),
+        modifier.clip(CircleShape).background(color.copy(alpha = Field.TILE_ALPHA)).semantics(mergeDescendants = true) {}.padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -857,7 +861,8 @@ fun FieldHeader(field: Field, modifier: Modifier = Modifier, content: @Composabl
         modifier
             .fillMaxWidth()
             .fieldSurface(field, FieldHeaderShape)
-            .windowInsetsPadding(WindowInsets.statusBars)
+            // Never shorter than the boards' 36 dp status bar (a renderer without system bars reports none).
+            .windowInsetsPadding(WindowInsets.statusBars.union(WindowInsets(top = 36.dp)))
             .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         content = content,
@@ -869,9 +874,12 @@ val FieldHeaderShape = RoundedCornerShape(bottomStart = 30.dp, bottomEnd = 30.dp
 
 // ---- The docked tab bar (Android) ---------------------------------------------------------------------------------
 
-/** One tab: its word, its glyph, its test tag, and a count on its glyph. */
+/**
+ * One tab: its word, its glyph, its test tag, a count on its glyph (tagged `<tag>:count`), and [dot]: the breathing
+ * bypass dot while any bypass runs.
+ */
 @Immutable
-data class TabItem(val label: String, val glyph: Glyph, val tag: String = "", val badge: Int = 0)
+data class TabItem(val label: String, val glyph: Glyph, val tag: String = "", val badge: Int = 0, val dot: Boolean = false)
 
 /**
  * Android's tab bar: docked on paper-raised with a hairline on top, labels always shown, an inverse pill behind the
@@ -928,11 +936,15 @@ fun DockedTabBar(tabs: List<TabItem>, selected: Int, onSelect: (Int) -> Unit, mo
                                 Box(Modifier.size(PILL_W, PILL_H).graphicsLayer { alpha = a }.background(c.inverse, RoundedCornerShape(16.dp)))
                             }
                             GlyphIcon(tab.glyph, if (on) c.onInverse else c.ink2, size = 20.dp)
-                            if (tab.badge > 0) CountPill(tab.badge, c.danger, Modifier.align(Alignment.TopEnd).offset(x = (-8).dp, y = (-6).dp), ring = c.paperRaised)
+                            if (tab.badge > 0) {
+                                TabBadge(tab.badge, Modifier.align(Alignment.TopEnd).offset(x = (-6).dp, y = (-3).dp).then(if (tab.tag.isNotEmpty()) Modifier.testTag("${tab.tag}:count") else Modifier))
+                            } else if (tab.dot) {
+                                BreathingDot(c.fieldDelete, Modifier.align(Alignment.TopEnd).offset(x = (-14).dp, y = 3.dp).testTag("${tab.tag}:dot"))
+                            }
                         }
                         RText(
                             tab.label,
-                            RType.sans(12f, if (on) FontWeight.SemiBold else FontWeight.Normal),
+                            RType.sans(12f, if (on) FontWeight.SemiBold else FontWeight.Medium),
                             if (on) c.ink else c.ink2,
                             maxLines = 1,
                             align = TextAlign.Center,
@@ -946,6 +958,15 @@ fun DockedTabBar(tabs: List<TabItem>, selected: Int, onSelect: (Int) -> Unit, mo
 
 private val PILL_W = 60.dp
 private val PILL_H = 32.dp
+
+/** The count on a tab: white on the push field, 17 dp tall and at least as wide (10.5 / 600). */
+@Composable
+private fun TabBadge(count: Int, modifier: Modifier = Modifier) {
+    Box(
+        modifier.defaultMinSize(minWidth = 17.dp, minHeight = 17.dp).background(Field.Push.fill(), CircleShape).padding(horizontal = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) { RText(countText(count), RType.sans(10.5f, FontWeight.SemiBold), Color.White, maxLines = 1) }
+}
 
 // ---- Dialog -------------------------------------------------------------------------------------------------------
 
@@ -963,10 +984,14 @@ fun SignalDialog(
     destructive: Boolean = false,
     italic: String? = null,
     cancelLabel: String = "Cancel",
+    /** The answer button's test tag. */
+    confirmTag: String? = null,
+    /** A glyph on a small tile above the title (And-Outside 05). */
+    glyph: Glyph? = null,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         DialogFeedback()
-        SignalDialogPanel(title, text, confirmLabel, onConfirm, onDismiss, Modifier.padding(horizontal = 24.dp), destructive, italic, cancelLabel)
+        SignalDialogPanel(title, text, confirmLabel, onConfirm, onDismiss, Modifier.padding(horizontal = 24.dp), destructive, italic, cancelLabel, confirmTag, glyph)
     }
 }
 
@@ -982,6 +1007,8 @@ fun SignalDialogPanel(
     destructive: Boolean = false,
     italic: String? = null,
     cancelLabel: String = "Cancel",
+    confirmTag: String? = null,
+    glyph: Glyph? = null,
 ) {
     val c = LocalColors.current
     val shape = RoundedCornerShape(28.dp)
@@ -989,12 +1016,22 @@ fun SignalDialogPanel(
         modifier.fillMaxWidth().shadow(24.dp, shape, ambientColor = Color(0x590A0A14), spotColor = Color(0x590A0A14)).clip(shape).background(c.paperRaised).border(1.dp, c.rule, shape).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        if (glyph != null) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(c.paperSunken), contentAlignment = Alignment.Center) {
+                GlyphIcon(glyph, c.ink2, size = 18.dp)
+            }
+        }
         androidx.compose.foundation.text.BasicText(askString(title, italic), style = RType.serif(28f, 30f, -0.01f).copy(color = c.ink))
         RText(text, RType.body, c.ink2)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SignalButton(cancelLabel, Modifier.weight(1f), style = ButtonStyle.Outline, onClick = onDismiss)
-            SignalButton(confirmLabel, Modifier.weight(1f), style = if (destructive) ButtonStyle.DangerWash else ButtonStyle.Inverse, onClick = onConfirm)
+            SignalButton(
+                confirmLabel,
+                Modifier.weight(1f).then(if (confirmTag != null) Modifier.testTag(confirmTag) else Modifier),
+                style = if (destructive) ButtonStyle.DangerWash else ButtonStyle.Inverse,
+                onClick = onConfirm,
+            )
         }
     }
 }

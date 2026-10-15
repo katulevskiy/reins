@@ -68,7 +68,7 @@ class ApprovalWordsTest {
         assertEquals(HeroTone.Search, heroTone(TestData.searchView()))
         assertEquals(HeroTone.Send, heroTone(TestData.sendView()))
         assertEquals(HeroTone.Grant, heroTone(TestData.grantView()))
-        assertEquals(HeroTone.Grant, heroTone(TestData.accountsView()))
+        assertEquals(HeroTone.Accounts, heroTone(TestData.accountsView()))
         assertEquals(HeroTone.Danger, heroTone(TestData.designDeleteView()))
         assertEquals(HeroTone.Search, heroTone(TestData.vaultView()), "a password is asked every time but changes nothing")
         assertEquals(Badge.Trash, badge(TestData.designDeleteView()))
@@ -190,5 +190,13 @@ class ApprovalWordsTest {
         assertFalse(ApprovalDraft().likeThis)
         assertFalse(dev.reins.android.ui.approval.likeThisOn(view, ApprovalDraft(lifetime = LifetimeKind.HOUR)))
         assertTrue(dev.reins.android.ui.approval.likeThisOn(view, ApprovalDraft(lifetime = LifetimeKind.HOUR, likeThis = true)))
+    }
+
+    @Test
+    fun `a preview line that only repeats the ask is left out, so the consequence comes first`() {
+        val lines = dev.reins.android.ui.approval.previewLines(TestData.onceOnlyWriteView())
+        assertEquals(listOf(1 to "All code, issues and pull requests are lost"), lines)
+        // Lines that say more than the ask stay, with their own index.
+        assertEquals(3, dev.reins.android.ui.approval.previewLines(TestData.gitPushView()).size)
     }
 }

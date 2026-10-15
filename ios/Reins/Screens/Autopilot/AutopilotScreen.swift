@@ -1,355 +1,76 @@
 import SwiftUI
 
-/// Autopilot: the mode (Manual or Auto, with Overnight, Bypass and Lock down at hand), this week in numbers, the model that runs
-/// on this phone, "Try it", and the profiles that learn from the user's answers. The Autopilot section's root
-/// (`root`), and also pushed from Activity's mode pill and Settings.
-struct AutopilotScreen: View {
-    var root = false
+// Autopilot's parts of Trust (TrustScreen): the mode, this week's numbers, the model and its sheet, "Try it" and the
+// profiles.
 
-    @Environment(AppModel.self) private var model
-    @Environment(\.feedback) private var feedback
-    @State private var ap = AutopilotModel()
-    @State private var bypassAsk = false
-    @State private var overnightAsk = false
-    @State private var mobileDataAsk = false
-    @State private var modelOpen = false
-    @State private var newProfile = false
-
-    var body: some View {
-        let page = ScrollView {
-            if let s = ap.settings {
-                content(s)
-                    .frame(maxWidth: 680)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 32)
-            } else {
-                ProgressView().padding(.top, 60).frame(maxWidth: .infinity)
-            }
-        }
-        .background(Palette.background.ignoresSafeArea())
-        .navigationTitle("Autopilot")
-        .refreshable {
-            feedback.play(.refresh)
-            await ap.refresh()
-            await ap.loadStats()
-        }
-        .task {
-            ap.bind(model)
-            await ap.refresh()
-            await ap.loadStats()
-        }
-        .sheet(isPresented: $bypassAsk) {
-            BypassSheet(who: nil) { length in
-                feedback.quietClose()
-                Task { await ap.startBypass(minutes: length.minutes) }
-            }
-            .environment(\.feedback, feedback)
-        }
-        .presentationFeedback(bypassAsk)
-        .sheet(isPresented: $overnightAsk) {
-            OvernightSheet(who: nil, ap: ap) { length in
-                feedback.quietClose()
-                Task { await ap.startOvernight(minutes: length.minutes) }
-            }
-            .environment(\.feedback, feedback)
-        }
-        .presentationFeedback(overnightAsk)
-        .sheet(isPresented: $modelOpen) {
-            ModelSheet(ap: ap)
-                .environment(\.feedback, feedback)
-        }
-        .presentationFeedback(modelOpen)
-        .sheet(isPresented: $newProfile) {
-            ProfileEditorSheet(title: "New profile", initialName: "", initialIcon: AutopilotText.icons[2], confirmLabel: "Create") { name, icon in
-                feedback.quietClose()
-                Task {
-                    if let id = await ap.createProfile(name: name, icon: icon) { model.openFromAutopilot(.autopilotProfile(id)) }
-                }
-            }
-        }
-        .presentationFeedback(newProfile)
-        .mobileDataPrompt(isPresented: $mobileDataAsk, ap: ap)
-
-        if root {
-            page.rootNavigationBar()
-        } else {
-            // The page draws its own large title under the back button.
-            page
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .principal) { EmptyView() } }
-        }
-    }
-
-    private func content(_ s: AutopilotSettings) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            PageHeader(title: "Autopilot") { EmptyView() }
-                .padding(.horizontal, 4)
-                .padding(.top, root ? 8 : 0)
-            VStack(alignment: .leading, spacing: 8) {
-                // "Mode" with its (?) right beside the word; what the modes do opens under it.
-                HelpHeader(title: "Mode", help: AutopilotText.modeHelp, id: "mode")
-                    .padding(.horizontal, 12)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("modeHeader")
-                ModeHero(
-                    settings: s,
-                    modelReady: ap.modelReady,
-                    onPick: { pick($0, s) },
-                    onBypass: { bypassAsk = true },
-                    onOvernight: { overnightAsk = true },
-                    onLockdown: { Task { await ap.setMode(.lockdown) } },
-                    onEndLockdown: { Task { await ap.endLockdown() } },
-                    onStopBypass: { Task { await ap.stopBypass() } },
-                    onStopOvernight: { Task { await ap.stopOvernight() } },
-                    onWhenRisky: { risky in Task { await ap.setOvernightWhenRisky(risky) } }
-                )
-            }
-            .padding(.top, -8)
-            if ap.error != nil || ap.notice != nil {
-                VStack(spacing: 8) {
-                    if let error = ap.error { IntegrationBanner(text: error, kind: .error).accessibilityIdentifier("autopilotError") }
-                    if let notice = ap.notice { IntegrationBanner(text: notice).accessibilityIdentifier("autopilotNotice") }
-                }
-            }
-
-            if ap.modelReady {
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader("This week").padding(.horizontal, 12)
-                    WeekStats(stats: ap.stats)
-                }
-            } else if let m = ap.model {
-                ModelOffer(ap: ap, model: m, onDownload: download)
-            }
-
-            AutopilotGroup(header: nil) {
-                ModelRow(ap: ap, onUpdate: download) { modelOpen = true }
-                RowDivider(inset: 60)
-                AutopilotLinkRow(title: "Try it", symbol: "flask.fill", tint: Palette.send, identifier: "openTryIt") {
-                    if !ap.modelReady {
-                        Text("after download").font(RFont.sans(15)).foregroundStyle(Palette.tertiary).lineLimit(1)
-                    }
-                } action: {
-                    model.openFromAutopilot(.tryIt(nil))
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    SectionHeader("Profiles")
-                    Button {
-                        feedback.play(.tap)
-                        newProfile = true
-                    } label: {
-                        Label("New", systemImage: "plus")
-                            .labelStyle(.titleAndIcon)
-                            .font(RFont.sans(14.5, .medium))
-                            .foregroundStyle(Palette.accent)
-                            .frame(minHeight: 30)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("newProfile")
-                }
-                .padding(.horizontal, 12)
-                AutopilotGroup(header: nil) {
-                    ForEach(Array(ap.profiles.enumerated()), id: \.element.id) { i, profile in
-                        if i > 0 { RowDivider(inset: 64) }
-                        ProfileRow(profile: profile, line: AutopilotText.profileLine(profile, ais: ais(profile, s))) {
-                            model.openFromAutopilot(.autopilotProfile(profile.id))
-                        }
-                    }
-                }
-            }
-        }
-        .task(id: [s.bypassUntil, s.overnightUntil]) {
-            // The core ends a bypass or an Overnight when it is read after its time; read it then, so the screen moves
-            // on by itself. One without an end waits for the user.
-            let ends = [s.bypassUntil, s.overnightUntil].compactMap { $0 }.filter { !AutopilotText.isUntilOff($0) }
-            guard let until = ends.min() else { return }
-            let left = Double(until) - Date().timeIntervalSince1970
-            try? await Task.sleep(for: .seconds(max(left, 0) + 1))
-            if !Task.isCancelled { await model.refreshAutopilot() }
-        }
-    }
-
-    private func ais(_ p: ProfileView, _ s: AutopilotSettings) -> [String] {
-        AutopilotText.profileAis(p, settings: s, connections: model.connections.map { ($0.id, $0.label) })
-    }
-
-    private func pick(_ mode: AutopilotMode, _ s: AutopilotSettings) {
-        if mode != s.mode { Task { await ap.setMode(mode) } }
-    }
-
-    private func download() {
-        if ap.needsMobileDataConsent() { mobileDataAsk = true } else { ap.download() }
-    }
-}
-
-/// The mode, large. Manual and Auto side by side (the chosen one tinted), then Overnight, then Bypass and Lock down;
-/// amber in Lockdown, where neither is chosen and the last button ends it. During a bypass: red, its ring, what it
-/// does and Stop bypass; during an Overnight the same in night indigo, with what it does with what is too risky.
-private struct ModeHero: View {
+/// The mode tiles (iOS-Trust.png, 01): Manual and Auto side by side (the one in force ringed, violet for Auto), then
+/// Lock down and Bypass…, then Overnight…. While a bypass or an Overnight runs, the field above Trust has them; a
+/// lockdown keeps the tiles, to pick what follows it, and the field ends it.
+struct ModeHero: View {
     var settings: AutopilotSettings
     var modelReady: Bool
     var onPick: (AutopilotMode) -> Void
     var onBypass: () -> Void
     var onOvernight: () -> Void
     var onLockdown: () -> Void
-    var onEndLockdown: () -> Void
-    var onStopBypass: () -> Void
-    var onStopOvernight: () -> Void
-    var onWhenRisky: (OvernightRisky) -> Void
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.feedback) private var feedback
 
     private var mode: AutopilotMode { settings.mode }
 
-    /// The colour the whole card takes on: red in a bypass, night indigo in an Overnight, amber in Lockdown.
-    private var wash: Color? {
-        switch mode {
-        case .bypass: Palette.danger
-        case .overnight: settings.overnightUntil != nil ? Palette.overnight : nil
-        case .lockdown: Palette.warning
-        default: nil
-        }
-    }
-
     var body: some View {
-        Group {
-            if mode == .bypass, let until = settings.bypassUntil {
-                bypass(until: until)
-            } else if mode == .overnight, let until = settings.overnightUntil {
-                overnight(until: until)
-            } else {
-                choices
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity)
-        .background {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Palette.elevated)
-                .overlay {
-                    if let wash {
-                        RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .fill(LinearGradient(
-                                colors: [wash.opacity(scheme == .dark ? 0.2 : 0.12), wash.opacity(0.05)],
-                                startPoint: .top, endPoint: .bottom
-                            ))
-                    }
+        if let running = TrustRunning.of(settings), running != .lockdown {
+            EmptyView()
+        } else {
+            VStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    ModeTile(mode: .manual, selected: mode == .manual, dimmed: false) { onPick(.manual) }
+                    ModeTile(mode: .auto, selected: mode == .auto, dimmed: !modelReady) { onPick(.auto) }
                 }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(wash.map { $0.opacity(0.32) } ?? Palette.hairline, lineWidth: 1)
-        )
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: mode)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("modeHero")
-    }
-
-    private var choices: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                ModeCard(mode: .manual, selected: mode == .manual, dimmed: false) { onPick(.manual) }
-                ModeCard(mode: .auto, selected: mode == .auto, dimmed: !modelReady) { onPick(.auto) }
-            }
-            HeroButton(
-                title: AutopilotText.overnightName, symbol: AutopilotText.overnightSymbol, fill: Palette.overnight.opacity(0.13),
-                text: Palette.overnight, identifier: "mode:overnight"
-            ) {
-                feedback.play(.tap)
-                onOvernight()
-            }
-            HStack(spacing: 8) {
-                HeroButton(title: "Bypass", symbol: "bolt.fill", fill: Palette.danger.opacity(0.12), text: Palette.danger, identifier: "mode:bypass") {
+                .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button {
+                        onLockdown()
+                    } label: {
+                        Label(mode == .lockdown ? "Locked down" : "Lock down", systemImage: "lock.fill")
+                    }
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small))
+                    .disabled(mode == .lockdown)
+                    .accessibilityIdentifier("mode:lockdown")
+                    Button {
+                        feedback.play(.tap)
+                        onBypass()
+                    } label: {
+                        Label("Bypass…", systemImage: "bolt.fill")
+                    }
+                    .buttonStyle(SignalButtonStyle(.danger, size: .small))
+                    .accessibilityIdentifier("mode:bypass")
+                }
+                Button {
                     feedback.play(.tap)
-                    onBypass()
-                }
-                if mode == .lockdown {
-                    HeroButton(title: "End lockdown", symbol: "lock.open.fill", fill: Palette.warning.opacity(0.16), text: Palette.warning, identifier: "endLockdown", action: onEndLockdown)
-                } else {
-                    HeroButton(title: "Lock down", symbol: "lock.fill", fill: Palette.controlFill, text: Palette.text, identifier: "mode:lockdown", action: onLockdown)
-                }
-            }
-        }
-    }
-
-    private func bypass(until: Int64) -> some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 16) {
-                BypassRing(until: until, since: settings.bypassSince, size: 76)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Bypass")
-                        .font(RFont.sans(22, .semibold))
-                        .foregroundStyle(Palette.danger)
-                        .accessibilityIdentifier("heroMode")
-                    LiveClock(interval: AutopilotText.isUntilOff(until) ? 30 : 60) { now in
-                        Text(AutopilotText.bypassLine(until: until, since: settings.bypassSince, now: Int64(now)))
-                            .font(RFont.sans(13.5))
-                            .foregroundStyle(Palette.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("bypassLine")
+                    onOvernight()
+                } label: {
+                    HStack(spacing: 8) {
+                        GlyphIcon(.moon, size: 18)
+                        Text("\(AutopilotText.overnightName)…").font(RFont.sans(14.5, .semibold))
                     }
-                }
-                Spacer(minLength: 0)
-            }
-            // Words only, as everywhere a bypass is stopped.
-            Button(action: onStopBypass) {
-                Text("Stop bypass")
-                    .font(RFont.sans(16, .semibold))
-                    .foregroundStyle(Palette.dynamic(0xFFFFFF, 0x2A0606))
-                    .frame(maxWidth: .infinity, minHeight: 46)
-                    .background(Palette.danger, in: Capsule())
+                    .foregroundStyle(Palette.violet)
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(Palette.violet.opacity(0.12), in: Capsule())
                     .contentShape(Capsule())
-            }
-            .buttonStyle(PressDim())
-            .accessibilityIdentifier("stopBypass")
-        }
-    }
-
-    private func overnight(until: Int64) -> some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 16) {
-                BypassRing(
-                    until: until, since: settings.overnightSince, size: 76, tint: Palette.overnight,
-                    name: AutopilotText.overnightName, identifier: "overnightClock"
-                )
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(AutopilotText.overnightName)
-                        .font(RFont.sans(22, .semibold))
-                        .foregroundStyle(Palette.overnight)
-                        .accessibilityIdentifier("heroMode")
-                    LiveClock(interval: AutopilotText.isUntilOff(until) ? 30 : 60) { now in
-                        Text(AutopilotText.overnightLine(until: until, since: settings.overnightSince, now: Int64(now)))
-                            .font(RFont.sans(13.5))
-                            .foregroundStyle(Palette.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("overnightLine")
-                    }
                 }
-                Spacer(minLength: 0)
+                .buttonStyle(PressDim())
+                .accessibilityIdentifier("mode:overnight")
             }
-            WhenRiskyPicker(selected: settings.overnightWhenRisky, onPick: onWhenRisky)
-            // Words only, as a bypass is stopped.
-            Button(action: onStopOvernight) {
-                Text("Stop \(AutopilotText.overnightName)")
-                    .font(RFont.sans(16, .semibold))
-                    .foregroundStyle(Palette.dynamic(0xFFFFFF, 0x0E1033))
-                    .frame(maxWidth: .infinity, minHeight: 46)
-                    .background(Palette.overnight, in: Capsule())
-                    .contentShape(Capsule())
-            }
-            .buttonStyle(PressDim())
-            .accessibilityIdentifier("stopOvernight")
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: mode)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("modeHero")
         }
     }
 }
 
-/// Manual or Auto on the hero: its tile, name and what it does; tinted when chosen, faded (but still there to tap) for
-/// Auto without the model.
-private struct ModeCard: View {
+/// Manual or Auto as a tile: its glyph, its name in the serif, what it does; the one in force has a 2 pt ring (violet
+/// for Auto, with its check). Auto without the model is faded, still there to tap.
+private struct ModeTile: View {
     var mode: AutopilotMode
     var selected: Bool
     var dimmed: Bool
@@ -357,43 +78,35 @@ private struct ModeCard: View {
     @Environment(\.feedback) private var feedback
 
     var body: some View {
-        let tint = AutopilotStyle.tint(mode)
+        let auto = mode == .auto
+        let accent = auto ? Palette.violet : Palette.ink
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
         Button {
             feedback.play(.selection)
             action()
         } label: {
             VStack(alignment: .leading, spacing: 0) {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(tint.opacity(0.17))
-                    .frame(width: 40, height: 40)
-                    .overlay {
-                        Image(systemName: AutopilotText.symbol(mode))
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(tint)
-                    }
+                HStack {
+                    GlyphIcon(auto ? .autopilot : .person, size: 20).foregroundStyle(accent)
+                    Spacer(minLength: 0)
+                    if selected && auto { GlyphIcon(.check, size: 18).foregroundStyle(Palette.violet) }
+                }
                 Text(AutopilotText.name(mode))
-                    .font(RFont.sans(17, .semibold))
-                    .foregroundStyle(Palette.text)
-                    .padding(.top, 10)
-                Text(dimmed ? "Needs the model" : AutopilotText.cardLine(mode))
-                    .font(RFont.sans(12.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .font(RFont.serif(26))
+                    .foregroundStyle(Palette.ink)
+                    .padding(.top, 8)
+                Text(dimmed ? "Needs the model" : auto ? AutopilotText.cardLine(mode) : "You decide, with a hint")
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 3)
                 Spacer(minLength: 0)
             }
             .padding(14)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(
-                selected ? tint.opacity(0.09) : Palette.dynamic(0xF7F7F9, 0x0D0D0F),
-                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(selected ? tint : Palette.hairline, lineWidth: 1.5)
-            )
+            .background(Palette.paperRaised, in: shape)
+            .overlay(shape.strokeBorder(selected ? accent : Palette.rule, lineWidth: selected ? 2 : 1))
             .opacity(dimmed ? 0.5 : 1)
-            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .contentShape(shape)
         }
         .buttonStyle(ModeCardPress())
         .accessibilityElement(children: .combine)
@@ -403,49 +116,35 @@ private struct ModeCard: View {
     }
 }
 
-/// Overnight, Bypass, Lock down and End lockdown: a pill in its colour.
-private struct HeroButton: View {
-    var title: String
-    var symbol: String
-    var fill: Color
-    var text: Color
-    var identifier: String
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(RFont.sans(15, .semibold))
-                .foregroundStyle(text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, minHeight: 40)
-                .background(fill, in: Capsule())
-                .contentShape(Capsule())
-        }
-        .buttonStyle(PressDim())
-        .accessibilityIdentifier(identifier)
-    }
-}
-
-/// This week in three numbers: requests scored, how often Autopilot matched the user, kinds on Auto.
-private struct WeekStats: View {
+/// This week in three numbers, in the serif between two hairlines: requests scored, how often Autopilot matched the
+/// user, kinds on Auto.
+struct WeekStats: View {
     var stats: AutopilotStats?
 
     var body: some View {
-        HStack(spacing: 8) {
-            StatTile(value: stats.map { "\($0.scored)" } ?? "—", label: "requests scored")
-                .accessibilityIdentifier("stat:scored")
-            StatTile(value: AutopilotText.share(stats?.matched), label: "matched you", tint: stats?.matched == nil ? Palette.text : Palette.success)
+        HStack(alignment: .top, spacing: 8) {
+            stat(stats.map { "\($0.scored)" } ?? "—", "scored this week").accessibilityIdentifier("stat:scored")
+            stat(AutopilotText.share(stats?.matched), "matched you", tint: stats?.matched == nil ? Palette.ink : Palette.success)
                 .accessibilityIdentifier("stat:matched")
-            StatTile(value: stats.map { "\($0.kindsOnAuto)" } ?? "—", label: "kinds on Auto")
-                .accessibilityIdentifier("stat:kinds")
+            stat(stats.map { "\($0.kindsOnAuto)" } ?? "—", "kinds on Auto").accessibilityIdentifier("stat:kinds")
         }
+        .padding(.vertical, 12)
+        .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+    }
+
+    private func stat(_ value: String, _ label: String, tint: Color = Palette.ink) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(value).font(RFont.serif(32)).foregroundStyle(tint).contentTransition(.numericText()).lineLimit(1)
+            Text(label).textRole(.meta).foregroundStyle(Palette.inkMeta).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
 /// Without the model: what it gives and getting it, with the download's progress while it comes.
-private struct ModelOffer: View {
+struct ModelOffer: View {
     var ap: AutopilotModel
     var model: ModelStatus
     var onDownload: () -> Void
@@ -520,7 +219,7 @@ private struct ModelOffer: View {
 
 /// "On-device model": Ready, Update (a tap downloads the newer model), the download's percent, or Download; opens the
 /// model's details.
-private struct ModelRow: View {
+struct ModelRow: View {
     var ap: AutopilotModel
     var onUpdate: () -> Void
     var action: () -> Void
@@ -576,7 +275,7 @@ private struct ModelRow: View {
 }
 
 /// A row of the Autopilot list: a coloured tile, a title, what goes on the right, and the disclosure mark.
-private struct AutopilotLinkRow<Trailing: View>: View {
+struct AutopilotLinkRow<Trailing: View>: View {
     var title: String
     var symbol: String
     var tint: Color
@@ -606,7 +305,7 @@ private struct AutopilotLinkRow<Trailing: View>: View {
 }
 
 /// A profile: its emoji, name, the AIs it learns from and how much it remembers.
-private struct ProfileRow: View {
+struct ProfileRow: View {
     var profile: ProfileView
     var line: String
     var action: () -> Void
@@ -638,7 +337,7 @@ private struct ProfileRow: View {
 }
 
 /// The model's details: what it is, getting it or removing it, and the Wi-Fi only switch.
-private struct ModelSheet: View {
+struct ModelSheet: View {
     var ap: AutopilotModel
     @State private var deleteAsk = false
     @State private var mobileDataAsk = false
@@ -648,24 +347,15 @@ private struct ModelSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("On-device model")
-                        .font(RFont.sans(18, .semibold))
-                        .foregroundStyle(Palette.text)
+                HStack(alignment: .center) {
+                    AskText([AskText.Run(text: "On-device "), AskText.Run(text: "model", target: true)], role: .sheetTitle)
+                        .foregroundStyle(Palette.ink)
                         .accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Button {
+                    RoundHeaderButton(glyph: .close, label: "Close", size: 34) {
                         feedback.play(.tap)
                         dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Palette.secondary)
-                            .frame(width: 30, height: 30)
-                            .background(Palette.controlFill, in: Circle())
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close")
                     .accessibilityIdentifier("closeModel")
                 }
                 ModelCard(ap: ap, wifiOnly: ap.settings?.wifiOnly ?? true, onDownload: download, onDelete: { deleteAsk = true })
@@ -813,7 +503,7 @@ private struct WifiOnlyRow: View {
     }
 }
 
-private extension View {
+extension View {
     /// Asks before downloading the model over mobile data while Wi-Fi only is on.
     func mobileDataPrompt(isPresented: Binding<Bool>, ap: AutopilotModel) -> some View {
         confirmationDialog("You are on mobile data", isPresented: isPresented, titleVisibility: .visible) {

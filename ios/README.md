@@ -150,7 +150,7 @@ unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1)
 | Argument | Effect |
 |---|---|
 | `-demo` | DemoCore instead of the real core: every kind of request, activity, grants, integrations, Autopilot |
-| `-signedout`, `-demoArrive`, `-demoNoModel`, `-demoOldModel`, `-noPopup` | Demo variants (start signed out, a request arrives after 6 s, no model, an older model with an update, no automatic sheet) |
+| `-signedout`, `-demoArrive`, `-demoNoModel`, `-demoOldModel`, `-noPopup`, `-demoQuiet`, `-demoWarn` | Demo variants (start signed out, a request arrives after 6 s, no model, an older model with an update, no automatic sheet, nothing waiting, the warn field) |
 | `-open reins://...` | Opens a link at launch (`simctl openurl` stops at a prompt) |
 | `-freezeTime <unix seconds>` | Stops the clocks, for screenshots |
 | `-hinge bent\|closed\|flat` | Forces a fold posture (the Simulator cannot fold from a script) |

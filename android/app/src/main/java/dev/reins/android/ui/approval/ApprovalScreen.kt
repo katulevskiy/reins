@@ -106,6 +106,9 @@ class ApprovalNav {
     var overlay by mutableStateOf<ApprovalOverlay?>(null)
     var help by mutableStateOf<HelpTip?>(null)
 
+    /** The risk did not fit on the field in two lines: the field says its word, the first fact row its reason. */
+    var riskInFacts by mutableStateOf(false)
+
     fun push(page: ApprovalPage) {
         help = null
         pages.add(page)
@@ -143,6 +146,11 @@ class ApprovalRecord(
     val footer: (@Composable () -> Unit)? = null,
     /** How risky the model rated it, and whether Overnight held it; null when it was not rated. */
     val risk: dev.reins.core.RiskView? = null,
+    /** How the ask is told: done, or (denied, failed) refused. */
+    val tense: dev.reins.android.ui.common.Tense = dev.reins.android.ui.common.Tense.Done,
+    /** The core's reading of the request (its label) and where a command ran, as the entry kept them. */
+    val label: dev.reins.core.RequestLabel? = null,
+    val cwd: String? = null,
 )
 
 /** The entry the approval screen shows again, or null for a request that waits. */
@@ -179,6 +187,7 @@ fun ApprovalScreen(
     val feedback = LocalFeedback.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val nav = remember { ApprovalNav() }
+    val entered = remember { androidx.compose.animation.core.MutableTransitionState(false).apply { targetState = true } }
     LaunchedEffect(ui.finished) { if (ui.finished) onDone() }
     BackHandler(enabled = nav.help != null || nav.overlay != null || nav.pages.isNotEmpty()) {
         if (nav.overlay != null) feedback.play(Event.Close)
@@ -209,12 +218,14 @@ fun ApprovalScreen(
             Column(Modifier.fillMaxSize()) {
                 val page = nav.pages.lastOrNull()
                 if (page == null) {
-                    AgentBar(view, close, back = record != null)
+                    Hero(view, ui, viewModel, close, back = record != null, entered = entered)
                 } else {
-                    PageBar(pageTitle(view, page), view) {
+                    // Drilled in: the field becomes a band with the ask and the timer.
+                    val (ask, target) = askWords(view)
+                    AskBand(askField(view), ask, target, onBack = {
                         feedback.play(Event.Close)
                         nav.back()
-                    }
+                    }) { TimerPill(view) }
                 }
                 AnimatedContent(
                     targetState = nav.pages.size to page,
@@ -227,6 +238,15 @@ fun ApprovalScreen(
                     label = "page",
                 ) { (_, shown) ->
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        if (shown != null) {
+                            RText(
+                                pageTitle(view, shown),
+                                RType.serif(28f, 32f, italic = shown !is ApprovalPage.Text),
+                                c.ink,
+                                Modifier.padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 4.dp).testTag("pageTitle"),
+                                maxLines = 2,
+                            )
+                        }
                         when (shown) {
                             null -> {
                                 MainPage(view, ui, viewModel)
@@ -274,45 +294,6 @@ private fun CloseButton(onClick: () -> Unit, back: Boolean = false) {
     ) { Icon(if (back) Icons.AutoMirrored.Rounded.ArrowBack else Icons.Rounded.Close, null, Modifier.size(24.dp), tint = c.text) }
 }
 
-/** Close, the agent ("Claude Code · laptop") and the time it still waits. */
-@Composable
-private fun AgentBar(view: ApprovalView, onClose: () -> Unit, back: Boolean = false) {
-    val c = LocalColors.current
-    val host = findConnection(LocalConnections.current, view.connectionId, view.connectionLabel)?.clientHost?.let(::untrusted)
-    Row(
-        Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CloseButton(onClose, back)
-        Spacer(Modifier.width(4.dp))
-        ConnectionIcon(view.connectionId, view.connectionLabel, size = 28.dp)
-        Spacer(Modifier.width(9.dp))
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            RText(untrusted(view.connectionLabel), RType.sans(15f, FontWeight.SemiBold), c.text, Modifier.weight(1f, fill = false), maxLines = 1)
-            if (!host.isNullOrBlank()) RText(" · $host", RType.sans(15f, FontWeight.Medium), c.tertiary, maxLines = 1)
-        }
-        Spacer(Modifier.width(10.dp))
-        TimerPill(view)
-    }
-}
-
-/** A pushed page: back, its title, and the time it still waits. */
-@Composable
-private fun PageBar(title: String, view: ApprovalView, onBack: () -> Unit) {
-    val c = LocalColors.current
-    Row(
-        Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier.size(44.dp).pressable(shape = CircleShape, label = "Back", onClick = onBack).semantics { contentDescription = "Back" }.testTag("back"),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, Modifier.size(24.dp), tint = c.text) }
-        RText(title, RType.sans(19f, FontWeight.Medium), c.text, Modifier.weight(1f).padding(start = 4.dp).testTag("pageTitle"), maxLines = 1)
-        TimerPill(view)
-    }
-}
-
 /** The (?) bubble: one short explanation under the button that opened it; a tap anywhere closes it. */
 @Composable
 private fun HelpBubble(nav: ApprovalNav) {
@@ -346,7 +327,7 @@ private fun HelpBubble(nav: ApprovalNav) {
 
 /** A round (?) of its own, never inside another tappable thing; it opens [text] in the bubble. */
 @Composable
-internal fun HelpDot(key: String, text: String, modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp = 32.dp) {
+internal fun HelpDot(key: String, text: String, modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp = 32.dp, onField: Boolean = false) {
     val c = LocalColors.current
     val nav = LocalApprovalNav.current
     val feedback = LocalFeedback.current
@@ -356,7 +337,7 @@ internal fun HelpDot(key: String, text: String, modifier: Modifier = Modifier, s
         modifier
             .size(size)
             .clip(CircleShape)
-            .background(if (open) c.text.copy(alpha = 0.18f) else c.text.copy(alpha = 0.08f))
+            .background(if (onField) (if (open) Color.White.copy(alpha = 0.32f) else c.onFieldWash) else if (open) c.text.copy(alpha = 0.18f) else c.text.copy(alpha = 0.08f))
             .onGloballyPositioned { bottom = it.positionInRoot().y + it.size.height }
             .pressable(shape = CircleShape, label = "More about this") {
                 nav.help = if (open) null else HelpTip(key, text, bottom)
@@ -366,11 +347,10 @@ internal fun HelpDot(key: String, text: String, modifier: Modifier = Modifier, s
             .testTag("help:$key"),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            Icons.AutoMirrored.Rounded.HelpOutline,
-            null,
-            Modifier.size(size * 0.58f),
-            tint = if (open) c.text else c.secondary,
+        dev.reins.android.design.GlyphIcon(
+            dev.reins.android.design.Glyph.Help,
+            if (onField) c.onField else if (open) c.text else c.secondary,
+            size = size * 0.62f,
         )
     }
 }

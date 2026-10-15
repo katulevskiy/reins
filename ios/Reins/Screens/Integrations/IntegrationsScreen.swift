@@ -1,54 +1,40 @@
 import SwiftUI
 
-/// Every service Reins can connect, with how many accounts each one has, and the MCP servers the user added.
-struct IntegrationsScreen: View {
+/// Every service Reins can connect, with how many accounts each one has (Connections' "What they can reach").
+struct ServicesSection: View {
+    var title: String
     @Environment(AppModel.self) private var model
-    @Environment(\.feedback) private var feedback
 
     /// The services as listed, text messages last (iOS has no way to them, so they are only shown as unavailable).
     private var services: [ServiceView] { model.services + [ServiceCopy.sms] }
 
     var body: some View {
-        List {
-            Section {
-                ForEach(services, id: \.service) { service in
-                    LinkRow(identifier: "service:\(service.service)", action: { open(service.service) }) {
-                        ServiceAvatar(service: service.service, size: 44)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(service.name).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
-                            // Only what is there: a service with nothing connected is just its name.
-                            if !ServiceCopy.summary(service).isEmpty {
-                                Text(ServiceCopy.summary(service))
-                                    .font(RFont.sans(13))
-                                    .foregroundStyle(Palette.secondary)
-                            }
+        Section {
+            ForEach(services, id: \.service) { service in
+                LinkRow(identifier: "service:\(service.service)", action: { open(service.service) }) {
+                    ServiceAvatar(service: service.service, size: 44)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(service.name).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
+                        // Only what is there: a service with nothing connected is just its name.
+                        if !ServiceCopy.summary(service).isEmpty {
+                            Text(ServiceCopy.summary(service))
+                                .font(RFont.sans(13))
+                                .foregroundStyle(Palette.secondary)
                         }
                     }
                 }
-            } header: {
-                GroupHeading("Services")
-            } footer: {
-                GroupFootnote("Each service can have as many accounts as you like. Your AIs can see which services and accounts exist and choose one; you approve what they do with it.")
             }
-            .listRowBackground(Palette.elevated)
-
-            McpServersSection(servers: model.mcpServers)
+        } header: {
+            GroupHeading(title)
+        } footer: {
+            GroupFootnote("Each service can have as many accounts as you like. Your AIs can see which services and accounts exist and choose one; you approve what they do with it.")
         }
-        .integrationList()
-        .navigationTitle("Integrations")
-        .navigationBarTitleDisplayMode(.large)
-        .refreshable {
-            feedback.play(.refresh)
-            await model.refreshPending()
-        }
-        .task {
-            await model.refreshPending()
-            DemoIntegrationsLaunch.openOnce(model)
-        }
+        .listRowBackground(Color.clear)
     }
 
+    /// From Connections' root: the detail column on a regular width, pushed on a compact one.
     private func open(_ service: String) {
-        model.push(service == "gmail" ? .gmail : .service(service))
+        model.show(service == "gmail" ? .gmail : .service(service))
     }
 }
 
@@ -96,7 +82,7 @@ struct McpServersSection: View {
                     .accessibilityIdentifier("noMcp")
             }
             ForEach(servers, id: \.id) { server in
-                LinkRow(identifier: "mcp:\(server.id)", action: { model.push(.mcpServer(server.id)) }) {
+                LinkRow(identifier: "mcp:\(server.id)", action: { model.show(.mcpServer(server.id)) }) {
                     ServiceAvatar(service: "mcp", size: 44)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(untrusted(server.name))
@@ -119,10 +105,10 @@ struct McpServersSection: View {
         } footer: {
             GroupFootnote("Tools of the MCP servers you add here are offered to your AIs through Reins. You approve each call, the way you approve everything else.")
         }
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
 
         Section {
-            ActionButton(title: "Add MCP server", symbol: "plus", kind: .secondary) { model.push(.mcpAdd) }
+            ActionButton(title: "Add MCP server", symbol: "plus", kind: .secondary) { model.show(.mcpAdd) }
                 .accessibilityIdentifier("addMcp")
                 .plainListRow(top: 0, bottom: 24)
         }
@@ -147,8 +133,8 @@ struct McpStatusPill: View {
     }
 }
 
-/// `-demo -integration <gmail | telegram | mcp:linear | mcpAdd | ...>`: opens one integration screen at launch, for
-/// screenshots and a look at a screen without tapping there.
+/// `-demo -integration <gmail | telegram | mcp:linear | mcpAdd | ...>`: opens one integration screen on Connections at
+/// launch, for screenshots and a look at a screen without tapping there.
 @MainActor
 enum DemoIntegrationsLaunch {
     private static var done = false

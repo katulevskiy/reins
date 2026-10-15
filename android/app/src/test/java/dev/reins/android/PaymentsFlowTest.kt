@@ -36,11 +36,11 @@ class PaymentsFlowTest : FlowHarness() {
         tap("shipTo:work")
         tap("payWith:card:visa")
         authResult = AuthResult.Cancelled
-        tap("approve")
+        hold("approve")
         awaitCore { prompts.get() == 1 }
         assertTrue("nothing is approved without the screen lock", core.purchaseApprovals.isEmpty())
         authResult = AuthResult.Success
-        tap("approve")
+        hold("approve")
         awaitCore { core.purchaseApprovals.isNotEmpty() }
         assertEquals("req20" to PurchaseChoice("card:visa", "work", null), core.purchaseApprovals.single())
     }
@@ -57,7 +57,7 @@ class PaymentsFlowTest : FlowHarness() {
         awaitTag("limitEach")
         rule.onNodeWithTag("limitEach").performTextReplacement("40")
         rule.onNodeWithTag("limitDay").performTextReplacement("80")
-        tap("approve")
+        hold("approve")
         awaitCore { core.purchaseApprovals.isNotEmpty() }
         val limit = core.purchaseApprovals.single().second.limit
         assertEquals(
@@ -82,7 +82,7 @@ class PaymentsFlowTest : FlowHarness() {
     fun payments_is_turned_on_and_privacy_dot_com_connected_from_integrations() {
         core.payments = TestData.paymentsOverview(enabled = false).copy(provider = null, limits = emptyList())
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:payments")
         awaitTag("paymentsEnable")
         core.payments = TestData.paymentsOverview().copy(provider = null, limits = emptyList())
@@ -103,7 +103,7 @@ class PaymentsFlowTest : FlowHarness() {
     fun spending_shows_a_foreign_charge_and_closes_an_open_card() {
         core.payments = TestData.paymentsOverview()
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:payments")
         tap("openSpending")
         awaitTag("mismatch:p1")

@@ -1,29 +1,33 @@
 import Foundation
 
-/// The app's top-level sections: tabs on a compact width, the sidebar on a regular one (iPad, an unfolded iPhone
-/// Duo).
+/// The app's four places, the same on every platform (Map.png): tabs on a compact width, the sidebar on a regular one
+/// (iPad, an unfolded iPhone Duo). Trust holds Autopilot and the grants; Connections holds who can ask (AI apps and
+/// computers) and what they can reach (services and MCP servers).
 enum AppSection: String, CaseIterable, Hashable, Identifiable {
-    case activity, grants, autopilot, settings
+    case activity, trust, connections, settings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .activity: "Activity"
-        case .grants: "Grants"
-        case .autopilot: "Autopilot"
+        case .trust: "Trust"
+        case .connections: "Connections"
         case .settings: "Settings"
         }
     }
 
-    var symbol: String {
+    var glyph: Glyph {
         switch self {
-        case .activity: "waveform.path.ecg"
-        case .grants: "key.horizontal"
-        case .autopilot: "bolt.shield"
-        case .settings: "gearshape"
+        case .activity: .activity
+        case .trust: .shield
+        case .connections: .link
+        case .settings: .settings
         }
     }
+
+    /// The UI-test identifier of its tab or sidebar row.
+    var identifier: String { "tab:\(rawValue)" }
 }
 
 /// Screens shown on top of a section's root (pushed on a compact width, in the detail column on a regular one).
@@ -32,6 +36,8 @@ enum Route: Hashable {
     case sounds
     /// Settings > Vault passkeys.
     case vaultPasskeys
+    /// Settings > Appearance: the theme, grain on fields, the sans.
+    case appearance
     /// Settings > Devices: the account's phones (sign out a lost one) and computers.
     case devices
     /// Integrations > Password vault > Open the vault.
@@ -48,8 +54,6 @@ enum Route: Hashable {
     case tryIt(String?)
     /// One AI connection.
     case connection(String)
-    /// The services that can be connected (Gmail, GitHub, ...).
-    case integrations
     /// The Gmail accounts.
     case gmail
     /// The accounts of one other integration (its id).
@@ -65,8 +69,6 @@ enum Route: Hashable {
     /// The grants that ended (expired, used up or deleted): resumed or deleted for good from here.
     case expiredGrants
     case newGrant(token: Int)
-    /// Autopilot settings reached from Activity's mode pill or Settings (the Autopilot section's root, pushed).
-    case autopilot
 }
 
 /// The near-full-screen sheet for an item that waits for the user.

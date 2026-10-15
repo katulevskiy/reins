@@ -36,7 +36,7 @@ class HoldToConfirmFlowTest : FlowHarness() {
 
     private fun openConnection() {
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         awaitTag("disconnect")
         rule.onNodeWithTag("disconnect").performScrollTo()

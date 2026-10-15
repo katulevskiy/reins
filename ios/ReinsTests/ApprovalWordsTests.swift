@@ -100,7 +100,7 @@ final class ApprovalWordsTests: XCTestCase {
         XCTAssertEqual(ApprovalWords.tone(push([ref()])), .write)
         XCTAssertEqual(ApprovalWords.tone(T.view(kind: .search)), .search)
         XCTAssertEqual(ApprovalWords.tone(T.grantView()), .grant)
-        XCTAssertEqual(ApprovalWords.tone(T.accountsView()), .grant)
+        XCTAssertEqual(ApprovalWords.tone(T.accountsView()), .accounts, "an account change is pink, not a grant")
         XCTAssertEqual(ApprovalWords.tone(deleteRepo), .danger)
         XCTAssertEqual(ApprovalWords.tone(T.view(kind: .fetch, service: "vault", noStanding: true, action: "read")), .search, "a password changes nothing")
         XCTAssertEqual(ApprovalWords.badge(deleteRepo), .trash)
@@ -123,7 +123,10 @@ final class ApprovalWordsTests: XCTestCase {
         XCTAssertEqual(ApprovalWords.dangerTag(push([ref(force: true)], noStanding: true))?.id, "forceWarning:0")
         XCTAssertEqual(ApprovalWords.dangerTag(push([ref(force: true, forceUnknown: true)], noStanding: true))?.id, "forceUnknown:0")
         XCTAssertEqual(ApprovalWords.dangerTag(deleteRepo)?.id, "onceWarning")
-        XCTAssertNil(ApprovalWords.dangerTag(push([ref()])))
+        XCTAssertNil(ApprovalWords.dangerTag(push([ref("feature/passkeys")])))
+        // A push to the default branch says so, without making it a hold.
+        XCTAssertEqual(ApprovalWords.dangerTag(push([ref()]))?.id, "defaultBranch")
+        XCTAssertEqual(ApprovalWords.dangerTag(push([ref()]))?.destructive, false)
         let hidden = GitCommitView(shortSha: "a1b2c3d", subject: "x", author: "a", date: 0, filesChanged: nil, files: [], additions: nil, deletions: nil, hiddenChars: true)
         XCTAssertEqual(ApprovalWords.dangerTag(push([ref(commits: [hidden])]))?.id, "hiddenChars")
     }

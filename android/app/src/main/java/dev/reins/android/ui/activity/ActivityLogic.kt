@@ -267,58 +267,7 @@ fun waitCards(pending: List<PendingItem>): List<WaitCard> {
 
 // ---- history -------------------------------------------------------------------------------------------------------
 
-private val PAST = mapOf(
-    "search" to "Searched", "read" to "Read", "send" to "Sent", "push" to "Pushed", "create" to "Created",
-    "comment" to "Commented", "list" to "Listed", "add" to "Added", "delete" to "Deleted", "change" to "Changed",
-    "see" to "Saw", "get" to "Got", "update" to "Updated", "use" to "Used", "share" to "Shared", "open" to "Opened",
-    "edit" to "Edited", "close" to "Closed", "merge" to "Merged", "move" to "Moved", "archive" to "Archived",
-    "download" to "Downloaded", "upload" to "Uploaded", "fetch" to "Fetched", "buy" to "Bought", "connect" to "Connected",
-    "reply" to "Replied", "label" to "Labelled", "write" to "Wrote", "post" to "Posted", "sign" to "Signed",
-)
-
-/** "Push to a branch" → "Pushed to a branch" (a verb it does not know stays as it is). */
-fun pastTense(phrase: String): String {
-    val first = phrase.substringBefore(' ')
-    val past = PAST[first.lowercase()] ?: return phrase
-    return past + phrase.removePrefix(first)
-}
-
 private fun done(outcome: String) = outcome == "released" || outcome == "sent" || outcome == "granted"
-
-/** What an entry did, as one line: "Read 2 emails from Stripe", "Pushed to a branch"; what was refused stays as asked. */
-fun historySentence(entry: ActivityEntry): String = historyParts(entry).plain
-
-/** [historySentence] with its key nouns in bold, for the entry's page. */
-fun historyParts(entry: ActivityEntry): Sentence {
-    val count = entry.count.toInt()
-    val past = done(entry.outcome)
-    val info = entry.info
-    if (ActionKind.of(entry.action) == ActionKind.Grant) {
-        return sentence {
-            t(if (entry.outcome == "granted") "Got " else "Asked for ").b("access")
-            info.grantSummary?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { t(": ").b(it) }
-        }
-    }
-    if (mail(entry.service, entry.op)) {
-        when (ActionKind.of(entry.action)) {
-            ActionKind.Search -> return sentence {
-                t(if (past) "Searched " else "Search ").b("Gmail")
-                info.query?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { t(" for ").b("“$it”") }
-            }
-            ActionKind.Read -> return sentence {
-                t("Read ").b(emails(count))
-                commonSender(info.messages.map { untrusted(it.from) })?.let { t(" from ").b(it) }
-            }
-            ActionKind.Send -> return sentence {
-                t(if (past) "Sent " else "Send ").b("an email")
-                info.email?.to?.firstOrNull()?.let(::untrusted)?.let { t(" to ").b(it) }
-            }
-            else -> Unit
-        }
-    }
-    val title = operationTitle(entry.action, count, entry.service, untrusted(entry.opTitle), entry.op)
-    return sentence { b(if (past) pastTense(title) else title) }
-}
 
 /** How an entry ended, as the marker at the end of its row. */
 enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Bypass, Lockdown, Failed }
@@ -412,4 +361,142 @@ fun dayTime(epochSeconds: Long, nowSeconds: Long, zone: TimeZone = TimeZone.getD
         1L -> "Tomorrow, $time"
         else -> "${dayLabel(epochSeconds, nowSeconds, zone)}, $time"
     }
+}
+
+// ---- Reins Signal: the stack and the river ----------------------------------------------------------------------------
+
+/** A push as the reason line counts it: the repository and whether it went to the default branch. */
+data class PushKey(val repo: String, val defaultBranch: Boolean)
+
+/** Whether [branch] is the repository's default ([default], else main or master). */
+fun isDefaultBranch(branch: String, default: String?): Boolean =
+    if (default != null) branch == default else branch == "main" || branch == "master"
+
+/** The push a request (or a decided entry's stored approval) makes: its first branch, else its first ref. */
+fun pushKey(view: ApprovalView?): PushKey? {
+    val git = view?.git ?: return null
+    val ref = git.refs.firstOrNull { it.kind == "branch" } ?: git.refs.firstOrNull() ?: return null
+    if (git.repo.isBlank()) return null
+    return PushKey(untrusted(git.repo), isDefaultBranch(ref.shortName, git.defaultBranch))
+}
+
+/** A push you approved yourself (not Autopilot, a bypass or a grant). */
+fun approvedPush(e: ActivityEntry): Boolean =
+    (e.op == "git_push" || e.label?.action == "push") && e.decidedBy.isEmpty() && e.grantId == null && done(e.outcome)
+
+/**
+ * Autopilot's reason line for a waiting request, built on the phone: for a push, the pushes of the same repository
+ * and branch kind you approved ("Like 11 pushes to feature branches of acme/web you approved"); otherwise the count of
+ * its kind in the profile ("Like 9 searches you approved"). Null when Autopilot is not sure either way or has nothing.
+ */
+fun reasonLine(
+    suggestion: SuggestionView?,
+    item: PendingItem,
+    classApproved: Int?,
+    classDenied: Int?,
+    push: PushKey?,
+    approvedPushes: List<PushKey>,
+): String? {
+    if (suggestion == null || !suggestion.judged || suggestion.floor) return null
+    val allow = when (suggestion.verdict) {
+        Verdict.APPROVE -> true
+        Verdict.DENY -> false
+        else -> return null
+    }
+    if (push != null && allow) {
+        val n = approvedPushes.count { it == push }
+        if (n > 0) {
+            val where = if (push.defaultBranch) "the default branch" else "feature branches"
+            return "Like $n ${if (n == 1) "push" else "pushes"} to $where of ${push.repo} you approved"
+        }
+    }
+    val n = (if (allow) classApproved else classDenied)?.takeIf { it > 0 } ?: return null
+    val noun = kindNoun(item, n)
+    return "Like $n $noun you ${if (allow) "approved" else "denied"}"
+}
+
+/** "pushes", "searches", "reads", …: what a kind of request is called when counted. */
+private fun kindNoun(item: PendingItem, n: Int): String {
+    val one = n == 1
+    if (item.op == "git_push" || item.label?.action == "push") return if (one) "push" else "pushes"
+    return when (ActionKind.of(item.action)) {
+        ActionKind.Search -> if (one) "search" else "searches"
+        ActionKind.Read, ActionKind.Headlines -> if (one) "read" else "reads"
+        ActionKind.List -> if (one) "list" else "lists"
+        ActionKind.Send -> if (one) "send" else "sends"
+        ActionKind.Write -> if (one) "change" else "changes"
+        else -> if (one) "request like it" else "requests like it"
+    }
+}
+
+/** The ask on a waiting card and the part of it set in italic (the target), with the mono line under it. */
+data class CardAsk(val text: String, val target: String?, val details: String? = null)
+
+/** What a waiting request asks, as the card's ask: the one formatter's sentence ([askSentence]). */
+fun cardAsk(item: PendingItem, view: ApprovalView?): CardAsk =
+    dev.reins.android.ui.common.askSentence(item, view).let { CardAsk(it.text, it.target, it.details) }
+
+/** A group's ask: "Read 5 emails from Stripe". */
+fun groupAsk(items: List<PendingItem>, views: (String) -> ApprovalView?): CardAsk {
+    val s = groupSentence(items, views)
+    // Only the sender is a target ("… from *Stripe*"); a verb ("and *read 2 emails*") is never italic.
+    val from = s.parts.size >= 2 && s.parts[s.parts.size - 2].text == " from "
+    return askOf(s).copy(target = if (from) s.parts.last().text else null)
+}
+
+/** "Wants to **search Gmail** for **invoice**" → "Search Gmail for *invoice*" (the last of two or more bold parts). */
+private fun askOf(s: Sentence): CardAsk {
+    val plain = s.plain
+    val text = when {
+        plain.startsWith("Wants to ") -> plain.removePrefix("Wants to ")
+        plain.startsWith("Asks for ") -> "Ask for " + plain.removePrefix("Asks for ")
+        else -> plain
+    }
+    val bold = s.parts.filter { it.bold }
+    return CardAsk(text.replaceFirstChar { it.uppercase() }, bold.lastOrNull()?.text?.takeIf { bold.size >= 2 })
+}
+
+/** The card's label line ("GitHub · Push"): what it touches, then what it does. */
+fun cardLabel(item: PendingItem): String = dev.reins.android.ui.common.askSentence(item).kind
+
+/** Who asks, under the ask: "ChatGPT · dana@acme.dev". */
+fun cardWho(item: PendingItem): String =
+    listOfNotNull(
+        dev.reins.android.ui.common.serifLine(item.connectionLabel),
+        // The account's host in punycode when it has other letters, its raw form beside it.
+        item.account?.let { dev.reins.android.ui.common.addressLine(it) }?.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
+
+/** "One thing waits for you." with its number word upright. */
+fun waitingMood(n: Int): Pair<String, String> =
+    numberWordCap(n) to if (n == 1) " thing waits for you." else " things wait for you."
+
+/** "All quiet. Three AIs are connected." */
+fun quietMood(connections: Int): String = when (connections) {
+    0 -> "All quiet. Nothing is connected yet."
+    1 -> "All quiet. One AI is connected."
+    else -> "All quiet. ${numberWordCap(connections)} AIs are connected."
+}
+
+private fun numberWordCap(n: Int): String =
+    listOf("No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve").getOrNull(n) ?: n.toString()
+
+/** "12 asked · 9 by Autopilot": a day's count beside its label. */
+fun dayCount(entries: List<ActivityEntry>, autopilotOnly: Boolean): String {
+    val auto = entries.count { it.decidedBy == "autopilot" || it.decidedBy == "overnight" }
+    return if (autopilotOnly) "$auto by Autopilot" else if (auto > 0) "${entries.size} asked · $auto by Autopilot" else "${entries.size} asked"
+}
+
+/** The glyph of an operation by its kind. */
+fun kindGlyph(action: String): dev.reins.android.design.Glyph = when (ActionKind.of(action)) {
+    ActionKind.Search -> dev.reins.android.design.Glyph.Search
+    ActionKind.List, ActionKind.Headlines -> dev.reins.android.design.Glyph.List
+    ActionKind.Read -> dev.reins.android.design.Glyph.Mail
+    ActionKind.Write -> dev.reins.android.design.Glyph.Pencil
+    ActionKind.Send -> dev.reins.android.design.Glyph.Send
+    ActionKind.Grant, ActionKind.Other -> dev.reins.android.design.Glyph.Key
+    ActionKind.Accounts -> dev.reins.android.design.Glyph.People
+    ActionKind.Pair -> dev.reins.android.design.Glyph.Link
+    ActionKind.Join -> dev.reins.android.design.Glyph.Phone
+    ActionKind.Upload -> dev.reins.android.design.Glyph.CloudUpload
 }

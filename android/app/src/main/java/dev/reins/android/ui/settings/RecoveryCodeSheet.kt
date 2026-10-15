@@ -35,6 +35,14 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
 import dev.reins.android.BuildConfig
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import dev.reins.android.design.AskText
+import dev.reins.android.design.ButtonSize
+import dev.reins.android.design.Field
+import dev.reins.android.design.LabelText
+import dev.reins.android.design.SignalButton
+import dev.reins.android.design.fieldSurface
 import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.Glyph
@@ -64,41 +72,50 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
         ),
     ) {
         DialogFeedback()
+        // An account field (iOS-Arrival 04): pink because it changes how the account opens.
+        val shape = RoundedCornerShape(28.dp)
         Column(
-            Modifier.padding(horizontal = 20.dp).fillMaxWidth().glass(c, RoundedCornerShape(26.dp), 16.dp).verticalScroll(rememberScrollState()).padding(22.dp).testTag("recoveryCodeSheet"),
+            Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(shape).background(c.paper).verticalScroll(rememberScrollState()).testTag("recoveryCodeSheet"),
         ) {
-            RText("Recovery code", RType.sans(19f, FontWeight.SemiBold), c.text)
-            Spacer(Modifier.height(14.dp))
-            SelectionContainer {
-                RText(
-                    recoveryCodeLines(code).joinToString("\n"),
-                    RType.mono(19f, FontWeight.Medium).copy(letterSpacing = 1.sp, lineHeight = 26.sp),
-                    c.text,
-                    Modifier.fillMaxWidth()
-                        .background(c.controlFill, RoundedCornerShape(16.dp))
-                        .clickable(onClickLabel = "Copy recovery code", onClick = onCopy)
-                        .padding(vertical = 16.dp, horizontal = 12.dp)
-                        .testTag("recoveryCode"),
-                    ltr = true,
-                )
+            Column(
+                Modifier.fillMaxWidth().fieldSurface(Field.Accounts, RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)).padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                LabelText("Account · Recovery", c.onField2)
+                AskText("Write down your recovery code", c.onField, target = "recovery code", style = RType.serif(32f, 36f), minSize = 26.sp)
+                RText("It opens your vault if you lose this phone. Nobody else has it, us included.", RType.sans(14.5f, lineHeight = 20f), c.onField2)
             }
-            Spacer(Modifier.height(14.dp))
-            RText(
-                "Opens your vault if you lose this phone. Write it down and keep it safe.",
-                RType.sans(14.5f, lineHeight = 20f),
-                c.secondary,
-            )
-            Spacer(Modifier.height(20.dp))
-            if (required) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = recorded, onCheckedChange = { recorded = it }, modifier = Modifier.testTag("recoveryRecorded"))
-                    RText("I wrote it down", RType.sans(14.5f, lineHeight = 20f), c.text, Modifier.weight(1f))
+            Column(Modifier.padding(22.dp)) {
+                SelectionContainer {
+                    RText(
+                        recoveryCodeLines(code).joinToString("\n"),
+                        RType.mono(19f, FontWeight.Medium).copy(letterSpacing = 1.sp, lineHeight = 28.sp),
+                        c.ink,
+                        Modifier.fillMaxWidth()
+                            .background(c.paperRaised, RoundedCornerShape(16.dp))
+                            .border(1.dp, c.rule, RoundedCornerShape(16.dp))
+                            .clickable(onClickLabel = "Copy recovery code", onClick = onCopy)
+                            .padding(vertical = 16.dp, horizontal = 14.dp)
+                            .testTag("recoveryCode"),
+                        ltr = true,
+                    )
                 }
+                RText("A copy clears from the clipboard in 60 s.", RType.meta, c.inkMeta, Modifier.padding(top = 8.dp))
                 Spacer(Modifier.height(12.dp))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CapsuleButton("Copy", Modifier.weight(1f).testTag("copyRecoveryCode"), style = ButtonStyle.Secondary, glyph = Glyph.Copy, onClick = onCopy)
-                CapsuleButton(if (required) "Continue" else "Done", Modifier.weight(1f).testTag("recoveryCodeDone"), enabled = !required || recorded, style = ButtonStyle.Primary, onClick = onDone)
+                if (required) {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { recorded = !recorded }.testTag("recoveryRecordedRow"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = recorded, onCheckedChange = { recorded = it }, modifier = Modifier.testTag("recoveryRecorded"))
+                        RText("I wrote it down", RType.row, c.ink, Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SignalButton("Copy", Modifier.weight(1f).testTag("copyRecoveryCode"), style = ButtonStyle.Soft, size = ButtonSize.Small, glyph = Glyph.Copy, onClick = onCopy)
+                    SignalButton(if (required) "Continue" else "Done", Modifier.weight(1f).testTag("recoveryCodeDone"), enabled = !required || recorded, size = ButtonSize.Small, onClick = onDone)
+                }
             }
         }
     }

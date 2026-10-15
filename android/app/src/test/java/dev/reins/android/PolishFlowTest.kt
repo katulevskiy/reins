@@ -59,12 +59,15 @@ class PolishFlowTest : FlowHarness() {
         )
         launch()
         awaitTag("entry:7")
-        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Run git push --force origin main")
-        rule.onNodeWithTag("entryTitle:8", useUnmergedTree = true).assertTextEquals("Read ~/dev/api/.env")
-        rule.onNodeWithTag("entryTitle:9", useUnmergedTree = true).assertTextEquals("Send an email to ada@acme.com")
-        assertTrue(hasDeep("providerTile:terminal:run"))
-        assertTrue(hasDeep("providerTile:file:read"))
-        assertTrue(hasDeep("providerTile:gmail:send"))
+        rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Asked to run a command in acme-web")
+        rule.onNodeWithTag("entryDetails:7", useUnmergedTree = true).assertTextEquals("git push --force origin main \\\n--no-verify")
+        rule.onNodeWithTag("entryTitle:8", useUnmergedTree = true).assertTextEquals("Read .env")
+        rule.onNodeWithTag("entryDetails:8", useUnmergedTree = true).assertTextEquals("~/dev/api/.env")
+        rule.onNodeWithTag("entryTitle:9", useUnmergedTree = true).assertTextEquals("Sent an email")
+        rule.onNodeWithTag("entryDetails:9", useUnmergedTree = true).assertTextEquals("ada@acme.com")
+        assertTrue("a kind tile each", hasDeep("tile:7"))
+        assertTrue(hasDeep("tile:8"))
+        assertTrue(hasDeep("tile:9"))
         assertFalse("never the tool's generic title", showsText("Ask you on your phone", substring = true))
     }
 
@@ -75,8 +78,9 @@ class PolishFlowTest : FlowHarness() {
         )
         launch()
         awaitTag("pending:req7")
-        rule.onNodeWithTag("sentence:req7", useUnmergedTree = true).assertTextEquals("Run git push --force origin main")
-        assertTrue(hasDeep("providerTile:terminal:run"))
+        rule.onNodeWithTag("sentence:req7", useUnmergedTree = true).assertTextEquals("Run a command")
+        rule.onNodeWithTag("cardDetails:req7", useUnmergedTree = true).assertTextEquals("git push --force origin main")
+        assertTrue("what it touches and what it does", showsText("TERMINAL · RUN"))
     }
 
     @Test
@@ -85,7 +89,7 @@ class PolishFlowTest : FlowHarness() {
         launch()
         tap("entry:7")
         awaitTag("entryHero")
-        rule.onNodeWithTag("detailTitle", useUnmergedTree = true).assertTextEquals("Run git push --force origin main")
+        rule.onNodeWithTag("detailTitle", useUnmergedTree = true).assertTextEquals("Asked to run a command in acme-web")
         rule.onNodeWithTag("askedWho").assertTextContains("Claude Code", substring = true)
         rule.onNodeWithTag("askedIn").assertTextContains("~/dev/acme-web", substring = true)
         rule.onNodeWithTag("askedWhy").assertTextContains("Rewriting git history", substring = true)
@@ -150,7 +154,7 @@ class PolishFlowTest : FlowHarness() {
     fun theChosenChipIsTintedWithACheckAndTheOthersAreNot() {
         core.connections = listOf(TestData.connection("c1", "Claude"), TestData.connection("c2", "ChatGPT"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         awaitTag("conn:c1")
         tap("conn:c2")
@@ -158,6 +162,8 @@ class PolishFlowTest : FlowHarness() {
         rule.onNodeWithTag("conn:c1").assertIsNotSelected()
         tap("scope:all")
         rule.onNodeWithTag("scope:all").assertIsSelected()
-        rule.onNodeWithTag("scope:specific").assertIsNotSelected()
+        // All mail takes the place of the address box.
+        awaitTag("allMailNote")
+        assertFalse(has("parties"))
     }
 }

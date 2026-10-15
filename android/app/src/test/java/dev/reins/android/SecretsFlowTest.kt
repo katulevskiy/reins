@@ -46,7 +46,7 @@ class SecretsFlowTest : FlowHarness() {
     fun anEnvReleaseShowsTheWholeCommandAndTheVariablesNames() {
         openRequest(TestData.envReleaseView(TestData.envRelease(command = longCommand, purpose = "Seed and run the dev server")))
         awaitTag("envRelease")
-        rule.onNodeWithTag("what").assertTextEquals("Wants 3 variables\nof shop · dev")
+        rule.onNodeWithTag("what").assertTextEquals("Use 3 variables of shop · dev")
         rule.onNodeWithTag("envRunner").assertTextEquals("You")
         assertTrue(has("envPerson"))
         rule.onNodeWithTag("envCommand").assertTextEquals(longCommand)
@@ -165,7 +165,8 @@ class SecretsFlowTest : FlowHarness() {
     fun aPrintedValueIsAskedEveryTime() {
         openRequest(TestData.envReleaseView(TestData.envRelease(variables = listOf("STRIPE_KEY"), print = true, command = "reins secrets get STRIPE_KEY")))
         awaitTag("noStanding")
-        rule.onNodeWithTag("what").assertTextEquals("Wants to print STRIPE_KEY\nfrom shop · dev")
+        rule.onNodeWithTag("what").assertTextEquals("Print a value from shop · dev")
+        rule.onNodeWithTag("askDetails", useUnmergedTree = true).assertTextEquals("STRIPE_KEY")
         rule.onNodeWithTag("envLease").assertTextEquals("Printed")
         assertFalse(has("alwaysAskToggle"))
     }
@@ -190,7 +191,7 @@ class SecretsFlowTest : FlowHarness() {
         openRequest(TestData.secretsStoreView())
         awaitTag("storeCheck")
         rule.onNodeWithTag("storeCheck").assertContentDescriptionEquals("4821")
-        rule.onNodeWithTag("what").assertTextEquals("Wants to save 9 secrets\nin your vault")
+        rule.onNodeWithTag("what").assertTextEquals("Save 9 secrets in your vault")
         rule.onNodeWithTag("storeEnvName:0", useUnmergedTree = true).assertTextEquals("shop · dev")
         assertFalse(hasUnmerged("storeNew:0"))
         assertTrue(hasUnmerged("storeNew:1"))
@@ -245,7 +246,7 @@ class SecretsFlowTest : FlowHarness() {
         core.grants = listOf(TestData.secretsGrant())
         core.secretsRevokeAnswer = SecretsRevoked(1u, 2u, listOf("work-laptop"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:s1")
         tap("revokeEverywhere")
         confirmRevoke()
@@ -259,7 +260,7 @@ class SecretsFlowTest : FlowHarness() {
     fun otherGrantsHaveNoRevokeOnAllComputers() {
         core.grants = listOf(TestData.grant("g1"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:g1")
         awaitTag("revoke")
         assertFalse(has("revokeEverywhere"))

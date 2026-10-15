@@ -66,6 +66,15 @@ final class NotificationAccess {
 
 /// Activity's card while requests cannot ring: what that means, and Turn on. Not in the demo, which asks only when told.
 struct NotificationsOffCard: View {
+    /// `-demoWarn` (debug): the warn field shows in the demo, for screenshots.
+    static var demoWarn: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-demoWarn")
+        #else
+        false
+        #endif
+    }
+
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
@@ -74,13 +83,13 @@ struct NotificationsOffCard: View {
     var body: some View {
         // A stack, not a Group, so the checks below run while nothing shows.
         VStack(spacing: 0) {
-            if access.state.needsAttention && !model.demo {
+            if (access.state.needsAttention && !model.demo) || Self.demoWarn {
                 CompactBanner(
                     text: access.state == .quiet ? "Notifications are quiet" : "Notifications are off",
                     symbol: "bell.slash.fill",
-                    button: "Turn on"
+                    button: "Turn on",
+                    label: "Reins · Notifications"
                 ) { Task { await access.turnOn(openURL: openURL) } }
-                .padding(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("notificationsOff")
             }

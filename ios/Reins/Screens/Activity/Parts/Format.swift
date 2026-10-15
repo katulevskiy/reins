@@ -87,7 +87,8 @@ enum FileText {
 /// "mcp.linear.app", "localhost:8080": a server by its host, never with its path or query.
 func mcpHostLabel(_ url: String) -> String {
     guard let comps = URLComponents(string: url.trimmingCharacters(in: .whitespaces)), let host = comps.host, !host.isEmpty else {
-        return url
+        return untrusted(url)
     }
-    return comps.port.map { "\(host):\($0)" } ?? host
+    let ascii = asciiHost(untrusted(host))
+    return comps.port.map { "\(ascii):\($0)" } ?? ascii
 }

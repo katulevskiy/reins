@@ -1,5 +1,13 @@
 package dev.reins.android.ui.signin
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.browser.auth.AuthTabIntent
@@ -141,17 +149,26 @@ private fun WelcomePage(
     val passwordForms = (custom && valid && !AccountRules.isDefaultServer(server, BuildConfig.DEFAULT_SERVER)) || noBrowserSignIn
     Screen(title = null, modifier = Modifier.testTag("welcome")) {
         Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Spacer(Modifier.height(72.dp))
-            Box(
-                Modifier.size(64.dp).background(c.accentSoft, RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center,
-            ) { GlyphIcon(Glyph.ShieldCheck, c.accent, size = 34.dp) }
-            Spacer(Modifier.height(6.dp))
-            RText("Reins", RType.sans(38f, FontWeight.SemiBold), c.text)
-            RText(
+            // The kite (iOS-Arrival 01): the AI flies, you hold the line.
+            Spacer(Modifier.height(24.dp))
+            Image(
+                painterResource(dev.reins.android.design.Illustration.Kite.res),
+                contentDescription = null,
+                modifier = Modifier.fillMaxWidth().aspectRatio(dev.reins.android.design.Illustration.Kite.aspect).testTag("kite"),
+                contentScale = ContentScale.Fit,
+            )
+            dev.reins.android.design.AskText(
                 "Your AIs ask. You decide.",
-                RType.sans(16.5f, lineHeight = 23f),
-                c.secondary,
+                c.ink,
+                Modifier.padding(top = 8.dp).semantics { heading() },
+                target = "You decide.",
+                style = RType.serif(44f, 46f),
+                minSize = 34.sp,
+            )
+            RText(
+                "Reins sits between your AI agents and your accounts. When one wants to read, send or change something, this phone asks you first.",
+                RType.sans(16f, lineHeight = 23f),
+                c.ink2,
             )
             if (linkWaiting) {
                 Banner("Sign in, then your computer connects.", Modifier.padding(top = 6.dp), tag = "linkWaiting")

@@ -84,29 +84,36 @@ import dev.reins.android.ui.signin.AccountRules
 import dev.reins.core.AutopilotMode
 import dev.reins.core.ConnectionView
 
+import dev.reins.android.design.ButtonSize
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.Pill
+import dev.reins.android.design.SignalButton
+import dev.reins.android.design.SignalDialog
+import dev.reins.android.design.hairlineBelow
+import dev.reins.android.design.Appearance
+import dev.reins.android.ui.main.RootHeader
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.verticalScroll
+
 /**
- * Settings: the account card (email, server, whether this phone approves and is notified, with the one fix when
- * something is off), what is connected, Autopilot and the other pages, security, the tour and version, and leaving.
+ * Settings (Reins Signal, iOS-Settings 01 / And-Core 05): only you and this phone. The account, then Devices, Sounds
+ * and vibration, Notification channels, Appearance, the recovery code, vault passkeys and the tour as monochrome rows;
+ * below the fold the version and updates, signing out and deleting the account, Terms and Privacy. Connections and
+ * Autopilot have their own tabs now.
  */
 @Composable
 fun SettingsScreen(
     state: AppState,
     viewModel: SettingsViewModel,
-    /** Null at the root of the Settings tab. */
-    onBack: (() -> Unit)? = null,
-    onConnection: (String) -> Unit,
-    onIntegrations: () -> Unit,
     onSounds: () -> Unit,
+    onAppearance: () -> Unit = {},
     onTour: () -> Unit = {},
-    onAutopilot: () -> Unit = {},
-    onScanComputer: () -> Unit = {},
-    onTypeComputerCode: () -> Unit = {},
     onVaultPasskeys: () -> Unit = {},
     onDevices: () -> Unit = {},
     /** Debug builds: the Signal component gallery. */
     onSignalGallery: () -> Unit = {},
-    /** A sheet covers the page: the tab bar steps aside for it. */
-    onCovered: (Boolean) -> Unit = {},
     authenticator: Authenticator,
 ) {
     val c = LocalColors.current
@@ -115,121 +122,45 @@ fun SettingsScreen(
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val sounds by viewModel.sounds.collectAsStateWithLifecycle()
     val session by state.session.collectAsStateWithLifecycle()
-    val connections by state.connections.collectAsStateWithLifecycle()
-    val accounts by state.accounts.collectAsStateWithLifecycle()
-    val autopilot by state.autopilot.collectAsStateWithLifecycle()
     val hasRecoveryCode by viewModel.hasRecoveryCode.collectAsStateWithLifecycle()
     val recoveryCode by viewModel.recoveryCode.collectAsStateWithLifecycle()
     val deletion by viewModel.deletion.collectAsStateWithLifecycle()
     val vaultPasskeys by viewModel.vaultPasskeys.collectAsStateWithLifecycle()
     val devices by viewModel.devices.collectAsStateWithLifecycle()
+    val appearance by Appearance.state(context)
     var confirmSignOut by remember { mutableStateOf(false) }
-    var connectOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(connectOpen) { onCovered(connectOpen) }
     LaunchedEffect(session) {
         viewModel.checkRecoveryCode()
         viewModel.countDevices()
     }
     val signedIn = session as? SessionState.SignedIn
-    val mcpUrl = signedIn?.info?.serverUrl?.let(AccountRules::mcpUrl)
-    val copyMcp: () -> Unit = {
-        if (mcpUrl != null) {
-            copyText(context, "Reins MCP address", mcpUrl)
-            feedback.play(Event.Copied)
-            // Android 13 and later confirm a copy themselves.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.notice("MCP address copied.")
-        }
-    }
+    val channels = remember { notificationChannelCount(context) }
 
-    Box(Modifier.fillMaxSize()) {
-        SettingsPage(title = "Settings", onBack = onBack) {
-            signedIn?.let { AccountCard(it.info.email, it.info.serverUrl, state, viewModel) }
-            Column(Modifier.padding(horizontal = 16.dp)) {
+    Box(Modifier.fillMaxSize().background(c.paper)) {
+        Column(Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+            RootHeader("Settings")
+            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 18.dp)) {
+                signedIn?.let { AccountBlock(it.info.email, it.info.serverUrl, state, viewModel) }
                 ui.message?.let { Banner(it, Modifier.padding(top = 10.dp)) }
                 ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error) }
-            }
 
-            SettingsGroup(header = "Connected") {
-                // AI apps first, then the computers, which pinned their key when they paired.
-                connections.sortedBy { it.keyFingerprint != null }.forEach { connection ->
-                    ConnectionRow(connection) { onConnection(connection.id) }
+                if (signedIn != null) {
+                    SetRow("Devices", Glyph.Phone, Modifier.testTag("devicesRow"), value = devices?.toString(), onClick = onDevices)
                 }
-                SettingsRow(
-                    "Connect",
-                    Modifier.testTag("connect"),
-                    icon = Icons.Rounded.Add,
-                    tint = c.accent,
-                    titleColor = c.accent,
-                    chevron = false,
-                ) { connectOpen = true }
-            }
-
-            SettingsGroup {
-                val mode = autopilot?.mode ?: AutopilotMode.MANUAL
-                SettingsRow(
-                    "Autopilot",
-                    Modifier.testTag("openAutopilot"),
-                    icon = Icons.Rounded.Bolt,
-                    tint = c.accent,
-                    valueContent = { ModeValue(mode) },
-                    onClick = onAutopilot,
-                )
-                SettingsRow(
-                    "Integrations",
-                    Modifier.testTag("openIntegrations"),
-                    icon = Icons.Rounded.Extension,
-                    tint = c.read,
-                    // The vault comes with the account: it is not something the user connected.
-                    value = accountsValue(accounts.count { it.service != "vault" }),
-                    onClick = onIntegrations,
-                )
-                SettingsRow(
-                    "Sounds & haptics",
-                    Modifier.testTag("openSounds"),
-                    icon = Icons.AutoMirrored.Rounded.VolumeUp,
-                    tint = c.accounts,
-                    value = soundsValue(sounds),
-                    onClick = onSounds,
-                )
-            }
-
-            if (signedIn != null) {
-                SettingsGroup(header = "Security") {
-                    SettingsRow(
-                        "Devices",
-                        Modifier.testTag("devicesRow"),
-                        icon = Icons.Rounded.Devices,
-                        tint = c.search,
-                        value = devices?.toString(),
-                        onClick = onDevices,
-                    )
-                    if (hasRecoveryCode) {
-                        SettingsRow(
-                            "Recovery code",
-                            Modifier.testTag("recoveryCodeRow"),
-                            icon = Icons.Rounded.Key,
-                            tint = c.send,
-                        ) { viewModel.showRecoveryCode(authenticator) }
-                        SettingsRow(
-                            "Vault passkeys",
-                            Modifier.testTag("vaultPasskeysRow"),
-                            icon = Icons.Rounded.Fingerprint,
-                            tint = c.accent,
-                            value = vaultPasskeysValue(vaultPasskeys),
-                            onClick = onVaultPasskeys,
-                        )
-                    }
+                SetRow("Sounds and vibration", Glyph.Haptics, Modifier.testTag("openSounds"), value = soundsValue(sounds), onClick = onSounds)
+                SetRow("Notification channels", Glyph.Bell, Modifier.testTag("notificationChannels"), value = channels.takeIf { it > 0 }?.toString()) {
+                    openNotificationChannels(context)
                 }
+                SetRow("Appearance", Glyph.Appearance, Modifier.testTag("openAppearance"), value = appearance.theme.label, onClick = onAppearance)
+                if (signedIn != null && hasRecoveryCode) {
+                    SetRow("Recovery code", Glyph.Key, Modifier.testTag("recoveryCodeRow")) { viewModel.showRecoveryCode(authenticator) }
+                    SetRow("Vault passkeys", Glyph.Fingerprint, Modifier.testTag("vaultPasskeysRow"), value = vaultPasskeysValue(vaultPasskeys), onClick = onVaultPasskeys)
+                }
+                SetRow("Take the tour", Glyph.Help, Modifier.testTag("takeTour"), onClick = onTour)
             }
 
-            SettingsGroup {
-                SettingsRow(
-                    "Take the tour",
-                    Modifier.testTag("takeTour"),
-                    icon = Icons.Rounded.Explore,
-                    tint = c.tertiary,
-                    onClick = onTour,
-                )
+            // Below the fold: the version and updates, then the way out.
+            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 26.dp)) {
                 VersionRow()
                 val updates = viewModel.updates
                 if (updates != null) {
@@ -243,60 +174,23 @@ fun SettingsScreen(
                     )
                 }
             }
-
-            SettingsGroup {
-                SettingsRow(
-                    "Sign out",
-                    Modifier.testTag("signOut"),
-                    icon = Icons.AutoMirrored.Rounded.Logout,
-                    destructive = true,
-                    chevron = false,
-                    onClick = { if (!ui.busy) confirmSignOut = true },
-                )
+            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 10.dp)) {
+                SetRow("Sign out", Glyph.Quit, Modifier.testTag("signOut"), destructive = true, chevron = false) { if (!ui.busy) confirmSignOut = true }
                 if (signedIn != null) {
-                    SettingsRow(
-                        "Delete account",
-                        Modifier.testTag("deleteAccount"),
-                        icon = Icons.Rounded.Delete,
-                        destructive = true,
-                        chevron = false,
-                        onClick = viewModel::openDeletion,
-                    )
+                    SetRow("Delete account", Glyph.Trash, Modifier.testTag("deleteAccount"), destructive = true, chevron = false, divider = false, onClick = viewModel::openDeletion)
                 }
             }
 
             Footer()
 
             if (BuildConfig.DEBUG) {
-                // Debug builds only: what the round Autopilot button opens, to compare the designs on a phone.
-                SettingsGroup(header = "Developer") {
-                    val quick by dev.reins.android.ui.autopilot.QuickStyles.state(context)
-                    dev.reins.android.ui.autopilot.Segmented(
-                        dev.reins.android.ui.autopilot.QuickStyle.entries,
-                        quick,
-                        label = { it.label },
-                        modifier = Modifier.padding(12.dp),
-                        tag = { "quickStyle:${it.name}" },
-                    ) { dev.reins.android.ui.autopilot.QuickStyles.set(context, it) }
-                    SettingsRow("Signal gallery", Modifier.testTag("signalGalleryRow"), onClick = onSignalGallery)
+                // Debug builds only: every Signal component, to compare with the boards on a phone.
+                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 22.dp)) {
+                    dev.reins.android.design.LabelText("Developer", c.inkMeta)
+                    SetRow("Signal gallery", Glyph.Apps, Modifier.testTag("signalGalleryRow"), divider = false, onClick = onSignalGallery)
                 }
             }
-            Spacer(Modifier.height(32.dp))
-        }
-
-        BottomSheet(connectOpen, "Connect", onClose = { connectOpen = false }, tag = "connectSheet") {
-            ConnectSheetContent(
-                mcpUrl = mcpUrl,
-                onCopy = copyMcp,
-                onScan = {
-                    connectOpen = false
-                    onScanComputer()
-                },
-                onType = {
-                    connectOpen = false
-                    onTypeComputerCode()
-                },
-            )
+            Spacer(Modifier.height(32.dp).testTag("pageEnd"))
         }
     }
 
@@ -319,10 +213,11 @@ fun SettingsScreen(
     }
 
     if (confirmSignOut) {
-        ConfirmDialog(
+        SignalDialog(
             title = "Sign out?",
             text = "Requests can't reach this phone until you sign in again.",
             confirmLabel = "Sign out",
+            destructive = true,
             onConfirm = {
                 confirmSignOut = false
                 viewModel.signOut()
@@ -333,12 +228,63 @@ fun SettingsScreen(
 }
 
 /**
+ * A row of Settings (Signal `.row`): a monochrome 32 dp tile, the title, a value in meta, a chevron. [destructive]
+ * draws the title and glyph in danger.
+ */
+@Composable
+fun SetRow(
+    title: String,
+    glyph: Glyph,
+    modifier: Modifier = Modifier,
+    value: String? = null,
+    destructive: Boolean = false,
+    chevron: Boolean = true,
+    divider: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val c = LocalColors.current
+    Row(
+        modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 56.dp)
+            .then(if (divider) Modifier.hairlineBelow(c.rule) else Modifier)
+            .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(32.dp).background(if (destructive) c.dangerWash else c.paperSunken, RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center,
+        ) { GlyphIcon(glyph, if (destructive) c.danger else c.ink, size = 18.dp) }
+        RText(title, RType.sans(15f, FontWeight.Medium), if (destructive) c.danger else c.ink, Modifier.weight(1f), maxLines = 1)
+        value?.let { RText(it, RType.sans(14.5f), c.inkMeta, maxLines = 1) }
+        if (chevron) GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 16.dp)
+    }
+}
+
+/** How many notification channels Reins has (the row opens Android's page for them). */
+internal fun notificationChannelCount(context: Context): Int =
+    androidx.core.app.NotificationManagerCompat.from(context).notificationChannelsCompat.size
+
+/** Android's notification page for Reins, where each channel can be changed. */
+internal fun openNotificationChannels(context: Context) {
+    val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (_: android.content.ActivityNotFoundException) {
+    }
+}
+
+/**
  * Who is signed in and to which server (a tap copies it), then whether this phone approves and is notified: green
- * chips when all is well, or the one thing to do about it.
+ * pills when all is well, or the one thing to do about it.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AccountCard(email: String, serverUrl: String, state: AppState, viewModel: SettingsViewModel) {
+private fun AccountBlock(email: String, serverUrl: String, state: AppState, viewModel: SettingsViewModel) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
     val context = LocalContext.current
@@ -347,24 +293,18 @@ private fun AccountCard(email: String, serverUrl: String, state: AppState, viewM
     val serverPush by viewModel.serverPush.collectAsStateWithLifecycle()
     val notifications = rememberNotificationState()
     val push = pushChip(approvalDevice, notifications.enabled, appPushOverride ?: FirebaseSupport.available(context), serverPush)
-    val shape = RoundedCornerShape(28.dp)
-    Column(
-        Modifier
-            .padding(horizontal = 16.dp)
-            .fillMaxWidth()
-            .background(c.accent.copy(alpha = 0.09f), shape)
-            .border(1.dp, c.accent.copy(alpha = 0.24f), shape)
-            .padding(18.dp)
-            .testTag("accountCard"),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BlobAvatar(email, size = 52.dp)
-            Spacer(Modifier.width(14.dp))
+    Column(Modifier.fillMaxWidth().hairlineBelow(c.rule).padding(bottom = 14.dp).testTag("accountCard")) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(Modifier.size(54.dp).background(c.paperSunken, CircleShape), contentAlignment = Alignment.Center) {
+                RText(email.take(1).uppercase(), RType.serif(28f, 30f), c.ink, maxLines = 1)
+            }
             Column(Modifier.weight(1f)) {
-                RText(email, RType.sans(17f, FontWeight.SemiBold), c.text, Modifier.testTag("accountEmail"), maxLines = 1, ltr = true)
-                Row(
+                RText(email, RType.sans(17f, FontWeight.SemiBold), c.ink, Modifier.testTag("accountEmail"), maxLines = 1, ltr = true)
+                RText(
+                    hostOf(serverUrl),
+                    RType.mono(12.5f),
+                    c.inkMeta,
                     Modifier
-                        .padding(top = 3.dp)
                         .pressable(shape = RoundedCornerShape(6.dp), label = "Copy server address") {
                             copyText(context, "Reins server", serverUrl)
                             feedback.play(Event.Copied)
@@ -372,172 +312,43 @@ private fun AccountCard(email: String, serverUrl: String, state: AppState, viewM
                             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) viewModel.notice("Server address copied.")
                         }
                         .testTag("copyServer"),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RText(hostOf(serverUrl), RType.mono(13f), c.secondary, Modifier.weight(1f, fill = false), maxLines = 1, ltr = true)
-                    Spacer(Modifier.width(6.dp))
-                    Icon(Icons.Rounded.ContentCopy, null, Modifier.size(13.dp), tint = c.tertiary)
+                    maxLines = 1,
+                    ltr = true,
+                )
+                FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (approvalDevice) {
+                        Pill("Approval phone", c.success, Modifier.testTag("approvalChip"), glyph = Glyph.Check)
+                    } else {
+                        Pill("Another phone approves", c.warning, Modifier.testTag("approvalChip"))
+                    }
+                    when (push) {
+                        PushChip.On -> Pill("Notifications on", c.success, Modifier.testTag("notificationsChip"))
+                        PushChip.OnlyWhileOpen -> Pill("Only while open", c.inkMeta, Modifier.testTag("notificationsChip"))
+                        PushChip.Hidden -> Unit
+                    }
                 }
-            }
-        }
-        FlowRow(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (approvalDevice) {
-                StatusChip("Approval phone", Icons.Rounded.PhoneAndroid, ChipTone.Ok, Modifier.testTag("approvalChip"))
-            } else {
-                StatusChip("Another phone approves", Icons.Rounded.PhoneAndroid, ChipTone.Warn, Modifier.testTag("approvalChip"))
-            }
-            when (push) {
-                PushChip.On -> StatusChip("Notifications on", Icons.Rounded.Notifications, ChipTone.Ok, Modifier.testTag("notificationsChip"))
-                PushChip.OnlyWhileOpen -> StatusChip("Only while open", Icons.Rounded.NotificationsOff, ChipTone.Plain, Modifier.testTag("notificationsChip"))
-                PushChip.Hidden -> Unit
             }
         }
         if (!notifications.enabled) {
             Row(
-                Modifier
-                    .padding(top = 14.dp)
-                    .fillMaxWidth()
-                    .background(c.warning.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
-                    .border(1.dp, c.warning.copy(alpha = 0.22f), RoundedCornerShape(16.dp))
-                    .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp)
-                    .testTag("notificationsRow"),
+                Modifier.padding(top = 14.dp).fillMaxWidth().testTag("notificationsRow"),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Rounded.WarningAmber, null, Modifier.size(18.dp), tint = c.warning)
-                Spacer(Modifier.width(12.dp))
-                RText("Notifications are off", RType.sans(14.5f, FontWeight.Medium), c.text, Modifier.weight(1f), maxLines = 2)
-                PillButton(
-                    "Turn on",
-                    Modifier.testTag("turnOnNotifications"),
-                    background = c.warning,
-                    foreground = if (c.dark) Color(0xFF231A00) else Color.White,
-                    height = 36.dp,
-                    textSize = 14f,
-                ) { notifications.request() }
+                GlyphIcon(Glyph.Warning, c.warning, size = 18.dp)
+                RText("Notifications are off", RType.sans(14.5f, FontWeight.Medium), c.ink, Modifier.weight(1f), maxLines = 2)
+                SignalButton("Turn on", Modifier.testTag("turnOnNotifications"), style = ButtonStyle.Soft, size = ButtonSize.Compact) { notifications.request() }
             }
         }
         if (!approvalDevice) {
-            val (bg, fg) = primaryFill(c)
-            PillButton(
+            SignalButton(
                 "Use this phone for approvals",
                 Modifier.padding(top = 14.dp).fillMaxWidth().testTag("registerPhone"),
-                icon = Icons.Rounded.PhoneAndroid,
-                background = bg,
-                foreground = fg,
-                height = 50.dp,
-                textSize = 16f,
+                size = ButtonSize.Small,
+                glyph = Glyph.Phone,
                 enabled = !ui.busy,
-                busy = ui.busy,
                 onClick = viewModel::registerThisPhone,
             )
-        }
-    }
-}
-
-/** A connected AI app or computer: its icon, its name, and where it connects from and when it was last used. */
-@Composable
-private fun ConnectionRow(connection: ConnectionView, onClick: () -> Unit) {
-    val c = LocalColors.current
-    SettingsRow(
-        untrusted(connection.label),
-        Modifier.testTag("connection:${connection.id}"),
-        subtitle = connectionLine(connection),
-        subtitleTag = "connectionDetail:${connection.id}",
-        leading = {
-            if (connection.keyFingerprint != null && connection.icon == null) {
-                IconPlate(Icons.Rounded.Laptop, c.pair)
-            } else {
-                ConnectionIcon(connection.id, connection.label, size = 40.dp)
-            }
-        },
-        onClick = onClick,
-    )
-}
-
-/** Autopilot's mode on the right of its row: the mode's icon in its colour, and its name. */
-@Composable
-private fun ModeValue(mode: AutopilotMode) {
-    val c = LocalColors.current
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("autopilotMode")) {
-        Icon(settingsModeIcon(mode), null, Modifier.size(16.dp), tint = dev.reins.android.ui.autopilot.modeTint(mode, c))
-        Spacer(Modifier.width(5.dp))
-        RText(dev.reins.android.autopilot.AutopilotText.name(mode), RType.sans(15f), c.secondary, maxLines = 1)
-    }
-}
-
-/** The connect sheet: an AI app by the address to paste (copied here), or a computer by the code it shows. */
-@Composable
-private fun ConnectSheetContent(mcpUrl: String?, onCopy: () -> Unit, onScan: () -> Unit, onType: () -> Unit) {
-    val c = LocalColors.current
-    var help by remember { mutableStateOf(false) }
-    val card = Modifier
-        .padding(horizontal = 16.dp, vertical = 5.dp)
-        .fillMaxWidth()
-        .background(if (c.dark) c.elevated else c.background, RoundedCornerShape(22.dp))
-        .border(1.dp, if (c.dark) Color(0xFF1F1F23) else c.hairline, RoundedCornerShape(22.dp))
-        .padding(16.dp)
-    Column(card.testTag("connectAi")) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(58.dp)) {
-                Box(Modifier.padding(start = 24.dp)) { dev.reins.android.design.ConnectionAvatar("ChatGPT", "openai", size = 34.dp) }
-                Box(Modifier.border(2.5.dp, if (c.dark) c.elevated else c.background, CircleShape)) {
-                    dev.reins.android.design.ConnectionAvatar("Claude", "claude", size = 34.dp)
-                }
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                RText("AI app", RType.sans(16.5f, FontWeight.SemiBold), c.text, maxLines = 1)
-                RText("Claude, ChatGPT and others", RType.sans(13f), c.tertiary, Modifier.padding(top = 1.dp), maxLines = 1)
-            }
-            HelpIcon(help, "AI apps") { help = it }
-        }
-        dev.reins.android.design.HelpText(
-            "In Claude.ai, ChatGPT or another AI app, add a custom connector (MCP) and paste this address. It then asks you here before it reads or sends anything.",
-            help,
-            Modifier.padding(top = 10.dp),
-        )
-        if (mcpUrl != null) {
-            Row(
-                Modifier
-                    .padding(top = 14.dp)
-                    .fillMaxWidth()
-                    .background(if (c.dark) Color(0xFF060606) else c.elevated, RoundedCornerShape(13.dp))
-                    .pressable(shape = RoundedCornerShape(13.dp), label = "Copy MCP address", onClick = onCopy)
-                    .padding(start = 14.dp, end = 12.dp, top = 11.dp, bottom = 11.dp)
-                    .testTag("copyMcpUrl"),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RText(mcpUrl.removePrefix("https://"), RType.mono(13f), c.text, Modifier.weight(1f), maxLines = 1, ltr = true)
-                Spacer(Modifier.width(10.dp))
-                Icon(Icons.Rounded.ContentCopy, null, Modifier.size(16.dp), tint = c.accent)
-                Spacer(Modifier.width(6.dp))
-                RText("Copy", RType.sans(14f, FontWeight.SemiBold), c.accent, maxLines = 1)
-            }
-        }
-    }
-    Column(card.testTag("connectComputerCard")) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconPlate(Icons.Rounded.Laptop, c.pair)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                RText("Computer", RType.sans(16.5f, FontWeight.SemiBold), c.text, maxLines = 1)
-                Row(Modifier.padding(top = 1.dp)) {
-                    RText("Desktop app or ", RType.sans(13f), c.tertiary, maxLines = 1)
-                    RText("reins login", RType.mono(13f), c.tertiary, maxLines = 1, ltr = true)
-                }
-            }
-        }
-        Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            val (bg, fg) = primaryFill(c)
-            PillButton(
-                "Scan QR code",
-                Modifier.weight(1f).testTag("sheetScanQr"),
-                icon = Icons.Rounded.QrCodeScanner,
-                background = bg,
-                foreground = fg,
-                onClick = onScan,
-            )
-            PillButton("Type code", Modifier.testTag("sheetTypeCode"), background = c.controlFill, foreground = c.text, onClick = onType)
         }
     }
 }

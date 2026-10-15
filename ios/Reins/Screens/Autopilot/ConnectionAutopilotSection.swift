@@ -23,7 +23,7 @@ struct ConnectionAutopilotSection: View {
             // Its explanation behind a (?) beside the heading, not under the options.
             HelpHeader(title: "Autopilot", help: ConnectionAutopilotContent.footer)
         }
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
     }
 }
 
@@ -145,7 +145,7 @@ struct ConnectionAutopilotContent: View {
                     AutopilotCaption("Learns into")
                     FlowRow(spacing: 8) {
                         ForEach(ap.profiles, id: \.id) { p in
-                            let title = "\(AutopilotText.profileIcon(p))  \(untrusted(p.name))" + (p.id == s.defaultProfileId ? " (default)" : "")
+                            let title = untrustedName(p.name, limit: 40) + (p.id == s.defaultProfileId ? " (default)" : "")
                             AutopilotChip(title: title, selected: p.id == profileId, identifier: "connProfile:\(p.id)") {
                                 if p.id != profileId {
                                     Task { await ap.assignProfile(connectionId, p.id == s.defaultProfileId ? nil : p.id) }

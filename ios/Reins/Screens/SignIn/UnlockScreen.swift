@@ -48,22 +48,22 @@ struct UnlockScreen: View {
 
     @ViewBuilder private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Image(systemName: "iphone.gen3")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(Palette.accent)
+            GlyphIcon(.phone, size: 26)
+                .foregroundStyle(Palette.onField)
                 .frame(width: 56, height: 56)
-                .background(Palette.accentSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .fieldBackground(.accounts, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityHidden(true)
-                .padding(.bottom, 6)
-            Text(takeover ? "Another phone approves for this account" : "Your account is on another phone")
-                .font(RFont.sans(28, .semibold))
-                .foregroundStyle(Palette.text)
-                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 10)
+            AskText(takeover
+                    ? [AskText.Run(text: "Another phone "), AskText.Run(text: "approves", target: true), AskText.Run(text: " for this account")]
+                    : [AskText.Run(text: "Your account is on "), AskText.Run(text: "another phone", target: true)],
+                    role: .ask, lineLimit: nil)
+                .foregroundStyle(Palette.ink)
                 .accessibilityAddTraits(.isHeader)
             if let info = model.session.unlocking {
                 Text(info.email)
                     .font(RFont.mono(14))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .environment(\.layoutDirection, .leftToRight)
             }
             switch vm.stage {
@@ -80,8 +80,8 @@ struct UnlockScreen: View {
                 vm.stopWaiting()
                 Task { await model.signOut() }
             }
-            .font(RFont.sans(14.5, .medium))
-            .foregroundStyle(Palette.secondary)
+            .font(TextRole.button.font())
+            .foregroundStyle(Palette.ink2)
             .frame(maxWidth: .infinity)
             .padding(.top, 10)
             .disabled(vm.busy)
@@ -99,8 +99,8 @@ struct UnlockScreen: View {
     private var choose: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(reason)
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
+                .textRole(.body)
+                .foregroundStyle(Palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 10)
                 .accessibilityIdentifier("unlockReason")
@@ -110,8 +110,8 @@ struct UnlockScreen: View {
                     Task { await vm.unlockWithPasskey(model) }
                 } label: {
                     HStack(spacing: 10) {
-                        if vm.passkeyBusy { ProgressView().tint(Palette.background) } else { Image(systemName: "person.badge.key.fill") }
-                        Text("Unlock with passkey")
+                        if vm.passkeyBusy { ProgressView().tint(Palette.onInverse) } else { GlyphIcon(.key, size: 18) }
+                        Text("Unlock with a passkey")
                     }
                 }
                 .buttonStyle(CapsuleButtonStyle(kind: .primary))
@@ -123,19 +123,19 @@ struct UnlockScreen: View {
                 Task { await vm.ask(model) }
             } label: {
                 HStack(spacing: 10) {
-                    if vm.busy && !vm.passkeyBusy { ProgressView().tint(vm.passkeyUnlock ? Palette.text : Palette.background) }
+                    if vm.busy && !vm.passkeyBusy { ProgressView().tint(vm.passkeyUnlock ? Palette.ink : Palette.onInverse) }
                     Text("Ask my other phone")
                 }
             }
-            .buttonStyle(CapsuleButtonStyle(kind: vm.passkeyUnlock ? .secondary : .primary))
+            .buttonStyle(vm.passkeyUnlock ? SignalButtonStyle(.outline) : SignalButtonStyle(.inverse))
             .disabled(vm.busy)
             .accessibilityIdentifier("askOtherPhone")
-            Button("Enter recovery code") {
+            Button("Enter my recovery code") {
                 feedback.play(.tap)
                 vm.showRecovery()
                 codeFocused = true
             }
-            .buttonStyle(CapsuleButtonStyle(kind: .secondary))
+            .buttonStyle(SignalButtonStyle(.outline))
             .disabled(vm.busy)
             .accessibilityIdentifier("enterRecoveryCode")
             if !takeover {
@@ -144,8 +144,8 @@ struct UnlockScreen: View {
                     feedback.play(.tap)
                     vm.showReset()
                 }
-                .font(RFont.sans(14.5, .medium))
-                .foregroundStyle(Palette.secondary)
+                .font(TextRole.button.font())
+                .foregroundStyle(Palette.danger)
                 .frame(maxWidth: .infinity)
                 .padding(.top, 4)
                 .disabled(vm.busy)
@@ -157,31 +157,38 @@ struct UnlockScreen: View {
 
     private func waiting(_ code: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Open Reins on your other phone and approve this one. Approve only if it shows this code:")
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
+            Text("Open Reins on your other phone. Approve this one only if it shows the same code.")
+                .textRole(.body)
+                .foregroundStyle(Palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
+            // The hero: serif, spaced, impossible to misread.
             Text(code)
-                .font(RFont.mono(40, .semibold))
-                .foregroundStyle(Palette.text)
+                .font(RFont.serif(64))
+                .tracking(4)
+                .monospacedDigit()
+                .foregroundStyle(Palette.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-                .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .padding(.vertical, 22)
+                .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
+                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
                 .environment(\.layoutDirection, .leftToRight)
                 .accessibilityLabel("Code \(code)")
                 .accessibilityIdentifier("joinCode")
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Waiting for your other phone...")
-                    .font(RFont.sans(14.5))
-                    .foregroundStyle(Palette.secondary)
+                Text("Waiting for your other phone")
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
             }
+            .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
             Button("Cancel") {
                 feedback.play(.tap)
                 Task { await vm.cancel(model) }
             }
-            .buttonStyle(CapsuleButtonStyle(kind: .secondary))
+            .buttonStyle(SignalButtonStyle(.outline))
             .accessibilityIdentifier("cancelJoin")
         }
         .transition(.opacity)
@@ -208,7 +215,7 @@ struct UnlockScreen: View {
                 Task { await vm.unlock(model) }
             } label: {
                 HStack(spacing: 10) {
-                    if vm.busy { ProgressView().tint(Palette.background) }
+                    if vm.busy { ProgressView().tint(Palette.onInverse) }
                     Text("Open the vault")
                 }
             }
@@ -219,8 +226,8 @@ struct UnlockScreen: View {
                 feedback.play(.tap)
                 vm.back()
             }
-            .font(RFont.sans(14.5, .medium))
-            .foregroundStyle(Palette.secondary)
+            .font(TextRole.button.font())
+            .foregroundStyle(Palette.ink2)
             .frame(maxWidth: .infinity)
             .disabled(vm.busy)
             .accessibilityIdentifier("unlockBack")
@@ -232,36 +239,29 @@ struct UnlockScreen: View {
     private var resetting: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Deletes the vault: items, integrations, grants and activity. Other phones sign out; AIs connect again. Can't be undone.")
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
+                .textRole(.body)
+                .foregroundStyle(Palette.danger)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Your email and sign-in stay. You get a new recovery code.")
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
+                .textRole(.body)
+                .foregroundStyle(Palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
             Text("To confirm, sign in again with this account.")
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
+                .textRole(.body)
+                .foregroundStyle(Palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 10)
-            Button {
-                feedback.play(.tap)
+            // A red hold, never a tap: everything in the vault goes.
+            HoldButton(title: "Hold to sign in again and reset", busy: vm.busy) {
                 Task { await vm.reset(model) }
-            } label: {
-                HStack(spacing: 10) {
-                    if vm.busy { ProgressView().tint(.white) }
-                    Text("Sign in again and reset")
-                }
             }
-            .buttonStyle(CapsuleButtonStyle(kind: .danger))
-            .disabled(vm.busy)
             .accessibilityIdentifier("confirmReset")
             Button("Back") {
                 feedback.play(.tap)
                 vm.back()
             }
-            .font(RFont.sans(14.5, .medium))
-            .foregroundStyle(Palette.secondary)
+            .font(TextRole.button.font())
+            .foregroundStyle(Palette.ink2)
             .frame(maxWidth: .infinity)
             .disabled(vm.busy)
             .accessibilityIdentifier("resetBack")

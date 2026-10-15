@@ -44,7 +44,7 @@ final class LiveOnboardingUITests: XCTestCase {
 
     /// Through the setup's pages with their forward button ("Not now" on notifications) until `id` shows.
     private func advance(to id: String, timeout: TimeInterval = 10) {
-        for _ in 0..<8 {
+        for _ in 0..<5 {
             if element(id).waitForExistence(timeout: 1.5) { return }
             if element("onboardingNext").waitForExistence(timeout: timeout) { element("onboardingNext").tap() }
         }
@@ -120,7 +120,7 @@ final class LiveOnboardingUITests: XCTestCase {
         element("create").tap()
 
         // The account exists: the setup asks for notifications on its page (allowed), and the phone becomes the
-        // approval device by the computer page.
+        // approval device by the page of what the AIs can use.
         wait("onboardingNext", 30).tap()
         wait("allowNotifications", 10).tap()
         allowSystemPrompt(["Allow"], timeout: 20)
@@ -128,12 +128,10 @@ final class LiveOnboardingUITests: XCTestCase {
         XCTAssertFalse(element("registerAgain").exists, "registering as the approval device failed")
         shot("03-connect-your-computer")
 
-        // Claude.ai or ChatGPT: the server's /mcp address, copied; back to the computer step.
-        wait("onboardingNext").tap()
+        // Claude.ai or ChatGPT, on the same page: the server's /mcp address, copied.
         XCTAssertEqual(wait("mcpAddress").label, server.hasSuffix("/") ? "\(server)mcp" : "\(server)/mcp")
         wait("copyMcp").tap()
         shot("04-connect-claude-or-chatgpt")
-        wait("onboardingBack").tap()
         wait("scanQR")
         FileManager.default.createFile(atPath: file("created").path, contents: nil)
 
@@ -159,18 +157,15 @@ final class LiveOnboardingUITests: XCTestCase {
         if !closed { shot("failed-pairing-stayed") }
         XCTAssertTrue(closed, "the pairing sheet did not close after approving")
         XCTAssertNotNil(waitForFile("host-done", 90), "the computer's session did not work")
-        wait("integrations", 30)
+        wait("activityMood", 30)
         Thread.sleep(forTimeInterval: 2)
         shot("07-activity")
 
-        // The computer is one of the AI connections in Settings.
-        let settings = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        settings.tap()
-        scrollTo("connect")
+        // The computer is one of the connections that can ask.
+        XCTAssertTrue(app.openTab("connections", timeout: 5))
         let desktop = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'connection:'")).firstMatch
-        XCTAssertTrue(desktop.waitForExistence(timeout: 10), "no AI connection in Settings")
+        XCTAssertTrue(desktop.waitForExistence(timeout: 10), "no AI connection in Connections")
         XCTAssertTrue(desktop.label.contains("Reins desktop app"), "the connection is the computer: \(desktop.label)")
-        shot("08-settings-connections")
+        shot("08-connections")
     }
 }

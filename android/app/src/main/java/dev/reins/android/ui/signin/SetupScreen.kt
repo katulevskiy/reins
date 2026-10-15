@@ -7,24 +7,22 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,37 +44,36 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.AppContainer
 import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.autopilot.DownloadJob
+import dev.reins.android.design.AskText
+import dev.reins.android.design.ButtonSize
 import dev.reins.android.design.ButtonStyle
-import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.Calm
 import dev.reins.android.design.Glyph
-import dev.reins.android.design.InlineHelp
 import dev.reins.android.design.GlyphIcon
-import dev.reins.android.design.Group
-import dev.reins.android.design.Hairline
+import dev.reins.android.design.InlineHelp
+import dev.reins.android.design.LabelText
 import dev.reins.android.design.LocalColors
-import dev.reins.android.design.LocalLiveTimers
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.design.ServiceAvatar
+import dev.reins.android.design.SignalButton
 import dev.reins.android.design.Spinner
-import dev.reins.android.design.Tag
+import dev.reins.android.design.Toggle
+import dev.reins.android.design.hairlineBelow
 import dev.reins.android.design.pressable
 import dev.reins.android.feedback.Cue
 import dev.reins.android.feedback.Event
@@ -85,31 +82,31 @@ import dev.reins.android.feedback.cueUnlessRecent
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.NotificationAccess
 import dev.reins.android.platform.NotificationState
-import dev.reins.android.platform.rememberNotificationState
 import dev.reins.android.platform.ScreenLockState
+import dev.reins.android.platform.rememberNotificationState
 import dev.reins.android.platform.rememberScreenLockState
-import dev.reins.android.ui.common.ScreenLockCard
 import dev.reins.android.ui.AppViewModel
 import dev.reins.android.ui.autopilot.AutopilotViewModel
-import dev.reins.android.ui.autopilot.IconTile
-import dev.reins.android.ui.autopilot.ModelCard
-import dev.reins.android.ui.autopilot.modeIcon
-import dev.reins.android.ui.autopilot.modeTint
+import dev.reins.android.ui.autopilot.PlainTile
+import dev.reins.android.ui.common.ScreenLockCard
 import dev.reins.android.ui.nav.Route
 import dev.reins.android.ui.pairing.ComputerHowTo
 import dev.reins.android.ui.pairing.ConnectComputerPanel
 import dev.reins.android.ui.pairing.DesktopAppLink
+import dev.reins.core.AutopilotMode
 import dev.reins.core.ModelState
 import dev.reins.core.ServiceView
-
 /** The pages of the setup after signing in, in order. */
-enum class SetupPage { Welcome, Notifications, Integrations, Rules, Autopilot, Computer, Ai, Done }
+
+/** The tour's five pages (iOS-Tour: eight steps became five, always skippable). */
+enum class SetupPage { Welcome, Notifications, Connect, Ask, Done }
 
 /**
- * Right after signing in or creating an account (once per account, and again from Settings > Take the tour): what
- * Reins is and how a request travels, notifications, the integrations an AI can use, the private on-device model,
- * connecting the computer and an AI app, and a summary. Every page can be skipped; "Skip setup" ends it. An
- * integration opens its own page over the setup and Back returns to the same page ([AppViewModel.setupPage]).
+ * Right after signing in or creating an account (once per account, and again from Settings > Take the tour), in five
+ * pages: what Reins promises; requests come to you (notifications and the screen lock); what your AIs can use (the
+ * services, the computer and an AI app, all connections); how much to ask (how a new AI starts and Autopilot's
+ * model); and a quiet finish with the pond. Skip ends it from any page. A service opens its own page over the tour and
+ * Back returns to the same page ([AppViewModel.setupPage]).
  */
 @Composable
 fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: AutopilotViewModel, serverUrl: String) {
@@ -120,7 +117,7 @@ fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: Autopilot
     val pages = SetupPage.entries
     val go = { next: SetupPage ->
         if (next.ordinal > page.ordinal) feedback.cue(Cue.Open) else feedback.cueUnlessRecent(Cue.Close)
-        if (next == SetupPage.Ai) app.resetConnect()
+        if (next == SetupPage.Connect) app.resetConnect()
         app.setupPage = next
     }
     val next = { go(pages[(page.ordinal + 1).coerceAtMost(pages.lastIndex)]) }
@@ -131,7 +128,7 @@ fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: Autopilot
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.background)
+            .background(c.paper)
             .windowInsetsPadding(WindowInsets.statusBars)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .imePadding()
@@ -148,11 +145,11 @@ fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: Autopilot
             },
             label = "setupPage",
         ) { shown ->
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
                 when (shown) {
                     SetupPage.Welcome -> WelcomePage()
                     SetupPage.Notifications -> NotificationsPage(notifications, screenLock)
-                    SetupPage.Integrations -> IntegrationsPage(container) { id ->
+                    SetupPage.Connect -> ConnectPage(app, container, AccountRules.mcpUrl(serverUrl)) { id ->
                         app.open(
                             when (id) {
                                 "gmail" -> Route.Gmail
@@ -161,10 +158,7 @@ fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: Autopilot
                             },
                         )
                     }
-                    SetupPage.Rules -> RulesPage(container)
-                    SetupPage.Autopilot -> AutopilotPage(autopilot)
-                    SetupPage.Computer -> ComputerPage(app)
-                    SetupPage.Ai -> AiPage(AccountRules.mcpUrl(serverUrl))
+                    SetupPage.Ask -> AskPage(container, autopilot)
                     SetupPage.Done -> DonePage(container, autopilot, notifications, screenLock)
                 }
                 Spacer(Modifier.height(16.dp))
@@ -176,76 +170,58 @@ fun SetupScreen(app: AppViewModel, container: AppContainer, autopilot: Autopilot
 
 private const val MCP = "mcp"
 
-/** A segment per page (filled up to this one), and "Skip setup". */
+/** A bar per page (filled up to this one), and Skip. */
 @Composable
 private fun SetupTopBar(page: SetupPage, onSkip: () -> Unit) {
     val c = LocalColors.current
     Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).testTag("setupProgress"), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.width(120.dp).testTag("setupProgress"), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             SetupPage.entries.forEach { p ->
-                val fill by animateColorAsState(if (p.ordinal <= page.ordinal) c.accent else c.controlFill.copy(alpha = if (c.dark) 0.16f else 0.1f), label = "segment")
-                Box(Modifier.weight(1f).height(4.dp).clip(CircleShape).background(fill))
+                val fill by animateColorAsState(if (p.ordinal <= page.ordinal) c.ink else c.rule, label = "segment")
+                Box(Modifier.weight(1f).height(3.dp).clip(CircleShape).background(fill))
             }
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.weight(1f))
         if (page != SetupPage.Done) {
-            TextLink("Skip setup", "setupSkip", onClick = onSkip)
+            SignalButton("Skip", Modifier.testTag("setupSkip"), style = ButtonStyle.Ghost, size = ButtonSize.Small, onClick = onSkip)
         } else {
-            Spacer(Modifier.height(36.dp))
+            Spacer(Modifier.height(40.dp))
         }
     }
 }
 
-/** Back and the page's forward button; the notifications page's forward button asks for them first. */
+/** Back and the page's forward button; on the notifications page, Not now and Allow until they are on. */
 @Composable
 private fun SetupButtons(page: SetupPage, notifications: NotificationState, onBack: () -> Unit, onNext: () -> Unit, onDone: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         val asking = page == SetupPage.Notifications && !notifications.enabled
         if (asking) {
             val context = LocalContext.current
-            CapsuleButton("Not now", Modifier.weight(1f).testTag("notificationsLater"), style = ButtonStyle.Ghost) {
-                // An answer: Activity does not ask again right after the setup (its card still offers them).
+            SignalButton("Not now", Modifier.weight(1f).testTag("notificationsLater"), style = ButtonStyle.Outline) {
+                // An answer: Activity does not ask again right after the tour (its card still offers them).
                 NotificationAccess.markAsked(context)
                 onNext()
             }
         } else if (page != SetupPage.Welcome && page != SetupPage.Done) {
-            CapsuleButton("Back", Modifier.weight(1f).testTag("setupBack"), style = ButtonStyle.Ghost, onClick = onBack)
+            SignalButton("Back", Modifier.weight(1f).testTag("setupBack"), style = ButtonStyle.Outline, onClick = onBack)
         }
         when {
-            page == SetupPage.Welcome -> CapsuleButton("Show me around", Modifier.weight(1f).testTag("setupNext"), style = ButtonStyle.Primary, onClick = onNext)
-            asking ->
-                // "Allow notifications" does not fit beside "Not now" on a narrow phone; the page says what for.
-                CapsuleButton("Allow", Modifier.weight(1f).testTag("allowNotifications"), style = ButtonStyle.Accent, glyph = Glyph.Bell) {
-                    notifications.request()
-                }
-            page == SetupPage.Done -> CapsuleButton("Start using Reins", Modifier.weight(1f).testTag("setupDone"), style = ButtonStyle.Primary, onClick = onDone)
-            else -> CapsuleButton("Next", Modifier.weight(1f).testTag("setupNext"), style = ButtonStyle.Primary, onClick = onNext)
+            page == SetupPage.Welcome -> SignalButton("Show me around", Modifier.weight(1f).testTag("setupNext"), onClick = onNext)
+            asking -> SignalButton("Allow", Modifier.weight(1f).testTag("allowNotifications"), glyph = Glyph.Bell) { notifications.request() }
+            page == SetupPage.Done -> SignalButton("Start using Reins", Modifier.weight(1f).testTag("setupDone"), onClick = onDone)
+            else -> SignalButton("Next", Modifier.weight(1f).testTag("setupNext"), onClick = onNext)
         }
     }
 }
 
-/** A page's heading: an eyebrow, a glyph on a soft tile, the title and a line under it. */
+/** A page's title in the serif with its italic part, and a line under it. */
 @Composable
-private fun PageHeader(eyebrow: String, glyph: Glyph, title: String, body: String? = null, tint: Color? = null) {
+private fun PageTitle(title: String, italic: String, body: String? = null, eyebrow: String? = null) {
     val c = LocalColors.current
-    val t = tint ?: c.accent
-    Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 28.dp)) {
-        RText(
-            eyebrow.uppercase(),
-            RType.sans(12.5f, FontWeight.Medium).copy(letterSpacing = 0.6.sp),
-            c.secondary,
-            Modifier.testTag("setupStep"),
-        )
-        Spacer(Modifier.height(16.dp))
-        Box(Modifier.size(56.dp).background(t.copy(alpha = 0.13f), RoundedCornerShape(18.dp)), contentAlignment = Alignment.Center) {
-            GlyphIcon(glyph, t, size = 30.dp)
-        }
-        Spacer(Modifier.height(14.dp))
-        RText(title, RType.sans(28f, FontWeight.SemiBold, lineHeight = 34f), c.text)
-        if (body != null) {
-            Spacer(Modifier.height(8.dp))
-            RText(body, RType.sans(15.5f, lineHeight = 22f), c.secondary)
-        }
+    Column(Modifier.padding(top = 26.dp)) {
+        if (eyebrow != null) LabelText(eyebrow, c.inkMeta, Modifier.padding(bottom = 14.dp).testTag("setupStep"))
+        AskText(title, c.ink, Modifier.semantics { heading() }, target = italic, style = RType.serif(38f, 42f), minSize = 30.sp, maxLines = 4)
+        if (body != null) RText(body, RType.sans(15.5f, lineHeight = 22f), c.ink2, Modifier.padding(top = 12.dp))
     }
 }
 
@@ -253,186 +229,126 @@ private fun PageHeader(eyebrow: String, glyph: Glyph, title: String, body: Strin
 
 @Composable
 private fun WelcomePage() {
-    val c = LocalColors.current
     Column(Modifier.testTag("setupWelcome")) {
-        Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 28.dp)) {
-            RText(
-                "WELCOME TO REINS",
-                RType.sans(12.5f, FontWeight.Medium).copy(letterSpacing = 0.6.sp),
-                c.secondary,
-                Modifier.testTag("setupStep"),
-            )
-            Spacer(Modifier.height(12.dp))
-            RText("Your AIs ask.\nYou decide.", RType.sans(34f, FontWeight.SemiBold, lineHeight = 40f), c.text)
-        }
-        RequestFlow(Modifier.padding(horizontal = 12.dp, vertical = 22.dp))
-        Group {
-            Promise(Glyph.Hand, c.accent, "Nothing without your tap")
-            Hairline(inset = 70.dp)
-            Promise(Glyph.Key, c.success, "Your keys stay on this phone")
-            Hairline(inset = 70.dp)
-            Promise(Glyph.Clock, c.search, "Allow for a while, or let Autopilot learn")
-            Hairline(inset = 70.dp)
-            Promise(Glyph.Lock, c.warning, "One tap stops everything")
+        PageTitle("Nothing happens behind your back", "behind your back", eyebrow = "Welcome to Reins")
+        Column(Modifier.padding(top = 18.dp)) {
+            Promise(Glyph.Activity, "Every ask waits for you", "Each read, send or change shows exactly what the AI wants.")
+            Promise(Glyph.Key, "Your keys stay on this phone", "The server passes requests along and sees nothing inside.")
+            Promise(Glyph.Shield, "Trust on your terms", "Allow for an hour, or let Autopilot learn what you always allow.")
+            Promise(Glyph.Lock, "One tap stops everything", "Lockdown denies every request at once, until you lift it.", last = true)
         }
     }
 }
 
 @Composable
-private fun Promise(glyph: Glyph, tint: Color, title: String) {
+private fun Promise(glyph: Glyph, title: String, detail: String, last: Boolean = false) {
     val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconTile(glyph, tint, size = 36.dp)
-        Spacer(Modifier.width(14.dp))
-        RText(title, RType.sans(16f, FontWeight.SemiBold), c.text, Modifier.weight(1f))
-    }
-}
-
-/**
- * How a request travels: from the AI to this phone (blue), a pause while you decide (the phone's ring and a tick),
- * then on to your app (green). Still, mid-way, when clocks are frozen (screenshots).
- */
-@Composable
-private fun RequestFlow(modifier: Modifier = Modifier) {
-    val c = LocalColors.current
-    val t = if (LocalLiveTimers.current) {
-        rememberInfiniteTransition(label = "flow").animateFloat(0f, 1f, infiniteRepeatable(tween(4200, easing = LinearEasing)), label = "flowT").value
-    } else {
-        0.5f
-    }
-    val toPhone = (t / 0.32f).coerceIn(0f, 1f)
-    val deciding = t in 0.32f..0.62f
-    val approved = t >= 0.5f
-    val toApp = ((t - 0.62f) / 0.3f).coerceIn(0f, 1f)
-    val tileCenter = 34.dp
-    Box(modifier.fillMaxWidth().height(118.dp).testTag("requestFlow")) {
-        Canvas(Modifier.fillMaxSize()) {
-            val y = tileCenter.toPx()
-            val x0 = size.width * 0.16f
-            val x1 = size.width * 0.5f
-            val x2 = size.width * 0.84f
-            val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 6.dp.toPx()))
-            val track = c.tertiary.copy(alpha = 0.5f)
-            drawLine(track, Offset(x0 + 34.dp.toPx(), y), Offset(x1 - 40.dp.toPx(), y), 2.dp.toPx(), StrokeCap.Round, dash)
-            drawLine(track, Offset(x1 + 40.dp.toPx(), y), Offset(x2 - 34.dp.toPx(), y), 2.dp.toPx(), StrokeCap.Round, dash)
-            if (t < 0.32f) {
-                val x = (x0 + 34.dp.toPx()) + (x1 - 40.dp.toPx() - x0 - 34.dp.toPx()) * toPhone
-                drawCircle(c.search, 6.dp.toPx(), Offset(x, y))
-            }
-            if (deciding) {
-                val p = (t - 0.32f) / 0.3f
-                drawCircle(c.accent.copy(alpha = 0.35f * (1f - p)), 36.dp.toPx() + 14.dp.toPx() * p, Offset(x1, y), style = Stroke(2.dp.toPx()))
-            }
-            if (t > 0.62f && t < 0.92f) {
-                val x = (x1 + 40.dp.toPx()) + (x2 - 34.dp.toPx() - x1 - 40.dp.toPx()) * toApp
-                drawCircle(c.success, 6.dp.toPx(), Offset(x, y))
-            }
+    Row(
+        Modifier.fillMaxWidth().then(if (last) Modifier else Modifier.hairlineBelow(c.rule)).padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        PlainTile(glyph, 34.dp)
+        Column(Modifier.weight(1f)) {
+            RText(title, RType.row, c.ink)
+            RText(detail, RType.meta, c.inkMeta, Modifier.padding(top = 2.dp))
         }
-        FlowNode(Glyph.Sparkle, c.search, "Your AI", "asks", BiasAlignment(-0.68f, -1f), 52.dp)
-        FlowNode(if (approved && t < 0.95f) Glyph.Check else Glyph.ShieldCheck, c.accent, "This phone", "you decide", BiasAlignment(0f, -1f), 64.dp, filled = deciding || (approved && t < 0.95f))
-        FlowNode(Glyph.Mail, c.success, "Your apps", "only then", BiasAlignment(0.68f, -1f), 52.dp, filled = t in 0.9f..0.98f)
     }
 }
 
-@Composable
-private fun androidx.compose.foundation.layout.BoxScope.FlowNode(
-    glyph: Glyph,
-    tint: Color,
-    title: String,
-    subtitle: String,
-    alignment: Alignment,
-    size: androidx.compose.ui.unit.Dp,
-    filled: Boolean = false,
-) {
-    val c = LocalColors.current
-    Column(Modifier.align(alignment).width(96.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.height(68.dp), contentAlignment = Alignment.Center) { IconTile(glyph, tint, size = size, filled = filled) }
-        RText(title, RType.sans(13.5f, FontWeight.SemiBold), c.text, maxLines = 1, align = TextAlign.Center)
-        RText(subtitle, RType.sans(12f), c.secondary, maxLines = 1, align = TextAlign.Center)
-    }
-}
-
-// ---- 2. Notifications -------------------------------------------------------------------------------------------
+// ---- 2. Requests come to you ---------------------------------------------------------------------------------------
 
 @Composable
 private fun NotificationsPage(notifications: NotificationState, screenLock: ScreenLockState) {
     val c = LocalColors.current
     Column(Modifier.testTag("setupNotifications")) {
-        PageHeader(
-            "Step 1 · Notifications",
-            Glyph.Bell,
+        PageTitle(
             "Requests come to you",
-            "Approve right from the notification.",
+            "come to you",
+            "When an AI asks, this phone rings, even with Reins closed. Answer right from the notification.",
         )
-        // What one looks like.
+        // The notification they will get, in their theme.
         Column(
             Modifier
-                .padding(start = 16.dp, end = 16.dp, top = 24.dp)
+                .padding(top = 22.dp)
                 .fillMaxWidth()
-                .background(c.elevated, RoundedCornerShape(22.dp))
-                .padding(16.dp),
+                .clip(RoundedCornerShape(22.dp))
+                .background(c.paperRaised)
+                .border(1.dp, c.rule, RoundedCornerShape(22.dp))
+                .padding(16.dp)
+                .testTag("sampleNotification"),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(22.dp).background(c.accent, CircleShape), contentAlignment = Alignment.Center) {
-                    GlyphIcon(Glyph.ShieldCheck, Color.White, size = 13.dp, weight = 2f)
+                Box(Modifier.size(20.dp).background(c.inverse, RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
+                    GlyphIcon(Glyph.ShieldCheck, c.onInverse, size = 12.dp)
                 }
                 Spacer(Modifier.width(8.dp))
-                RText("Reins · now", RType.sans(12.5f, FontWeight.Medium), c.secondary)
+                RText("Reins", RType.sans(13f, FontWeight.Medium), c.ink, Modifier.weight(1f))
+                RText("now", RType.meta, c.inkMeta)
             }
-            Spacer(Modifier.height(10.dp))
-            RText("Claude wants to send an email", RType.sans(15.5f, FontWeight.SemiBold), c.text)
-            RText("To anna@example.com · \"Draft for Friday\"", RType.sans(13.5f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 1)
+            RText("Claude wants to send an email", RType.row, c.ink, Modifier.padding(top = 10.dp))
+            RText("To anna@example.com · “Draft for Friday”", RType.meta, c.inkMeta, Modifier.padding(top = 2.dp), maxLines = 1)
             Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Tag("Approve", tint = c.success)
-                Tag("Deny", tint = c.danger)
+                SignalButton("Deny", Modifier.weight(1f), style = ButtonStyle.Soft, size = ButtonSize.Small) {}
+                SignalButton("Review", Modifier.weight(1f), style = ButtonStyle.Outline, size = ButtonSize.Small) {}
             }
         }
-        Spacer(Modifier.height(18.dp))
-        if (notifications.enabled) {
-            Row(Modifier.padding(horizontal = 24.dp).testTag("notificationsOn"), verticalAlignment = Alignment.CenterVertically) {
-                IconTile(Glyph.Check, c.success, size = 30.dp, filled = true)
-                Spacer(Modifier.width(10.dp))
-                RText("Notifications on", RType.sans(15f, FontWeight.Medium), c.text)
-            }
-        } else {
-            InlineHelp(
-                "notifications",
-                "Without notifications an AI waits for an answer that never comes, and its request times out. " +
-                    "Reins only notifies you about requests, grants and your own devices.",
-                Modifier.padding(horizontal = 20.dp),
-                label = "Why it matters",
+        Column(Modifier.padding(top = 18.dp)) {
+            StatusLine(
+                Glyph.Bell,
+                "Notifications",
+                "Requests, grants and your devices only",
+                if (notifications.enabled) "On" else "Not yet",
+                notifications.enabled,
+                Modifier.then(if (notifications.enabled) Modifier.testTag("notificationsOn") else Modifier),
             )
+            StatusLine(Glyph.Fingerprint, "Screen lock", "Every approval asks for it", if (screenLock.set) "On" else "Not yet", screenLock.set, last = true)
         }
         // Approving needs the screen lock: better found out here than at the first request.
-        if (!screenLock.set) ScreenLockCard(Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp), screenLock::openSettings)
+        if (!screenLock.set) ScreenLockCard(Modifier.padding(top = 14.dp), screenLock::openSettings)
     }
 }
 
-// ---- 3. Integrations --------------------------------------------------------------------------------------------
-
+/** "Notifications · Requests, grants and your devices only · On": a glyph, what it is, and whether it is. */
 @Composable
-private fun IntegrationsPage(container: AppContainer, onOpen: (String) -> Unit) {
+private fun StatusLine(glyph: Glyph, title: String, detail: String, value: String, done: Boolean, modifier: Modifier = Modifier, last: Boolean = false) {
     val c = LocalColors.current
+    Row(
+        modifier.fillMaxWidth().then(if (last) Modifier else Modifier.hairlineBelow(c.rule)).padding(vertical = 12.dp).semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        PlainTile(glyph, 34.dp)
+        Column(Modifier.weight(1f)) {
+            RText(title, RType.row, c.ink, maxLines = 1)
+            RText(detail, RType.meta, c.inkMeta, maxLines = 2)
+        }
+        RText(value, RType.sans(13.5f, FontWeight.Medium), if (done) c.success else c.inkMeta, maxLines = 1)
+    }
+}
+
+// ---- 3. What your AIs can use ----------------------------------------------------------------------------------------
+
+/** The services, the computer and an AI app: all of them connections. */
+@Composable
+private fun ConnectPage(app: AppViewModel, container: AppContainer, mcpUrl: String, onOpen: (String) -> Unit) {
+    val c = LocalColors.current
+    val context = LocalContext.current
+    val feedback = LocalFeedback.current
     val services by container.state.services.collectAsStateWithLifecycle()
+    var copied by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.testTag("setupIntegrations")) {
-        PageHeader(
-            "Step 2 · Integrations",
-            Glyph.Apps,
-            "What your AIs can use",
-            "Only ever through this phone.",
-            tint = c.read,
-        )
+        PageTitle("What your AIs can use", "can use", "They reach these only through this phone, one approved request at a time.")
         Spacer(Modifier.height(20.dp))
         if (services.isEmpty()) {
-            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { Spinner(c.accent, size = 36.dp) }
+            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { Spinner(c.ink2, size = 36.dp) }
         } else {
             val tiles = services.map { it as ServiceView? } + null
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                tiles.chunked(2).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                tiles.chunked(3).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEach { service ->
                             if (service == null) {
-                                IntegrationTile(Modifier.weight(1f), "mcp", "Any MCP server", "Add your own tools", connected = false, available = true, glyph = Glyph.Link) { onOpen(MCP) }
+                                IntegrationTile(Modifier.weight(1f), MCP, "Any MCP", "Add yours", connected = false, available = true, glyph = Glyph.Link) { onOpen(MCP) }
                             } else {
                                 val count = service.accounts.size
                                 IntegrationTile(
@@ -441,7 +357,7 @@ private fun IntegrationsPage(container: AppContainer, onOpen: (String) -> Unit) 
                                     service.name,
                                     when {
                                         !service.available -> "Not available"
-                                        count == 0 -> "Tap to connect"
+                                        count == 0 -> "Connect"
                                         count == 1 -> "1 account"
                                         else -> "$count accounts"
                                     },
@@ -450,10 +366,42 @@ private fun IntegrationsPage(container: AppContainer, onOpen: (String) -> Unit) 
                                 ) { onOpen(service.service) }
                             }
                         }
-                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
+        }
+        // The computer: the desktop app or `reins login`, scanned or typed in here.
+        Column(Modifier.padding(top = 22.dp).testTag("setupComputer")) {
+            LabelText("Your computer", c.inkMeta)
+            ComputerHowTo(Modifier.padding(top = 8.dp))
+            ConnectComputerPanel(app, Modifier.padding(top = 12.dp))
+            DesktopAppLink()
+        }
+        // An AI app: Claude.ai or ChatGPT, through the address it pastes as a custom connector.
+        Column(Modifier.padding(top = 18.dp).testTag("setupAi")) {
+            LabelText("Claude.ai or ChatGPT", c.inkMeta)
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp).hairlineBelow(c.rule).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                RText(mcpUrl, RType.value, c.ink, Modifier.weight(1f).testTag("mcpUrl"), ltr = true)
+                Spacer(Modifier.width(10.dp))
+                SignalButton(
+                    if (copied && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) "Copied" else "Copy",
+                    Modifier.testTag("copyMcp"),
+                    style = ButtonStyle.Soft,
+                    size = ButtonSize.Compact,
+                ) {
+                    copyText(context, "Reins MCP address", mcpUrl)
+                    // Android 13 and later confirm a copy themselves.
+                    copied = true
+                    feedback.play(Event.Copied)
+                }
+            }
+            InlineHelp(
+                "custom connectors",
+                "In Claude.ai or ChatGPT, open Settings > Connectors, add a custom connector and paste this address.",
+                Modifier.padding(top = 4.dp).testTag("connectorHowTo"),
+                label = "Paste as a custom connector",
+            )
         }
     }
 }
@@ -470,147 +418,104 @@ private fun IntegrationTile(
     onClick: () -> Unit,
 ) {
     val c = LocalColors.current
+    val shape = RoundedCornerShape(16.dp)
     Column(
         modifier
-            .background(c.elevated, RoundedCornerShape(18.dp))
-            .pressable(enabled = available, highlight = c.controlFill, shape = RoundedCornerShape(18.dp), onClick = onClick)
-            .padding(14.dp)
+            .clip(shape)
+            .background(c.paperRaised)
+            .border(1.dp, c.rule, shape)
+            .pressable(enabled = available, highlight = c.paperSunken, shape = shape, onClick = onClick)
+            .padding(12.dp)
             .testTag("setupService:$id"),
     ) {
         Row(verticalAlignment = Alignment.Top) {
-            if (glyph != null) IconTile(glyph, c.accent, size = 40.dp) else ServiceAvatar(id, size = 40.dp)
+            if (glyph != null) PlainTile(glyph, 30.dp) else ServiceAvatar(id, size = 30.dp)
             Spacer(Modifier.weight(1f))
-            if (connected) IconTile(Glyph.Check, c.success, size = 22.dp, filled = true)
+            if (connected) GlyphIcon(Glyph.Check, c.success, size = 16.dp)
         }
         Spacer(Modifier.height(10.dp))
-        RText(name, RType.sans(15f, FontWeight.SemiBold), if (available) c.text else c.tertiary, maxLines = 1)
-        RText(status, RType.sans(12.5f), if (connected) c.success else c.tertiary, Modifier.padding(top = 1.dp), maxLines = 1)
+        RText(name, RType.sans(14f, FontWeight.Medium), if (available) c.ink else c.inkMeta, maxLines = 1)
+        RText(status, RType.meta, if (connected) c.success else c.inkMeta, maxLines = 1)
     }
 }
 
-// ---- 3. How much to ask -------------------------------------------------------------------------------------------
+// ---- 4. How much to ask --------------------------------------------------------------------------------------------
 
+/** How a new AI starts, and whether a model on this phone helps: two decisions, one page. */
 @Composable
-private fun RulesPage(container: AppContainer) {
+private fun AskPage(container: AppContainer, viewModel: AutopilotViewModel) {
+    val c = LocalColors.current
     val policy by container.state.startingPolicy.collectAsStateWithLifecycle()
+    val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
     // Someone who just installed Reins starts with the recommended rule (ask every time); a choice made before stays.
     LaunchedEffect(Unit) {
         if (container.core.startingPolicy() == null) container.chooseStartingPolicy(dev.reins.core.StartingPolicy.ASK_EVERY_TIME)
     }
-    Column(Modifier.testTag("setupRules")) {
-        PageHeader(
-            "Step 3 · How much to ask",
-            Glyph.ShieldCheck,
-            "Fewer questions",
-            "How a new AI starts.",
-        )
-        dev.reins.android.ui.grants.StartingRuleChooser(policy, Modifier.padding(top = 20.dp), container::chooseStartingPolicy)
-    }
-}
-
-// ---- 4. Autopilot -----------------------------------------------------------------------------------------------
-
-@Composable
-private fun AutopilotPage(viewModel: AutopilotViewModel) {
-    val c = LocalColors.current
-    val ui by viewModel.ui.collectAsStateWithLifecycle()
-    val settings by viewModel.settings.collectAsStateWithLifecycle()
-    Column(Modifier.testTag("setupAutopilot")) {
-        PageHeader(
-            "Step 4 · Autopilot",
-            Glyph.Chip,
-            "A private model",
-            "Learns your answers. Runs on this phone.",
-        )
-        Group(Modifier.padding(top = 20.dp), header = "Modes", footer = "You start in Manual. Change modes any time with the round button next to the tabs.") {
-            AutopilotText.modes.forEachIndexed { i, mode ->
-                if (i > 0) Hairline(inset = 66.dp)
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconTile(modeIcon(mode), modeTint(mode, c), size = 36.dp)
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        RText(AutopilotText.name(mode), RType.sans(15.5f, FontWeight.SemiBold), c.text)
-                        RText(AutopilotText.line(mode), RType.sans(13f), c.secondary, maxLines = 2)
-                    }
-                    if (AutopilotText.needsModel(mode)) Tag("Model")
+    Column {
+        PageTitle("How much to ask", "to ask")
+        Column(Modifier.padding(top = 20.dp).testTag("setupRules")) {
+            LabelText("A new AI starts with", c.inkMeta, Modifier.padding(bottom = 4.dp))
+            dev.reins.android.ui.grants.StartingRuleChooser(policy, onChoose = container::chooseStartingPolicy)
+        }
+        Column(Modifier.padding(top = 22.dp).testTag("setupAutopilot")) {
+            LabelText("Autopilot · a private model", c.inkMeta, Modifier.padding(bottom = 10.dp))
+            val s = settings
+            val model = ui.model ?: s?.model
+            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(AutopilotMode.MANUAL, AutopilotMode.AUTO).forEach { mode ->
+                    TourModeTile(mode, selected = (s?.mode ?: AutopilotMode.MANUAL) == mode, Modifier.weight(1f).fillMaxHeight()) { viewModel.setMode(mode) }
                 }
             }
-        }
-        ModelCard(
-            model = ui.model ?: settings?.model,
-            job = ui.job,
-            wifiOnly = settings?.wifiOnly ?: true,
-            onDownload = viewModel::download,
-            onCancel = viewModel::cancelDownload,
-            onDelete = viewModel::deleteModel,
-            onWifiOnly = viewModel::setWifiOnly,
-        )
-    }
-}
-
-// ---- 5. Your computer -------------------------------------------------------------------------------------------
-
-@Composable
-private fun ComputerPage(app: AppViewModel) {
-    Column(Modifier.testTag("setupComputer")) {
-        PageHeader(
-            "Step 5 · Your computer",
-            Glyph.Laptop,
-            "Connect your computer",
-        )
-        ComputerHowTo(Modifier.padding(start = 24.dp, end = 24.dp, top = 10.dp))
-        ConnectComputerPanel(app, Modifier.padding(horizontal = 16.dp, vertical = 20.dp))
-        DesktopAppLink()
-    }
-}
-
-// ---- 6. Your AI app ---------------------------------------------------------------------------------------------
-
-@Composable
-private fun AiPage(mcpUrl: String) {
-    val c = LocalColors.current
-    val context = LocalContext.current
-    val feedback = LocalFeedback.current
-    var copied by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.testTag("setupAi")) {
-        PageHeader(
-            "Step 6 · Your AI app",
-            Glyph.Sparkle,
-            "Connect Claude.ai or ChatGPT",
-            tint = c.search,
-        )
-        Group(Modifier.padding(top = 18.dp)) {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 10.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                RText(mcpUrl, RType.mono(15f, FontWeight.Medium), c.text, Modifier.weight(1f).testTag("mcpUrl"), ltr = true)
+            // Getting the model: a switch, quiet in the background.
+            val getting = model != null && (model.state == ModelState.INSTALLED || model.state == ModelState.DOWNLOADING || ui.job != DownloadJob.Idle)
+            Row(
+                Modifier.fillMaxWidth().padding(top = 14.dp).testTag("modelCard"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    RText(if (model?.state == ModelState.INSTALLED) "The model is here" else "Get the model now", RType.row, c.ink, maxLines = 1)
+                    RText(
+                        model?.let { "${AutopilotText.modelSize(it)}, on Wi-Fi, runs on this phone" } ?: "Runs on this phone",
+                        RType.meta,
+                        c.inkMeta,
+                        maxLines = 2,
+                    )
+                }
                 Spacer(Modifier.width(10.dp))
-                CapsuleButton(
-                    if (copied && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) "Copied" else "Copy",
-                    Modifier.testTag("copyMcp"),
-                    style = ButtonStyle.Secondary,
-                    glyph = Glyph.Copy,
-                    compact = true,
-                ) {
-                    copyText(context, "Reins MCP address", mcpUrl)
-                    // Android 13 and later confirm a copy themselves.
-                    copied = true
-                    feedback.play(Event.Copied)
+                Toggle(getting, Modifier.testTag("getModel"), enabled = model != null && model.state != ModelState.INSTALLED) { on ->
+                    if (on) viewModel.download() else viewModel.cancelDownload()
                 }
             }
         }
-        InlineHelp(
-            "custom connectors",
-            "In Claude.ai or ChatGPT, open Settings > Connectors, add a custom connector and paste this address.",
-            Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp).testTag("connectorHowTo"),
-            label = "Paste as a custom connector",
-        )
     }
 }
 
-// ---- 7. Done ----------------------------------------------------------------------------------------------------
+/** Manual or Auto as on Trust: its glyph, its name in the serif, what it does; the one picked ringed. */
+@Composable
+private fun TourModeTile(mode: AutopilotMode, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    val c = LocalColors.current
+    val shape = RoundedCornerShape(20.dp)
+    Column(
+        modifier
+            .clip(shape)
+            .background(c.paperRaised)
+            .border(if (selected) 2.dp else 1.dp, if (selected) c.ink else c.rule, shape)
+            .pressable(shape = shape, onClick = onClick)
+            .semantics(mergeDescendants = true) { this.selected = selected }
+            .testTag("tourMode:${mode.name}")
+            .padding(14.dp),
+    ) {
+        GlyphIcon(if (mode == AutopilotMode.AUTO) Glyph.Autopilot else Glyph.Person, if (mode == AutopilotMode.AUTO) c.violet else c.ink, size = 18.dp)
+        RText(AutopilotText.name(mode), RType.serif(24f, 28f), c.ink, Modifier.padding(top = 8.dp), maxLines = 1)
+        RText(if (mode == AutopilotMode.MANUAL) "You decide, with a hint" else AutopilotText.line(mode), RType.meta, c.inkMeta, maxLines = 3)
+    }
+}
+
+// ---- 5. You're in control -------------------------------------------------------------------------------------------
 
 @Composable
 private fun DonePage(container: AppContainer, autopilot: AutopilotViewModel, notifications: NotificationState, screenLock: ScreenLockState) {
-    val c = LocalColors.current
     val services by container.state.services.collectAsStateWithLifecycle()
     val connections by container.state.connections.collectAsStateWithLifecycle()
     val ui by autopilot.ui.collectAsStateWithLifecycle()
@@ -619,64 +524,47 @@ private fun DonePage(container: AppContainer, autopilot: AutopilotViewModel, not
     val accounts = services.filter { it.service != "vault" }.sumOf { it.accounts.size }
     val model = (ui.model ?: settings?.model)?.state
     Column(Modifier.testTag("setupFinished")) {
-        PageHeader(
-            "All set",
-            Glyph.ShieldCheck,
-            "You're in control",
-            tint = c.success,
-        )
-        Group(Modifier.padding(top = 20.dp)) {
-            Checklist(Glyph.Bell, "Notifications", if (notifications.enabled) "On" else "Off", notifications.enabled)
-            Hairline(inset = 66.dp)
-            Checklist(Glyph.Lock, "Screen lock", if (screenLock.set) "On" else "Off", screenLock.set)
-            Hairline(inset = 66.dp)
-            Checklist(
+        // A quiet finish: the pond the empty Activity shows next.
+        Calm("", Modifier.padding(top = 18.dp), drawingWidth = 260.dp, gap = 0.dp)
+        PageTitle("You're in control", "in control")
+        Column(Modifier.padding(top = 18.dp)) {
+            StatusLine(Glyph.Bell, "Notifications", if (notifications.enabled) "Requests reach you" else "Turn them on in Settings", if (notifications.enabled) "On" else "Off", notifications.enabled)
+            StatusLine(Glyph.Fingerprint, "Screen lock", "Every approval asks for it", if (screenLock.set) "On" else "Off", screenLock.set)
+            StatusLine(
                 Glyph.Apps,
-                "Integrations",
+                "Services",
                 when (accounts) {
                     0 -> "None yet"
                     1 -> "1 account"
                     else -> "$accounts accounts"
                 },
+                if (accounts > 0) "$accounts" else "Later",
                 accounts > 0,
             )
-            Hairline(inset = 66.dp)
-            Checklist(
+            StatusLine(
                 Glyph.Chip,
                 "Private model",
                 when (model) {
-                    ModelState.INSTALLED -> "Installed"
-                    ModelState.DOWNLOADING -> "Downloading"
+                    ModelState.INSTALLED -> "On this phone"
+                    ModelState.DOWNLOADING -> "Downloading in the background"
                     else -> "Not downloaded"
+                },
+                when (model) {
+                    ModelState.INSTALLED -> "On"
+                    ModelState.DOWNLOADING -> "Soon"
+                    else -> "Later"
                 },
                 model == ModelState.INSTALLED || model == ModelState.DOWNLOADING,
             )
-            Hairline(inset = 66.dp)
-            Checklist(
+            StatusLine(
                 Glyph.Laptop,
                 "Computers and AI apps",
-                when (val n = connections.size) {
-                    0 -> "None yet"
-                    1 -> "1 connected"
-                    else -> "$n connected"
-                },
+                if (connections.isEmpty()) "None yet · connect from Connections" else "${connections.size} connected",
+                if (connections.isEmpty()) "Later" else "${connections.size}",
                 connections.isNotEmpty(),
+                last = true,
             )
         }
-    }
-}
-
-@Composable
-private fun Checklist(glyph: Glyph, title: String, detail: String, done: Boolean) {
-    val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconTile(glyph, if (done) c.success else c.tertiary, size = 36.dp)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            RText(title, RType.sans(15.5f, FontWeight.SemiBold), c.text)
-            RText(detail, RType.sans(13f), if (done) c.secondary else c.tertiary, maxLines = 2)
-        }
-        if (done) IconTile(Glyph.Check, c.success, size = 24.dp, filled = true)
     }
 }
 

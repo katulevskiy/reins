@@ -104,14 +104,6 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         stack.clear()
     }
 
-    /** Whether the "Expired" list on the Grants tab is open; closed until the user opens it, and kept while they browse. */
-    var expiredOpen by mutableStateOf(false)
-        private set
-
-    fun toggleExpired() {
-        expiredOpen = !expiredOpen
-    }
-
     /** Changes for every visit to "New grant", so the form always starts empty. */
     var newGrantToken by mutableIntStateOf(0)
         private set
@@ -174,10 +166,10 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** The bypass notification or the download's: the Autopilot tab. */
+    /** The bypass notification or the download's: the Trust tab, where Autopilot lives. */
     fun openAutopilot() {
         home()
-        selectTab(Tab.Autopilot)
+        selectTab(Tab.Trust)
     }
 
     /** A "grant ends soon" notification was tapped: show that grant, if it exists. */
@@ -185,7 +177,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.refreshPending()
             home()
-            selectTab(Tab.Grants)
+            selectTab(Tab.Trust)
             if (container.state.grants.value.any { it.id == id }) open(Route.GrantDetail(id))
         }
     }
@@ -222,7 +214,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             container.feedback.play(if (notice.failed) Event.Error else Event.Connected)
             container.state.setMcpNotice(notice)
             home()
-            open(Route.Integrations)
+            selectTab(Tab.Connections)
             open(Route.McpServer(id))
         }
     }

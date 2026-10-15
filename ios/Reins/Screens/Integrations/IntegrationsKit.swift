@@ -5,10 +5,11 @@ import UIKit
 // progress, status pills, secret fields with a paste button, and an account's row.
 
 extension View {
-    /// An inset grouped list on the app background, rows on the elevated surface (Zeron's settings lists).
+    /// A list of rows on paper with rule hairlines between them, never cards (Signal's lists).
     func integrationList() -> some View {
-        listStyle(.insetGrouped)
+        listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .listRowSeparatorTint(Palette.rule)
             .background(Palette.background.ignoresSafeArea())
             .listSectionSpacing(18)
             .environment(\.defaultMinListRowHeight, 44)
@@ -94,9 +95,9 @@ struct StatusPill: View {
 
     var body: some View {
         Text(text)
-            .font(RFont.sans(12.5, .medium))
+            .font(TextRole.tag.font())
             .foregroundStyle(tint)
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
             .background(tint.opacity(0.13), in: Capsule())
             .lineLimit(1)
@@ -121,11 +122,12 @@ struct ActionButton: View {
 
     private var colors: (fg: Color, bg: Color) {
         switch kind {
-        case .primary: (Palette.background, Palette.text)
-        case .accent: (.white, Palette.accent)
-        case .secondary: (Palette.text, Palette.controlFill)
-        case .ghost: (Palette.secondary, .clear)
-        case .destructive: (Palette.danger, Palette.danger.opacity(0.12))
+        // Signal's buttons: ink for the one thing to do, violet only where a permission is given, the soft wash, red.
+        case .primary: (Palette.onInverse, Palette.inverse)
+        case .accent: (Palette.onInverse, Palette.inverse)
+        case .secondary: (Palette.ink, Palette.paperSunken)
+        case .ghost: (Palette.ink2, .clear)
+        case .destructive: (Palette.danger, Palette.dangerWash)
         }
     }
 
@@ -141,14 +143,14 @@ struct ActionButton: View {
                     Image(systemName: symbol).font(.system(size: compact ? 13 : 15, weight: .semibold))
                 }
                 Text(title)
-                    .font(RFont.sans(compact ? 14 : 16, .semibold))
+                    .font(compact ? TextRole.buttonSmall.font() : TextRole.button.font())
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
             }
             .foregroundStyle(colors.fg)
             .padding(.horizontal, compact ? 14 : 18)
             .padding(.vertical, compact ? 7 : 12)
-            .frame(maxWidth: compact ? nil : .infinity, minHeight: compact ? 34 : 50)
+            .frame(maxWidth: compact ? nil : .infinity, minHeight: compact ? 36 : 54)
             .background(colors.bg, in: Capsule())
             .contentShape(Capsule())
         }
@@ -181,8 +183,8 @@ struct InputWell<Field: View, Trailing: View>: View {
         }
         .padding(.leading, 16)
         .padding(.trailing, 8)
-        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
+        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
     }
 }
 
@@ -276,14 +278,15 @@ struct AccountStatusLine: View {
         case nil:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
-                Text("Checking…").font(RFont.sans(13)).foregroundStyle(Palette.secondary)
+                Text("Checking…").textRole(.meta).foregroundStyle(Palette.inkMeta)
             }
         case .ready:
             StatusPill(text: "Connected", tint: Palette.success)
         case .needsConsent:
-            Text(needsAgain).font(RFont.sans(13, .medium)).foregroundStyle(Palette.warning)
+            // A problem in words, amber, never just a red dot.
+            Text(needsAgain).textRole(.meta).foregroundStyle(Palette.warning)
         case let .unavailable(message):
-            Text(untrusted(message)).font(RFont.sans(13)).foregroundStyle(Palette.danger).lineLimit(3)
+            Text(untrusted(message)).textRole(.meta).foregroundStyle(Palette.danger).lineLimit(3)
         }
     }
 }
@@ -306,26 +309,27 @@ struct AccountRowView<Avatar: View>: View {
             avatar
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(RFont.sans(16, .medium))
-                    .foregroundStyle(Palette.text)
+                    .font(TextRole.row.font())
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .environment(\.layoutDirection, .leftToRight)
                 AccountStatusLine(status: status, needsAgain: needsAgain)
-                if status == .needsConsent && canAllowAgain {
-                    ActionButton(title: "Allow again", kind: .secondary, enabled: !busy, compact: true, action: onAllowAgain)
-                        .padding(.top, 4)
-                        .accessibilityIdentifier("reconnect:\(title)")
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // The one-tap fix beside the problem.
+            if status == .needsConsent && canAllowAgain {
+                Button("Allow again", action: onAllowAgain)
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
+                    .disabled(busy)
+                    .accessibilityIdentifier("reconnect:\(title)")
+            }
             Button {
                 onRemove()
                 feedback.defaultTap()
             } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Palette.danger)
+                GlyphIcon(.trash, size: 18)
+                    .foregroundStyle(Palette.inkMeta)
                     .frame(width: 40, height: 40)
                     .contentShape(Circle())
             }
@@ -353,7 +357,7 @@ struct NoAccountsRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             // The message (what the service is for) is behind the group's (?), with the rest of its explanation.
-            Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
+            Text(title).textRole(.row).foregroundStyle(Palette.ink)
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)

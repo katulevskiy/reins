@@ -89,14 +89,9 @@ final class AppHost {
                 await model.handle(link)
             }
             #if DEBUG
-            // `-show sounds`: open Settings > Sounds & haptics at launch (screenshots, manual checks); `-show grants`
-            // (or another section) opens that tab.
+            // `-show <place>`: open a tab or a page at launch (DebugShow).
             if let i = args.firstIndex(of: "-show"), i + 1 < args.count {
-                if args[i + 1] == "sounds" {
-                    model.show(.sounds, in: .settings)
-                } else if let section = AppSection(rawValue: args[i + 1]) {
-                    model.select(section)
-                }
+                DebugShow.open(args[i + 1], in: model)
             }
             #endif
         }

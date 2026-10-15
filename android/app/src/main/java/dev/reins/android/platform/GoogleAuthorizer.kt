@@ -5,6 +5,7 @@ import android.accounts.AccountManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
@@ -47,17 +48,21 @@ class GoogleAuthorizer(context: Context) : GoogleTokenProvider {
         client.revokeAccess(RevokeAccessRequest.builder().setAccount(google).setScopes(scopesOf(service).map(::Scope)).build()).await()
     }
 
+    // What the user reads is a short line; how to fix it (a setup step, a status code) goes to the log.
     private suspend fun authorize(account: String, service: String): AuthorizationResult = try {
         client.authorize(request(account, service)).await()
     } catch (e: ApiException) {
         throw if (e.statusCode == CommonStatusCodes.DEVELOPER_ERROR) {
-            ForeignException.Failed(SETUP_NEEDED)
+            Log.w(TAG, SETUP_DETAIL, e)
+            ForeignException.Failed(unavailable(service))
         } else {
-            ForeignException.Failed("Google could not authorize ${nameOf(service)} (code ${e.statusCode})")
+            Log.w(TAG, "Google authorization for ${nameOf(service)} failed with status ${e.statusCode}", e)
+            ForeignException.Failed("Google couldn't connect ${nameOf(service)}. Try again.")
         }
     } catch (e: Exception) {
         if (e is kotlin.coroutines.cancellation.CancellationException) throw e
-        throw ForeignException.Failed("Google Play services is not available: ${e.javaClass.simpleName}")
+        Log.w(TAG, "Google Play services unavailable: ${e.javaClass.simpleName}", e)
+        throw ForeignException.Failed("This phone needs Google Play services to connect ${nameOf(service)}.")
     }
 
     companion object {
@@ -69,8 +74,14 @@ class GoogleAuthorizer(context: Context) : GoogleTokenProvider {
         const val CALENDAR_READONLY = "https://www.googleapis.com/auth/calendar.readonly"
         const val CONTACTS_READONLY = "https://www.googleapis.com/auth/contacts.readonly"
         const val GOOGLE_ACCOUNT_TYPE = "com.google"
-        const val SETUP_NEEDED =
+        private const val TAG = "ReinsGoogle"
+
+        /** For whoever builds the app (the log, never the screen): what Google needs before it lets this build in. */
+        const val SETUP_DETAIL =
             "Google access needs setup: register this app's package and signing SHA-1 as an Android OAuth client in Google Cloud, and enable the Gmail, Calendar and People APIs."
+
+        /** What the user reads when this build of Reins can't reach Google at all. */
+        fun unavailable(service: String): String = "${nameOf(service)} can't be connected from this version of Reins yet."
 
         /** The OAuth scopes a Google service needs. */
         fun scopesOf(service: String): List<String> = when (service) {
@@ -79,7 +90,7 @@ class GoogleAuthorizer(context: Context) : GoogleTokenProvider {
             else -> listOf(GMAIL_MODIFY, GMAIL_SETTINGS)
         }
 
-        private fun nameOf(service: String) = when (service) {
+        fun nameOf(service: String) = when (service) {
             "gcalendar" -> "Google Calendar"
             "gcontacts" -> "Google Contacts"
             else -> "Gmail"

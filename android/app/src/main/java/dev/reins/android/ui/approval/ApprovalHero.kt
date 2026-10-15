@@ -1,5 +1,11 @@
 package dev.reins.android.ui.approval
 
+import dev.reins.core.ApprovalKind
+
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.ui.common.findConnection
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -111,166 +117,156 @@ fun badgeIcon(badge: Badge): ImageVector = when (badge) {
     Badge.Cart -> Icons.Rounded.ShoppingCart
 }
 
-/** The hero: tinted by what is asked, the AI → the service, one sentence, and Autopilot's score (or why there is none). */
+/**
+ * The ask as a field (Reins Signal): who asks and how long it waits, the label line ("GITHUB · PUSH"), the ask in the
+ * serif with its target in italic, and one verdict line: Autopilot's opinion, why it is always asked, the risk
+ * Overnight saw, or (an Activity entry) how it ended.
+ */
 @Composable
-internal fun Hero(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel) {
-    val c = LocalColors.current
-    val tone = toneColor(heroTone(view), c)
-    val danger = heroTone(view) == HeroTone.Danger
-    val shape = RoundedCornerShape(28.dp)
-    Column(
-        Modifier
-            .padding(start = 12.dp, end = 12.dp, top = 4.dp)
-            .fillMaxWidth()
-            .clip(shape)
-            .background(tone.copy(alpha = if (danger) 0.13f else 0.12f))
-            .border(1.dp, tone.copy(alpha = if (danger) 0.32f else 0.26f), shape)
-            .padding(start = 22.dp, end = 22.dp, top = 26.dp, bottom = 20.dp)
-            .testTag("hero"),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Stage(view, tone)
-        Sentence(view)
-        HeroPills(view, ui, viewModel)
-    }
-}
-
-/** The AI's avatar, three dots (the last in the hero's colour), the service's logo with the action's badge. */
-@Composable
-private fun Stage(view: ApprovalView, tone: Color) {
-    val c = LocalColors.current
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        ConnectionIcon(view.connectionId, view.connectionLabel, size = 58.dp)
-        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            repeat(3) { i -> Box(Modifier.size(5.dp).clip(CircleShape).background(if (i == 2) tone else c.tertiary)) }
-        }
-        ServiceTile(heroService(view), badgeIcon(badge(view)), tone)
-    }
-}
-
-@Composable
-private fun ServiceTile(service: String, badge: ImageVector, tone: Color) {
-    val c = LocalColors.current
-    val context = LocalContext.current
-    val size = 58.dp
-    val mark = 30.dp
-    val px = with(LocalDensity.current) { mark.roundToPx() }
-    val logo = remember(service, px) { service.takeIf { it.isNotBlank() }?.let { SvgAssets.bitmap(context, "services/$it.svg", px)?.asImageBitmap() } }
-    val shape = RoundedCornerShape(size * 0.3f)
-    Box(Modifier.size(size)) {
-        Box(
-            Modifier
-                .size(size)
-                .clip(shape)
-                .background(if (c.dark) Color(0xFF1C1C20) else Color.White)
-                .border(1.dp, if (c.dark) Color(0xFF2C2C31) else c.hairline, shape)
-                .testTag("serviceTile"),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (logo != null) {
-                Image(logo, dev.reins.android.design.serviceName(service), Modifier.size(mark), colorFilter = ColorFilter.tint(serviceColor(service, c)))
-            } else {
-                Icon(Icons.Rounded.Computer, null, Modifier.size(mark), tint = c.secondary)
-            }
-        }
-        val plate = if (c.dark) Color(0xFF111111) else Color.White
-        Box(
-            Modifier
-                .align(Alignment.BottomEnd)
-                .offset(x = 6.dp, y = 6.dp)
-                .size(25.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(lerp(plate, tone, 0.28f))
-                .border(2.5.dp, lerp(plate, tone, 0.08f), RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.Center,
-        ) { Icon(badge, null, Modifier.size(13.dp), tint = tone) }
-    }
-}
-
-/** "Wants to **push 8 commits**\nto **octo/app**": the key nouns bold, the rest quieter. */
-@Composable
-private fun Sentence(view: ApprovalView) {
-    val c = LocalColors.current
-    val spans = heroSentence(view)
-    val text = buildAnnotatedString {
-        spans.forEach { s ->
-            if (s.bold) withStyle(SpanStyle(color = c.text, fontWeight = FontWeight.SemiBold)) { append(s.text) } else append(s.text)
-        }
-    }
-    // A question is answered, so it is the question itself (tagged as such).
-    val tag = if (view.ask != null) "askQuestion" else "what"
-    Box(Modifier.padding(top = 20.dp)) {
-        BasicText(
-            text,
-            Modifier.fillMaxWidth().testTag(tag).semantics(mergeDescendants = true) {},
-            style = RType.sans(26f, FontWeight.Medium, lineHeight = 32.5f).copy(color = c.secondary, textAlign = TextAlign.Center),
-            maxLines = 5,
-        )
-    }
-}
-
-/** Under the sentence: a danger tag with its (?), Autopilot's score, or the offer to download its model. */
-@Composable
-private fun HeroPills(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel) {
-    val c = LocalColors.current
+internal fun Hero(
+    view: ApprovalView,
+    ui: ApprovalUi,
+    viewModel: ApprovalViewModel,
+    onClose: () -> Unit,
+    back: Boolean = false,
+    entered: androidx.compose.animation.core.MutableTransitionState<Boolean>? = null,
+) {
     val nav = LocalApprovalNav.current
+    val host = findConnection(dev.reins.android.ui.common.LocalConnections.current, view.connectionId, view.connectionLabel)?.clientHost?.let(::untrusted)
+    val record = LocalApprovalRecord.current
+    // Waiting: present tense from the verb (the asker is in the top row). An entry: past tense, with its icon.
+    // A desktop question is told through the core's reading of it (the entry's label, else the waiting item's).
+    val label = record?.label ?: viewModel.pendingLabel()
+    val sentence = androidx.compose.runtime.remember(view, record, label) {
+        dev.reins.android.ui.common.askSentence(view, record?.tense ?: dev.reins.android.ui.common.Tense.Waiting, label = label, cwd = record?.cwd)
+    }
+    val field = askField(view)
+    AskField(
+        field,
+        sentence.kind,
+        sentence.text,
+        sentence.target,
+        details = sentence.details,
+        icon = if (record != null) {
+            { dev.reins.android.ui.common.IntegrationIcon(sentence.provider, sentence.action, Modifier.testTag("entryIcon"), size = 34.dp, ring = field.fill(), field = field) }
+        } else {
+            null
+        },
+        onClose = onClose,
+        askTag = if (view.ask != null) "askQuestion" else "what",
+        closeGlyph = if (back) Glyph.ArrowBack else Glyph.Close,
+        closeLabel = if (back) "Back" else "Close",
+        top = {
+            AskWho(untrusted(view.connectionLabel), host) { ConnectionIcon(view.connectionId, view.connectionLabel, size = 28.dp) }
+            TimerPill(view)
+        },
+        verdict = { HeroVerdict(view, ui, viewModel, nav) },
+        entered = entered,
+    )
+}
+
+/**
+ * The field's verdict lines. Every warning the request carries is shown here, in this order and never cut short:
+ * what makes it dangerous or asked every time (with its (?) for the longer reason), then the risk Overnight's model
+ * saw and whether Overnight held it (two lines at most; if longer, the risk's word stays here and its reason becomes
+ * the first fact row). Then Autopilot's opinion (not for what can't be undone), or the offer to get its model. An
+ * Activity entry adds how it ended first.
+ */
+@Composable
+private fun HeroVerdict(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel, nav: ApprovalNav) {
     val feedback = LocalFeedback.current
+    val record = LocalApprovalRecord.current
     val danger = dangerTag(view)
     val s = ui.suggestion
     val model = ui.model
-    val record = LocalApprovalRecord.current
-    if (record != null) {
-        // An Activity entry: how it ended, beside what made it risky.
-        Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (danger != null) {
-                WarnTag(danger.label, if (danger.destructive) c.danger else c.warning, Modifier.testTag(danger.tag), icon = danger.icon)
-                Spacer(Modifier.width(8.dp))
-            }
-            OutcomePill(record.outcome, record.icon, record.tint(c))
-        }
-        RiskChip(record.risk, Modifier.padding(top = 10.dp))
-        return
+    val risk = record?.risk ?: s?.risk
+    val openAutopilot = {
+        nav.overlay = ApprovalOverlay.Autopilot
+        feedback.play(Event.Open)
     }
-    if (danger != null) {
-        Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            WarnTag(danger.label, if (danger.destructive) c.danger else c.warning, Modifier.testTag(danger.tag), icon = danger.icon)
-            Spacer(Modifier.width(8.dp))
-            HelpDot(danger.tag, danger.help)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (record != null) {
+            FieldVerdict(record.outcome, Modifier.testTag("entryOutcome"), glyph = Glyph.CircleCheck, textTag = "entryAutopilotTitle")
         }
-    }
-    // The model's risk, and whether Overnight held it: most often on just what cannot be undone.
-    RiskChip(s?.risk, Modifier.padding(top = if (danger != null) 10.dp else 16.dp))
-    // A guard rule that can be undone is an ordinary question: Autopilot's score shows under it.
-    if (danger != null && danger.destructive) return
-    val content: (@Composable () -> Unit)? = when {
-        s != null && s.judged && !s.floor -> {
-            { AutopilotPill(s) { nav.overlay = ApprovalOverlay.Autopilot; feedback.play(Event.Open) } }
-        }
-        model != null && !AutopilotText.modelUsable(model) && s?.floor != true -> {
-            { DownloadPill(ui, viewModel::downloadModel) }
-        }
-        s != null && s.floor -> {
-            {
-                QuietPill("Always asked", Modifier.testTag("suggestion")) { nav.overlay = ApprovalOverlay.Autopilot; feedback.play(Event.Open) }
+        // Every warning, each on its own line (see fieldWarnings).
+        fieldWarnings(view, if (record == null) s else null, risk, nav.riskInFacts).forEach { w ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val isRisk = w.tag == "risk"
+                FieldVerdict(
+                    w.text,
+                    Modifier.weight(1f, fill = false).testTag(w.tag),
+                    glyph = w.glyph,
+                    maxLines = w.maxLines,
+                    textTag = if (isRisk) "riskLine" else null,
+                    onClick = if (isRisk && record == null && s != null && s.judged) openAutopilot else null,
+                    onOverflow = if (isRisk) { over -> if (over && !nav.riskInFacts) nav.riskInFacts = true } else { _ -> },
+                )
+                if (record == null && w.help != null) HelpDot(w.tag, w.help, size = 26.dp, onField = true)
             }
         }
-        else -> null
-    }
-    if (content != null) {
-        Row(Modifier.padding(top = if (danger != null) 10.dp else 16.dp), verticalAlignment = Alignment.CenterVertically) { content() }
+        if (view.kind == ApprovalKind.GRANT) FieldVerdict("Nothing is shared now. Matches are answered for you.", Modifier.testTag("grantLine"))
+        if (record != null || heldByDanger(view)) return@Column
+        when {
+            s != null && s.judged && !s.floor -> {
+                val p = if (s.verdict == Verdict.DENY) s.pDeny else s.pApprove
+                val words = when (s.verdict) {
+                    Verdict.APPROVE -> "Autopilot would allow"
+                    Verdict.DENY -> "Autopilot would deny"
+                    Verdict.ASK -> "Autopilot is unsure"
+                }
+                FieldVerdict(
+                    "$words · ${AutopilotText.percent(p)}",
+                    Modifier.testTag("suggestion"),
+                    glyph = if (s.verdict == Verdict.ASK) null else Glyph.Autopilot,
+                    ring = if (s.verdict == Verdict.ASK) p else null,
+                    chevron = true,
+                    textTag = "suggestionHeadline",
+                    onClick = openAutopilot,
+                )
+            }
+            s != null && s.floor && danger == null && alwaysAskReason(view) == null ->
+                FieldVerdict("Always asks", Modifier.testTag("suggestion"), glyph = Glyph.Lock, chevron = true, onClick = openAutopilot)
+            model != null && !AutopilotText.modelUsable(model) && s?.floor != true -> DownloadLine(ui, viewModel::downloadModel)
+            else -> Unit
+        }
     }
 }
 
-/** How an Activity entry ended ("Denied by you", "Allowed by Autopilot · 96%"), on its hero. */
+/** A warning on the field: "Always asks · can't be undone", "Always asks · rewrites history", or the tag itself. */
+internal fun dangerLine(d: DangerTag): String = if (d.destructive) "Always asks · ${dangerWords(d)}" else d.label
+
+/** "can't be undone", "rewrites history": what a destructive tag says after "Always asks". */
+private fun dangerWords(d: DangerTag): String = when (d.tag) {
+    "onceWarning", "mcpDestructive" -> "can't be undone"
+    else -> d.label.replaceFirstChar { it.lowercase() }
+}
+
+/** No model on this phone: "Get Autopilot's score" and a white Download; while it downloads, how far. */
 @Composable
-private fun OutcomePill(text: String, icon: ImageVector, tint: Color) {
-    Row(
-        Modifier.clip(RoundedCornerShape(10.dp)).background(tint.copy(alpha = 0.16f)).padding(start = 9.dp, end = 12.dp, top = 7.dp, bottom = 7.dp).testTag("entryOutcome"),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, Modifier.size(15.dp), tint = tint)
-        Spacer(Modifier.width(6.dp))
-        RText(text, RType.sans(13f, FontWeight.SemiBold), tint, Modifier.testTag("entryAutopilotTitle"), maxLines = 1)
+private fun DownloadLine(ui: ApprovalUi, onDownload: () -> Unit) {
+    val c = LocalColors.current
+    val model = ui.model ?: return
+    val downloading = model.state == ModelState.DOWNLOADING
+    val waiting = !downloading && ui.downloadJob == DownloadJob.Waiting
+    Row(Modifier.testTag("getAutopilot"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        when {
+            downloading -> {
+                val total = model.sizeBytes.toLong()
+                val pct = if (total > 0) (model.downloadedBytes.toLong() * 100 / total).toInt().coerceIn(0, 100) else null
+                FieldVerdict(if (pct != null) "Downloading Autopilot · $pct%" else "Downloading Autopilot…", Modifier.testTag("modelProgress"), glyph = Glyph.Download)
+            }
+            waiting -> FieldVerdict("Autopilot waits for Wi-Fi", Modifier.testTag("modelProgress"), glyph = Glyph.Wifi)
+            else -> {
+                FieldVerdict("Get Autopilot's score", glyph = Glyph.Autopilot)
+                dev.reins.android.design.SignalButton(
+                    "Download",
+                    Modifier.testTag("downloadModel"),
+                    style = dev.reins.android.design.ButtonStyle.OnFieldWhite,
+                    size = dev.reins.android.design.ButtonSize.Compact,
+                    onClick = onDownload,
+                )
+            }
+        }
     }
 }
 
@@ -302,41 +298,50 @@ fun ruleTag(rule: AskRuleView, everyTime: Boolean = false, unread: Boolean = fal
     return DangerTag(label, "guardRule", help, rule.destructive, Icons.Rounded.Shield)
 }
 
-fun dangerTag(view: ApprovalView): DangerTag? {
-    view.ask?.let { ask ->
-        ask.rule?.let { return ruleTag(it, everyTime = view.noStanding, unread = ask.uncertain) }
-        if (ask.uncertain && !ask.destructive) {
-            return DangerTag(
-                "Couldn't read this",
-                "askUncertain",
-                "This phone couldn't read the command for sure, so it's asked every time.",
-                destructive = false,
-                icon = Icons.Rounded.QuestionMark,
-            )
-        }
-    }
-    val git = view.git
-    if (git != null) {
-        val forced = git.refs.indexOfFirst { it.force && !it.forceUnknown }
-        if (forced >= 0) return DangerTag("Rewrites history", "forceWarning:$forced", "This push replaces commits that are already there. What they held is lost on the server.")
-        val unknown = git.refs.indexOfFirst { it.forceUnknown }
-        if (unknown >= 0) return DangerTag("History not checked", "forceUnknown:$unknown", "Reins could not check that this push only adds commits, so it is treated as one that rewrites history.")
-        if (git.refs.any { r -> r.commits.any { it.hiddenChars } || r.files.any { it.hiddenChars } }) {
-            return DangerTag("Hidden characters", "hiddenChars", "Some text in this push has invisible characters that can make code read unlike what it does. They show as �.")
+/** The first of [dangerTags]: what the row in a list and Autopilot go by. */
+fun dangerTag(view: ApprovalView): DangerTag? = dangerTags(view).firstOrNull()
+
+/**
+ * Every warning the request carries, most telling first: the guard rule it matched, a command this phone couldn't
+ * read, a push that rewrites history (or that couldn't be checked), hidden characters, a destructive tool, and what
+ * can't be undone. The field shows them all, in full.
+ */
+fun dangerTags(view: ApprovalView): List<DangerTag> = buildList {
+    val ask = view.ask
+    val unread = DangerTag(
+        "Couldn't read this",
+        "askUncertain",
+        "This phone couldn't read the command for sure, so it's asked every time.",
+        destructive = false,
+        icon = Icons.Rounded.QuestionMark,
+    )
+    ask?.rule?.let { add(ruleTag(it, everyTime = view.noStanding, unread = ask.uncertain)) }
+    if (ask != null && ask.uncertain && ask.rule == null && !ask.destructive) add(unread)
+    val push = view.git
+    if (push != null) {
+        val forced = push.refs.indexOfFirst { it.force && !it.forceUnknown }
+        if (forced >= 0) add(DangerTag("Rewrites history", "forceWarning:$forced", "This push replaces commits that are already there. What they held is lost on the server."))
+        val unknown = push.refs.indexOfFirst { it.forceUnknown }
+        if (unknown >= 0) add(DangerTag("History not checked", "forceUnknown:$unknown", "Reins could not check that this push only adds commits, so it is treated as one that rewrites history."))
+        if (push.refs.any { r -> r.commits.any { it.hiddenChars } || r.files.any { it.hiddenChars } }) {
+            add(DangerTag("Hidden characters", "hiddenChars", "Some text in this push has invisible characters that can make code read unlike what it does. They show as �."))
         }
     }
     val mcp = view.mcp
     if (mcp != null && mcp.destructive) {
-        return DangerTag("Destructive", "mcpDestructive", "The server marks this tool as destructive. It is asked for every time and can never be allowed in advance.")
+        add(DangerTag("Destructive", "mcpDestructive", "The server marks this tool as destructive. It is asked for every time and can never be allowed in advance."))
     }
-    if (destructive(view)) {
-        return DangerTag(
-            "Can't be undone",
-            "onceWarning",
-            if (deletes(view)) "Removes it for good. Autopilot never allows this; you're always asked." else "This reaches far or can't be undone. It's asked every time and never remembered.",
+    if (destructive(view) && none { it.destructive }) {
+        add(
+            DangerTag(
+                "Can't be undone",
+                "onceWarning",
+                if (deletes(view)) "Removes it for good. Autopilot never allows this; you're always asked." else "This reaches far or can't be undone. It's asked every time and never remembered.",
+            ),
         )
     }
-    return null
+    // A command this phone couldn't read is said on its own line too, not only behind the rule's (?).
+    if (ask != null && ask.uncertain && (ask.rule != null || ask.destructive)) add(unread)
 }
 
 /** A tinted tag with a real icon (the warning sign unless said otherwise). */
@@ -356,32 +361,6 @@ internal fun WarnTag(text: String, tint: Color, modifier: Modifier = Modifier, s
     }
 }
 
-/** "Approve ▬ 97% ›": what Autopilot would do, how sure, in the verdict's colour. Opens its reasons. */
-@Composable
-private fun AutopilotPill(s: SuggestionView, onOpen: () -> Unit) {
-    val c = LocalColors.current
-    val tint = verdictTint(s.verdict, c)
-    val p = if (s.verdict == Verdict.DENY) s.pDeny else s.pApprove
-    Row(
-        Modifier
-            .clip(CircleShape)
-            .background(tint.copy(alpha = 0.12f))
-            .pressable(shape = CircleShape, label = "Autopilot", onClick = onOpen)
-            .padding(start = 13.dp, end = 8.dp, top = 7.dp, bottom = 7.dp)
-            .testTag("suggestion")
-            .semantics(mergeDescendants = true) {},
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RText(verdictLabel(s.verdict), RType.sans(13.5f, FontWeight.SemiBold), tint, Modifier.testTag("suggestionHeadline"), maxLines = 1)
-        Spacer(Modifier.width(8.dp))
-        MiniBar(p, tint)
-        Spacer(Modifier.width(8.dp))
-        RText(AutopilotText.percent(p), RType.sans(13.5f, FontWeight.SemiBold), tint, maxLines = 1)
-        Spacer(Modifier.width(4.dp))
-        Icon(Icons.Rounded.ChevronRight, null, Modifier.size(16.dp), tint = tint.copy(alpha = 0.67f))
-    }
-}
-
 /** Approve, Deny, or Unsure when Autopilot would ask. */
 fun verdictLabel(v: Verdict): String = when (v) {
     Verdict.APPROVE -> "Approve"
@@ -389,76 +368,10 @@ fun verdictLabel(v: Verdict): String = when (v) {
     Verdict.ASK -> "Unsure"
 }
 
-@Composable
-private fun MiniBar(p: Float, tint: Color) {
-    Box(Modifier.width(28.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.12f))) {
-        Box(Modifier.fillMaxHeight().fillMaxWidth(p.coerceIn(0f, 1f)).clip(RoundedCornerShape(2.dp)).background(tint))
-    }
-}
-
-/** No model on this phone: "Get Autopilot's score [Download]"; while it downloads, how far. */
-@Composable
-private fun DownloadPill(ui: ApprovalUi, onDownload: () -> Unit) {
-    val c = LocalColors.current
-    val blue = c.search
-    val model = ui.model ?: return
-    val downloading = model.state == ModelState.DOWNLOADING
-    val waiting = !downloading && ui.downloadJob == DownloadJob.Waiting
-    Row(
-        Modifier
-            .clip(CircleShape)
-            .background(blue.copy(alpha = 0.12f))
-            .padding(start = 13.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
-            .testTag("getAutopilot"),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        when {
-            downloading -> {
-                val total = model.sizeBytes.toLong()
-                val pct = if (total > 0) (model.downloadedBytes.toLong() * 100 / total).toInt().coerceIn(0, 100) else null
-                RText(if (pct != null) "Downloading… $pct%" else "Downloading…", RType.sans(13f, FontWeight.SemiBold), blue, Modifier.padding(end = 7.dp).testTag("modelProgress"), maxLines = 1)
-            }
-            waiting -> RText("Waiting for Wi-Fi", RType.sans(13f, FontWeight.SemiBold), blue, Modifier.padding(end = 7.dp).testTag("modelProgress"), maxLines = 1)
-            else -> {
-                RText("Get Autopilot's score", RType.sans(13f, FontWeight.SemiBold), blue, maxLines = 1)
-                Spacer(Modifier.width(8.dp))
-                val ink = if (c.dark) Color(0xFF04122A) else Color.White
-                Row(
-                    Modifier
-                        .clip(CircleShape)
-                        .background(blue)
-                        .pressable(shape = CircleShape, label = "Download Autopilot's model", onClick = onDownload)
-                        .padding(start = 8.dp, end = 11.dp, top = 4.dp, bottom = 4.dp)
-                        .testTag("downloadModel"),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Rounded.Download, null, Modifier.size(14.dp), tint = ink)
-                    Spacer(Modifier.width(4.dp))
-                    RText("Download", RType.sans(12.5f, FontWeight.SemiBold), ink, maxLines = 1)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun QuietPill(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val c = LocalColors.current
-    Row(
-        modifier
-            .clip(CircleShape)
-            .background(c.text.copy(alpha = 0.08f))
-            .pressable(shape = CircleShape, onClick = onClick)
-            .padding(start = 13.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RText(text, RType.sans(13.5f, FontWeight.SemiBold), c.secondary, maxLines = 1)
-        Spacer(Modifier.width(4.dp))
-        Icon(Icons.Rounded.ChevronRight, null, Modifier.size(16.dp), tint = c.tertiary)
-    }
-}
-
-/** The time the AI still waits: a ring that empties and the seconds, red in the last 15; "Stopped" once it gave up. */
+/**
+ * The time the AI still waits, on the field: a ring that drains each second and m:ss; a white pill with red digits in
+ * the last 15 s; "Stopped" once it gave up (a tap says what that means). Its own clock.
+ */
 @Composable
 internal fun TimerPill(view: ApprovalView) {
     val c = LocalColors.current
@@ -471,34 +384,23 @@ internal fun TimerPill(view: ApprovalView) {
         Row(
             Modifier
                 .clip(CircleShape)
-                .background(c.text.copy(alpha = 0.07f))
+                .background(c.onFieldWash)
                 .onGloballyPositioned { bottom = it.positionInRoot().y + it.size.height }
                 .pressable(shape = CircleShape, label = "Stopped waiting") {
                     nav.help = if (nav.help?.key == "late") null else HelpTip("late", "$label stopped waiting. You can still approve; then ask $label to try again.", bottom)
                 }
-                .padding(start = 9.dp, end = 11.dp, top = 7.dp, bottom = 7.dp)
+                .padding(start = 9.dp, end = 11.dp, top = 6.dp, bottom = 6.dp)
                 .testTag("lateBanner"),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Icon(Icons.Rounded.TimerOff, null, Modifier.size(17.dp), tint = c.secondary)
-            Spacer(Modifier.width(6.dp))
-            RText("Stopped", RType.sans(14f, FontWeight.SemiBold), c.secondary, maxLines = 1)
+            GlyphIcon(Glyph.TimerOff, c.onField, size = 16.dp)
+            RText("Stopped", RType.sans(13.5f, FontWeight.SemiBold), c.onField, maxLines = 1)
         }
         return
     }
-    val tint = if (u.urgent) c.danger else c.secondary
-    Row(
-        Modifier
-            .clip(CircleShape)
-            .background(if (u.urgent) c.danger.copy(alpha = 0.13f) else c.text.copy(alpha = 0.07f))
-            .padding(start = 8.dp, end = 11.dp, top = 7.dp, bottom = 7.dp)
-            .testTag("waitLine")
-            .semantics(mergeDescendants = true) {},
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Ring(u.fraction, tint, if (u.urgent) c.danger.copy(alpha = 0.22f) else c.text.copy(alpha = 0.14f), 20.dp)
-        Spacer(Modifier.width(7.dp))
-        RText(secondsLabel(u.remainingSeconds), RType.sans(14f, FontWeight.SemiBold).copy(fontFeatureSettings = "tnum"), tint, maxLines = 1)
+    Box(Modifier.testTag("waitLine").semantics(mergeDescendants = true) {}) {
+        dev.reins.android.design.TimerPill(u.remainingSeconds, ((view.waitUntil ?: 0) - view.createdAt).coerceAtLeast(1))
     }
 }
 

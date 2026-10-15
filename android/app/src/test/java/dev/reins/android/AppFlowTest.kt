@@ -338,7 +338,7 @@ class AppFlowTest {
         awaitTag("entry:2")
         awaitTag("entry:1")
         // The waiting card says what it wants; the history says what was done.
-        rule.onNodeWithTag("sentence:req1", useUnmergedTree = true).assertTextContains("Wants to search Gmail", substring = true)
+        rule.onNodeWithTag("sentence:req1", useUnmergedTree = true).assertTextContains("Search Gmail", substring = true)
         rule.onNodeWithTag("entryTitle:1", useUnmergedTree = true).assertTextEquals("Searched Gmail")
         rule.onNodeWithTag("entryTitle:2", useUnmergedTree = true).assertTextEquals("Sent an email")
     }
@@ -358,9 +358,9 @@ class AppFlowTest {
         core.activity = (60L downTo 1L).map { TestData.entry(it) }
         (context.applicationContext as ReinsApp).container.state.setSeenActivityId(0)
         launch()
-        awaitTag("tabGrants")
-        rule.waitUntil(10_000) { navCount("tabGrants") == 2 }
-        assertEquals(2, navCount("tabGrants"))
+        awaitTag("tabTrust")
+        // Trust carries no count: only a running bypass puts its dot there.
+        assertEquals(null, navCount("tabTrust"))
         // Most of the 60 entries are far off screen, so most are still unseen.
         rule.waitUntil(10_000) { (navCount("tabActivity") ?: 0) > 20 }
         // Jumping to the latest shows the newest, which clears what is above.
@@ -700,7 +700,7 @@ class AppFlowTest {
         rule.onNodeWithTag("grantSlider").performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
         settle()
         tap("grantDone")
-        rule.onNodeWithTag("grantPeriod").assertTextContains("For 1 minute", substring = true)
+        rule.onNodeWithTag("grantPeriod").assertTextContains("1 minute", substring = true)
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
         val standing = core.approvals.single().second.standing!!
@@ -728,7 +728,7 @@ class AppFlowTest {
         openItem("req1")
         awaitTag("waitLine")
         rule.onNodeWithTag("waitLine").assertIsDisplayed()
-        rule.onNodeWithTag("waitLine").assertTextContains("40s", substring = true)
+        rule.onNodeWithTag("waitLine").assertTextContains("0:40", substring = true)
     }
 
     @Test
@@ -823,10 +823,10 @@ class AppFlowTest {
         launch()
         openPairing("pair1")
         awaitTag("keyFingerprint")
-        rule.onNodeWithTag("keyFingerprint").assertTextContains("Desktop app key")
+        rule.onNodeWithTag("keyFingerprint").assertTextContains("DESKTOP KEY")
         rule.onNodeWithTag("keyFingerprint").assertTextContains("4821 9930")
         rule.onNodeWithTag("keyFingerprint")
-            .assertTextContains("Check that your computer shows the same numbers. If they differ, deny.")
+            .assertTextContains("This computer's key must match. If it differs, deny.")
         // It sits above the codes, so it is read before anything can be approved.
         val card = rule.onNodeWithTag("keyFingerprint").fetchSemanticsNode().boundsInRoot
         val codes = rule.onNodeWithTag("code:42").fetchSemanticsNode().boundsInRoot
@@ -875,7 +875,7 @@ class AppFlowTest {
     @Test
     fun aPushShowsTheBranchItsCommitsAndItsFiles() {
         openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(), notes = listOf("Line counts are approximate"))))
-        rule.onNodeWithTag("what").assertTextContains("push 9 commits", substring = true).assertTextContains("octo/app", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Push 9 commits", substring = true).assertTextContains("octo/app", substring = true)
         rule.onNodeWithTag("gitRef:0").assertTextContains("main")
         assertFalse("an ordinary update needs no chip", has("gitChip:0"))
         // The git section replaces the core's plain lines.
@@ -950,7 +950,7 @@ class AppFlowTest {
     @Test
     fun aForcePushWarnsThatItRewritesHistoryAndIsAskedEveryTime() {
         openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(force = true)), noStanding = true))
-        rule.onNodeWithTag("forceWarning:0").assertTextContains("Rewrites history")
+        rule.onNodeWithTag("forceWarning:0").assertTextContains("rewrites history", substring = true)
         tap("help:forceWarning:0")
         awaitTextContaining("replaces commits")
         tap("help:forceWarning:0")
@@ -967,7 +967,7 @@ class AppFlowTest {
     @Test
     fun aPushWhoseHistoryCouldNotBeCheckedIsTreatedAsAForcePush() {
         openGitPush(TestData.gitPushView(TestData.gitPush(TestData.gitRef(force = true, forceUnknown = true)), noStanding = true))
-        rule.onNodeWithTag("forceUnknown:0").assertTextContains("History not checked")
+        rule.onNodeWithTag("forceUnknown:0").assertTextContains("history not checked", substring = true)
         assertFalse(has("forceWarning:0"))
     }
 
@@ -976,7 +976,7 @@ class AppFlowTest {
         val tag = TestData.gitRef("v1.2", kind = "tag", change = "create", commitCount = 0u, commits = emptyList(), filesChanged = 0u, files = emptyList(), additions = null, deletions = null)
         val branch = TestData.gitRef("feature/login", change = "create", commitCount = 2u, commits = (1..2).map(TestData::gitCommit), filesChanged = 1u, files = listOf(TestData.gitFile("README.md", "added", 4u, 0u)), additions = 4u, deletions = 0u)
         openGitPush(TestData.gitPushView(TestData.gitPush(tag, branch), tags = true))
-        rule.onNodeWithTag("what").assertTextContains("push 2 commits", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Push 2 commits", substring = true)
         rule.onNodeWithTag("gitRef:0").assertTextContains("v1.2")
         rule.onNodeWithTag("gitChip:0", useUnmergedTree = true).assertTextContains("New tag")
         assertFalse(has("gitCommits:0"))
@@ -1007,7 +1007,7 @@ class AppFlowTest {
         core.approval = view
         launch()
         openItem(view.requestId)
-        rule.onNodeWithTag("what").assertTextContains("clone and fetch with git", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Clone and fetch with git", substring = true)
         awaitTag("message:octo/app")
         assertFalse(has("gitPush"))
     }
@@ -1022,9 +1022,9 @@ class AppFlowTest {
         Foreground.autoPopup = false
         launch()
         awaitTag("pending:req21")
-        rule.onNodeWithTag("sentence:req21", useUnmergedTree = true).assertTextContains("Wants to clone and fetch with git", substring = true)
+        rule.onNodeWithTag("sentence:req21", useUnmergedTree = true).assertTextContains("Clone and fetch with git", substring = true)
         rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Pushed with git")
-        rule.onNodeWithText("Reins desktop app on laptop", substring = true).assertExists()
+        assertTrue(rule.onAllNodes(hasText("Reins desktop app on laptop", substring = true)).fetchSemanticsNodes().isNotEmpty())
         tap("entry:7")
         awaitTag("detailTitle")
         rule.onNodeWithTag("detailTitle").assertTextContains("Pushed with git")
@@ -1114,7 +1114,7 @@ class AppFlowTest {
         core.grants = listOf(TestData.grant("old", active = false), TestData.grant("g1", uses = 4u))
         core.activity = listOf(TestData.entry(7, grantId = "g1"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         awaitTag("grant:g1")
         rule.onNodeWithText("Claude · used 4 times").assertExists()
         tap("grant:g1")
@@ -1134,17 +1134,17 @@ class AppFlowTest {
             TestData.grant("gone", active = false, state = "revoked"),
         )
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         awaitTag("grant:g1")
         assertFalse(has("ended:old"))
         assertFalse("nothing explains the list under the title", rule.onAllNodes(hasText("active. Everything else asks you first.", substring = true)).fetchSemanticsNodes().isNotEmpty())
-        rule.onNodeWithTag("expiredHeader").assertTextContains("Expired", substring = true).assertTextContains("3", substring = true)
+        rule.onNodeWithTag("expiredHeader").assertTextContains("Ended", substring = true)
         tap("expiredHeader")
         awaitTag("ended:old")
         awaitTag("ended:spent")
         awaitTag("ended:gone")
-        rule.onNodeWithText("Deleted", substring = true).assertExists()
-        rule.onNodeWithText("All 3 uses spent", substring = true).assertExists()
+        rule.onNodeWithText("deleted", substring = true).assertExists()
+        rule.onNodeWithText("all 3 uses spent", substring = true).assertExists()
         // The list stays open while the user looks at a grant and comes back.
         tap("ended:old")
         awaitTag("grantTitle")
@@ -1160,7 +1160,7 @@ class AppFlowTest {
             TestData.grant("days", leftSeconds = 5 * 86_400 + 100, ageSeconds = 100),
         )
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         awaitTag("grant:calm")
         rule.onNodeWithText("50m").assertExists()
         rule.onNodeWithText("4m").assertExists()
@@ -1173,11 +1173,12 @@ class AppFlowTest {
     fun anEndedGrantCanBeResumedForAChosenPeriodAfterAuthentication() {
         core.grants = listOf(TestData.grant("old", active = false))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
-        awaitTag("resumeDialog")
-        tap("period:WEEK")
+        // The same sheet as Extend: the chooser, then Resume.
+        awaitTag("resumeSheet")
+        tap("extend:WEEK")
         tap("confirmResume")
         awaitCore { core.resumed.isNotEmpty() }
         assertEquals(listOf("old" to 604_800uL), core.resumed.toList())
@@ -1189,9 +1190,10 @@ class AppFlowTest {
     fun aCustomTimeCanBeTypedUnderMoreOptions() {
         core.grants = listOf(TestData.grant("old", active = false))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
+        tap("resumeOptions")
         awaitTag("resumeDialog")
         assertFalse("the extras stay tucked away", has("customAmount"))
         tap("resumeMore")
@@ -1208,9 +1210,10 @@ class AppFlowTest {
     fun theSendersAndTheUsesOfAnEndedGrantCanBeTweakedWhenResuming() {
         core.grants = listOf(TestData.grant("old", active = false))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
+        tap("resumeOptions")
         tap("resumeMore")
         awaitTag("resumeParties")
         rule.onNodeWithTag("resumeParties").performTextReplacement("@bank.com, alerts@other.com")
@@ -1233,9 +1236,10 @@ class AppFlowTest {
     fun anInvalidResumeExplainsWhatIsWrongAndChangesNothing() {
         core.grants = listOf(TestData.grant("old", active = false))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
+        tap("resumeOptions")
         tap("resumeMore")
         rule.onNodeWithTag("resumeParties").performTextReplacement("")
         tap("confirmResume")
@@ -1248,9 +1252,10 @@ class AppFlowTest {
     fun aGrantTiedToSpecificEmailsSaysItCanOnlyComeBackAsItWas() {
         core.grants = listOf(TestData.grant("old", active = false, editable = null))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
+        tap("resumeOptions")
         tap("resumeMore")
         awaitTextContaining("Comes back as it was")
         assertFalse(has("resumeParties"))
@@ -1260,10 +1265,16 @@ class AppFlowTest {
     fun aGrantForAllMailCannotBeResumedForAMonth() {
         core.grants = listOf(TestData.grant("wide", active = false, allMail = true))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("resume:wide")
-        awaitTag("resumeDialog")
+        awaitTag("resumeSheet")
+        tap("extend:custom")
+        awaitTag("extend:4H")
+        assertFalse(has("extend:MONTH"))
+        // The full form says the same.
+        rule.onNodeWithTag("extend:4H").performClick()
+        tap("resumeOptions")
         awaitTag("period:WEEK")
         assertFalse(has("period:MONTH"))
     }
@@ -1272,21 +1283,21 @@ class AppFlowTest {
     fun withNothingRunningThePlaceholderStillShowsAboveTheExpiredIsland() {
         core.grants = listOf(TestData.grant("old", active = false))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         awaitTag("noGrants")
-        rule.onNodeWithText("No active grants").assertExists()
+        rule.onNodeWithText("None running.").assertExists()
         awaitTag("expiredHeader")
         // The foreground poll re-reads the lists.
         core.grants = emptyList()
         awaitGone("expiredHeader")
-        rule.onNodeWithText("No grants").assertExists()
+        rule.onNodeWithText("No grants yet.").assertExists()
     }
 
     @Test
     fun anEndedGrantCanBeDeletedForGoodAfterConfirming() {
         core.grants = listOf(TestData.grant("old", active = false), TestData.grant("other", active = false))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("delete:old")
         rule.onAllNodes(hasText("Delete")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
@@ -1300,7 +1311,7 @@ class AppFlowTest {
     fun anEndedGrantCanBeDeletedFromItsDetailsToo() {
         core.grants = listOf(TestData.grant("old", active = false))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("ended:old")
         tap("deleteEnded")
@@ -1310,15 +1321,15 @@ class AppFlowTest {
     }
 
     @Test
-    fun theExpiredIslandOpensAndClosesFromItsHeader() {
+    fun theEndedPageOpensFromTrustAndBackLeavesIt() {
         core.grants = listOf(TestData.grant("g1"), TestData.grant("old", active = false))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         awaitTag("grant:g1")
         assertFalse(has("expiredList"))
         tap("expiredHeader")
         awaitTag("expiredList")
-        tap("expiredHeader")
+        tap("back")
         awaitGone("expiredList")
         awaitTag("grant:g1")
     }
@@ -1328,14 +1339,15 @@ class AppFlowTest {
         core.activity = listOf(TestData.entry(3).copy(connectionId = ""))
         launch()
         awaitTag("entry:3")
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         tap("connectionIcon")
         tap("icon:grok")
         awaitCore { core.icons["c1"] == "grok" }
         rule.onNodeWithContentDescription("Back").performClick()
         tap("tabActivity")
-        awaitTag("entry:3")
+        tap("entry:3")
+        awaitTag("entryHero")
         settle()
         assertTrue(rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Grok"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
     }
@@ -1344,13 +1356,14 @@ class AppFlowTest {
     fun aDeletedGrantCanBeResumedFromItsDetails() {
         core.grants = listOf(TestData.grant("gone", active = false, state = "revoked"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("expiredHeader")
         tap("ended:gone")
         awaitTag("grantTitle")
         assertFalse("an ended grant is deleted for good, not revoked", has("revoke"))
         awaitTag("deleteEnded")
         tap("resume")
+        awaitTag("resumeSheet")
         tap("confirmResume")
         awaitCore { core.resumed.isNotEmpty() }
         assertEquals("gone", core.resumed.single().first)
@@ -1360,10 +1373,10 @@ class AppFlowTest {
     fun aGrantCanBeRevokedFromItsDetails() {
         core.grants = listOf(TestData.grant("g1"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:g1")
-        tap("revoke")
-        rule.onAllNodes(hasText("End now")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
+        // Ending a grant is held, not confirmed in a dialog.
+        hold("revoke")
         awaitCore { core.revokedGrants.isNotEmpty() }
         assertEquals(listOf("g1"), core.revokedGrants.toList())
     }
@@ -1392,7 +1405,7 @@ class AppFlowTest {
     fun settingsListsComputersAndAiAppsAndAComputersPageShowsItsKey() {
         core.connections = listOf(TestData.computer(), TestData.connection())
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         awaitTag("connection:d1")
         rule.onNodeWithTag("connectionDetail:d1", useUnmergedTree = true).assertTextContains("computer", substring = true)
         rule.onNodeWithTag("connectionDetail:c1", useUnmergedTree = true).assertTextContains("claude.ai", substring = true)
@@ -1407,12 +1420,14 @@ class AppFlowTest {
     }
 
     @Test
-    fun theIntegrationsCountLeavesOutTheVault() {
+    fun theVaultIsNotListedAsAnAccount() {
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
         launch()
-        tap("tabSettings")
-        awaitTag("openIntegrations")
-        rule.onNodeWithTag("openIntegrations").assertTextContains("None", substring = true)
+        tap("tabConnections")
+        awaitTag("service:vault")
+        // The vault comes with the account: it is not something the user connected.
+        assertFalse(rule.onAllNodes(hasText("me@example.com")).fetchSemanticsNodes().isNotEmpty())
+        assertEquals("None", dev.reins.android.ui.settings.accountsValue(0))
     }
 
     @Test
@@ -1420,7 +1435,7 @@ class AppFlowTest {
         // A new account has its vault and no Gmail yet: the mail grant has no account to offer.
         core.accounts = listOf(dev.reins.core.AccountView("vault", "me@example.com", 1_700_000_000))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         awaitTag("noAccounts")
         assertFalse(has("acct:me@example.com"))
@@ -1429,7 +1444,7 @@ class AppFlowTest {
     @Test
     fun aGrantCanBeCreatedInAdvanceAndOneTimeIsAnOption() {
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         awaitTag("createGrant")
         tap("kind:read")
@@ -1451,7 +1466,7 @@ class AppFlowTest {
     @Test
     fun anIncompleteNewGrantExplainsWhatIsMissing() {
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         tap("createGrant")
         awaitTextContaining("Enter which senders")
@@ -1465,7 +1480,7 @@ class AppFlowTest {
             AccountView("gmail", "work@gmail.com", 1_700_000_050),
         )
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         awaitTag("createGrant")
         rule.onNodeWithTag("parties").performTextReplacement("@bank.com")
@@ -1487,7 +1502,7 @@ class AppFlowTest {
             AccountView("gmail", "work@gmail.com", 1_700_000_050),
         )
         launch()
-        tap("integrations")
+        tap("tabConnections")
         awaitTag("service:gmail")
         rule.onNodeWithText("2 accounts").assertExists()
         tap("service:gmail")
@@ -1506,10 +1521,13 @@ class AppFlowTest {
         core.accountStatuses = mapOf("work@gmail.com" to GmailStatus.NeedsConsent)
         core.grants = listOf(TestData.grant("g1"), TestData.grant("gw").copy(account = "work@gmail.com"))
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:gmail")
         awaitTag("reconnect:work@gmail.com")
         assertFalse(has("reconnect:me@gmail.com"))
+        // What happened, in amber (as on iOS); "Allow again" is only the button beside it.
+        rule.onNodeWithTag("consentStatus:work@gmail.com", useUnmergedTree = true).assertTextEquals("Token expired")
+        assertEquals(1, rule.onAllNodes(hasText("Allow again"), useUnmergedTree = true).fetchSemanticsNodes().size)
         tap("removeAccount:work@gmail.com")
         rule.onAllNodes(hasText("Remove")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
         awaitCore { core.removedAccounts.isNotEmpty() }
@@ -1522,7 +1540,7 @@ class AppFlowTest {
     fun aFreshPhoneExplainsThatNoAccountIsConnectedYet() {
         core.accounts = emptyList()
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:gmail")
         awaitTag("noAccounts")
         awaitTag("addAccount")
@@ -1531,16 +1549,20 @@ class AppFlowTest {
     @Test
     fun addingAGoogleAccountSaysWhatGoogleWillShow() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:gmail")
         awaitTag("googleSignInNote")
-        rule.onNodeWithTag("googleSignInNote").assertTextContains("hasn't verified this app", substring = true)
+        // A short line; the way through Google's warning is behind its (?).
+        awaitText("Google may warn you first")
+        assertTrue(rule.onAllNodes(hasText("hasn't verified this app", substring = true)).fetchSemanticsNodes().isEmpty())
+        tap("help:Google's warning")
+        awaitText("If Google says it hasn't verified this app: Advanced, then Go to Reins.")
     }
 
     @Test
     fun calendarSaysWhatGoogleWillShowToo() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:gcalendar")
         awaitTag("googleSignInNote")
     }
@@ -1548,7 +1570,7 @@ class AppFlowTest {
     @Test
     fun anAccountTheUserPickedIsConnectedThroughTheCore() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:gmail")
         awaitTag("addAccount")
         val container = (context.applicationContext as ReinsApp).container
@@ -1562,7 +1584,7 @@ class AppFlowTest {
     @Test
     fun everyIntegrationIsListedAndOpensItsOwnScreen() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         // Text messages are listed in the `full` build only (DistributionTest).
         for (id in listOf("gmail", "gcalendar", "gcontacts", "telegram", "github", "device_calendar", "device_contacts", "vault")) {
             awaitTag("service:$id")
@@ -1575,7 +1597,7 @@ class AppFlowTest {
     @Test
     fun aTelegramAccountSignsInWithPhoneCodeAndPassword() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:telegram")
         awaitTag("phone")
         rule.onNodeWithTag("sendCode").assertIsNotEnabled()
@@ -1597,7 +1619,7 @@ class AppFlowTest {
     @Test
     fun aWrongTelegramCodeIsExplainedAndTheNumberCanBeChanged() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:telegram")
         awaitTag("phone")
         rule.onNodeWithTag("phone").performTextReplacement("+15550100")
@@ -1613,7 +1635,7 @@ class AppFlowTest {
     @Test
     fun aGithubTokenIsSentOnceAndTheFieldIsEmptiedAtOnce() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:github")
         awaitTag("openGithub")
         awaitTag("openGithubClassic")
@@ -1631,7 +1653,7 @@ class AppFlowTest {
     @Test
     fun theVaultIsUnlockedWithTheMasterPasswordAndOnlyOnce() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:vault")
         awaitTag("secret")
         rule.onNodeWithTag("secret").performTextReplacement("correct horse")
@@ -1645,7 +1667,7 @@ class AppFlowTest {
     fun theFailureOfAServiceIsShownNotSwallowed() {
         core.serviceFailure = CoreException.Invalid("Wrong password")
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:github")
         tap("pasteManually")
         awaitTag("secret")
@@ -1658,7 +1680,7 @@ class AppFlowTest {
     @Test
     fun thePhonesOwnServicesConnectOnceAndroidAllowedThem() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:device_contacts")
         awaitTag("allowDevice")
         val container = (context.applicationContext as ReinsApp).container
@@ -1673,7 +1695,7 @@ class AppFlowTest {
     fun aServiceAccountIsRemovedAfterConfirming() {
         core.accounts = core.accounts + AccountView("telegram", "+15550100", 1_700_000_000)
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:telegram")
         awaitTag("account:+15550100")
         tap("removeAccount:+15550100")
@@ -1690,7 +1712,7 @@ class AppFlowTest {
         core.approval = TestData.fetchView()
         launch()
         openItem("req7")
-        rule.onNodeWithTag("what").assertTextContains("read Telegram messages", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Read Telegram messages", substring = true)
         awaitTag("check:100:2")
         awaitTag("sensitive:100:9")
         rule.onNodeWithTag("approve").assertTextContains("Share 2")
@@ -1740,7 +1762,7 @@ class AppFlowTest {
         core.approval = TestData.vaultView()
         launch()
         openItem("req8")
-        rule.onNodeWithTag("what").assertTextContains("get a login from the vault", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Get a login from the vault", substring = true)
         awaitText("Password for GitHub")
         awaitTag("sensitive:git:password")
         awaitTag("noStanding")
@@ -1759,7 +1781,7 @@ class AppFlowTest {
         core.approval = TestData.writeView()
         launch()
         openItem("req9")
-        rule.onNodeWithTag("what").assertTextContains("send a Telegram message", substring = true).assertTextContains("Family", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Send a Telegram message", substring = true).assertTextContains("Family", substring = true)
         rule.onNodeWithTag("approve").assertTextContains("Approve")
         awaitTag("writePreview")
         rule.onNodeWithTag("previewLine:0").assertTextContains("Send to Family")
@@ -1779,7 +1801,7 @@ class AppFlowTest {
     @Test
     fun aChangeToARepositoryIsNamedByTheCoreAndOffersTheKindsOfChangeToRemember() {
         openRepoWrite()
-        rule.onNodeWithTag("what").assertTextContains("commit a file to GitHub", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Commit a file to GitHub", substring = true)
         awaitTag("writePreview")
         rule.onNodeWithTag("previewLine:0").assertTextContains("Commit README.md to main of octo/app")
         assertFalse(has("onceWarning"))
@@ -1837,7 +1859,7 @@ class AppFlowTest {
     @Test
     fun aChangeThatIsAskedForEveryTimeShowsAWarningAndOffersNothingToRemember() {
         openRepoWrite(TestData.onceOnlyWriteView())
-        rule.onNodeWithTag("what").assertTextContains("delete", substring = true).assertTextContains("octo/app", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Delete", substring = true).assertTextContains("octo/app", substring = true)
         awaitTag("onceWarning")
         tap("help:onceWarning")
         awaitTextContaining("Removes it for good")
@@ -1865,7 +1887,7 @@ class AppFlowTest {
         core.approval = TestData.repoReadView()
         launch()
         openItem("req12")
-        rule.onNodeWithTag("what").assertTextContains("read a file from GitHub", substring = true)
+        rule.onNodeWithTag("what").assertTextContains("Read a file from GitHub", substring = true)
         tap("lifetime:HOUR")
         tap("lifetimeCustom")
         tap("moreToggle")
@@ -1886,7 +1908,7 @@ class AppFlowTest {
         core.pending = listOf(TestData.pending("req10", "write", 1u, service = "github", account = "octo-cat", op = "file_put", opTitle = "Commit a file to GitHub"))
         launch()
         awaitTag("pending:req10")
-        rule.onNodeWithTag("sentence:req10", useUnmergedTree = true).assertTextContains("Wants to commit a file to GitHub", substring = true)
+        rule.onNodeWithTag("sentence:req10", useUnmergedTree = true).assertTextContains("Commit a file to GitHub", substring = true)
     }
 
     @Test
@@ -1923,14 +1945,15 @@ class AppFlowTest {
     // ---- settings -------------------------------------------------------------------------------------------------
 
     @Test
-    fun settingsHoldsConnectionsIntegrationsAndTheApprovalDeviceButton() {
+    fun settingsHoldsTheApprovalDeviceButtonAndConnectionsWhoAsksAndWhatTheyReach() {
         launch()
         tap("tabSettings")
         awaitTag("registerPhone")
         rule.onNodeWithText("Use this phone for approvals").assertExists()
-        rule.onNodeWithTag("connection:c1").assertExists()
-        rule.onNodeWithTag("openIntegrations").assertExists()
-        rule.onNodeWithText("1 account").assertExists()
+        assertFalse("connections have their own tab", has("connection:c1"))
+        tap("tabConnections")
+        awaitTag("connection:c1")
+        awaitTag("service:gmail")
     }
 
     @Test
@@ -1947,7 +1970,7 @@ class AppFlowTest {
     @Test
     fun aConnectionsIconCanBePickedAndItCanBeDisconnected() {
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         tap("connectionIcon")
         tap("icon:grok")
@@ -1971,7 +1994,7 @@ class AppFlowTest {
         awaitTag("entry:3")
         fun shown() = rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Grok"), useUnmergedTree = true).fetchSemanticsNodes().size
         assertEquals(0, shown())
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         tap("connectionIcon")
         tap("icon:grok")
@@ -1981,9 +2004,10 @@ class AppFlowTest {
         awaitTag("entry:3")
         settle()
         val onActivity = shown()
-        assertTrue("the activity list and the waiting request use the chosen icon, saw $onActivity", onActivity >= 2)
-        tap("tabGrants")
-        awaitTag("grant:g1")
+        // The river's rows show what was done (a kind tile); the waiting card shows who asks.
+        assertTrue("the waiting card uses the chosen icon, saw $onActivity", onActivity >= 1)
+        tap("tabConnections")
+        awaitTag("connection:c1")
         assertTrue(shown() >= 1)
     }
 

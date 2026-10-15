@@ -98,7 +98,7 @@ class OnboardingFlowTest : FlowHarness() {
     /** Settings > Connect > Computer > "Scan QR code": the connect page opens and starts the scanner. */
     private fun scanFromSettings() {
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connect")
         tap("sheetScanQr")
         awaitTag("scanQr")
@@ -248,32 +248,29 @@ class OnboardingFlowTest : FlowHarness() {
         launch()
         fillCreateForm()
         tap("create")
+        // Five pages (iOS-Tour): welcome, requests, what the AIs can use, how much to ask, and the finish.
         awaitTag("setupWelcome")
-        assertTrue(has("requestFlow"))
+        assertTrue(showsText("Every ask waits for you"))
         tap("setupNext")
         awaitTag("setupNotifications")
+        assertTrue(has("sampleNotification"))
         if (has("notificationsLater")) tap("notificationsLater") else tap("setupNext")
+        // Services, the computer and an AI app on one page: all of them connections.
         awaitTag("setupIntegrations")
         assertTrue(has("setupService:gmail"))
         assertTrue(has("setupService:mcp"))
-        tap("setupNext")
-        awaitTag("setupRules")
-        // Someone who just installed Reins starts with the recommended rule.
-        awaitCore { core.startingPolicy == dev.reins.core.StartingPolicy.ASK_EVERY_TIME }
-        tap("setupNext")
-        awaitTag("setupAutopilot")
-        assertTrue(has("modelCard"))
-        tap("setupNext")
-        awaitTag("setup")
         rule.onNodeWithTag("computerHowTo").assertTextContains("reins login", substring = true)
         assertTrue(has("desktopDownload"))
-        tap("setupNext")
-        awaitTag("setupAi")
         val mcp = "$server/mcp"
         rule.onNodeWithTag("mcpUrl").assertTextEquals(mcp)
         tap("copyMcp")
         val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
         assertEquals(mcp, clip?.getItemAt(0)?.text?.toString())
+        tap("setupNext")
+        // How a new AI starts, and Autopilot's model.
+        awaitTag("setupRules")
+        awaitCore { core.startingPolicy == dev.reins.core.StartingPolicy.ASK_EVERY_TIME }
+        assertTrue(has("setupAutopilot") && has("modelCard"))
         tap("setupNext")
         awaitTag("setupFinished")
         tap("setupDone")
@@ -403,7 +400,7 @@ class OnboardingFlowTest : FlowHarness() {
     @Test
     fun typeCodeInTheConnectSheetOpensTheCodeField() {
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connect")
         tap("sheetTypeCode")
         awaitTag("pairCode")

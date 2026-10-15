@@ -31,6 +31,31 @@ struct PairingSheet: View {
     }
 }
 
+/// A pairing's words (pure, unit-tested). The ask is Reins' own sentence; what the other side calls itself is only ever
+/// quoted, on one short line.
+enum PairWords {
+    /// A computer shows its key's digits; an AI app on the web does not.
+    static func computer(_ view: PairingView) -> Bool { view.keyFingerprint != nil }
+    static func label(_ view: PairingView) -> String { computer(view) ? "Computer · Pair" : "AI app · Pair" }
+
+    /// "Connect a *computer*", "Connect an *AI app*": a laptop or a link, with a plus, on the pair field.
+    static func line(_ view: PairingView) -> AskLine {
+        let computer = computer(view)
+        return AskLine(
+            kind: label(view), lead: computer ? "Connect a " : "Connect an ", target: computer ? "computer" : "AI app",
+            icon: AskIcon(mark: .glyph(computer ? .laptop : .link), action: .plus, kind: .pair)
+        )
+    }
+
+    static func ask(_ view: PairingView) -> String { line(view).text }
+
+    /// “Gemini”: a name the other side sent, quoted, on one line, capped and cleaned; "No name" for none.
+    static func quoted(_ name: String) -> String {
+        let clean = untrustedName(name, limit: 48)
+        return clean.isEmpty ? "No name" : "“\(clean)”"
+    }
+}
+
 /// The pairing sheet's state (the Android app's PairingViewModel).
 @Observable
 @MainActor
@@ -57,7 +82,7 @@ final class PairingModel {
     init(view: PairingView) {
         pairingId = view.id
         self.view = view
-        label = String(untrusted(view.clientName).prefix(Self.maxLabel))
+        label = untrustedName(view.clientName, limit: Self.maxLabel)
         loading = false
     }
 
@@ -69,7 +94,7 @@ final class PairingModel {
         do {
             let v = try await app.core.pairingView(pairingId: pairingId)
             view = v
-            label = String(untrusted(v.clientName).prefix(Self.maxLabel))
+            label = untrustedName(v.clientName, limit: Self.maxLabel)
             loading = false
         } catch {
             loading = false
@@ -86,8 +111,9 @@ final class PairingModel {
         }
         busy = true
         error = nil
-        let name = untrusted(view?.clientName ?? "")
-        switch await OwnerPrompt.confirm(app, reason: "Connect \(name.isEmpty ? "this AI" : name)") {
+        let name = untrustedName(view?.clientName ?? "", limit: 40)
+        let computer = view.map(PairWords.computer) ?? false
+        switch await OwnerPrompt.confirm(app, reason: computer ? "Connect a computer" : "Connect an AI app") {
         case .confirmed:
             app.feedback.play(.connected)
             do {
@@ -97,7 +123,7 @@ final class PairingModel {
                 await app.refreshConnections()
                 // A computer: say it worked, since the sheet that connected it closes now.
                 if view?.keyFingerprint != nil {
-                    app.notice = "\(trimmed.isEmpty ? name : untrusted(trimmed)) is connected."
+                    app.notice = "\(trimmed.isEmpty ? name : untrustedName(trimmed, limit: 40)) is connected."
                 }
                 busy = false
                 finished = true
@@ -141,25 +167,25 @@ private struct PairingContent: View {
     @FocusState private var naming: Bool
 
     var body: some View {
-        DecisionLayout {
+        DecisionLayout(closeInField: true) {
             VStack(alignment: .leading, spacing: 0) {
-                DecisionHeader(
-                    connectionId: "",
-                    label: view.clientName,
-                    subtitle: untrusted(view.clientHost),
-                    monoSubtitle: true,
-                    kind: .pair,
-                    title: "Connect",
-                    known: false
-                ) {
-                    Text("Only continue if you just started this connection yourself. Tap the two-digit code shown on your computer or in your browser.")
-                        .font(RFont.sans(15))
-                        .foregroundStyle(Palette.secondary)
-                        .padding(.top, 14)
+                SheetField(kind: .pair, ask: PairWords.line(view))
+                // What the other side calls itself: quoted, on rows of their own, never the ask.
+                FactGroup {
+                    FactRow(key: "Calls itself", value: PairWords.quoted(view.clientName), valueId: "pairName")
+                    let host = asciiHost(untrustedName(view.clientHost, limit: 64))
+                    if !host.isEmpty { FactRow(key: "From", value: host, mono: true, valueId: "pairHost") }
+                    if let fingerprint = view.keyFingerprint { DesktopKeyRow(fingerprint: fingerprint) }
                 }
-                if let fingerprint = view.keyFingerprint { DesktopKeyCard(fingerprint: fingerprint) }
-                codes.padding(.horizontal, 16).padding(.vertical, 20)
-                SectionHeader("Name this connection").padding(.leading, 20).padding(.bottom, 8)
+                .padding(.top, 10)
+                Text("Only continue if you just started this connection yourself. Tap the two-digit code shown on your computer or in your browser.")
+                    .textRole(.body)
+                    .foregroundStyle(Palette.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 16)
+                codes.padding(.horizontal, 20).padding(.vertical, 18)
+                Text("Name this connection").textRole(.label).foregroundStyle(Palette.inkMeta).padding(.leading, 24).padding(.bottom, 8)
                 TextField("Name", text: $vm.label)
                     .font(RFont.sans(16))
                     .focused($naming)
@@ -167,8 +193,9 @@ private struct PairingContent: View {
                     .textInputAutocapitalization(.words)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
-                    .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .padding(.horizontal, 16)
+                    .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
+                    .padding(.horizontal, 20)
                     .accessibilityLabel("Name this connection")
                     .accessibilityIdentifier("label")
                 if let note = StartingRuleText.onPairing(model.startingPolicy) {
@@ -185,7 +212,7 @@ private struct PairingContent: View {
                 }
             }
         } recap: {
-            Text("Connect \(untrusted(view.clientName))?").font(RFont.sans(22, .semibold)).foregroundStyle(Palette.text)
+            Text(PairWords.ask(view)).font(RFont.serif(28)).foregroundStyle(Palette.ink)
         } decision: {
             DecisionBar(
                 approveTitle: "Connect",
@@ -212,9 +239,9 @@ private struct PairingContent: View {
                 } label: {
                     Text(label)
                         .font(RFont.mono(20, .semibold))
-                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(CapsuleButtonStyle(kind: picked ? .accent : .secondary, height: 56))
+                .buttonStyle(SignalButtonLook(kind: picked ? .inverse : .outline, height: 56))
                 .accessibilityLabel("Code \(label)")
                 .accessibilityAddTraits(picked ? .isSelected : [])
                 .accessibilityIdentifier("code:\(label)")
@@ -223,34 +250,30 @@ private struct PairingContent: View {
     }
 }
 
-/// The Reins desktop app's key, as eight digits the computer shows too. Matching them is what stops the server from
-/// slipping in a key of its own, so they come first, large, and set apart like a permission request.
-private struct DesktopKeyCard: View {
+/// The Reins desktop app's key, as eight digits the computer shows too, on a mono row of its own. They come from the
+/// key this phone verified, not from anything the other side named; matching them is what stops the server from
+/// slipping in a key of its own.
+private struct DesktopKeyRow: View {
     var fingerprint: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "key.horizontal.fill").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.accent)
-                Text("Desktop app key").font(RFont.sans(16, .semibold)).foregroundStyle(Palette.text)
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Key").font(RFont.sans(15)).foregroundStyle(Palette.ink2)
             Text(fingerprint)
-                .font(RFont.mono(36, .semibold))
+                .font(RFont.mono(34, .semibold))
                 .tracking(1.5)
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .environment(\.layoutDirection, .leftToRight)
             Text("Check that your computer shows the same numbers. If they differ, deny.")
-                .font(RFont.sans(14.5))
-                .foregroundStyle(Palette.secondary)
+                .textRole(.meta)
+                .foregroundStyle(Palette.inkMeta)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Palette.accent.opacity(0.55), lineWidth: 1.5))
-        .padding(.horizontal, 16)
-        .padding(.top, 18)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("keyFingerprint")
     }

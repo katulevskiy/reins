@@ -380,18 +380,14 @@ private fun AccountRow(
             when (status) {
                 null -> RText("Checking…", RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp))
                 GmailStatus.Ready -> RText("Connected", RType.sans(13f, FontWeight.Medium), c.success, Modifier.padding(top = 2.dp))
-                GmailStatus.NeedsConsent -> RText(needsAgain(service), RType.sans(13f, FontWeight.Medium), c.warning, Modifier.padding(top = 2.dp))
-                is GmailStatus.Unavailable -> RText(untrusted(status.message), RType.sans(13f), c.danger, Modifier.padding(top = 2.dp), maxLines = 3)
-            }
-            if (status == GmailStatus.NeedsConsent && (service.kind == "google" || service.kind == "device")) {
-                CapsuleButton(
-                    "Allow again",
-                    Modifier.padding(top = 8.dp).testTag("reconnect:${account.account}"),
-                    style = ButtonStyle.Secondary,
-                    compact = true,
-                    enabled = !busy,
-                    onClick = onReconnect,
+                GmailStatus.NeedsConsent -> ConsentLine(
+                    needsAgain(service),
+                    account.account,
+                    canAllow = service.kind == "google" || service.kind == "device",
+                    busy = busy,
+                    onAllow = onReconnect,
                 )
+                is GmailStatus.Unavailable -> RText(untrusted(status.message), RType.sans(13f), c.danger, Modifier.padding(top = 2.dp), maxLines = 3)
             }
         }
         Spacer(Modifier.width(8.dp))
@@ -404,10 +400,35 @@ private fun AccountRow(
     }
 }
 
-private fun needsAgain(service: ServiceView): String = when (service.kind) {
-    "device" -> "Allow again"
+/**
+ * What an account that needs consent again says (as on iOS): what happened, in amber, never the button's words.
+ * Google's sign-in expired or was revoked: "Token expired"; a phone permission was turned off: "Access turned off".
+ */
+internal fun needsAgain(service: ServiceView): String = needsAgain(service.kind)
+
+internal fun needsAgain(kind: String): String = when (kind) {
+    "device" -> "Access turned off"
     "telegram" -> "Signed out"
-    "token" -> "Token expired"
     "vault" -> "Locked"
-    else -> "Allow again"
+    else -> "Token expired"
+}
+
+/** The status of an account that needs consent again, in amber, with "Allow again" as the soft button beside it. */
+@Composable
+internal fun ConsentLine(status: String, account: String, canAllow: Boolean, busy: Boolean, onAllow: () -> Unit) {
+    val c = LocalColors.current
+    Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        RText(status, RType.sans(13f, FontWeight.Medium), c.warning, Modifier.weight(1f, fill = false).testTag("consentStatus:$account"), maxLines = 1)
+        if (canAllow) {
+            Spacer(Modifier.width(10.dp))
+            CapsuleButton(
+                "Allow again",
+                Modifier.testTag("reconnect:$account"),
+                style = ButtonStyle.Secondary,
+                compact = true,
+                enabled = !busy,
+                onClick = onAllow,
+            )
+        }
+    }
 }

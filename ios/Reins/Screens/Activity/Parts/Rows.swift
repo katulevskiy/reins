@@ -133,97 +133,136 @@ enum EntryText {
     }
 }
 
-/// The trailing mark of a history row: a green check, a red cross, a violet bolt "Auto", a key "Grant".
+/// The trailing mark of a river row, always with its word where colour would say it alone: a green check, "Denied",
+/// "Auto" in violet, a key for a grant, "Overnight", "Bypass", "Lockdown".
 struct EntryMark: View {
     var mark: EntryText.Mark
 
     var body: some View {
-        let (symbol, text, tint): (String, String?, Color) = switch mark {
-        case .approved: ("checkmark", nil, Palette.success)
-        case .denied: ("xmark", nil, Palette.danger)
-        case .failed: ("exclamationmark.triangle", nil, Palette.warning)
-        case .auto: ("bolt", "Auto", Palette.accent)
-        case .grant: ("key.horizontal", "Grant", Palette.accent)
-        case .overnight: (AutopilotText.overnightSymbol, AutopilotText.overnightName, Palette.overnight)
-        case .bypass: ("bolt.fill", "Bypass", Palette.danger)
-        case .lockdown: ("lock.fill", "Lockdown", Palette.warning)
+        Group {
+            switch mark {
+            case .approved: GlyphIcon(.check, size: 18).foregroundStyle(Palette.success)
+            case .grant: GlyphIcon(.key, size: 17).foregroundStyle(Palette.violet)
+            case .denied: word("Denied", Palette.danger)
+            case .failed: word("Failed", Palette.warning)
+            case .auto: word("Auto", Palette.violet)
+            case .overnight: word(AutopilotText.overnightName, Palette.violet)
+            case .bypass: word("Bypass", Palette.danger)
+            case .lockdown: word("Lockdown", Palette.warning)
+            }
         }
-        HStack(spacing: 4) {
-            Image(systemName: symbol).font(.system(size: text == nil ? 14 : 12, weight: .semibold))
-            if let text { Text(text).font(RFont.sans(12.5, .semibold)) }
-        }
-        .foregroundStyle(tint)
         .fixedSize()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text ?? (mark == .denied ? "Denied" : mark == .failed ? "Failed" : "Approved"))
+        .accessibilityLabel(Self.spoken(mark))
+    }
+
+    private func word(_ text: String, _ tint: Color) -> some View {
+        Text(text).font(RFont.sans(12, .semibold)).foregroundStyle(tint)
+    }
+
+    static func spoken(_ mark: EntryText.Mark) -> String {
+        switch mark {
+        case .approved: "Approved"
+        case .grant: "Under a grant"
+        case .denied: "Denied"
+        case .failed: "Failed"
+        case .auto: "Decided by Autopilot"
+        case .overnight: "Decided during \(AutopilotText.overnightName)"
+        case .bypass: "Approved by a bypass"
+        case .lockdown: "Denied by Lockdown"
+        }
     }
 }
 
-/// One operation in the history: what it touched with what it did (the label's tile), the request in up to two lines,
-/// who and when, and how it ended. Entries the core gave no label (older ones) keep the kind's tile and sentence.
-/// `first` and `last` round the group's corners (each row is its own lazy cell).
+/// What an entry is, as the river shows it: its kind's field (or none) and the glyph on its tile (pure, unit-tested).
+enum EntryLook {
+    /// The entry written (ASK-TEXT): its sentence, told as it ended, and its icon. `who` starts a past sentence.
+    static func line(_ entry: ActivityEntry, who: String? = nil) -> AskLine { AskLabels.entry(entry, field: field(entry), who: who) }
+
+    static func field(_ entry: ActivityEntry) -> FieldKind? {
+        let verb = (entry.label?.action ?? entry.op).lowercased()
+        if verb.hasPrefix("delete") || entry.opTitle.hasPrefix("Delete") { return .delete }
+        return FieldKind.of(ActionKind.of(entry.action))
+    }
+
+    static func glyph(_ entry: ActivityEntry) -> Glyph {
+        let provider = entry.label?.provider ?? entry.service
+        let verb = (entry.label?.action ?? entry.op).lowercased()
+        if verb.hasPrefix("delete") || entry.opTitle.hasPrefix("Delete") { return .trash }
+        if verb.contains("push") || (provider == "github" && ActionKind.of(entry.action) == .write) { return .gitBranch }
+        switch ActionKind.of(entry.action) {
+        case .search, .list: return .search
+        case .read, .headlines: return provider.isEmpty || provider == "gmail" ? .mail : .eye
+        case .send: return .send
+        case .write: return .pencil
+        case .grant: return .key
+        case .accounts: return .person
+        case .pair: return .link
+        case .join: return .phone
+        case .upload: return .file
+        case .other: return .shield
+        }
+    }
+}
+
+/// One operation in the river (iOS-Activity.png): its kind tile, what happened in a line or two, who and when, and how
+/// it ended. Hairlines, never cards. The newest row glows faintly in its kind colour for a moment after an answer
+/// folds into it.
 struct HistoryRow: View {
     var entry: ActivityEntry
     var selected = false
-    var first = false
-    var last = false
+    var glowing = false
     var now: Int64 = Timers.nowSeconds()
 
-    /// Where the hairline under a row starts: under the title, past the tile.
-    static func hairlineInset(_ entry: ActivityEntry) -> CGFloat { entry.label == nil ? 62 : 66 }
-
     var body: some View {
-        let label = entry.label
-        HStack(alignment: label == nil ? .center : .top, spacing: 12) {
-            if let label {
-                ProviderTile(label: label, ring: Palette.elevated)
-            } else {
-                KindTile(kind: ActionKind.of(entry.action))
-            }
-            VStack(alignment: .leading, spacing: label == nil ? 3 : 4) {
-                if let label {
-                    LabelText(label: label, size: 15, lines: 2)
-                } else {
-                    sentence
+        let field = EntryLook.field(entry)
+        let line = EntryLook.line(entry)
+        HStack(alignment: .center, spacing: 14) {
+            RequestIcon(spec: line.icon, size: 36, ring: selected ? Palette.accentSoft : Palette.paper)
+                .foldTile(entry.id)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                AskRunsText(runs: line.runs, size: 18)
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(2)
+                    .accessibilityLabel(line.text)
+                    .accessibilityIdentifier("entryTitle:\(entry.id)")
+                if let mono = line.mono {
+                    Text(verbatim: mono)
+                        .font(RFont.mono(12))
+                        .foregroundStyle(Palette.inkMeta)
                         .lineLimit(1)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .accessibilityIdentifier("entryDetails:\(entry.id)")
                 }
-                HStack(spacing: 5) {
-                    ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 14)
-                    Text("\(untrusted(entry.connectionLabel)) · \(EntryText.time(entry.at, now: now))")
-                        .font(RFont.sans(12.5))
-                        .foregroundStyle(Palette.tertiary)
-                        .lineLimit(1)
-                }
+                Text("\(untrusted(entry.connectionLabel)) · \(EntryText.time(entry.at, now: now))")
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
+                    .lineLimit(1)
                 if let risk = entry.autopilot?.risk, RiskLook.listed(risk) {
                     RiskLine(risk: risk)
                 }
             }
-            .padding(.top, label == nil ? 0 : 1)
             .frame(maxWidth: .infinity, alignment: .leading)
             EntryMark(mark: EntryText.mark(entry))
-                .padding(.top, label == nil ? 0 : 3)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(selected ? Palette.accentSoft : Color.clear)
+        .padding(.vertical, 10)
+        .frame(minHeight: 60)
+        .padding(.horizontal, 24)
+        .background {
+            if selected {
+                Palette.accentSoft
+            } else if glowing, let field {
+                field.tile.transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 1.2), value: glowing)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 
-    /// The sentence, and what it was about in a quieter colour when there is room.
-    private var sentence: Text {
-        var out = AttributedString(EntryText.title(entry))
-        out.font = RFont.sans(15, .medium)
-        out.foregroundColor = Palette.text
-        let detail = untrusted(entry.detail).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !detail.isEmpty {
-            var more = AttributedString(" · " + detail)
-            more.font = RFont.sans(15)
-            more.foregroundColor = Palette.tertiary
-            out += more
-        }
-        return Text(out)
-    }
+    /// What happened, in a line (ASK-TEXT): in the past when it was carried out, else what was asked.
+    static func title(_ entry: ActivityEntry) -> String { EntryLook.line(entry).text }
 }
 
 /// A file the server holds, as it saw the bytes: its name (from the AI), size, type and SHA-256, and a preview: the

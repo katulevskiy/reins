@@ -92,6 +92,24 @@ enum VaultText {
         }
     }
 
+    /// "Delete this key" for the keys, "Delete this item" for the rest.
+    static func deleteTitle(_ kind: VaultItemKind) -> String {
+        kind == .sshKey ? "Delete this key" : "Delete this item"
+    }
+
+    /// The characters a generated password draws from: letters, digits and a few symbols every site takes.
+    static let passwordAlphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_!@#%*")
+
+    /// A new password ("generate, don't type"): `length` characters drawn from the system's secure random source.
+    static func generatedPassword(length: Int = 24) -> String {
+        var rng = SystemRandomNumberGenerator()
+        return generatedPassword(length: length, using: &rng)
+    }
+
+    static func generatedPassword<G: RandomNumberGenerator>(length: Int, using rng: inout G) -> String {
+        String((0..<length).map { _ in passwordAlphabet.randomElement(using: &rng)! })
+    }
+
     static let footer =
         "reins run and the API proxy find an item by its exact name: vault:NAME/password, /username, /notes or a custom field's name. The SSH agent offers every SSH key. From a computer, reins vault add NAME saves a secret here without showing it to an AI."
 }
@@ -329,10 +347,9 @@ struct VaultScreen: View {
                             InfoRow(
                                 title: untrusted(item.name),
                                 subtitle: untrusted(item.subtitle).isEmpty ? VaultText.kindLabel(item.kind) : untrusted(item.subtitle),
-                                symbol: VaultText.symbol(item.kind),
-                                tint: Palette.accent
+                                symbol: VaultText.symbol(item.kind)
                             ) {
-                                if item.favorite { Image(systemName: "star.fill").foregroundStyle(Palette.warning) }
+                                if item.favorite { GlyphIcon(.star, size: 16).foregroundStyle(Palette.ink2).accessibilityLabel("Favourite") }
                                 Chevron()
                             }
                             .contentShape(Rectangle())
@@ -374,25 +391,78 @@ struct VaultScreen: View {
 }
 
 /// Vault > Add: what kind of item.
+/// "Add to the vault" (iOS-Vault.png, 02): pick by picture, six large tiles, each a glyph, its kind and one line.
 struct VaultAddScreen: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
 
     var body: some View {
-        List {
-            Section {
-                ForEach(NewVaultItem.allCases) { kind in
-                    SettingsLinkRow(title: kind.title, subtitle: kind.detail, symbol: kind.symbol, tint: Palette.accent, id: "newItem:\(kind.rawValue)") {
-                        model.push(.vaultEdit(id: nil, newItem: kind))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                AskText([AskText.Run(text: "Add to the "), AskText.Run(text: "vault", target: true)], role: .title)
+                    .foregroundStyle(Palette.ink)
+                    .accessibilityAddTraits(.isHeader)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(NewVaultItem.allCases) { kind in
+                        Button {
+                            feedback.play(.tap)
+                            model.push(.vaultEdit(id: nil, newItem: kind))
+                        } label: {
+                            VStack(alignment: .leading, spacing: 0) {
+                                GlyphIcon(kind.glyph, size: 22).foregroundStyle(Palette.ink)
+                                Text(kind.title).font(TextRole.row.font()).foregroundStyle(Palette.ink).padding(.top, 14)
+                                Text(kind.tileLine).textRole(.meta).foregroundStyle(Palette.inkMeta).fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(16)
+                            .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
+                            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
+                            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        }
+                        .buttonStyle(PressDim())
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("newItem:\(kind.rawValue)")
                     }
                 }
-            } header: {
-                GroupHeader("What to add")
-            } footer: {
-                GroupFooter("Everything is encrypted on this phone with your vault's key before it reaches the server.")
+                .padding(.top, 22)
+                Text("Everything is encrypted on this phone with your vault's key before it reaches the server.")
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
+                    .padding(.top, 18)
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
         }
-        .reinsGrouped()
-        .navigationTitle("Add to the vault")
+        .pageBackground()
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+extension NewVaultItem {
+    /// The kind's glyph on its tile.
+    var glyph: Glyph {
+        switch self {
+        case .apiKey: .key
+        case .sshKey: .terminal
+        case .login: .person
+        case .note: .file
+        case .card: .card
+        case .identity: .idCard
+        }
+    }
+
+    /// One short line under the tile's name.
+    var tileLine: String {
+        switch self {
+        case .apiKey: "For reins run and the API proxy"
+        case .sshKey: "Made here, never leaves"
+        case .login: "Username and password"
+        case .note: "Any text"
+        case .card: "For approved purchases"
+        case .identity: "Name and address"
+        }
     }
 }
 
@@ -408,15 +478,28 @@ struct VaultItemScreen: View {
     var body: some View {
         List {
             if let item = vm.item, item.id == id {
-                if vm.madeKey?.id == id {
+                // Its kind under the serif title (a subtitle in the bar would crowd its buttons).
+                Section {
+                    Text(VaultText.kindLabel(item.kind))
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.inkMeta)
+                        .accessibilityIdentifier("vaultKind")
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
+                if item.kind == .sshKey {
                     Section {
-                        FormBanner(
-                            text: "Made on this phone. Put the public key below on the servers and Git hosts you sign in to (GitHub: Settings, SSH and GPG keys). The private key stays in your vault.",
-                            kind: .info
-                        )
-                        .accessibilityIdentifier("sshMade")
+                        Text(vm.madeKey?.id == id
+                            ? "Made on this phone. Put the public key on the servers and Git hosts you sign in to (GitHub: Settings, SSH and GPG keys). The private key stays in your vault; the phone signs with it."
+                            : "Put the public key on the servers and Git hosts you sign in to. The private key stays in your vault; the phone signs with it.")
+                            .textRole(.body)
+                            .foregroundStyle(Palette.ink2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier(vm.madeKey?.id == id ? "sshMade" : "sshAbout")
                     }
                     .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
                 if let warning = item.warning {
                     Section { FormBanner(text: untrusted(warning)).accessibilityIdentifier("vaultWarning") }
@@ -430,11 +513,16 @@ struct VaultItemScreen: View {
                                 UIPasteboard.general.string = use.reference
                                 copied = use.reference
                             } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(untrusted(use.reference)).font(RFont.mono(14.5)).foregroundStyle(Palette.text)
-                                    Text(use.hint).font(RFont.sans(12.5)).foregroundStyle(Palette.secondary)
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(untrusted(use.reference)).font(RFont.mono(14.5)).foregroundStyle(Palette.ink)
+                                            .environment(\.layoutDirection, .leftToRight)
+                                        Text(use.hint).textRole(.meta).foregroundStyle(Palette.inkMeta)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    // Copying a reference, not a secret.
+                                    if item.kind != .sshKey { GlyphIcon(.copy, size: 18).foregroundStyle(Palette.ink2) }
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -470,13 +558,19 @@ struct VaultItemScreen: View {
                     if let copied { GroupFooter("Copied \(untrusted(copied)).").accessibilityIdentifier("vaultCopied") }
                 }
                 Section {
-                    Button("Delete", role: .destructive) { deleting = true }
-                        .buttonStyle(CapsuleButtonStyle(kind: .danger, height: 50))
-                        .disabled(vm.busy)
-                        .accessibilityIdentifier("vaultDelete")
+                    Button(role: .destructive) { deleting = true } label: {
+                        Text(VaultText.deleteTitle(item.kind))
+                            .font(TextRole.button.font())
+                            .foregroundStyle(Palette.danger)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.busy)
+                    .accessibilityIdentifier("vaultDelete")
                 }
                 .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
             } else {
                 InfoRow(title: "Loading…") { EmptyView() }.cardRow()
             }
@@ -487,7 +581,7 @@ struct VaultItemScreen: View {
         }
         .reinsGrouped()
         .navigationTitle(vm.item.map { untrusted($0.name) } ?? "Vault item")
-        .navigationSubtitle(vm.item.map { VaultText.kindLabel($0.kind) } ?? "")
+        .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { model.push(.vaultEdit(id: id, newItem: nil)) } label: { Image(systemName: "pencil") }
@@ -526,34 +620,35 @@ private struct FieldRow: View {
         let value = field.value ?? shown
         HStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(untrusted(field.label)).font(RFont.sans(12.5, .medium)).foregroundStyle(Palette.secondary)
+                Text(untrusted(field.label)).textRole(.meta).foregroundStyle(Palette.inkMeta)
                 Text(kept ? "Kept in the vault. The phone signs with it." : value.map(untrusted) ?? "••••••••••")
-                    .font(!kept && (field.multiline || field.secret) ? RFont.mono(14.5) : RFont.sans(16))
-                    .foregroundStyle(Palette.text)
+                    .font(!kept && (field.multiline || field.secret || field.key == "public_key" || field.key == "fingerprint") ? RFont.mono(14.5) : TextRole.row.font())
+                    .foregroundStyle(kept ? Palette.ink2 : Palette.ink)
                     .lineLimit(field.multiline ? 12 : 3)
                     .accessibilityIdentifier("vaultValue:\(field.key)")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if !kept {
                 if field.secret {
-                    iconButton(shown != nil ? "eye.slash" : "eye", shown != nil ? "Hide" : "Show", "vaultReveal:\(field.key)", onReveal)
+                    iconButton(.eye, shown != nil ? "Hide" : "Show", "vaultReveal:\(field.key)", onReveal)
+                        .opacity(shown != nil ? 0.5 : 1)
                 }
                 if field.key == "public_key", let text = field.value {
-                    ShareLink(item: text) { Image(systemName: "square.and.arrow.up").foregroundStyle(Palette.accent) }
+                    ShareLink(item: text) { GlyphIcon(.share, size: 18).foregroundStyle(Palette.ink2).frame(width: 40, height: 40) }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Share")
                         .accessibilityIdentifier("vaultShare:\(field.key)")
                 }
-                iconButton("doc.on.doc", "Copy", "vaultCopy:\(field.key)", onCopy)
+                iconButton(.copy, "Copy", "vaultCopy:\(field.key)", onCopy)
             }
         }
         .accessibilityIdentifier("vaultField:\(field.key)")
     }
 
-    private func iconButton(_ symbol: String, _ label: String, _ id: String, _ action: @escaping () -> Void) -> some View {
+    private func iconButton(_ glyph: Glyph, _ label: String, _ id: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(Palette.accent)
+            GlyphIcon(glyph, size: 18)
+                .foregroundStyle(Palette.ink2)
                 .frame(width: 40, height: 40)
                 .contentShape(Circle())
         }
@@ -568,6 +663,7 @@ struct VaultEditScreen: View {
     var id: String?
     var newItem: NewVaultItem?
     @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
     @State private var name = ""
     @State private var values: [String: String] = [:]
     @State private var pasteKey = false
@@ -593,7 +689,7 @@ struct VaultEditScreen: View {
                 GroupHeader("Name")
             } footer: {
                 if let hint = VaultText.referenceHint(kind, name: name) {
-                    Text(hint).font(RFont.mono(13)).foregroundStyle(Palette.secondary).accessibilityIdentifier("vaultHint")
+                    Text(hint).font(RFont.mono(13)).foregroundStyle(Palette.ink2).accessibilityIdentifier("vaultHint")
                 }
             }
             ForEach(fields, id: \.key) { f in
@@ -618,7 +714,7 @@ struct VaultEditScreen: View {
                         }
                     } label: {
                         HStack(spacing: 10) {
-                            if vm.busy { ProgressView().tint(Palette.background) } else { Image(systemName: "key.horizontal") }
+                            if vm.busy { ProgressView().tint(Palette.onInverse) }
                             Text("Make a new key on this phone")
                         }
                     }
@@ -640,7 +736,7 @@ struct VaultEditScreen: View {
                         }
                     } label: {
                         HStack(spacing: 10) {
-                            if vm.busy { ProgressView().tint(Palette.background) }
+                            if vm.busy { ProgressView().tint(Palette.onInverse) } else { GlyphIcon(.faceId, size: 18) }
                             Text("Save")
                         }
                     }
@@ -656,6 +752,7 @@ struct VaultEditScreen: View {
         }
         .reinsGrouped()
         .navigationTitle(existing != nil ? "Edit" : newItem?.newTitle ?? "New item")
+        .navigationBarTitleDisplayMode(.large)
         .privacySensitive()
         .onAppear {
             guard !started else { return }
@@ -673,6 +770,20 @@ struct VaultEditScreen: View {
         Group {
             if f.multiline {
                 TextField(placeholder, text: binding, axis: .vertical).lineLimit(3...12).font(RFont.mono(14.5))
+            } else if f.key == "password" && kind == .login && newItem != .apiKey {
+                // Generate, don't type: a new 24-character password at a tap.
+                HStack(spacing: 8) {
+                    SecureField(placeholder, text: binding).font(RFont.mono(14.5))
+                    Button {
+                        values[f.key] = VaultText.generatedPassword()
+                        feedback.play(.selection)
+                    } label: {
+                        GlyphIcon(.refresh, size: 18).foregroundStyle(Palette.ink2).frame(width: 36, height: 36)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Generate a password")
+                    .accessibilityIdentifier("vaultGeneratePassword")
+                }
             } else if f.secret {
                 SecureField(placeholder, text: binding).font(RFont.mono(14.5))
             } else {

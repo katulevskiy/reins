@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// One grant: its time left as a big ring, what it allows and never includes, its uses and end, what it was used for,
-/// and, pinned at the bottom, Extend and End now (running) or Resume and Delete (ended).
+/// One grant (iOS-Trust.png, 02): a violet field, since it is power already handed over: its time left in the serif
+/// with a ring that drains, what it allows in a sentence, for whom; then what it may and never does, its uses and end as
+/// hairline rows, what it was used for; and Extend with End now (held), or Resume and Delete once it ended.
 struct GrantDetailScreen: View {
     var grantId: String
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
-    @State private var confirmingRevoke = false
     @State private var confirmingDelete = false
     @State private var resuming: GrantPick?
     @State private var extending: GrantPick?
@@ -35,54 +35,58 @@ struct GrantDetailScreen: View {
     private func content(_ grant: GrantView) -> some View {
         let used = model.activity.filter { $0.grantId == grant.id }
         let never = GrantText.never(grant)
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                header(grant)
+        return GeometryReader { geo in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    GrantField(grant: grant, top: geo.safeAreaInsets.top)
 
-                if let error {
-                    FormBanner(text: error).padding(.horizontal, 16).padding(.top, 14)
-                }
+                    if let error {
+                        FormBanner(text: error).padding(.horizontal, 16).padding(.top, 14)
+                    }
 
-                GroupCard(header: "It may") {
-                    if grant.lines.isEmpty {
-                        allowLine("Nothing specific", allowed: true)
+                    // What it may do (a check) and never includes (a ban), as hairline rows.
+                    FactGroup {
+                        if grant.lines.isEmpty {
+                            allowLine("Nothing specific", allowed: true)
+                        }
+                        ForEach(Array(grant.lines.enumerated()), id: \.offset) { _, line in
+                            allowLine(untrusted(line), allowed: true)
+                        }
+                        ForEach(Array(never.enumerated()), id: \.offset) { _, line in
+                            allowLine(line, allowed: false)
+                        }
                     }
-                    ForEach(Array(grant.lines.enumerated()), id: \.offset) { i, line in
-                        if i > 0 { Hairline(inset: 44) }
-                        allowLine(untrusted(line), allowed: true)
-                    }
-                    ForEach(Array(never.enumerated()), id: \.offset) { _, line in
-                        Hairline(inset: 44)
-                        allowLine(line, allowed: false)
-                    }
-                }
+                    .padding(.top, 12)
 
-                GroupCard {
-                    ValueRow(label: "Uses", value: GrantText.usesValue(grant))
-                    Hairline()
-                    TimelineView(.periodic(from: .now, by: 30)) { _ in
-                        ValueRow(label: grant.active ? "Ends" : GrantText.inactiveWord(grant), value: ends(grant))
+                    FactGroup {
+                        FactRow(key: "Uses", value: GrantText.usesValue(grant)) {
+                            if let max = grant.maxUses { UsesDashes(uses: Int(grant.uses), max: Int(max)) }
+                        }
+                        TimelineView(.periodic(from: .now, by: 30)) { _ in
+                            FactRow(key: grant.active ? "Ends" : GrantText.inactiveWord(grant), value: ends(grant))
+                        }
+                        if let account = grant.account, !account.trimmingCharacters(in: .whitespaces).isEmpty {
+                            FactRow(key: "Account", value: untrusted(account), mono: true)
+                        }
+                        FactRow(key: "Came from", value: GrantText.origin(grant.origin, label: grant.connectionLabel))
                     }
-                    if let account = grant.account, !account.trimmingCharacters(in: .whitespaces).isEmpty {
-                        Hairline()
-                        ValueRow(label: "Account", value: account, mono: true)
+                    .padding(.top, 14)
+
+                    // A permission for secrets: its values may still be held on computers, so they can be told to drop them.
+                    if grant.action == "secrets", let project = grant.secretsProject {
+                        RevokeEverywhereSection(project: project, env: grant.secretsEnv).padding(.top, 12)
                     }
-                    Hairline()
-                    ValueRow(label: "Came from", value: GrantText.origin(grant.origin, label: grant.connectionLabel))
-                }
-                .padding(.top, 12)
 
-                // A permission for secrets: its values may still be held on computers, so they can be told to drop them.
-                if grant.action == "secrets", let project = grant.secretsProject {
-                    RevokeEverywhereSection(project: project, env: grant.secretsEnv).padding(.top, 12)
-                }
-
-                GroupCard(header: used.isEmpty ? nil : "Used for · \(used.count)") {
+                    Text(used.isEmpty ? "Used for" : "Used for · \(used.count)")
+                        .textRole(.label)
+                        .foregroundStyle(Palette.inkMeta)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 26)
+                        .padding(.bottom, 4)
                     if used.isEmpty {
-                        ValueRow(label: "Used for", value: "Nothing yet")
+                        Text("Nothing yet").textRole(.body).foregroundStyle(Palette.inkMeta).padding(.horizontal, 24).padding(.vertical, 8)
                     }
-                    ForEach(Array(used.prefix(10).enumerated()), id: \.element.id) { i, entry in
-                        if i > 0 { Hairline(inset: 62) }
+                    ForEach(used.prefix(10), id: \.id) { entry in
                         Button {
                             feedback.play(.tap)
                             model.push(.activityDetail(entry.id))
@@ -93,18 +97,16 @@ struct GrantDetailScreen: View {
                         .accessibilityIdentifier("entry:\(entry.id)")
                     }
                 }
-                .padding(.top, used.isEmpty ? 12 : 0)
+                .padding(.bottom, 24)
             }
-            .padding(.bottom, 24)
+            .ignoresSafeArea(edges: .top)
+            .scrollEdgeEffectHidden(true, for: .top)
         }
         .pageBackground()
+        // The bar stays for its back button and the edge swipe, clear over the field, its button white.
+        .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .pageDock { dock(grant) }
-        .confirmationDialog("End this grant now?", isPresented: $confirmingRevoke, titleVisibility: .visible) {
-            Button("End now", role: .destructive) { run(leave: true) { await model.revokeGrant(grant.id) } }
-        } message: {
-            Text(untrusted(grant.summary) + "\n\nYou can resume it later from Expired.")
-        }
-        .presentationFeedback(confirmingRevoke)
         .confirmationDialog("Delete this grant for good?", isPresented: $confirmingDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { run(leave: true) { await model.deleteGrant(grant.id) } }
         } message: {
@@ -129,66 +131,21 @@ struct GrantDetailScreen: View {
         .presentationFeedback(extending != nil)
     }
 
-    /// The big ring with the time left, the summary, and who and where.
-    private func header(_ grant: GrantView) -> some View {
-        VStack(spacing: 0) {
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                let clock = grantClock(grant, now: nowSeconds(ctx.date))
-                let color = grant.active ? clockColor(clock) : Palette.tertiary
-                ZStack {
-                    ArcRing(fraction: grant.active ? clock.fraction : 0, color: color, track: Palette.dynamic(0xE2E2E6, 0x26262B), lineWidth: 11)
-                    VStack(spacing: 1) {
-                        Text(grant.active ? GrantText.ringLabel(clock) : GrantText.inactiveWord(grant))
-                            .font(RFont.fixedSans(grant.active ? 28 : 17, .semibold))
-                            .foregroundStyle(grant.active ? Palette.text : Palette.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                        if grant.active && clock.remaining != nil {
-                            Text("left").font(RFont.fixedSans(12)).foregroundStyle(Palette.tertiary)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-                .frame(width: 120, height: 120)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(grant.active ? (clock.remaining.map { "\(compactDuration($0)) left" } ?? "No time limit") : GrantText.inactiveWord(grant))
-            }
-            Text(untrusted(grant.summary))
-                .font(RFont.sans(22, .semibold))
-                .foregroundStyle(Palette.text)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 14)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("grantTitle")
-            HStack(spacing: 6) {
-                ConnectionIcon(connectionId: grant.connectionId, label: grant.connectionLabel, size: 16)
-                Text([untrusted(grant.connectionLabel), grant.service.isEmpty ? "" : serviceName(grant.service)].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.tertiary)
-                    .lineLimit(1)
-            }
-            .padding(.top, 6)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
-        .padding(.top, 6)
-    }
-
     /// One line of what the grant allows (a green check) or never includes (a red ban).
     private func allowLine(_ text: String, allowed: Bool) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: allowed ? "checkmark" : "nosign")
-                .font(.system(size: 14, weight: .semibold))
+        HStack(alignment: .top, spacing: 10) {
+            GlyphIcon(allowed ? .check : .block, size: 16)
                 .foregroundStyle(allowed ? Palette.success : Palette.danger)
                 .frame(width: 18)
+                .padding(.top, 1)
             Text(text)
                 .font(RFont.sans(15))
-                .foregroundStyle(allowed ? Palette.text : Palette.tertiary)
+                .foregroundStyle(allowed ? Palette.ink : Palette.inkMeta)
                 .environment(\.layoutDirection, .leftToRight)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(allowed ? text : "Never: \(text)")
@@ -205,18 +162,16 @@ struct GrantDetailScreen: View {
                 Button {
                     extending = GrantPick(grant)
                 } label: {
-                    Label("Extend", systemImage: "clock")
+                    Label("Extend", systemImage: "timer")
                 }
-                .buttonStyle(DockButtonStyle(kind: .neutral))
+                .buttonStyle(SignalButtonLook(kind: .outline))
+                .frame(height: 54)
                 .disabled(busy)
                 .accessibilityIdentifier("extend")
-                Button(role: .destructive) {
-                    confirmingRevoke = true
-                } label: {
-                    Label("End now", systemImage: "nosign")
+                // The grant's power goes at once: held, never a tap, no dialog.
+                HoldButton(title: "End now", busy: busy) {
+                    run(leave: true) { await model.revokeGrant(grant.id) }
                 }
-                .buttonStyle(DockButtonStyle(kind: .danger))
-                .disabled(busy)
                 .accessibilityIdentifier("revoke")
             } else {
                 Button {
@@ -251,5 +206,90 @@ struct GrantDetailScreen: View {
             error = failure
             if failure == nil && leave { model.back() }
         }
+    }
+}
+
+/// The grant's field: "Grant · Gmail", the time left ("5h *left*") with its ring, the core's summary in the serif, and
+/// who it is for. An ended grant's field is dimmed.
+private struct GrantField: View {
+    var grant: GrantView
+    /// The status bar's and the bar's height: the field runs under them.
+    var top: CGFloat
+
+    var body: some View {
+        SignalField(kind: .grant) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Grant · \(grant.service.isEmpty ? "Reins" : serviceName(grant.service))")
+                    .textRole(.label)
+                    .foregroundStyle(Palette.onField2)
+                    .lineLimit(1)
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let clock = grantClock(grant, now: nowSeconds(ctx.date))
+                    HStack(alignment: .center) {
+                        HStack(alignment: .lastTextBaseline, spacing: 6) {
+                            Text(grant.active ? GrantText.ringLabel(clock).replacingOccurrences(of: " ", with: "") : GrantText.inactiveWord(grant))
+                                .font(RFont.serif(grant.active ? 52 : 40))
+                            if grant.active && clock.remaining != nil {
+                                Text("left").font(RFont.serif(24, italic: true))
+                            }
+                        }
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        Spacer(minLength: 8)
+                        if grant.active {
+                            ArcRing(fraction: clock.fraction, color: Palette.onField, track: Palette.onField.opacity(0.25), lineWidth: 3)
+                                .frame(width: 30, height: 30)
+                        }
+                    }
+                    .foregroundStyle(Palette.onField)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(grant.active ? (clock.remaining.map { "\(compactDuration($0)) left" } ?? "No time limit") : GrantText.inactiveWord(grant))
+                    .accessibilityIdentifier("grantClock")
+                }
+                .padding(.top, 18)
+                Text(verbatim: untrusted(grant.summary))
+                    .font(RFont.serif(36))
+                    .lineHeight(.multiple(factor: 38 / 36))
+                    .foregroundStyle(Palette.onField)
+                    .lineLimit(4)
+                    .minimumScaleFactor(0.78)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("grantTitle")
+                HStack(spacing: 6) {
+                    ConnectionIcon(connectionId: grant.connectionId, label: grant.connectionLabel, size: 18)
+                        .environment(\.colorScheme, .light)
+                    Text(verbatim: [untrustedName(grant.connectionLabel), grant.account.map { untrusted($0) } ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(RFont.sans(13.5))
+                        .foregroundStyle(Palette.onField2)
+                        .lineLimit(1)
+                }
+                .padding(.top, 12)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, top + 8)
+            .padding(.bottom, 24)
+        }
+        .opacity(grant.active ? 1 : 0.62)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("grantField")
+    }
+}
+
+/// How much of a grant's uses are spent, one dash per use (ten at most drawn).
+private struct UsesDashes: View {
+    var uses: Int
+    var max: Int
+
+    var body: some View {
+        let shown = min(max, 10)
+        let filled = max == 0 ? 0 : Int((Double(min(uses, max)) / Double(max) * Double(shown)).rounded(.up))
+        HStack(spacing: 3) {
+            ForEach(0..<shown, id: \.self) { i in
+                Capsule().fill(i < filled ? Palette.violet : Palette.rule).frame(width: 10, height: 3)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }

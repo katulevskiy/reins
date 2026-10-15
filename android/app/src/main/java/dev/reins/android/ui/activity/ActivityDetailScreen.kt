@@ -49,6 +49,7 @@ import dev.reins.android.design.BlobAvatar
 import dev.reins.android.design.ConfirmDialog
 import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
+import dev.reins.android.design.LabelText
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.OnWarning
 import dev.reins.android.design.PageDock
@@ -88,9 +89,11 @@ import dev.reins.android.ui.approval.ApprovalViewModel
 import dev.reins.android.ui.autopilot.modeTint
 import dev.reins.android.ui.autopilot.OvernightIcon
 import dev.reins.android.ui.autopilot.RiskChip
-import dev.reins.android.ui.common.LabelText
+import dev.reins.android.ui.common.AskSentenceText
+import dev.reins.android.ui.common.IntegrationIcon
+import dev.reins.android.ui.common.askSentence
+import dev.reins.android.ui.common.untrustedName
 import dev.reins.android.ui.common.LocalConnections
-import dev.reins.android.ui.common.ProviderTile
 import dev.reins.android.ui.common.findConnection
 import dev.reins.android.ui.common.untrustedLine
 import dev.reins.core.ApprovalView
@@ -173,6 +176,9 @@ fun ActivityDetailScreen(
                 },
                 footer = dock,
                 risk = entry.autopilot?.risk,
+                tense = dev.reins.android.ui.common.entryTense(entry.outcome),
+                label = entry.label,
+                cwd = entry.request?.cwd,
             ),
         )
     } else if (looked) {
@@ -262,53 +268,35 @@ private fun Hero(entry: ActivityEntry) {
     val c = LocalColors.current
     val tone = if (entry.outcome == "denied") c.danger else toneColor(toneOf(entry.action), c)
     val decided = entry.decidedBy.isNotEmpty() || entry.autopilot != null
-    val label = entry.label
-    if (label != null) {
-        Row(
-            Modifier
-                .padding(horizontal = 12.dp)
-                .fillMaxWidth()
-                .toneCard(tone, radius = 24.dp, top = if (c.dark) 0.16f else 0.10f, bottom = if (c.dark) 0.04f else 0.03f)
-                .testTag(if (decided) "entryAutopilot" else "entryHero")
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ProviderTile(label, ring = androidx.compose.ui.graphics.lerp(c.background, tone, 0.12f))
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                LabelText(label, Modifier.testTag("detailTitle"), size = 17f, lineHeight = 22f, maxLines = 4)
-                OutcomePill(entry, Modifier.padding(top = 8.dp))
-                RiskChip(entry.autopilot?.risk, Modifier.padding(top = 8.dp))
-            }
-        }
-        return
-    }
-    Column(
+    // Who asked is on its own line with their mark, as in the field's top row, so the sentence starts with the verb.
+    val sentence = remember(entry) { askSentence(entry) }
+    Row(
         Modifier
             .padding(horizontal = 12.dp)
             .fillMaxWidth()
-            .toneCard(tone, radius = 28.dp, top = if (c.dark) 0.16f else 0.10f, bottom = if (c.dark) 0.04f else 0.03f)
+            .toneCard(tone, radius = 24.dp, top = if (c.dark) 0.16f else 0.10f, bottom = if (c.dark) 0.04f else 0.03f)
             .testTag(if (decided) "entryAutopilot" else "entryHero")
-            .padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(16.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 52.dp)
-            Spacer(Modifier.width(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                Box(Modifier.size(5.dp).background(c.tertiary, CircleShape))
-                Box(Modifier.size(5.dp).background(c.tertiary, CircleShape))
-                Box(Modifier.size(5.dp).background(tone, CircleShape))
+        IntegrationIcon(sentence.provider, sentence.action, size = 44.dp, ring = androidx.compose.ui.graphics.lerp(c.background, tone, 0.12f))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Row(Modifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 20.dp)
+                Spacer(Modifier.width(7.dp))
+                RText(untrustedName(entry.connectionLabel), RType.sans(14f, FontWeight.Medium), c.secondary, Modifier.testTag("detailWho"), maxLines = 1)
             }
-            Spacer(Modifier.width(14.dp))
-            ServiceTile(entry.service.ifBlank { "gmail" }, size = 52.dp, fallback = kindIcon(entry.action), fallbackTint = tone)
+            LabelText(sentence.kind, c.inkMeta, Modifier.padding(bottom = 6.dp).testTag("detailKind"))
+            AskSentenceText(sentence, style = RType.serif(25f, 28f), color = c.text, detailsColor = c.secondary, detailsStyle = RType.mono(13f), tag = "detailTitle", detailsTag = "detailDetails")
+            if (entry.label == null) {
+                untrusted(entry.detail).takeIf { it.isNotBlank() }?.let {
+                    RText(it, RType.sans(13.5f, lineHeight = 18f), c.tertiary, Modifier.padding(top = 6.dp).testTag("detailSummary"), maxLines = 2)
+                }
+            }
+            OutcomePill(entry, Modifier.padding(top = 10.dp))
+            RiskChip(entry.autopilot?.risk, Modifier.padding(top = 8.dp))
         }
-        SentenceText(historyParts(entry), Modifier.padding(top = 16.dp).testTag("detailTitle"), size = 23f, lineHeight = 30f, maxLines = 3, align = TextAlign.Center)
-        untrusted(entry.detail).takeIf { it.isNotBlank() }?.let {
-            RText(it, RType.sans(13.5f, lineHeight = 18f), c.tertiary, Modifier.padding(top = 6.dp).testTag("detailSummary"), maxLines = 2, align = TextAlign.Center)
-        }
-        OutcomePill(entry, Modifier.padding(top = 14.dp))
-        RiskChip(entry.autopilot?.risk, Modifier.padding(top = 10.dp))
     }
 }
 

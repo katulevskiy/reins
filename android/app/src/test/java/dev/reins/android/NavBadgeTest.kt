@@ -10,7 +10,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RColors
 import dev.reins.android.design.countText
-import dev.reins.android.ui.main.FloatingNavBar
+import dev.reins.android.ui.main.ReinsTabBar
 import dev.reins.android.ui.nav.Tab
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -40,7 +40,7 @@ class NavBadgeTest {
         var count by androidx.compose.runtime.mutableIntStateOf(1)
         rule.setContent {
             CompositionLocalProvider(LocalColors provides RColors.Dark) {
-                Box { FloatingNavBar(Tab.Grants, activityCount = count, grantCount = 0, autopilot = null, onSelect = {}) }
+                Box { ReinsTabBar(Tab.Trust, activityCount = count, bypassOn = false, onSelect = {}) }
             }
         }
         for ((n, shown) in listOf(1 to "1", 12 to "12", 120 to "99+")) {

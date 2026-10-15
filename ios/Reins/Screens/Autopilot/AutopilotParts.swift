@@ -426,21 +426,21 @@ struct HelpMark: View {
     }
 }
 
-/// A profile's emoji on a rounded tile (its row and its page).
+/// A profile's glyph on a plain tile (its row and its page): the icon it keeps, drawn as a glyph, never an emoji.
 struct ProfileTile: View {
     var profile: ProfileView
     var size: CGFloat
 
     var body: some View {
         RoundedRectangle(cornerRadius: size * 0.31, style: .continuous)
-            .fill(Palette.chip)
+            .fill(Palette.paperSunken)
             .frame(width: size, height: size)
-            .overlay { Text(AutopilotText.profileIcon(profile)).font(.system(size: size * 0.52)) }
+            .overlay { GlyphIcon(AutopilotText.profileGlyph(AutopilotText.profileIcon(profile)), size: size * 0.46).foregroundStyle(Palette.ink) }
             .accessibilityHidden(true)
     }
 }
 
-/// A profile's emoji on a soft disc.
+/// A profile's glyph on a soft disc.
 struct ProfileAvatar: View {
     var profile: ProfileView
     var size: CGFloat
@@ -448,7 +448,7 @@ struct ProfileAvatar: View {
     var body: some View {
         Circle().fill(Palette.accentSoft)
             .frame(width: size, height: size)
-            .overlay { Text(AutopilotText.profileIcon(profile)).font(.system(size: size * 0.48)) }
+            .overlay { GlyphIcon(AutopilotText.profileGlyph(AutopilotText.profileIcon(profile)), size: size * 0.48).foregroundStyle(Palette.violet) }
             .accessibilityHidden(true)
     }
 }

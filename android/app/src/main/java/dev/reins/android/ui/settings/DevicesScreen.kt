@@ -1,5 +1,14 @@
 package dev.reins.android.ui.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
+import dev.reins.android.design.hairlineBelow
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -234,53 +243,68 @@ private fun SignOutDialog(device: DeviceView, busy: Boolean, error: String?, onC
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
         dev.reins.android.feedback.DialogFeedback()
-        Column(
-            Modifier
-                .padding(horizontal = 28.dp)
-                .fillMaxWidth()
-                .glass(c, androidx.compose.foundation.shape.RoundedCornerShape(26.dp), 16.dp)
-                .padding(22.dp)
-                .testTag("signOutDialog"),
-        ) {
-            RText("Sign out ${untrusted(device.name)}?", RType.sans(19f, FontWeight.SemiBold), c.text)
-            RText(
-                "${device.platform} · signed in ${relativeTime(device.createdAt)} · last seen ${relativeTime(device.lastSeenAt)}",
-                RType.sans(13.5f),
-                c.secondary,
-                Modifier.padding(top = 4.dp),
-            )
-            RText(
-                "The app on it can no longer open your vault, sync or answer requests, and cannot sign in again as " +
-                    "it is. Someone with its screen lock could still read your recovery code on it (see I lost my " +
-                    "phone in the help). Type your recovery code (or master password) to confirm.",
-                RType.sans(15f, lineHeight = 21f),
-                c.secondary,
-                Modifier.padding(top = 10.dp),
-            )
-            dev.reins.android.design.RTextField(
-                typed,
-                { typed = it },
-                "Recovery code or master password",
-                Modifier.padding(top = 14.dp),
-                tag = "signOutProof",
-                enabled = !busy,
-                mono = true,
-                password = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
-                    autoCorrectEnabled = false,
-                ),
-            )
-            error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "signOutError") }
-            Row(Modifier.padding(top = 18.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-                CapsuleButton("Cancel", Modifier.weight(1f), style = ButtonStyle.Secondary, onClick = onDismiss)
-                CapsuleButton(
-                    "Sign out",
-                    Modifier.weight(1f).testTag("confirmSignOut"),
-                    style = ButtonStyle.Destructive,
-                    enabled = typed.isNotBlank(),
-                    busy = busy,
-                ) { onConfirm(typed) }
+        var help by remember { mutableStateOf(false) }
+        // A sheet from the bottom (Signal): the question in the serif, the phone on its own row, the proof, the action.
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            val shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .background(c.paperRaised)
+                    .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                    .imePadding()
+                    .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 16.dp)
+                    .testTag("signOutDialog"),
+            ) {
+                dev.reins.android.design.AskText("Sign a phone out", c.ink, target = "out", style = RType.serif(32f, 36f), minSize = 26.sp)
+                Row(Modifier.padding(top = 12.dp).fillMaxWidth().hairlineBelow(c.rule).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    GlyphIcon(deviceGlyph(device.kind), c.ink2, size = 20.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        RText(dev.reins.android.ui.common.untrustedName(device.name), RType.row, c.ink, maxLines = 1)
+                        RText(
+                            "${device.platform} · signed in ${relativeTime(device.createdAt)} · last seen ${relativeTime(device.lastSeenAt)}",
+                            RType.meta,
+                            c.inkMeta,
+                            maxLines = 2,
+                        )
+                    }
+                }
+                Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RText("It can no longer open your vault or answer requests.", RType.sans(15f, lineHeight = 21f), c.ink2, Modifier.weight(1f))
+                    HelpIcon(help, "signing a phone out") { help = it }
+                }
+                dev.reins.android.design.HelpText(
+                    "It can't sign in again as it is. Someone with its screen lock could still read your recovery code on it " +
+                        "(see I lost my phone in the help). Your recovery code or master password confirms it's you.",
+                    help,
+                    Modifier.padding(top = 4.dp),
+                )
+                dev.reins.android.design.RTextField(
+                    typed,
+                    { typed = it },
+                    "Recovery code or master password",
+                    Modifier.padding(top = 14.dp),
+                    tag = "signOutProof",
+                    enabled = !busy,
+                    mono = true,
+                    password = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                        autoCorrectEnabled = false,
+                    ),
+                )
+                error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "signOutError") }
+                Row(Modifier.padding(top = 18.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                    dev.reins.android.design.SignalButton("Cancel", Modifier.weight(1f), style = ButtonStyle.Outline, onClick = onDismiss)
+                    dev.reins.android.design.SignalButton(
+                        "Sign out",
+                        Modifier.weight(1f).testTag("confirmSignOut"),
+                        style = ButtonStyle.DangerWash,
+                        enabled = typed.isNotBlank() && !busy,
+                    ) { onConfirm(typed) }
+                }
             }
         }
     }

@@ -223,10 +223,13 @@ struct AskText: View {
 
     var runs: [Run]
     var role: TextRole = .ask
+    /// Three lines, or nil for an ask that must never be cut (what is approved reads in full).
+    var lineLimit: Int? = 3
 
-    init(_ runs: [Run], role: TextRole = .ask) {
+    init(_ runs: [Run], role: TextRole = .ask, lineLimit: Int? = 3) {
         self.runs = runs
         self.role = role
+        self.lineLimit = lineLimit
     }
 
     /// "Push 8 commits to" + "octo/app".
@@ -244,7 +247,7 @@ struct AskText: View {
         }
         .tracking(role.trackingEm * size)
         .lineHeight(role.lineHeight.map { .multiple(factor: $0 / role.size) })
-        .lineLimit(3)
+        .lineLimit(lineLimit)
         .minimumScaleFactor(min(1, floor / size))
         .fixedSize(horizontal: false, vertical: true)
     }

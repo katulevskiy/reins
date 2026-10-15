@@ -31,7 +31,7 @@ struct ProfileScreen: View {
             }
         }
         .background(Palette.background.ignoresSafeArea())
-        .navigationTitle(profile.map { untrusted($0.name) } ?? "Profile")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // The name is the page's own heading, beside its emoji.
@@ -114,22 +114,19 @@ struct ProfileScreen: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                HelpHeader(title: "How sure", help: AutopilotText.howSureHelp).padding(.horizontal, 12)
-                Segments(
-                    items: AutopilotText.presets.map { p in
-                        let name = AutopilotText.presetName(p)
-                        return SegmentItem(id: p, title: name, identifier: "preset:\(name.lowercased())")
-                    },
-                    selected: profile.preset
-                ) { preset in
-                    guard preset != profile.preset else { return }
-                    if preset == .custom {
-                        // Custom starts from the thresholds in use.
-                        Task { await ap.setThresholds(profile.id, approveAt: profile.approveAt, denyAt: profile.denyAt) }
-                    } else {
-                        Task { await ap.setPreset(profile.id, preset) }
+                HelpHeader(title: "How sure before it acts", help: AutopilotText.howSureHelp).padding(.horizontal, 12)
+                Chooser(AutopilotText.presets.map { p in
+                    let name = AutopilotText.presetName(p)
+                    return Chooser.Segment(id: "preset:\(name.lowercased())", title: name, selected: profile.preset == p) {
+                        guard p != profile.preset else { return }
+                        if p == .custom {
+                            // Custom starts from the thresholds in use.
+                            Task { await ap.setThresholds(profile.id, approveAt: profile.approveAt, denyAt: profile.denyAt) }
+                        } else {
+                            Task { await ap.setPreset(profile.id, p) }
+                        }
                     }
-                }
+                })
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("How sure")
                 .accessibilityValue(AutopilotText.presetLine(profile))
@@ -193,31 +190,50 @@ private struct ProfileHeader: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(untrusted(profile.name))
-                            .font(RFont.sans(24, .semibold))
-                            .foregroundStyle(Palette.text)
+                            .font(RFont.serif(40))
+                            .foregroundStyle(Palette.ink)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                             .accessibilityAddTraits(.isHeader)
                         if profile.isDefault {
                             StatusPill(text: "Default", tint: Palette.accent).accessibilityIdentifier("defaultTag")
                         }
                     }
-                    Text(ais.isEmpty ? "No AI yet" : ais.joined(separator: ", "))
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.tertiary)
+                    Text(ais.isEmpty ? "No AI yet" : ais.map { untrustedName($0, limit: 40) }.joined(separator: ", "))
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.inkMeta)
                         .lineLimit(2)
                 }
             }
             .padding(.horizontal, 4)
-            HStack(spacing: 8) {
-                StatTile(value: "\(profile.memoryCount)", label: profile.memoryCount == 1 ? "decision" : "decisions")
-                    .accessibilityIdentifier("statMemory")
-                StatTile(value: AutopilotText.share(profile.agreement), label: "matched you", tint: profile.agreement == nil ? Palette.text : Palette.success)
+            // Its numbers in the serif between two hairlines, as Trust's week.
+            HStack(alignment: .top, spacing: 8) {
+                stat("\(profile.memoryCount)", profile.memoryCount == 1 ? "decision" : "decisions").accessibilityIdentifier("statMemory")
+                stat(AutopilotText.share(profile.agreement), "matched you", tint: profile.agreement == nil ? Palette.ink : Palette.success)
                     .accessibilityIdentifier("statAgreement")
-                StatTile(value: "\(profile.classes.filter(\.autoApprove).count)", label: "kinds on Auto", suffix: "/\(profile.classes.count)")
+                stat("\(profile.classes.filter(\.autoApprove).count)", "kinds on Auto", suffix: "/\(profile.classes.count)")
                     .accessibilityIdentifier("statKinds")
             }
+            .padding(.vertical, 12)
+            .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
+            .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
         }
         .padding(.top, 4)
+    }
+}
+
+private extension ProfileHeader {
+    func stat(_ value: String, _ label: String, tint: Color = Palette.ink, suffix: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .lastTextBaseline, spacing: 1) {
+                Text(value).font(RFont.serif(32)).foregroundStyle(tint)
+                if let suffix { Text(suffix).font(RFont.serif(20)).foregroundStyle(Palette.inkMeta) }
+            }
+            .lineLimit(1)
+            Text(label).textRole(.meta).foregroundStyle(Palette.inkMeta).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 

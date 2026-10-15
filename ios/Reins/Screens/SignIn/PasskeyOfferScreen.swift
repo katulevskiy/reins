@@ -30,23 +30,25 @@ struct PasskeyOfferScreen: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Image(systemName: "person.badge.key.fill")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(Palette.accent)
+            // On paper, not a field: nothing waits on an AI here. The pink tile says it is an account matter.
+            GlyphIcon(.key, size: 26)
+                .foregroundStyle(Palette.onField)
                 .frame(width: 56, height: 56)
-                .background(Palette.accentSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .fieldBackground(.accounts, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityHidden(true)
-                .padding(.bottom, 6)
-            Text("Protect your vault with a passkey")
-                .font(RFont.sans(28, .semibold))
-                .foregroundStyle(Palette.text)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-            Text("Unlocks your vault on a new phone. Your password manager keeps it.")
-                .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 10)
+            AskText([AskText.Run(text: "Protect your vault with a "), AskText.Run(text: "passkey", target: true)], role: .ask, lineLimit: nil)
+                .foregroundStyle(Palette.ink)
+                .accessibilityAddTraits(.isHeader)
+            Text("It unlocks your vault on a new phone, without your other phone or a recovery code. Your password manager keeps it.")
+                .textRole(.body)
+                .foregroundStyle(Palette.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                fact(.circleCheck, "Works with iCloud Keychain and password managers")
+                fact(.lock, "Reins keeps only a sealed copy of the key")
+            }
+            .padding(.vertical, 8)
             if let error = vm.error {
                 FormBanner(text: error).transition(.opacity).accessibilityIdentifier("passkeyError")
             }
@@ -54,7 +56,7 @@ struct PasskeyOfferScreen: View {
                 Task { await vm.add(model) }
             } label: {
                 HStack(spacing: 10) {
-                    if vm.busy { ProgressView().tint(Palette.background) } else { Image(systemName: "key.fill") }
+                    if vm.busy { ProgressView().tint(Palette.onInverse) }
                     Text("Add a passkey")
                 }
             }
@@ -62,14 +64,26 @@ struct PasskeyOfferScreen: View {
             .disabled(vm.busy)
             .accessibilityIdentifier("addPasskey")
             Button("Use the recovery code only") { model.declinePasskeyOffer() }
-                .buttonStyle(CapsuleButtonStyle(kind: .secondary))
+                .buttonStyle(SignalButtonStyle(.outline))
                 .disabled(vm.busy)
                 .accessibilityIdentifier("skipPasskey")
             Text("A recovery code comes next.")
-                .font(RFont.sans(13))
-                .foregroundStyle(Palette.tertiary)
+                .textRole(.meta)
+                .foregroundStyle(Palette.inkMeta)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, 4)
+                .frame(maxWidth: .infinity)
         }
+    }
+
+    /// One thing worth knowing about the passkey, on a hairline row.
+    private func fact(_ glyph: Glyph, _ text: String) -> some View {
+        HStack(spacing: 12) {
+            GlyphIcon(glyph, size: 18).foregroundStyle(Palette.ink2)
+            Text(text).textRole(.row).foregroundStyle(Palette.ink).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        .accessibilityElement(children: .combine)
     }
 }

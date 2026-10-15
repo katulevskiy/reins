@@ -53,6 +53,17 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [shown], timeout: timeout), .completed, "\(element) never appeared")
     }
 
+    /// The core's word about syncing with the other phone is a row on Activity until OK dismisses it.
+    func testTheSyncNoticeShowsUntilOK() {
+        let app = launch(extra: ["-demoSyncNotice"])
+        let row = element(app, "syncNoticeBanner")
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Synced with your other phone. A backup of this phone's changes is kept."].exists)
+        shot(app, "activity-sync-notice")
+        row.buttons["OK"].tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5))
+    }
+
     func testWaitingRequestsComeAboveTheHistoryAndOpenTheirSheet() {
         let app = launch()
         let card = element(app, "pending:req1")
@@ -212,8 +223,10 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 8))
         row.tap()
         XCTAssertTrue(element(app, "entryApproval").waitForExistence(timeout: 5))
-        XCTAssertTrue(element(app, "hero").exists)
-        XCTAssertTrue(element(app, "entryOutcome").exists, "how it ended, where Autopilot's score was")
+        // Decided means paper: the entry's own header, not the approval's field.
+        XCTAssertTrue(element(app, "entryHero").exists)
+        XCTAssertFalse(element(app, "hero").exists)
+        XCTAssertTrue(element(app, "entryOutcome").exists, "how it ended, under its line")
         XCTAssertFalse(element(app, "selectAll").exists, "nothing to tick again")
         XCTAssertFalse(element(app, "clearAll").exists)
         XCTAssertFalse(element(app, "approve").exists, "no decision dock")

@@ -168,6 +168,10 @@ final class AppModel {
     var section: AppSection = .activity
     /// Per section: the screens above its root. On a regular width the first is the detail column's root.
     var paths: [AppSection: [Route]] = [:]
+    /// An answer folding into Activity's river.
+    let fold = FoldState()
+    /// Autopilot's reason lines, worked out once per entry.
+    let reasons = ReasonMemory()
     var sheet: SheetTarget?
     /// The next "connect a computer" sheet opens on the code field rather than the camera (Settings' "Type code").
     var connectStartsTyped = false
@@ -647,6 +651,12 @@ final class AppModel {
     /// now and `work` runs without anyone waiting for it. If it fails, the item comes back with the next read and a few
     /// words say why ("Not approved: …").
     func answerInBackground(_ id: String, failed: String, work: @escaping @Sendable () async throws -> Void) {
+        if let item = pending.first(where: { $0.id == id }) {
+            fold.decided(FoldRequest(
+                field: ActivityText.field(item, danger: false), connectionId: item.connectionId, action: item.action,
+                after: activity.first?.id ?? 0, fromSheet: sheet?.isApproval == true
+            ))
+        }
         dropPending(id)
         Task {
             do {
@@ -842,6 +852,12 @@ final class AppModel {
 
     func path(_ s: AppSection) -> [Route] { paths[s] ?? [] }
 
+    /// A place's root, with nothing open on it (Autopilot settings is Trust's root, Integrations is Connections').
+    func open(_ target: AppSection) {
+        paths[target] = []
+        section = target
+    }
+
     /// From a section's root list: the detail column shows `route` (a regular width), or it is pushed (compact).
     func show(_ route: Route, in target: AppSection? = nil) {
         let s = target ?? section
@@ -955,14 +971,12 @@ final class AppModel {
             show(.activityDetail(id), in: .activity)
         case let .grant(id):
             await refreshPending()
-            section = .grants
-            paths[.grants] = grants.contains { $0.id == id } ? [.grantDetail(id)] : []
+            section = .trust
+            paths[.trust] = grants.contains { $0.id == id } ? [.grantDetail(id)] : []
         case .autopilot:
-            section = .autopilot
-            paths[.autopilot] = []
+            open(.trust)
         case .integrations:
-            home()
-            show(.integrations, in: .activity)
+            open(.connections)
         case .home:
             home()
         case .pair:
@@ -1067,14 +1081,8 @@ extension PendingItem {
 
     var expiresAt: Int64 { waitUntil ?? (createdAt + Self.answerWindow) }
 
-    /// "Claude: Search Gmail" (the core's `headline` is the sentence of what approving does).
-    var listTitle: String {
-        switch kind {
-        case .pairing, .join: untrusted(title)
-        case .blob: "\(untrusted(connectionLabel)): Share a file"
-        case .request: fullTitle(label: connectionLabel, action: action, count: Int(count), service: service, title: opTitle, op: op)
-        }
-    }
+    /// "Claude: Search Gmail for …" (ASK-TEXT; the core's `headline` is the sentence of what approving does).
+    var listTitle: String { AskLabels.listTitle(self) }
 
     var snapshotItem: Snapshot.Item {
         Snapshot.Item(

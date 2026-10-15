@@ -8,6 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.net.Uri
+import dev.reins.android.ui.activity.field
+import dev.reins.android.ui.activity.pendingTone
+import androidx.compose.ui.graphics.toArgb
 import dev.reins.android.MainActivity
 import dev.reins.android.BuildConfig
 import dev.reins.android.R
@@ -18,7 +21,10 @@ import dev.reins.android.feedback.FeedbackSettings
 import dev.reins.android.feedback.NoFeedback
 import dev.reins.android.feedback.play
 import dev.reins.android.autopilot.AutopilotText
-import dev.reins.android.ui.common.fullTitle
+import dev.reins.android.ui.common.AskSentence
+import dev.reins.android.ui.common.IntegrationBitmap
+import dev.reins.android.ui.common.askSentence
+import dev.reins.android.ui.common.untrustedName
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.AutoDecisionView
 import dev.reins.core.AutopilotEvent
@@ -126,13 +132,11 @@ class AppNotifier(
         }
         if (!manager.areNotificationsEnabled()) return
         val channel = channel(Kind.Approvals)
-        val title = when (item.kind) {
-            PendingKind.REQUEST ->
-                if (item.action == "grant") "Permission requested" else "Approval needed"
-            PendingKind.PAIRING -> "Connect an AI"
-            PendingKind.BLOB -> "File to check"
-            PendingKind.JOIN -> "Add a phone"
-        }
+        // The ask in the one formatter's words (ASK-TEXT.md): the sentence with its italic target as the title, who
+        // asks beside the app's name, the machine part in mono under it, and the request's icon as the large icon.
+        val ask = askSentence(item)
+        val who = if (item.kind == PendingKind.REQUEST || item.kind == PendingKind.BLOB) untrustedName(item.connectionLabel).ifEmpty { null } else null
+        val color = notificationColor(item)
         val public = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Reins")
@@ -140,20 +144,19 @@ class AppNotifier(
             .build()
         val notification = Notification.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title)
-            .setContentText(
-                if (item.kind == PendingKind.PAIRING || item.kind == PendingKind.JOIN) {
-                    untrusted(item.title)
-                } else {
-                    fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
-                },
-            )
-            .setSubText(untrusted(item.subtitle).ifBlank { null })
+            .setContentTitle(notificationTitle(ask))
+            .setContentText(ask.details?.let(::mono) ?: who ?: ask.kind)
+            .setSubText(if (ask.details != null) who else null)
             .apply {
-                // Expanded: what approving does, then what Autopilot would do (Manual).
-                val text = fullTitle(item.connectionLabel, item.action, item.count.toInt(), item.service, item.opTitle, item.op)
+                largeIcon(ask, color)?.let { setLargeIcon(it) }
+                // Expanded: the machine part whole, what approving does, then what Autopilot would do (Manual).
                 val more = listOfNotNull(untrusted(item.headline).ifBlank { null }, item.suggestion)
-                if (more.isNotEmpty()) setStyle(Notification.BigTextStyle().bigText((listOf(text) + more).joinToString("\n")))
+                val lines = listOfNotNull<CharSequence>(ask.details?.let(::mono)) + more
+                if (lines.isNotEmpty()) {
+                    val big = android.text.SpannableStringBuilder()
+                    lines.forEachIndexed { i, line -> if (i > 0) big.append('\n'); big.append(line) }
+                    setStyle(Notification.BigTextStyle().bigText(big))
+                }
                 // Routine requests are answered right here; what is asked every time opens the sheet.
                 if (item.kind == PendingKind.REQUEST && item.quick) {
                     addAction(Notification.Action.Builder(null, "Deny", answer(item.id, approve = false)).build())
@@ -164,6 +167,9 @@ class AppNotifier(
                     )
                 }
             }
+            // Colorized in the field's colour (And-Outside 01): the kind of ask, before a word is read.
+            .setColor(color)
+            .setColorized(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(public)
             .setCategory(Notification.CATEGORY_MESSAGE)
@@ -289,11 +295,11 @@ class AppNotifier(
      * without an end shows how long it has run instead, and stays until it is stopped.
      */
     fun showBypass(notice: AutopilotText.BypassNotice?, nowMillis: Long = System.currentTimeMillis()) =
-        showRunning(BYPASS_ID, Kind.Bypass, BypassStopReceiver.ACTION_STOP, BYPASS_RED, notice, nowMillis)
+        showRunning(BYPASS_ID, Kind.Bypass, BypassStopReceiver.ACTION_STOP, runningColor(Kind.Bypass), notice, nowMillis)
 
     /** The ongoing "Overnight on" notification, as [showBypass] (its own channel, colour and Stop); null takes it away. */
     fun showOvernight(notice: AutopilotText.BypassNotice?, nowMillis: Long = System.currentTimeMillis()) =
-        showRunning(OVERNIGHT_ID, Kind.Overnight, BypassStopReceiver.ACTION_STOP_OVERNIGHT, OVERNIGHT_INDIGO, notice, nowMillis)
+        showRunning(OVERNIGHT_ID, Kind.Overnight, BypassStopReceiver.ACTION_STOP_OVERNIGHT, runningColor(Kind.Overnight), notice, nowMillis)
 
     private fun showRunning(id: Int, kind: Kind, stopAction: String, color: Int, notice: AutopilotText.BypassNotice?, nowMillis: Long) {
         if (notice == null || !notice.untilOff && notice.until * 1000 <= nowMillis) {
@@ -322,6 +328,9 @@ class AppNotifier(
         } else {
             builder.setWhen(notice.until * 1000).setChronometerCountDown(true).setTimeoutAfter(notice.until * 1000 - nowMillis)
         }
+        // Android 16 Live Update: promoted to the top of the shade and the status bar chip, with its chronometer. A
+        // promoted notification is coloured with setColor only, never colorized.
+        if (promotes(android.os.Build.VERSION.SDK_INT)) builder.setRequestPromotedOngoing(true)
         val notification = builder
             .setColor(color)
             .setCategory(Notification.CATEGORY_STATUS)
@@ -472,7 +481,49 @@ class AppNotifier(
 
     private fun notificationId(id: String): Int = id.hashCode() and 0x7FFFFFFF or 0x100
 
+    /** The request's icon (the integration with the action on its corner), ringed in the notification's colour. */
+    private fun largeIcon(ask: AskSentence, ring: Int): android.graphics.drawable.Icon? = try {
+        val px = (LARGE_ICON_DP * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        android.graphics.drawable.Icon.createWithBitmap(IntegrationBitmap.draw(context, ask.provider, ask.action, px, ring))
+    } catch (e: Exception) {
+        android.util.Log.w("Reins", "No large icon for a notification", e)
+        null
+    }
+
     companion object {
+        /** The large icon's size: what a notification shows at its side. */
+        private const val LARGE_ICON_DP = 64
+
+        /** The ask as a notification title: the target in italic (ASK-TEXT.md). */
+        fun notificationTitle(ask: AskSentence): CharSequence {
+            val text = android.text.SpannableString(ask.text)
+            val target = ask.target
+            val at = if (target.isNullOrEmpty()) -1 else ask.text.lastIndexOf(target)
+            if (at >= 0) text.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.ITALIC), at, at + target!!.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            return text
+        }
+
+        /** Machine text (a command, a branch, an address) in mono. */
+        fun mono(text: String): CharSequence = android.text.SpannableString(text).apply {
+            setSpan(android.text.style.TypefaceSpan("monospace"), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+
+        /** Android 16 (API 36): Live Updates, `setRequestPromotedOngoing`. */
+        const val PROMOTED_SDK = 36
+
+        /** Whether a running bypass or Overnight asks to be a Live Update on [sdk]. */
+        fun promotes(sdk: Int): Boolean = sdk >= PROMOTED_SDK
+
+        /** A waiting item's notification colour: its field, as on the stack's card (Reins Signal). */
+        fun notificationColor(item: PendingItem): Int =
+            (pendingTone(item, null).field ?: dev.reins.android.design.Field.Push).fill().toArgb()
+
+        /** A running bypass is red like what can't be undone; Overnight is violet like power handed over. */
+        fun runningColor(kind: Kind): Int = when (kind) {
+            Kind.Overnight -> dev.reins.android.design.Field.Grant
+            else -> dev.reins.android.design.Field.Delete
+        }.fill().toArgb()
+
         /** Bumped whenever a channel's sound or vibration changes (they cannot be edited once created). */
         const val CHANNEL_VERSION = 2
 
@@ -508,12 +559,6 @@ class AppNotifier(
 
         /** The settings group of Autopilot's channels, and the group its notifications fold into. */
         const val GROUP_AUTOPILOT = "autopilot"
-
-        /** The bypass notification's accent: Reins's danger red. */
-        private const val BYPASS_RED = 0xFFDC2626.toInt()
-
-        /** The Overnight notification's accent: its night indigo. */
-        private const val OVERNIGHT_INDIGO = 0xFF3F51B5.toInt()
 
         /** A channel id, e.g. `approvals-v2-sv` (sound and vibration), `-s`, `-v` or `-q` (quiet). */
         fun channelId(kind: Kind, sound: Boolean, vibrate: Boolean): String =

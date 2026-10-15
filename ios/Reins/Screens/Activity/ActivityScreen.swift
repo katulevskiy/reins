@@ -23,13 +23,17 @@ enum ActivityFilter: String, CaseIterable {
     }
 }
 
-/// The first section: what waits for you, then everything your AIs did, by day, newest first. On a regular width this
-/// is the content column and an entry opens in the detail column.
+/// Activity (iOS-Activity.png): when something is broken, a short amber field at the very top; the title with the mode
+/// chip and the filter; one mood line; the stack of what waits (the pond when nothing does); then the river, everything
+/// your AIs did by day, newest first, in hairline rows. An answer folds into the river. On a regular width this is the
+/// content column and an entry opens in the detail column.
 struct ActivityScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @SceneStorage("activity.filter") private var filterRaw = ActivityFilter.all.rawValue
-    @State private var filtersShown = false
+    /// Any AI, or one connection's entries only ("" for any).
+    @SceneStorage("activity.ai") private var aiFilter = ""
     /// What Autopilot made of each waiting request (Manual and Auto), by request id.
     @State private var suggestions: [String: SuggestionView] = [:]
     /// The list was placed where the user stopped reading; until then nothing is marked seen.
@@ -38,29 +42,43 @@ struct ActivityScreen: View {
     @State private var seen = SeenRows()
     @State private var atTop = true
     @State private var away = false
-    /// The mode pill's quick menu is open.
-    @State private var quickOpen = false
 
     private var filter: ActivityFilter { ActivityFilter(rawValue: filterRaw) ?? .all }
 
+    private var filterBinding: Binding<ActivityFilter> {
+        Binding(get: { filter }, set: { f in
+            withAnimation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion)) { filterRaw = f.rawValue }
+        })
+    }
+
+    private var aiBinding: Binding<String> {
+        Binding(get: { aiFilter }, set: { id in
+            withAnimation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion)) { aiFilter = id }
+        })
+    }
+
     private var shown: [ActivityEntry] {
-        let f = filter
-        return f == .all ? model.activity : model.activity.filter(f.keeps)
+        ActivityText.filtered(model.activity, filter: filter, connection: aiFilter)
     }
 
     var body: some View {
         let entries = shown
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    header.id("top")
-                    banners
-                    waiting
-                    if filtersShown || filter != .all { filters }
-                    if entries.isEmpty {
-                        empty
-                    } else {
-                        list(entries)
+                // The warnings are often empty: outside the lazy stack, whose first rows must have a size.
+                VStack(alignment: .leading, spacing: 0) {
+                    warnings
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        header.id("top")
+                        mood
+                        if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
+                        waiting
+                        if filter != .all || !aiFilter.isEmpty { filters }
+                        if entries.isEmpty {
+                            empty
+                        } else {
+                            list(entries)
+                        }
                     }
                 }
                 .padding(.bottom, 32)
@@ -81,14 +99,18 @@ struct ActivityScreen: View {
                         withAnimation(.smooth) { proxy.scrollTo("top", anchor: .top) }
                         feedback.play(.tap)
                     } label: {
-                        Label("Latest", systemImage: "chevron.up")
-                            .font(RFont.sans(14, .semibold))
-                            .foregroundStyle(Palette.accent)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
+                        HStack(spacing: 6) {
+                            GlyphIcon(.chevronUp, size: 14)
+                            Text("Latest")
+                        }
+                        .font(RFont.sans(14, .semibold))
+                        .foregroundStyle(Palette.ink)
+                        .padding(.horizontal, 16)
+                        .frame(height: 40)
+                        .background(Palette.paperRaised, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Palette.rule, lineWidth: 1))
                     }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: Capsule())
+                    .buttonStyle(PressDimsStyle())
                     .padding(.bottom, 16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .accessibilityIdentifier("scrollToLatest")
@@ -97,17 +119,19 @@ struct ActivityScreen: View {
             .task(id: model.activity.isEmpty) { await position(proxy) }
         }
         .task(id: model.pending.filter { $0.kind == .request }.map(\.id)) { await loadSuggestions() }
+        .task(id: model.fold.request?.at) { await model.fold.run(model) }
         .onChange(of: atTop) { markSeenSoon() }
         .pageBackground()
-        .autopilotQuickMenu(isPresented: $quickOpen)
+        .foldOverlay(model.fold)
+        .signalMenuHost()
         .rootNavigationBar()
         .navigationTitle("Activity")
     }
 
     // MARK: Parts
 
-    /// The title with the + and the mode pill beside it, or under it when the column is too narrow for both (an iPad's
-    /// content column).
+    /// The title with the mode chip and the filter beside it, or under it when the column is too narrow for both (an
+    /// iPad's content column).
     private var header: some View {
         ViewThatFits(in: .horizontal) {
             PageHeader(title: "Activity") { controls }
@@ -116,41 +140,43 @@ struct ActivityScreen: View {
                 controls
             }
         }
-        .padding(.leading, 20)
-        .padding(.trailing, 16)
+        .padding(.horizontal, 24)
         .padding(.top, 12)
-        .padding(.bottom, 4)
     }
 
     private var controls: some View {
         HStack(spacing: 8) {
-            // The page's Open cue is the sound (the button plays the default tap).
-            RoundPlusButton(label: "Integrations") { model.show(.integrations) }
-                .accessibilityIdentifier("integrations")
             if let autopilot = model.autopilot {
-                AutopilotQuickPill(settings: autopilot, menuOpen: $quickOpen)
+                ActivityModeMenu(settings: autopilot)
             }
+            ActivityFilterMenu(filter: filterBinding, ai: aiBinding, ais: ActivityText.ais(model.activity))
         }
         .fixedSize()
     }
 
-    @ViewBuilder private var banners: some View {
+    /// "Two things wait for you.", "All quiet. Three AIs are connected."
+    private var mood: some View {
+        Text(ActivityText.mood(waiting: model.pending.count, connections: model.connections.count))
+            .textRole(.mood)
+            .foregroundStyle(Palette.ink2)
+            .padding(.horizontal, 24)
+            .padding(.top, 2)
+            .accessibilityIdentifier("activityMood")
+    }
+
+    /// What is broken, as the warn field at the top of the screen.
+    @ViewBuilder private var warnings: some View {
         if model.deviceReplaced {
-            CompactBanner(text: "Another phone approves", symbol: "iphone.slash", button: "Settings") {
+            CompactBanner(text: "Another phone approves", symbol: "iphone.slash", button: "Settings", label: "Reins · This phone") {
                 model.select(.settings)
             }
-            .padding(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
             .accessibilityIdentifier("replacedBanner")
         }
-        if let notice = model.syncNotice {
-            CompactBanner(text: notice, symbol: "arrow.triangle.2.circlepath", button: "OK") {
-                Task { await model.dismissSyncNotice() }
-            }
-            .padding(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-            .accessibilityIdentifier("syncNoticeBanner")
-        }
         if model.registrationError != nil {
-            CompactBanner(text: "Not your approval phone yet", symbol: "exclamationmark.triangle.fill", tint: Palette.danger, button: "Retry") {
+            CompactBanner(
+                text: "Not your approval phone yet", symbol: "exclamationmark.triangle.fill", tint: Palette.danger, button: "Retry",
+                label: "Reins · Approvals"
+            ) {
                 Task {
                     do {
                         try await model.registerDevice(force: false)
@@ -160,89 +186,52 @@ struct ActivityScreen: View {
                     }
                 }
             }
-            .padding(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
             .accessibilityIdentifier("registrationBanner")
         }
         NotificationsOffCard()
-        ScreenLockBanner(padding: EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16), compact: true)
+        ScreenLockBanner(compact: true)
     }
 
     @ViewBuilder private var waiting: some View {
         if !model.pending.isEmpty {
-            PageSectionHeader("Waiting · \(model.pending.count)")
-            ForEach(WaitGroup.of(model.pending)) { group in
-                WaitCard(
-                    group: group,
-                    advice: WaitAdvice.of(group.items, suggestions),
-                    danger: group.items.contains { suggestions[$0.id]?.floor == true }
-                )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .id("p:\(group.id)")
-            }
+            WaitStack(groups: WaitGroup.of(model.pending), suggestions: suggestions)
+                .padding(.top, 16)
+                .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: model.pending.map(\.id))
+        } else if filter == .all && !model.connections.isEmpty {
+            // All quiet: the pond fills the empty stack.
+            Illustration(.pond)
+                .frame(maxWidth: 300)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .accessibilityIdentifier("pond")
         }
     }
 
-    /// The shared choice chips, one chosen; Autopilot's carries its bolt. They scroll sideways when the chosen one's
-    /// check leaves no room.
+    /// The chosen filter, as chips to change or clear it.
     private var filters: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(ActivityFilter.allCases, id: \.self) { f in
-                    let on = filter == f
-                    let pick = {
-                        guard !on else { return }
-                        withAnimation(.smooth(duration: 0.2)) { filterRaw = f.rawValue }
-                    }
-                    Group {
-                        if f == .autopilot {
-                            SelectChip(title: f.title, selected: on, leading: {
-                                Image(systemName: "bolt.fill")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(on ? Palette.accent : Palette.secondary)
-                            }, action: pick)
-                        } else {
-                            SelectChip(title: f.title, selected: on, action: pick)
-                        }
-                    }
-                    .accessibilityIdentifier("filter:\(f.rawValue)")
+                    FilterChip(title: f.title, selected: filter == f) { filterBinding.wrappedValue = f }
+                        .accessibilityIdentifier("filter:\(f.rawValue)")
                 }
+                AnyAIChip(ai: aiBinding, ais: ActivityText.ais(model.activity))
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 24)
         }
-        .padding(.top, 14)
-        .transition(.opacity.combined(with: .move(edge: .top)))
-    }
-
-    private var filterButton: some View {
-        Button {
-            // Closing the chips also shows everything again.
-            let open = !(filtersShown || filter != .all)
-            withAnimation(.smooth(duration: 0.25)) {
-                filtersShown = open
-                if !open { filterRaw = ActivityFilter.all.rawValue }
-            }
-            feedback.play(.expand(open))
-        } label: {
-            Image(systemName: filter == .all ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Palette.accent)
-                .frame(width: 32, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Filter")
-        .accessibilityIdentifier("filterToggle")
+        .padding(.top, 16)
+        .transition(.opacity)
     }
 
     @ViewBuilder private var empty: some View {
-        if filter != .all {
+        if filter != .all || !aiFilter.isEmpty {
             EmptyState(symbol: "line.3.horizontal.decrease", title: "Nothing here")
                 .accessibilityIdentifier("noAutomatic")
         } else if model.connections.isEmpty {
             // A new account: nothing can ask yet, so offer the ways to connect something.
             VStack(spacing: 10) {
-                EmptyState(symbol: "waveform.path.ecg", title: "Nothing yet")
+                EmptyState.calm("Nothing has asked yet.")
                     .accessibilityIdentifier("noActivity")
                 Button {
                     model.openSheet(.connectComputer)
@@ -263,6 +252,9 @@ struct ActivityScreen: View {
                 .accessibilityIdentifier("emptyConnectAi")
             }
             .padding(.horizontal, 32)
+        } else if model.pending.isEmpty {
+            // The pond already says it.
+            Color.clear.frame(height: 1).accessibilityIdentifier("noActivity")
         } else {
             EmptyState(symbol: "waveform.path.ecg", title: "Nothing yet")
                 .accessibilityIdentifier("noActivity")
@@ -275,41 +267,35 @@ struct ActivityScreen: View {
         let selected: Int64? = if case let .activityDetail(id)? = model.path(.activity).first { id } else { nil }
         let now = Timers.nowSeconds()
         let today = Date(timeIntervalSince1970: TimeInterval(now))
-        ForEach(Array(EntryText.days(entries).enumerated()), id: \.element.day) { index, group in
-            if index == 0 {
-                PageSectionHeader(EntryText.day(group.day, now: today)) { filterButton }
-            } else {
-                PageSectionHeader(EntryText.day(group.day, now: today))
+        ForEach(Array(EntryText.days(entries).enumerated()), id: \.element.day) { _, group in
+            PageSectionHeader(EntryText.day(group.day, now: today)) {
+                Text(ActivityText.dayCount(group.entries)).textRole(.meta).foregroundStyle(Palette.inkMeta)
             }
+            .padding(.top, 10)
             ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
-                let first = i == 0
                 let last = i == group.entries.count - 1
-                row(entry, selected: selected == entry.id, first: first, last: last, now: now)
+                row(entry, selected: selected == entry.id, now: now)
                 // Where the entries you have not seen end: everything above this line is new.
                 if entry.id == oldestUnseen && !last {
-                    NewMarker().background(Palette.elevated).padding(.horizontal, 16)
+                    NewMarker()
                 } else if !last {
-                    Hairline(inset: HistoryRow.hairlineInset(entry)).background(Palette.elevated).padding(.horizontal, 16)
+                    Rectangle().fill(Palette.rule).frame(height: 1).padding(.leading, 76).padding(.trailing, 24)
                 }
             }
         }
     }
 
-    private func row(_ entry: ActivityEntry, selected: Bool, first: Bool, last: Bool, now: Int64) -> some View {
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: first ? 20 : 0, bottomLeadingRadius: last ? 20 : 0,
-            bottomTrailingRadius: last ? 20 : 0, topTrailingRadius: first ? 20 : 0, style: .continuous
-        )
-        return Button {
+    private func row(_ entry: ActivityEntry, selected: Bool, now: Int64) -> some View {
+        Button {
             model.show(.activityDetail(entry.id), in: .activity)
             feedback.defaultTap()
         } label: {
-            HistoryRow(entry: entry, selected: selected, now: now)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                HistoryRow(entry: entry, selected: selected, glowing: model.fold.glowing(entry.id, now: context.date), now: now)
+            }
         }
         .buttonStyle(RowButtonStyle())
-        .background(Palette.elevated)
-        .clipShape(shape)
-        .contentShape(.contextMenuPreview, shape)
+        .correctionSwipe(entry)
         .contextMenu {
             Button("Open", systemImage: "arrow.up.right") {
                 model.show(.activityDetail(entry.id), in: .activity)
@@ -322,7 +308,6 @@ struct ActivityScreen: View {
                 feedback.play(.copied)
             }
         }
-        .padding(.horizontal, 16)
         .onScrollVisibilityChange(threshold: 0.6) { isVisible in
             if isVisible { seen.visible.insert(entry.id) } else { seen.visible.remove(entry.id) }
             markSeenSoon()
@@ -400,11 +385,11 @@ private final class SeenRows {
 private struct NewMarker: View {
     var body: some View {
         HStack(spacing: 10) {
-            Rectangle().fill(Palette.accent.opacity(0.4)).frame(height: 1)
-            Text("NEW ABOVE").font(RFont.sans(11.5, .semibold)).tracking(0.8).foregroundStyle(Palette.accent).fixedSize()
-            Rectangle().fill(Palette.accent.opacity(0.4)).frame(height: 1)
+            Rectangle().fill(Palette.violet.opacity(0.4)).frame(height: 1)
+            Text("New above").textRole(.label).foregroundStyle(Palette.violet).fixedSize()
+            Rectangle().fill(Palette.violet.opacity(0.4)).frame(height: 1)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
         .padding(.vertical, 6)
         .accessibilityIdentifier("newMarker")
     }
@@ -415,3 +400,31 @@ private struct NewMarker: View {
     PreviewHost { NavigationStack { ActivityScreen() } }
 }
 #endif
+
+/// What the core says about syncing with the account's other phone (#101): a soft row on paper under a hairline, the
+/// sync glyph, the core's words and OK, which dismisses it in the core. Sync never keeps anyone out; this row is all it
+/// shows.
+struct SyncNoticeRow: View {
+    var text: String
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 12) {
+            GlyphIcon(.refresh, size: 18).foregroundStyle(Palette.violet)
+            Text(text)
+                .font(RFont.sans(14))
+                .foregroundStyle(Palette.ink)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("OK") { Task { await model.dismissSyncNotice() } }
+                .buttonStyle(SignalButtonStyle(.soft, size: .small))
+                .fixedSize()
+        }
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        .padding(.horizontal, 24)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("syncNoticeBanner")
+    }
+}

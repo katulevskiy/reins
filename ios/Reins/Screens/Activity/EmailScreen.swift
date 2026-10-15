@@ -48,15 +48,26 @@ struct EmailScreen: View {
     @ViewBuilder private func content(_ entry: ActivityEntry, _ logged: ActivityMessage) -> some View {
         let email: EmailContent? = if case let .loaded(e) = load { e } else { nil }
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(([serviceName(entry.service.isEmpty ? "gmail" : entry.service)] + [entry.account ?? ""].filter { !$0.isEmpty }).joined(separator: " · "))
+                    .textRole(.label)
+                    .foregroundStyle(Palette.inkMeta)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .environment(\.layoutDirection, .leftToRight)
                 let subject = untrusted(email?.subject ?? logged.subject)
                 Text(subject.isEmpty ? "(no subject)" : subject)
-                    .font(RFont.sans(22, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .textRole(.sheetTitle)
+                    .foregroundStyle(Palette.ink)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("emailSubject")
-                ConnectorTags(service: entry.service, account: entry.account).padding(.top, 10)
-                HeaderLine(label: "From", value: untrusted(email?.from ?? logged.from)).padding(.top, 10).accessibilityIdentifier("emailFrom")
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+
+            VStack(spacing: 0) {
+                HeaderLine(label: "From", value: untrusted(email?.from ?? logged.from)).accessibilityIdentifier("emailFrom")
                 if let to = email?.to, !to.isEmpty {
                     HeaderLine(label: "To", value: to.map(untrusted).joined(separator: ", ")).accessibilityIdentifier("emailTo")
                 }
@@ -65,14 +76,13 @@ struct EmailScreen: View {
                 }
                 HeaderLine(label: "Date", value: TimeText.full(email?.date ?? logged.date))
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 24)
 
             switch load {
             case .loading:
                 HStack(spacing: 12) {
-                    ProgressView().tint(Palette.accent)
-                    Text("Fetching it from Gmail…").font(RFont.sans(15)).foregroundStyle(Palette.secondary)
+                    ProgressView().tint(Palette.violet)
+                    Text("Fetching it from Gmail…").textRole(.body).foregroundStyle(Palette.ink2)
                 }
                 .padding(24)
                 .accessibilityIdentifier("emailLoading")
@@ -91,33 +101,35 @@ struct EmailScreen: View {
             case let .loaded(e):
                 let body = untrusted(e.body)
                 Text(body.isEmpty ? "(This email has no text.)" : body)
-                    .font(RFont.sans(16))
-                    .foregroundStyle(Palette.text)
-                    .lineSpacing(4)
+                    .textRole(.body)
+                    .foregroundStyle(Palette.ink)
                     .textSelection(.enabled)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 18)
                     .accessibilityIdentifier("emailBody")
             }
         }
     }
 }
 
+/// "From        Bank <alerts@bank.com>": a header as a hairline fact.
 private struct HeaderLine: View {
     var label: String
     var value: String
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            Text(label).font(RFont.sans(13, .medium)).foregroundStyle(Palette.tertiary).frame(width: 52, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text(label).font(RFont.sans(15)).foregroundStyle(Palette.ink2).frame(width: 52, alignment: .leading)
             Text(value)
-                .font(RFont.sans(14.5))
-                .foregroundStyle(Palette.text)
+                .font(RFont.sans(15, .medium))
+                .foregroundStyle(Palette.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .environment(\.layoutDirection, .leftToRight)
                 .textSelection(.enabled)
         }
-        .padding(.top, 6)
+        .padding(.vertical, 12)
+        .frame(minHeight: 48)
+        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
         .accessibilityElement(children: .combine)
     }
 }

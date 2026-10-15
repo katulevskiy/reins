@@ -24,14 +24,30 @@ data class SignalPrefs(
 
 val LocalSignalPrefs = staticCompositionLocalOf { SignalPrefs() }
 
-/** The Appearance choices, kept on this phone: the sans and the field grain. */
+/** Settings › Appearance: paper follows the system, or stays Paper (light) or Graphite (dark). */
+enum class ThemeChoice(val label: String) {
+    System("System"),
+    Paper("Paper"),
+    Graphite("Graphite"),
+    ;
+
+    /** Whether the app draws dark, given what the system asks for. */
+    fun dark(systemDark: Boolean): Boolean = when (this) {
+        System -> systemDark
+        Paper -> false
+        Graphite -> true
+    }
+}
+
+/** The Appearance choices, kept on this phone: paper or graphite, the sans and the field grain. */
 @Immutable
-data class AppearanceChoice(val geist: Boolean = false, val grain: Boolean = true)
+data class AppearanceChoice(val geist: Boolean = false, val grain: Boolean = true, val theme: ThemeChoice = ThemeChoice.System)
 
 object Appearance {
     private const val PREFS = "appearance"
     private const val KEY_SANS = "sans"
     private const val KEY_GRAIN = "grain"
+    private const val KEY_THEME = "theme"
     private var state: MutableState<AppearanceChoice>? = null
 
     fun state(context: Context): MutableState<AppearanceChoice> = state ?: mutableStateOf(load(context)).also {
@@ -40,14 +56,22 @@ object Appearance {
     }
 
     fun set(context: Context, choice: AppearanceChoice) {
-        prefs(context).edit().putString(KEY_SANS, if (choice.geist) "geist" else "instrument").putBoolean(KEY_GRAIN, choice.grain).apply()
+        prefs(context).edit()
+            .putString(KEY_SANS, if (choice.geist) "geist" else "instrument")
+            .putBoolean(KEY_GRAIN, choice.grain)
+            .putString(KEY_THEME, choice.theme.name)
+            .apply()
         Fonts.geist = choice.geist
         state(context).value = choice
     }
 
     private fun load(context: Context): AppearanceChoice {
         val p = prefs(context)
-        return AppearanceChoice(geist = p.getString(KEY_SANS, null) == "geist", grain = p.getBoolean(KEY_GRAIN, true))
+        return AppearanceChoice(
+            geist = p.getString(KEY_SANS, null) == "geist",
+            grain = p.getBoolean(KEY_GRAIN, true),
+            theme = ThemeChoice.entries.firstOrNull { it.name == p.getString(KEY_THEME, null) } ?: ThemeChoice.System,
+        )
     }
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

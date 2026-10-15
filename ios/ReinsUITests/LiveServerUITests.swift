@@ -43,7 +43,7 @@ final class LiveServerUITests: XCTestCase {
 
     /// Through the setup's pages with their forward button ("Not now" on notifications) until `id` shows.
     private func advance(to id: String, timeout: TimeInterval = 10) {
-        for _ in 0..<8 {
+        for _ in 0..<5 {
             if element(id).waitForExistence(timeout: 1.5) { return }
             if element("onboardingNext").waitForExistence(timeout: timeout) { element("onboardingNext").tap() }
         }
@@ -88,18 +88,14 @@ final class LiveServerUITests: XCTestCase {
     }
 
     private func section(_ title: String) {
-        // Back to the section's root first: a pushed page that scrolled has the tab bar minimized, where a tap on the
-        // remaining button only brings the bar back.
+        // Back to the section's root first, as a person would.
         var tries = 0
         while app.navigationBars.buttons["BackButton"].exists && tries < 4 {
             app.navigationBars.buttons["BackButton"].tap()
             Thread.sleep(forTimeInterval: 0.8)
             tries += 1
         }
-        let tab = app.tabBars.buttons[title]
-        if !(tab.exists && tab.isHittable) { app.swipeDown() }
-        XCTAssertTrue(tab.waitForExistence(timeout: 5), "no tab \(title)")
-        tab.tap()
+        XCTAssertTrue(app.openTab(title, timeout: 5), "no tab \(title)")
     }
 
     func testSignInPairApproveAndLookAround() throws {
@@ -130,7 +126,7 @@ final class LiveServerUITests: XCTestCase {
         advance(to: "phoneReady", timeout: 30)
         advance(to: "onboardingDone")
         wait("onboardingDone").tap()
-        wait("integrations", 30)
+        wait("activityMood", 30)
         Thread.sleep(forTimeInterval: 3)
         XCTAssertFalse(element("registrationBanner").exists, "registering as the approval device failed")
         shot("02-signed-in")
@@ -145,10 +141,10 @@ final class LiveServerUITests: XCTestCase {
         approve("pairingSheet")
         shot("04-paired")
 
-        // Add the host's MCP server (Integrations > Add MCP server).
-        wait("integrations").tap()
+        // Add the host's MCP server (Connections > Add MCP server).
+        XCTAssertTrue(app.openTab("connections"), "no Connections tab")
         // Rows further down are made only once they scroll into view.
-        XCTAssertTrue(app.staticTexts["Gmail"].waitForExistence(timeout: 10), "Integrations did not open")
+        XCTAssertTrue(app.staticTexts["Gmail"].waitForExistence(timeout: 10), "Connections did not open")
         var tries = 0
         while !(element("addMcp").exists && element("addMcp").isHittable) && tries < 8 { app.swipeUp(); tries += 1 }
         wait("addMcp").tap()
@@ -181,15 +177,15 @@ final class LiveServerUITests: XCTestCase {
         XCTAssertNotNil(waitForFile("host-done", 90), "the host did not get all its results")
         XCTAssertFalse(element("approvalSheet").exists, "the permission should have answered the third call")
         shot("09-mcp-server")
-        section("Activity")
+        section("activity")
         Thread.sleep(forTimeInterval: 2)
         shot("10-activity")
 
-        section("Grants")
+        section("trust")
         Thread.sleep(forTimeInterval: 1)
-        shot("11-grants")
+        shot("11-trust")
 
-        section("Settings")
+        section("settings")
         Thread.sleep(forTimeInterval: 1)
         XCTAssertTrue(app.staticTexts[email].waitForExistence(timeout: 5) || app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", email)).firstMatch.exists, "Settings does not show the account")

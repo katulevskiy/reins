@@ -9,6 +9,7 @@ import Foundation
 /// (passwordless sign-in) makes a new account; `-demoLocked` finds one whose keys are on another phone instead (the recovery code is `DemoData.recoveryCode`; asking the other phone
 /// works after two polls, `-demoJoinDenied` refuses; resetting the vault starts it over as a new account).
 /// `-demoJoin` has another phone ask this one for the keys.
+/// `-demoQuiet`: nothing waits (Activity's pond and its mood line).
 /// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
 /// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
 enum DemoCore {
@@ -33,7 +34,8 @@ enum DemoCore {
             joinWaiting: args.contains("-demoJoin"),
             approvalElsewhere: otherPhone,
             passkeys: !args.contains("-demoNoPasskeys"),
-            passkeysOffline: args.contains("-demoPasskeysOffline")
+            passkeysOffline: args.contains("-demoPasskeysOffline"),
+            quiet: args.contains("-demoQuiet")
         )
     }
 }
@@ -65,6 +67,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     struct State {
         var session: SessionInfo?
+        /// `-demoSyncNotice`'s OK was tapped.
+        var syncNoticeDismissed = false
         var pending: [PendingItem] = []
         /// Bumped by every change to `pending`, so a waiting `sync` can return early.
         var pendingVersion = 0
@@ -128,13 +132,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     init(
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, modelOutdated: Bool = false, syncCap: Double = 5,
-        keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false
+        keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false,
+        quiet: Bool = false
     ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
         var s = State(model: modelInstalled ? DemoData.model(.installed, update: modelOutdated) : DemoData.model(.notInstalled))
         s.session = signedIn ? SessionInfo(serverUrl: DemoData.server, email: DemoData.email) : nil
-        s.pending = seeded.items
+        s.pending = quiet ? [] : seeded.items
         s.views = seeded.views
         s.pairings = seeded.pairings
         s.blobs = seeded.blobs
@@ -153,6 +158,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         s.approvalElsewhere = approvalElsewhere
         s.passkeys = passkeys ? [Self.demoPasskey] : []
         s.passkeysOffline = passkeysOffline
+        // `-demoMode bypass|overnight|lockdown` (screenshots): start with that mode running, as if started 12 minutes ago.
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-demoMode"), i + 1 < args.count {
+            switch args[i + 1] {
+            case "bypass": s.apGlobal = ApRow(mode: .manual, bypassUntil: now + 47 * 60 + 12, bypassSince: now - 12 * 60)
+            case "overnight": s.apGlobal = ApRow(mode: .overnight, overnightUntil: now + 6 * 3_600, overnightSince: now - 12 * 60, overnightReturn: .manual)
+            case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
+            default: break
+            }
+        }
         if joinWaiting {
             let join = DemoData.join(now)
             s.joins[join.id] = join
@@ -179,10 +194,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func session() async -> SessionInfo? { locked { $0.session } }
 
-    /// The demo has one phone: nothing to sync with, so never a notice.
-    func accountSyncNotice() async -> String? { nil }
+    /// The demo has one phone: nothing to sync with, so never a notice, except with `-demoSyncNotice` (tests,
+    /// screenshots), until it is dismissed.
+    func accountSyncNotice() async -> String? {
+        locked { $0.syncNoticeDismissed } || !ProcessInfo.processInfo.arguments.contains("-demoSyncNotice")
+            ? nil : "Synced with your other phone. A backup of this phone's changes is kept."
+    }
 
-    func dismissAccountSyncNotice() async throws {}
+    func dismissAccountSyncNotice() async throws { locked { $0.syncNoticeDismissed = true } }
 
     func restoreAccountSyncBackup() async throws -> Bool { false }
 
@@ -863,6 +882,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             ],
             warning: nil, favorite: false
         ),
+        VaultItemDetail(
+            id: "deploy", name: "Deploy key", kind: .sshKey,
+            fields: [
+                VaultField(key: "private_key", label: "Private key", value: nil, secret: true, multiline: true),
+                VaultField(key: "public_key", label: "Public key", value: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoDeployKey00000000000000000000000000 Deploy key", secret: false, multiline: true),
+                VaultField(key: "fingerprint", label: "Fingerprint", value: "SHA256:x1PqDemo0000000000000000000000000009fZk", secret: false, multiline: false),
+            ],
+            uses: [VaultUse(reference: "vault:Deploy key/public", hint: "Offered by the SSH agent of the desktop app (reins ssh setup); the private key stays on the phone")],
+            warning: nil, favorite: false
+        ),
     ]
 
     func devices() async throws -> [DeviceView] { locked { $0.devices } }
@@ -882,7 +911,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
                 .sorted { $0.name.lowercased() < $1.name.lowercased() }
                 .map { d in
-                    VaultItemSummary(id: d.id, name: d.name, kind: d.kind, subtitle: d.fields.first { !$0.secret }?.value ?? "", favorite: d.favorite)
+                    VaultItemSummary(
+                        id: d.id, name: d.name, kind: d.kind,
+                        subtitle: d.kind == .sshKey ? "SSH key · ed25519" : d.fields.first { !$0.secret }?.value ?? "", favorite: d.favorite
+                    )
                 }
         }
     }

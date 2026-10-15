@@ -128,12 +128,11 @@ class FeedbackFlowTest : FlowHarness() {
         core.grants = listOf(TestData.grant("g1"))
         core.revokedGrants.clear()
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:g1")
         awaitCore { Cue.Open in heard.cues } // the page opens with its cue
-        tap("revoke")
         heard.clear()
-        rule.onAllNodes(hasText("End now")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
+        hold("revoke")
         awaitCore { core.revokedGrants.contains("g1") }
         assertTrue(heard.played(Event.Revoked))
     }
@@ -141,10 +140,10 @@ class FeedbackFlowTest : FlowHarness() {
     @Test
     fun everyTabSwitchTaps() {
         launch()
-        awaitTag("tabGrants")
+        awaitTag("tabTrust")
         heard.clear()
         repeat(3) {
-            tap("tabGrants")
+            tap("tabTrust")
             awaitTag("newGrant")
             tap("tabActivity")
             awaitGone("newGrant")
@@ -224,7 +223,7 @@ class FeedbackFlowTest : FlowHarness() {
     fun withNoAiConnectedSettingsOffersTheMcpAddressToCopy() {
         core.connections = emptyList()
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connect")
         heard.clear()
         awaitText("http://127.0.0.1:8000/mcp")

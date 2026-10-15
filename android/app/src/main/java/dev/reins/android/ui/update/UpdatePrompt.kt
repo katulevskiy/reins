@@ -1,6 +1,10 @@
 package dev.reins.android.ui.update
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.shadow
+import dev.reins.android.design.ButtonSize
+import dev.reins.android.design.SignalButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,61 +69,60 @@ fun UpdatePrompt(status: UpdateStatus, onInstall: () -> Unit, onLater: () -> Uni
         is UpdateStatus.Failed -> "Update failed" to status.message
         else -> return
     }
+    // Signal (And-Core 05): a raised card just above the bar, a monochrome tile, and Later · Install beside the words.
+    val shape = RoundedCornerShape(24.dp)
     Column(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .glass(c, RoundedCornerShape(24.dp), 10.dp)
-            .padding(16.dp)
+            .padding(horizontal = 14.dp)
+            .shadow(24.dp, shape, ambientColor = androidx.compose.ui.graphics.Color(0x80000000), spotColor = androidx.compose.ui.graphics.Color(0x80000000))
+            .clip(shape)
+            .background(c.paperRaised)
+            .border(1.dp, c.rule, shape)
+            .padding(14.dp)
             .testTag("updatePrompt"),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(if (status is UpdateStatus.Failed) c.danger.copy(alpha = 0.12f) else c.accentSoft), contentAlignment = Alignment.Center) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(if (status is UpdateStatus.Failed) c.dangerWash else c.paperSunken), contentAlignment = Alignment.Center) {
                 when (status) {
-                    is UpdateStatus.Installing -> Spinner(c.accent, size = 22.dp)
+                    is UpdateStatus.Installing -> Spinner(c.ink, size = 20.dp)
                     is UpdateStatus.Failed -> GlyphIcon(Glyph.Warning, c.danger, size = 20.dp)
-                    else -> GlyphIcon(Glyph.Download, c.accent, size = 20.dp)
+                    else -> GlyphIcon(Glyph.Download, c.ink, size = 20.dp)
                 }
             }
-            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                RText(title, RType.sans(16f, FontWeight.SemiBold), c.text, maxLines = 1)
-                RText(body, RType.sans(14f, lineHeight = 19f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 4)
+                RText(title, RType.row, c.ink, maxLines = 1)
+                RText(body.removeSuffix("."), RType.meta, c.inkMeta, maxLines = 4)
+            }
+            if (status is UpdateStatus.Ready || status is UpdateStatus.Available || status is UpdateStatus.Failed) {
+                SignalButton("Later", Modifier.testTag("updatePromptLater"), style = ButtonStyle.Soft, size = ButtonSize.Compact, onClick = onLater)
+                if (status is UpdateStatus.Failed) {
+                    SignalButton("Try again", Modifier.testTag("updatePromptRetry"), size = ButtonSize.Compact, onClick = onRetry)
+                } else {
+                    SignalButton("Install", Modifier.testTag("updatePromptInstall"), size = ButtonSize.Compact, onClick = onInstall)
+                }
             }
         }
         if (status is UpdateStatus.Downloading) {
-            UpdateProgressBar(status.percent, Modifier.padding(top = 14.dp))
-        }
-        if (status is UpdateStatus.Ready || status is UpdateStatus.Available || status is UpdateStatus.Failed) {
-            Row(Modifier.fillMaxWidth().padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CapsuleButton("Later", Modifier.weight(1f).testTag("updatePromptLater"), style = ButtonStyle.Secondary, compact = true, onClick = onLater)
-                if (status is UpdateStatus.Failed) {
-                    CapsuleButton("Try again", Modifier.weight(1f).testTag("updatePromptRetry"), style = ButtonStyle.Accent, compact = true, onClick = onRetry)
-                } else {
-                    CapsuleButton("Install", Modifier.weight(1f).testTag("updatePromptInstall"), style = ButtonStyle.Accent, compact = true, glyph = Glyph.Download, onClick = onInstall)
-                }
-            }
+            UpdateProgressBar(status.percent, Modifier.padding(top = 12.dp))
         }
     }
 }
 
 /** Before Android's "install unknown apps" screen: why it is needed and what to turn on. */
 @Composable
-fun InstallPermissionDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit) {
-    val c = LocalColors.current
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        DialogFeedback()
-        Column(Modifier.padding(horizontal = 28.dp).fillMaxWidth().glass(c, RoundedCornerShape(26.dp), 16.dp).padding(22.dp)) {
-            RText("Allow updates", RType.sans(19f, FontWeight.SemiBold), c.text)
-            Spacer(Modifier.height(6.dp))
-            RText("Android asks once. Turn on “Allow from this source”.", RType.sans(15f, lineHeight = 21f), c.secondary)
-            Spacer(Modifier.height(20.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CapsuleButton("Not now", Modifier.weight(1f), style = ButtonStyle.Secondary, onClick = onDismiss)
-                CapsuleButton("Allow", Modifier.weight(1f).testTag("allowInstalls"), style = ButtonStyle.Accent, onClick = onOpenSettings)
-            }
-        }
-    }
+fun InstallPermissionDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit, version: String? = null) {
+    dev.reins.android.design.SignalDialog(
+        title = "Allow updates",
+        text = "Android asks once. Turn on “Allow from this source”" + (version?.let { " and Reins $it installs." } ?: "."),
+        glyph = dev.reins.android.design.Glyph.Download,
+        confirmLabel = "Allow",
+        onConfirm = onOpenSettings,
+        onDismiss = onDismiss,
+        italic = "updates",
+        cancelLabel = "Not now",
+        confirmTag = "allowInstalls",
+    )
 }
 
 /** The update prompt for [updates]. [allowed] is false while something more important is on screen (an approval sheet). */
@@ -142,6 +145,10 @@ fun InstallPermissionHost(updates: UpdateController) {
     val state by updates.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     if (state.askPermission) {
-        InstallPermissionDialog(onOpenSettings = { updates.openPermissionSettings(context) }, onDismiss = updates::dismissPermission)
+        InstallPermissionDialog(
+            onOpenSettings = { updates.openPermissionSettings(context) },
+            onDismiss = updates::dismissPermission,
+            version = state.status.release?.versionName,
+        )
     }
 }

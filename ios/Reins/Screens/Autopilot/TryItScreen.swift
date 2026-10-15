@@ -21,8 +21,17 @@ struct TryItScreen: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                GroupFooter("A request as Autopilot reads it: the facts first, then what the AI wrote. Edit anything; nothing is kept.")
-                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 4) {
+                    AskText([AskText.Run(text: "Try "), AskText.Run(text: "it", target: true)], role: .title)
+                        .foregroundStyle(Palette.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("A request as Autopilot reads it: the facts first, then what the AI wrote. Edit anything; nothing is kept.")
+                        .textRole(.body)
+                        .foregroundStyle(Palette.ink2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
                 if ap.settings != nil && !ap.modelReady {
                     IntegrationBanner(text: "Download the model first.", kind: .warning)
                         .accessibilityIdentifier("tryNoModel")
@@ -41,7 +50,7 @@ struct TryItScreen: View {
                 if ap.profiles.count > 1 {
                     chips("Profile") {
                         ForEach(ap.profiles, id: \.id) { p in
-                            AutopilotChip(title: "\(AutopilotText.profileIcon(p))  \(untrusted(p.name))", selected: p.id == profile?.id, identifier: "tryProfile:\(p.id)") {
+                            AutopilotChip(title: untrustedName(p.name, limit: 40), selected: p.id == profile?.id, identifier: "tryProfile:\(p.id)") {
                                 chosenProfile = p.id
                                 ap.clearEvaluation()
                             }
@@ -63,23 +72,22 @@ struct TryItScreen: View {
                     .focused($editing)
                     .frame(minHeight: 200)
                     .padding(10)
-                    .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(editing ? Palette.accent.opacity(0.5) : Palette.hairline, lineWidth: editing ? 1.25 : 0.5))
+                    .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(editing ? Palette.violet : Palette.rule, lineWidth: editing ? 1.5 : 1))
                     .accessibilityLabel("The request")
                     .accessibilityIdentifier("situation")
                 }
 
                 VStack(spacing: 12) {
-                    ActionButton(
-                        title: "Ask Autopilot",
-                        symbol: "sparkles",
-                        kind: .accent,
-                        busy: ap.evaluating,
-                        enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ) {
+                    Button {
                         editing = false
                         Task { await ap.evaluate(profileId: profile?.id, situation: text) }
+                    } label: {
+                        if ap.evaluating { ProgressView().tint(Palette.onInverse) } else { Text("Ask Autopilot") }
                     }
+                    .buttonStyle(SignalButtonLook(kind: .inverse))
+                    .frame(height: 54)
+                    .disabled(ap.evaluating || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("evaluate")
                     if let error = ap.error {
                         IntegrationBanner(text: error, kind: .error).accessibilityIdentifier("tryError")
@@ -100,8 +108,8 @@ struct TryItScreen: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Palette.background.ignoresSafeArea())
-        .navigationTitle("Try it")
-        .navigationSubtitle(profile.map { untrusted($0.name) } ?? "")
+        .navigationTitle("")
+        .navigationSubtitle(profile.map { untrustedName($0.name) } ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
@@ -139,15 +147,16 @@ private struct VerdictCard: View {
                     Image(systemName: AutopilotStyle.symbol(s.verdict)).font(.system(size: 22, weight: .bold)).foregroundStyle(tint)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    AutopilotCaption("Autopilot would")
-                    Text(s.judged ? AutopilotText.verdictWord(s.verdict) : "Leave it to you")
-                        .font(RFont.sans(26, .semibold))
+                    Text("Autopilot would").textRole(.label).foregroundStyle(Palette.inkMeta)
+                    // "Deny *91%*": the verdict in the serif, how sure in italic.
+                    (Text(s.judged ? AutopilotText.verdictWord(s.verdict) : "Leave it to you").font(RFont.serif(38))
+                        + Text(s.judged ? " \(AutopilotText.percent(s.verdict == .deny ? s.pDeny : s.pApprove))" : "").font(RFont.serif(38, italic: true)))
                         .foregroundStyle(tint)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .accessibilityIdentifier("verdictWord")
                     if s.judged {
-                        Text("\(AutopilotText.percent(s.confidence)) confident").font(RFont.sans(13.5)).foregroundStyle(Palette.secondary)
+                        Text("\(AutopilotText.percent(s.confidence)) confident").textRole(.meta).foregroundStyle(Palette.inkMeta)
                     }
                 }
             }
@@ -177,8 +186,8 @@ private struct VerdictCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 0.75))
+        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("verdict")
     }

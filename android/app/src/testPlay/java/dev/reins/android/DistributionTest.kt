@@ -59,7 +59,7 @@ class DistributionTest : FlowHarness() {
     fun textMessagesAreNotListedEvenThoughTheCoreCataloguesThem() {
         assertTrue(core.catalogue.any { it.service == "sms" })
         launch()
-        tap("integrations")
+        tap("tabConnections")
         awaitTag("service:device_contacts")
         assertFalse(has("service:sms"))
         assertTrue(container.state.services.value.none { it.service == "sms" })

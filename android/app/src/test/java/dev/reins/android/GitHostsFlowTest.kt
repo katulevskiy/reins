@@ -23,7 +23,7 @@ import org.robolectric.annotation.GraphicsMode
 class GitHostsFlowTest : FlowHarness() {
     private fun openService(id: String) {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:$id")
     }
 
@@ -37,7 +37,7 @@ class GitHostsFlowTest : FlowHarness() {
     @Test
     fun theIntegrationsListHasTheNewGitHosts() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         awaitTag("service:gitlab")
         awaitTag("service:codeberg")
         awaitTag("service:bitbucket")

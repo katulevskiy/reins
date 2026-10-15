@@ -162,7 +162,8 @@ final class IntegrationsLogicTests: XCTestCase {
     func testEachKindOfServiceSaysWhatToDoWhenItNeedsTheUserAgain() {
         XCTAssertEqual(ServiceCopy.needsAgain(service("telegram", kind: "telegram")), "Signed out")
         XCTAssertEqual(ServiceCopy.needsAgain(service("github", kind: "token")), "Token expired")
-        XCTAssertEqual(ServiceCopy.needsAgain(service("gcalendar", kind: "google")), "Allow again")
+        XCTAssertEqual(ServiceCopy.needsAgain(service("gcalendar", kind: "google")), "Token expired")
+        XCTAssertEqual(ServiceCopy.needsAgain(service("contacts", kind: "device")), "Access turned off")
         XCTAssertTrue(ServiceCopy.canAllowAgain(service("gcalendar", kind: "google")))
         XCTAssertTrue(ServiceCopy.canAllowAgain(service("device_contacts", kind: "device")))
         XCTAssertFalse(ServiceCopy.canAllowAgain(service("telegram", kind: "telegram")))

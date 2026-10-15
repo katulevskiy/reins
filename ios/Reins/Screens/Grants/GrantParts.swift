@@ -119,19 +119,23 @@ struct FormLabel: View {
 /// A text field in the grant forms and sign-in: a soft rounded well, mono for addresses.
 struct FieldWell: ViewModifier {
     var mono = false
+    /// What was typed is wrong: the ring turns red (the meta line below says why).
+    var error = false
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         content
             .font(mono ? RFont.mono(15) : RFont.sans(16))
-            .foregroundStyle(Palette.text)
+            .foregroundStyle(Palette.ink)
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.vertical, 13)
+            .background(Palette.paperRaised, in: shape)
+            .overlay(shape.strokeBorder(error ? Palette.danger : Palette.rule, lineWidth: error ? 1.5 : 1))
     }
 }
 
 extension View {
-    func fieldWell(mono: Bool = false) -> some View { modifier(FieldWell(mono: mono)) }
+    func fieldWell(mono: Bool = false, error: Bool = false) -> some View { modifier(FieldWell(mono: mono, error: error)) }
 }
 
 /// A message under a form: what is wrong, or what went well.
@@ -160,18 +164,20 @@ struct FormBanner: View {
 struct GrantCard: View {
     var grant: GrantView
     var now: Int64
+    /// A hairline row (Trust's list) instead of a card.
+    var row = false
 
     var body: some View {
         let clock = grantClock(grant, now: now)
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        HStack(alignment: .center, spacing: 13) {
+        HStack(alignment: .center, spacing: row ? 14 : 13) {
             ServiceMini(
                 service: grant.service, symbol: ActionKind.of(grant.action).symbol,
-                connectionId: grant.connectionId, label: grant.connectionLabel
+                connectionId: grant.connectionId, label: grant.connectionLabel, size: row ? 38 : 44
             )
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: row ? 2 : 4) {
                 Text(untrusted(grant.summary))
-                    .font(RFont.sans(15.5, .semibold))
+                    .font(row ? TextRole.row.font() : RFont.sans(15.5, .semibold))
                     .foregroundStyle(Palette.text)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -191,21 +197,40 @@ struct GrantCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            TimePie(clock: clock, size: 48)
+            TimePie(clock: clock, size: row ? 38 : 48)
         }
-        .padding(14)
-        .background {
-            if clock.soon {
-                shape.fill(LinearGradient(colors: [Palette.danger.opacity(0.07), Palette.danger.opacity(0.02)], startPoint: .top, endPoint: .bottom))
-                    .background(Palette.elevated, in: shape)
-            } else {
-                shape.fill(Palette.elevated)
-            }
-        }
-        .overlay(shape.strokeBorder(clock.soon ? Palette.danger.opacity(0.35) : Palette.hairline, lineWidth: 1))
-        .contentShape(shape)
+        .modifier(GrantCardSurface(row: row, soon: clock.soon, shape: shape))
+        .contentShape(row ? AnyShape(Rectangle()) : AnyShape(shape))
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens the grant")
+    }
+}
+
+/// A grant's card surface, or a hairline row's: rows are hairlines, never cards.
+private struct GrantCardSurface<S: InsettableShape>: ViewModifier {
+    var row: Bool
+    var soon: Bool
+    var shape: S
+
+    func body(content: Content) -> some View {
+        if row {
+            content
+                .padding(.vertical, 9)
+                .frame(minHeight: 56)
+                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        } else {
+            content
+                .padding(14)
+                .background {
+                    if soon {
+                        shape.fill(LinearGradient(colors: [Palette.danger.opacity(0.07), Palette.danger.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                            .background(Palette.elevated, in: shape)
+                    } else {
+                        shape.fill(Palette.elevated)
+                    }
+                }
+                .overlay(shape.strokeBorder(soon ? Palette.danger.opacity(0.35) : Palette.hairline, lineWidth: 1))
+        }
     }
 }
 
@@ -270,18 +295,19 @@ struct EndedGrantRow: View {
                 service: grant.service, symbol: ActionKind.of(grant.action).symbol,
                 connectionId: grant.connectionId, label: grant.connectionLabel
             )
-            .opacity(0.7)
+            // Dimmed, not gone: the service's mark at 55 %.
+            .opacity(0.55)
             VStack(alignment: .leading, spacing: 5) {
                 Button(action: onOpen) {
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(untrusted(grant.summary))
-                            .font(RFont.sans(15.5, .medium))
-                            .foregroundStyle(Palette.text)
+                            .font(TextRole.row.font())
+                            .foregroundStyle(Palette.ink)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
-                        Text(untrusted(grant.connectionLabel) + " · " + GrantText.endedLine(grant))
-                            .font(RFont.sans(12.5))
-                            .foregroundStyle(Palette.tertiary)
+                        Text(untrustedName(grant.connectionLabel) + " · " + GrantText.endedLine(grant))
+                            .textRole(.meta)
+                            .foregroundStyle(Palette.inkMeta)
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -293,18 +319,20 @@ struct EndedGrantRow: View {
                     Button(action: onResume) {
                         Label("Resume", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(SmallCapsuleStyle(kind: .secondary))
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small))
+                    .fixedSize()
                     .accessibilityIdentifier("resume:\(grant.id)")
                     Button(role: .destructive, action: onDelete) {
-                        Label("Delete", systemImage: "trash")
+                        Text("Delete")
                     }
-                    .buttonStyle(SmallCapsuleStyle(kind: .danger))
+                    .buttonStyle(SignalButtonStyle(.danger, size: .small))
+                    .fixedSize()
                     .accessibilityIdentifier("delete:\(grant.id)")
                 }
-                .padding(.top, 6)
+                .padding(.top, 8)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 24)
         .padding(.vertical, 14)
     }
 }
