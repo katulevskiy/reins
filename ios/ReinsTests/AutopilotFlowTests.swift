@@ -14,12 +14,12 @@ final class AutopilotFlowTests: XCTestCase {
     private var model: AppModel!
     private var ap: AutopilotModel!
 
-    private func start(modelInstalled: Bool = true) async {
+    private func start(modelInstalled: Bool = true, modelOutdated: Bool = false) async {
         feedback = EventFeedback()
         owner = AnswerAuthenticator()
         network = FakeNetwork()
         surroundings = FakeSurroundings()
-        core = DemoReinsCore(modelInstalled: modelInstalled, syncCap: 0.3)
+        core = DemoReinsCore(modelInstalled: modelInstalled, modelOutdated: modelOutdated, syncCap: 0.3)
         let downloads = ModelDownloads(core: core, feedback: feedback, network: network, surroundings: surroundings)
         model = AppModel(core: core, feedback: feedback, authenticator: owner, demo: true, modelDownloads: downloads)
         await model.refreshSession()
@@ -386,6 +386,29 @@ final class AutopilotFlowTests: XCTestCase {
         network.set(.unmetered)
         XCTAssertEqual(ap.downloadJob, .idle, "a cancelled download does not start by itself")
         XCTAssertFalse(ap.modelReady)
+    }
+
+    func testAnOlderModelUpdatesLikeADownloadAndKeepsScoringMeanwhile() async {
+        await start(modelOutdated: true)
+        XCTAssertTrue(ap.modelUpdatable, "the row says Update, not Ready")
+        XCTAssertTrue(ap.modelReady)
+        network.set(.cellular)
+        XCTAssertTrue(ap.needsMobileDataConsent(), "Wi-Fi only holds for an update too")
+        ap.download()
+        XCTAssertEqual(ap.downloadJob, .waiting)
+        XCTAssertTrue(ap.modelUpdatable)
+        network.set(.unmetered)
+        XCTAssertEqual(ap.downloadJob, .running, "Wi-Fi came back")
+        await until { model.modelDownloads.downloaded > 0 }
+        XCTAssertEqual(ap.model?.state, .downloading)
+        XCTAssertNotNil(AutopilotText.fraction(ap.model!), "the row shows how far, as a download does")
+        XCTAssertFalse(ap.modelUpdatable)
+        XCTAssertTrue(ap.modelReady, "the older model still scores while the newer one comes")
+        await until { ap.downloadJob == .idle }
+        await until { model.autopilot?.model.update == false }
+        XCTAssertEqual(ap.model?.state, .installed, "Ready")
+        XCTAssertFalse(ap.modelUpdatable)
+        XCTAssertEqual(model.autopilot?.model.risk, true, "the newer model rates risk")
     }
 
     func testTheModelCanBeDeleted() async {

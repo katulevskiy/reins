@@ -123,7 +123,7 @@ struct AutopilotScreen: View {
             }
 
             AutopilotGroup(header: nil) {
-                ModelRow(ap: ap) { modelOpen = true }
+                ModelRow(ap: ap, onUpdate: download) { modelOpen = true }
                 RowDivider(inset: 60)
                 AutopilotLinkRow(title: "Try it", symbol: "flask.fill", tint: Palette.send, identifier: "openTryIt") {
                     if !ap.modelReady {
@@ -518,15 +518,37 @@ private struct ModelOffer: View {
     }
 }
 
-/// "On-device model": Ready, the download's percent, or Download; opens the model's details.
+/// "On-device model": Ready, Update (a tap downloads the newer model), the download's percent, or Download; opens the
+/// model's details.
 private struct ModelRow: View {
     var ap: AutopilotModel
+    var onUpdate: () -> Void
     var action: () -> Void
+    @Environment(\.feedback) private var feedback
 
     var body: some View {
         AutopilotLinkRow(title: "On-device model", symbol: "cpu", tint: Palette.read, identifier: "modelRow") {
             if let m = ap.model {
-                if m.state == .installed {
+                if ap.modelUpdatable, ap.downloadJob == .waiting {
+                    Text("Waiting").font(RFont.sans(15)).foregroundStyle(Palette.secondary)
+                        .accessibilityIdentifier("modelUpdateWaiting")
+                } else if ap.modelUpdatable {
+                    Button {
+                        feedback.play(.tap)
+                        onUpdate()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.down.circle").font(.system(size: 14, weight: .medium))
+                            Text("Update").font(RFont.sans(15, .medium))
+                        }
+                        .foregroundStyle(Palette.accent)
+                        .padding(.horizontal, 6)
+                        .frame(minHeight: 30)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("updateModel")
+                } else if m.state == .installed {
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle").font(.system(size: 14, weight: .medium))
                         Text("Ready").font(RFont.sans(15))
@@ -543,6 +565,12 @@ private struct ModelRow: View {
             }
         } action: {
             action()
+        }
+        // The row reads as one element; Update stays reachable as its action.
+        .accessibilityActions {
+            if ap.modelUpdatable, ap.downloadJob == .idle {
+                Button("Update", action: onUpdate)
+            }
         }
     }
 }
@@ -714,6 +742,14 @@ private struct ModelCard: View {
                 .font(RFont.sans(13.5, .medium))
                 .foregroundStyle(m.state == .failed ? Palette.danger : Palette.secondary)
                 .padding(.top, 12)
+            if AutopilotText.modelUpdatable(m), !waiting {
+                Text(AutopilotText.modelUpdateLine)
+                    .font(RFont.sans(13))
+                    .foregroundStyle(Palette.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+                    .accessibilityIdentifier("modelUpdateLine")
+            }
             if downloading {
                 MeterBar(fraction: AutopilotText.fraction(m), tint: Palette.accent, height: 8)
                     .padding(.top, 10)
@@ -731,9 +767,15 @@ private struct ModelCard: View {
                     ActionButton(title: "Cancel", kind: .secondary, compact: true) { ap.cancelDownload() }
                         .padding(.top, 14)
                 } else if m.state == .installed {
-                    ActionButton(title: "Delete model", symbol: "trash", kind: .destructive, compact: true, action: onDelete)
-                        .accessibilityIdentifier("deleteModel")
-                        .padding(.top, 14)
+                    HStack(spacing: 10) {
+                        if m.update {
+                            ActionButton(title: "Update", symbol: "arrow.down.circle", kind: .accent, compact: true, action: onDownload)
+                                .accessibilityIdentifier("updateModelDetails")
+                        }
+                        ActionButton(title: "Delete model", symbol: "trash", kind: .destructive, compact: true, action: onDelete)
+                            .accessibilityIdentifier("deleteModel")
+                    }
+                    .padding(.top, 14)
                 } else {
                     ActionButton(
                         title: m.state == .failed ? "Try again" : "Download",

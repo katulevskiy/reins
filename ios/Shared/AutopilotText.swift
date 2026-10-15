@@ -597,6 +597,18 @@ extension AutopilotText {
         return p.name.lowercased() == "work" ? "💼" : "🙂"
     }
 
+    /// The model can score now: installed, or an older one still in use while its update downloads.
+    static func modelUsable(_ m: ModelStatus?) -> Bool {
+        guard let m else { return false }
+        return m.state == .installed || (m.state == .downloading && m.update)
+    }
+
+    /// An older model is installed and a newer one can be downloaded.
+    static func modelUpdatable(_ m: ModelStatus?) -> Bool { m?.state == .installed && m?.update == true }
+
+    /// Under the model's details when a newer one is there to download.
+    static let modelUpdateLine = "A newer model is available: it also rates risk, which Overnight needs."
+
     /// The model card's state line.
     static func modelState(_ m: ModelStatus, waitingForNetwork: Bool, wifiOnly: Bool) -> String {
         if m.state == .downloading { return "Downloading · " + progressText(m) }
