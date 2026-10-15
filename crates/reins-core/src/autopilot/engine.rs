@@ -1290,14 +1290,20 @@ impl Engine {
         by: By,
     ) -> Result<(), CoreError> {
         if verdict == Verdict::Approve {
+            // The mode as it is now, not as it was when the request was judged: a change in between (another mode, a
+            // lockdown, an Overnight that ended or was stopped) leaves the request to the user.
+            let now_mode = self.ap_mode_for(&subject.connection_id, unix_now()).ok();
+            let still = |m: AutopilotMode| now_mode == Some(m) && s.mode == m;
             let allowed = match &by {
-                By::Bypass => true,
+                By::Bypass => still(AutopilotMode::Bypass),
                 By::Lockdown | By::Overnight(None) => false,
-                // Overnight's gate proved it, for this very request
-                By::Overnight(Some(proof)) => proof.request_id() == subject.id,
-                // Overnight with a model that rates risk approves only through its gate
+                // Overnight's gate proved it, for this very request, and Overnight still holds for its AI
+                By::Overnight(Some(proof)) => proof.request_id() == subject.id && still(AutopilotMode::Overnight),
+                // Auto, or an Overnight without a model that rates risk (which decides like Auto): Overnight with one
+                // approves only through its gate
                 By::Autopilot => {
-                    !(s.mode == AutopilotMode::Overnight && s.judged.as_ref().is_some_and(|j| j.risk_declared))
+                    (still(AutopilotMode::Auto) || still(AutopilotMode::Overnight))
+                        && !(s.mode == AutopilotMode::Overnight && s.judged.as_ref().is_some_and(|j| j.risk_declared))
                 }
             };
             if !allowed {

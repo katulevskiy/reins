@@ -1148,6 +1148,76 @@ async fn steering_in_a_command_cannot_lower_the_risk() {
     assert!(seen.iter().any(|t| t.contains("target: make clean") && !t.contains("pre-approved")), "{seen:?}");
 }
 
+/// The gates in order, each on its own: Lockdown first, a just-paired AI waits, only Bypass skips the floor Overnight
+/// keeps, an Overnight never reaches an AI kept on Manual or locked down, rate limits and the pause apply before an
+/// approval, and nothing Overnight approves outlives it.
+#[tokio::test]
+async fn the_gates_hold_in_order_in_every_mode() {
+    let env = env_risk().await;
+    let key = desktop_key(&env);
+    known_and_unlocked(&env).await;
+    env.relay("seed-3", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    env.approve("seed-3").await;
+    env.unlock("desktop/ask").await;
+    // Lockdown before anything: a global Overnight never reaches an AI locked down, nor one kept on Manual
+    env.mode(Some(OTHER), AutopilotMode::Lockdown).await;
+    env.mode(None, AutopilotMode::Overnight).await;
+    env.relay("locked", OTHER, email("friend@x.com", "hi")).await;
+    assert!(env.decided().iter().any(|(id, v, by)| id == "locked" && *v == Verdict::Deny && by == "lockdown"));
+    env.mode(Some(OTHER), AutopilotMode::Manual).await;
+    env.relay("manual", OTHER, email("friend@x.com", "hi again")).await;
+    assert!(!env.decided().iter().any(|(id, _, _)| id == "manual"), "kept on Manual");
+    // a just-paired AI waits in Overnight
+    env.relay("young", NEW, email("friend@x.com", "hi")).await;
+    assert!(!env.decided().iter().any(|(id, _, _)| id == "young"));
+    // the floor Overnight keeps (a standing permission) waits; only Bypass takes it
+    env.relay("grant", OLD, grant()).await;
+    assert!(!env.decided().iter().any(|(id, _, _)| id == "grant"));
+    // rate limits apply before an approval
+    let now = unix_now();
+    for _ in 0..gates::RATE_PER_10_MIN {
+        env.store().ap_rate_add(OLD, now - 30).unwrap();
+    }
+    env.relay("busy", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    assert!(!env.decided().iter().any(|(id, _, _)| id == "busy"));
+    assert!(env.suggestion("busy").await.reason.contains("unusual volume"));
+    env.store().lock().unwrap().execute_batch("DELETE FROM autopilot_rate;").unwrap();
+    // what it approves carries its origin and grants nothing that outlives it
+    env.relay("ok", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    assert!(env.decided().iter().any(|(id, v, by)| id == "ok" && *v == Verdict::Approve && by == "overnight"));
+    assert!(env.store().grants().unwrap().is_empty());
+    env.core.start_bypass(None, Some(15)).await.unwrap();
+    assert!(env.decided().iter().any(|(id, v, by)| id == "grant" && *v == Verdict::Approve && by == "bypass"));
+}
+
+/// The mode is read again when a decision is carried out: a mode changed while the model was judging leaves the
+/// request to the user (a proof is not good for a mode that is gone).
+#[tokio::test]
+async fn a_mode_changed_while_judging_leaves_the_request_to_the_user() {
+    let env = env_risk().await;
+    let key = desktop_key(&env);
+    known_and_unlocked(&env).await;
+    env.relay("seed-3", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
+    env.approve("seed-3").await;
+    env.unlock("desktop/ask").await;
+    for (to, id) in [(AutopilotMode::Manual, "r1"), (AutopilotMode::Lockdown, "r2")] {
+        env.mode(None, AutopilotMode::Overnight).await;
+        env.model.stall_ms.store(1_500, Ordering::SeqCst);
+        let core = Arc::clone(&env.core);
+        let call = hook_ask(&key, "", "command:rm -r", "rm -rf build");
+        let judging = tokio::spawn(async move { core.engine().process_relayed(request(id, OLD, call)).await });
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        env.core.set_autopilot_mode(None, Some(to), None).await.unwrap();
+        judging.await.unwrap().unwrap();
+        env.model.stall_ms.store(0, Ordering::SeqCst);
+        assert!(
+            !env.decided().iter().any(|(d, v, _)| d == id && *v == Verdict::Approve),
+            "{to:?}: {:?}",
+            env.decided()
+        );
+    }
+}
+
 /// The neutral view can only add: when it alone reads the request as harmless, the other views' catastrophic rating
 /// still holds it.
 #[tokio::test]
