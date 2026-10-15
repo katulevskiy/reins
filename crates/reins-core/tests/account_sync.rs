@@ -218,11 +218,15 @@ async fn an_upload_that_loses_the_race_merges_and_retries() {
     assert_eq!(integrations(&c).await, ["first", "from-a", "from-b"]);
 }
 
-/// The server answers with a state this phone cannot open (another key, or bytes that are no state at all), newer or
-/// older than its own: the phone opens with its own data and a notice, and never uploads over what it cannot read.
+/// The server answers with a newer state this phone cannot open (another key, a forged revision, bytes that are no
+/// state at all), or with an older revision (lost, or replayed): the phone opens with its own data and a notice, and
+/// never uploads over it.
 #[tokio::test]
-async fn a_state_that_does_not_open_leaves_a_notice_and_is_never_overwritten() {
-    for revision in [9, 1] {
+async fn a_state_that_does_not_open_or_is_older_leaves_a_notice_and_is_never_overwritten() {
+    for (revision, notice) in [
+        (9, "Couldn't read your other phone's changes."),
+        (1, "The server sent an older copy of this account. It was ignored."),
+    ] {
         let cloud = Cloud::default();
         let server = server(&cloud).await;
         let dir = tempfile::tempdir().unwrap();
@@ -238,11 +242,7 @@ async fn a_state_that_does_not_open_leaves_a_notice_and_is_never_overwritten() {
         let app = core(dir.path());
         assert!(app.session().await.is_some(), "revision {revision}: still opens");
         assert_eq!(integrations(&app).await, ["first", "second"]);
-        assert_eq!(
-            app.account_sync_notice().await.as_deref(),
-            Some("Couldn't read your other phone's changes."),
-            "revision {revision}"
-        );
+        assert_eq!(app.account_sync_notice().await.as_deref(), Some(notice), "revision {revision}");
         app.engine().register_account("github", "third").unwrap();
         app.accounts().await.unwrap();
         cloud.settle().await;

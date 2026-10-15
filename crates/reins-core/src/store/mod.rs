@@ -83,6 +83,15 @@ CREATE TABLE IF NOT EXISTS handled (id TEXT PRIMARY KEY, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS connection_prefs (connection_id TEXT PRIMARY KEY, icon TEXT);
 CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB NOT NULL);
 ";
+/// Every deleted grant leaves a tombstone (`meta` key `app.grant-tombstone.<id>`, kept for good: a grant may have no
+/// end), so that no merge with another phone's copy brings it back (see `merge.rs`). In `meta`, which every version
+/// syncs, rather than a table of its own that older versions would refuse. Imports drop it while they replace rows.
+const GRANT_TOMBSTONES: &str = "
+CREATE TRIGGER IF NOT EXISTS grant_tombstone AFTER DELETE ON grants BEGIN
+    INSERT OR IGNORE INTO meta (key, value) VALUES ('app.grant-tombstone.' || old.id, old.created_at);
+END;
+";
+pub(crate) const GRANT_TOMBSTONE_PREFIX: &str = "app.grant-tombstone.";
 
 /// Columns and tables added after the first release, applied once each (`PRAGMA user_version`). A table added to
 /// [`SCHEMA`] needs one here too: a sealed database restored from disk keeps the tables it was written with.
@@ -240,6 +249,7 @@ const DATA_FIXUPS: &str = DROP_TOPIC_DESKTOP_GRANTS;
 /// restored from disk (written by this version, an older one, or another process).
 fn prepare(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(SCHEMA)?;
+    conn.execute_batch(GRANT_TOMBSTONES)?;
     migrate(conn)?;
     conn.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
     Ok(())
@@ -675,6 +685,25 @@ pub(crate) mod tests {
             server_url: "https://rw.example.com".to_owned(),
             email: "me@example.com".to_owned(),
             refresh_token: Zeroizing::new("REFRESH-TOKEN-SECRET".to_owned()),
+        }
+    }
+
+    /// An Activity entry, as approving a search writes it.
+    pub(crate) fn audit_record() -> AuditRecord {
+        AuditRecord {
+            seq: 0,
+            at: 5,
+            connection_id: "c1".to_owned(),
+            connection_label: "ChatGPT".to_owned(),
+            action: "search".to_owned(),
+            outcome: "released".to_owned(),
+            detail: "2 messages".to_owned(),
+            grant_id: None,
+            service: "gmail".to_owned(),
+            account: None,
+            count: 2,
+            info: AuditInfo::default(),
+            op: String::new(),
         }
     }
 

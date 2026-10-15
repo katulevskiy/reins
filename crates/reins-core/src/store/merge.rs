@@ -1,15 +1,22 @@
 //! Three-way merge of portable account snapshots: the state both phones last agreed on (the base), this phone's,
-//! and the server's. Each record is merged on its own:
+//! and the server's. What the snapshots carry and how each table merges:
 //!
-//! - changed on one side only: that side's version;
-//! - changed on both: deleted wins over edited; a grant becomes the more restrictive of the two (revoked over
-//!   active, the earlier expiry, the fewer uses left, never a changed scope); a row with `updated_at` the newer one;
-//!   anything else the server's (what the other phone already uploaded);
-//! - logs (activity, Autopilot memory): entries added on either side are all kept, numbered after the server's.
+//! | table | merge |
+//! |---|---|
+//! | `grants` | security: never more permissive than either side or the base (see [`merge_grant`]); deleted on either side, or tombstoned, stays deleted |
+//! | `autopilot_settings` | security: lockdown on either side wins; otherwise the more restrictive mode; a bypass ends at the earlier time and one stopped on either side stays stopped; clocks never decide |
+//! | `audit` (Activity) | grow-only: the union of both phones' entries, trimmed to the newest [`AUDIT_RETENTION`]; never a conflict |
+//! | `autopilot_memory` | entries added on either side are kept; one forgotten on either side goes |
+//! | `meta` | per key; grant tombstones are a grow-only set; JSON settings merge entry by entry (always-ask: asking wins) |
+//! | `accounts`, `secrets`, `desktop_keys`, `mcp_servers`, `connection_prefs`, `autopilot_profiles`, `autopilot_targets` | per row: a change on one side wins; on both, deleted beats edited, else the server's |
 //!
-//! Without a base (an older version kept only a hash of it, or it was lost) nothing can tell an addition here from a
-//! deletion there: the server's version wins, except that a grant is never left less restrictive than this phone's
-//! and log entries are still all kept. [`Merged::dropped_local`] then says whether anything of this phone's was lost.
+//! Not synced at all (this phone's own, `snapshot.rs`): `session`, `pending`, `handled`, `autopilot_suggestions`,
+//! `autopilot_rate`, installation keys and metadata, and `audit_snapshots`.
+//!
+//! Without a base (an older version kept only a hash of it, or it was lost) the server's version wins, except that
+//! grants and modes still only tighten and logs keep both phones' entries. [`Merged::dropped_local`] then says whether
+//! anything of this phone's was lost.
+use super::AUDIT_RETENTION;
 use super::snapshot::{Cell, Snapshot, Table, identity};
 use reins_policy::Grant;
 use serde_json::Value as Json;
@@ -28,8 +35,9 @@ type Row = Vec<Cell>;
 enum Kind {
     /// By these primary key columns.
     Keyed(&'static [&'static str]),
-    /// An append-only log numbered by this column, which each phone counts on its own.
-    Log(&'static str),
+    /// A log numbered by this column, which each phone counts on its own: rows are told apart by their content.
+    /// `grow_only`: nothing is ever removed by a merge (Activity); otherwise a removal on either side carries.
+    Log(&'static str, bool),
 }
 
 /// Every portable table needs a rule here (a test checks): one without is merged as a whole.
@@ -40,8 +48,8 @@ fn kind(table: &str) -> Option<Kind> {
         "connection_prefs" | "desktop_keys" => Kind::Keyed(&["connection_id"]),
         "accounts" | "secrets" => Kind::Keyed(&["service", "account"]),
         "autopilot_settings" => Kind::Keyed(&["scope"]),
-        "audit" => Kind::Log("seq"),
-        "autopilot_memory" => Kind::Log("id"),
+        "audit" => Kind::Log("seq", true),
+        "autopilot_memory" => Kind::Log("id", false),
         _ => return None,
     })
 }
@@ -65,18 +73,42 @@ pub(super) fn merge(base: Option<&Snapshot>, local: &Snapshot, server: &Snapshot
         } else {
             match kind(name) {
                 Some(Kind::Keyed(key)) => keyed(name, key, b.as_ref(), &l, &s, &mut dropped_local),
-                Some(Kind::Log(seq)) => log(seq, b.as_ref(), &l, &s),
+                Some(Kind::Log(seq, grow_only)) => log(seq, grow_only, b.as_ref(), &l, &s),
                 None => whole(b.as_ref(), l, s, &mut dropped_local),
             }
         };
         tables.insert(name.clone(), merged);
     }
+    bury_tombstoned_grants(&mut tables);
     Merged {
         snapshot: Snapshot {
             version: 1,
             tables,
         },
         dropped_local,
+    }
+}
+
+/// A grant with a tombstone on either side was deleted for good.
+fn bury_tombstoned_grants(tables: &mut BTreeMap<String, Table>) {
+    let Some(meta) = tables.get("meta") else {
+        return;
+    };
+    let Some(key) = meta.column("key") else {
+        return;
+    };
+    let buried: BTreeSet<String> = meta
+        .rows
+        .iter()
+        .filter_map(|r| match r.get(key) {
+            Some(Cell::Text(k)) => k.strip_prefix(super::GRANT_TOMBSTONE_PREFIX).map(str::to_owned),
+            _ => None,
+        })
+        .collect();
+    if let Some(grants) = tables.get_mut("grants")
+        && let Some(id) = grants.column("id")
+    {
+        grants.rows.retain(|r| !matches!(r.get(id), Some(Cell::Text(g)) if buried.contains(g)));
     }
 }
 
@@ -102,6 +134,15 @@ fn rows_by_key(table: &Table, key: &[usize]) -> BTreeMap<String, Row> {
         .collect()
 }
 
+/// The three versions of one record: the base's (`has_base`: there is a base snapshot at all), this phone's and the
+/// server's.
+struct Versions<'a> {
+    has_base: bool,
+    base: Option<&'a Row>,
+    local: Option<&'a Row>,
+    server: Option<&'a Row>,
+}
+
 fn keyed(
     name: &str,
     key: &[&str],
@@ -118,20 +159,25 @@ fn keyed(
     let keys: BTreeSet<&String> = l.keys().chain(s.keys()).collect();
     let mut rows = Vec::with_capacity(keys.len());
     for k in keys {
-        let (lr, sr) = (l.get(k), s.get(k));
-        let br = b.as_ref().and_then(|b| b.get(k));
-        let picked = if lr == sr {
-            lr.cloned()
-        } else if b.is_some() && br == lr {
-            sr.cloned()
-        } else if b.is_some() && br == sr {
-            lr.cloned()
-        } else {
-            let resolved = conflict(name, &server.columns, br, lr, sr);
-            *dropped_local |=
-                b.is_none() && lr.is_some() && resolved.as_ref() != lr && !restricts(name, lr, resolved.as_ref());
-            resolved
+        let v = Versions {
+            has_base: b.is_some(),
+            base: b.as_ref().and_then(|b| b.get(k)),
+            local: l.get(k),
+            server: s.get(k),
         };
+        // Identical on both sides is that, except a grant: held against its base too (both may have resumed it).
+        let picked = if v.local == v.server && (name != "grants" || v.base.is_none() || v.local.is_none()) {
+            v.local.cloned()
+        } else {
+            match name {
+                "grants" => grant_versions(&server.columns, &v),
+                "autopilot_settings" => setting_versions(&server.columns, &v),
+                "meta" if is_tombstone(&server.columns, v.local.or(v.server)) => v.local.or(v.server).cloned(),
+                _ => plain_versions(name, &server.columns, &v),
+            }
+        };
+        *dropped_local |= !v.has_base && v.local.is_some() && picked.as_ref() != v.local && name != "grants";
+        *dropped_local |= !v.has_base && name == "grants" && v.local.is_some() && picked.is_none();
         rows.extend(picked);
     }
     Table {
@@ -140,39 +186,40 @@ fn keyed(
     }
 }
 
-/// Without a base, a grant made more restrictive by the merge is not a loss: that is the merge doing its job.
-fn restricts(table: &str, local: Option<&Row>, resolved: Option<&Row>) -> bool {
-    table == "grants" && local.is_some() && resolved.is_some()
+fn is_tombstone(columns: &[String], row: Option<&Row>) -> bool {
+    matches!(row.and_then(|r| cell(columns, r, "key")), Some(Cell::Text(k)) if k.starts_with(super::GRANT_TOMBSTONE_PREFIX))
 }
 
-/// Both sides changed the record (or, without a base, they differ).
-fn conflict(
-    name: &str,
-    columns: &[String],
-    base: Option<&Row>,
-    local: Option<&Row>,
-    server: Option<&Row>,
-) -> Option<Row> {
-    let (Some(l), Some(s)) = (local, server) else {
-        // Deleted on one side, changed on the other: deleted. Without a base, the server's version.
-        return if base.is_some() {
+/// An ordinary record: changed on one side, that side's; changed on both, deleted beats edited, else the server's.
+/// Without a base, the server's.
+fn plain_versions(name: &str, columns: &[String], v: &Versions<'_>) -> Option<Row> {
+    if v.has_base && v.base == v.local {
+        return v.server.cloned();
+    }
+    if v.has_base && v.base == v.server {
+        return v.local.cloned();
+    }
+    let (Some(l), Some(s)) = (v.local, v.server) else {
+        return if v.has_base && v.base.is_some() {
             None
         } else {
-            server.cloned()
+            v.server.cloned()
         };
     };
-    match name {
-        "grants" => merge_grant(columns, base, l, s),
-        "meta" => Some(merge_meta(columns, base, l, s)),
-        _ => {
-            if let Some(i) = columns.iter().position(|c| c == "updated_at")
-                && let (Some(Cell::Integer(lt)), Some(Cell::Integer(st))) = (l.get(i), s.get(i))
-                && lt > st
-            {
-                return Some(l.clone());
-            }
-            Some(s.clone())
-        }
+    if name == "meta" {
+        return Some(merge_meta(columns, v.base, l, s));
+    }
+    Some(s.clone())
+}
+
+/// Grants are merged for security, whichever side changed: never more permissive than either side or the base.
+fn grant_versions(columns: &[String], v: &Versions<'_>) -> Option<Row> {
+    match (v.local, v.server) {
+        (Some(l), Some(s)) => merge_grant(columns, v.base, l, s),
+        // Deleted on one side: deleted. New on one side: kept, unless there is no base to tell new from deleted.
+        (Some(l), None) => (v.has_base && v.base.is_none()).then(|| l.clone()),
+        (None, Some(s)) => v.base.is_none().then(|| s.clone()),
+        (None, None) => None,
     }
 }
 
@@ -190,62 +237,135 @@ fn grant_of(columns: &[String], row: &Row) -> Option<Grant> {
         _ => None,
     }
 }
-/// The earlier of two limits, where `None` is no limit.
-fn tighter<T: Ord + Copy>(a: Option<T>, b: Option<T>) -> Option<T> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
-    }
+/// The earliest of some limits, where `None` is no limit.
+fn tightest<T: Ord + Copy>(limits: impl IntoIterator<Item = Option<T>>) -> Option<T> {
+    limits.into_iter().flatten().min()
 }
 
-/// Two versions of one grant, both changed: the merge is never less restrictive than either. Revoked wins; a grant
-/// whose scope, account or connection differ between the two is dropped (neither can be shown to be the narrower);
-/// otherwise the earlier expiry, the smaller use limit, and every use either phone counted.
+/// Every version of one grant (the base's too): the merge is never more permissive than any of them, whatever the
+/// clocks say. Revoked in any version: revoked. A scope, account or connection that differs between versions:
+/// revoked (neither can be shown to be the narrower). Otherwise the earliest expiry, the smallest use limit, and every
+/// use either phone counted (so the fewest uses left). A grant either version gave only while a bypass lasts keeps that
+/// origin. A version that does not parse is no grant at all.
 fn merge_grant(columns: &[String], base: Option<&Row>, local: &Row, server: &Row) -> Option<Row> {
     let (Some(l), Some(s)) = (grant_of(columns, local), grant_of(columns, server)) else {
         return None;
     };
-    if s.revoked {
-        return Some(server.clone());
-    }
-    if l.revoked {
-        return Some(local.clone());
-    }
-    if l.id != s.id || l.connection_id != s.connection_id || l.scope != s.scope || l.account != s.account {
-        return None;
-    }
+    let b = match base {
+        Some(row) => Some(grant_of(columns, row)?),
+        None => None,
+    };
+    let all: Vec<&Grant> = [Some(&l), Some(&s), b.as_ref()].into_iter().flatten().collect();
     let mut merged = s.clone();
-    merged.expires_at = tighter(l.expires_at, s.expires_at);
-    merged.max_uses = tighter(l.max_uses, s.max_uses);
-    // Uses counted on each phone since the base add up; never fewer than either phone counted.
-    let base_uses = base.and_then(|b| grant_of(columns, b)).map_or(0, |b| b.uses);
-    let added = l.uses.saturating_add(s.uses).saturating_sub(base_uses);
-    merged.uses = added.max(l.uses).max(s.uses);
+    merged.revoked = all.iter().any(|g| g.revoked)
+        || all.iter().any(|g| {
+            g.id != s.id || g.connection_id != s.connection_id || g.scope != s.scope || g.account != s.account
+        });
+    merged.expires_at = tightest(all.iter().map(|g| g.expires_at));
+    merged.max_uses = tightest(all.iter().map(|g| g.max_uses));
+    let base_uses = b.as_ref().map_or(0, |b| b.uses);
+    // Uses each phone counted since the base add up (with no base, the larger count).
+    let added = if b.is_some() {
+        l.uses.saturating_add(s.uses).saturating_sub(base_uses)
+    } else {
+        l.uses.max(s.uses)
+    };
+    merged.uses = added.max(l.uses).max(s.uses).max(base_uses);
     let mut row = server.clone();
     set_cell(columns, &mut row, "grant_json", Cell::Text(serde_json::to_string(&merged).ok()?));
-    if let (Some(Cell::Integer(a)), Some(Cell::Integer(b))) =
-        (cell(columns, local, "last_used_at"), cell(columns, server, "last_used_at"))
-    {
-        set_cell(columns, &mut row, "last_used_at", Cell::Integer(*a.max(b)));
-    } else if let Some(Cell::Integer(a)) = cell(columns, local, "last_used_at") {
-        set_cell(columns, &mut row, "last_used_at", Cell::Integer(*a));
+    let used = [local, server]
+        .iter()
+        .filter_map(|r| match cell(columns, r, "last_used_at") {
+            Some(Cell::Integer(at)) => Some(*at),
+            _ => None,
+        })
+        .max();
+    if let Some(at) = used {
+        set_cell(columns, &mut row, "last_used_at", Cell::Integer(at));
     }
-    // A grant a bypass gave lasts only while that bypass does: the more restrictive origin.
-    if let Some(Cell::Text(origin)) = cell(columns, local, "origin")
-        && crate::autopilot::modes::temporary_scope(origin).is_some()
-    {
-        set_cell(columns, &mut row, "origin", Cell::Text(origin.clone()));
+    for version in [local, server] {
+        if let Some(Cell::Text(origin)) = cell(columns, version, "origin")
+            && crate::autopilot::modes::temporary_scope(origin).is_some()
+        {
+            set_cell(columns, &mut row, "origin", Cell::Text(origin.clone()));
+        }
+    }
+    Some(row)
+}
+
+/// How much a mode lets through without asking: lower is more restrictive. No mode is the default (manual).
+fn permissiveness(mode: Option<&Cell>) -> u8 {
+    match mode {
+        Some(Cell::Text(m)) => match m.as_str() {
+            "lockdown" => 0,
+            "auto" => 2,
+            "overnight" => 3,
+            "bypass" => 4,
+            _ => 1,
+        },
+        _ => 1,
+    }
+}
+
+/// Autopilot's mode for one scope, merged for security whichever side changed: lockdown on either side wins; else the
+/// less permissive mode; a bypass ends at the earlier time, and one stopped on either side stays stopped. Clocks
+/// (`updated_at`) decide nothing. Deleted on one side (back to the default): deleted.
+fn setting_versions(columns: &[String], v: &Versions<'_>) -> Option<Row> {
+    let (Some(l), Some(s)) = (v.local, v.server) else {
+        return if v.base.is_some() || !v.has_base && v.server.is_none() {
+            None
+        } else {
+            v.local.or(v.server).cloned()
+        };
+    };
+    let mode = |r: &Row| permissiveness(cell(columns, r, "mode"));
+    let mut row = if mode(l) < mode(s) {
+        l.clone()
+    } else {
+        s.clone()
+    };
+    let until: Vec<Option<&Cell>> = [l, s].iter().map(|r| cell(columns, r, "bypass_until")).collect();
+    let ends = if until.iter().any(|c| !matches!(c, Some(Cell::Integer(_)))) {
+        Cell::Null
+    } else {
+        until
+            .iter()
+            .filter_map(|c| {
+                if let Some(Cell::Integer(t)) = c {
+                    Some(*t)
+                } else {
+                    None
+                }
+            })
+            .min()
+            .map_or(Cell::Null, Cell::Integer)
+    };
+    set_cell(columns, &mut row, "bypass_until", ends);
+    let at = [l, s]
+        .iter()
+        .filter_map(|r| {
+            if let Some(Cell::Integer(t)) = cell(columns, r, "updated_at") {
+                Some(*t)
+            } else {
+                None
+            }
+        })
+        .max();
+    if let Some(at) = at {
+        set_cell(columns, &mut row, "updated_at", Cell::Integer(at));
     }
     Some(row)
 }
 
 /// A setting kept as JSON (purchases, choices per environment, revocations to send) merges by its entries: an object
-/// key by key, a list by its items' `id` (or the whole item). Any other value: the server's.
+/// key by key, a list by its items' `id` (or the whole item). Asking every time wins over not asking. Any other value:
+/// the server's.
 fn merge_meta(columns: &[String], base: Option<&Row>, local: &Row, server: &Row) -> Row {
     let json = |row: Option<&Row>| match row.and_then(|r| cell(columns, r, "value")) {
         Some(Cell::Text(t)) => serde_json::from_str::<Json>(t).ok(),
         _ => None,
     };
+    let restrictive_true = matches!(cell(columns, server, "key"), Some(Cell::Text(k)) if k == "app.secrets.always-ask");
     let (b, l, s) = (json(base), json(Some(local)), json(Some(server)));
     let merged = match (l, s) {
         (Some(Json::Object(l)), Some(Json::Object(s))) => {
@@ -258,7 +378,10 @@ fn merge_meta(columns: &[String], base: Option<&Row>, local: &Row, server: &Row)
             for k in keys {
                 let (bv, lv, sv) = (b.get(k), l.get(k), s.get(k));
                 // Changed on one side: that side's; on both (or deleted on one): the server's.
-                let v = if lv == sv || bv == sv {
+                let asks = restrictive_true && (lv == Some(&Json::Bool(true)) || sv == Some(&Json::Bool(true)));
+                let v = if asks {
+                    Some(&Json::Bool(true))
+                } else if lv == sv || bv == sv {
                     lv
                 } else {
                     sv
@@ -292,9 +415,17 @@ fn merge_meta(columns: &[String], base: Option<&Row>, local: &Row, server: &Row)
     row
 }
 
-/// Entries added on either side are kept; one deleted on a side (pruned, or forgotten on purpose) goes. The server's
-/// keep their numbers; this phone's new ones follow them.
-fn log(seq: &str, base: Option<&Table>, local: &Table, server: &Table) -> Table {
+fn number(row: &Row, at: usize) -> i64 {
+    if let Some(Cell::Integer(n)) = row.get(at) {
+        *n
+    } else {
+        0
+    }
+}
+
+/// Entries added on either side are all kept, the server's with their numbers and this phone's new ones after them.
+/// A grow-only log (Activity) keeps everything, trimmed to its retention; another log drops what either side removed.
+fn log(seq: &str, grow_only: bool, base: Option<&Table>, local: &Table, server: &Table) -> Table {
     let Some(at) = server.column(seq) else {
         return server.clone();
     };
@@ -304,42 +435,33 @@ fn log(seq: &str, base: Option<&Table>, local: &Table, server: &Table) -> Table 
         .rows
         .iter()
         .filter(|r| {
-            let id = identity(&server.columns, r, seq);
-            !b.contains(&id) || l.contains(&id)
+            grow_only || {
+                let id = identity(&server.columns, r, seq);
+                !b.contains(&id) || l.contains(&id)
+            }
         })
         .cloned()
         .collect();
-    let mut next = rows
-        .iter()
-        .filter_map(|r| {
-            if let Some(Cell::Integer(n)) = r.get(at) {
-                Some(*n)
-            } else {
-                None
-            }
-        })
-        .max()
-        .unwrap_or(0);
+    let mut next = rows.iter().map(|r| number(r, at)).max().unwrap_or(0);
     let mut added: Vec<&Row> = local
         .rows
         .iter()
         .filter(|r| {
             let id = identity(&local.columns, r, seq);
-            !s.contains(&id) && !b.contains(&id)
+            !s.contains(&id) && (grow_only || !b.contains(&id))
         })
         .collect();
-    added.sort_by_key(|r| {
-        if let Some(Cell::Integer(n)) = r.get(at) {
-            *n
-        } else {
-            0
-        }
-    });
+    added.sort_by_key(|r| number(r, at));
     for row in added {
         next += 1;
         let mut row = row.clone();
         row[at] = Cell::Integer(next);
         rows.push(row);
+    }
+    if grow_only {
+        rows.sort_by_key(|r| number(r, at));
+        let excess = rows.len().saturating_sub(usize::try_from(AUDIT_RETENTION).unwrap_or(usize::MAX));
+        rows.drain(..excess);
     }
     Table {
         columns: server.columns.clone(),
@@ -363,20 +485,30 @@ mod tests {
             Cell::Text("approval".to_owned()),
         ]
     }
-    fn grants(rows: Vec<Row>) -> Snapshot {
+    fn grants_and_meta(rows: Vec<Row>, tombstones: &[&str]) -> Snapshot {
         let columns = ["id", "connection_id", "connection_label", "created_at", "grant_json", "last_used_at", "origin"]
             .map(str::to_owned)
             .to_vec();
+        let meta = tombstones
+            .iter()
+            .map(|id| vec![Cell::Text(format!("{}{id}", super::super::GRANT_TOMBSTONE_PREFIX)), Cell::Integer(10)])
+            .collect();
         Snapshot {
             version: 1,
-            tables: BTreeMap::from([(
-                "grants".to_owned(),
-                Table {
-                    columns,
-                    rows,
-                },
-            )]),
+            tables: BTreeMap::from([
+                (
+                    "grants".to_owned(),
+                    Table {
+                        columns,
+                        rows,
+                    },
+                ),
+                ("meta".to_owned(), table(&["key", "value"], meta)),
+            ]),
         }
+    }
+    fn grants(rows: Vec<Row>) -> Snapshot {
+        grants_and_meta(rows, &[])
     }
     fn grant(id: &str) -> Grant {
         crate::store::grants::tests::read_grant(id, "c1", Some(1_000))
@@ -386,13 +518,18 @@ mod tests {
         let t = &m.snapshot.tables["grants"];
         (t.rows.iter().map(|r| grant_of(&t.columns, r).unwrap()).collect(), m.dropped_local)
     }
+    fn other_scope() -> Scope {
+        Scope::Read(reins_policy::ReadScope {
+            from: vec![reins_policy::AddrRule::domain("example.com").unwrap()],
+            ..reins_policy::ReadScope::default()
+        })
+    }
 
     #[test]
-    fn a_change_on_one_side_wins() {
+    fn a_change_on_one_side_wins_when_it_tightens_and_new_grants_are_kept() {
         let base = grants(vec![grant_row(&grant("g1")), grant_row(&grant("g2"))]);
         let mut revoked = grant("g1");
         revoked.revoked = true;
-        // Revoked here, untouched there; and a new grant on the server.
         let local = grants(vec![grant_row(&revoked), grant_row(&grant("g2"))]);
         let server = grants(vec![grant_row(&grant("g1")), grant_row(&grant("g2")), grant_row(&grant("g3"))]);
         let (out, dropped) = merged_grants(Some(&base), &local, &server);
@@ -401,7 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn revoked_beats_extended() {
+    fn revoked_beats_extended_and_a_revoked_base_is_never_resumed_by_a_merge() {
         let base = grants(vec![grant_row(&grant("g1"))]);
         let mut revoked = grant("g1");
         revoked.revoked = true;
@@ -411,13 +548,21 @@ mod tests {
         for (local, server) in [(&revoked, &extended), (&extended, &revoked)] {
             let (out, _) =
                 merged_grants(Some(&base), &grants(vec![grant_row(local)]), &grants(vec![grant_row(server)]));
-            assert_eq!(out.len(), 1);
             assert!(out[0].revoked, "a revoked grant is never resurrected");
         }
+        // Revoked at the base, resumed on the server, used here: still revoked, whatever the clocks.
+        let base = grants(vec![grant_row(&revoked)]);
+        let mut resumed = grant("g1");
+        resumed.created_at = 99_999;
+        resumed.expires_at = Some(9_000_000);
+        let mut used = revoked;
+        used.uses = 1;
+        let (out, _) = merged_grants(Some(&base), &grants(vec![grant_row(&used)]), &grants(vec![grant_row(&resumed)]));
+        assert!(out[0].revoked);
     }
 
     #[test]
-    fn deleted_beats_edited() {
+    fn deleted_or_tombstoned_beats_edited() {
         let base = grants(vec![grant_row(&grant("g1"))]);
         let mut used = grant("g1");
         used.uses = 1;
@@ -427,6 +572,12 @@ mod tests {
             let (out, _) = merged_grants(Some(&base), &local, &server);
             assert!(out.is_empty(), "a grant deleted on either phone stays deleted");
         }
+        // A tombstone on one side buries the grant even where nothing else tells it was deleted (no base).
+        let local = grants_and_meta(vec![], &["g1"]);
+        let (out, _) = merged_grants(None, &local, &grants(vec![grant_row(&used)]));
+        assert!(out.is_empty());
+        let m = merge(None, &local, &grants(vec![grant_row(&used)]));
+        assert_eq!(m.snapshot.tables["meta"].rows.len(), 1, "the tombstone is kept");
     }
 
     #[test]
@@ -437,7 +588,7 @@ mod tests {
         b.expires_at = Some(5_000);
         let mut l = b.clone();
         l.uses = 4;
-        l.expires_at = Some(9_000); // resumed for longer here
+        l.expires_at = Some(9_000); // extended here
         let mut s = b.clone();
         s.uses = 3;
         s.max_uses = Some(6);
@@ -446,27 +597,28 @@ mod tests {
             &grants(vec![grant_row(&l)]),
             &grants(vec![grant_row(&s)]),
         );
-        assert_eq!(out.len(), 1);
         assert_eq!((out[0].uses, out[0].max_uses, out[0].expires_at), (5, Some(6), Some(5_000)));
         assert!(!out[0].revoked);
     }
 
     #[test]
-    fn a_grant_whose_scope_differs_on_the_two_phones_is_dropped() {
+    fn a_changed_scope_is_revoked() {
         let b = grant("g1");
-        let mut l = b.clone();
-        l.uses = 1;
         let mut s = b.clone();
-        s.scope = Scope::Read(reins_policy::ReadScope {
-            from: vec![reins_policy::AddrRule::domain("example.com").unwrap()],
-            ..reins_policy::ReadScope::default()
-        });
-        let (out, _) = merged_grants(
-            Some(&grants(vec![grant_row(&b)])),
-            &grants(vec![grant_row(&l)]),
-            &grants(vec![grant_row(&s)]),
-        );
-        assert!(out.is_empty(), "neither scope can be shown to be the narrower one");
+        s.scope = other_scope();
+        // Changed on one side only, or on both: no merge widens a scope.
+        for local in [b.clone(), {
+            let mut l = b.clone();
+            l.scope = Scope::Read(reins_policy::ReadScope::default());
+            l
+        }] {
+            let (out, _) = merged_grants(
+                Some(&grants(vec![grant_row(&b)])),
+                &grants(vec![grant_row(&local)]),
+                &grants(vec![grant_row(&s)]),
+            );
+            assert!(out[0].revoked);
+        }
     }
 
     #[test]
@@ -499,37 +651,93 @@ mod tests {
     }
 
     #[test]
-    fn log_entries_from_both_phones_are_all_kept_and_renumbered() {
+    fn activity_is_a_grow_only_union_trimmed_to_its_retention() {
         let cols = ["seq", "detail"];
-        let base = one("audit", table(&cols, vec![entry(1, "old"), entry(2, "pruned here")]));
+        let base = one("audit", table(&cols, vec![entry(1, "old"), entry(2, "gone here")]));
         let local = one("audit", table(&cols, vec![entry(1, "old"), entry(3, "here a"), entry(4, "here b")]));
-        let server = one("audit", table(&cols, vec![entry(1, "old"), entry(2, "pruned here"), entry(3, "there")]));
-        let m = merge(Some(&base), &local, &server);
-        let rows = &m.snapshot.tables["audit"].rows;
-        assert_eq!(rows, &[entry(1, "old"), entry(3, "there"), entry(4, "here a"), entry(5, "here b")]);
-        assert!(!m.dropped_local);
-        // Without a base nothing is lost either: entries are only ever added.
-        let m = merge(None, &local, &server);
-        assert_eq!(m.snapshot.tables["audit"].rows.len(), 5);
-    }
-
-    #[test]
-    fn a_setting_changed_on_both_phones_keeps_the_newest() {
-        let cols = ["scope", "mode", "bypass_until", "profile_id", "updated_at"];
-        let row = |mode: &str, at: i64| {
-            vec![Cell::Text(String::new()), Cell::Text(mode.to_owned()), Cell::Null, Cell::Null, Cell::Integer(at)]
+        let server = one("audit", table(&cols, vec![entry(1, "old"), entry(2, "gone here"), entry(3, "there")]));
+        for base in [Some(&base), None] {
+            let m = merge(base, &local, &server);
+            assert_eq!(
+                m.snapshot.tables["audit"].rows,
+                [entry(1, "old"), entry(2, "gone here"), entry(3, "there"), entry(4, "here a"), entry(5, "here b")]
+            );
+            assert!(!m.dropped_local);
+        }
+        let many = |from: i64, what: &str| {
+            one(
+                "audit",
+                table(&cols, (from..from + AUDIT_RETENTION).map(|i| entry(i, &format!("{what}{i}"))).collect()),
+            )
         };
-        let base = one("autopilot_settings", table(&cols, vec![row("ask", 1)]));
-        let newer_here = one("autopilot_settings", table(&cols, vec![row("lockdown", 30)]));
-        let older_there = one("autopilot_settings", table(&cols, vec![row("assist", 20)]));
-        let m = merge(Some(&base), &newer_here, &older_there);
-        assert_eq!(m.snapshot.tables["autopilot_settings"].rows, [row("lockdown", 30)]);
-        let m = merge(Some(&base), &older_there, &newer_here);
-        assert_eq!(m.snapshot.tables["autopilot_settings"].rows, [row("lockdown", 30)]);
+        let m = merge(None, &many(1, "here"), &many(1, "there"));
+        let rows = &m.snapshot.tables["audit"].rows;
+        assert_eq!(rows.len(), usize::try_from(AUDIT_RETENTION).unwrap());
+        assert_eq!(rows.last().unwrap(), &entry(2 * AUDIT_RETENTION, &format!("here{AUDIT_RETENTION}")));
     }
 
     #[test]
-    fn json_settings_merge_by_entry() {
+    fn memory_forgotten_on_either_side_stays_forgotten() {
+        let cols = ["id", "data"];
+        let base = one("autopilot_memory", table(&cols, vec![entry(1, "kept"), entry(2, "forgotten here")]));
+        let local = one("autopilot_memory", table(&cols, vec![entry(1, "kept")]));
+        let server =
+            one("autopilot_memory", table(&cols, vec![entry(1, "kept"), entry(2, "forgotten here"), entry(3, "new")]));
+        let m = merge(Some(&base), &local, &server);
+        assert_eq!(m.snapshot.tables["autopilot_memory"].rows, [entry(1, "kept"), entry(3, "new")]);
+    }
+
+    fn setting(mode: Option<&str>, bypass_until: Option<i64>, at: i64) -> Row {
+        vec![
+            Cell::Text(String::new()),
+            mode.map_or(Cell::Null, |m| Cell::Text(m.to_owned())),
+            bypass_until.map_or(Cell::Null, Cell::Integer),
+            Cell::Null,
+            Cell::Integer(at),
+        ]
+    }
+    fn modes(row: Row) -> Snapshot {
+        one("autopilot_settings", table(&["scope", "mode", "bypass_until", "profile_id", "updated_at"], vec![row]))
+    }
+    fn merged_mode(base: Row, local: Row, server: Row) -> Row {
+        merge(Some(&modes(base)), &modes(local), &modes(server)).snapshot.tables["autopilot_settings"].rows[0].clone()
+    }
+
+    #[test]
+    fn lockdown_wins_and_a_stopped_bypass_never_restarts_whatever_the_clocks() {
+        // Lockdown on one side (even the unchanged one, with an older clock) wins.
+        let m = merged_mode(
+            setting(Some("lockdown"), None, 1),
+            setting(Some("lockdown"), None, 1),
+            setting(Some("bypass"), Some(9_999), 50),
+        );
+        assert_eq!(m[1], Cell::Text("lockdown".to_owned()));
+        assert_eq!(m[2], Cell::Null);
+        // Bypass stopped here (older clock), extended there (newer): stopped.
+        let m = merged_mode(
+            setting(Some("bypass"), Some(100), 1),
+            setting(Some("manual"), None, 2),
+            setting(Some("bypass"), Some(9_999), 90),
+        );
+        assert_eq!((m[1].clone(), m[2].clone()), (Cell::Text("manual".to_owned()), Cell::Null));
+        // Overnight against auto, the newer clock on overnight: auto.
+        let m = merged_mode(
+            setting(Some("manual"), None, 1),
+            setting(Some("auto"), None, 2),
+            setting(Some("overnight"), None, 90),
+        );
+        assert_eq!(m[1], Cell::Text("auto".to_owned()));
+        // Two bypasses: the earlier end.
+        let m = merged_mode(
+            setting(None, None, 1),
+            setting(Some("bypass"), Some(500), 2),
+            setting(Some("bypass"), Some(300), 3),
+        );
+        assert_eq!(m[2], Cell::Integer(300));
+    }
+
+    #[test]
+    fn json_settings_merge_by_entry_and_asking_wins() {
         let cols = ["key", "value"];
         let kv = |v: &str| vec![Cell::Text("app.payments.ledger".to_owned()), Cell::Text(v.to_owned())];
         let base = one("meta", table(&cols, vec![kv(r#"[{"id":"p1"}]"#)]));
@@ -538,11 +746,11 @@ mod tests {
         let m = merge(Some(&base), &local, &server);
         assert_eq!(m.snapshot.tables["meta"].rows, [kv(r#"[{"id":"there"},{"id":"p1"},{"id":"here"}]"#)]);
         let kv = |v: &str| vec![Cell::Text("app.secrets.always-ask".to_owned()), Cell::Text(v.to_owned())];
-        let base = one("meta", table(&cols, vec![kv(r#"{"a/prod":true}"#)]));
+        let base = one("meta", table(&cols, vec![kv(r#"{"a/prod":false}"#)]));
         let local = one("meta", table(&cols, vec![kv(r#"{"a/prod":true,"b/prod":true}"#)]));
-        let server = one("meta", table(&cols, vec![kv(r#"{"c/dev":false}"#)]));
+        let server = one("meta", table(&cols, vec![kv(r#"{"a/prod":false,"c/dev":false}"#)]));
         let m = merge(Some(&base), &local, &server);
-        assert_eq!(m.snapshot.tables["meta"].rows, [kv(r#"{"b/prod":true,"c/dev":false}"#)]);
+        assert_eq!(m.snapshot.tables["meta"].rows, [kv(r#"{"a/prod":true,"b/prod":true,"c/dev":false}"#)]);
     }
 
     #[test]
@@ -550,6 +758,111 @@ mod tests {
         for table in super::super::snapshot::TABLES {
             if !matches!(*table, "session" | "pending" | "handled" | "autopilot_suggestions" | "autopilot_rate") {
                 assert!(kind(table).is_some(), "{table} needs a merge rule");
+            }
+        }
+    }
+
+    /// A small deterministic generator (xorshift), so that a failure can be replayed from its seed.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    /// One phone's edit of a grant, as the app can make it (and some it cannot: a merge must hold whatever it gets).
+    fn edit(rng: &mut Rng, g: &Grant) -> Option<Grant> {
+        let mut g = g.clone();
+        match rng.below(9) {
+            0 => return None, // deleted
+            1 => g.revoked = true,
+            2 => {
+                // resumed or extended
+                g.revoked = false;
+                g.expires_at = Some(1_000_000 + i64::try_from(rng.below(1_000_000)).unwrap());
+                g.uses = 0;
+            }
+            3 => g.expires_at = Some(i64::try_from(rng.below(10_000)).unwrap()),
+            4 => g.expires_at = None,
+            5 => g.uses += u32::try_from(rng.below(5)).unwrap() + 1,
+            6 => {
+                g.max_uses = if rng.below(2) == 0 {
+                    None
+                } else {
+                    Some(u32::try_from(rng.below(20)).unwrap())
+                }
+            }
+            7 => g.scope = other_scope(),
+            _ => {}
+        }
+        Some(g)
+    }
+
+    /// Whether `merged` lets through nothing that `side` (a phone's version, `None`: deleted there) does not.
+    fn no_more_permissive(merged: &Grant, side: Option<&Grant>) -> bool {
+        let Some(side) = side else {
+            return false;
+        };
+        let expiry_ok = match (merged.expires_at, side.expires_at) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some(m), Some(s)) => m <= s,
+        };
+        let limit_ok = match (merged.max_uses, side.max_uses) {
+            (_, None) => true,
+            (None, Some(_)) => false,
+            (Some(m), Some(s)) => m <= s,
+        };
+        (merged.revoked || (!side.revoked && merged.scope == side.scope && merged.account == side.account))
+            && expiry_ok
+            && limit_ok
+            && merged.uses >= side.uses
+    }
+
+    #[test]
+    fn property_a_merge_is_never_more_permissive_than_either_side() {
+        let mut rng = Rng(0x5eed_cafe_f00d_d00d);
+        for case in 0..5_000 {
+            let mut b = grant("g");
+            b.revoked = rng.below(4) == 0;
+            b.expires_at = if rng.below(2) == 0 {
+                None
+            } else {
+                Some(i64::try_from(rng.below(10_000)).unwrap())
+            };
+            b.max_uses = if rng.below(2) == 0 {
+                None
+            } else {
+                Some(u32::try_from(rng.below(20)).unwrap())
+            };
+            b.uses = u32::try_from(rng.below(5)).unwrap();
+            let (l, s) = (edit(&mut rng, &b), edit(&mut rng, &b));
+            // A phone that deleted the grant keeps its tombstone, as the store's trigger leaves one.
+            let snap = |g: &Option<Grant>| match g {
+                Some(g) => grants(vec![grant_row(g)]),
+                None => grants_and_meta(vec![], &["g"]),
+            };
+            for base in [Some(grants(vec![grant_row(&b)])), None] {
+                let (out, _) = merged_grants(base.as_ref(), &snap(&l), &snap(&s));
+                if let Some(m) = out.first() {
+                    assert!(
+                        no_more_permissive(m, l.as_ref()) && no_more_permissive(m, s.as_ref()),
+                        "case {case}: base {b:?}\nlocal {l:?}\nserver {s:?}\nmerged {m:?}"
+                    );
+                    if base.is_some() {
+                        assert!(
+                            no_more_permissive(m, Some(&b)) || !b.revoked,
+                            "case {case}: revived the base's revoked grant"
+                        );
+                        assert!(!b.revoked || m.revoked, "case {case}: a revoked grant came back");
+                    }
+                }
             }
         }
     }

@@ -30,8 +30,14 @@ pub(super) const TABLES: &[&str] = &[
 /// Tables that belong to this installation only: never in a portable snapshot.
 const DEVICE_TABLES: &[&str] = &["session", "pending", "handled", "autopilot_suggestions", "autopilot_rate"];
 /// Installation metadata (`meta.key`), besides every `app.session.*` key: never in a portable snapshot.
-pub(super) const DEVICE_META: &[&str] =
-    &["device_id", "dek_check", "app.account-state.revision", "app.account-state.synced", "app.account-state.notice"];
+pub(super) const DEVICE_META: &[&str] = &[
+    "device_id",
+    "dek_check",
+    "app.account-state.revision",
+    "app.account-state.synced",
+    "app.account-state.notice",
+    "app.account-state.seen",
+];
 /// Installation keys (`secrets.service`): never in a portable snapshot, and refused in one.
 const DEVICE_SECRETS: &[&str] = &[
     "reins.device-key",
@@ -235,6 +241,8 @@ pub(super) fn import_snapshot(conn: &mut Connection, snapshot: Snapshot, portabl
         return Err(CoreError::storage("unsupported account data version").into());
     }
     let tx = conn.transaction()?;
+    // Rows replaced here were not deleted by anyone: no tombstones for them.
+    tx.execute_batch("DROP TRIGGER IF EXISTS grant_tombstone")?;
     for (name, table) in snapshot.tables {
         if !TABLES.contains(&name.as_str()) {
             return Err(Unreadable::Newer);
@@ -295,6 +303,7 @@ pub(super) fn import_snapshot(conn: &mut Connection, snapshot: Snapshot, portabl
             move_audit_snapshots(&tx, kept_snapshots, &mut new_seqs)?;
         }
     }
+    tx.execute_batch(super::GRANT_TOMBSTONES)?;
     tx.commit()?;
     Ok(())
 }

@@ -46,7 +46,7 @@ impl Engine {
         }
         let _guard = self.account_sync.lock().await;
         match self.pull_locked().await? {
-            Pulled::Merged | Pulled::Behind => self.upload_locked().await,
+            Pulled::Merged => self.upload_locked().await,
             Pulled::Current | Pulled::Imported | Pulled::Unusable => Ok(()),
         }
     }
@@ -77,9 +77,11 @@ impl Engine {
         }
         let state = read_state(response).await?;
         self.ensure_active()?;
-        // Newer: to merge. Older (the server lost what it had): uploaded over only when it is this account's state.
+        // Only a newer revision is opened. An older one (lost, or replayed) is refused by `pull`, never uploaded over.
         let plain = match &state.ciphertext {
-            Some(ciphertext) if state.revision != self.store.sync_revision()? => {
+            Some(ciphertext)
+                if state.revision > self.store.sync_revision()? && state.revision >= self.store.sync_floor()? =>
+            {
                 if ciphertext.len() > MAX_CIPHERTEXT_BYTES {
                     return Err(CoreError::storage("account state is too large"));
                 }
@@ -200,6 +202,18 @@ impl Engine {
             return Ok(None);
         }
         self.store.sync_notice()
+    }
+    /// Brings back this phone's own changes that a sync without a merge base set aside (see the notice), merged with
+    /// the data as it is now by the usual rules. False when there is nothing to bring back.
+    pub fn restore_account_sync_backup(&self) -> Result<bool, CoreError> {
+        if self.store.owner.is_none() {
+            return Ok(false);
+        }
+        let restored = self.store.restore_sync_backup()?;
+        if restored {
+            self.store.clear_sync_notice()?;
+        }
+        Ok(restored)
     }
     pub fn dismiss_account_sync_notice(&self) -> Result<(), CoreError> {
         if self.store.owner.is_none() {
