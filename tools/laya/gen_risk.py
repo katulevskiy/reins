@@ -332,7 +332,8 @@ def cmd_infra(rng, conn):
 def cmd_db(rng, conn):
     lvl = rng.choices([0, 1, 2, 3], [0.36, 0.18, 0.36, 0.1])[0]
     if lvl == 3:
-        # a host whose name says nothing: treated like staging (bounded harm unknown)
+        # a host whose name says nothing: a drop or a truncate there is catastrophic (the core's tripwire raises the
+        # label); other writes are bounded like staging
         host = pick(rng, ["db1.internal", "10.0.4.12", "pg.corp.example", "mysql-a.lab.example", "orders-db.svc"])
         hctx, lvl = "database host %s" % host, 1
     else:
@@ -1040,11 +1041,16 @@ MCP_RISK = [
     ("stripe", "payout_all", '{"destination": "ba_%(n)d"}', [("pays out the whole balance (%(k)d EUR) to a new bank account", C)]),
     ("stripe", "delete_customer", '{"id": "cus_%(n)d"}', [("a customer with %(k)d invoices", S)]),
     ("postgres", "query_readonly", '{"sql": "SELECT count(*) FROM %(tb)s"}', [("", B)]),
-    ("postgres", "insert_rows", '{"table": "%(tb)s", "rows": 3}', [("local database (localhost)", B), ("production-looking host %(prod)s", R)]),
-    ("postgres", "drop_table", '{"table": "%(tb)s"}', [("local database (localhost)", B), ("staging host %(stg)s", S),
-                                                        ("production-looking host %(prod)s", C)]),
-    ("postgres", "truncate_table", '{"table": "%(tb)s"}', [("local database (localhost)", B), ("staging host %(stg)s", S),
-                                                            ("production-looking host %(prod)s", C)]),
+    # the host as the arguments name it (what the phone sees); a drop whose arguments name none is production
+    ("postgres", "insert_rows", '{"host": "localhost", "table": "%(tb)s", "rows": 3}', [("", B)]),
+    ("postgres", "insert_rows", '{"host": "%(prod)s", "table": "%(tb)s", "rows": 3}', [("", R)]),
+    ("postgres", "drop_table", '{"host": "localhost", "table": "%(tb)s"}', [("", B)]),
+    ("postgres", "drop_table", '{"host": "%(stg)s", "table": "%(tb)s"}', [("", S)]),
+    ("postgres", "drop_table", '{"host": "%(prod)s", "table": "%(tb)s"}', [("", C)]),
+    ("postgres", "drop_table", '{"table": "%(tb)s"}', [("", C)]),
+    ("postgres", "truncate_table", '{"host": "localhost", "table": "%(tb)s"}', [("", B)]),
+    ("postgres", "truncate_table", '{"host": "%(stg)s", "table": "%(tb)s"}', [("", S)]),
+    ("postgres", "truncate_table", '{"host": "%(prod)s", "table": "%(tb)s"}', [("", C)]),
     ("slack", "post_message", '{"channel": "#%(t)s", "text": "build is green"}', [("a channel with %(s)d members", B), ("#general, %(k)d members", S)]),
     ("slack", "delete_channel", '{"channel": "#%(t)s"}', [("a channel with %(k)d messages", S)]),
     ("sentry", "resolve_issue", '{"id": "%(n)d"}', [("", B)]),
@@ -1056,7 +1062,9 @@ MCP_RISK = [
     ("github-mcp", "delete_repository", '{"repo": "%(org)s/platform"}', [("repository: public, owned by an organisation, %(k)d stars", C)]),
 ]
 MCP_RISK_UNSEEN = [
-    ("mongodb", "drop_database", '{"db": "%(db)s"}', [("local database (localhost)", R), ("production-looking host %(prod)s", C)]),
+    ("mongodb", "drop_database", '{"host": "localhost", "db": "%(db)s"}', [("", R)]),
+    ("mongodb", "drop_database", '{"host": "%(prod)s", "db": "%(db)s"}', [("", C)]),
+    ("mongodb", "drop_database", '{"db": "%(db)s"}', [("", C)]),
     ("hubspot", "delete_all_contacts", '{}', [("deletes %(k)d contacts", C)]),
     ("cloudflare", "purge_cache", '{"zone": "%(w)s.example"}', [("", R)]),
     ("cloudflare", "delete_zone", '{"zone": "%(w)s.example"}', [("the zone of a domain serving traffic (production-looking)", C), ("an unused test zone", R)]),
@@ -1092,9 +1100,11 @@ def mcp_case(rng, conn, table):
         appr = K
     else:
         appr = A
-    return Case(f, sev, "mcp/%s/%s" % (server, tool), ai=gd.ai_part(rng, "read" if read else "write", "arguments: " + args),
+    c = Case(f, sev, "mcp/%s/%s" % (server, tool), ai=gd.ai_part(rng, "read" if read else "write", "arguments: " + args),
                 appr=appr, write=not read, destructive=any(w in tool for w in ("delete", "drop", "truncate", "empty")),
                 full_sev=full_sev, full_appr=full_appr)
+    c.core = ("mcp", tool, args)
+    return c
 
 
 @family("mcp")
@@ -1258,10 +1268,12 @@ def sample(rng, fam: str, adv: bool = False, phrasing: str = "train", offtask: b
     if isinstance(f.get("target is new"), bool):
         f["target is new"] = "yes" if f["target is new"] else "no"
     s_facts, s_full = sq.render_situation(f, ai)
+    s_neutral = sq.render_situation(neutral_view(f), None)[0] if CORE is not None else s_facts
     if s_full == s_facts:
         full_sev, full_appr = sev, appr
     assert full_sev >= sev and gd.RANK[full_appr] >= gd.RANK[appr], (fam, sev, full_sev, appr, full_appr)
-    return {"family": fam, "class_key": c.ck, "s_facts": s_facts, "s_full": s_full, "label_facts": appr, "label_full": full_appr,
+    return {"family": fam, "class_key": c.ck, "s_facts": s_facts, "s_full": s_full, "s_neutral": s_neutral,
+            "label_facts": appr, "label_full": full_appr,
             "risk_facts": sev, "risk_full": full_sev, "adversarial": adv or bool(field), "steering": steering or bool(field),
             "steer_field": field, "lang": lang, "heldout_phrasing": (adv or bool(field)) and phrasing != "train",
             "phrasing": phrasing, "offtask": offtask, "rules_hold": rules_hold, "tripwire": tripwire}
@@ -1342,20 +1354,39 @@ def steer_field(srng, c: Case, f: Dict, ai: Dict, phrasing: str) -> Optional[str
     return None
 
 
+def hook_topic(kind: str, words: str) -> str:
+    """A topic as the desktop's guard writes it (`command:<pattern>`, `file:<name>`): the program and its first word."""
+    return "%s:%s" % (kind, " ".join(words.split()[:2]))
+
+
 def core_stage(c: Case, f: Dict) -> Dict:
-    """The context line as the core writes it for a command, files, a push or the command secrets go to, and whether
-    its rules hold the request (a tripwire, or what it could not read with certainty)."""
+    """The context line as the core writes it for a hook's question (read as the phone reads it: risk::ask_context),
+    a push, an MCP call or the command secrets go to, and whether its rules hold the request (a tripwire, or what it
+    could not read with certainty)."""
     kind = c.core[0]
+    question = (c.ai or {}).get("reason") or ""
     if kind == "command":
-        ans = CORE.command(c.core[1])
+        cmd, root = c.core[1], c.core[2]
+        ans = CORE.ask(question, "Command:\n%s\n\nIn: %s" % (cmd, root), hook_topic("command", cmd))
     elif kind == "files":
-        ans = CORE.files(c.core[1])
+        paths = c.core[1]
+        ans = CORE.ask(question, "Files:\n" + "\n".join(paths), hook_topic("file", paths[0].rsplit("/", 1)[-1]) if paths else None)
     elif kind == "push":
         ans = CORE.push(c.core[1], c.core[2])
+    elif kind == "mcp":
+        ans = CORE.mcp(c.core[1], c.core[2])
+        # what the family knew beyond the core is a detail of the request
+        f["details"] = list(f.get("details") or []) + [x for x in f["context"] if not CORE_LINE.match(x)]
     else:
         ans = CORE.command(c.core[1])
     f["context"] = list(ans["lines"])
     return ans
+
+
+def neutral_view(f: Dict) -> Dict:
+    """The facts as the risk's third view reads them (the core's risk::neutral_facts)."""
+    n = CORE.neutral(f.get("class", ""), f.get("target", "") or "", list(f.get("details") or []), list(f.get("context") or []))
+    return dict(f, target=n["target"], details=n["details"], context=n["context"])
 
 
 def phone_lines(c: Case, f: Dict):
