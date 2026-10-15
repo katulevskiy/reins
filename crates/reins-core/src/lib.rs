@@ -15,6 +15,7 @@ mod account_sync;
 pub mod api;
 pub mod approval;
 pub mod autopilot;
+pub mod avatar;
 pub mod blob;
 pub mod connector;
 pub mod crypto;

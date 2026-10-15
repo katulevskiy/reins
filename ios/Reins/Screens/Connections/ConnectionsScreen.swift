@@ -120,7 +120,7 @@ private struct WhoCanAskSection: View {
             feedback.defaultTap()
         } label: {
             SettingsRowLabel(title: untrusted(connection.label), subtitle: SettingsText.connectionLine(connection)) {
-                ConnectionMark(connection: connection, size: 32)
+                ConnectionAvatar(connection: connection, size: 32)
             } trailing: {
                 EmptyView()
             }
@@ -129,29 +129,6 @@ private struct WhoCanAskSection: View {
         .accessibilityLabel("\(untrusted(connection.label)), \(SettingsText.connectionLine(connection))")
         .accessibilityIdentifier("connection:\(connection.id)")
         .cardRow()
-    }
-}
-
-/// A connection's mark: the icon picked for it, else a computer's laptop on a cyan tile, else the avatar its name
-/// suggests.
-struct ConnectionMark: View {
-    var connection: ConnectionView
-    var size: CGFloat
-
-    var body: some View {
-        if connection.keyFingerprint != nil && connection.icon == nil {
-            RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
-                .fill(Palette.kindPair)
-                .frame(width: size, height: size)
-                .overlay {
-                    Image(systemName: "laptopcomputer")
-                        .font(.system(size: size * 0.45, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .accessibilityHidden(true)
-        } else {
-            ConnectionAvatar(label: untrusted(connection.label), pick: connection.icon, size: size)
-        }
     }
 }
 

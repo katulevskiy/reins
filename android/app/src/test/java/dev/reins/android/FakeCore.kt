@@ -28,6 +28,7 @@ import dev.reins.core.ApprovalKind
 import dev.reins.core.StandingGrant
 import dev.reins.core.ApprovalView
 import dev.reins.core.BlobView
+import dev.reins.core.Blobatar
 import dev.reins.core.ConnectionView
 import dev.reins.core.DeviceView
 import dev.reins.core.CoreException
@@ -374,6 +375,34 @@ class FakeCore : ReinsCoreInterface {
         connections = connections.map { if (it.id == connectionId) it.copy(icon = icon) else it }
     }
 
+    /** The blobatar calls, in order: "shape 3 colour 7 c1", "shuffle c1". */
+    val blobatarCalls = CopyOnWriteArrayList<String>()
+    private var shuffles = 0
+
+    /** Keeps the seed, like the core; a connection without one gets its id. */
+    override suspend fun setConnectionBlobatar(connectionId: String, shape: UByte, colour: UByte): Blobatar {
+        blobatarCalls += "shape $shape colour $colour $connectionId"
+        val seed = connections.firstOrNull { it.id == connectionId }?.blobatar?.seed ?: connectionId
+        return Blobatar(seed, shape, colour).also { b -> keepBlobatar(connectionId, b) }
+    }
+
+    /** A new seed, and the next shape and colour (always others). */
+    override suspend fun shuffleConnectionBlobatar(connectionId: String): Blobatar {
+        blobatarCalls += "shuffle $connectionId"
+        val current = connections.firstOrNull { it.id == connectionId }?.blobatar ?: Blobatar(connectionId, 0u, 0u)
+        shuffles++
+        val next = Blobatar(
+            "shuffled-$shuffles",
+            ((current.shape.toInt() + 1) % 10).toUByte(),
+            ((current.colour.toInt() + 5) % 12).toUByte(),
+        )
+        return next.also { keepBlobatar(connectionId, it) }
+    }
+
+    private fun keepBlobatar(connectionId: String, blobatar: Blobatar) {
+        connections = connections.map { if (it.id == connectionId) it.copy(blobatar = blobatar) else it }
+    }
+
     override suspend fun deny(requestId: String) {
         denials += requestId
         pending = pending.filterNot { it.id == requestId }
@@ -658,7 +687,7 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun pairingByCode(userCode: String): PairingView {
         pairingCodes += userCode
         pairingByCodeError?.let { throw it }
-        val view = pairingByCodeResult ?: TestData.pairingView("pair-code", "Reins desktop app on laptop", "laptop", keyFingerprint = "4821 9930")
+        val view = pairingByCodeResult ?: TestData.pairingView("pair-code", "M2A", "laptop", keyFingerprint = "4821 9930")
         pairing = view
         pending = pending.filterNot { it.id == view.id } + TestData.pairingItem(view.id)
         return view

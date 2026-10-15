@@ -781,14 +781,28 @@ pub struct AccountView {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ConnectionView {
     pub id: String,
+    /// Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
+    /// name it was given (`avatar::shown_label`).
     pub label: String,
     pub client_host: String,
     pub created_at: i64,
     pub last_used_at: Option<i64>,
-    /// The icon the user picked (`None` = derived from the name by the app).
+    /// The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
+    /// ("macos", "windows", "linux") or "blob".
     pub icon: Option<String>,
     /// A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
     pub key_fingerprint: Option<String>,
+    /// What Auto shows: for a computer its platform's logo ("macos", "windows", "linux"), for an AI its provider's
+    /// ("claude", "grok", ...) when its name says which, else "blob" (its blobatar).
+    #[uniffi(default)]
+    pub auto_icon: String,
+    /// A computer's platform: "macos", "windows" or "linux"; `None` for an AI app or when not known.
+    #[uniffi(default)]
+    pub platform: Option<String>,
+    /// Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
+    /// changed by the user).
+    #[uniffi(default)]
+    pub blobatar: Option<crate::avatar::Blobatar>,
 }
 
 /// What a device signed in to the account is.

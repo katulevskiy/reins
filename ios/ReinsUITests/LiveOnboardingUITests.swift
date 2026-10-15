@@ -165,7 +165,9 @@ final class LiveOnboardingUITests: XCTestCase {
         XCTAssertTrue(app.openTab("connections", timeout: 5))
         let desktop = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'connection:'")).firstMatch
         XCTAssertTrue(desktop.waitForExistence(timeout: 10), "no AI connection in Connections")
-        XCTAssertTrue(desktop.label.contains("Reins desktop app"), "the connection is the computer: \(desktop.label)")
+        // The core names a computer by itself ("M2A"), never "Reins desktop app on <host>".
+        XCTAssertFalse(desktop.label.isEmpty, "the connection has a name")
+        XCTAssertFalse(desktop.label.hasPrefix("Reins desktop app"), "the computer shows its own name: \(desktop.label)")
         shot("08-connections")
     }
 }

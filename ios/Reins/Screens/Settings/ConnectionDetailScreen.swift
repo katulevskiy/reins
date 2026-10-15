@@ -62,7 +62,7 @@ private struct ConnectionHeader: View {
         Section {
             // Its mark, its name in the serif (one short clean line), where it is and when it was last used.
             HStack(spacing: 14) {
-                ConnectionMark(connection: connection, size: 56)
+                ConnectionAvatar(connection: connection, size: 56)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(untrustedName(connection.label, limit: 40))
                         .font(RFont.serif(40))
@@ -440,7 +440,7 @@ private struct ConnectionIconGroup: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(Palette.paperSunken)
                         .frame(width: 32, height: 32)
-                        .overlay { ConnectionAvatar(label: untrusted(connection.label), pick: connection.icon, size: 24) }
+                        .overlay { ConnectionAvatar(connection: connection, size: 24) }
                         .accessibilityHidden(true)
                 } trailing: {
                     RowValue(SettingsText.iconName(connection.icon))
@@ -453,10 +453,11 @@ private struct ConnectionIconGroup: View {
             .cardRow()
             // On the row: a section's modifiers go to each of its rows, the error banner's too.
             .sheet(isPresented: $picking) {
-                IconPickerSheet(label: untrusted(connection.label), selection: connection.icon) { icon in
+                IconPickerSheet(connectionId: connection.id) { icon in
                     picking = false
                     setIcon(icon)
                 }
+                .environment(model)
                 .environment(\.feedback, feedback)
             }
             .presentationFeedback(picking)
@@ -479,11 +480,14 @@ private struct ConnectionIconGroup: View {
     }
 }
 
-/// The icons to pick from; picking one closes the sheet.
+/// The icons to pick from (picking one closes the sheet), then the blobatar's shape, colour and Shuffle, which stay
+/// open and redraw as the core keeps each change.
 private struct IconPickerSheet: View {
-    var label: String
-    var selection: String?
+    var connectionId: String
     var onPick: (String?) -> Void
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
+    @State private var error: String?
 
     var body: some View {
         ScrollView {
@@ -492,8 +496,13 @@ private struct IconPickerSheet: View {
                     .font(RFont.sans(18, .semibold))
                     .foregroundStyle(Palette.ink)
                     .accessibilityAddTraits(.isHeader)
-                ProviderPicker(label: label, selection: selection, size: 50, onPick: onPick)
-                GroupFooter(ProviderPicker.footnote)
+                if let connection = model.connection(connectionId) {
+                    ProviderPicker(connection: connection, size: 50, onPick: onPick)
+                    GroupFooter(ProviderPicker.footnote)
+                    editor(connection)
+                        .padding(.top, 8)
+                    if let error { FormBanner(text: error) }
+                }
             }
             .padding(20)
         }
@@ -501,6 +510,31 @@ private struct IconPickerSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(Palette.paper)
         .accessibilityIdentifier("iconSheet")
+    }
+
+    private func editor(_ connection: ConnectionView) -> some View {
+        let kept = ConnectionLook.blobatar(connection)
+        return BlobatarEditor(
+            seed: kept?.seed ?? untrusted(connection.label),
+            shape: kept?.shape,
+            colour: kept?.colour,
+            onShape: { change(.shape(UInt8($0))) },
+            onColour: { change(.colour(UInt8($0))) },
+            onShuffle: { change(.shuffle) }
+        )
+    }
+
+    private func change(_ change: AppModel.BlobatarChange) {
+        error = nil
+        let id = connectionId
+        Task {
+            do {
+                try await model.changeBlobatar(id, change)
+            } catch {
+                feedback.play(.error)
+                self.error = error.userMessage
+            }
+        }
     }
 }
 

@@ -506,6 +506,93 @@ async fn a_connection_icon_choice_is_remembered_and_forgotten_with_the_connectio
     assert_eq!(env.core.connections().await.unwrap()[0].icon, None);
 }
 
+/// A computer pairs (`client_name` as its desktop app registered) and the user approves it as `connection`.
+async fn pair_computer(env: &Env, id: &str, client_name: &str, key_byte: u8, connection: &str) {
+    let key = reins_proto::desktop::encode_key(&[key_byte; 32]);
+    let pairing = json!({"v": 1, "id": id, "client_name": client_name, "client_host": "127.0.0.1",
+        "choices": [12, 47, 83], "created_at": 50, "client_key": key});
+    serve_pending(env, &[], &[pairing]).await;
+    env.core.sync(0).await.unwrap();
+    Mock::given(method("POST"))
+        .and(path(format!("/reins/api/pairings/{id}/response")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": connection})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.core.answer_pairing(id.to_owned(), true, Some(47), None).await.unwrap();
+}
+
+#[tokio::test]
+async fn connections_show_their_computers_names_platform_logos_and_distinct_blobatars_the_user_can_change() {
+    let env = env().await;
+    // The new desktop app names itself "M2A (macOS)": the phone offers to keep "M2A".
+    let pairing = json!({"v": 1, "id": "p-mac", "client_name": "M2A (macOS)", "client_host": "127.0.0.1",
+        "choices": [12, 47, 83], "created_at": 50, "client_key": reins_proto::desktop::encode_key(&[1; 32])});
+    serve_pending(&env, &[], &[pairing]).await;
+    env.core.sync(0).await.unwrap();
+    assert_eq!(env.core.pairing_view("p-mac".to_owned()).await.unwrap().client_name, "M2A");
+    pair_computer(&env, "p-mac", "M2A (macOS)", 1, "mac").await;
+    pair_computer(&env, "p-pc", "Reins desktop app on honeypot", 2, "pc").await;
+    pair_computer(&env, "p-old", "Reins desktop app on Mac.localdomain", 3, "oldmac").await;
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
+            {"id": "c1", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai", "created_at": 1},
+            {"id": "mac", "label": "M2A", "client_name": "M2A (macOS)", "client_host": "127.0.0.1", "created_at": 2},
+            {"id": "pc", "label": "Reins desktop app on honeypot", "client_name": "Reins desktop app on honeypot",
+             "client_host": "127.0.0.1", "created_at": 3},
+            {"id": "oldmac", "label": "Reins desktop app on Mac.localdomain",
+             "client_name": "Reins desktop app on Mac.localdomain", "client_host": "127.0.0.1", "created_at": 4},
+            {"id": "grok", "label": "Grok", "client_name": "Grok", "client_host": "grok.com", "created_at": 5},
+            {"id": "typed", "label": "Work laptop", "client_name": "Raycast", "client_host": "raycast.com",
+             "created_at": 6}]})))
+        .mount(&env.server)
+        .await;
+    let listed = env.core.connections().await.unwrap();
+    let looks: Vec<(&str, &str, Option<&str>)> =
+        listed.iter().map(|c| (c.label.as_str(), c.auto_icon.as_str(), c.platform.as_deref())).collect();
+    assert_eq!(
+        looks,
+        [
+            ("Claude", "claude", None),
+            ("M2A", "macos", Some("macos")),
+            ("honeypot", "blob", None),
+            ("Mac", "macos", Some("macos")),
+            ("Grok", "grok", None),
+            ("Work laptop", "blob", None),
+        ]
+    );
+    assert!(listed.iter().all(|c| c.icon.is_none()), "nothing picked: Auto");
+
+    // Every connection got a blobatar of its own, in colours far apart.
+    let blobatars: Vec<reins_core::avatar::Blobatar> = listed.iter().map(|c| c.blobatar.clone().unwrap()).collect();
+    for (i, a) in blobatars.iter().enumerate() {
+        for b in &blobatars[i + 1..] {
+            assert_ne!(a.colour, b.colour, "{blobatars:?}");
+            assert!(reins_core::avatar::colour_distance(a.colour, b.colour) >= 0.12, "{a:?} and {b:?}");
+        }
+    }
+    let again = env.core.connections().await.unwrap();
+    assert_eq!(again.iter().map(|c| c.blobatar.clone().unwrap()).collect::<Vec<_>>(), blobatars, "kept as they are");
+
+    // The user picks a shape and a colour for the PC, then shuffles the Mac's.
+    let pc = env.core.set_connection_blobatar("pc".to_owned(), 3, 9).await.unwrap();
+    assert_eq!((pc.shape, pc.colour, pc.seed.as_str()), (3, 9, blobatars[2].seed.as_str()), "the figure stays");
+    let mac = env.core.shuffle_connection_blobatar("mac".to_owned()).await.unwrap();
+    assert_ne!(mac, blobatars[1]);
+    assert_ne!((mac.shape, mac.colour), (blobatars[1].shape, blobatars[1].colour));
+    let after = env.core.connections().await.unwrap();
+    assert_eq!(after[2].blobatar.as_ref(), Some(&pc), "kept");
+    assert_eq!(after[1].blobatar.as_ref(), Some(&mac), "kept");
+    assert_eq!(after[0].blobatar, listed[0].blobatar, "the others are left alone");
+    assert!(matches!(env.core.set_connection_blobatar("pc".to_owned(), 10, 0).await, Err(CoreError::Invalid { .. })));
+    assert!(matches!(env.core.set_connection_blobatar("pc".to_owned(), 0, 12).await, Err(CoreError::Invalid { .. })));
+
+    // Picking a platform's logo as the icon is remembered like any other icon.
+    env.core.set_connection_icon("pc".to_owned(), Some("linux".to_owned())).await.unwrap();
+    assert_eq!(env.core.connections().await.unwrap()[2].icon.as_deref(), Some("linux"));
+}
+
 #[tokio::test]
 async fn covered_messages_are_always_released_and_the_rest_needs_a_pick() {
     let env = env().await;

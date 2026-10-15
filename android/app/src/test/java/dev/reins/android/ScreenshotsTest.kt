@@ -253,7 +253,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun pairingComputer() {
         history()
         core.pending = listOf(TestData.pairingItem("p1"))
-        core.pairing = PairingView("p1", "Reins desktop app on laptop", "laptop", byteArrayOf(7, 42, 88), 1_700_000_200, "4821 9930")
+        core.pairing = PairingView("p1", "M2A", "laptop", byteArrayOf(7, 42, 88), 1_700_000_200, "4821 9930")
         launch(link("pairing", "p1"))
         await("keyFingerprint")
         shoot("sg-pair-computer")
@@ -590,7 +590,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun desktopPairing() {
         history()
         core.pending = listOf(TestData.pairingItem("p1"))
-        core.pairing = TestData.pairingView("p1", "Reins desktop app on laptop", "laptop", keyFingerprint = "4821 9930")
+        core.pairing = TestData.pairingView("p1", "M2A", "laptop", keyFingerprint = "4821 9930")
         launch(link("pairing", "p1"))
         await("keyFingerprint")
         shoot("27-desktop-pairing")
@@ -2333,6 +2333,28 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("updatePrompt")
         frames()
         shoot("sg-33-settings-update")
+    }
+
+    /** Computers with their platform's logo, AIs with their provider's, a bot with its blobatar; then the Icon sheet. */
+    @Test
+    fun connectionAvatars() {
+        history()
+        core.connections = TestData.showcaseConnections()
+        launch()
+        tap("tabConnections")
+        await("connection:c3")
+        shoot("av-1-connections")
+        tap("connection:d2")
+        await("disconnect")
+        shoot("av-2-computer")
+        tap("connectionIcon")
+        await("blobatarEditor")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("av-3-icon-sheet")
+        tap("shape:5")
+        rule.waitUntil(5_000) { settle(); core.connections.single { it.id == "d2" }.icon == "blob" }
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("av-5-icon-sheet-picked")
     }
 
     companion object {

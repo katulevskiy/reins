@@ -375,5 +375,20 @@ final class WidgetsTests: XCTestCase {
         XCTAssertNil(s.baseMode)
         XCTAssertNil(s.anyBypassUntil)
         XCTAssertNil(s.pending.first?.connectionIcon)
+        XCTAssertNil(s.pending.first?.connectionBlobatar)
+    }
+
+    /// A computer's platform logo and a kept blobatar reach the widgets and the Live Activity as the app draws them.
+    func testTheConnectionsIconAndBlobatarReachTheWidgets() throws {
+        var a = item("req1", created: now - 5, expires: now + 40, connection: "M2A")
+        a.connectionIcon = "macos"
+        a.connectionBlobatar = BlobatarLook(seed: "c6", shape: 4, colour: 6)
+        let state = Glance.approvalState([a], now: now)
+        XCTAssertEqual(state?.connectionIcon, "macos")
+        XCTAssertEqual(state?.connectionBlobatar, BlobatarLook(seed: "c6", shape: 4, colour: 6))
+        let back = try JSONDecoder().decode(Snapshot.Item.self, from: JSONEncoder().encode(a))
+        XCTAssertEqual(back, a)
+        XCTAssertEqual(AvatarLook.of(label: a.connection, icon: a.connectionIcon, blobatar: a.connectionBlobatar), .platform(Platforms.byKey("macos")!))
+        XCTAssertEqual(AvatarLook.of(label: "notes-bot", icon: "blob", blobatar: a.connectionBlobatar), .blob(seed: "c6", shape: 4, colour: 6))
     }
 }

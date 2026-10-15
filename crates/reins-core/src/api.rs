@@ -897,6 +897,42 @@ impl ReinsCore {
         .await
     }
 
+    /// Changes a connection's blobatar to `shape` (below `blobatar_shape_count()`) and `colour` (an index of
+    /// `blobatar_colours()`), keeping its figure. Returns the one kept.
+    pub async fn set_connection_blobatar(
+        &self,
+        connection_id: String,
+        shape: u8,
+        colour: u8,
+    ) -> Result<crate::avatar::Blobatar, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.set_connection_blobatar(&connection_id, shape, colour) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
+    pub async fn shuffle_connection_blobatar(
+        &self,
+        connection_id: String,
+    ) -> Result<crate::avatar::Blobatar, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.shuffle_connection_blobatar(&connection_id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Creates a permission ahead of any request (`kind` is `Read` or `Send`).
     pub async fn create_grant(
         &self,
