@@ -28,6 +28,11 @@ mod work;
 /// A request in one sentence, for the notification that says to check the phone.
 pub(crate) use story::spoken;
 
+/// A request's sentence as plain text, for the tray.
+pub(crate) fn ask_line(e: &Entry) -> String {
+    story::Ask::of(e).line()
+}
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -245,7 +250,8 @@ impl Root {
             ((m.screen, m.section), m.demo())
         };
         // `--demo` with `REINS_DEMO_HELP=<id>`: that (?) open, `REINS_DEMO_PAUSE=1`: the pause sheet open (`manual`:
-        // at "Until I resume"), for screenshots.
+        // at "Until I resume"), `REINS_DEMO_SELECT=<id>`: that request in Activity, for
+        // screenshots.
         let demo_var = |name: &str| std::env::var(name).ok().filter(|h| demo && !h.is_empty());
         let help = demo_var("REINS_DEMO_HELP").map(|h| &*Box::leak(h.into_boxed_str()));
         let pause_demo = demo_var("REINS_DEMO_PAUSE");
@@ -264,7 +270,7 @@ impl Root {
             kind_filter: None,
             filter_open: demo_var("REINS_DEMO_FILTER").is_some(),
             menu_closed: None,
-            selected: None,
+            selected: demo_var("REINS_DEMO_SELECT"),
             rows_shown: ROWS,
             pause_sheet: pause_demo.is_some(),
             pause_choice: if matches!(pause_demo.as_deref(), Some("manual" | "hold")) {

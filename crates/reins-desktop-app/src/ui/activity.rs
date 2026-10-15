@@ -1,8 +1,8 @@
 //! Activity (`Desk-Activity.png`): this computer's log of requests (journal) as a list, and the request picked in it
 //! as a plate beside. The list has what waits for the phone first, then the days; its filter is an inverse button
-//! that opens a menu of outcomes and kinds, each outcome with how many. The plate: the kind tile and the label line
-//! with the time, the request in the serif with its target in italic, how it ended and where, the facts as rows, and
-//! the request as a terminal showed it, in a mono well.
+//! that opens a menu of outcomes and kinds, each outcome with how many. The plate: the integration's icon and the
+//! label line with the time, the request in the serif with its target in italic and its details in mono, how it ended
+//! and where, the facts as rows, and the request as a terminal showed it, in a mono well.
 
 use std::time::{Duration, Instant};
 
@@ -13,10 +13,9 @@ use gpui::{
 };
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
-use super::home::label_line;
 use super::icons::{Glyph, glyph};
-use super::parts::{fact_rows, italic, phone_qr};
-use super::story::{Fact, Story, answer, facts, transcript};
+use super::parts::{fact_rows, italic, phone_qr, wrapped};
+use super::story::{Ask, Fact, FactStyle, answer, transcript};
 use super::{Data, ROWS, Root, kit};
 use crate::backend::ACTIVITY_LIMIT;
 use crate::format;
@@ -281,10 +280,10 @@ impl Root {
         trigger.child(kit::open_menu("activity-filter-menu", menu, Anchor::TopRight)).into_any_element()
     }
 
-    /// One request, as a plate: the kind tile and the label line, the request in the serif, how it ended, the facts
-    /// and the transcript.
+    /// One request, as a plate: the integration's icon and the label line, the request in the serif with its details
+    /// in mono, how it ended, the facts and the transcript.
     fn entry_detail(e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let s = Story::of(e);
+        let s = Ask::of(e);
         let (ic, tone, said) = answer(e, &d.phone());
         let verdict = pal.tone(tone);
         let mark = match e.outcome {
@@ -306,17 +305,33 @@ impl Root {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.0))
-                    .child(kit::kind_tile(s.icon, s.tone, 40.0, pal).rounded(px(12.0)))
-                    .child(kit::section_label(format!("{} · {}", label_line(&s), format::when(d.now, e.at)), pal)),
+                    .gap(px(12.0))
+                    .child(kit::request_icon(s.mark, s.badge, s.field, 40.0, pal.paper_raised(), pal))
+                    .child(kit::section_label(format!("{} · {}", s.label(), format::when(d.now, e.at)), pal)),
             )
             .child(
                 div()
-                    .font_family(SERIF)
-                    .text_size(px(38.0))
-                    .line_height(px(40.0))
-                    .text_color(pal.ink())
-                    .child(italic(&s.sentence)),
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .font_family(SERIF)
+                            .text_size(px(38.0))
+                            .line_height(px(40.0))
+                            .text_color(pal.ink())
+                            .child(italic(&s.sentence)),
+                    )
+                    .when_some(s.details.clone(), |c, details| {
+                        c.child(
+                            div()
+                                .font_family(MONO)
+                                .text_size(px(13.0))
+                                .line_height(px(19.0))
+                                .text_color(pal.ink_2())
+                                .child(wrapped(&details)),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -371,7 +386,8 @@ impl Root {
         let fact = |key: &str, value: String| Fact {
             key: key.to_owned(),
             value,
-            mono: false,
+            style: FactStyle::Text,
+            tail: None,
         };
         let mut rows = Vec::new();
         if let Some(end) = e.ended_at {
@@ -387,8 +403,8 @@ impl Root {
         if let Some(who) = decided(e).filter(|_| e.decider != Decider::Phone) {
             rows.push(fact("Decided", who.to_owned()));
         }
-        rows.extend(facts(e).0);
-        plate = plate.child(fact_rows(&rows, 0.0, Some(120.0), pal));
+        rows.extend(s.facts);
+        plate = plate.child(fact_rows(&rows, 0.0, Some(130.0), pal));
 
         let mut well = div()
             .flex()
