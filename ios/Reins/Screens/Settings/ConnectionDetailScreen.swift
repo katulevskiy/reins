@@ -100,7 +100,7 @@ private struct ConnectionAutopilotIfRead: View {
     }
 }
 
-/// The Autopilot part of an AI's page: like every AI or its own mode (Manual, Auto) in a segmented control, then an
+/// The Autopilot part of an AI's page: like every AI or its own mode (Manual, Auto) in a chooser, then an
 /// Overnight and a bypass for just this AI (their sheets, held to confirm) and a lockdown for just this AI (a tap).
 private struct ConnectionAutopilotGroup: View {
     var connection: ConnectionView
@@ -172,37 +172,18 @@ private struct ConnectionAutopilotGroup: View {
         .onAppear { ap.bind(model) }
     }
 
+    /// Like all, Manual, Auto: the Signal chooser, the chosen one raised.
     private var segments: some View {
-        HStack(spacing: 2) {
-            ForEach(choices, id: \.self) { m in
-                Button {
-                    guard m != chosen else { return }
-                    feedback.play(.selection)
-                    setMode(m)
-                } label: {
-                    HStack(spacing: 4) {
-                        if let m {
-                            Image(systemName: m == .manual ? SettingsText.modeSymbol(m) : SettingsText.modeValueSymbol(m))
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(m == .manual ? SettingsText.modeTint(m) : Palette.secondary)
-                        }
-                        Text(m.map(SettingsText.modeName) ?? "Like all")
-                            .font(RFont.sans(14, m == chosen ? .semibold : .medium))
-                            .foregroundStyle(m == chosen ? Palette.text : Palette.secondary)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 34)
-                    .background(m == chosen ? Palette.dynamic(0xFFFFFF, 0x2C2C31) : Color.clear, in: Capsule())
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(m == chosen ? .isSelected : [])
-                .accessibilityIdentifier(m.map { "connMode:\(SettingsText.modeName($0).uppercased())" } ?? "connMode:follow")
+        Chooser(choices.map { m in
+            Chooser.Segment(
+                id: m.map { "connMode:\(SettingsText.modeName($0).uppercased())" } ?? "connMode:follow",
+                title: m.map(SettingsText.modeName) ?? "Like all",
+                selected: m == chosen
+            ) {
+                feedback.play(.selection)
+                setMode(m)
             }
-        }
-        .padding(3)
-        .background(Palette.controlFill, in: Capsule())
-        .animation(.smooth(duration: 0.2), value: chosen)
+        })
     }
 
     @ViewBuilder private var bypassButton: some View {
@@ -220,7 +201,7 @@ private struct ConnectionAutopilotGroup: View {
                         }
                     }
                 }
-                .modePill(fill: Palette.danger.opacity(0.16), text: Palette.danger)
+                .modePill(fill: Palette.dangerWash, text: Palette.danger)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("stopConnectionBypass")
@@ -229,8 +210,8 @@ private struct ConnectionAutopilotGroup: View {
                 feedback.play(.tap)
                 askBypass = true
             } label: {
-                Label("Bypass", systemImage: "bolt.fill")
-                    .modePill(fill: Palette.danger.opacity(0.12), text: Palette.danger)
+                Label { Text("Bypass") } icon: { GlyphIcon(.shieldPaused, size: 16) }
+                    .modePill(fill: Palette.dangerWash, text: Palette.danger)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("connMode:BYPASS")
@@ -262,7 +243,7 @@ private struct ConnectionAutopilotGroup: View {
                 feedback.play(.tap)
                 askOvernight = true
             } label: {
-                Label(AutopilotText.overnightName, systemImage: AutopilotText.overnightSymbol)
+                Label { Text(AutopilotText.overnightName) } icon: { GlyphIcon(.moon, size: 16) }
                     .modePill(fill: Palette.overnight.opacity(0.12), text: Palette.overnight)
             }
             .buttonStyle(.plain)
@@ -275,7 +256,7 @@ private struct ConnectionAutopilotGroup: View {
             Button {
                 setMode(nil)
             } label: {
-                Label("Unlock", systemImage: "lock.open.fill")
+                Label { Text("Unlock") } icon: { GlyphIcon(.lockOpen, size: 16) }
                     .modePill(fill: Palette.warning.opacity(0.14), text: Palette.warning)
             }
             .buttonStyle(.plain)
@@ -284,8 +265,8 @@ private struct ConnectionAutopilotGroup: View {
             Button {
                 setMode(.lockdown)
             } label: {
-                Label("Lock down", systemImage: "lock.fill")
-                    .modePill(fill: Palette.controlFill, text: Palette.text)
+                Label { Text("Lock down") } icon: { GlyphIcon(.lock, size: 16) }
+                    .modePill(fill: Palette.paperSunken, text: Palette.ink)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("connMode:LOCKDOWN")
@@ -346,7 +327,7 @@ private struct ConnectionAutopilotGroup: View {
 private extension View {
     /// One of the two buttons under the mode control: a 40-point pill in its colour.
     func modePill(fill: Color, text: Color) -> some View {
-        font(RFont.sans(14.5, .semibold))
+        font(RFont.sans(14.5, .medium))
             .foregroundStyle(text)
             .lineLimit(1)
             .frame(maxWidth: .infinity, minHeight: 40)
