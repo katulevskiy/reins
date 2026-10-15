@@ -51,7 +51,9 @@ enum AskFormat {
             var lead = lead
             var flag: String?
             if let t = target, let stand {
-                let lookalike = !t.unicodeScalars.allSatisfy(\.isASCII) || mixedScriptRaw(t) != nil
+                // Reins' own separator ("web · dev") is not part of what is checked.
+                let own = t.replacingOccurrences(of: " · ", with: " ")
+                let lookalike = !own.unicodeScalars.allSatisfy(\.isASCII) || mixedScriptRaw(own) != nil
                 if lookalike {
                     flag = "\(stand.split(separator: " ").last.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Name"): \(rawForm(t))"
                     lead += stand

@@ -243,6 +243,14 @@ final class AskFormatTests: XCTestCase {
         XCTAssertEqual(AskFormat.waiting(chat).mono, "F\\u{430}mily · mixed scripts")
         XCTAssertNil(mixedScriptRaw("octo/app"))
         XCTAssertNil(mixedScriptRaw("москва"), "one script is not mixed")
+        // A project named with look-alike letters is flagged; Reins' own " · " between project and environment is not.
+        var env = T.view("e", kind: .write, service: "vault", op: "env_release", action: "write")
+        env.envRelease = EnvReleaseView(
+            project: "w\u{0435}b", env: "dev", runner: "", runnerLabel: "", agent: false, root: "", command: "x", program: "", programWarning: nil,
+            variables: ["A"], allVariables: false, leaseSecs: 60, purpose: nil, commands: [], print: false, alwaysAsk: false, alwaysAskSet: false
+        )
+        XCTAssertEqual(AskFormat.waiting(env).text, "Release a variable of a project")
+        XCTAssertEqual(AskFormat.waiting(env).mono, "Project: w\\u{435}b \\u{b7} dev\nx")
     }
 
     func testAHostBeyondAsciiShowsAsPunycode() {
