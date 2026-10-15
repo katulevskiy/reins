@@ -305,6 +305,14 @@ built and checked locally, and `KNOWN_MODELS` still pins v1 only.
 
 **int8 parity (4,369 texts):** decision agreement 0.978, approval argmax agreement 0.995, 0 unsafe approvals.
 
+**int8 package (what would ship; 336.8 MB):** approval temperature 2.88, risk temperature 2.40, Overnight threshold
+0.0716.
+- v7 test_iid: coverage 48.5%, 0 unsafe automatic approvals. adv_test: 0 unsafe.
+- Golden: catastrophic recall 0.992 (1 of 129 missed), false holds 4.9% on benign and 19.4% on all non-catastrophic,
+  ECE 0.036.
+- Risk test_iid and adv_test: catastrophic recall 1.0. That holds for steering in held-out phrasings and every
+  language too.
+
 **Known gaps**
 - The golden miss is `mcp-mongo-prod`: `drop_database` with arguments that name no host, so the phone sees no
   production fact.
