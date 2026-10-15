@@ -2773,6 +2773,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func revokeGrant(grantId: String) async throws 
     
     /**
+     * Reins Secrets: "Revoke on all computers". The permissions for secrets of `project` (and `env`; neither: all of
+     * them) end, and every paired computer is told to drop the values it holds. Returns how many computers were told.
+     */
+    func revokeSecretsEverywhere(project: String?, env: String?) async throws  -> SecretsRevoked
+    
+    /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
      * can wake each phone app. Unknown values are `None`; an unreachable server is no error.
      */
@@ -2829,6 +2835,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setModelRuntime(runtime: ModelRuntime) 
     
     func setPreset(profileId: String, preset: Preset) async throws 
+    
+    /**
+     * Reins Secrets: whether `project/env` is asked every time (`Some`), or left to the computer's reins.toml and the
+     * environment's name (`None`: production environments and `confirm = "always"` are asked every time).
+     */
+    func setSecretsAlwaysAsk(project: String, env: String, always: Bool?) async throws 
     
     /**
      * Chosen during setup and changed under Grants; applies to connections made from then on.
@@ -4319,6 +4331,26 @@ open func revokeGrant(grantId: String)async throws   {
 }
     
     /**
+     * Reins Secrets: "Revoke on all computers". The permissions for secrets of `project` (and `env`; neither: all of
+     * them) end, and every paired computer is told to drop the values it holds. Returns how many computers were told.
+     */
+open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -> SecretsRevoked  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_revoke_secrets_everywhere(
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(project),FfiConverterOptionString.lower(env)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSecretsRevoked_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
      * can wake each phone app. Unknown values are `None`; an unreachable server is no error.
      */
@@ -4515,6 +4547,26 @@ open func setPreset(profileId: String, preset: Preset)async throws   {
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_set_preset(
                         self.uniffiCloneHandle(),FfiConverterString.lower(profileId),FfiConverterTypePreset_lower(preset)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Reins Secrets: whether `project/env` is asked every time (`Some`), or left to the computer's reins.toml and the
+     * environment's name (`None`: production environments and `confirm = "always"` are asked every time).
+     */
+open func setSecretsAlwaysAsk(project: String, env: String, always: Bool?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_secrets_always_ask(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(project),FfiConverterString.lower(env),FfiConverterOptionBool.lower(always)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -6077,6 +6129,18 @@ public struct ApprovalView: Equatable, Hashable {
      * A purchase: the cart like a receipt, and what may pay for it (approve it with `approve_purchase`).
      */
     public var purchase: PurchaseView?
+    /**
+     * Reins Secrets: the variables of a project's environment for one command on the computer (names only).
+     */
+    public var envRelease: EnvReleaseView?
+    /**
+     * Reins Secrets: variables the computer sends to be saved, environment by environment (names only).
+     */
+    public var secretsStore: SecretsStoreView?
+    /**
+     * A git host's token the computer hands to the phone's integration of that host.
+     */
+    public var tokenStore: TokenStoreView?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6141,7 +6205,16 @@ public struct ApprovalView: Equatable, Hashable {
          */quick: QuickApproval? = nil, 
         /**
          * A purchase: the cart like a receipt, and what may pay for it (approve it with `approve_purchase`).
-         */purchase: PurchaseView? = nil) {
+         */purchase: PurchaseView? = nil, 
+        /**
+         * Reins Secrets: the variables of a project's environment for one command on the computer (names only).
+         */envRelease: EnvReleaseView? = nil, 
+        /**
+         * Reins Secrets: variables the computer sends to be saved, environment by environment (names only).
+         */secretsStore: SecretsStoreView? = nil, 
+        /**
+         * A git host's token the computer hands to the phone's integration of that host.
+         */tokenStore: TokenStoreView? = nil) {
         self.requestId = requestId
         self.connectionId = connectionId
         self.connectionLabel = connectionLabel
@@ -6174,6 +6247,9 @@ public struct ApprovalView: Equatable, Hashable {
         self.headline = headline
         self.quick = quick
         self.purchase = purchase
+        self.envRelease = envRelease
+        self.secretsStore = secretsStore
+        self.tokenStore = tokenStore
     }
 
     
@@ -6223,7 +6299,10 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
                 ssh: FfiConverterOptionTypeSshSignView.read(from: &buf), 
                 headline: FfiConverterString.read(from: &buf), 
                 quick: FfiConverterOptionTypeQuickApproval.read(from: &buf), 
-                purchase: FfiConverterOptionTypePurchaseView.read(from: &buf)
+                purchase: FfiConverterOptionTypePurchaseView.read(from: &buf), 
+                envRelease: FfiConverterOptionTypeEnvReleaseView.read(from: &buf), 
+                secretsStore: FfiConverterOptionTypeSecretsStoreView.read(from: &buf), 
+                tokenStore: FfiConverterOptionTypeTokenStoreView.read(from: &buf)
         )
     }
 
@@ -6260,6 +6339,9 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
         FfiConverterString.write(value.headline, into: &buf)
         FfiConverterOptionTypeQuickApproval.write(value.quick, into: &buf)
         FfiConverterOptionTypePurchaseView.write(value.purchase, into: &buf)
+        FfiConverterOptionTypeEnvReleaseView.write(value.envRelease, into: &buf)
+        FfiConverterOptionTypeSecretsStoreView.write(value.secretsStore, into: &buf)
+        FfiConverterOptionTypeTokenStoreView.write(value.tokenStore, into: &buf)
     }
 }
 
@@ -7481,6 +7563,81 @@ public func FfiConverterTypeClassView_lower(_ value: ClassView) -> RustBuffer {
 
 
 /**
+ * One command a permission for secrets can cover, as the approval offers it.
+ */
+public struct CommandOption: Equatable, Hashable {
+    /**
+     * What `SecretsScopeChoice.command` names: `exact`, or `prefix:<n>` (the program and its first n arguments, then
+     * any whole arguments).
+     */
+    public var id: String
+    /**
+     * `npm run dev`, `npm run *`.
+     */
+    public var label: String
+    public var prefix: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What `SecretsScopeChoice.command` names: `exact`, or `prefix:<n>` (the program and its first n arguments, then
+         * any whole arguments).
+         */id: String, 
+        /**
+         * `npm run dev`, `npm run *`.
+         */label: String, prefix: Bool) {
+        self.id = id
+        self.label = label
+        self.prefix = prefix
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CommandOption: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCommandOption: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CommandOption {
+        return
+            try CommandOption(
+                id: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                prefix: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CommandOption, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterBool.write(value.prefix, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandOption_lift(_ buf: RustBuffer) throws -> CommandOption {
+    return try FfiConverterTypeCommandOption.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandOption_lower(_ value: CommandOption) -> RustBuffer {
+    return FfiConverterTypeCommandOption.lower(value)
+}
+
+
+/**
  * One connection's Autopilot settings.
  */
 public struct ConnectionAutopilot: Equatable, Hashable {
@@ -8143,6 +8300,296 @@ public func FfiConverterTypeEmailView_lower(_ value: EmailView) -> RustBuffer {
 }
 
 
+/**
+ * The variables of one environment of a project, for one command on the computer (`reins run`).
+ */
+public struct EnvReleaseView: Equatable, Hashable {
+    public var project: String
+    public var env: String
+    /**
+     * `person`, or `agent:<harness>`.
+     */
+    public var runner: String
+    /**
+     * "You", or the agent's name ("Claude Code").
+     */
+    public var runnerLabel: String
+    public var agent: Bool
+    /**
+     * The project's folder on the computer.
+     */
+    public var root: String
+    /**
+     * The command as it runs (program name and arguments).
+     */
+    public var command: String
+    /**
+     * The program's full path, as the computer resolved it.
+     */
+    public var program: String
+    /**
+     * Why the program deserves a second look, for a warning row ("In a temporary folder", "Inside the project
+     * folder", "Not the one on your PATH"); `command` then shows its whole path too.
+     */
+    public var programWarning: String?
+    /**
+     * The variables' names (never a value), sorted.
+     */
+    public var variables: [String]
+    /**
+     * Every variable of the environment was asked for.
+     */
+    public var allVariables: Bool
+    public var leaseSecs: UInt64
+    public var purpose: String?
+    /**
+     * What a remembered approval can cover, narrowest first (the exact command first).
+     */
+    public var commands: [CommandOption]
+    /**
+     * The value is printed in the terminal (`reins secrets get`): asked every time.
+     */
+    public var print: Bool
+    /**
+     * The environment is asked every time (`confirm = "always"` in reins.toml, a production environment, or your
+     * choice); `always_ask_set` says you chose it on the phone.
+     */
+    public var alwaysAsk: Bool
+    public var alwaysAskSet: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(project: String, env: String, 
+        /**
+         * `person`, or `agent:<harness>`.
+         */runner: String, 
+        /**
+         * "You", or the agent's name ("Claude Code").
+         */runnerLabel: String, agent: Bool, 
+        /**
+         * The project's folder on the computer.
+         */root: String, 
+        /**
+         * The command as it runs (program name and arguments).
+         */command: String, 
+        /**
+         * The program's full path, as the computer resolved it.
+         */program: String, 
+        /**
+         * Why the program deserves a second look, for a warning row ("In a temporary folder", "Inside the project
+         * folder", "Not the one on your PATH"); `command` then shows its whole path too.
+         */programWarning: String? = nil, 
+        /**
+         * The variables' names (never a value), sorted.
+         */variables: [String], 
+        /**
+         * Every variable of the environment was asked for.
+         */allVariables: Bool, leaseSecs: UInt64, purpose: String?, 
+        /**
+         * What a remembered approval can cover, narrowest first (the exact command first).
+         */commands: [CommandOption], 
+        /**
+         * The value is printed in the terminal (`reins secrets get`): asked every time.
+         */print: Bool, 
+        /**
+         * The environment is asked every time (`confirm = "always"` in reins.toml, a production environment, or your
+         * choice); `always_ask_set` says you chose it on the phone.
+         */alwaysAsk: Bool, alwaysAskSet: Bool) {
+        self.project = project
+        self.env = env
+        self.runner = runner
+        self.runnerLabel = runnerLabel
+        self.agent = agent
+        self.root = root
+        self.command = command
+        self.program = program
+        self.programWarning = programWarning
+        self.variables = variables
+        self.allVariables = allVariables
+        self.leaseSecs = leaseSecs
+        self.purpose = purpose
+        self.commands = commands
+        self.print = print
+        self.alwaysAsk = alwaysAsk
+        self.alwaysAskSet = alwaysAskSet
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension EnvReleaseView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEnvReleaseView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EnvReleaseView {
+        return
+            try EnvReleaseView(
+                project: FfiConverterString.read(from: &buf), 
+                env: FfiConverterString.read(from: &buf), 
+                runner: FfiConverterString.read(from: &buf), 
+                runnerLabel: FfiConverterString.read(from: &buf), 
+                agent: FfiConverterBool.read(from: &buf), 
+                root: FfiConverterString.read(from: &buf), 
+                command: FfiConverterString.read(from: &buf), 
+                program: FfiConverterString.read(from: &buf), 
+                programWarning: FfiConverterOptionString.read(from: &buf), 
+                variables: FfiConverterSequenceString.read(from: &buf), 
+                allVariables: FfiConverterBool.read(from: &buf), 
+                leaseSecs: FfiConverterUInt64.read(from: &buf), 
+                purpose: FfiConverterOptionString.read(from: &buf), 
+                commands: FfiConverterSequenceTypeCommandOption.read(from: &buf), 
+                print: FfiConverterBool.read(from: &buf), 
+                alwaysAsk: FfiConverterBool.read(from: &buf), 
+                alwaysAskSet: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EnvReleaseView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.project, into: &buf)
+        FfiConverterString.write(value.env, into: &buf)
+        FfiConverterString.write(value.runner, into: &buf)
+        FfiConverterString.write(value.runnerLabel, into: &buf)
+        FfiConverterBool.write(value.agent, into: &buf)
+        FfiConverterString.write(value.root, into: &buf)
+        FfiConverterString.write(value.command, into: &buf)
+        FfiConverterString.write(value.program, into: &buf)
+        FfiConverterOptionString.write(value.programWarning, into: &buf)
+        FfiConverterSequenceString.write(value.variables, into: &buf)
+        FfiConverterBool.write(value.allVariables, into: &buf)
+        FfiConverterUInt64.write(value.leaseSecs, into: &buf)
+        FfiConverterOptionString.write(value.purpose, into: &buf)
+        FfiConverterSequenceTypeCommandOption.write(value.commands, into: &buf)
+        FfiConverterBool.write(value.print, into: &buf)
+        FfiConverterBool.write(value.alwaysAsk, into: &buf)
+        FfiConverterBool.write(value.alwaysAskSet, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnvReleaseView_lift(_ buf: RustBuffer) throws -> EnvReleaseView {
+    return try FfiConverterTypeEnvReleaseView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnvReleaseView_lower(_ value: EnvReleaseView) -> RustBuffer {
+    return FfiConverterTypeEnvReleaseView.lower(value)
+}
+
+
+/**
+ * One environment of a `vault_secrets_store`.
+ */
+public struct EnvStoreView: Equatable, Hashable {
+    public var project: String
+    public var env: String
+    /**
+     * The environment does not exist yet and is made.
+     */
+    public var newEnv: Bool
+    public var added: [String]
+    public var replaced: [String]
+    public var removed: [String]
+    /**
+     * "OLD → NEW".
+     */
+    public var renamed: [String]
+    /**
+     * Variables copied in from another environment of the project, and from which.
+     */
+    public var copiedFrom: String?
+    public var copied: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(project: String, env: String, 
+        /**
+         * The environment does not exist yet and is made.
+         */newEnv: Bool, added: [String], replaced: [String], removed: [String], 
+        /**
+         * "OLD → NEW".
+         */renamed: [String], 
+        /**
+         * Variables copied in from another environment of the project, and from which.
+         */copiedFrom: String?, copied: UInt32) {
+        self.project = project
+        self.env = env
+        self.newEnv = newEnv
+        self.added = added
+        self.replaced = replaced
+        self.removed = removed
+        self.renamed = renamed
+        self.copiedFrom = copiedFrom
+        self.copied = copied
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension EnvStoreView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEnvStoreView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EnvStoreView {
+        return
+            try EnvStoreView(
+                project: FfiConverterString.read(from: &buf), 
+                env: FfiConverterString.read(from: &buf), 
+                newEnv: FfiConverterBool.read(from: &buf), 
+                added: FfiConverterSequenceString.read(from: &buf), 
+                replaced: FfiConverterSequenceString.read(from: &buf), 
+                removed: FfiConverterSequenceString.read(from: &buf), 
+                renamed: FfiConverterSequenceString.read(from: &buf), 
+                copiedFrom: FfiConverterOptionString.read(from: &buf), 
+                copied: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EnvStoreView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.project, into: &buf)
+        FfiConverterString.write(value.env, into: &buf)
+        FfiConverterBool.write(value.newEnv, into: &buf)
+        FfiConverterSequenceString.write(value.added, into: &buf)
+        FfiConverterSequenceString.write(value.replaced, into: &buf)
+        FfiConverterSequenceString.write(value.removed, into: &buf)
+        FfiConverterSequenceString.write(value.renamed, into: &buf)
+        FfiConverterOptionString.write(value.copiedFrom, into: &buf)
+        FfiConverterUInt32.write(value.copied, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnvStoreView_lift(_ buf: RustBuffer) throws -> EnvStoreView {
+    return try FfiConverterTypeEnvStoreView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnvStoreView_lower(_ value: EnvStoreView) -> RustBuffer {
+    return FfiConverterTypeEnvStoreView.lower(value)
+}
+
+
 public struct GitCommitView: Equatable, Hashable {
     /**
      * The first 7 hex digits.
@@ -8755,6 +9202,11 @@ public struct GrantScopeChoice: Equatable, Hashable {
      * Empty = the kind of the request itself.
      */
     public var classes: [String]
+    /**
+     * Reins Secrets: the command and variables a permission for an environment covers. `None`: the exact command and
+     * the variables asked for.
+     */
+    public var secrets: SecretsScopeChoice?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8788,7 +9240,11 @@ public struct GrantScopeChoice: Equatable, Hashable {
         /**
          * Another integration, a permission to change things: the kinds of change it allows (see `ApprovalView.classes`).
          * Empty = the kind of the request itself.
-         */classes: [String]) {
+         */classes: [String], 
+        /**
+         * Reins Secrets: the command and variables a permission for an environment covers. `None`: the exact command and
+         * the variables asked for.
+         */secrets: SecretsScopeChoice? = nil) {
         self.allMail = allMail
         self.selectedMessagesOnly = selectedMessagesOnly
         self.senderAddresses = senderAddresses
@@ -8798,6 +9254,7 @@ public struct GrantScopeChoice: Equatable, Hashable {
         self.recipientDomains = recipientDomains
         self.resources = resources
         self.classes = classes
+        self.secrets = secrets
     }
 
     
@@ -8824,7 +9281,8 @@ public struct FfiConverterTypeGrantScopeChoice: FfiConverterRustBuffer {
                 recipientAddresses: FfiConverterSequenceString.read(from: &buf), 
                 recipientDomains: FfiConverterSequenceString.read(from: &buf), 
                 resources: FfiConverterSequenceString.read(from: &buf), 
-                classes: FfiConverterSequenceString.read(from: &buf)
+                classes: FfiConverterSequenceString.read(from: &buf), 
+                secrets: FfiConverterOptionTypeSecretsScopeChoice.read(from: &buf)
         )
     }
 
@@ -8838,6 +9296,7 @@ public struct FfiConverterTypeGrantScopeChoice: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.recipientDomains, into: &buf)
         FfiConverterSequenceString.write(value.resources, into: &buf)
         FfiConverterSequenceString.write(value.classes, into: &buf)
+        FfiConverterOptionTypeSecretsScopeChoice.write(value.secrets, into: &buf)
     }
 }
 
@@ -11495,6 +11954,232 @@ public func FfiConverterTypeSecretReleaseView_lower(_ value: SecretReleaseView) 
 
 
 /**
+ * What "Revoke on all computers" did: the permissions it ended on this phone, the computers told, and those not told
+ * yet (by name). A note that could not be delivered is kept and sent again on each sync until the server takes it;
+ * the permissions ended on this phone either way.
+ */
+public struct SecretsRevoked: Equatable, Hashable {
+    public var ended: UInt32
+    public var told: UInt32
+    /**
+     * "Not yet delivered to <name>" for each of these.
+     */
+    public var notDelivered: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(ended: UInt32, told: UInt32, 
+        /**
+         * "Not yet delivered to <name>" for each of these.
+         */notDelivered: [String]) {
+        self.ended = ended
+        self.told = told
+        self.notDelivered = notDelivered
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SecretsRevoked: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecretsRevoked: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecretsRevoked {
+        return
+            try SecretsRevoked(
+                ended: FfiConverterUInt32.read(from: &buf), 
+                told: FfiConverterUInt32.read(from: &buf), 
+                notDelivered: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SecretsRevoked, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.ended, into: &buf)
+        FfiConverterUInt32.write(value.told, into: &buf)
+        FfiConverterSequenceString.write(value.notDelivered, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsRevoked_lift(_ buf: RustBuffer) throws -> SecretsRevoked {
+    return try FfiConverterTypeSecretsRevoked.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsRevoked_lower(_ value: SecretsRevoked) -> RustBuffer {
+    return FfiConverterTypeSecretsRevoked.lower(value)
+}
+
+
+/**
+ * A standing permission for secrets (`ApprovalView.env_release`): which of the offered commands it covers, and
+ * whether every variable of the environment or only those asked for.
+ */
+public struct SecretsScopeChoice: Equatable, Hashable {
+    /**
+     * An id of `EnvReleaseView.commands`.
+     */
+    public var command: String
+    public var allVariables: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * An id of `EnvReleaseView.commands`.
+         */command: String, allVariables: Bool) {
+        self.command = command
+        self.allVariables = allVariables
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SecretsScopeChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecretsScopeChoice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecretsScopeChoice {
+        return
+            try SecretsScopeChoice(
+                command: FfiConverterString.read(from: &buf), 
+                allVariables: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SecretsScopeChoice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.command, into: &buf)
+        FfiConverterBool.write(value.allVariables, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsScopeChoice_lift(_ buf: RustBuffer) throws -> SecretsScopeChoice {
+    return try FfiConverterTypeSecretsScopeChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsScopeChoice_lower(_ value: SecretsScopeChoice) -> RustBuffer {
+    return FfiConverterTypeSecretsScopeChoice.lower(value)
+}
+
+
+/**
+ * Variables the computer sends to be saved in the vault (`reins secrets set/push`, import): one approval.
+ */
+public struct SecretsStoreView: Equatable, Hashable {
+    public var envs: [EnvStoreView]
+    /**
+     * Four digits the terminal shows too.
+     */
+    public var check: String
+    /**
+     * Values in all (variables set, SSH keys, tokens).
+     */
+    public var total: UInt32
+    /**
+     * SSH keys kept in the folder Reins/ssh.
+     */
+    public var ssh: [SshStoreView]
+    /**
+     * Git hosts' tokens handed to the phone's integrations (`check` empty: the batch has one).
+     */
+    public var tokens: [TokenStoreView]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(envs: [EnvStoreView], 
+        /**
+         * Four digits the terminal shows too.
+         */check: String, 
+        /**
+         * Values in all (variables set, SSH keys, tokens).
+         */total: UInt32, 
+        /**
+         * SSH keys kept in the folder Reins/ssh.
+         */ssh: [SshStoreView] = [], 
+        /**
+         * Git hosts' tokens handed to the phone's integrations (`check` empty: the batch has one).
+         */tokens: [TokenStoreView] = []) {
+        self.envs = envs
+        self.check = check
+        self.total = total
+        self.ssh = ssh
+        self.tokens = tokens
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SecretsStoreView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecretsStoreView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecretsStoreView {
+        return
+            try SecretsStoreView(
+                envs: FfiConverterSequenceTypeEnvStoreView.read(from: &buf), 
+                check: FfiConverterString.read(from: &buf), 
+                total: FfiConverterUInt32.read(from: &buf), 
+                ssh: FfiConverterSequenceTypeSshStoreView.read(from: &buf), 
+                tokens: FfiConverterSequenceTypeTokenStoreView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SecretsStoreView, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeEnvStoreView.write(value.envs, into: &buf)
+        FfiConverterString.write(value.check, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterSequenceTypeSshStoreView.write(value.ssh, into: &buf)
+        FfiConverterSequenceTypeTokenStoreView.write(value.tokens, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsStoreView_lift(_ buf: RustBuffer) throws -> SecretsStoreView {
+    return try FfiConverterTypeSecretsStoreView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsStoreView_lower(_ value: SecretsStoreView) -> RustBuffer {
+    return FfiConverterTypeSecretsStoreView.lower(value)
+}
+
+
+/**
  * What a server offers, read before signing in (`/api/config`). `None`: the server does not say (an older one).
  */
 public struct ServerInfo: Equatable, Hashable {
@@ -12351,6 +13036,69 @@ public func FfiConverterTypeSshSignView_lower(_ value: SshSignView) -> RustBuffe
 }
 
 
+/**
+ * An SSH key of a store.
+ */
+public struct SshStoreView: Equatable, Hashable {
+    public var name: String
+    /**
+     * `SHA256:…`
+     */
+    public var fingerprint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, 
+        /**
+         * `SHA256:…`
+         */fingerprint: String) {
+        self.name = name
+        self.fingerprint = fingerprint
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SshStoreView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSshStoreView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SshStoreView {
+        return
+            try SshStoreView(
+                name: FfiConverterString.read(from: &buf), 
+                fingerprint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SshStoreView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.fingerprint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSshStoreView_lift(_ buf: RustBuffer) throws -> SshStoreView {
+    return try FfiConverterTypeSshStoreView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSshStoreView_lower(_ value: SshStoreView) -> RustBuffer {
+    return FfiConverterTypeSshStoreView.lower(value)
+}
+
+
 public struct SsoOutcome: Equatable, Hashable {
     public var session: SessionInfo
     public var keys: AccountKeys
@@ -12759,6 +13507,89 @@ public func FfiConverterTypeThresholdReplay_lift(_ buf: RustBuffer) throws -> Th
 #endif
 public func FfiConverterTypeThresholdReplay_lower(_ value: ThresholdReplay) -> RustBuffer {
     return FfiConverterTypeThresholdReplay.lower(value)
+}
+
+
+/**
+ * A git host's token the computer hands to the phone's integration.
+ */
+public struct TokenStoreView: Equatable, Hashable {
+    /**
+     * `github`, `gitlab`, `codeberg`, `bitbucket`.
+     */
+    public var service: String
+    public var host: String
+    /**
+     * As the computer reported them (not checked).
+     */
+    public var scopes: [String]
+    /**
+     * Four digits of the token, which the terminal shows too.
+     */
+    public var check: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `github`, `gitlab`, `codeberg`, `bitbucket`.
+         */service: String, host: String, 
+        /**
+         * As the computer reported them (not checked).
+         */scopes: [String], 
+        /**
+         * Four digits of the token, which the terminal shows too.
+         */check: String) {
+        self.service = service
+        self.host = host
+        self.scopes = scopes
+        self.check = check
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TokenStoreView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTokenStoreView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TokenStoreView {
+        return
+            try TokenStoreView(
+                service: FfiConverterString.read(from: &buf), 
+                host: FfiConverterString.read(from: &buf), 
+                scopes: FfiConverterSequenceString.read(from: &buf), 
+                check: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TokenStoreView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterString.write(value.host, into: &buf)
+        FfiConverterSequenceString.write(value.scopes, into: &buf)
+        FfiConverterString.write(value.check, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTokenStoreView_lift(_ buf: RustBuffer) throws -> TokenStoreView {
+    return try FfiConverterTypeTokenStoreView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTokenStoreView_lower(_ value: TokenStoreView) -> RustBuffer {
+    return FfiConverterTypeTokenStoreView.lower(value)
 }
 
 
@@ -15614,6 +16445,30 @@ fileprivate struct FfiConverterOptionTypeEmailView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeEnvReleaseView: FfiConverterRustBuffer {
+    typealias SwiftType = EnvReleaseView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeEnvReleaseView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeEnvReleaseView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeGitPushView: FfiConverterRustBuffer {
     typealias SwiftType = GitPushView?
 
@@ -15806,6 +16661,54 @@ fileprivate struct FfiConverterOptionTypeSecretReleaseView: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeSecretsScopeChoice: FfiConverterRustBuffer {
+    typealias SwiftType = SecretsScopeChoice?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSecretsScopeChoice.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSecretsScopeChoice.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSecretsStoreView: FfiConverterRustBuffer {
+    typealias SwiftType = SecretsStoreView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSecretsStoreView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSecretsStoreView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSessionInfo: FfiConverterRustBuffer {
     typealias SwiftType = SessionInfo?
 
@@ -15918,6 +16821,30 @@ fileprivate struct FfiConverterOptionTypeSuggestionView: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSuggestionView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeTokenStoreView: FfiConverterRustBuffer {
+    typealias SwiftType = TokenStoreView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTokenStoreView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTokenStoreView.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -16249,6 +17176,31 @@ fileprivate struct FfiConverterSequenceTypeClassView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeCommandOption: FfiConverterRustBuffer {
+    typealias SwiftType = [CommandOption]
+
+    public static func write(_ value: [CommandOption], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCommandOption.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CommandOption] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CommandOption]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCommandOption.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeConnectionAutopilot: FfiConverterRustBuffer {
     typealias SwiftType = [ConnectionAutopilot]
 
@@ -16391,6 +17343,31 @@ fileprivate struct FfiConverterSequenceTypeDiffLineView: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeDiffLineView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeEnvStoreView: FfiConverterRustBuffer {
+    typealias SwiftType = [EnvStoreView]
+
+    public static func write(_ value: [EnvStoreView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeEnvStoreView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [EnvStoreView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [EnvStoreView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeEnvStoreView.read(from: &buf))
         }
         return seq
     }
@@ -16891,6 +17868,56 @@ fileprivate struct FfiConverterSequenceTypeSpendTotal: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSpendTotal.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSshStoreView: FfiConverterRustBuffer {
+    typealias SwiftType = [SshStoreView]
+
+    public static func write(_ value: [SshStoreView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSshStoreView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SshStoreView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SshStoreView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSshStoreView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTokenStoreView: FfiConverterRustBuffer {
+    typealias SwiftType = [TokenStoreView]
+
+    public static func write(_ value: [TokenStoreView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTokenStoreView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TokenStoreView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TokenStoreView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTokenStoreView.read(from: &buf))
         }
         return seq
     }
@@ -17405,6 +18432,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_revoke_grant() != 13815) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_revoke_secrets_everywhere() != 57345) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_server_info() != 48285) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -17436,6 +18466,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_preset() != 57690) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_set_secrets_always_ask() != 9230) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_starting_policy() != 46624) {

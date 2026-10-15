@@ -30,6 +30,7 @@ use crate::store::unix_now;
 use crate::types::{SecretReleaseView, SshSignView};
 use crate::{CoreError, text};
 
+pub(crate) mod env;
 mod store;
 
 /// The resource of a release that names several items.
@@ -73,6 +74,9 @@ pub(in crate::connector::vault) async fn preview(
         "phone_key" => store::preview_phone_key(vault, call),
         "secret_store" => store::preview_store(vault, account, call).await,
         "names" => store::preview_names(vault, account, call).await,
+        "env_release" => env::preview_release(vault, account, call).await,
+        "secrets_store" => env::preview_store(vault, account, call).await,
+        "secrets_list" => env::preview_list(vault, account, call).await,
         _ => return None,
     })
 }
@@ -89,6 +93,11 @@ pub(in crate::connector::vault) async fn perform(
         "phone_key" => store::perform_phone_key(vault, call),
         "secret_store" => store::perform_store(vault, account, call).await,
         "names" => store::perform_names(vault, account, call).await,
+        // Bound to what the user approved, which only the flow knows (`env::perform_release`).
+        "env_release" => Err(bad("A release of an environment is carried out by the approval flow.")),
+        // With its tokens, which only the flow can add.
+        "secrets_store" => Err(bad("A store of secrets is carried out by the approval flow.")),
+        "secrets_list" => env::perform_list(vault, account, call).await,
         _ => return None,
     })
 }
@@ -190,14 +199,25 @@ fn named(snap: &Snapshot, item: &str) -> Vec<usize> {
 fn resolve(snap: &Snapshot, reference: &str) -> Result<Wanted, CoreError> {
     let shown = text::truncate_chars(&text::one_line(reference), 100);
     let mut found: Vec<(usize, &str)> = Vec::new();
+    let mut environment = false;
     for (at, _) in reference.match_indices('/') {
         let (item, field) = (&reference[..at], &reference[at + 1..]);
         if item.is_empty() || field.is_empty() {
             continue;
         }
-        found.extend(named(snap, item).into_iter().map(|i| (i, field)));
+        for i in named(snap, item) {
+            // A project's environment is released only bound to a command (`vault_env_release`), never here.
+            if env::env_identity(snap, &snap.entries[i]).is_some() {
+                environment = true;
+                continue;
+            }
+            found.push((i, field));
+        }
     }
     match found.as_slice() {
+        [] if environment => Err(bad(format!(
+            "`{shown}` is a variable of a project's environment: it is used with reins run, bound to the command."
+        ))),
         [] if !reference.contains('/') => Err(bad(format!("`{shown}` must be item/field."))),
         [] => Err(bad(format!("No vault item matches `{shown}`. Name an item by its id or its exact name."))),
         [(entry, field)] => Ok(Wanted {
@@ -305,6 +325,13 @@ async fn perform_release(vault: &Vault, account: &str, call: &ConnectorCall) -> 
         nonce: nonce_arg(call)?,
         secrets,
         expires_at,
+        project: None,
+        env: None,
+        revision: None,
+        runner: None,
+        root: None,
+        command: None,
+        one_shot: false,
     };
     let sealed = seal(client_key(call)?, &grant);
     // The grant holds the values in the clear: wipe them.

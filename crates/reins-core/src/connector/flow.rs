@@ -242,16 +242,43 @@ impl Engine {
             let Some(file) = self.file_input(session, &request, call).await? else {
                 return Ok(());
             };
-            let preview = match connector.preview(&account, call).await {
+            let previewed = if is_token_store(call) {
+                self.token_store_preview(call)
+            } else {
+                connector.preview(&account, call).await
+            };
+            // A store's tokens go to integrations this phone must have.
+            let previewed = previewed.and_then(|p| {
+                if is_secrets_store(call) {
+                    self.check_store_tokens(&p).map(|()| p)
+                } else {
+                    Ok(p)
+                }
+            });
+            let preview = match previewed {
                 Ok(p) => file.show(p),
                 Err(e) => return self.fail_connector(session, &request, call, &e).await,
             };
             let spec = call.spec();
             let class = preview.class.clone().unwrap_or_else(|| spec.map_or("", |s| s.class).to_owned());
             let once = spec.is_some_and(|s| s.once_only) || preview.once_only;
+            // A release of secrets is covered only by a permission bound to everything it is about.
+            let mut granted_command = None;
             // A change that is asked for every time never looks at the permissions.
             let covered = if once {
                 BTreeMap::new()
+            } else if is_env_release(call) {
+                let ask = match crate::connector::vault::release_ask(call) {
+                    Ok(a) => a,
+                    Err(e) => return self.fail_connector(session, &request, call, &e).await,
+                };
+                match self.store.secrets_reserve(&request.connection_id, Some(&account), &ask.facts(), now)? {
+                    Some((grant, command, ends)) => {
+                        granted_command = Some((command, ends));
+                        BTreeMap::from([(preview.resource.clone(), grant)])
+                    }
+                    None => BTreeMap::new(),
+                }
             } else {
                 self.store.service_reserve(
                     &request.connection_id,
@@ -266,7 +293,7 @@ impl Engine {
                 )?
             };
             if let Some(grant) = covered.get(&preview.resource) {
-                return match connector.perform(&account, call).await {
+                return match self.perform_write(connector.as_ref(), &account, call, granted_command).await {
                     Ok(data) => {
                         let detail = format!("done: {}", preview.lines.first().map_or("", String::as_str));
                         let audit = self.audit_connector(
@@ -456,6 +483,10 @@ impl Engine {
                 .standing
                 .as_ref()
                 .map(|s| {
+                    if is_env_release(call) {
+                        let ask = crate::connector::vault::release_ask(call)?;
+                        return crate::secrets::build_secrets_grant(s, &ask, &request.connection_id, &account, now);
+                    }
                     build_service_grant(
                         s,
                         &call.service,
@@ -469,6 +500,11 @@ impl Engine {
                     )
                 })
                 .transpose()?;
+            // A release is bound to what the user approved: the permission's command, else exactly the one asked.
+            let granted_command = match new_grant.as_ref().map(|g| (&g.scope, g.expires_at)) {
+                Some((Scope::Secrets(s), ends)) => Some((s.command.clone(), ends)),
+                _ => None,
+            };
             // The action happens first; if it fails the request stays parked. A work session's action is creating
             // its grants.
             let data =
@@ -476,7 +512,7 @@ impl Engine {
                     let plan = crate::work_session::plan(call)?;
                     self.start_work_session(&request.connection_id, &parked.label(), &plan, now)?
                 } else {
-                    connector.perform(&account, call).await?
+                    self.perform_write(connector.as_ref(), &account, call, granted_command).await?
                 };
             if let Some(grant) = &new_grant {
                 self.store.insert_grant_from(grant, &parked.label(), "approval")?;
@@ -613,6 +649,29 @@ impl Engine {
         .await
     }
 
+    /// Carries out an approved (or permitted) write: a release of secrets bound to `command`, a git host's token for
+    /// the phone's integration, or the integration's own write.
+    async fn perform_write(
+        &self,
+        connector: &dyn super::Connector,
+        account: &str,
+        call: &ConnectorCall,
+        command: Option<(desktop::CommandScope, Option<i64>)>,
+    ) -> Result<serde_json::Value, CoreError> {
+        // Boxed: each is a large future (a store adds integrations), which would otherwise be inlined into every
+        // approval's future, autopilot's included.
+        if is_env_release(call) {
+            return Box::pin(self.release_env(account, call, command)).await;
+        }
+        if is_token_store(call) {
+            return Box::pin(self.token_store_perform(call)).await;
+        }
+        if is_secrets_store(call) {
+            return Box::pin(self.secrets_store_perform(account, call)).await;
+        }
+        connector.perform(account, call).await
+    }
+
     /// Records the decision, drops the parked request and answers the server.
     pub(crate) async fn settle(
         &self,
@@ -652,6 +711,18 @@ impl Engine {
 }
 
 use reins_proto::gmail::ToolCall;
+
+fn is_env_release(call: &ConnectorCall) -> bool {
+    call.service == reins_proto::connector::VAULT && call.op == "env_release"
+}
+
+fn is_secrets_store(call: &ConnectorCall) -> bool {
+    call.service == reins_proto::connector::VAULT && call.op == "secrets_store"
+}
+
+fn is_token_store(call: &ConnectorCall) -> bool {
+    call.service == reins_proto::connector::DESKTOP && call.op == reins_proto::connector::TOKEN_STORE_OP
+}
 
 /// What the activity log calls the action: "list", "read", "search", "send" or "write".
 pub(crate) fn action_of(call: &ConnectorCall) -> &'static str {

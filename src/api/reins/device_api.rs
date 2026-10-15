@@ -62,7 +62,8 @@ pub fn routes() -> Vec<Route> {
         delete_connection,
         get_devices,
         delete_device,
-        post_logout
+        post_logout,
+        post_revocations
     ]
 }
 
@@ -468,6 +469,26 @@ async fn delete_connection(id: &str, headers: Headers, key: DeviceKey, conn: DbC
         return Err(not_found());
     };
     connection.delete(&conn).await.map_err(|e| internal(&e))?;
+    Ok(Status::NoContent)
+}
+
+/// Reins Secrets: "Revoke on all computers". The phone posts a revocation sealed to each paired computer's key; each
+/// waits (in memory, a day at most) until that computer's daemon picks it up. Only for this account's connections.
+#[post("/reins/api/desktop/revocations", data = "<data>")]
+async fn post_revocations(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let post: reins_proto::desktop::RevocationPost =
+        serde_json::from_slice(&read_body_limited(data, 256 * 1024).await?)
+            .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    if post.items.len() > 100 {
+        return Err(bad_request("at most 100 computers"));
+    }
+    let now = now_unix();
+    for item in post.items {
+        if ReinsConnection::find_by_uuid_and_user(&item.connection_id, &headers.user.uuid, &conn).await.is_some() {
+            HUB.revocations.post(&item.connection_id, item.sealed, item.all, now);
+        }
+    }
     Ok(Status::NoContent)
 }
 

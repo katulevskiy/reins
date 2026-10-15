@@ -97,6 +97,7 @@ fn empty_scope() -> GrantScopeChoice {
         recipient_domains: Vec::new(),
         resources: Vec::new(),
         classes: Vec::new(),
+        secrets: None,
     }
 }
 
@@ -255,6 +256,20 @@ fn connector_headline(who: &str, view: &ApprovalView) -> String {
             text::one_line(&s.command),
             crate::views::duration_text(s.lease_secs.max(60))
         );
+    }
+    if let Some(r) = &view.env_release {
+        let what = if r.all_variables {
+            format!("all of {} \u{b7} {}", r.project, r.env)
+        } else {
+            format!("{} of {} \u{b7} {}", plural(r.variables.len(), "variable", "variables"), r.project, r.env)
+        };
+        return format!("{} gets {what} for {}.", r.runner_label, text::one_line(&r.command));
+    }
+    if let Some(s) = &view.secrets_store {
+        return format!("{} from the computer go into your vault.", plural(s.total as usize, "secret", "secrets"));
+    }
+    if let Some(t) = &view.token_store {
+        return format!("A {} token from the computer goes to the phone.", service_name(&t.service));
     }
     if let Some(ssh) = &view.ssh {
         let host = ssh.host.as_deref().map(|h| format!(" to {h}")).unwrap_or_default();

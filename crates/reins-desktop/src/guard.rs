@@ -126,11 +126,14 @@ pub const DEFAULT_FILES: &[&str] = &[
     // What `reins secrets import` keeps: its receipts (what moved where; undo trusts only authenticated ones) and their
     // key (`import-receipts.key` is `*.key`).
     "reins/imports/*",
+    "reins/session.json",
+    "reins/control.token",
+    "reins/phone-key.json",
 ];
 
 /// Built-in exceptions to the file patterns.
 pub const DEFAULT_ALLOW_FILES: &[&str] =
-    &["*.pub", "known_hosts", ".env.example", ".env.sample", ".env.template", ".env.dist"];
+    &["*.pub", "known_hosts", ".env.example", ".env.sample", ".env.template", ".env.dist", ".env.reins"];
 
 /// A named part of the built-in rules, which the desktop app (or `disabled_groups`) can turn off on its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,7 +206,7 @@ pub const GROUPS: &[Group] = &[
     Group {
         id: "env-files",
         label: ".env files",
-        detail: "Reading or changing .env and .env.* (not .env.example)",
+        detail: "Reading or changing .env and .env.* (not .env.example or .env.reins)",
         commands: builtin::ENV_FILES.commands,
         files: builtin::ENV_FILES.files,
     },
@@ -227,6 +230,13 @@ pub const GROUPS: &[Group] = &[
         detail: ".netrc, .git-credentials, .npmrc, .pypirc, .vault-token, Reins' import receipts",
         commands: builtin::TOKENS.commands,
         files: builtin::TOKENS.files,
+    },
+    Group {
+        id: "reins",
+        label: "Reins's own sign-in",
+        detail: "This computer's session with Reins, the daemon's control token, the phone key it trusts",
+        commands: builtin::REINS_STATE.commands,
+        files: builtin::REINS_STATE.files,
     },
 ];
 
@@ -517,6 +527,28 @@ mod tests {
                 g.id
             );
         }
+    }
+
+    #[test]
+    fn env_reins_is_readable_and_reins_own_state_is_not() {
+        let g = GuardConfig::default();
+        for ok in ["/app/.env.reins", ".env.example", "app/.env.reins"] {
+            assert!(g.check_file(ok).is_none(), "{ok}");
+        }
+        for guarded in [
+            "/app/.env",
+            "/app/.env.local",
+            "/home/me/.local/state/reins/session.json",
+            "/home/me/.local/state/reins/control.token",
+            "/home/me/.local/state/reins/phone-key.json",
+            r"C:\Users\me\AppData\Local\reins\session.json",
+        ] {
+            assert!(g.check_file(guarded).is_some(), "{guarded}");
+        }
+        assert_eq!(g.check_file("/home/me/.local/state/reins/session.json").unwrap().topic, "file:reins/session.json");
+        assert!(g.check_file("/app/session.json").is_none(), "another program's session file is not Reins's");
+        assert!(g.check_command("cat ~/.local/state/reins/control.token").is_some());
+        assert_eq!(group_of("reins/phone-key.json").map(|g| g.id), Some("reins"));
     }
 
     #[test]

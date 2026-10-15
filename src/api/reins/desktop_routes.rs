@@ -42,7 +42,7 @@ const MAX_REQUEST_ID_BYTES: usize = 64;
 const MAX_ECHOED_TOOL_CHARS: usize = 64;
 
 pub fn routes() -> Vec<Route> {
-    routes![post_call, get_call, get_phone]
+    routes![post_call, get_call, get_phone, get_revocations, post_revocations_ack]
 }
 
 // ---------------------------------------------------------------------------------------
@@ -322,6 +322,53 @@ async fn get_phone(request: McpRequest, conn: DbConn) -> DesktopResponse {
     DesktopResponse::json(Status::Ok, json!({"last_seen": last_seen, "services": services, "server_time": now_unix()}))
 }
 
+/// A reader id (one daemon run) as given: printable, at most [`desktop::MAX_READER`] characters; else none.
+fn reader(given: Option<&str>) -> Option<String> {
+    given
+        .filter(|r| {
+            !r.is_empty()
+                && r.len() <= reins_proto::desktop::MAX_READER
+                && r.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .map(str::to_owned)
+}
+
+/// Reins Secrets: the sealed lease revocations the phone left for this computer that this reader (one daemon run) has
+/// not acknowledged. The daemon polls while it holds secrets, applies them, then acknowledges them
+/// (`POST /reins/desktop/revocations/ack`).
+#[get("/reins/desktop/revocations?<reader>")]
+async fn get_revocations(reader: Option<&str>, request: McpRequest, conn: DbConn) -> DesktopResponse {
+    let connection = match authenticated(&request, &conn).await {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+    drop(conn);
+    let Some(reader) = self::reader(reader) else {
+        return DesktopResponse::error(Status::BadRequest, "invalid_request", "Name the reader (?reader=<id>).");
+    };
+    DesktopResponse::json(Status::Ok, json!(HUB.revocations.peek(&connection.uuid, &reader, now_unix())))
+}
+
+/// Reins Secrets: what one reader of this computer applied ([`reins_proto::desktop::RevocationAck`]).
+#[post("/reins/desktop/revocations/ack", data = "<data>")]
+async fn post_revocations_ack(data: Data<'_>, request: McpRequest, conn: DbConn) -> DesktopResponse {
+    let connection = match authenticated(&request, &conn).await {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+    drop(conn);
+    let body = match data.open(64.kibibytes()).into_bytes().await {
+        Ok(b) if b.is_complete() => b.into_inner(),
+        _ => return DesktopResponse::error(Status::BadRequest, "invalid_request", "Unreadable or too large body."),
+    };
+    let ack = match serde_json::from_slice::<reins_proto::desktop::RevocationAck>(&body) {
+        Ok(a) if reader(Some(&a.reader)).is_some() && a.ids.len() <= 100 => a,
+        _ => return DesktopResponse::error(Status::BadRequest, "invalid_request", "The body is not a RevocationAck."),
+    };
+    HUB.revocations.ack(&connection.uuid, &ack);
+    DesktopResponse::json(Status::Ok, json!({}))
+}
+
 #[cfg(test)]
 mod tests {
     use reins_proto::{
@@ -452,6 +499,72 @@ mod tests {
             json!({"error": "rate_limited",
                 "message": "Rate limited: too many requests on this connection; try again in 3 s."})
         );
+    }
+
+    fn ack(reader: &str, mail: &desktop::RevocationMail) -> desktop::RevocationAck {
+        desktop::RevocationAck {
+            reader: reader.to_owned(),
+            ids: mail.items.iter().map(|i| i.id.clone()).collect(),
+            lost: mail.lost.as_ref().map(|l| l.id.clone()),
+        }
+    }
+
+    fn sealed(m: &desktop::RevocationMail) -> Vec<String> {
+        m.items.iter().map(|i| i.sealed.clone()).collect()
+    }
+
+    #[test]
+    fn revocations_wait_for_their_computer_until_its_reader_acknowledges_them() {
+        let r = crate::api::reins::Revocations::default();
+        r.post("c1", "a".into(), false, 100);
+        r.post("c2", "b".into(), false, 100);
+        r.post("c1", String::new(), false, 100);
+        r.post("c1", "x".repeat(crate::api::reins::MAX_REVOCATION_CHARS + 1), false, 100);
+        let mail = r.peek("c1", "d1", 101);
+        assert_eq!(sealed(&mail), ["a"]);
+        assert!(mail.lost.is_some(), "the server restarted since: what it held may be lost");
+        assert_eq!(r.peek("c1", "d1", 101), mail, "kept until acknowledged");
+        r.ack("c1", &ack("d1", &mail));
+        assert_eq!(r.peek("c1", "d1", 101), desktop::RevocationMail::default());
+        // Another reader (a copy of this computer's state) still gets it; a replayed acknowledgement changes nothing.
+        assert_eq!(sealed(&r.peek("c1", "d2", 101)), ["a"]);
+        r.ack("c1", &ack("d1", &mail));
+        assert_eq!(sealed(&r.peek("c1", "d2", 101)), ["a"]);
+        // Another computer's acknowledgement does not reach this one.
+        r.ack("c2", &ack("d2", &mail));
+        assert_eq!(sealed(&r.peek("c1", "d2", 101)), ["a"]);
+        assert!(r.peek("c2", "d1", 100 + desktop::REVOCATION_TTL_SECS).items.is_empty(), "a day at most");
+    }
+
+    #[test]
+    fn a_revocation_of_everything_outranks_the_others_and_nothing_goes_unsaid() {
+        let r = crate::api::reins::Revocations::default();
+        r.post("c3", "e1".into(), false, 100);
+        let early = r.peek("c3", "d1", 100);
+        r.post("c3", "all".into(), true, 100);
+        // An acknowledgement of what was read before still names only that: the revocation of everything stays.
+        r.ack("c3", &ack("d1", &early));
+        let mail = r.peek("c3", "d1", 101);
+        assert_eq!(sealed(&mail), ["all"], "it superseded e1");
+        for i in 0..desktop::MAX_REVOCATIONS + 5 {
+            r.post("c3", format!("n{i}"), false, 200);
+        }
+        let mail = r.peek("c3", "d1", 201);
+        assert_eq!(sealed(&mail)[0], "all", "never pushed out");
+        assert_eq!(mail.items.len(), desktop::MAX_REVOCATIONS + 1);
+        let lost = mail.lost.clone().expect("some were dropped");
+        assert_eq!(lost.at, 200, "leases made before then are dropped");
+        // A loss after the one acknowledged is reported again.
+        r.ack("c3", &ack("d1", &mail));
+        assert!(r.peek("c3", "d1", 201).lost.is_none());
+        for i in 0..=desktop::MAX_REVOCATIONS {
+            r.post("c3", format!("m{i}"), false, 300);
+        }
+        assert_eq!(r.peek("c3", "d1", 301).lost.map(|l| l.at), Some(300));
+        assert_ne!(r.peek("c3", "d1", 301).lost.map(|l| l.id), Some(lost.id));
+        // Purging keeps a mailbox whose loss is not the restart's.
+        r.purge(400 + desktop::REVOCATION_TTL_SECS);
+        assert_eq!(r.peek("c3", "d1", 401 + desktop::REVOCATION_TTL_SECS).lost.map(|l| l.at), Some(300));
     }
 
     #[test]

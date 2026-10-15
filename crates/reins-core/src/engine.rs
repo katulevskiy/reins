@@ -726,6 +726,10 @@ impl Engine {
 
     /// Long-polls the server (foreground channel) and processes what arrives, then runs Autopilot's pass.
     pub async fn sync(&self, wait_secs: u32) -> Result<Vec<PendingItem>, CoreError> {
+        // Revocations of secrets not delivered yet go first (Box: kept out of this future's size).
+        if let Err(e) = Box::pin(self.flush_revocations(Vec::new())).await {
+            log::warn!("could not send the revocations waiting: {e}");
+        }
         let result = self.sync_inner(wait_secs).await;
         self.autopilot_pass().await;
         result?;
@@ -814,7 +818,8 @@ impl Engine {
                 reins_policy::Scope::Send(_) => crate::types::ApprovalKind::Send,
                 reins_policy::Scope::Accounts(_)
                 | reins_policy::Scope::Service(_)
-                | reins_policy::Scope::Headlines(_) => {
+                | reins_policy::Scope::Headlines(_)
+                | reins_policy::Scope::Secrets(_) => {
                     return Err(CoreError::invalid("this grant can only be resumed as it was"));
                 }
             };

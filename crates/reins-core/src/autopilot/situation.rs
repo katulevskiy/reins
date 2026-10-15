@@ -315,6 +315,12 @@ pub fn describe_request(view: &ApprovalView) -> Described {
         f.details.push(plural(secrets.items.len(), "secret", "secrets"));
         f.details.push(format!("kept {} seconds", secrets.lease_secs));
         ai.reason = secrets.purpose.clone().unwrap_or_default();
+    } else if let Some(r) = &view.env_release {
+        f.target = format!("{}/{} for {}", r.project, r.env, r.command);
+        f.details.push(plural(r.variables.len(), "variable", "variables"));
+        f.details.push(format!("run by {}", r.runner));
+        f.details.push(format!("kept {} seconds", r.lease_secs));
+        ai.reason = r.purpose.clone().unwrap_or_default();
     } else if let Some(ssh) = &view.ssh {
         f.target = ssh.host.clone().unwrap_or_else(|| ssh.key_name.clone());
         f.details.push(format!("key {} {}", ssh.key_name, ssh.key_fingerprint));

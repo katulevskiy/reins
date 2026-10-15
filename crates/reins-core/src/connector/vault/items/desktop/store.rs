@@ -44,9 +44,9 @@ use crate::{CoreError, text};
 const PHONE_KEY: &str = "phone_key";
 const NAMES: &str = "names";
 /// Where the requests seen are remembered (a `meta` key): nonce → what the approval was about, and whether it was done.
-const SEEN: &str = "vault.secret-store.seen";
+pub(super) const SEEN: &str = "vault.secret-store.seen";
 /// A box made this far ahead of the phone's clock is refused too.
-const CLOCK_SKEW_SECS: i64 = 5 * 60;
+pub(super) const CLOCK_SKEW_SECS: i64 = 5 * 60;
 
 pub(super) fn preview_phone_key(vault: &Vault, call: &ConnectorCall) -> Result<Preview, CoreError> {
     client_key(call)?;
@@ -170,20 +170,20 @@ fn open(vault: &Vault, call: &ConnectorCall, now: i64) -> Result<Request, CoreEr
 /// One request the phone has seen: what its approval was about (`new`, or an item at a revision), and whether it was
 /// carried out.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Seen {
-    target: String,
-    until: i64,
-    done: bool,
+pub(super) struct Seen {
+    pub target: String,
+    pub until: i64,
+    pub done: bool,
 }
 
-fn seen_all(store: &Store, now: i64) -> Result<BTreeMap<String, Seen>, CoreError> {
+pub(super) fn seen_all(store: &Store, now: i64) -> Result<BTreeMap<String, Seen>, CoreError> {
     let mut all: BTreeMap<String, Seen> =
         store.meta_get(SEEN)?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     all.retain(|_, s| s.until >= now);
     Ok(all)
 }
 
-fn seen_save(store: &Store, all: &BTreeMap<String, Seen>) -> Result<(), CoreError> {
+pub(super) fn seen_save(store: &Store, all: &BTreeMap<String, Seen>) -> Result<(), CoreError> {
     store.meta_set(SEEN, &serde_json::to_string(all).map_err(|_| CoreError::storage("cannot record the request"))?)
 }
 

@@ -29,6 +29,7 @@ pub mod mcp;
 pub mod phone_api;
 pub mod quick;
 pub mod rt;
+mod secrets;
 pub mod services;
 pub mod session;
 pub mod sso;
@@ -64,4 +65,7 @@ pub use types::{
     PairingView, PendingItem, PendingKind, QuickApproval, ResourceView, ServiceView, SessionInfo, StandingGrant,
     StartingPolicy,
 };
-pub use types::{AskRuleView, AskView, SecretReleaseView, SshSignView};
+pub use types::{
+    AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,
+    SecretsScopeChoice, SecretsStoreView, SshSignView, SshStoreView, TokenStoreView,
+};

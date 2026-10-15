@@ -520,6 +520,7 @@ impl Proxy {
                 authorizer: Some(Arc::<Scripted>::clone(auth)),
                 prompter: Arc::new(reins_desktop::auth::prompt::NoPrompter),
                 harden: false,
+                process_info: reins_desktop::runner::process_info,
             },
         )
         .await

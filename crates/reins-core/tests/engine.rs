@@ -39,6 +39,7 @@ fn scope() -> GrantScopeChoice {
         recipient_domains: vec![],
         resources: vec![],
         classes: vec![],
+        secrets: None,
     }
 }
 

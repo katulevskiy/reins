@@ -287,6 +287,136 @@ pub struct ApprovalView {
     /// A purchase: the cart like a receipt, and what may pay for it (approve it with `approve_purchase`).
     #[uniffi(default)]
     pub purchase: Option<crate::connector::payments::PurchaseView>,
+    /// Reins Secrets: the variables of a project's environment for one command on the computer (names only).
+    #[uniffi(default)]
+    pub env_release: Option<EnvReleaseView>,
+    /// Reins Secrets: variables the computer sends to be saved, environment by environment (names only).
+    #[uniffi(default)]
+    pub secrets_store: Option<SecretsStoreView>,
+    /// A git host's token the computer hands to the phone's integration of that host.
+    #[uniffi(default)]
+    pub token_store: Option<TokenStoreView>,
+}
+
+/// One command a permission for secrets can cover, as the approval offers it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommandOption {
+    /// What `SecretsScopeChoice.command` names: `exact`, or `prefix:<n>` (the program and its first n arguments, then
+    /// any whole arguments).
+    pub id: String,
+    /// `npm run dev`, `npm run *`.
+    pub label: String,
+    pub prefix: bool,
+}
+
+/// The variables of one environment of a project, for one command on the computer (`reins run`).
+#[allow(clippy::struct_excessive_bools, reason = "a release is described by this many independent facts")]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EnvReleaseView {
+    pub project: String,
+    pub env: String,
+    /// `person`, or `agent:<harness>`.
+    pub runner: String,
+    /// "You", or the agent's name ("Claude Code").
+    pub runner_label: String,
+    pub agent: bool,
+    /// The project's folder on the computer.
+    pub root: String,
+    /// The command as it runs (program name and arguments).
+    pub command: String,
+    /// The program's full path, as the computer resolved it.
+    pub program: String,
+    /// Why the program deserves a second look, for a warning row ("In a temporary folder", "Inside the project
+    /// folder", "Not the one on your PATH"); `command` then shows its whole path too.
+    #[uniffi(default)]
+    pub program_warning: Option<String>,
+    /// The variables' names (never a value), sorted.
+    pub variables: Vec<String>,
+    /// Every variable of the environment was asked for.
+    pub all_variables: bool,
+    pub lease_secs: u64,
+    pub purpose: Option<String>,
+    /// What a remembered approval can cover, narrowest first (the exact command first).
+    pub commands: Vec<CommandOption>,
+    /// The value is printed in the terminal (`reins secrets get`): asked every time.
+    pub print: bool,
+    /// The environment is asked every time (`confirm = "always"` in reins.toml, a production environment, or your
+    /// choice); `always_ask_set` says you chose it on the phone.
+    pub always_ask: bool,
+    pub always_ask_set: bool,
+}
+
+/// One environment of a `vault_secrets_store`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EnvStoreView {
+    pub project: String,
+    pub env: String,
+    /// The environment does not exist yet and is made.
+    pub new_env: bool,
+    pub added: Vec<String>,
+    pub replaced: Vec<String>,
+    pub removed: Vec<String>,
+    /// "OLD → NEW".
+    pub renamed: Vec<String>,
+    /// Variables copied in from another environment of the project, and from which.
+    pub copied_from: Option<String>,
+    pub copied: u32,
+}
+
+/// Variables the computer sends to be saved in the vault (`reins secrets set/push`, import): one approval.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretsStoreView {
+    pub envs: Vec<EnvStoreView>,
+    /// Four digits the terminal shows too.
+    pub check: String,
+    /// Values in all (variables set, SSH keys, tokens).
+    pub total: u32,
+    /// SSH keys kept in the folder Reins/ssh.
+    #[uniffi(default)]
+    pub ssh: Vec<SshStoreView>,
+    /// Git hosts' tokens handed to the phone's integrations (`check` empty: the batch has one).
+    #[uniffi(default)]
+    pub tokens: Vec<TokenStoreView>,
+}
+
+/// An SSH key of a store.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SshStoreView {
+    pub name: String,
+    /// `SHA256:…`
+    pub fingerprint: String,
+}
+
+/// A git host's token the computer hands to the phone's integration.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TokenStoreView {
+    /// `github`, `gitlab`, `codeberg`, `bitbucket`.
+    pub service: String,
+    pub host: String,
+    /// As the computer reported them (not checked).
+    pub scopes: Vec<String>,
+    /// Four digits of the token, which the terminal shows too.
+    pub check: String,
+}
+
+/// What "Revoke on all computers" did: the permissions it ended on this phone, the computers told, and those not told
+/// yet (by name). A note that could not be delivered is kept and sent again on each sync until the server takes it;
+/// the permissions ended on this phone either way.
+#[derive(Clone, Debug, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SecretsRevoked {
+    pub ended: u32,
+    pub told: u32,
+    /// "Not yet delivered to <name>" for each of these.
+    pub not_delivered: Vec<String>,
+}
+
+/// A standing permission for secrets (`ApprovalView.env_release`): which of the offered commands it covers, and
+/// whether every variable of the environment or only those asked for.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct SecretsScopeChoice {
+    /// An id of `EnvReleaseView.commands`.
+    pub command: String,
+    pub all_variables: bool,
 }
 
 /// What a newly connected AI may do before it asked for anything (see `crate::starter`).
@@ -559,6 +689,10 @@ pub struct GrantScopeChoice {
     /// Another integration, a permission to change things: the kinds of change it allows (see `ApprovalView.classes`).
     /// Empty = the kind of the request itself.
     pub classes: Vec<String>,
+    /// Reins Secrets: the command and variables a permission for an environment covers. `None`: the exact command and
+    /// the variables asked for.
+    #[uniffi(default)]
+    pub secrets: Option<SecretsScopeChoice>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]

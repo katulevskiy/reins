@@ -257,6 +257,27 @@ updates, the SHA-256 of the pack and the push options. The phone's credential is
 part of the analysis cannot be completed, the screen shows a note instead of a guess. A push whose history could not
 be checked is treated as a force push.
 
+**Reins Secrets** ([secrets.md](secrets.md)). A project's environment is released to the desktop app sealed to its
+pinned key, like any secret, for one command: the program (by its absolute path) and its arguments as `reins run`
+spawns them, without a shell, the project's folder on the computer, and who runs it (you, or which agent). The phone
+decides what the release is bound to and says so inside the sealed answer: exactly that command, or an argument prefix
+you picked on the phone (`npm run *`; never for shells, interpreters, launchers or the program alone). A standing
+permission binds the same things, and every one of them is compared. Production environments, and those whose
+`reins.toml` says `confirm = "always"`, are asked every time unless you change that on the phone; the repository can
+make an environment stricter, never looser; those are released for one run only, and the phone caps how long any
+release is kept (8 hours, never past the permission that covers it). A program outside the usual system folders is shown
+by its whole path, with a warning row when it sits in a temporary folder, in the project's folder or off the login
+`PATH`. Values sent from the computer (`reins secrets set`, import) travel in a box
+to the phone's own key, as `reins vault add`'s do, with one set of four check digits over the whole batch. A git host's
+token found on the computer goes the same way to the phone's integration. **Revoke on all computers** ends the
+permissions on the phone and leaves, for each paired computer, a note sealed to its key on the server; its daemon picks
+it up, drops what it holds, and only then acknowledges it, and the server keeps handing a note to any daemon that has
+not acknowledged it; a note for everything outranks the others, notes dropped to stay within bounds (or forgotten in a
+server restart) make the computer drop everything it held from before, and a note that does not open counts as one
+for everything. The phone ends the permissions in its own store first and keeps a note it could not deliver to send
+again, naming the computers not told yet. The server cannot read the note, and one it made up could only make a
+computer ask again.
+
 ## What the server sees
 
 The server is a relay, and it is in a position to read what it relays.
@@ -266,6 +287,7 @@ phone's push token, the AI clients that registered, your AI connections (name, l
 times), and hashed refresh tokens.
 
 **In memory only:** waiting requests and their results (at most 10 minutes), pairings and sign-in sessions (minutes),
+sealed "drop your secrets" notes for paired computers (a day at most),
 which integrations your phone has (ids only, no account names), and the names and tool lists of MCP servers you added
 on the phone.
 
@@ -310,6 +332,14 @@ the app's key and session. With them it could act as the desktop app: call the s
 open them. It still cannot get anything you do not approve on the phone. It does benefit from standing permissions
 you gave the desktop connection, and it could approve local-mode prompts through the control API. For full
 separation, run the daemon as its own OS user and keep the agent from reading that user's files.
+
+**Who runs a command** (Reins Secrets). The daemon tells a person from an AI agent by the process that asks it
+(`reins run` connects to a socket only this user can open; the daemon reads the caller's process id from it) and that
+process's ancestors: a known agent harness among them makes it that agent, and what the caller says can only make it an
+agent. A program of the same user that cuts itself off from its ancestry (a double fork, a service of the user) and
+says nothing passes for a person; that is the same-user limit above, and running the daemon as its own user closes it.
+The approval names the exact command either way. On Windows the daemon does not take over `reins run` yet, and the
+runner is what the caller's environment says.
 
 **Local mode** (not logged in): the GitHub token comes from `gh auth token`, an environment variable or a file the
 agent's user can usually read. Local mode protects against an agent's mistakes. Phone mode protects against a hostile

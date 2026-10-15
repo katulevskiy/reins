@@ -98,6 +98,24 @@ impl DesktopClient {
             .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
     }
 
+    /// The sealed lease revocations the phone left for this computer that `reader` (this daemon run) has not
+    /// acknowledged yet. A server too old to know them answers `LinkError::NotFound`.
+    pub async fn revocations(&self, reader: &str) -> Result<reins_proto::desktop::RevocationMail, LinkError> {
+        let body = self
+            .send_raw(|server| {
+                self.http.get(format!("{server}/reins/desktop/revocations")).query(&[("reader", reader)])
+            })
+            .await?;
+        serde_json::from_slice(&body)
+            .map_err(|e| LinkError::Failed(format!("unexpected answer from the Reins server: {e}")))
+    }
+
+    /// Tells the server what this reader applied, so that it stops handing it those.
+    pub async fn ack_revocations(&self, ack: &reins_proto::desktop::RevocationAck) -> Result<(), LinkError> {
+        self.send_raw(|server| self.http.post(format!("{server}/reins/desktop/revocations/ack")).json(ack)).await?;
+        Ok(())
+    }
+
     async fn send(&self, build: impl Fn(&str) -> reqwest::RequestBuilder) -> Result<CallAnswer, LinkError> {
         parse_answer(&self.send_raw(build).await?)
     }

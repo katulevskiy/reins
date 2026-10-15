@@ -204,6 +204,17 @@ pub const TOKENS: BuiltinGroup = BuiltinGroup {
     files: &[".netrc", "_netrc", ".git-credentials", ".npmrc", ".pypirc", ".vault-token", "reins/imports/*"],
 };
 
+/// Reins's own state on the computer: its session with the server, the daemon's control token (which reaches the
+/// secrets the daemon holds), the phone key it trusts.
+pub const REINS_STATE: BuiltinGroup = BuiltinGroup {
+    id: "reins",
+    label: "Reins's own sign-in",
+    destructive: false,
+    every_time: true,
+    commands: &[],
+    files: &["reins/session.json", "reins/control.token", "reins/phone-key.json"],
+};
+
 /// Every built-in group, what cannot be undone first.
 pub const BUILTIN: &[BuiltinGroup] = &[
     GIT_HISTORY,
@@ -218,10 +229,13 @@ pub const BUILTIN: &[BuiltinGroup] = &[
     KEYS,
     CLOUD,
     TOKENS,
+    REINS_STATE,
 ];
 
 /// Exceptions to the built-in file rules.
-pub const ALLOW_FILES: &[&str] = &["*.pub", "known_hosts", ".env.example", ".env.sample", ".env.template", ".env.dist"];
+/// `.env.reins` holds references to the vault, never a value.
+pub const ALLOW_FILES: &[&str] =
+    &["*.pub", "known_hosts", ".env.example", ".env.sample", ".env.template", ".env.dist", ".env.reins"];
 
 /// The built-in group `id`.
 #[must_use]

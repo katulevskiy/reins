@@ -213,6 +213,7 @@ async fn a_field_is_handed_over_only_after_approval_every_time_and_never_written
         recipient_domains: vec![],
         resources: vec!["git".into()],
         classes: vec![],
+        secrets: None,
     };
     let standing = StandingGrant {
         duration_secs: Some(3_600),

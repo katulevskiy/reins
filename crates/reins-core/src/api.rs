@@ -18,8 +18,8 @@ use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
 use crate::types::{
     AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, DeviceView,
-    EmailContent, GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServerInfo,
-    ServiceView, SessionInfo, SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
+    EmailContent, GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, SecretsRevoked,
+    ServerInfo, ServiceView, SessionInfo, SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
 };
 use crate::vault_editor::{VaultItemDetail, VaultItemInput, VaultItemSummary, VaultSshKey};
 use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
@@ -769,6 +769,44 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             let result = engine.run_account(async { engine.phone_key_fingerprint() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Reins Secrets: whether `project/env` is asked every time (`Some`), or left to the computer's reins.toml and the
+    /// environment's name (`None`: production environments and `confirm = "always"` are asked every time).
+    pub async fn set_secrets_always_ask(
+        &self,
+        project: String,
+        env: String,
+        always: Option<bool>,
+    ) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(async { engine.set_secrets_always_ask(&project, &env, always) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Reins Secrets: "Revoke on all computers". The permissions for secrets of `project` (and `env`; neither: all of
+    /// them) end, and every paired computer is told to drop the values it holds. Returns how many computers were told.
+    pub async fn revoke_secrets_everywhere(
+        &self,
+        project: Option<String>,
+        env: Option<String>,
+    ) -> Result<SecretsRevoked, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine
+                .run_account(async { engine.revoke_secrets_everywhere(project.as_deref(), env.as_deref()).await })
+                .await;
             runtime.finish(&engine, result)
         })
         .await

@@ -62,8 +62,11 @@ pub fn request_floor(view: &ApprovalView) -> Option<&'static str> {
     if matches!(view.kind, ApprovalKind::Accounts) {
         return Some("which accounts an AI sees is only ever decided by you");
     }
-    if view.secrets.is_some() {
+    if view.secrets.is_some() || view.env_release.is_some() {
         return Some("secrets for the desktop app are only ever released by you");
+    }
+    if view.secrets_store.is_some() || view.token_store.is_some() {
+        return Some("secrets sent from the computer are only ever saved by you");
     }
     if view.ssh.is_some() {
         return Some("SSH sign-ins are only ever approved by you");

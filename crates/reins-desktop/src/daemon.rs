@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use http_body_util::BodyExt;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode, header};
@@ -29,6 +30,8 @@ pub struct Options {
     pub authorizer: Option<Arc<dyn Authorizer>>,
     pub prompter: Arc<dyn Prompter>,
     pub harden: bool,
+    /// How `reins run`'s caller and its ancestors are read to tell a person from an agent.
+    pub process_info: crate::runner::ProcessReader,
 }
 
 impl Default for Options {
@@ -37,6 +40,7 @@ impl Default for Options {
             authorizer: None,
             prompter: Arc::new(DesktopPrompter),
             harden: true,
+            process_info: crate::runner::process_info,
         }
     }
 }
@@ -108,6 +112,7 @@ struct State {
     proxy: Proxy,
     control: Control,
     api: Arc<crate::api_proxy::ApiProxy>,
+    secrets: Arc<crate::leases::SecretsService>,
 }
 
 impl State {
@@ -131,6 +136,18 @@ impl State {
             return text(StatusCode::FORBIDDEN, "Refused: browsers may not use this proxy.");
         }
         let path = req.uri().path().to_owned();
+        if path.starts_with(crate::leases::PREFIX) {
+            if !self.control.authorized(req.headers()) {
+                return text(StatusCode::UNAUTHORIZED, "The control API needs the X-Reins-Token header.");
+            }
+            let method = req.method().clone();
+            let body =
+                match BodyExt::collect(http_body_util::Limited::new(req.into_body(), crate::leases::MAX_BODY)).await {
+                    Ok(b) => zeroize::Zeroizing::new(b.to_bytes().to_vec()),
+                    Err(_) => return text(StatusCode::PAYLOAD_TOO_LARGE, "The request is too large."),
+                };
+            return self.secrets.handle(&method, &path, &body);
+        }
         if path.starts_with(control::PREFIX) {
             return self.control.handle(req.method(), &path, req.headers());
         }
@@ -150,6 +167,8 @@ pub struct Daemon {
     state: Arc<State>,
     token_file: std::path::PathBuf,
     ssh: Option<crate::ssh_agent::SshAgent>,
+    /// Picks up the revocations the phone leaves while leases are held, and (Unix) serves `reins run`.
+    revocations: std::pin::Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
 /// A daemon serving in the background (tests).
@@ -199,6 +218,8 @@ impl Daemon {
         let token_file = paths.control_token_file();
         crate::config::write_private(&token_file, token.as_bytes())
             .map_err(|e| format!("{}: {e}", token_file.display()))?;
+        #[cfg(unix)]
+        let run_listener = crate::run_socket::bind(paths)?;
         let counts = Arc::new(crate::stats::Stats::default());
         let proxy = Proxy::new(&config, Arc::clone(&authorizer))?
             .with_activity(crate::journal::Journal::new(paths), Arc::clone(&counts));
@@ -209,6 +230,9 @@ impl Daemon {
             Duration::from_secs(config.approval_timeout_secs),
         ));
         let api = Arc::new(crate::api_proxy::ApiProxy::new(&config.api, Arc::clone(&phone), Arc::clone(&counts))?);
+        let leases = Arc::new(crate::leases::LeaseCache::default());
+        let secrets = Arc::new(crate::leases::SecretsService::new(Arc::clone(&leases), Arc::clone(&phone)));
+        let revocations = Box::pin(crate::leases::poll_revocations(leases, paths.clone(), Arc::clone(&identity)));
         let ssh = crate::ssh_agent::start(paths, &config.ssh, phone, Arc::clone(&counts));
         let overview = {
             let started_at = crate::now_unix();
@@ -258,6 +282,14 @@ impl Daemon {
                 pending: pending.list().len(),
             })
         };
+        #[cfg(unix)]
+        let revocations: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> = {
+            let runs =
+                crate::run_socket::serve(run_listener, Arc::clone(&secrets), token.clone(), options.process_info);
+            Box::pin(async move {
+                tokio::join!(revocations, runs);
+            })
+        };
         Ok(Self {
             listener,
             state: Arc::new(State {
@@ -265,9 +297,11 @@ impl Daemon {
                 proxy,
                 control: Control::new(token, pending, status).with_overview(overview),
                 api,
+                secrets,
             }),
             token_file,
             ssh,
+            revocations,
         })
     }
 
@@ -331,6 +365,7 @@ impl Daemon {
         tokio::select! {
             () = serve => {}
             () = crate::ssh_agent::serve(self.ssh) => {}
+            () = self.revocations => {}
             () = shutdown_signal() => log::info!("stopping"),
             () = stop.notified() => {
                 log::info!("stopping");
@@ -351,7 +386,11 @@ impl Daemon {
         Running {
             addr,
             task: tokio::spawn(async move {
-                tokio::join!(Self::accept_loop(self.listener, self.state), crate::ssh_agent::serve(self.ssh));
+                tokio::join!(
+                    Self::accept_loop(self.listener, self.state),
+                    crate::ssh_agent::serve(self.ssh),
+                    self.revocations
+                );
             }),
         }
     }

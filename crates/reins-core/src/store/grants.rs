@@ -417,6 +417,34 @@ impl Store {
         Ok(covered)
     }
 
+    /// The grant that lets `connection`, acting as `account` (the vault), have the secrets `facts` describes released
+    /// without asking, and the command scope it names; one use of it is spent in the same transaction.
+    pub fn secrets_reserve(
+        &self,
+        connection: &ConnectionId,
+        account: Option<&str>,
+        facts: &reins_policy::SecretsFacts<'_>,
+        now: i64,
+    ) -> Result<Option<(GrantId, reins_proto::desktop::CommandScope, Option<i64>)>, CoreError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut grants = all_connection_grants(&tx, connection, now)?;
+        let found = reins_policy::secrets_allows(&grants, connection, account, facts, now);
+        let mut out = None;
+        if let Some(id) = &found {
+            record_uses(&mut grants, &BTreeSet::from([id.clone()]));
+            if let Some(grant) = grants.iter().find(|g| &g.id == id) {
+                save_grant(&tx, grant)?;
+                touch_used(&tx, &grant.id, now)?;
+                if let reins_policy::Scope::Secrets(s) = &grant.scope {
+                    out = Some((id.clone(), s.command.clone(), grant.expires_at));
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(out)
+    }
+
     /// Which accounts of `service` `connection` may be shown without asking.
     pub fn account_coverage(
         &self,

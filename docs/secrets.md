@@ -36,10 +36,10 @@ A **project** is a named set of **environments** (`development`, `staging`, `pro
 |---|---|
 | All Reins Secrets | folder `Reins` |
 | Project `acme-web` | folder `Reins/acme-web` |
-| Environment `development` | one **Secure Note item** named `acme-web/development` in that folder, type marker in a hidden custom field `reins.kind = env/1` |
+| Environment `development` | one **Secure Note item** in that folder with the hidden custom fields `reins.kind = env/1` and `reins.env = development`; it is named `acme-web/development` for people, but the folder and the two fields are what make it the environment. An imported project also keeps where it came from in the hidden field `reins.origin` (its git origin, `github.com/acme/web`), which `vault_secrets_list` reports, so that an import from elsewhere is not merged into it unasked |
 | Variable | one **hidden custom field** on that item: name = variable name, value = value |
 | Non-secret variable (optional) | a **text** custom field (kept so an env can be complete; never needs approval to read its name) |
-| Machine credential (gh token, npm token, AWS profile) | an env item in project `Reins/machine/<computer>` or `Reins/shared` (section 5) |
+| Machine credential (gh token, npm token, AWS profile) | an env item in project `machine-<computer>-<4 hex>` (folder `Reins/machine-…`) or `shared` (section 5) |
 | SSH key | existing **SshKey item** in folder `Reins/ssh` |
 
 Why one item per environment: one approval releases a whole environment (a dev server needs all of them), the item's
@@ -54,8 +54,15 @@ The reference syntax stays `vault:<item>/<field>` (`crates/reins-desktop/src/sec
 - `vault:acme-web/development` (no field, item is an env) = every variable of the environment.
 - Inside a project (a `reins.toml` above the working directory), `env:development/OPENAI_API_KEY` and `env:development`.
 
-Items are resolved on the phone by id, then exact name (existing resolver). Renaming an environment updates nothing in
-repos because repos reference the project and env names, which the phone keeps unique per folder.
+Project and environment names are 1 to 64 lowercase letters, digits and `-` (not first or last) and never contain a
+`/`, so an environment
+reference splits one way only: `vault:<project>/<env>/<VAR>` (three parts) or `vault:<project>/<env>` (two). The phone
+finds an environment only among items that carry both marker fields, inside the folder named exactly `Reins/<project>`;
+it never uses, changes or adopts an ordinary item that happens to be named `project/env` (a store that meets one is
+refused until it is renamed), and a folder or item elsewhere is never confused with it, whatever it is called. The
+older `vault:Item/field` references keep working through the existing resolver (id, then exact name, every `/` split),
+except that it reaches an environment only by its own `project/env/NAME` split. Renaming an environment's item updates
+nothing in repos: they name the project and the environment, which the folder and `reins.env` hold.
 
 ### 2.3 Files in a repo
 
@@ -80,8 +87,16 @@ reference (written by import, kept in sync by `reins secrets pull`):
 ```dotenv
 OPENAI_API_KEY=vault:acme-web/development/OPENAI_API_KEY
 STRIPE_SECRET_KEY=vault:acme-web/development/STRIPE_SECRET_KEY
-LOG_LEVEL=debug                   # non-secret values may stay literal
+# non-secret values may stay literal
+LOG_LEVEL=debug
 ```
+
+Its grammar is strict, so that no dotenv reader reads a line differently from `reins run`: `NAME=value` from the first
+column, no spaces around `=`, nothing after the value (comments are lines of their own). A value is empty, bare
+(no whitespace, quotes, `#`, `$`, `\` or backticks), in double quotes (escapes `\"` and `\\` only; no `$` or
+backticks, since other readers interpolate them), or in single quotes (taken as is). No `export`, no `${VAR}`, no value
+spanning lines, no carriage returns, no byte order mark: each is an error naming its line. The writers only write this
+form. (A plaintext `.env` that `push` and import read is read the usual, lenient way.)
 
 `reins run` reads `.env.reins` if present (literal values pass through, references are resolved), else `reins.toml`
 (the whole environment). Neither file ever holds a secret value; the guard keeps treating `.env*` as protected except
@@ -97,14 +112,38 @@ reins run [-e ENV] [--project NAME] [--env NAME=REF ...] [--purpose TEXT] [--no-
 
 1. Finds the project (`reins.toml` upwards from the cwd, or `--project`) and the environment (`-e`, else
    `default_env`), plus explicit `--env` pairs and existing `[run.profiles]` (kept).
-2. Asks the **daemon** (control API, new route `POST /secrets/lease`) for a lease covering exactly those references for
-   this command. The daemon returns a cached lease if one matches (same computer principal, project, env, command
-   pattern, still valid), else asks the phone with one `vault_env_release` (3.2) and caches the answer.
-3. Spawns the command with the variables in its environment. By default it **redacts**: the child's stdout/stderr are
-   piped through a filter that replaces any released value (and its base64/URL-encoded forms) with
-   `[vault:acme-web/development/OPENAI_API_KEY]`. Redaction is forced on when the caller is an agent (6.2); a person can
-   pass `--no-redact` for interactive tools that need a raw TTY.
-4. Journals the run (references, command, who), never values.
+2. Hands the run to the **daemon** (Unix): it connects to the daemon's socket (`run.sock` in the state folder, this
+   user only), passes its stdin, stdout and stderr (`SCM_RIGHTS`) and the command's argument list, folder, environment
+   and which variables it needs. The `reins run` process is not trusted with anything: the daemon
+   - checks the caller is this user (the socket's peer credentials) and knows the control token;
+   - decides the **runner** from the caller's process and its ancestors (a known harness among them, as its program or
+     as the script node runs, makes it `agent:<harness>`); `REINS_RUNNER` and the harnesses' environment markers can
+     only make it an agent, never a person;
+   - resolves the program to its absolute path (with the caller's `PATH`, recording each link on the way and whether
+     its own `PATH` finds the same program: `typed`, `aliases`, `path_check` in 3.2), refuses a program it cannot find,
+     and gets each environment from a lease it holds for exactly this runner, folder, environment, variables, command
+     and execution environment (3.4), else from the phone with one `vault_env_release` (3.2). The phone is shown, and
+     the daemon starts, the same parsed argument list;
+   - under a remembered pattern (not exactly this command) leaves out the variables that change what a program runs or
+     loads (`NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_*`, `PYTHONPATH`, `RUSTC_WRAPPER`, `CARGO_TARGET_*_RUNNER`, `GIT_SSH`
+     and other `GIT_*` hooks, `BASH_ENV`, `ENV`, `npm_config_*`, …), and says so; a lease is reused only while those
+     and `PATH` are as they were when it was released;
+   - **starts the command itself**, in that folder, with the caller's terminal as its stdin, stdout and stderr. No value
+     is ever sent back: no route hands values out.
+3. By default the output is **redacted**: the child's stdout/stderr go through a filter that replaces any released value
+   with `[vault:acme-web/development/OPENAI_API_KEY]`, as it is and as programs commonly print it: base64 and base64url
+   (with or without padding); percent-encoded in upper or lower case hex, a space as `%20` or `+`, with `/` left raw or
+   as `encodeURIComponent` and `encodeURI` leave it; JSON-escaped (`\n`, `\"`, `\/`, `\uXXXX`), as a multi-line or
+   PEM value shows in JSON. The filter is built before the command starts, and a run whose filter cannot be built does
+   not start (never unfiltered). The daemon forces it for an agent (6.2) and refuses `--no-redact` from one; a person
+   can pass `--no-redact` for interactive tools that need the raw terminal.
+4. Signals the caller gets (Ctrl-C, SIGTERM, SIGHUP) are passed on to the command's process group; the caller exits
+   with the command's code. Journals the run (references, command, who), never values.
+
+Without a running daemon a project's secrets are not released (`reins resume` starts it). `vault:Item/field`
+references alone are still asked for by `reins run` itself, every time, as before. On Windows, where the daemon cannot
+take over the terminal yet, `reins run` asks and starts the command itself, and the runner comes from what its own
+environment says (a known gap).
 
 ### 3.2 Release protocol
 
@@ -112,15 +151,32 @@ New desktop-only tool **`vault_env_release`** (replaces repeated `vault_secret_r
 single references):
 
 ```json
-{ "project": "acme-web", "env": "development", "fields": ["OPENAI_API_KEY", "..."] | "all",
-  "command": "npm run dev", "cwd": "~/dev/acme-web", "runner": {"kind": "person" | "agent", "harness": "claude-code"},
-  "lease_secs": 28800, "purpose": "…", "nonce": "…", "client_key": "…" }
+{ "project": "acme-web", "env": "development", "fields": ["OPENAI_API_KEY", "..."],
+  "program": "/usr/bin/npm", "args": ["run", "dev"], "root": "/home/dana/dev/acme-web",
+  "runner": "person" | "agent:claude-code", "lease_secs": 28800, "purpose": "…", "nonce": "…", "client_key": "…" }
 ```
 
+`fields` left out means every variable of the environment. The command is the argument list `reins run` spawns (it
+never uses a shell), with the program resolved to its absolute path; `root` is the project's folder (canonical path).
+`typed` is the program as typed (`npm`, `./npm`) and `aliases` each link on the way to it: the phone refuses a prefix
+when any of these names, or the resolved one, is a launcher (3.3).
+`path_check` (`same` or `other`) says whether the daemon's own login `PATH` finds the same program for that name.
+The phone shows a program outside the usual system folders (`/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, …) by
+its whole path, in the headline too, and flags it in a warning row when it is in a temporary folder, inside the
+project's folder (which a repository or an agent can write), or not the one the login `PATH` finds: `PATH=/tmp/x:$PATH
+reins run -- npm run dev` reads `/tmp/x/npm run dev`, "In a temporary folder", never `npm run dev`.
+
 The phone answers with the existing `SecretGrant` (sealed to the pinned computer key, bound to the nonce), extended with
-`project`, `env` and the item revision. Limits: up to 200 fields per release, 64 KB of values. The approval view
-(`SecretReleaseView`) shows: who (person or agent and which), which computer, the command, the project and env, the
-variable names (never values), the lease, and the Remember choices of the approval dock.
+`project`, `env`, the item revision, and the binding the phone decided: the `runner` and `root` it approved and the
+`command` (a `CommandScope`: exactly the approved argument list, or the prefix the user chose on the phone; a pattern
+the computer merely proposed is never used). The variables granted are the names in `secrets`. Limits: up to 200 fields
+per release, 64 KB of values. The approval view (`SecretReleaseView`) shows: who (person or agent and which), which
+computer, the command, the project and env, the variable names (never values), the lease, and the Remember choices of
+the approval dock.
+
+The daemon reuses a cached lease only when all of these match: runner, computer (its own connection), project root,
+environment and its revision, the variables asked for are among those granted, and the program with its arguments is
+covered by the granted command. Anything else asks again.
 
 ### 3.3 Grants bound to what runs
 
@@ -132,8 +188,33 @@ gains a `secrets` part):
 | project, env | exact |
 | computer | the connection (as today) |
 | runner | `person`, or `agent:<harness>` (6.1) |
-| command | a pattern: exact, or a prefix with `*` (`npm run *`), chosen in the dock's Custom sheet; default = the exact command |
+| project root | the folder on the computer (canonical path) |
+| command | the program (absolute path) and its arguments, compared as whole arguments: exactly, or an allowed prefix followed by whole arguments its grammar allows (`npm run dev *` covers `npm run dev --silent`, never `npm run devx`), chosen in the dock's Custom sheet; default = the exact command |
 | fields | all of the env, or the listed ones |
+
+A prefix never ends inside an argument and never has a wildcard in the middle. Prefixes are **closed by
+construction**: one is allowed only for a program and first arguments on an allow-list with a grammar per program
+(`reins_proto::desktop::GRAMMARS`): `cargo build|test|run|check|clippy *`, `npm|pnpm|yarn run <script> *`,
+`npm|pnpm|yarn test|start *`, `make <target> *`, `go build|test|run|vet *`, `pytest *`, `uv run pytest *`,
+`rails server|test *`, `docker compose up *`. Everything else (shells, interpreters, launchers, wrappers, and any program
+the list does not name) can be remembered only exactly. What the `*` stands for is checked too: each argument must be a
+plain word (not a path out of the project: absolute, `~`, or with a `..` part; not a `NAME=value` assignment; not `--`)
+or an option the program's grammar lists as safe. Options that run other code or read other configuration (`cargo
+--config`/`-Z`/`+toolchain`/`--manifest-path`, `npm --script-shell`/`--node-options`/`--prefix`, `make -f`/`-C`/`--eval`,
+`pytest -p`/`--rootdir`/`-c`/`--pyargs`, `go -exec`/`-toolexec`/`-ldflags`, `docker compose -f`) are not listed, so a
+command with them needs its own exact approval.
+
+A program is compared by every name it goes by: as typed (`npm`, `./npm`), each link on the way to it, and as
+resolved (`…/npm/bin/npm-cli.js`); a prefix is allowed only when all of them are the same program on the list. Each name
+is lower-cased on every platform (`NPM`), loses trailing dots and spaces, a Windows or script extension, a `-cli` or
+`-preview` ending and a version (`npm-cli.js`, `pnpm.cjs`, `python3.12`, `node22`, `CMD.EXE` are `npm`, `pnpm`,
+`python`, `node`, `cmd`), and a name that leaves any doubt (anything but ASCII letters, digits and `-_.+`: a look-alike
+letter, a Windows 8.3 short name such as `NPM~1.CMD`) is never on the list. Another program of the same name
+elsewhere on PATH is another program.
+
+An exact command (`bash -c <code>`, `python -c <code>` among them) can be remembered, and the phone then shows all of
+it, never cut short. When it is longer than `MAX_REMEMBERED_CODE` (300 characters as shown) it cannot be remembered at
+all: it is approved one run at a time.
 
 `confirm = "always"` in `reins.toml` and any env named `production`/`prod` make the env `no_standing` by default (the
 user can change it on the phone, never from the repo alone). Bypass still approves everything (by the user's decision),
@@ -141,11 +222,35 @@ and its grants end with it (existing).
 
 ### 3.4 Leases and revocation
 
-- The daemon holds released values in memory only (`Zeroizing`), per lease key `(principal, project, env, fields,
-  command pattern)`, until `min(phone expiry, reins.toml lease, phone policy)`.
+- The daemon holds released values in memory only (`Zeroizing`), and uses a lease again only when every dimension it
+  was released for matches at the time of use: the runner (as the daemon decided it), this computer, the project's
+  folder, the environment and its version, variables among those released (every variable only after a release of
+  every one), and a command the released scope covers (exactly the approved argument list, or the prefix the user chose
+  on the phone). It keeps them until the expiry the phone sealed, never across a restart, and drops them on a
+  revocation from the phone or when this computer saves to the environment. The phone decides that expiry:
+  `min(lease asked for, 8 hours, what is left of the permission that covers it)`, so `lease` in `reins.toml` (which a
+  repository or an agent can edit) is a request the phone can only shorten.
+- An environment asked every time (`confirm = "always"`, `production`/`prod` unless the user said otherwise on the
+  phone, the user's own choice), a value to print and a command that cannot be remembered are released **one-shot**:
+  the `SecretGrant` says `one_shot`, lives a minute, and the daemon hands it to the command it starts now and never
+  keeps it; a second run asks again.
 - `reins secrets leases` lists them; `reins secrets revoke [--all]` drops them; the desktop app's Keys & secrets page shows
-  and drops them; the phone's grant/activity pages get **Revoke on all computers**, which the daemon picks up through
-  the existing poll (a new `lease_revocations` message, sealed to the computer).
+  and drops them; the phone's grant/activity pages get **Revoke on all computers**: the environment's standing
+  permissions end on the phone, and a `LeaseRevocation` sealed to each paired computer's key goes to the server
+  (`POST /reins/api/desktop/revocations`, from the approval device). The server keeps each in memory for a day at most
+  for that computer's daemon: the daemon picks them up (`GET /reins/desktop/revocations?reader=<id of this daemon
+  run>`, polled while it holds leases), applies them, then acknowledges them by the ids the server gave
+  (`POST /reins/desktop/revocations/ack`); the server then stops handing those to that reader only, so a replayed or
+  another reader's acknowledgement never hides one, and one posted meanwhile has an id no acknowledgement names. Every
+  change to a computer's mailbox happens under one lock. A revocation of everything (marked `all` beside its box)
+  supersedes the ones before it and is never pushed out by others; the others are kept up to 50 per computer, and when
+  one has to go the mailbox reports a loss as of then (`lost`), which makes the daemon drop every lease made before it.
+  A server that restarts reports a loss as of its start the same way (what it held was in memory). One that does not
+  open on the computer is logged and treated as a revocation of everything.
+- On the phone, Revoke on all computers ends the permissions in its own store first, so nothing it signs afterwards
+  relies on them; a note the server did not take waits in the phone's outbox and is sent again on each sync, and the
+  answer names the computers not told yet ("Not yet delivered to <computer>"), never reporting them as told. A revocation only ever takes leases away, so one the server makes up (it
+  knows the public key) can only make the computer ask again.
 - A child process that already received values keeps them (the OS gives no way back); leases stop new releases.
 
 ### 3.5 Other ways in
@@ -154,8 +259,13 @@ and its grants end with it (existing).
 - **SSH agent** (exists): keys imported to `Reins/ssh`; nothing else changes.
 - **git** (exists): host tokens stay in the phone's integration store (they are integrations, not vault items); import
   moves a found `gh`/`.git-credentials` token there (5.3).
+- **One gate.** Every release of a project's values goes through `reins_proto::desktop::release_gate` (the approved
+  command scope is valid and covers the program and arguments): on the phone before it seals a release, whether a
+  permission or the user approved it; on the computer before the daemon hands values to a command, reuses a lease, or
+  prints one (`reins secrets get`). The old `vault_secret_release` (single `vault:Item/field` references) never
+  reaches a project's environment. Tests list the places that seal or hand out values, so a new one cannot skip it.
 - **`reins secrets get REF`** for scripts that need one value on stdout: person-only (refused when the caller is an agent),
-  always asked, never granted.
+  always asked, never granted (`vault_env_release` with `print: true`, which the phone asks every time).
 
 ## 4. Managing secrets
 
@@ -176,8 +286,24 @@ screens:
 | `leases`, `revoke` | 3.4 |
 | `doctor` | checks the project: references resolve, no plaintext `.env` left, guard rules on |
 
-Writes use a new **batch** store tool `vault_secrets_store` (extends `vault_secret_store`: many variables of one env in
-one sealed box, one approval, one set of check digits over the batch, history kept for replaced values).
+Writes use a new **batch** store tool `vault_secrets_store` (extends `vault_secret_store`: the changes to one or more
+environments in one box from the app's key to the phone's key, one approval, one set of check digits over the batch).
+The call names what it saves beside the box (`envs: ["project/env", ...]`, `ssh: [names]`, `hosts: [git hosts]`), and
+the box must name the same. One store (one approval) may also carry SSH keys (`SshKeyToStore`, kept as SSH key items in
+the folder `Reins/ssh`) and git hosts' tokens (`HostToken`, handed to the phone's GitHub, GitLab, Codeberg or Bitbucket
+integration), so an import is one approval. The check digits are `reins_proto::desktop::batch_check` over every operation of
+the batch (each value set, each removal, rename and copy with its names, and whether values may be replaced), in a
+canonical, order-independent form, so a store without values has digits of its own too; the phone answers with one result per environment, key and token
+(`SecretsStoreAck`), and a part that fails does not undo the others. The box (`SecretsToStore`) holds per
+environment `set` (name, value), `unset`, `rename` (from, to), `copy_from` (another environment of the project, copied on
+the phone so the values never travel) and `replace` (without it a `set` that would change an existing value is refused).
+The phone makes the folder and the item when missing (the item: a Secure Note with the hidden `reins.kind = env/1`
+field, variables as hidden fields), keeps replaced and removed values in the item's history (`NAME: value`, as the
+Bitwarden apps keep hidden fields), refuses a box older than 15 minutes or seen before, and changes nothing if the
+vault changed between the approval and the save. Limits: 20 environments, 200 variables each, 128 KB of values.
+
+Names come from `vault_secrets_list` (projects, environments, variable names and versions, boxed from the phone's key;
+never a value; can be remembered on the phone per project).
 
 ## 5. Scan and import (workstream A)
 

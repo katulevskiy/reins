@@ -70,6 +70,7 @@ async fn local(up: &Upstream, prompt: Arc<Prompt>) -> (Proxy, tempfile::TempDir)
             authorizer: None,
             prompter: prompt,
             harden: false,
+            process_info: reins_desktop::runner::process_info,
         },
     )
     .await;

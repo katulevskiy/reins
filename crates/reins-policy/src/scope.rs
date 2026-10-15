@@ -212,6 +212,76 @@ impl ServiceScope {
     }
 }
 
+/// Secrets of one environment handed to the desktop app (Reins Secrets, docs/secrets.md 3.3), bound to what runs: the
+/// project and environment, who runs it, the project's folder on the computer, the command and the variables.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretsScope {
+    pub project: String,
+    pub env: String,
+    /// `person` or `agent:<harness>`.
+    pub runner: String,
+    /// The project's folder on the computer (its canonical path).
+    pub root: String,
+    /// The program and arguments covered: exactly, or an allowed prefix.
+    pub command: reins_proto::desktop::CommandScope,
+    /// The variables covered; empty = every variable of the environment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+}
+
+/// What a release asks for, as [`SecretsScope::covers`] compares it.
+#[derive(Clone, Copy, Debug)]
+pub struct SecretsFacts<'a> {
+    pub project: &'a str,
+    pub env: &'a str,
+    pub runner: &'a str,
+    pub root: &'a str,
+    pub program: &'a str,
+    pub args: &'a [String],
+    /// The variables asked for; `None`: every variable of the environment.
+    pub fields: Option<&'a [String]>,
+}
+
+impl SecretsScope {
+    pub fn validate(&self) -> Result<(), PolicyError> {
+        use reins_proto::desktop::{MAX_ENV_VARS, name_ok, runner_ok, var_ok};
+        let bad = |why: &str| Err(PolicyError::InvalidScope(why.to_owned()));
+        if !name_ok(&self.project) || !name_ok(&self.env) {
+            return bad("a secrets scope names a project and an environment");
+        }
+        if !runner_ok(&self.runner) {
+            return bad("a secrets scope names who runs it: person or agent:<harness>");
+        }
+        if self.root.trim().is_empty() || self.root.len() > 1_000 || self.root.chars().any(char::is_control) {
+            return bad("a secrets scope names the project's folder");
+        }
+        self.command.validate().map_err(PolicyError::InvalidScope)?;
+        if self.fields.len() > MAX_ENV_VARS
+            || !self.fields.iter().all(|f| var_ok(f))
+            || self.fields.iter().collect::<BTreeSet<_>>().len() != self.fields.len()
+        {
+            return bad("a secrets scope names each variable once");
+        }
+        Ok(())
+    }
+
+    /// Whether every dimension matches: the same project, environment, runner and folder, a command the scope's
+    /// covers (whole arguments; a refused prefix covers nothing), and variables among the scope's (a scope for some
+    /// variables never covers a release of every one).
+    #[must_use]
+    pub fn covers(&self, facts: &SecretsFacts<'_>) -> bool {
+        self.project == facts.project
+            && self.env == facts.env
+            && self.runner == facts.runner
+            && self.root == facts.root
+            && reins_proto::desktop::release_gate(&self.command, facts.program, facts.args)
+            && self.command.rememberable(&[])
+            && (self.fields.is_empty()
+                || facts.fields.is_some_and(|asked| asked.iter().all(|f| self.fields.contains(f))))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Scope {
@@ -223,6 +293,8 @@ pub enum Scope {
     Service(ServiceScope),
     /// The metadata of what searches and lists find (see [`HeadlinesScope`]). Never covers opening anything.
     Headlines(HeadlinesScope),
+    /// Secrets of one environment for the desktop app (see [`SecretsScope`]).
+    Secrets(SecretsScope),
 }
 
 impl ReadScope {
@@ -309,6 +381,7 @@ impl Scope {
             Self::Accounts(s) => s.validate(),
             Self::Service(s) => s.validate(),
             Self::Headlines(s) => s.validate(),
+            Self::Secrets(s) => s.validate(),
         }
     }
 }
@@ -318,6 +391,127 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn secrets(fields: &[&str], command: reins_proto::desktop::CommandScope) -> SecretsScope {
+        SecretsScope {
+            project: "acme".to_owned(),
+            env: "dev".to_owned(),
+            runner: "person".to_owned(),
+            root: "/home/me/dev/a".to_owned(),
+            command,
+            fields: fields.iter().map(|f| (*f).to_owned()).collect(),
+        }
+    }
+
+    fn words(w: &[&str]) -> Vec<String> {
+        w.iter().map(|x| (*x).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_secrets_scope_binds_every_dimension() {
+        use reins_proto::desktop::CommandScope;
+        let npm = "/usr/bin/npm";
+        let exact = secrets(&["A"], CommandScope::exact(npm, &words(&["run", "dev"])));
+        exact.validate().unwrap();
+        let args = words(&["run", "dev"]);
+        let asked = words(&["A"]);
+        let facts = SecretsFacts {
+            project: "acme",
+            env: "dev",
+            runner: "person",
+            root: "/home/me/dev/a",
+            program: npm,
+            args: &args,
+            fields: Some(&asked),
+        };
+        assert!(exact.covers(&facts));
+        assert!(
+            !exact.covers(&SecretsFacts {
+                runner: "agent:claude-code",
+                ..facts
+            }),
+            "another runner"
+        );
+        assert!(
+            !exact.covers(&SecretsFacts {
+                root: "/home/me/dev/b",
+                ..facts
+            }),
+            "another folder"
+        );
+        assert!(
+            !exact.covers(&SecretsFacts {
+                env: "prod",
+                ..facts
+            }),
+            "another environment"
+        );
+        let both = words(&["A", "B"]);
+        assert!(
+            !exact.covers(&SecretsFacts {
+                fields: Some(&both),
+                ..facts
+            }),
+            "more variables"
+        );
+        assert!(
+            !exact.covers(&SecretsFacts {
+                fields: None,
+                ..facts
+            }),
+            "every variable"
+        );
+        let test = words(&["run", "test"]);
+        assert!(
+            !exact.covers(&SecretsFacts {
+                args: &test,
+                ..facts
+            }),
+            "another command"
+        );
+        assert!(
+            !exact.covers(&SecretsFacts {
+                program: "/tmp/npm",
+                ..facts
+            }),
+            "another program"
+        );
+        let all = secrets(
+            &[],
+            CommandScope {
+                program: npm.to_owned(),
+                args: words(&["run", "dev"]),
+                prefix: true,
+            },
+        );
+        all.validate().unwrap();
+        let more = words(&["run", "dev", "--silent"]);
+        assert!(all.covers(&SecretsFacts {
+            args: &more,
+            fields: None,
+            ..facts
+        }));
+        assert!(!all.covers(&SecretsFacts {
+            args: &test,
+            fields: None,
+            ..facts
+        }));
+        let shell = secrets(
+            &[],
+            CommandScope {
+                program: "/bin/sh".to_owned(),
+                args: words(&["-c"]),
+                prefix: true,
+            },
+        );
+        assert!(shell.validate().is_err());
+        let mut bad = exact.clone();
+        bad.runner = "robot".to_owned();
+        assert!(bad.validate().is_err());
+        let json = serde_json::to_value(Scope::Secrets(exact.clone())).unwrap();
+        assert_eq!(json["action"], "secrets");
+        assert_eq!(serde_json::from_value::<Scope>(json).unwrap(), Scope::Secrets(exact));
+    }
 
     #[test]
     fn a_scope_that_names_operations_covers_only_those() {

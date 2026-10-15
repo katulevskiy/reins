@@ -474,15 +474,39 @@ pub struct AskAnswer {
     pub approved: bool,
 }
 
-/// What the phone seals to the desktop app for `vault_secret_release`: each requested `item/field` and its value.
+/// What the phone seals to the desktop app for `vault_secret_release` (each requested `item/field` and its value) and
+/// for `vault_env_release` (each variable of the environment and its value, with the environment it came from).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SecretGrant {
     pub v: u32,
     pub nonce: String,
-    /// In the order requested.
+    /// In the order requested (`vault_env_release` with every variable: sorted by name).
     pub secrets: Vec<(String, String)>,
     /// Unix seconds; the desktop app forgets them then.
     pub expires_at: i64,
+    /// `vault_env_release`: the project and environment released.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
+    /// `vault_env_release`: the environment's version (the vault item's revision date).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    /// `vault_env_release`: who it was released to (`person`, `agent:<harness>`), as the phone approved it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
+    /// `vault_env_release`: the project's folder on the computer (its canonical path) it was released for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
+    /// `vault_env_release`: the commands the desktop app may hand these values to until they expire, without asking
+    /// again: exactly the command approved, or the argument prefix the user chose on the phone. The variables it may
+    /// hand them for are the names in `secrets`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandScope>,
+    /// `vault_env_release`: for this one run only (an environment asked every time, a production one, a value to
+    /// print): the desktop app hands the values to the command it starts now and never keeps them for another.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub one_shot: bool,
 }
 
 impl std::fmt::Debug for SecretGrant {
@@ -624,6 +648,1176 @@ pub struct VaultNames {
     pub nonce: String,
     /// `(name, kind)`, the kind as the vault tools name it (`login`, `note`, `card`, `identity`, `ssh_key`).
     pub items: Vec<(String, String)>,
+}
+
+// ---- Reins Secrets (docs/secrets.md) --------------------------------------------------------------------------------
+
+/// The tools of Reins Secrets (all desktop-only).
+pub const ENV_RELEASE_TOOL: &str = "vault_env_release";
+pub const SECRETS_STORE_TOOL: &str = "vault_secrets_store";
+pub const SECRETS_LIST_TOOL: &str = "vault_secrets_list";
+pub const TOKEN_STORE_TOOL: &str = "integration_token_store";
+/// The vault folder of Reins Secrets; a project is the folder `Reins/<project>`.
+pub const SECRETS_FOLDER: &str = "Reins";
+/// The hidden custom field that marks a Secure Note as an environment, and its value.
+pub const ENV_KIND_FIELD: &str = "reins.kind";
+pub const ENV_KIND: &str = "env/1";
+/// The hidden custom field that names the environment (its identity; the item's name is only shown).
+pub const ENV_NAME_FIELD: &str = "reins.env";
+/// The hidden custom field that says where a project came from (its git origin, `github.com/acme/api`), so that an
+/// import from somewhere else is not merged into it unasked.
+pub const ENV_ORIGIN_FIELD: &str = "reins.origin";
+/// Custom fields whose names start with this belong to Reins, not to the environment's variables.
+pub const RESERVED_PREFIX: &str = "reins.";
+/// The most variables one release or one environment holds, and the most bytes of values one release carries.
+pub const MAX_ENV_VARS: usize = 200;
+pub const MAX_ENV_BYTES: usize = 64 * 1024;
+/// The most environments one `vault_secrets_store` changes, and the most bytes of values it carries.
+pub const MAX_STORE_ENVS: usize = 20;
+pub const MAX_STORE_BYTES: usize = 128 * 1024;
+/// How long a store box is good for (as [`SECRET_STORE_TTL_SECS`]).
+pub const SECRETS_STORE_TTL_SECS: i64 = SECRET_STORE_TTL_SECS;
+/// The runner of a person at the computer; an agent's is `agent:<harness>` (`agent:claude-code`).
+pub const PERSON: &str = "person";
+
+/// Whether `runner` is `person` or `agent:<harness>` (harness: 1 to 40 of `a-z 0-9 - _ .`).
+#[must_use]
+pub fn runner_ok(runner: &str) -> bool {
+    runner == PERSON
+        || runner.strip_prefix("agent:").is_some_and(|h| {
+            !h.is_empty()
+                && h.len() <= 40
+                && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_' | b'.'))
+        })
+}
+
+/// A project or environment name: 1 to 64 lowercase letters, digits and `-`, starting and ending with a letter or a
+/// digit (`acme-web`, `machine-danas-macbook-3f9a`, `production`). Never a `/`, so `project/env` is one item name and
+/// `project/env/NAME` one variable.
+#[must_use]
+pub fn name_ok(name: &str) -> bool {
+    let b = name.as_bytes();
+    !b.is_empty()
+        && b.len() <= 64
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        && b[0] != b'-'
+        && b[b.len() - 1] != b'-'
+}
+
+/// An environment variable name: a letter or `_`, then letters, digits and `_`, at most 100.
+#[must_use]
+pub fn var_ok(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && name.len() <= 100
+}
+
+/// The most arguments a command of a release may have, and the longest one.
+pub const MAX_ARGS: usize = 64;
+pub const MAX_ARG: usize = 1_000;
+/// The longest exact command a standing permission may name, as shown (`bash -c <code>`, `python -c <code>` among
+/// them): the phone shows all of it, never cut short. A longer one is asked every time.
+pub const MAX_REMEMBERED_CODE: usize = 300;
+
+/// The commands a release (or a standing permission for secrets) covers. `reins run` never uses a shell: a command is
+/// the program and its argument list as spawned, compared as whole arguments, never as text.
+///
+/// - exact (`prefix` false): this program with exactly these arguments;
+/// - prefix (`prefix` true): this program with these first arguments, then zero or more whole arguments (`npm run dev *`
+///   covers `npm run dev --watch`, never `npm run devx`). Closed by construction: a prefix is allowed only for a
+///   program and first arguments on an allow-list ([`GRAMMARS`]), and the arguments the `*` stands for only when each
+///   is a plain word or an option that program's grammar lists as safe ([`tail_refusal`]). Everything else is allowed
+///   exactly only.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CommandScope {
+    /// The program, by its absolute path when the computer could resolve it (so another `npm` elsewhere on PATH is
+    /// another program).
+    pub program: String,
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prefix: bool,
+}
+
+/// One word of a grammar's fixed part: a literal (`run`), or a name the project defines (a script, a target).
+#[derive(Clone, Copy, Debug)]
+pub enum Word {
+    Lit(&'static str),
+    /// A plain name: letters, digits and `_ . : -`, not starting with `-` or `+`.
+    Name,
+}
+
+/// The prefixes one program may be remembered by, and the options the `*` may stand for.
+#[derive(Debug)]
+pub struct Grammar {
+    /// The program's names, as [`program_name`] gives them.
+    pub programs: &'static [&'static str],
+    /// The fixed parts a prefix may have (`[run, <script>]`: `npm run dev *`). An empty one: the program alone.
+    pub prefixes: &'static [&'static [Word]],
+    /// The options the `*` may stand for (`--release`; `--features=x` and `-j8` match `--features` and `-j`).
+    /// Anything else that starts with `-` or `+` is refused there.
+    pub options: &'static [&'static str],
+}
+
+const CARGO_OPTIONS: &[&str] = &[
+    "--release",
+    "-r",
+    "--workspace",
+    "--all",
+    "--all-targets",
+    "--all-features",
+    "--no-default-features",
+    "--features",
+    "-F",
+    "-p",
+    "--package",
+    "--bin",
+    "--bins",
+    "--lib",
+    "--tests",
+    "--test",
+    "--examples",
+    "--example",
+    "--benches",
+    "--bench",
+    "--locked",
+    "--frozen",
+    "--offline",
+    "-q",
+    "--quiet",
+    "-v",
+    "-vv",
+    "--verbose",
+    "-j",
+    "--jobs",
+    "--no-fail-fast",
+    "--doc",
+    "--exclude",
+    "--profile",
+    "--message-format",
+    "--color",
+    "--keep-going",
+    "--no-run",
+    "--timings",
+];
+const PYTEST_OPTIONS: &[&str] = &[
+    "-v",
+    "-vv",
+    "-q",
+    "-x",
+    "--exitfirst",
+    "-k",
+    "-m",
+    "-s",
+    "--lf",
+    "--last-failed",
+    "--ff",
+    "--failed-first",
+    "-n",
+    "--maxfail",
+    "--tb",
+    "--durations",
+    "--no-header",
+    "-ra",
+    "-rA",
+    "--co",
+    "--collect-only",
+];
+
+/// Every program a prefix may be remembered for, with its grammar. Not here: allowed exactly only.
+pub const GRAMMARS: &[Grammar] = &[
+    Grammar {
+        programs: &["cargo"],
+        prefixes: &[
+            &[Word::Lit("build")],
+            &[Word::Lit("test")],
+            &[Word::Lit("run")],
+            &[Word::Lit("check")],
+            &[Word::Lit("clippy")],
+        ],
+        options: CARGO_OPTIONS,
+    },
+    Grammar {
+        programs: &["npm", "pnpm", "yarn"],
+        prefixes: &[&[Word::Lit("run"), Word::Name], &[Word::Lit("test")], &[Word::Lit("start")]],
+        options: &["--silent", "-s", "--if-present"],
+    },
+    Grammar {
+        programs: &["make", "gmake"],
+        prefixes: &[&[Word::Name]],
+        options: &["-j", "--jobs", "-k", "--keep-going", "-s", "--silent", "--quiet", "-n", "--dry-run", "-B", "-O"],
+    },
+    Grammar {
+        programs: &["go"],
+        prefixes: &[&[Word::Lit("build")], &[Word::Lit("test")], &[Word::Lit("run")], &[Word::Lit("vet")]],
+        options: &[
+            "-v",
+            "-race",
+            "-count",
+            "-run",
+            "-timeout",
+            "-short",
+            "-cover",
+            "-tags",
+            "-p",
+            "-failfast",
+            "-bench",
+            "-benchmem",
+            "-trimpath",
+        ],
+    },
+    Grammar {
+        programs: &["pytest", "py.test"],
+        prefixes: &[&[]],
+        options: PYTEST_OPTIONS,
+    },
+    Grammar {
+        programs: &["uv"],
+        prefixes: &[&[Word::Lit("run"), Word::Lit("pytest")]],
+        options: PYTEST_OPTIONS,
+    },
+    Grammar {
+        programs: &["rails"],
+        prefixes: &[&[Word::Lit("server")], &[Word::Lit("s")], &[Word::Lit("test")], &[Word::Lit("t")]],
+        options: &["-p", "--port", "-b", "--binding", "-e", "--environment"],
+    },
+    Grammar {
+        programs: &["docker"],
+        prefixes: &[&[Word::Lit("compose"), Word::Lit("up")]],
+        options: &[
+            "-d",
+            "--detach",
+            "--build",
+            "--no-build",
+            "--no-deps",
+            "--force-recreate",
+            "--remove-orphans",
+            "--wait",
+        ],
+    },
+];
+
+/// The grammar of `program`, if a prefix may be remembered for it.
+#[must_use]
+pub fn grammar(program: &str) -> Option<&'static Grammar> {
+    if doubtful_name(program) {
+        return None;
+    }
+    let name = program_name(program);
+    GRAMMARS.iter().find(|g| g.programs.contains(&name.as_str()))
+}
+
+fn plain_name(w: &str) -> bool {
+    w.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        && w.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-'))
+}
+
+/// The program's name as compared with the lists above: its file name, lower case on every platform (macOS and
+/// Windows find `NPM` and `Bash` as `npm` and `bash`), without the trailing dots and spaces Windows ignores, a Windows
+/// or script extension, a `-cli` or `-preview` ending, and without a version (`python3.12`, `node22`, `bash5.2` and
+/// `php8.3` are `python`, `node`, `bash` and `php`). A package manager installed as a script resolves to that script:
+/// `npm` is `…/npm/bin/npm-cli.js`, `pnpm` is `…/pnpm/bin/pnpm.cjs`, and both are still `npm` and `pnpm` here.
+#[must_use]
+pub fn program_name(program: &str) -> String {
+    let file = program.trim_end_matches(['.', ' ']);
+    let file = file.rsplit(['/', '\\']).next().unwrap_or(file).to_lowercase();
+    let mut name = file.trim_end_matches(['.', ' ']);
+    loop {
+        let before = name;
+        name = [".exe", ".cmd", ".bat", ".com", ".ps1", ".js", ".cjs", ".mjs", ".py", ".rb", ".pl", ".sh"]
+            .iter()
+            .find_map(|x| name.strip_suffix(x))
+            .unwrap_or(name);
+        name = name.trim_end_matches(|c: char| c.is_ascii_digit() || matches!(c, '.' | ' '));
+        name = ["-cli", "-preview"].iter().find_map(|x| name.strip_suffix(x)).unwrap_or(name);
+        if name == before {
+            break;
+        }
+    }
+    if name.is_empty() {
+        file.clone()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// Whether a program's name leaves any doubt about what it is, so that no list can be trusted to know it: anything
+/// but ASCII letters, digits and `-_.+` (a look-alike letter from another script, a Windows 8.3 short name such as
+/// `PYTHON~1.EXE`), or nothing left.
+#[must_use]
+pub fn doubtful_name(program: &str) -> bool {
+    let file = program.trim_end_matches(['.', ' ']);
+    let file = file.rsplit(['/', '\\']).next().unwrap_or(file);
+    file.is_empty() || !file.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+'))
+}
+
+/// [`prefix_refusal`] for a program known by several names: as the user typed it (`npm`), each link on the way to it,
+/// and as the computer resolved it (`…/npm-cli.js`). Refused unless every one of them is the same program on the
+/// allow-list: any doubt about which program runs means exact only.
+#[must_use]
+pub fn prefix_refusal_as(names: &[&str], program: &str, args: &[String]) -> Option<String> {
+    if let Some(why) = prefix_refusal(program, args) {
+        return Some(why);
+    }
+    let name = program_name(program);
+    names
+        .iter()
+        .find(|n| doubtful_name(n) || program_name(n) != name)
+        .map(|n| format!("{n} is not plainly {name}: only the exact command can be allowed"))
+}
+
+/// Why `program` with the fixed first arguments `fixed` may not be a prefix pattern; `None` when its grammar
+/// ([`GRAMMARS`]) allows exactly these.
+#[must_use]
+pub fn prefix_refusal(program: &str, fixed: &[String]) -> Option<String> {
+    let name = program_name(program);
+    let Some(g) = grammar(program) else {
+        return Some(format!("{name} can be allowed only exactly"));
+    };
+    let fits = |words: &[Word]| {
+        words.len() == fixed.len()
+            && words.iter().zip(fixed).all(|(w, a)| match w {
+                Word::Lit(l) => a == l,
+                Word::Name => plain_name(a),
+            })
+    };
+    if g.prefixes.iter().any(|p| fits(p)) {
+        None
+    } else {
+        Some(format!("{name} {} * is not a pattern Reins allows: only the exact command", fixed.join(" ")))
+    }
+}
+
+/// Why the arguments `tail` may not stand for the `*` after `program` `fixed`; `None` when every one is a plain word
+/// (not a path out of the project: absolute, `~`, or with a `..` part; not a `NAME=value` assignment; not `--`) or an
+/// option the program's grammar lists as safe. Options that run other code or read other configuration (`cargo
+/// --config`, `npm --script-shell`, `make -f`, `pytest -p`, `go -toolexec`, …) are not listed, so they need the exact
+/// command.
+#[must_use]
+pub fn tail_refusal(program: &str, tail: &[String]) -> Option<String> {
+    let Some(g) = grammar(program) else {
+        return Some("no pattern for this program".to_owned());
+    };
+    for a in tail {
+        if a == "--" {
+            return Some("arguments after `--` are allowed only exactly".to_owned());
+        }
+        if a.starts_with('-') || a.starts_with('+') {
+            let key = a.split_once('=').map_or(a.as_str(), |(k, _)| k);
+            let short_count = g
+                .options
+                .iter()
+                .any(|o| o.len() == 2 && a.len() > 2 && a.starts_with(o) && a[2..].chars().all(|c| c.is_ascii_digit()));
+            if !g.options.contains(&key) && !short_count {
+                return Some(format!("{a} is allowed only in the exact command"));
+            }
+            continue;
+        }
+        let assignment = a.split_once('=').is_some_and(|(k, _)| {
+            !k.is_empty()
+                && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !k.starts_with(char::is_numeric)
+        });
+        let outside = a.starts_with('/')
+            || a.starts_with('\\')
+            || a.starts_with('~')
+            || a.get(1..2) == Some(":")
+            || a.split(['/', '\\']).any(|part| part == "..");
+        if assignment || outside {
+            return Some(format!("{a} is allowed only in the exact command"));
+        }
+    }
+    None
+}
+
+fn clean_arg(a: &str) -> bool {
+    a.chars().count() <= MAX_ARG && !a.chars().any(char::is_control)
+}
+
+impl CommandScope {
+    #[must_use]
+    pub fn exact(program: &str, args: &[String]) -> Self {
+        Self {
+            program: program.to_owned(),
+            args: args.to_vec(),
+            prefix: false,
+        }
+    }
+
+    /// Bounds, and for a prefix [`prefix_refusal`].
+    pub fn validate(&self) -> Result<(), String> {
+        if self.program.trim().is_empty() || !clean_arg(&self.program) {
+            return Err("a command needs a program".to_owned());
+        }
+        if self.args.len() > MAX_ARGS || !self.args.iter().all(|a| clean_arg(a)) {
+            return Err(format!("a command has at most {MAX_ARGS} arguments of at most {MAX_ARG} characters"));
+        }
+        match self.prefix.then(|| prefix_refusal(&self.program, &self.args)).flatten() {
+            Some(why) => Err(why),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether `program` with `args` is covered: the same program, then the same arguments (all of them, or these
+    /// first ones and any whole arguments after). A prefix that fails [`prefix_refusal`] covers nothing.
+    #[must_use]
+    pub fn matches(&self, program: &str, args: &[String]) -> bool {
+        if program != self.program {
+            return false;
+        }
+        if self.prefix {
+            prefix_refusal(&self.program, &self.args).is_none()
+                && args.starts_with(&self.args)
+                && tail_refusal(&self.program, &args[self.args.len()..]).is_none()
+        } else {
+            args == self.args.as_slice()
+        }
+    }
+
+    /// Whether every command this one covers is covered by `wider` too.
+    #[must_use]
+    pub fn within(&self, wider: &Self) -> bool {
+        if self.program != wider.program {
+            return false;
+        }
+        if wider.prefix {
+            prefix_refusal(&wider.program, &wider.args).is_none()
+                && self.args.starts_with(&wider.args)
+                && tail_refusal(&wider.program, &self.args[wider.args.len()..]).is_none()
+        } else {
+            !self.prefix && self.args == wider.args
+        }
+    }
+
+    /// The patterns that can be offered for this exact command, narrowest first: the command itself, then each
+    /// shorter prefix its grammar allows and that covers it.
+    #[must_use]
+    pub fn offers(&self) -> Vec<Self> {
+        self.offers_as(&[])
+    }
+
+    /// Whether a standing permission may name this command: a prefix its grammar allows by every name of the
+    /// program ([`prefix_refusal_as`]); an exact command when the phone can show all of it ([`MAX_REMEMBERED_CODE`]
+    /// characters), else it is approved once at a time.
+    #[must_use]
+    pub fn rememberable(&self, names: &[&str]) -> bool {
+        if self.prefix {
+            return prefix_refusal_as(names, &self.program, &self.args).is_none();
+        }
+        self.shown().chars().count() <= MAX_REMEMBERED_CODE
+    }
+
+    /// [`CommandScope::offers`], refusing what either name of the program refuses ([`prefix_refusal_as`]): `typed` is
+    /// the program as the user typed it.
+    #[must_use]
+    pub fn offers_as(&self, names: &[&str]) -> Vec<Self> {
+        let exact = Self::exact(&self.program, &self.args);
+        if !exact.rememberable(names) {
+            return Vec::new();
+        }
+        let mut out = vec![exact];
+        for k in (0..=self.args.len()).rev() {
+            let fixed = &self.args[..k];
+            if prefix_refusal_as(names, &self.program, fixed).is_none()
+                && tail_refusal(&self.program, &self.args[k..]).is_none()
+            {
+                out.push(Self {
+                    program: self.program.clone(),
+                    args: fixed.to_vec(),
+                    prefix: true,
+                });
+            }
+        }
+        out
+    }
+
+    /// As shown to the user, with the program's whole path when it is not in a usual place ([`usual_program`]): an
+    /// `npm` anywhere else is not shown as plain `npm`.
+    #[must_use]
+    pub fn shown_where(&self) -> String {
+        self.render(!usual_program(&self.program))
+    }
+
+    /// As shown to the user: the program's name and the arguments (quoted when they hold spaces or quotes), then ` *`
+    /// for a prefix.
+    #[must_use]
+    pub fn shown(&self) -> String {
+        self.render(false)
+    }
+
+    fn render(&self, whole_path: bool) -> String {
+        let file = if whole_path {
+            &self.program
+        } else {
+            self.program.rsplit(['/', '\\']).next().unwrap_or(&self.program)
+        };
+        let mut shown = shell_word(file);
+        for a in &self.args {
+            shown.push(' ');
+            shown.push_str(&shell_word(a));
+        }
+        if self.prefix {
+            shown.push_str(" *");
+        }
+        shown
+    }
+}
+
+/// The one check every release of a project's values goes through, on the phone and on the computer: whether the
+/// command scope approved (`scope`) is valid and covers `program` with `args`. The phone seals nothing, the computer
+/// hands nothing to a command and keeps nothing for one, that it does not pass.
+#[must_use]
+pub fn release_gate(scope: &CommandScope, program: &str, args: &[String]) -> bool {
+    scope.validate().is_ok() && scope.matches(program, args)
+}
+
+/// Folders a program is usually installed in, where the phone shows it by its name alone.
+pub const USUAL_PROGRAM_DIRS: &[&str] = &[
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/run/current-system/sw/bin",
+    "/nix/var/nix/profiles/default/bin",
+];
+
+/// Whether `program` is a full path into one of [`USUAL_PROGRAM_DIRS`].
+#[must_use]
+pub fn usual_program(program: &str) -> bool {
+    program.rsplit_once('/').is_some_and(|(dir, file)| !file.is_empty() && USUAL_PROGRAM_DIRS.contains(&dir))
+}
+
+/// What `path_check` of `vault_env_release` says about the program: the desktop app's own login `PATH` finds the same
+/// program for the name typed, or another one (or none).
+pub const PATH_SAME: &str = "same";
+pub const PATH_OTHER: &str = "other";
+
+/// Why the program of a release deserves a second look, in a few words for a warning row: it is in a temporary
+/// folder, inside the project's folder (which a repository or an agent can write), or not the program the login
+/// `PATH` finds for its name. `None`: nothing to flag.
+#[must_use]
+pub fn program_warning(program: &str, root: &str, path_check: Option<&str>) -> Option<&'static str> {
+    let p = program.replace('\\', "/");
+    let lower = p.to_ascii_lowercase();
+    let temp =
+        ["/tmp/", "/var/tmp/", "/private/tmp/", "/private/var/folders/", "/var/folders/", "/dev/shm/", "/run/user/"]
+            .iter()
+            .any(|t| lower.starts_with(t))
+            || lower.contains("/appdata/local/temp/");
+    if temp {
+        return Some("In a temporary folder");
+    }
+    let root = root.replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    if !root.is_empty() && p.starts_with(root) && p[root.len()..].starts_with('/') {
+        return Some("Inside the project folder");
+    }
+    if !p.starts_with('/') && p.get(1..3).is_none_or(|d| d != ":/") {
+        return Some("Not found on this computer");
+    }
+    if path_check == Some(PATH_OTHER) {
+        return Some("Not the one on your PATH");
+    }
+    None
+}
+
+/// Characters that change how text reads without being seen: bidirectional controls, zero-width characters, the
+/// soft hyphen, the byte order mark.
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{00ad}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+        | '\u{2060}'..='\u{2069}' | '\u{feff}')
+}
+
+/// One argument as a POSIX shell would read it back exactly, and as a person reads it unambiguously: bare when it is
+/// only letters, digits and `_ @ % + = : , . / -`; else in single quotes; else, when it holds a control or invisible
+/// character, in `$'…'` with each such character escaped (`\n`, `\t`, `\x1b`, `\u{202e}`), so nothing hides.
+#[must_use]
+pub fn shell_word(arg: &str) -> String {
+    use std::fmt::Write as _;
+    let plain =
+        |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '@' | '%' | '+' | '=' | ':' | ',' | '.' | '/' | '-');
+    if !arg.is_empty() && arg.chars().all(plain) {
+        return arg.to_owned();
+    }
+    if !arg.chars().any(|c| c.is_control() || invisible(c)) {
+        return format!("'{}'", arg.replace('\'', r"'\''"));
+    }
+    let mut out = String::from("$'");
+    for c in arg.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_control() && (c as u32) < 0x100 => {
+                let _ = write!(out, "\\x{:02x}", c as u32);
+            }
+            c if c.is_control() || invisible(c) => {
+                let _ = write!(out, "\\u{{{:04x}}}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// A whole argument list, as [`shell_word`] renders each.
+#[must_use]
+pub fn shell_words(argv: &[String]) -> String {
+    argv.iter().map(|a| shell_word(a)).collect::<Vec<_>>().join(" ")
+}
+
+/// Changes to one environment, as `vault_secrets_store` carries them (in [`SecretsToStore`]). Values are wiped when
+/// this is dropped.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvChanges {
+    pub project: String,
+    pub env: String,
+    /// Variables to set: a new name is added, an existing one replaced (its earlier value kept in the item's history).
+    #[serde(default)]
+    pub set: Vec<(String, String)>,
+    /// Variables to remove (their values kept in the item's history).
+    #[serde(default)]
+    pub unset: Vec<String>,
+    /// `(from, to)`: variables to rename.
+    #[serde(default)]
+    pub rename: Vec<(String, String)>,
+    /// Another environment of the same project whose variables are copied in first, on the phone (`reins secrets
+    /// cp`): the values never leave it. Names `set` here win.
+    #[serde(default)]
+    pub copy_from: Option<String>,
+    /// A `set` may replace a variable that has another value; without it the phone refuses the whole store.
+    #[serde(default)]
+    pub replace: bool,
+    /// The project's origin, kept on the environment as [`ENV_ORIGIN_FIELD`] (import).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+impl Drop for EnvChanges {
+    fn drop(&mut self) {
+        for (_, v) in &mut self.set {
+            zeroize::Zeroize::zeroize(v);
+        }
+    }
+}
+
+impl std::fmt::Debug for EnvChanges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names: Vec<&str> = self.set.iter().map(|(n, _)| n.as_str()).collect();
+        f.debug_struct("EnvChanges")
+            .field("project", &self.project)
+            .field("env", &self.env)
+            .field("set", &names)
+            .field("unset", &self.unset)
+            .field("rename", &self.rename)
+            .field("copy_from", &self.copy_from)
+            .field("replace", &self.replace)
+            .field("origin", &self.origin)
+            .finish()
+    }
+}
+
+impl EnvChanges {
+    /// No changes yet to `project/env` (fill in `set`, `unset`, …; the type wipes its values when dropped, so it is
+    /// not built with `..Default::default()`).
+    #[must_use]
+    pub fn new(project: &str, env: &str) -> Self {
+        Self {
+            project: project.to_owned(),
+            env: env.to_owned(),
+            set: Vec::new(),
+            unset: Vec::new(),
+            rename: Vec::new(),
+            copy_from: None,
+            replace: false,
+            origin: None,
+        }
+    }
+
+    /// `project/env`: the vault item's name, and what the call names beside the box.
+    #[must_use]
+    pub fn item(&self) -> String {
+        format!("{}/{}", self.project, self.env)
+    }
+
+    /// Names and counts, as the phone checks them.
+    pub fn validate(&self) -> Result<(), String> {
+        let item = self.item();
+        if !name_ok(&self.project) || !name_ok(&self.env) {
+            return Err(format!("`{}` is not a project/environment name", printable(&item)));
+        }
+        if self
+            .origin
+            .as_ref()
+            .is_some_and(|o| o.is_empty() || o.chars().count() > 300 || o.chars().any(char::is_control))
+        {
+            return Err(format!(
+                "the origin of {item} is empty, longer than 300 characters or holds control characters"
+            ));
+        }
+        if self.set.is_empty() && self.unset.is_empty() && self.rename.is_empty() && self.copy_from.is_none() {
+            return Err(format!("nothing to change in {item}"));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let names =
+            self.set.iter().map(|(n, _)| n).chain(&self.unset).chain(self.rename.iter().flat_map(|(a, b)| [a, b]));
+        for name in names {
+            if !var_ok(name) {
+                return Err(format!("`{}` in {item} is not a variable name", printable(name)));
+            }
+        }
+        for name in self.set.iter().map(|(n, _)| n).chain(&self.unset) {
+            if !seen.insert(name) {
+                return Err(format!("{name} is changed twice in {item}"));
+            }
+        }
+        if self.set.len() + self.rename.len() > MAX_ENV_VARS {
+            return Err(format!("at most {MAX_ENV_VARS} variables per environment"));
+        }
+        if let Some(from) = &self.copy_from
+            && (!name_ok(from) || from == &self.env)
+        {
+            return Err(format!("{item} cannot be copied from `{}`", printable(from)));
+        }
+        Ok(())
+    }
+}
+
+/// An SSH private key for the phone to keep as an SSH key item in the vault folder `Reins/ssh` (import). The key is
+/// wiped when this is dropped.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshKeyToStore {
+    /// The item's name.
+    pub name: String,
+    /// OpenSSH or PEM, without a passphrase.
+    pub private_key: String,
+}
+
+impl Drop for SshKeyToStore {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.private_key);
+    }
+}
+
+impl std::fmt::Debug for SshKeyToStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshKeyToStore").field("name", &self.name).finish_non_exhaustive()
+    }
+}
+
+/// A git host's token for the phone's integration of that host (GitHub, GitLab, Codeberg, Bitbucket). Wiped on drop.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostToken {
+    /// `github.com`, `gitlab.com`, `codeberg.org` or `bitbucket.org` ([`crate::connector::TOKEN_HOSTS`]).
+    pub host: String,
+    /// The user the token was found for, when the source says (Bitbucket signs in as `user:token`).
+    #[serde(default)]
+    pub user: Option<String>,
+    /// What the computer knows of its scopes; shown, not trusted.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub token: String,
+}
+
+impl Drop for HostToken {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.token);
+    }
+}
+
+impl std::fmt::Debug for HostToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostToken").field("host", &self.host).field("user", &self.user).finish_non_exhaustive()
+    }
+}
+
+impl HostToken {
+    /// The integration this host's token is for.
+    #[must_use]
+    pub fn service(&self) -> Option<&'static str> {
+        let host = self.host.to_ascii_lowercase();
+        crate::connector::TOKEN_HOSTS.iter().find(|(_, h)| *h == host).map(|(s, _)| *s)
+    }
+}
+
+/// The most SSH keys and tokens one store carries.
+pub const MAX_STORE_SSH: usize = 20;
+pub const MAX_STORE_TOKENS: usize = 10;
+
+/// A whole `vault_secrets_store`: something to save, at most [`MAX_STORE_ENVS`] distinct environments (each valid),
+/// [`MAX_STORE_SSH`] SSH keys with distinct names and [`MAX_STORE_TOKENS`] tokens for hosts the phone serves, at most
+/// [`MAX_STORE_BYTES`] of values in all.
+pub fn validate_batch(envs: &[EnvChanges], ssh: &[SshKeyToStore], tokens: &[HostToken]) -> Result<(), String> {
+    if envs.is_empty() && ssh.is_empty() && tokens.is_empty() {
+        return Err("nothing to save".to_owned());
+    }
+    if envs.len() > MAX_STORE_ENVS || ssh.len() > MAX_STORE_SSH || tokens.len() > MAX_STORE_TOKENS {
+        return Err(format!(
+            "one store saves at most {MAX_STORE_ENVS} environments, {MAX_STORE_SSH} SSH keys and {MAX_STORE_TOKENS} tokens"
+        ));
+    }
+    let mut items = std::collections::BTreeSet::new();
+    let mut bytes = 0usize;
+    for e in envs {
+        e.validate()?;
+        if !items.insert(e.item()) {
+            return Err(format!("{} appears twice", e.item()));
+        }
+        bytes += e.set.iter().map(|(n, v)| n.len() + v.len()).sum::<usize>();
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for k in ssh {
+        let name = k.name.trim();
+        if name.is_empty() || name.chars().count() > 200 || name.chars().any(char::is_control) {
+            return Err("an SSH key needs a name of at most 200 characters".to_owned());
+        }
+        if !names.insert(name) {
+            return Err(format!("the SSH key {} appears twice", printable(name)));
+        }
+        if k.private_key.trim().is_empty() {
+            return Err(format!("the SSH key {} is empty", printable(name)));
+        }
+        bytes += k.private_key.len();
+    }
+    for t in tokens {
+        if t.service().is_none() {
+            return Err(format!("{} is not a git host the phone serves", printable(&t.host)));
+        }
+        if t.token.trim().is_empty() || t.token.len() > 4_000 || t.user.as_ref().is_some_and(|u| u.len() > 200) {
+            return Err(format!("the token for {} is empty or too long", t.host));
+        }
+        bytes += t.token.len();
+    }
+    if bytes > MAX_STORE_BYTES {
+        return Err(format!("at most {} KB of values in one store", MAX_STORE_BYTES / 1024));
+    }
+    Ok(())
+}
+
+/// [`validate_batch`] for environments alone.
+pub fn validate_store(envs: &[EnvChanges]) -> Result<(), String> {
+    if envs.is_empty() {
+        return Err(format!("one store changes 1 to {MAX_STORE_ENVS} environments"));
+    }
+    validate_batch(envs, &[], &[])
+}
+
+/// What the desktop app sends the phone for `vault_secrets_store`: changes to one or more environments, in a box from
+/// the app's key to the phone's key (as [`SecretToStore`]). One approval, one set of [`secrets_check`] digits.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretsToStore {
+    pub v: u32,
+    /// [`TO_PHONE`].
+    pub dir: String,
+    pub nonce: String,
+    /// Unix seconds, on the computer.
+    pub created_at: i64,
+    pub envs: Vec<EnvChanges>,
+    /// SSH keys for the folder `Reins/ssh`.
+    #[serde(default)]
+    pub ssh: Vec<SshKeyToStore>,
+    /// Git hosts' tokens for the phone's integrations.
+    #[serde(default)]
+    pub tokens: Vec<HostToken>,
+}
+
+impl std::fmt::Debug for SecretsToStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretsToStore")
+            .field("nonce", &self.nonce)
+            .field("envs", &self.envs)
+            .field("ssh", &self.ssh)
+            .field("tokens", &self.tokens)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Four digits both the computer and the phone show for a whole store, so that a batch an AI on the computer sent in
+/// the user's place does not pass for theirs. Like [`value_check`]: about 13 bits, not a secret on its own.
+///
+/// The canonical form, independent of order: one entry per operation, so that a store without values (removals,
+/// renames, copies) has digits of its own too:
+///
+/// - `("env", "<project>/<env>", NAME, value)` for every variable set;
+/// - `("unset", "<project>/<env>", NAME, "")`, `("rename", "<project>/<env>", FROM, TO)`, `("copy", "<project>/<env>",
+///   FROM_ENV, "")`, `("origin", "<project>/<env>", ORIGIN, "")` and `("replace", "<project>/<env>", "", "")` (existing
+///   values may be replaced);
+/// - `("ssh", name, "", private_key)` for every SSH key, `("token", host, user or "", token)` for every token;
+///
+/// the entries sorted; SHA-256 over `reins-secrets-batch/2` then each part of each entry as its length (8 bytes,
+/// big-endian) and its bytes; the first two bytes of the hash as a big-endian number, modulo 10 000, in four digits.
+#[must_use]
+pub fn batch_check(envs: &[EnvChanges], ssh: &[SshKeyToStore], tokens: &[HostToken]) -> String {
+    let mut all: Vec<[String; 4]> = Vec::new();
+    for e in envs {
+        let item = e.item();
+        for (n, v) in &e.set {
+            all.push(["env".to_owned(), item.clone(), n.clone(), v.clone()]);
+        }
+        for n in &e.unset {
+            all.push(["unset".to_owned(), item.clone(), n.clone(), String::new()]);
+        }
+        for (from, to) in &e.rename {
+            all.push(["rename".to_owned(), item.clone(), from.clone(), to.clone()]);
+        }
+        if let Some(from) = &e.copy_from {
+            all.push(["copy".to_owned(), item.clone(), from.clone(), String::new()]);
+        }
+        if let Some(origin) = &e.origin {
+            all.push(["origin".to_owned(), item.clone(), origin.clone(), String::new()]);
+        }
+        if e.replace {
+            all.push(["replace".to_owned(), item, String::new(), String::new()]);
+        }
+    }
+    for k in ssh {
+        all.push(["ssh".to_owned(), k.name.clone(), String::new(), k.private_key.clone()]);
+    }
+    for t in tokens {
+        all.push(["token".to_owned(), t.host.clone(), t.user.clone().unwrap_or_default(), t.token.clone()]);
+    }
+    all.sort_unstable();
+    let mut h = Sha256::new();
+    h.update(b"reins-secrets-batch/2");
+    for entry in &mut all {
+        for part in entry.iter_mut() {
+            h.update((part.len() as u64).to_be_bytes());
+            h.update(part.as_bytes());
+            zeroize::Zeroize::zeroize(part);
+        }
+    }
+    let d = h.finalize();
+    format!("{:04}", u16::from_be_bytes([d[0], d[1]]) % 10_000)
+}
+
+/// [`batch_check`] of environments alone.
+#[must_use]
+pub fn secrets_check(envs: &[EnvChanges]) -> String {
+    batch_check(envs, &[], &[])
+}
+
+/// What happened to one environment, as the phone acknowledges a `vault_secrets_store`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvStored {
+    pub project: String,
+    pub env: String,
+    /// The environment was made (its folder too, when it was missing).
+    pub created: bool,
+    pub added: u32,
+    pub replaced: u32,
+    pub removed: u32,
+    pub renamed: u32,
+    pub copied: u32,
+    /// The environment's new version.
+    pub revision: String,
+    /// Why it was not changed (the rest of the store is unaffected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What happened to one SSH key of a store.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshStored {
+    pub name: String,
+    /// `SHA256:…` of the key kept; empty when it failed.
+    pub fingerprint: String,
+    /// Why it was not kept (the rest of the store is unaffected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What happened to one token of a store.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenStored {
+    pub host: String,
+    /// The integration (`github`, …) and the account the token signs in as; empty when it failed.
+    pub service: String,
+    pub account: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What the phone answers a `vault_secrets_store` it carried out, boxed from its inbox key (as [`StoreAck`]): one
+/// entry per environment, SSH key and token, in the order sent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretsStoreAck {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    pub nonce: String,
+    pub envs: Vec<EnvStored>,
+    #[serde(default)]
+    pub ssh: Vec<SshStored>,
+    #[serde(default)]
+    pub tokens: Vec<TokenStored>,
+}
+
+/// What the desktop app sends the phone for `integration_token_store`: a git host's token (found by import: `gh`,
+/// `.git-credentials`) for the phone's own integration (GitHub, GitLab, Codeberg, Bitbucket), boxed to the phone's key.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenToStore {
+    pub v: u32,
+    /// [`TO_PHONE`].
+    pub dir: String,
+    pub nonce: String,
+    pub created_at: i64,
+    /// `github`, `gitlab`, `codeberg` or `bitbucket`.
+    pub service: String,
+    /// The host it was found for (`github.com`).
+    pub host: String,
+    /// What the computer found out about the token's scopes (`repo`, `read:org`); shown, not trusted.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    pub token: String,
+}
+
+impl Drop for TokenToStore {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.token);
+    }
+}
+
+impl std::fmt::Debug for TokenToStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenToStore")
+            .field("nonce", &self.nonce)
+            .field("service", &self.service)
+            .field("host", &self.host)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What the phone answers an `integration_token_store` it carried out, boxed from its inbox key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenStoreAck {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    pub nonce: String,
+    pub service: String,
+    /// The account the token signs in as, as the integration lists it.
+    pub account: String,
+}
+
+/// One environment as `vault_secrets_list` names it: never a value.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvListing {
+    pub name: String,
+    /// The environment's version (the vault item's revision date).
+    pub revision: String,
+    /// Its variables' names, sorted.
+    pub variables: Vec<String>,
+    /// [`ENV_ORIGIN_FIELD`], when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectListing {
+    pub name: String,
+    pub envs: Vec<EnvListing>,
+    /// Where the project came from: the [`ENV_ORIGIN_FIELD`] of its environments (the first one that has one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+/// What the phone answers `vault_secrets_list`, boxed from its inbox key: the projects, environments and variable
+/// names (of one project when the call names it).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretsListing {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    pub nonce: String,
+    pub projects: Vec<ProjectListing>,
+}
+
+/// "Drop the secrets you hold": sent by the phone (Revoke on all computers) to every paired desktop app, sealed to its
+/// key, picked up by its daemon. Anyone who knows the app's public key could make one, so it only ever takes leases
+/// away. `project`/`env` narrow it; neither: every lease.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseRevocation {
+    pub v: u32,
+    /// [`TO_DESKTOP`].
+    pub dir: String,
+    /// Random: the same revocation is applied once.
+    pub id: String,
+    /// Unix seconds, on the phone.
+    pub issued_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
+}
+
+/// The most revocations of single projects or environments the server keeps for one computer until its daemon
+/// acknowledges them, and for how long (a revocation of everything is kept apart, one at a time: the newest).
+pub const MAX_REVOCATIONS: usize = 50;
+pub const REVOCATION_TTL_SECS: i64 = 24 * 3_600;
+
+/// One [`LeaseRevocation`] sealed to one paired computer (`POST /reins/api/desktop/revocations`, from the phone).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SealedRevocation {
+    pub connection_id: String,
+    /// The [`LeaseRevocation`] JSON in a sealed box to the computer's pinned key (base64url).
+    pub sealed: String,
+    /// It drops every lease (no project named): the server keeps it above any other and lets it supersede what came
+    /// before. What the server does with this can only make the computer drop more.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevocationPost {
+    pub items: Vec<SealedRevocation>,
+}
+
+/// One revocation waiting for a computer, under the id the server gave it (to acknowledge it by).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailedRevocation {
+    pub id: String,
+    /// [`SealedRevocation::sealed`].
+    pub sealed: String,
+}
+
+/// What a computer's daemon picks up (`GET /reins/desktop/revocations?reader=<id>`): the sealed revocations for it
+/// that this reader (one daemon run) has not acknowledged, the revocation of everything first. Each stays on the
+/// server for a day, whoever acknowledged it, so that no reader's acknowledgement hides it from another.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevocationMail {
+    pub items: Vec<MailedRevocation>,
+    /// Revocations for this computer may have been lost (dropped to stay within bounds, or the server restarted and
+    /// forgot what it held): the daemon drops every lease made before `at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost: Option<LostRevocations>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LostRevocations {
+    /// To acknowledge it by.
+    pub id: String,
+    /// Unix seconds (the server's clock): leases made before this may have been revoked.
+    pub at: i64,
+}
+
+/// The longest id of a reader of revocations.
+pub const MAX_READER: usize = 64;
+
+/// `POST /reins/desktop/revocations/ack`: what one reader applied, by [`MailedRevocation::id`] and
+/// [`LostRevocations::id`]. The server stops handing those to that reader; others still get them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevocationAck {
+    pub reader: String,
+    pub ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lost: Option<String>,
 }
 
 /// SHA-256 (lowercase hex) binding an approval to exactly what git sends: the repository, every `old new ref`
@@ -934,6 +2128,390 @@ mod tests {
         assert_ne!(fp, key_fingerprint(&encode_key(&[8u8; 32])).unwrap());
         assert!(key_fingerprint("short").is_none());
         assert_eq!(decode_key(&key), Some([7u8; 32]));
+    }
+
+    fn changes(project: &str, env: &str, set: &[(&str, &str)]) -> EnvChanges {
+        let mut c = EnvChanges::new(project, env);
+        c.set = set.iter().map(|(n, v)| ((*n).to_owned(), (*v).to_owned())).collect();
+        c
+    }
+
+    #[test]
+    fn the_batch_check_covers_every_value_name_and_environment_in_any_order() {
+        let a = changes("acme", "dev", &[("A", "1"), ("B", "2")]);
+        let check = secrets_check(std::slice::from_ref(&a));
+        assert_eq!(check.len(), 4);
+        assert_eq!(check, secrets_check(&[changes("acme", "dev", &[("B", "2"), ("A", "1")])]));
+        assert_ne!(check, secrets_check(&[changes("acme", "dev", &[("A", "1"), ("B", "3")])]));
+        assert_ne!(check, secrets_check(&[changes("acme", "prod", &[("A", "1"), ("B", "2")])]));
+        assert_ne!(check, secrets_check(&[changes("acme", "dev", &[("A", "1"), ("C", "2")])]));
+        // Boundaries are part of the hash: "A"+"12" is not "A1"+"2".
+        assert_ne!(
+            secrets_check(&[changes("acme", "dev", &[("A", "12")])]),
+            secrets_check(&[changes("acme", "dev", &[("A1", "2")])])
+        );
+        assert!(!format!("{a:?}").contains("\"1\""), "values never show in Debug");
+    }
+
+    fn ssh(name: &str, key: &str) -> SshKeyToStore {
+        SshKeyToStore {
+            name: name.into(),
+            private_key: key.into(),
+        }
+    }
+
+    fn token(host: &str, value: &str) -> HostToken {
+        HostToken {
+            host: host.into(),
+            user: None,
+            scopes: vec![],
+            token: value.into(),
+        }
+    }
+
+    #[test]
+    fn the_batch_check_covers_ssh_keys_and_tokens_in_any_order() {
+        let envs = [changes("acme", "dev", &[("A", "1")])];
+        let keys = [ssh("deploy", "KEY-1"), ssh("other", "KEY-2")];
+        let tokens = [token("github.com", "ghp_1")];
+        let check = batch_check(&envs, &keys, &tokens);
+        assert_eq!(check, batch_check(&envs, &[ssh("other", "KEY-2"), ssh("deploy", "KEY-1")], &tokens));
+        assert_ne!(check, batch_check(&envs, &keys, &[token("github.com", "ghp_2")]));
+        assert_ne!(check, batch_check(&envs, &[ssh("deploy", "KEY-1")], &tokens));
+        assert_ne!(check, batch_check(&envs, &keys, &[]));
+        assert_eq!(secrets_check(&envs), batch_check(&envs, &[], &[]));
+        validate_batch(&[], &keys, &tokens).unwrap();
+        assert!(validate_batch(&[], &[], &[]).is_err());
+        assert!(validate_batch(&[], &[ssh("a", "K"), ssh("a", "K")], &[]).is_err());
+        assert!(validate_batch(&[], &[], &[token("example.com", "t")]).is_err());
+        assert_eq!(token("GitHub.com", "t").service(), Some("github"));
+        assert!(!format!("{:?} {:?}", keys[0], tokens[0]).contains("KEY-1"));
+    }
+
+    #[test]
+    fn the_batch_check_covers_every_operation_not_only_values() {
+        let edit = |f: &dyn Fn(&mut EnvChanges)| {
+            let mut c = changes("acme", "dev", &[]);
+            f(&mut c);
+            secrets_check(&[c])
+        };
+        let unset_a = edit(&|c| c.unset = vec!["A".into()]);
+        assert_ne!(unset_a, edit(&|c| c.unset = vec!["B".into()]));
+        assert_ne!(unset_a, edit(&|c| c.rename = vec![("A".into(), "B".into())]));
+        let rename = edit(&|c| c.rename = vec![("A".into(), "B".into())]);
+        assert_ne!(rename, edit(&|c| c.rename = vec![("A".into(), "C".into())]));
+        assert_ne!(rename, edit(&|c| c.rename = vec![("B".into(), "A".into())]));
+        let copy = edit(&|c| c.copy_from = Some("prod".into()));
+        assert_ne!(copy, edit(&|c| c.copy_from = Some("staging".into())));
+        assert_ne!(copy, edit(&|_| {}));
+        let mut set = changes("acme", "dev", &[("A", "1")]);
+        let plain = secrets_check(std::slice::from_ref(&set));
+        set.replace = true;
+        assert_ne!(plain, secrets_check(std::slice::from_ref(&set)), "replacing values is part of what is approved");
+        let replacing = secrets_check(std::slice::from_ref(&set));
+        set.origin = Some("github.com/acme/api".into());
+        assert_ne!(replacing, secrets_check(&[set]), "where the project came from too");
+    }
+
+    #[test]
+    fn stores_are_checked_before_they_are_sealed() {
+        validate_store(&[changes("acme", "dev", &[("A", "1")])]).unwrap();
+        let mut copy = changes("acme", "staging", &[]);
+        copy.copy_from = Some("dev".into());
+        validate_store(&[copy]).unwrap();
+        let mut bad_copy = changes("acme", "dev", &[]);
+        bad_copy.copy_from = Some("dev".into());
+        let mut renamed = changes("acme", "dev", &[]);
+        renamed.rename = vec![("A".into(), "1B".into())];
+        let mut twice = changes("acme", "dev", &[("A", "1")]);
+        twice.unset = vec!["A".into()];
+        for (bad, why) in [
+            (vec![], "empty"),
+            (vec![changes("acme", "dev", &[])], "nothing to change"),
+            (vec![changes("a/b", "dev", &[("A", "1")])], "name"),
+            (vec![changes("acme", "dev", &[("1A", "1")])], "variable"),
+            (vec![changes("acme", "dev", &[("A", "1"), ("A", "2")])], "twice"),
+            (vec![twice], "set and unset"),
+            (vec![renamed], "rename target"),
+            (vec![bad_copy], "copy from itself"),
+            (vec![changes("acme", "dev", &[("A", "1")]), changes("acme", "dev", &[("B", "1")])], "env twice"),
+            (vec![changes("acme", "dev", &[("A", &"x".repeat(MAX_STORE_BYTES))])], "too large"),
+        ] {
+            assert!(validate_store(&bad).is_err(), "{why}");
+        }
+        assert!(name_ok("acme-web") && !name_ok(".x") && !name_ok("a b"));
+        assert!(var_ok("_X1") && !var_ok("1X") && !var_ok("A-B"));
+    }
+
+    fn argv(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| (*w).to_owned()).collect()
+    }
+
+    fn prefix(program: &str, args: &[&str]) -> CommandScope {
+        CommandScope {
+            program: program.to_owned(),
+            args: argv(args),
+            prefix: true,
+        }
+    }
+
+    #[test]
+    fn commands_match_as_whole_arguments() {
+        let npm = "/usr/bin/npm";
+        let run = prefix(npm, &["run", "test"]);
+        run.validate().unwrap();
+        assert!(run.matches(npm, &argv(&["run", "test", "--silent", "unit"])));
+        assert!(run.matches(npm, &argv(&["run", "test"])), "zero extra arguments");
+        assert!(!run.matches(npm, &argv(&["run", "testx"])), "never a partial argument");
+        assert!(!run.matches(npm, &argv(&["exec", "run", "test"])));
+        assert!(!run.matches("/home/me/evil/npm", &argv(&["run", "test"])), "another npm on PATH");
+        let exact = CommandScope::exact(npm, &argv(&["run", "test"]));
+        assert!(exact.matches(npm, &argv(&["run", "test"])));
+        assert!(!exact.matches(npm, &argv(&["run", "dev"])));
+        assert!(!exact.matches(npm, &argv(&["run", "test", "--", "x"])));
+        // An argument with a space is one argument: it is never split into two.
+        let spaced = CommandScope::exact("/bin/echo", &argv(&["a b"]));
+        assert!(spaced.matches("/bin/echo", &argv(&["a b"])) && !spaced.matches("/bin/echo", &argv(&["a", "b"])));
+        assert_eq!(spaced.shown(), "echo 'a b'");
+        assert_eq!(run.shown(), "npm run test *");
+        assert!(exact.within(&run) && !run.within(&exact));
+    }
+
+    #[test]
+    fn commands_are_shown_so_that_what_runs_cannot_hide() {
+        for (arg, shown) in [
+            ("dev", "dev"),
+            ("--port=3000", "--port=3000"),
+            ("", "''"),
+            ("a b", "'a b'"),
+            ("it's", r"'it'\''s'"),
+            ("$HOME;rm", "'$HOME;rm'"),
+            ("*", "'*'"),
+            ("a\nb", r"$'a\nb'"),
+            ("\u{1b}[2Jok", r"$'\x1b[2Jok'"),
+            ("evil\u{202e}txt.exe", r"$'evil\u{202e}txt.exe'"),
+            ("zero\u{200b}width", r"$'zero\u{200b}width'"),
+            ("back\\slash'q\t", r"$'back\\slash\'q\t'"),
+        ] {
+            assert_eq!(shell_word(arg), shown, "{arg:?}");
+        }
+        assert_eq!(shell_words(&argv(&["npm", "run", "a b"])), "npm run 'a b'");
+        // Two different argument lists never look the same.
+        assert_ne!(shell_words(&argv(&["a b"])), shell_words(&argv(&["a", "b"])));
+        assert_ne!(shell_words(&argv(&["a\u{202e}b"])), shell_words(&argv(&["ab"])));
+        let c = CommandScope::exact("/usr/bin/npm", &argv(&["run", "dev\u{202e}"]));
+        assert_eq!(c.shown(), r"npm run $'dev\u{202e}'");
+    }
+
+    #[test]
+    fn a_prefix_is_allowed_only_for_programs_and_subcommands_on_the_allow_list() {
+        for (program, args) in [
+            ("/usr/bin/cargo", vec!["build"]),
+            ("/usr/bin/cargo", vec!["test"]),
+            ("/usr/bin/cargo", vec!["run"]),
+            ("/usr/bin/cargo", vec!["check"]),
+            ("/usr/bin/cargo", vec!["clippy"]),
+            ("/usr/bin/npm", vec!["run", "dev"]),
+            ("/usr/lib/node_modules/npm/bin/npm-cli.js", vec!["run", "dev"]),
+            ("/usr/bin/pnpm", vec!["run", "build:prod"]),
+            ("/usr/bin/yarn", vec!["test"]),
+            ("/usr/bin/make", vec!["deploy"]),
+            ("/usr/bin/go", vec!["test"]),
+            ("/usr/bin/pytest", vec![]),
+            ("/usr/bin/uv", vec!["run", "pytest"]),
+            ("/home/me/app/bin/rails", vec!["server"]),
+            ("/usr/bin/docker", vec!["compose", "up"]),
+            ("NPM", vec!["run", "dev"]),
+        ] {
+            prefix(program, &args).validate().unwrap_or_else(|e| panic!("{program} {args:?}: {e}"));
+        }
+        // Everything else is exact only: shells, interpreters, launchers, wrappers, and what the list does not name.
+        for (program, args) in [
+            ("/bin/bash", vec!["-c"]),
+            ("/usr/bin/python3.12", vec!["manage.py"]),
+            ("/usr/bin/node", vec!["server.js"]),
+            ("/usr/bin/npx", vec!["vite"]),
+            ("/usr/bin/env", vec!["FOO=1"]),
+            ("/usr/bin/sudo", vec!["make"]),
+            ("/usr/bin/ssh", vec!["host"]),
+            ("/usr/bin/docker", vec!["run"]),
+            ("/usr/bin/uv", vec!["run"]),
+            ("/usr/bin/deno", vec!["run"]),
+            ("C:\\Windows\\System32\\cmd.exe", vec!["/c"]),
+            ("/usr/bin/npm", vec!["exec"]),
+            ("/usr/bin/npm", vec!["run"]),
+            ("/usr/bin/npm", vec!["run", "--script-shell"]),
+            ("/usr/bin/npm", vec![]),
+            ("/usr/bin/pnpm", vec!["dlx"]),
+            ("/usr/bin/cargo", vec!["+nightly"]),
+            ("/usr/bin/cargo", vec!["install"]),
+            ("/usr/bin/make", vec!["-f"]),
+            ("/usr/bin/make", vec!["SHELL=/tmp/x"]),
+            ("/usr/bin/git", vec!["push"]),
+            ("/opt/tools/runner", vec!["x"]),
+            ("/usr/bin/n\u{440}m", vec!["run", "dev"]),
+            ("C:\\PROGRA~1\\nodejs\\NPM~1.CMD", vec!["run", "dev"]),
+        ] {
+            let p = prefix(program, &args);
+            assert!(p.validate().is_err(), "{program} {args:?}");
+            let mut more = argv(&args);
+            more.push("anything".to_owned());
+            assert!(!p.matches(program, &more), "a refused prefix covers nothing: {program} {args:?}");
+        }
+        CommandScope::exact("/bin/bash", &argv(&["-c", "make"])).validate().unwrap();
+    }
+
+    #[test]
+    fn what_the_star_stands_for_runs_no_other_code() {
+        let ok = |program: &str, fixed: &[&str], tail: &[&str]| {
+            prefix(program, fixed).matches(program, &argv(&[fixed, tail].concat()))
+        };
+        // Plain words and the grammar's safe options.
+        assert!(ok("/usr/bin/cargo", &["test"], &["--release", "-p", "core", "some_test", "-j8", "--features=x"]));
+        assert!(ok("/usr/bin/npm", &["run", "dev"], &["--silent", "src/app.ts"]));
+        assert!(ok("/usr/bin/make", &["build"], &["-j4", "docs"]));
+        assert!(ok("/usr/bin/go", &["test"], &["-race", "-run=TestX", "./pkg/..."]));
+        assert!(ok("/usr/bin/pytest", &[], &["-k", "login and not slow", "tests/test_auth.py"]));
+        // Options that run other code or read other configuration, assignments, `--`, paths out of the project.
+        for (program, fixed, tail) in [
+            ("/usr/bin/cargo", vec!["test"], vec!["--config", "build.rustc-wrapper='/tmp/x'"]),
+            ("/usr/bin/cargo", vec!["test"], vec!["-Zunstable-options"]),
+            ("/usr/bin/cargo", vec!["build"], vec!["+nightly"]),
+            ("/usr/bin/cargo", vec!["build"], vec!["--manifest-path", "x"]),
+            ("/usr/bin/cargo", vec!["run"], vec!["--", "--anything"]),
+            ("/usr/bin/npm", vec!["run", "dev"], vec!["--script-shell=/tmp/sh"]),
+            ("/usr/bin/npm", vec!["run", "dev"], vec!["--node-options=--require=/tmp/x.js"]),
+            ("/usr/bin/npm", vec!["run", "dev"], vec!["--prefix", "/tmp"]),
+            ("/usr/bin/make", vec!["build"], vec!["-f", "evil.mk"]),
+            ("/usr/bin/make", vec!["build"], vec!["-C", "x"]),
+            ("/usr/bin/make", vec!["build"], vec!["--eval=x"]),
+            ("/usr/bin/make", vec!["build"], vec!["SHELL=/tmp/sh"]),
+            ("/usr/bin/pytest", vec![], vec!["-p", "evil"]),
+            ("/usr/bin/pytest", vec![], vec!["--rootdir=/tmp"]),
+            ("/usr/bin/pytest", vec![], vec!["-c", "x.ini"]),
+            ("/usr/bin/pytest", vec![], vec!["--pyargs", "x"]),
+            ("/usr/bin/pytest", vec![], vec!["/tmp/evil_test.py"]),
+            ("/usr/bin/pytest", vec![], vec!["../other/test.py"]),
+            ("/usr/bin/pytest", vec![], vec!["~/x.py"]),
+            ("/usr/bin/go", vec!["test"], vec!["-exec", "/tmp/x"]),
+            ("/usr/bin/go", vec!["build"], vec!["-toolexec=/tmp/x"]),
+            ("/usr/bin/go", vec!["build"], vec!["-ldflags=-X main.v=1"]),
+            ("/usr/bin/docker", vec!["compose", "up"], vec!["-f", "/tmp/c.yml"]),
+        ] {
+            assert!(!ok(program, &fixed, &tail), "{program} {fixed:?} {tail:?}");
+            assert!(tail_refusal(program, &argv(&tail)).is_some(), "{program} {tail:?}");
+        }
+    }
+
+    #[test]
+    fn the_offers_are_the_command_then_each_allowed_prefix() {
+        let c = CommandScope::exact("/usr/bin/npm", &argv(&["run", "dev", "--silent"]));
+        let shown: Vec<String> = c.offers().iter().map(CommandScope::shown).collect();
+        assert_eq!(shown, ["npm run dev --silent", "npm run dev *"]);
+        let plain = CommandScope::exact("/usr/bin/npm", &argv(&["run", "dev"]));
+        assert_eq!(
+            plain.offers().iter().map(CommandScope::shown).collect::<Vec<_>>(),
+            ["npm run dev", "npm run dev *"]
+        );
+        let shell = CommandScope::exact("/bin/sh", &argv(&["-c", "x"]));
+        assert_eq!(shell.offers(), vec![shell], "a shell is only ever exact");
+        let cargo = CommandScope::exact("/usr/bin/cargo", &argv(&["run", "--", "x"]));
+        assert_eq!(cargo.offers().len(), 1, "a prefix that would not cover it is not offered");
+        let pytest = CommandScope::exact("/usr/bin/pytest", &argv(&["-x", "tests"]));
+        assert_eq!(
+            pytest.offers().iter().map(CommandScope::shown).collect::<Vec<_>>(),
+            ["pytest -x tests", "pytest *"]
+        );
+    }
+
+    #[test]
+    fn a_program_is_judged_by_every_name_and_any_doubt_means_exact() {
+        for (path, name) in [
+            ("/usr/lib/node_modules/npm/bin/npm-cli.js", "npm"),
+            ("/home/me/.nvm/versions/node/v22.1.0/lib/node_modules/npm/bin/npx-cli.js", "npx"),
+            ("/usr/lib/node_modules/yarn/bin/yarn.js", "yarn"),
+            ("/usr/lib/node_modules/pnpm/bin/pnpm.cjs", "pnpm"),
+            ("C:\\nodejs\\npm.cmd", "npm"),
+            ("/usr/bin/python3.12", "python"),
+            ("node22", "node"),
+            ("bash5.2", "bash"),
+            ("pwsh-preview", "pwsh"),
+            ("php8.3", "php"),
+            ("CMD.EXE", "cmd"),
+            ("python.exe.", "python"),
+            ("bash. . ", "bash"),
+            ("NPM", "npm"),
+            ("-cli", "-cli"),
+        ] {
+            assert_eq!(program_name(path), name, "{path}");
+        }
+        let npm = "/usr/lib/node_modules/npm/bin/npm-cli.js";
+        assert!(prefix_refusal_as(&["npm", "./npm"], npm, &argv(&["run", "dev"])).is_none(), "the same program");
+        // Typed or linked by another name: which program runs is in doubt.
+        assert!(prefix_refusal_as(&["deploy"], "/usr/bin/make", &argv(&["build"])).is_some());
+        assert!(prefix_refusal_as(&["npm", "env", "npm-cli.js"], npm, &argv(&["run", "dev"])).is_some());
+        assert!(prefix_refusal_as(&["n\u{440}m"], npm, &argv(&["run", "dev"])).is_some());
+        let linked = CommandScope::exact("/usr/bin/make", &argv(&["build", "-j4"]));
+        assert_eq!(linked.offers().len(), 2);
+        assert_eq!(linked.offers_as(&["deploy"]).len(), 1);
+        for name in ["/usr/bin/n\u{440}m", "C:\\PROGRA~1\\nodejs\\NPM~1.CMD", "PYTHON~1.EXE", "/usr/bin/", ""] {
+            assert!(doubtful_name(name), "{name:?}");
+        }
+        assert!(!doubtful_name("/usr/local/bin/my-tool_2.0+x"));
+    }
+
+    #[test]
+    fn an_exact_command_is_remembered_only_when_all_of_it_shows() {
+        let short = CommandScope::exact("/bin/bash", &argv(&["-c", "make deploy"]));
+        assert!(short.rememberable(&[]));
+        assert_eq!(short.offers(), vec![short]);
+        let long = CommandScope::exact("/usr/bin/python3", &argv(&["-c", &"x = 1; ".repeat(60)]));
+        assert!(!long.rememberable(&[]));
+        assert!(long.offers().is_empty(), "approved once at a time");
+        long.validate().unwrap();
+    }
+
+    #[test]
+    fn a_program_out_of_the_usual_places_is_shown_by_its_path_and_flagged() {
+        let at = |p: &str| CommandScope::exact(p, &argv(&["run", "dev"])).shown_where();
+        assert_eq!(at("/usr/bin/npm"), "npm run dev");
+        assert_eq!(at("/opt/homebrew/bin/npm"), "npm run dev");
+        assert_eq!(at("/tmp/x/npm"), "/tmp/x/npm run dev");
+        assert_eq!(at("/home/me/my tools/npm"), "'/home/me/my tools/npm' run dev");
+        let root = "/home/me/acme";
+        assert_eq!(program_warning("/tmp/x/npm", root, Some(PATH_SAME)), Some("In a temporary folder"));
+        assert_eq!(program_warning("/private/var/folders/ab/T/npm", root, None), Some("In a temporary folder"));
+        assert_eq!(
+            program_warning("/home/me/acme/node_modules/.bin/npm", root, None),
+            Some("Inside the project folder")
+        );
+        assert_eq!(program_warning("/home/me/acme-other/npm", root, None), None);
+        assert_eq!(program_warning("npm", root, None), Some("Not found on this computer"));
+        assert_eq!(program_warning("/home/me/bin/npm", root, Some(PATH_OTHER)), Some("Not the one on your PATH"));
+        assert_eq!(program_warning("/usr/bin/npm", root, Some(PATH_SAME)), None);
+        assert_eq!(
+            program_warning("C:\\Users\\me\\AppData\\Local\\Temp\\npm.cmd", "C:\\dev", None),
+            Some("In a temporary folder")
+        );
+    }
+
+    #[test]
+    fn runners_are_a_person_or_a_named_agent() {
+        for ok in ["person", "agent:claude-code", "agent:codex", "agent:gemini_cli"] {
+            assert!(runner_ok(ok), "{ok}");
+        }
+        for bad in ["", "agent:", "agent:Claude", "agent:a b", "robot", "person "] {
+            assert!(!runner_ok(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_secret_grant_without_an_environment_reads_as_before() {
+        let old = r#"{"v":1,"nonce":"n","secrets":[["A/password","x"]],"expires_at":5}"#;
+        let g: SecretGrant = serde_json::from_str(old).unwrap();
+        assert_eq!((&g.project, &g.env, &g.revision, &g.command), (&None, &None, &None, &None));
+        assert_eq!((&g.runner, &g.root), (&None, &None));
+        assert_eq!(serde_json::to_string(&g).unwrap(), old);
     }
 
     #[test]
