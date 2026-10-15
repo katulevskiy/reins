@@ -153,6 +153,8 @@ class ApprovalRecord(
     /** The core's reading of the request (its label) and where a command ran, as the entry kept them. */
     val label: dev.reins.core.RequestLabel? = null,
     val cwd: String? = null,
+    /** A push whose changes may not be on this phone: its commits load from the git host, one at a time. */
+    val commits: EntryCommits? = null,
 )
 
 /** The entry the approval screen shows again, or null for a request that waits. */

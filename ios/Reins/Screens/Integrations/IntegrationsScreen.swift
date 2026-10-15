@@ -14,12 +14,12 @@ struct ServicesSection: View {
                 LinkRow(identifier: "service:\(service.service)", action: { open(service.service) }) {
                     ServiceAvatar(service: service.service, size: 44)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(service.name).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
+                        Text(service.name).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink)
                         // Only what is there: a service with nothing connected is just its name.
                         if !ServiceCopy.summary(service).isEmpty {
                             Text(ServiceCopy.summary(service))
                                 .font(RFont.sans(13))
-                                .foregroundStyle(Palette.secondary)
+                                .foregroundStyle(Palette.ink2)
                         }
                     }
                 }
@@ -55,7 +55,7 @@ struct LinkRow<Content: View>: View {
                 Spacer(minLength: 6)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .accessibilityHidden(true)
             }
             .padding(.vertical, 4)
@@ -87,11 +87,11 @@ struct McpServersSection: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(untrusted(server.name))
                             .font(RFont.sans(16, .medium))
-                            .foregroundStyle(Palette.text)
+                            .foregroundStyle(Palette.ink)
                             .lineLimit(1)
                         Text(McpLogic.host(server.url) + " · " + McpLogic.toolCount(server.tools.count))
                             .font(RFont.sans(13))
-                            .foregroundStyle(Palette.secondary)
+                            .foregroundStyle(Palette.ink2)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .environment(\.layoutDirection, .leftToRight)

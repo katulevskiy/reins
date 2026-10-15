@@ -50,3 +50,45 @@ enum Providers {
         byKey(pick) ?? (pick == nil ? infer(label) : nil)
     }
 }
+
+/// A computer's platform, which it shows as its icon: its logo is `platform-<key>` in Brand.xcassets (Simple Icons,
+/// see BRAND-NOTICE.md). Apple's and Linux's marks take the text colour, Windows' its brand blue (`brand`).
+struct Platform: Identifiable, Equatable {
+    let key: String
+    let name: String
+    let brand: UInt32?
+
+    var id: String { key }
+    var asset: String { "platform-\(key)" }
+}
+
+enum Platforms {
+    static let all: [Platform] = [
+        Platform(key: "macos", name: "macOS", brand: nil),
+        Platform(key: "windows", name: "Windows", brand: 0x0078D4),
+        Platform(key: "linux", name: "Linux", brand: nil),
+    ]
+
+    static func byKey(_ key: String?) -> Platform? { all.first { $0.key == key } }
+}
+
+/// What a connection's avatar draws: a provider's logo, a platform's logo, or a blobatar (the seed's figure, with the
+/// shape and colour the connection keeps, when it keeps them).
+enum AvatarLook: Equatable {
+    case provider(Provider)
+    case platform(Platform)
+    case blob(seed: String, shape: Int?, colour: Int?)
+
+    /// For `icon`, a provider's or a platform's key or "blob" (an unknown one draws the blobatar too), or nil, the
+    /// older rule: the provider `label` suggests, else the blobatar. The blobatar is `blobatar`, else seeded by `label`.
+    static func of(label: String, icon: String?, blobatar: BlobatarLook? = nil) -> AvatarLook {
+        if let platform = Platforms.byKey(icon) { return .platform(platform) }
+        if let provider = Providers.resolve(label: label, pick: icon) { return .provider(provider) }
+        return .blob(seed: blobatar?.seed ?? label, shape: blobatar?.shape, colour: blobatar?.colour)
+    }
+
+    var isBlob: Bool {
+        if case .blob = self { return true }
+        return false
+    }
+}

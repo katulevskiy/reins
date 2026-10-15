@@ -18,6 +18,12 @@ struct AvatarGallery: View {
             VStack(alignment: .leading, spacing: 18) {
                 SectionHeader("Providers")
                 grid(Providers.all.map { ($0.name, AnyView(ProviderAvatar(provider: $0, size: 48))) })
+                SectionHeader("Platforms")
+                grid(Platforms.all.map { ($0.name, AnyView(PlatformAvatar(platform: $0, size: 48))) })
+                SectionHeader("Blobatar shapes and colours")
+                grid(BlobatarPalette.shapes.indices.map { i in
+                    (BlobatarPalette.shapes[i], AnyView(BlobAvatar(seed: "c4", shape: i, colour: i, size: 48)))
+                })
                 SectionHeader("Services")
                 grid(Self.services.map { ($0, AnyView(ServiceAvatar(service: $0, size: 48))) })
                 SectionHeader("Blobatars")
@@ -30,13 +36,13 @@ struct AvatarGallery: View {
                 Card {
                     VStack(alignment: .leading, spacing: 10) {
                         ProviderPicker(label: "Claude Desktop", selection: pick) { pick = $0 }
-                        Text(ProviderPicker.footnote).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                        Text(ProviderPicker.footnote).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
                     }
                 }
             }
             .padding(16)
         }
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
     }
 
     private func grid(_ items: [(String, AnyView)]) -> some View {
@@ -44,7 +50,7 @@ struct AvatarGallery: View {
             ForEach(items.indices, id: \.self) { i in
                 VStack(spacing: 4) {
                     items[i].1
-                    Text(items[i].0).font(RFont.sans(11)).foregroundStyle(Palette.secondary).lineLimit(1)
+                    Text(items[i].0).font(RFont.sans(11)).foregroundStyle(Palette.ink2).lineLimit(1)
                 }
             }
         }

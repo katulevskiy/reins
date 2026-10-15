@@ -32,7 +32,7 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
                             decision
                         }
                         .frame(width: sideBySide ? geo.size.width / 2 : nil, height: sideBySide ? nil : geo.size.height / 2)
-                        .background(Palette.elevated.opacity(0.5))
+                        .background(Palette.paperRaised.opacity(0.5))
                     }
                 } else {
                     ScrollView { details.padding(.bottom, 12) }
@@ -43,12 +43,12 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
                             decision.background {
                                 VStack(spacing: 0) {
                                     LinearGradient(
-                                        colors: [Palette.background.opacity(0), Palette.background],
+                                        colors: [Palette.paper.opacity(0), Palette.paper],
                                         startPoint: .top,
                                         endPoint: .bottom
                                     )
                                     .frame(height: 24)
-                                    Palette.background
+                                    Palette.paper
                                 }
                                 .padding(.top, -24)
                                 .ignoresSafeArea()
@@ -58,7 +58,7 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
                 }
             }
         }
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
         .overlay(alignment: .topTrailing) {
             if !closeInField {
                 GlassIconButton(symbol: "xmark", size: 36, label: "Close") { model.closeSheet() }
@@ -189,10 +189,10 @@ struct DecisionHeader<Extra: View>: View {
                     ConnectionAvatar(label: untrusted(label), pick: nil, size: 40)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(untrusted(label)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+                    Text(untrusted(label)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
                     Text(subtitle)
                         .font(monoSubtitle ? RFont.mono(13) : RFont.sans(12.5))
-                        .foregroundStyle(monoSubtitle ? Palette.secondary : Palette.tertiary)
+                        .foregroundStyle(monoSubtitle ? Palette.ink2 : Palette.inkMeta)
                         .lineLimit(1)
                 }
             }
@@ -200,7 +200,7 @@ struct DecisionHeader<Extra: View>: View {
                 ActionTile(kind: kind, count: count, size: 48)
                 Text(title)
                     .font(RFont.sans(26, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
                     .accessibilityIdentifier("what")
@@ -257,7 +257,7 @@ struct DecisionLoading: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
     }
 }
 
@@ -269,11 +269,11 @@ struct QuoteBox: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Caption(caption)
-            Text("“\(text)”").font(RFont.sans(15)).foregroundStyle(Palette.text).lineSpacing(2)
+            Text("“\(text)”").font(RFont.sans(15)).foregroundStyle(Palette.ink).lineSpacing(2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 }

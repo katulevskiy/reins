@@ -26,7 +26,7 @@ func findConnection(_ connections: [ConnectionView], id: String, label: String) 
     return named.count == 1 ? named[0] : nil
 }
 
-/// An AI connection's avatar, with the icon the user picked for it.
+/// A connection's avatar as it shows everywhere, looked up by id; the one its name suggests when it is gone.
 struct ConnectionIcon: View {
     var connectionId: String
     var label: String
@@ -34,11 +34,11 @@ struct ConnectionIcon: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        ConnectionAvatar(
-            label: untrusted(label),
-            pick: findConnection(model.connections, id: connectionId, label: label)?.icon,
-            size: size
-        )
+        if let connection = findConnection(model.connections, id: connectionId, label: label) {
+            ConnectionAvatar(connection: connection, size: size)
+        } else {
+            ConnectionAvatar(label: untrusted(label), pick: nil, size: size)
+        }
     }
 }
 
@@ -107,6 +107,19 @@ enum EntryText {
         return sameYear
             ? start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
             : start.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    /// The line under a row's title: who asked and when, "M2A · 5 min ago"; with the agent that asked on it when it
+    /// named itself, "Claude Code · M2A · 5 min ago".
+    static func byline(_ entry: ActivityEntry, now: Int64) -> String {
+        byline(label: entry.connectionLabel, agent: entry.request?.agent, time: time(entry.at, now: now))
+    }
+
+    static func byline(label: String, agent: String?, time: String) -> String {
+        let label = untrusted(label)
+        let agent = untrusted(agent ?? "").trimmingCharacters(in: .whitespaces)
+        let who = agent.isEmpty || agent == label ? [label] : [agent, label]
+        return (who.filter { !$0.isEmpty } + [time]).joined(separator: " · ")
     }
 
     /// The time on the row: "5 min ago" today, "18:20" before.
@@ -220,7 +233,7 @@ struct HistoryRow: View {
         let field = EntryLook.field(entry)
         let line = EntryLook.line(entry)
         HStack(alignment: .center, spacing: 14) {
-            RequestIcon(spec: line.icon, size: 36, ring: selected ? Palette.accentSoft : Palette.paper)
+            RequestIcon(spec: line.icon, size: 36, ring: selected ? Palette.violetWash : Palette.paper)
                 .foldTile(entry.id)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
@@ -237,7 +250,7 @@ struct HistoryRow: View {
                         .environment(\.layoutDirection, .leftToRight)
                         .accessibilityIdentifier("entryDetails:\(entry.id)")
                 }
-                Text("\(untrusted(entry.connectionLabel)) · \(EntryText.time(entry.at, now: now))")
+                Text(EntryText.byline(entry, now: now))
                     .textRole(.meta)
                     .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
@@ -259,7 +272,7 @@ struct HistoryRow: View {
         .padding(.horizontal, 24)
         .background {
             if selected {
-                Palette.accentSoft
+                Palette.violetWash
             } else if glowing, let field {
                 field.tile.transition(.opacity)
             }
@@ -284,20 +297,20 @@ struct FileCard: View {
                 HStack(spacing: 10) {
                     Image(systemName: "tray.full")
                         .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                     Text(name)
                         .font(RFont.sans(16.5, .semibold))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(2)
                         .truncationMode(.middle)
                 }
                 Text(FileText.size(blob.size) + " · " + untrusted(blob.contentType))
                     .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .lineLimit(1)
                 Text("SHA-256 " + FileText.shortSha(blob.sha256))
                     .font(RFont.mono(12.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
                     .environment(\.layoutDirection, .leftToRight)
                     .textSelection(.enabled)
@@ -318,24 +331,24 @@ struct FileCard: View {
                 .resizable()
                 .scaledToFit()
                 .frame(maxWidth: .infinity, maxHeight: 240)
-                .background(Palette.controlFill)
+                .background(Palette.paperSunken)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .padding(.top, 6)
                 .accessibilityLabel("Preview of \(name)")
         } else if let text, FileText.isText(blob.contentType) {
             Text(text)
                 .font(RFont.mono(12.5))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .lineLimit(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .environment(\.layoutDirection, .leftToRight)
                 .padding(.top, 6)
         } else if let text {
             Text(text)
                 .font(RFont.sans(14, .medium))
-                .foregroundStyle(Palette.secondary)
+                .foregroundStyle(Palette.ink2)
                 .lineLimit(2)
                 .padding(.top, 4)
         }

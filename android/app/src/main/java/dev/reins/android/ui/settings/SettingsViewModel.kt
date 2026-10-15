@@ -3,6 +3,7 @@ package dev.reins.android.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.reins.android.AppContainer
+import dev.reins.android.design.BLOB_ICON
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.FeedbackSettings
 import dev.reins.android.feedback.play
@@ -183,6 +184,35 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             try {
                 container.core.setConnectionIcon(connectionId, icon)
+                container.refreshConnections()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                _ui.value = SettingsUi(error = e.userMessage())
+            }
+        }
+    }
+
+    /**
+     * Changes a connection's blobatar: [shape] and [colour] (indexes of the shared palette) when given, else a shuffle
+     * (a new seed, shape and colour). When the connection does not show its blobatar ([shown] is something else), its
+     * icon becomes the blobatar too, so the change shows.
+     */
+    fun editBlobatar(connectionId: String, shown: String, shape: Int? = null, colour: Int? = null) {
+        viewModelScope.launch {
+            try {
+                val current = container.state.connections.value.firstOrNull { it.id == connectionId }?.blobatar
+                if (shape == null && colour == null) {
+                    container.core.shuffleConnectionBlobatar(connectionId)
+                } else {
+                    container.core.setConnectionBlobatar(
+                        connectionId,
+                        (shape ?: current?.shape?.toInt() ?: 0).toUByte(),
+                        (colour ?: current?.colour?.toInt() ?: 0).toUByte(),
+                    )
+                }
+                if (shown != BLOB_ICON) container.core.setConnectionIcon(connectionId, BLOB_ICON)
                 container.refreshConnections()
             } catch (e: CancellationException) {
                 throw e

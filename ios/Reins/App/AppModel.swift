@@ -623,6 +623,32 @@ final class AppModel {
         }
     }
 
+    /// A change to a connection's blobatar from its Icon sheet.
+    enum BlobatarChange: Equatable {
+        case shape(UInt8)
+        case colour(UInt8)
+        case shuffle
+    }
+
+    /// Changes a connection's blobatar (kept and synced by the core) and, when the connection shows something else
+    /// (a logo), makes it show the blobatar, so the change is seen. Then reads the connections again.
+    func changeBlobatar(_ connectionId: String, _ change: BlobatarChange) async throws {
+        guard let connection = connection(connectionId) else { return }
+        let kept = connection.blobatar
+        switch change {
+        case let .shape(shape):
+            _ = try await core.setConnectionBlobatar(connectionId: connectionId, shape: shape, colour: kept?.colour ?? 0)
+        case let .colour(colour):
+            _ = try await core.setConnectionBlobatar(connectionId: connectionId, shape: kept?.shape ?? 0, colour: colour)
+        case .shuffle:
+            _ = try await core.shuffleConnectionBlobatar(connectionId: connectionId)
+        }
+        if !ConnectionLook.showsBlob(connection) {
+            try await core.setConnectionIcon(connectionId: connectionId, icon: Providers.blob)
+        }
+        await refreshConnections()
+    }
+
     private func setMcpServers(_ list: [McpServerView]) {
         mcpServers = list
         McpNames.update(Dictionary(uniqueKeysWithValues: list.map {
@@ -1014,10 +1040,12 @@ final class AppModel {
 
     // MARK: Widgets
 
-    /// An item as widgets and Live Activities show it, with its connection's logo pick.
+    /// An item as widgets and Live Activities show it, with the icon its connection shows and the blobatar it keeps.
     func snapshotItem(_ item: PendingItem) -> Snapshot.Item {
         var s = item.snapshotItem
-        s.connectionIcon = connection(item.connectionId)?.icon
+        let c = connection(item.connectionId)
+        s.connectionIcon = c.flatMap(ConnectionLook.shownIcon)
+        s.connectionBlobatar = c.flatMap(ConnectionLook.blobatar)
         return s
     }
 
@@ -1123,9 +1151,14 @@ extension PendingItem {
             createdAt: createdAt,
             expiresAt: expiresAt,
             suggestion: suggestion,
-            quick: kind == .request && quick
+            quick: kind == .request && quick,
+            field: field.rawValue,
+            label: AskLabels.pending(self, field: field).kind
         )
     }
+
+    /// The field it is painted in outside the app, as on its waiting card (`ActivityText.field`).
+    private var field: FieldKind { ActivityText.field(self, danger: false) }
 }
 
 extension ActivityEntry {

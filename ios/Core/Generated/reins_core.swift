@@ -3105,6 +3105,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setClassLock(profileId: String, classKey: String, locked: Bool?) async throws 
     
     /**
+     * Changes a connection's blobatar to `shape` (below `blobatar_shape_count()`) and `colour` (an index of
+     * `blobatar_colours()`), keeping its figure. Returns the one kept.
+     */
+    func setConnectionBlobatar(connectionId: String, shape: UInt8, colour: UInt8) async throws  -> Blobatar
+    
+    /**
      * Remembers the icon picked for a connection (`None` = derive it from the name).
      */
     func setConnectionIcon(connectionId: String, icon: String?) async throws 
@@ -3143,6 +3149,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * A profile's own thresholds (the `Custom` preset), each clamped to 0.80–0.99.
      */
     func setThresholds(profileId: String, approveAt: Float, denyAt: Float) async throws 
+    
+    /**
+     * "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
+     */
+    func shuffleConnectionBlobatar(connectionId: String) async throws  -> Blobatar
     
     /**
      * Signs another device of the account out (a lost phone), with the recovery code or master password the user
@@ -4958,6 +4969,26 @@ open func setClassLock(profileId: String, classKey: String, locked: Bool?)async 
 }
     
     /**
+     * Changes a connection's blobatar to `shape` (below `blobatar_shape_count()`) and `colour` (an index of
+     * `blobatar_colours()`), keeping its figure. Returns the one kept.
+     */
+open func setConnectionBlobatar(connectionId: String, shape: UInt8, colour: UInt8)async throws  -> Blobatar  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_connection_blobatar(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterUInt8.lower(shape),FfiConverterUInt8.lower(colour)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeBlobatar_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Remembers the icon picked for a connection (`None` = derive it from the name).
      */
 open func setConnectionIcon(connectionId: String, icon: String?)async throws   {
@@ -5098,6 +5129,25 @@ open func setThresholds(profileId: String, approveAt: Float, denyAt: Float)async
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
+     */
+open func shuffleConnectionBlobatar(connectionId: String)async throws  -> Blobatar  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_shuffle_connection_blobatar(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeBlobatar_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -8515,6 +8565,68 @@ public func FfiConverterTypeBlobView_lower(_ value: BlobView) -> RustBuffer {
 
 
 /**
+ * A connection's blobatar: the library's figure for `seed`, drawn in colour `colour` (an index of [`COLOURS`]) with
+ * shape `shape` (the library's order, [`SHAPES`]).
+ */
+public struct Blobatar: Equatable, Hashable {
+    public var seed: String
+    public var shape: UInt8
+    public var colour: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(seed: String, shape: UInt8, colour: UInt8) {
+        self.seed = seed
+        self.shape = shape
+        self.colour = colour
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Blobatar: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBlobatar: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Blobatar {
+        return
+            try Blobatar(
+                seed: FfiConverterString.read(from: &buf), 
+                shape: FfiConverterUInt8.read(from: &buf), 
+                colour: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Blobatar, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.seed, into: &buf)
+        FfiConverterUInt8.write(value.shape, into: &buf)
+        FfiConverterUInt8.write(value.colour, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBlobatar_lift(_ buf: RustBuffer) throws -> Blobatar {
+    return try FfiConverterTypeBlobatar.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBlobatar_lower(_ value: Blobatar) -> RustBuffer {
+    return FfiConverterTypeBlobatar.lower(value)
+}
+
+
+/**
  * A budget: every AI together (`connection_id` empty) or one.
  */
 public struct BudgetView: Equatable, Hashable {
@@ -9066,28 +9178,63 @@ public func FfiConverterTypeConnectionAutopilot_lower(_ value: ConnectionAutopil
 
 public struct ConnectionView: Equatable, Hashable {
     public var id: String
+    /**
+     * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
+     * name it was given (`avatar::shown_label`).
+     */
     public var label: String
     public var clientHost: String
     public var createdAt: Int64
     public var lastUsedAt: Int64?
     /**
-     * The icon the user picked (`None` = derived from the name by the app).
+     * The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
+     * ("macos", "windows", "linux") or "blob".
      */
     public var icon: String?
     /**
      * A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
      */
     public var keyFingerprint: String?
+    /**
+     * What Auto shows: for a computer its platform's logo ("macos", "windows", "linux"), for an AI its provider's
+     * ("claude", "grok", ...) when its name says which, else "blob" (its blobatar).
+     */
+    public var autoIcon: String
+    /**
+     * A computer's platform: "macos", "windows" or "linux"; `None` for an AI app or when not known.
+     */
+    public var platform: String?
+    /**
+     * Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
+     * changed by the user).
+     */
+    public var blobatar: Blobatar?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, label: String, clientHost: String, createdAt: Int64, lastUsedAt: Int64?, 
+    public init(id: String, 
         /**
-         * The icon the user picked (`None` = derived from the name by the app).
+         * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
+         * name it was given (`avatar::shown_label`).
+         */label: String, clientHost: String, createdAt: Int64, lastUsedAt: Int64?, 
+        /**
+         * The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
+         * ("macos", "windows", "linux") or "blob".
          */icon: String?, 
         /**
          * A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
-         */keyFingerprint: String?) {
+         */keyFingerprint: String?, 
+        /**
+         * What Auto shows: for a computer its platform's logo ("macos", "windows", "linux"), for an AI its provider's
+         * ("claude", "grok", ...) when its name says which, else "blob" (its blobatar).
+         */autoIcon: String = "", 
+        /**
+         * A computer's platform: "macos", "windows" or "linux"; `None` for an AI app or when not known.
+         */platform: String? = nil, 
+        /**
+         * Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
+         * changed by the user).
+         */blobatar: Blobatar? = nil) {
         self.id = id
         self.label = label
         self.clientHost = clientHost
@@ -9095,6 +9242,9 @@ public struct ConnectionView: Equatable, Hashable {
         self.lastUsedAt = lastUsedAt
         self.icon = icon
         self.keyFingerprint = keyFingerprint
+        self.autoIcon = autoIcon
+        self.platform = platform
+        self.blobatar = blobatar
     }
 
     
@@ -9119,7 +9269,10 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
                 createdAt: FfiConverterInt64.read(from: &buf), 
                 lastUsedAt: FfiConverterOptionInt64.read(from: &buf), 
                 icon: FfiConverterOptionString.read(from: &buf), 
-                keyFingerprint: FfiConverterOptionString.read(from: &buf)
+                keyFingerprint: FfiConverterOptionString.read(from: &buf), 
+                autoIcon: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterOptionString.read(from: &buf), 
+                blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf)
         )
     }
 
@@ -9131,6 +9284,9 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.lastUsedAt, into: &buf)
         FfiConverterOptionString.write(value.icon, into: &buf)
         FfiConverterOptionString.write(value.keyFingerprint, into: &buf)
+        FfiConverterString.write(value.autoIcon, into: &buf)
+        FfiConverterOptionString.write(value.platform, into: &buf)
+        FfiConverterOptionTypeBlobatar.write(value.blobatar, into: &buf)
     }
 }
 
@@ -18484,6 +18640,30 @@ fileprivate struct FfiConverterOptionTypeBlobView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeBlobatar: FfiConverterRustBuffer {
+    typealias SwiftType = Blobatar?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBlobatar.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBlobatar.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeCardProviderView: FfiConverterRustBuffer {
     typealias SwiftType = CardProviderView?
 
@@ -20741,6 +20921,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_class_lock() != 43604) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_set_connection_blobatar() != 16073) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_set_connection_icon() != 4706) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -20763,6 +20946,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_thresholds() != 38198) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_shuffle_connection_blobatar() != 1265) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 32606) {

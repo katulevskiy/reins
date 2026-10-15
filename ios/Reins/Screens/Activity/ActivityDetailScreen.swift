@@ -58,7 +58,7 @@ struct ActivityDetailScreen: View {
                             ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 22)
                             Text(untrusted(entry.connectionLabel))
                                 .font(RFont.sans(15, .semibold))
-                                .foregroundStyle(Palette.text)
+                                .foregroundStyle(Palette.ink)
                                 .lineLimit(1)
                         }
                         .accessibilityElement(children: .combine)
@@ -181,7 +181,7 @@ struct ActivityDetailScreen: View {
                     BlobAvatar(seed: address, size: 36)
                     Text(address)
                         .font(RFont.sans(15.5, .medium))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .environment(\.layoutDirection, .leftToRight)
                         .textSelection(.enabled)
@@ -221,23 +221,23 @@ private struct MessageLine: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(untrusted(message.from))
                     .font(RFont.sans(15, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                     .environment(\.layoutDirection, .leftToRight)
                 if !message.subject.isEmpty {
-                    Text(untrusted(message.subject)).font(RFont.sans(14.5)).foregroundStyle(Palette.text).lineLimit(2)
+                    Text(untrusted(message.subject)).font(RFont.sans(14.5)).foregroundStyle(Palette.ink).lineLimit(2)
                 }
                 // Another integration keeps what was shared, so it can be read here without asking anyone.
                 if !message.text.isEmpty {
-                    Text(untrusted(message.text)).font(RFont.sans(14)).foregroundStyle(Palette.secondary)
+                    Text(untrusted(message.text)).font(RFont.sans(14)).foregroundStyle(Palette.ink2)
                 }
                 if message.date != 0 {
-                    Text(TimeText.dateTime(message.date)).font(RFont.sans(12)).foregroundStyle(Palette.tertiary).padding(.top, 1)
+                    Text(TimeText.dateTime(message.date)).font(RFont.sans(12)).foregroundStyle(Palette.inkMeta).padding(.top, 1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if openable {
-                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.tertiary)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.inkMeta)
             }
         }
         .padding(.horizontal, 16)

@@ -55,7 +55,7 @@ func grantClock(_ grant: GrantView, now: Int64) -> GrantClock {
 }
 
 /// The colour of a running grant's clock: calm, or the warning colour once it is about to end.
-func clockColor(_ clock: GrantClock) -> Color { clock.soon ? Palette.danger : Palette.accent }
+func clockColor(_ clock: GrantClock) -> Color { clock.soon ? Palette.danger : Palette.violet }
 
 /// Unix seconds now.
 func nowSeconds(_ date: Date = Date()) -> Int64 { Int64(date.timeIntervalSince1970) }
@@ -209,7 +209,7 @@ struct ExpiryPie: View {
     var body: some View {
         let color = clockColor(clock)
         ZStack {
-            Circle().fill(Palette.controlFill)
+            Circle().fill(Palette.paperSunken)
             if clock.fraction > 0 {
                 // The slice that is gone is bitten off clockwise from 12 o'clock; the wedge that remains ends there.
                 PieWedge(fraction: clock.fraction)
@@ -267,9 +267,9 @@ struct UsesMeter: View {
                     HStack(spacing: 4) {
                         ForEach(0..<maxUses, id: \.self) { i in
                             if i < uses {
-                                Circle().fill(Palette.accent).frame(width: 9, height: 9)
+                                Circle().fill(Palette.violet).frame(width: 9, height: 9)
                             } else {
-                                Circle().strokeBorder(Palette.tertiary, lineWidth: 1.5).frame(width: 9, height: 9)
+                                Circle().strokeBorder(Palette.inkMeta, lineWidth: 1.5).frame(width: 9, height: 9)
                             }
                         }
                     }
@@ -277,24 +277,24 @@ struct UsesMeter: View {
                 } else {
                     let fraction = min(max(Double(uses) / Double(maxUses), 0), 1)
                     Capsule()
-                        .fill(Palette.controlFill)
+                        .fill(Palette.paperSunken)
                         .frame(width: 56, height: 6)
                         .overlay(alignment: .leading) {
-                            Capsule().fill(Palette.accent).frame(width: 56 * fraction, height: 6)
+                            Capsule().fill(Palette.violet).frame(width: 56 * fraction, height: 6)
                         }
                         .padding(.trailing, 8)
                 }
                 Text(GrantText.usesLeft(uses, of: maxUses))
                     .font(RFont.sans(13, .medium))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
             } else {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(uses == 0 ? Palette.tertiary : Palette.secondary)
+                    .foregroundStyle(uses == 0 ? Palette.inkMeta : Palette.ink2)
                     .padding(.trailing, 5)
                 Text(GrantText.usedTimes(uses))
                     .font(RFont.sans(13, .medium))
-                    .foregroundStyle(uses == 0 ? Palette.tertiary : Palette.secondary)
+                    .foregroundStyle(uses == 0 ? Palette.inkMeta : Palette.ink2)
             }
         }
         .accessibilityElement(children: .combine)
@@ -311,7 +311,7 @@ struct TimeOutline: View {
 
     var body: some View {
         ZStack {
-            OutlinePath(radius: radius).stroke(Palette.hairline, lineWidth: lineWidth)
+            OutlinePath(radius: radius).stroke(Palette.rule, lineWidth: lineWidth)
             if fraction > 0 {
                 OutlinePath(radius: radius)
                     .trim(from: 0, to: min(fraction, 1))

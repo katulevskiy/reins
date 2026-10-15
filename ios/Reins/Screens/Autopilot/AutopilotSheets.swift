@@ -40,7 +40,7 @@ struct AutopilotRow: View {
     var title: String
     var subtitle: String? = nil
     var symbol: String
-    var tint: Color = Palette.accent
+    var tint: Color = Palette.violet
     var destructive = false
     var chevron = false
     var identifier: String
@@ -55,16 +55,16 @@ struct AutopilotRow: View {
             HStack(spacing: 14) {
                 IconTile(symbol: symbol, tint: destructive ? Palette.danger : tint, size: 34)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(RFont.sans(16, .medium)).foregroundStyle(destructive ? Palette.danger : Palette.text)
+                    Text(title).font(RFont.sans(16, .medium)).foregroundStyle(destructive ? Palette.danger : Palette.ink)
                     if let subtitle {
-                        Text(subtitle).font(RFont.sans(13)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(subtitle).font(RFont.sans(13)).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 6)
                 if chevron {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.inkMeta)
                 }
             }
             .padding(.horizontal, 16)
@@ -81,7 +81,7 @@ struct AutopilotRow: View {
 /// A row's pressed state: the control fill behind it.
 struct RowPress: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.background(configuration.isPressed ? Palette.controlFill : .clear)
+        configuration.label.background(configuration.isPressed ? Palette.paperSunken : .clear)
     }
 }
 
@@ -111,7 +111,7 @@ enum TimedMode: Hashable {
 
     var symbol: String { self == .bypass ? "bolt.fill" : AutopilotText.overnightSymbol }
 
-    var tint: Color { self == .bypass ? Palette.danger : Palette.overnight }
+    var tint: Color { self == .bypass ? Palette.danger : Palette.violet }
 
     /// The lengths offered first, and the one picked at first.
     var presets: [UInt32] { self == .bypass ? AutopilotText.bypassMinutes : AutopilotText.overnightMinutes }
@@ -292,7 +292,7 @@ struct TimedModeSheet<Extra: View>: View {
             .padding(.bottom, 16)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationSizing(.form)
@@ -348,7 +348,7 @@ struct BypassForSheet: View {
                 HStack {
                     Text(kind.forTitle)
                         .font(RFont.sans(18, .semibold))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .accessibilityAddTraits(.isHeader)
                     Spacer()
                     Button {
@@ -357,9 +357,9 @@ struct BypassForSheet: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Palette.secondary)
+                            .foregroundStyle(Palette.ink2)
                             .frame(width: 30, height: 30)
-                            .background(Palette.controlFill, in: Circle())
+                            .background(Palette.paperSunken, in: Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close")
@@ -367,17 +367,17 @@ struct BypassForSheet: View {
                 }
                 .padding(.bottom, 14)
 
-                card(border: Palette.hairline) {
+                card(border: Palette.rule) {
                     ForEach(kind.more, id: \.self) { m in
                         radioRow(.preset(m), identifier: kind.id("bypassFor:\(m)")) {
-                            Text(AutopilotText.lengthLabel(minutes: m)).font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+                            Text(AutopilotText.lengthLabel(minutes: m)).font(RFont.sans(15.5)).foregroundStyle(Palette.ink)
                         }
                         RowDivider()
                     }
                     // Its stepper and unit menu stay controls of their own for VoiceOver.
                     radioRow(.custom, identifier: kind.id("bypassFor:custom"), combine: false) {
                         HStack(spacing: 8) {
-                            Text("Custom").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+                            Text("Custom").font(RFont.sans(15.5)).foregroundStyle(Palette.ink)
                             Spacer(minLength: 4)
                             stepper
                             unitMenu
@@ -393,7 +393,7 @@ struct BypassForSheet: View {
                                 .foregroundStyle(kind.tint)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Until I turn it off").font(RFont.sans(15.5, .semibold)).foregroundStyle(kind.tint)
-                                Text("No end time").font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                                Text("No end time").font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
                             }
                         }
                     }
@@ -413,7 +413,7 @@ struct BypassForSheet: View {
                                 .foregroundStyle(kind.tint)
                             Text(kind.untilOffWarning.detail)
                                 .font(RFont.sans(13.5))
-                                .foregroundStyle(Palette.text)
+                                .foregroundStyle(Palette.ink)
                         }
                         .fixedSize(horizontal: false, vertical: true)
                     }
@@ -436,7 +436,7 @@ struct BypassForSheet: View {
                 .padding(.top, 16)
                 Text(HoldButton.hint)
                     .font(RFont.sans(12))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .frame(maxWidth: .infinity)
                     .padding(.top, 8)
             }
@@ -444,7 +444,7 @@ struct BypassForSheet: View {
             .animation(.smooth(duration: 0.2), value: pick)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationSizing(.form)
@@ -474,13 +474,13 @@ struct BypassForSheet: View {
 
     private func card<Content: View>(border: Color, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) { content() }
-            .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(border, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func radioRow<Label: View>(
-        _ choice: Pick, tint: Color = Palette.accent, identifier: String, combine: Bool = true, @ViewBuilder label: () -> Label
+        _ choice: Pick, tint: Color = Palette.violet, identifier: String, combine: Bool = true, @ViewBuilder label: () -> Label
     ) -> some View {
         let on = pick == choice
         return HStack(spacing: 10) {
@@ -508,13 +508,13 @@ struct BypassForSheet: View {
             stepButton("minus", identifier: "bypassLess", enabled: count > 1) { count -= 1 }
             Text("\(count)")
                 .font(RFont.mono(15, .medium))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .monospacedDigit()
                 .frame(minWidth: 30)
                 .accessibilityIdentifier("bypassCount")
             stepButton("plus", identifier: "bypassMore", enabled: count < unit.max) { count += 1 }
         }
-        .background(Palette.background, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .background(Palette.paper, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("bypassStepper")
         .accessibilityLabel("Custom length")
@@ -537,7 +537,7 @@ struct BypassForSheet: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(enabled ? Palette.secondary : Palette.tertiary.opacity(0.5))
+                .foregroundStyle(enabled ? Palette.ink2 : Palette.inkMeta.opacity(0.5))
                 .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
         }
@@ -556,13 +556,13 @@ struct BypassForSheet: View {
             }
         } label: {
             HStack(spacing: 3) {
-                Text(unit.label).font(RFont.sans(14.5, .semibold)).foregroundStyle(Palette.text)
-                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.secondary)
+                Text(unit.label).font(RFont.sans(14.5, .semibold)).foregroundStyle(Palette.ink)
+                Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.ink2)
             }
             .padding(.leading, 11)
             .padding(.trailing, 8)
             .frame(height: 32)
-            .background(Palette.background, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .background(Palette.paper, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .accessibilityLabel("Unit")
         .accessibilityValue(unit.label)
@@ -585,7 +585,7 @@ struct ProfileEditorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title).font(RFont.sans(22, .semibold)).foregroundStyle(Palette.text)
+            Text(title).font(RFont.sans(22, .semibold)).foregroundStyle(Palette.ink)
             InputWell {
                 TextField("Name, e.g. Side project", text: $name)
                     .font(RFont.sans(16))
@@ -598,7 +598,7 @@ struct ProfileEditorSheet: View {
             .padding(.top, 14)
             Text("Icon")
                 .font(RFont.sans(13, .medium))
-                .foregroundStyle(Palette.tertiary)
+                .foregroundStyle(Palette.inkMeta)
                 .padding(.top, 18)
                 .padding(.bottom, 8)
             HStack(spacing: 6) {
@@ -628,7 +628,7 @@ struct ProfileEditorSheet: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
         .presentationDetents([.height(340), .medium])
         .presentationDragIndicator(.visible)
         .presentationSizing(.form)

@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS handled (id TEXT PRIMARY KEY, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS connection_prefs (connection_id TEXT PRIMARY KEY, icon TEXT);
 CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB NOT NULL);
 ";
+/// Where a connection's blobatar is kept (`meta`, `connection.blobatar.<connection id>`).
+const BLOBATAR_KEY: &str = "connection.blobatar.";
 /// The records whose removal is a security decision (a permission, a connected account or its token, a paired
 /// computer's key, an MCP server, an approved target), with their primary keys: each removal leaves a tombstone, so
 /// that no merge, import or restore brings the record back (see `merge.rs` and `sync.rs`).
@@ -642,6 +644,30 @@ impl Store {
                  ON CONFLICT (connection_id) DO UPDATE SET icon = ?2",
             params![connection_id, icon],
         )?;
+        Ok(())
+    }
+
+    /// The blobatars kept for connections (`avatar::Blobatar::encode`), by connection id. In `meta`, so that they
+    /// travel with the account to every phone (and an older version keeps them as they are).
+    pub fn connection_blobatars(&self) -> Result<std::collections::HashMap<String, String>, CoreError> {
+        let prefix = format!("app.{BLOBATAR_KEY}");
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare("SELECT key, value FROM meta WHERE substr(key, 1, ?1) = ?2")?;
+        let rows = stmt
+            .query_map(params![i64::try_from(prefix.len()).unwrap_or(i64::MAX), prefix], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows.into_iter().filter_map(|(k, v)| Some((k.strip_prefix(&prefix)?.to_owned(), v))).collect())
+    }
+
+    /// Keeps a connection's blobatar (`None` forgets it).
+    pub fn set_connection_blobatar(&self, connection_id: &str, blobatar: Option<&str>) -> Result<(), CoreError> {
+        if let Some(value) = blobatar {
+            return self.meta_set(&format!("{BLOBATAR_KEY}{connection_id}"), value);
+        }
+        self.lock()?
+            .execute("DELETE FROM meta WHERE key = ?1", params![format!("app.{BLOBATAR_KEY}{connection_id}")])?;
         Ok(())
     }
 

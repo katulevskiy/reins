@@ -30,6 +30,7 @@ import dev.reins.core.ApprovalKind
 import dev.reins.core.StandingGrant
 import dev.reins.core.ApprovalView
 import dev.reins.core.BlobView
+import dev.reins.core.Blobatar
 import dev.reins.core.ConnectionView
 import dev.reins.core.DeviceView
 import dev.reins.core.EmailContent
@@ -165,6 +166,11 @@ class MainSafeCore(
         io { serviceAccountStatus(service, account) }
 
     override suspend fun setConnectionIcon(connectionId: String, icon: String?) = io { setConnectionIcon(connectionId, icon) }
+
+    override suspend fun setConnectionBlobatar(connectionId: String, shape: UByte, colour: UByte): Blobatar =
+        io { setConnectionBlobatar(connectionId, shape, colour) }
+
+    override suspend fun shuffleConnectionBlobatar(connectionId: String): Blobatar = io { shuffleConnectionBlobatar(connectionId) }
 
     override suspend fun deny(requestId: String) = io { deny(requestId) }
 

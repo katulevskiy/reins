@@ -184,7 +184,7 @@ enum ActivityDays {
 /// (`@ . / - _`) join into one. Never inside a word.
 enum TitleHighlight {
     /// The soft violet behind a match; an underline goes with it, so colour is never the only cue.
-    static let wash = Palette.accentSoft
+    static let wash = Palette.violetWash
 
     private static func isWord(_ s: Unicode.Scalar) -> Bool { s.properties.isAlphabetic || s.properties.numericType != nil }
 

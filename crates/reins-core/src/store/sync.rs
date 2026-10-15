@@ -416,6 +416,29 @@ mod tests {
         assert_eq!(store.pending_upload().unwrap(), None, "it has the server's state now: nothing to upload");
     }
 
+    /// A connection's blobatar (chosen, changed or shuffled on one phone) is drawn the same on the other.
+    #[test]
+    fn a_connections_blobatar_travels_to_the_other_phone() {
+        let (a_dir, b_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (Phone::new(a_dir.path()).open(), Phone::new(b_dir.path()).open());
+        let mut server = Server::default();
+        a.set_connection_blobatar("c1", Some("1:4:2:c1")).unwrap();
+        server.sync(&a);
+        assert_eq!(server.pull(&b), Pulled::Imported);
+        assert_eq!(b.connection_blobatars().unwrap().get("c1").map(String::as_str), Some("1:4:2:c1"));
+        b.set_connection_blobatar("c1", Some("1:9:3:c1")).unwrap();
+        b.set_connection_blobatar("c2", Some("1:0:0:c2")).unwrap();
+        server.sync(&b);
+        server.pull(&a);
+        let on_a = a.connection_blobatars().unwrap();
+        assert_eq!(on_a.get("c1").map(String::as_str), Some("1:9:3:c1"), "the change came over");
+        assert_eq!(on_a.get("c2").map(String::as_str), Some("1:0:0:c2"));
+        a.set_connection_blobatar("c2", None).unwrap();
+        server.sync(&a);
+        server.pull(&b);
+        assert_eq!(b.connection_blobatars().unwrap().get("c2"), None, "forgotten with its connection");
+    }
+
     /// A corrupt base is as good as none: never a refusal.
     #[test]
     fn a_corrupt_base_falls_back_to_the_servers_state_with_a_backup() {

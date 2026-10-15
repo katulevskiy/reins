@@ -17,6 +17,7 @@ struct ReinsWidgetBundle: WidgetBundle {
         LockdownControl()
         WaitingControl()
         StopBypassControl()
+        ModeControl()
     }
 }
 
@@ -68,13 +69,18 @@ struct SnapshotProvider: TimelineProvider {
 }
 
 extension View {
-    /// The widget plate on the Home Screen; Lock Screen accessories have none of their own.
-    @ViewBuilder func glanceBackground(_ family: WidgetFamily) -> some View {
+    /// The widget plate on the Home Screen: paper, or `field` while something waits on a decision. Lock Screen
+    /// accessories have none of their own.
+    @ViewBuilder func glanceBackground(_ family: WidgetFamily, field: FieldKind? = nil) -> some View {
         switch family {
         case .accessoryCircular, .accessoryRectangular, .accessoryInline:
             containerBackground(Color.clear, for: .widget)
         default:
-            containerBackground(GlanceStyle.background, for: .widget)
+            if let field {
+                containerBackground(for: .widget) { GlanceField(kind: field) }
+            } else {
+                containerBackground(GlanceStyle.background, for: .widget)
+            }
         }
     }
 }
@@ -110,7 +116,14 @@ struct WaitingWidgetView: View {
             }
         }
         .widgetURL(Glance.waitingLink(entry.snapshot, now: entry.now))
-        .glanceBackground(family)
+        .glanceBackground(family, field: field)
+    }
+
+    /// A field on the small widget only while something waits: the newest's.
+    private var field: FieldKind? {
+        guard family == .systemSmall, entry.snapshot.signedIn,
+              let newest = Glance.waiting(entry.snapshot, now: entry.now).first else { return nil }
+        return Glance.field(newest)
     }
 }
 
