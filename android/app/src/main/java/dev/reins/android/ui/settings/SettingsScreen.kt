@@ -103,6 +103,8 @@ fun SettingsScreen(
     onTypeComputerCode: () -> Unit = {},
     onVaultPasskeys: () -> Unit = {},
     onDevices: () -> Unit = {},
+    /** Debug builds: the Signal component gallery. */
+    onSignalGallery: () -> Unit = {},
     /** A sheet covers the page: the tab bar steps aside for it. */
     onCovered: (Boolean) -> Unit = {},
     authenticator: Authenticator,
@@ -276,6 +278,7 @@ fun SettingsScreen(
                         modifier = Modifier.padding(12.dp),
                         tag = { "quickStyle:${it.name}" },
                     ) { dev.reins.android.ui.autopilot.QuickStyles.set(context, it) }
+                    SettingsRow("Signal gallery", Modifier.testTag("signalGalleryRow"), onClick = onSignalGallery)
                 }
             }
             Spacer(Modifier.height(32.dp))

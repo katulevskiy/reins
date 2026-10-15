@@ -69,6 +69,9 @@ sealed interface Route {
     data class GrantDetail(val id: String) : Route
 
     data object NewGrant : Route
+
+    /** Debug builds: Settings > Developer > Signal gallery, every Signal component. */
+    data object SignalGallery : Route
 }
 
 /** The near-full-screen sheet for an item that waits for the user. */

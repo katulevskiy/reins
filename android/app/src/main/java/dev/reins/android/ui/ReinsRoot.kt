@@ -295,6 +295,7 @@ private fun SignedInContent(
                         },
                         onVaultPasskeys = { app.open(Route.VaultPasskeys) },
                         onDevices = { app.open(Route.Devices) },
+                        onSignalGallery = { app.open(Route.SignalGallery) },
                         onCovered = { covered = it },
                         authenticator = authenticator,
                     )
@@ -312,6 +313,7 @@ private fun SignedInContent(
                 )
                 Route.ConnectComputer -> ConnectComputerScreen(app, onBack = { app.back() })
                 Route.Sounds -> SoundsScreen(container.feedback, onBack = { app.back() })
+                Route.SignalGallery -> if (dev.reins.android.BuildConfig.DEBUG) dev.reins.android.ui.signal.SignalGallery(onBack = { app.back() })
                 Route.Autopilot -> AutopilotScreen(
                     autopilot,
                     onBack = { app.back() },

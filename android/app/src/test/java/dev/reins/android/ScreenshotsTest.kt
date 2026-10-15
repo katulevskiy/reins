@@ -1918,3 +1918,51 @@ class ScreenshotsDark : ScreenshotsBase("dark")
 
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-notnight-xxhdpi")
 class ScreenshotsLight : ScreenshotsBase("light")
+
+/**
+ * The Signal gallery (Settings, Developer, debug builds), one PNG per page: `signal-<page>-<theme>.png` in the
+ * `reins.screenshots` directory. Drawn on a tall window so each page fits whole.
+ */
+@RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+abstract class SignalGalleryShots(private val suffix: String) {
+    @get:Rule val rule = androidx.compose.ui.test.junit4.createAndroidComposeRule<androidx.activity.ComponentActivity>()
+
+    @Before
+    fun setUp() {
+        assumeTrue(System.getProperty("reins.screenshots") != null)
+        Timers.live = false
+    }
+
+    @After
+    fun tearDown() {
+        Timers.live = true
+    }
+
+    @Test
+    fun gallery() {
+        val dir = File(System.getProperty("reins.screenshots")!!).apply { mkdirs() }
+        val page = androidx.compose.runtime.mutableStateOf(dev.reins.android.ui.signal.GalleryPage.Type)
+        rule.setContent {
+            dev.reins.android.design.ReinsTheme {
+                androidx.compose.runtime.key(page.value) { dev.reins.android.ui.signal.SignalGallery(onBack = {}, initialPage = page.value) }
+            }
+        }
+        for (p in dev.reins.android.ui.signal.GalleryPage.entries) {
+            rule.runOnIdle { page.value = p }
+            rule.waitForIdle()
+            rule.mainClock.advanceTimeBy(1_000)
+            rule.waitForIdle()
+            val view = rule.activity.window.decorView
+            val bitmap = android.graphics.Bitmap.createBitmap(view.width, view.height, android.graphics.Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(bitmap))
+            File(dir, "signal-${p.name.lowercase()}-$suffix.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        }
+    }
+}
+
+@Config(sdk = [35], qualifiers = "w411dp-h2600dp-normal-notnight-xxhdpi")
+class SignalGalleryLight : SignalGalleryShots("light")
+
+@Config(sdk = [35], qualifiers = "w411dp-h2600dp-normal-night-xxhdpi")
+class SignalGalleryDark : SignalGalleryShots("dark")
