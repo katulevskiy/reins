@@ -720,6 +720,32 @@ fn hook_detail(ask: &AskView) -> Option<HookWhat> {
     ))
 }
 
+/// What the core reads of a desktop question: the action its detail carries ([`hook_action`]), the files it names
+/// ([`files_context`]), and every text the guard reads of it for its rules and certainty ([`hook_texts`]), with the
+/// same tokenizer, so that no tripwire sees other segments than the guard's certainty check did. Those texts only hold
+/// (a tripwire, a doubt) and never add phrases when they are the topic's rule (a pattern, not a command) or when the
+/// question is prose (a `reins ask` question). A question whose line names another command than its detail is held.
+pub fn ask_context(ask: &AskView) -> (Option<HookWhat>, Context) {
+    let (what, mut context) = hook_action(ask).start();
+    if let Some(HookWhat::Files(paths)) = &what {
+        context.merge(files_context(paths));
+    }
+    let read = hook_texts(ask);
+    if read.question_command {
+        context.doubt("the question and its detail name different commands");
+    }
+    let rule = ask.topic.as_deref().and_then(|t| t.split_once(':')).map(|(_, rule)| rule);
+    for t in read.texts {
+        let c = command_context(t);
+        if what.is_some() && Some(t) != rule {
+            context.merge(c);
+        } else {
+            context.merge_holds(c);
+        }
+    }
+    (what, context)
+}
+
 /// The texts the guard reads of a desktop question ([`crate::connector::desktop::ask_texts`]).
 pub(crate) fn hook_texts(ask: &AskView) -> crate::connector::desktop::AskTexts<'_> {
     crate::connector::desktop::ask_texts(ask.topic.as_deref(), &ask.question, ask.detail.as_deref().unwrap_or_default())
@@ -768,8 +794,10 @@ pub fn tilde(path: &str) -> String {
 /// command is the target), and the context line is added. Returns the context (tripwire and doubt included).
 pub fn refine(described: &mut Described, view: &ApprovalView) -> Context {
     // A request that is not a desktop question is structured (the server's view of a call): read as it is.
-    let asked = view.ask.as_ref().map_or_else(|| Reading::new(None, true, ""), hook_action);
-    let (what, mut context) = asked.start();
+    let (what, mut context) = match &view.ask {
+        Some(ask) => ask_context(ask),
+        None => Reading::new(None, true, "").start(),
+    };
     if let Some(what) = what {
         let f = &mut described.facts;
         // The rule the phone itself matched stays; what the computer wrote about where it runs does not.
@@ -786,25 +814,6 @@ pub fn refine(described: &mut Described, view: &ApprovalView) -> Context {
                 "Read or change a file".clone_into(&mut f.operation);
                 "file".clone_into(&mut f.class);
                 f.target = paths.first().map(|p| normalize(p).into_value(&mut context).display()).unwrap_or_default();
-                context.merge(files_context(paths));
-            }
-        }
-    }
-    if let Some(ask) = &view.ask {
-        // Every text the guard reads of the question, read the same way: the same tokenizer over the same texts, so
-        // that no tripwire sees other segments than the guard's certainty check did. A question that is prose (a
-        // `reins ask` question) can only hold through them: its words never become context phrases.
-        let read = hook_texts(ask);
-        if read.question_command {
-            context.doubt("the question and its detail name different commands");
-        }
-        let hook = matches!(described.facts.class.as_str(), "command" | "file");
-        for t in read.texts {
-            let c = command_context(t);
-            if hook {
-                context.merge(c);
-            } else {
-                context.merge_holds(c);
             }
         }
     }
@@ -2470,6 +2479,26 @@ mod tests {
             let (words, _) = read_command(cmd).start();
             assert_eq!(words.segments, shell::parse(cmd).segments, "{cmd}");
         }
+    }
+
+    #[test]
+    fn a_hook_question_is_read_in_the_guards_texts_and_its_topic_only_holds() {
+        let (what, c) = ask_context(&ask(
+            "Claude Code wants to run: git push --force origin feature/x",
+            "Command:\ngit push --force origin feature/x\n\nIn: /home/me/dev/shop",
+            "command:git push --force*",
+        ));
+        assert!(matches!(what, Some(HookWhat::Command(_))));
+        assert_eq!(c.outcome(), Outcome::Read, "the topic is a pattern: {c:?}");
+        assert!(c.lines().contains(&"force push to \"feature/x\" (not the default branch)".to_owned()), "{c:?}");
+        // a topic that names a protected file still holds
+        let (_, c) =
+            ask_context(&ask("Claude Code wants to run: ls", "Command:\nls", "command:cat ~/.ssh/authorized_keys"));
+        assert!(matches!(c.outcome(), Outcome::Tripwire(_)), "{c:?}");
+        // prose holds, never adds phrases
+        let (what, c) = ask_context(&ask("May I clean up?", "rm -rf build would free space", ""));
+        assert!(what.is_none());
+        assert!(c.lines().iter().all(|l| !l.starts_with("deletes inside")), "{c:?}");
     }
 
     #[test]

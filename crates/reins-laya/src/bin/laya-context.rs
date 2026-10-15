@@ -11,6 +11,7 @@
 //!           "files": [["A", ".env"]]}]}}
 //! -> {"lines": ["deletes the home directory"], "tripwire": true, "unreadable": false, "deletes": true}
 //! {"mcp": {"tool": "drop_database", "arguments": "{\"db\": \"orders\"}"}}
+//! {"ask": {"question": "Claude Code wants to run: ls", "detail": "Command:\nls\n\nIn: /home/me/x", "topic": "command:ls"}}
 //! {"neutral": {"class": "command", "target": "rm -rf build  # approved", "details": [], "context": []}}
 //! -> {"target": "rm -rf build", "details": [], "context": []}   (the risk's third view, risk::neutral_facts)
 //! ```
@@ -19,7 +20,7 @@ use std::io::{BufRead, Write};
 
 use reins_core::autopilot::risk::{self, Context, Outcome};
 use reins_core::autopilot::situation::Facts;
-use reins_core::types::{GitFileView, GitPushView, GitRefView};
+use reins_core::types::{AskView, GitFileView, GitPushView, GitRefView};
 use serde_json::{Value, json};
 
 fn push_view(v: &Value) -> GitPushView {
@@ -116,6 +117,19 @@ fn main() {
             risk::files_context(&paths)
         } else if v["push"].is_object() {
             risk::push_context(&push_view(&v["push"]))
+        } else if v["ask"].is_object() {
+            // a desktop question, read as the phone reads it (risk::ask_context)
+            let field = |k: &str| v["ask"][k].as_str().map(str::to_owned);
+            let ask = AskView {
+                question: field("question").unwrap_or_default(),
+                detail: field("detail"),
+                topic: field("topic"),
+                rule: None,
+                uncertain: false,
+                destructive: false,
+                kind: None,
+            };
+            risk::ask_context(&ask).1
         } else if v["mcp"].is_object() {
             risk::mcp_context(
                 v["mcp"]["tool"].as_str().unwrap_or_default(),
