@@ -75,7 +75,8 @@ internal fun Dock(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewMod
         }
         when {
             view.kind == ApprovalKind.GRANT -> GrantPeriodRow(view, ui)
-            rememberLocked(view, ui.draft) || view.purchase != null -> LockedRow()
+            // A red line on the field locks the chooser too: what it warns of is asked every time.
+            rememberLocked(view, ui.draft) || view.purchase != null || heldByDanger(view) -> LockedRow()
             else -> {
                 if (likeThisOn(view, ui.draft)) LikeThisNote()
                 envWiderLabel(view, ui.draft)?.let { EnvScopeNote(it) }
@@ -231,7 +232,7 @@ private fun Buttons(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewM
                     HoldButton("Hold to pay", c.danger, approveModifier.testTag("approve"), icon = Icons.Rounded.Fingerprint, enabled = !ui.busy, busy = ui.busy, onConfirm = pay)
                 }
             }
-            destructive(view) -> HoldButton(
+            heldByDanger(view) -> HoldButton(
                 "Hold to ${approveLabel(view, ui.draft).lowercase()}",
                 c.danger,
                 approveModifier.testTag("approve"),
