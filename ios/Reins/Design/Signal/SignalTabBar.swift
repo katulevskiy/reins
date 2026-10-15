@@ -10,7 +10,10 @@ struct SignalTabBar<Tab: Hashable>: View {
         var glyph: Glyph
         /// The UI-test identifier ("tab:activity").
         var identifier: String
+        /// A bypass runs: a red dot breathes on the glyph.
         var badge = false
+        /// How many wait (Activity): a count on the glyph, "99+" past 99.
+        var count = 0
 
         var id: String { identifier }
     }
@@ -27,21 +30,29 @@ struct SignalTabBar<Tab: Hashable>: View {
             ForEach(items) { item in
                 let chosen = item.tab == selection
                 Button {
-                    guard !chosen else { return }
+                    // The chosen tab again: back to its root, as a system tab bar does.
+                    guard !chosen else { return selection = item.tab }
                     withAnimation(Motion.of(Motion.tabSpring, reduce: reduceMotion)) { selection = item.tab }
                     feedback.play(.selection)
                 } label: {
                     HStack(spacing: 7) {
                         GlyphIcon(item.glyph, size: 20)
+                            .opacity(chosen ? 1 : 0.62)
                             .overlay(alignment: .topTrailing) {
                                 if item.badge { BreathingDot(color: Palette.fieldDelete, size: 7).offset(x: 3, y: -2) }
+                            }
+                            .overlay(alignment: .topTrailing) {
+                                if !chosen, item.count > 0 {
+                                    CountBadge(count: item.count, tint: Palette.fieldDelete)
+                                        .scaleEffect(0.85)
+                                        .offset(x: 11, y: -9)
+                                }
                             }
                         if chosen {
                             Text(item.title).font(RFont.sans(14.5, .semibold)).lineLimit(1).fixedSize()
                         }
                     }
                     .foregroundStyle(chosen ? Palette.ink : Palette.onInverse)
-                    .opacity(chosen ? 1 : 0.62)
                     .padding(.horizontal, chosen ? 16 : 0)
                     .frame(minWidth: 50, minHeight: 44)
                     .background {
@@ -53,6 +64,7 @@ struct SignalTabBar<Tab: Hashable>: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(item.title)
+                .accessibilityValue(item.count > 0 ? "\(item.count) waiting" : item.badge ? "Bypass on" : "")
                 .accessibilityAddTraits(chosen ? [.isSelected, .isButton] : .isButton)
                 .accessibilityIdentifier(item.identifier)
             }

@@ -125,7 +125,7 @@ struct ActivityScreen: View {
     private var controls: some View {
         HStack(spacing: 8) {
             // The page's Open cue is the sound (the button plays the default tap).
-            RoundPlusButton(label: "Integrations") { model.show(.integrations) }
+            RoundPlusButton(label: "Connections") { model.open(.connections) }
                 .accessibilityIdentifier("integrations")
             if let autopilot = model.autopilot {
                 AutopilotQuickPill(settings: autopilot, menuOpen: $quickOpen)

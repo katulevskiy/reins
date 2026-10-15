@@ -160,18 +160,20 @@ struct FormBanner: View {
 struct GrantCard: View {
     var grant: GrantView
     var now: Int64
+    /// A hairline row (Trust's list) instead of a card.
+    var row = false
 
     var body: some View {
         let clock = grantClock(grant, now: now)
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        HStack(alignment: .center, spacing: 13) {
+        HStack(alignment: .center, spacing: row ? 14 : 13) {
             ServiceMini(
                 service: grant.service, symbol: ActionKind.of(grant.action).symbol,
-                connectionId: grant.connectionId, label: grant.connectionLabel
+                connectionId: grant.connectionId, label: grant.connectionLabel, size: row ? 38 : 44
             )
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: row ? 2 : 4) {
                 Text(untrusted(grant.summary))
-                    .font(RFont.sans(15.5, .semibold))
+                    .font(row ? TextRole.row.font() : RFont.sans(15.5, .semibold))
                     .foregroundStyle(Palette.text)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -191,21 +193,40 @@ struct GrantCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            TimePie(clock: clock, size: 48)
+            TimePie(clock: clock, size: row ? 38 : 48)
         }
-        .padding(14)
-        .background {
-            if clock.soon {
-                shape.fill(LinearGradient(colors: [Palette.danger.opacity(0.07), Palette.danger.opacity(0.02)], startPoint: .top, endPoint: .bottom))
-                    .background(Palette.elevated, in: shape)
-            } else {
-                shape.fill(Palette.elevated)
-            }
-        }
-        .overlay(shape.strokeBorder(clock.soon ? Palette.danger.opacity(0.35) : Palette.hairline, lineWidth: 1))
-        .contentShape(shape)
+        .modifier(GrantCardSurface(row: row, soon: clock.soon, shape: shape))
+        .contentShape(row ? AnyShape(Rectangle()) : AnyShape(shape))
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens the grant")
+    }
+}
+
+/// A grant's card surface, or a hairline row's: rows are hairlines, never cards.
+private struct GrantCardSurface<S: InsettableShape>: ViewModifier {
+    var row: Bool
+    var soon: Bool
+    var shape: S
+
+    func body(content: Content) -> some View {
+        if row {
+            content
+                .padding(.vertical, 9)
+                .frame(minHeight: 56)
+                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        } else {
+            content
+                .padding(14)
+                .background {
+                    if soon {
+                        shape.fill(LinearGradient(colors: [Palette.danger.opacity(0.07), Palette.danger.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                            .background(Palette.elevated, in: shape)
+                    } else {
+                        shape.fill(Palette.elevated)
+                    }
+                }
+                .overlay(shape.strokeBorder(soon ? Palette.danger.opacity(0.35) : Palette.hairline, lineWidth: 1))
+        }
     }
 }
 
