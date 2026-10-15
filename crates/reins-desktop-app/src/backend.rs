@@ -39,7 +39,7 @@ const CLI_NAME: &str = if cfg!(windows) {
 /// How long starting the service may take before the app says it did not start.
 const SERVICE_START: Duration = Duration::from_secs(15);
 /// The most activity entries read.
-const ACTIVITY_LIMIT: usize = 500;
+pub const ACTIVITY_LIMIT: usize = 500;
 /// A request still "waiting" after this long was cut off (its process ended without writing the end).
 const STALE_AFTER: i64 = 3_600;
 

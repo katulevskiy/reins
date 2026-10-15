@@ -34,9 +34,9 @@ fn number(n: usize, pal: Palette) -> Div {
         .size(px(22.0))
         .rounded_full()
         .border(px(1.5))
-        .border_color(pal.accent)
-        .bg(pal.accent.opacity(0.15))
-        .text_color(pal.accent)
+        .border_color(pal.violet())
+        .bg(pal.violet().opacity(0.15))
+        .text_color(pal.violet())
         .text_size(px(11.5))
         .font_weight(FontWeight::SEMIBOLD)
         .child(n.to_string())
@@ -64,9 +64,9 @@ fn key_line(fingerprint: &str, pal: Palette) -> Div {
         .px(px(12.0))
         .py(px(10.0))
         .rounded(px(12.0))
-        .bg(pal.well())
+        .bg(pal.paper_sunken())
         .border_1()
-        .border_color(pal.hairline)
+        .border_color(pal.rule())
         .child(icon(Icon::ShieldCheck, 18.0, pal.success))
         .child(
             div()
@@ -75,7 +75,7 @@ fn key_line(fingerprint: &str, pal: Palette) -> Div {
                 .child(
                     div()
                         .text_size(px(11.5))
-                        .text_color(pal.tertiary)
+                        .text_color(pal.ink_meta())
                         .child(format!("{}'s key", capital(this_computer()))),
                 )
                 .child(
@@ -87,7 +87,7 @@ fn key_line(fingerprint: &str, pal: Palette) -> Div {
                 ),
         )
         .child(div().flex_1())
-        .child(div().text_size(px(12.0)).text_color(pal.tertiary).child("must match your phone"))
+        .child(div().text_size(px(12.0)).text_color(pal.ink_meta()).child("must match your phone"))
 }
 
 fn capital(s: &str) -> String {
@@ -161,8 +161,8 @@ impl Root {
                             .justify_center()
                             .size(px(QR + 2.0 * QR_FRAME))
                             .rounded(px(16.0))
-                            .bg(pal.control_fill)
-                            .child(waiting_dot("getting-code", pal.accent, 8.0)),
+                            .bg(pal.paper_sunken())
+                            .child(waiting_dot("getting-code", pal.violet(), 8.0)),
                     })
                     .child(
                         div()
@@ -171,9 +171,9 @@ impl Root {
                             .line_height(px(22.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(if code.is_some() {
-                                pal.text
+                                pal.ink()
                             } else {
-                                pal.tertiary
+                                pal.ink_meta()
                             })
                             .child(code.as_ref().map_or_else(|| "····-····".to_owned(), |c| c.user_code.clone())),
                     );
@@ -193,7 +193,7 @@ impl Root {
                                 .px(px(10.0))
                                 .rounded_full()
                                 .bg(pal.violet_fill())
-                                .text_color(pal.on_accent)
+                                .text_color(pal.on_field())
                                 .text_size(px(13.0))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(n.to_string()),
@@ -211,7 +211,7 @@ impl Root {
                 let get_app = chip_plain(Some(Icon::Download), "Get the app", pal)
                     .id("get-app")
                     .cursor_pointer()
-                    .hover(|s| s.text_color(pal.text))
+                    .hover(|s| s.text_color(pal.ink()))
                     .on_click(|_, _, cx| cx.open_url(crate::links::PHONE_APP));
                 let steps = div()
                     .flex()
@@ -249,7 +249,7 @@ impl Root {
                                 .gap(px(8.0))
                                 .text_size(px(15.0))
                                 .font_weight(FontWeight::MEDIUM)
-                                .child(waiting_dot("waiting", pal.accent, 8.0))
+                                .child(waiting_dot("waiting", pal.violet(), 8.0))
                                 .child("Finish in your browser"),
                         )
                         .when(!fingerprint.is_empty(), |c| {
@@ -288,7 +288,7 @@ impl Root {
             .flex_col()
             .items_center()
             .gap(px(16.0))
-            .child(stage(Mark::Icon(Icon::Laptop), Mark::Icon(Icon::Smartphone), None, pal.accent, 56.0, pal))
+            .child(stage(Mark::Icon(Icon::Laptop), Mark::Icon(Icon::Smartphone), None, pal.violet(), 56.0, pal))
             .child(welcome_title(
                 &pair_words(),
                 Some(help(
@@ -308,7 +308,7 @@ impl Root {
         if !matches!(pairing, Pairing::Browser | Pairing::Unavailable | Pairing::Approved { .. }) {
             more = more.child(
                 link("browser", "Use the browser", pal)
-                    .text_color(pal.secondary)
+                    .text_color(pal.ink_2())
                     .on_click(Self::on_model(cx, Model::sign_in_with_browser)),
             );
         }
@@ -323,7 +323,7 @@ impl Root {
                     },
                     pal,
                 )
-                .text_color(pal.tertiary)
+                .text_color(pal.ink_meta())
                 .on_click(Self::on_model(cx, Model::toggle_server)),
             );
         }

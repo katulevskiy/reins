@@ -207,32 +207,31 @@ impl Root {
             .track_focus(&focus)
             .flex_1()
             .min_w(px(0.0))
-            .h(px(34.0))
-            .px(px(11.0))
+            // The boards' input: 38 px, 12 px corners, paper with a hairline (violet while focused).
+            .h(px(38.0))
+            .px(px(12.0))
             .flex()
             .items_center()
             .overflow_hidden()
-            .rounded(px(9.0))
-            .bg(pal.well())
+            .rounded(px(12.0))
+            .bg(pal.paper())
             .border_1()
             .border_color(if focused {
-                pal.accent
-            } else if pal.dark {
-                pal.tile_border().opacity(0.8)
+                pal.violet()
             } else {
-                pal.hairline
+                pal.rule()
             })
             .font_family(MONO)
             .text_size(px(12.5))
             .text_color(if input.is_empty() && !focused {
-                pal.tertiary
+                pal.ink_faint()
             } else {
-                pal.text
+                pal.ink()
             })
             .cursor_text()
             .child(div().whitespace_nowrap().text_ellipsis_start().min_w(px(0.0)).child(shown))
             // The caret, drawn.
-            .when(focused, |f| f.child(div().flex_none().ml(px(1.0)).w(px(1.5)).h(px(15.0)).bg(pal.accent)))
+            .when(focused, |f| f.child(div().flex_none().ml(px(1.0)).w(px(1.5)).h(px(15.0)).bg(pal.violet())))
             .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| window.focus(&click_focus, cx)))
             .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| this.on_field_key(field, ev, cx)))
     }

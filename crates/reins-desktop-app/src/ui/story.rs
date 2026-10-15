@@ -16,14 +16,14 @@ pub struct Words {
     pub bold: bool,
 }
 
-fn plain(text: impl Into<String>) -> Words {
+pub fn plain(text: impl Into<String>) -> Words {
     Words {
         text: text.into(),
         bold: false,
     }
 }
 
-fn bold(text: impl Into<String>) -> Words {
+pub fn bold(text: impl Into<String>) -> Words {
     Words {
         text: text.into(),
         bold: true,
@@ -52,6 +52,10 @@ pub struct Story {
     pub risk: Option<&'static str>,
     /// The value row of the detail: what it is called and the value ("Command", `git push --force`).
     pub fact: Option<(&'static str, String)>,
+    /// The ask on a field, imperative, its target in italic: "Force-push to *acme-web · main*".
+    pub ask: Vec<Words>,
+    /// The label line's two parts, the kind and the action: ("git", "Force push").
+    pub label: (String, String),
 }
 
 /// The built-in rule group an entry was asked by ("(Rewriting git history)" on its `Rule:` line).
@@ -217,6 +221,8 @@ impl Story {
             badge: Icon::Terminal,
             risk: None,
             fact: None,
+            ask: vec![plain(e.what.clone())],
+            label: (kind.to_owned(), "Run".to_owned()),
         };
         match e.kind {
             Kind::Command => {
@@ -240,6 +246,8 @@ impl Story {
                     s.sentence =
                         vec![plain(format!("{who}{}", wants(e))), bold("force-push"), plain(" to "), bold(&to)];
                     s.title = format!("Force-push to {to}");
+                    s.ask = vec![plain("Force-push to "), bold(&to)];
+                    s.label = ("git".to_owned(), "Force push".to_owned());
                     s.icon = Icon::GitBranch;
                     s.badge = Icon::GitBranch;
                     s.target = Mark::Icon(Icon::GitBranch);
@@ -247,12 +255,15 @@ impl Story {
                     let what = first.iter().skip(1).filter(|a| !a.starts_with('-')).copied().collect::<Vec<_>>();
                     s.sentence =
                         vec![plain(format!("{who}{}", wants(e))), bold("delete"), plain(" "), bold(what.join(" "))];
+                    s.ask = vec![plain("Delete "), bold(what.join(" "))];
+                    "Delete".clone_into(&mut s.label.1);
                     s.title = cmd;
                     s.icon = Icon::Trash;
                     s.badge = Icon::Trash;
                     s.target = Mark::Icon(Icon::HardDrive);
                 } else {
                     s.sentence = vec![plain(format!("{who}{}", wants(e))), plain("run "), bold(&cmd)];
+                    s.ask = vec![plain("Run "), bold(&cmd)];
                     s.title = cmd;
                     s.target = Mark::Icon(Icon::SquareTerminal);
                 }
@@ -270,6 +281,8 @@ impl Story {
                 s.target = Mark::Icon(group.map_or(Icon::FileLock, group_icon));
                 s.sentence = vec![plain(format!("{who}{}", wants(e))), bold(verb), plain(" "), bold(path)];
                 s.title = format!("{} {path}", capitalised(verb));
+                s.ask = vec![plain(format!("{} ", capitalised(verb))), bold(path)];
+                s.label.1 = capitalised(verb);
                 s.fact = Some(("File", path.to_owned()));
             }
             Kind::Mcp => {
@@ -297,6 +310,12 @@ impl Story {
                     Some(service) => format!("{} with {service}", capitalised(&verb)),
                     None => capitalised(&verb),
                 };
+                s.ask = match &service {
+                    Some(service) => vec![plain(format!("{} with ", capitalised(&verb))), bold(service)],
+                    None => vec![plain("Use "), bold(&tool)],
+                };
+                s.label =
+                    (service.unwrap_or_else(|| kind.to_owned()), capitalised(verb.split(' ').next().unwrap_or("use")));
                 s.fact = Some(("Tool", tool));
             }
             Kind::Git => {
@@ -309,6 +328,8 @@ impl Story {
                 s.target = Brand::of_host(host).map_or(Mark::Icon(Icon::GitBranch), Mark::Brand);
                 s.sentence = vec![plain(format!("git{}", wants(e))), bold(&verb), plain(" to "), bold(&to)];
                 s.title = format!("{} to {to}", capitalised(&verb));
+                s.ask = vec![plain(format!("{} to ", capitalised(&verb))), bold(&to)];
+                s.label = ("git".to_owned(), capitalised(&verb));
                 let host_name = host.split('/').next().unwrap_or(host);
                 s.who = format!("git · {host_name}");
                 s.fact = Some(("Repository", host.to_owned()));
@@ -337,6 +358,8 @@ impl Story {
                 let who = caller.unwrap_or(who);
                 s.sentence = vec![plain(format!("{who}{}", wants(e))), plain("use "), bold(format!("the {name} key"))];
                 s.title = format!("The key for {name}");
+                s.ask = vec![plain("Use "), bold(format!("the {name} key"))];
+                "Use".clone_into(&mut s.label.1);
                 "API key".clone_into(&mut s.who);
                 s.fact = Some(("API", name));
             }
@@ -354,6 +377,8 @@ impl Story {
                     None => format!("ssh {host}"),
                 };
                 "SSH".clone_into(&mut s.who);
+                s.ask = vec![plain("Sign in to "), bold(&host)];
+                s.label = ("SSH".to_owned(), "Sign in".to_owned());
                 s.fact = Some(("Host", host));
             }
             Kind::Secrets => {
@@ -370,6 +395,8 @@ impl Story {
                     bold(&what),
                 ];
                 s.title = format!("Secrets for {what}");
+                s.ask = vec![plain("Get secrets for "), bold(&what)];
+                "Get".clone_into(&mut s.label.1);
                 s.fact = Some(("Command", what));
             }
             Kind::Ask => {
@@ -378,31 +405,10 @@ impl Story {
                 s.badge = Icon::Question;
                 s.target = Mark::Icon(Icon::Smartphone);
                 s.sentence = vec![plain(format!("{who} asks: ")), bold(&e.what)];
+                "Ask".clone_into(&mut s.label.1);
             }
         }
         s
-    }
-}
-
-/// How a row ends: an icon in a colour, or a chip.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ending {
-    Icon(Icon, Tone),
-    /// "By your rules" (let through without asking).
-    Rules,
-    /// "Waiting", violet.
-    Waiting,
-}
-
-#[must_use]
-pub fn ending(e: &Entry) -> Ending {
-    match e.outcome {
-        Outcome::Waiting => Ending::Waiting,
-        Outcome::Approved => Ending::Icon(Icon::CircleCheck, Tone::Success),
-        Outcome::Denied | Outcome::Blocked => Ending::Icon(Icon::CircleX, Tone::Field(Field::Delete)),
-        Outcome::TimedOut => Ending::Icon(Icon::TimerOff, Tone::Field(Field::Warn)),
-        Outcome::Failed => Ending::Icon(Icon::CircleAlert, Tone::Field(Field::Delete)),
-        Outcome::Allowed => Ending::Rules,
     }
 }
 
@@ -423,6 +429,145 @@ pub fn answer(e: &Entry, phone: &str) -> (Icon, Tone, String) {
         Outcome::Allowed => (Icon::Check, Tone::Neutral, "Allowed by your rules".to_owned()),
         Outcome::Blocked => (Icon::CircleX, Tone::Field(Field::Delete), "Blocked by your rules".to_owned()),
     }
+}
+
+/// The field a request waits on: its kind's ([`Field::of`]), or delete when a rule says it can't be undone, read when
+/// a tool only reads.
+#[must_use]
+pub fn field_of(e: &Entry) -> Field {
+    match Story::of(e).tone {
+        // git's decided rows wear teal; asking, a push is a push.
+        Tone::Field(Field::Pair) | Tone::Neutral | Tone::Success => Field::of(e.kind),
+        Tone::Field(f) => f,
+    }
+}
+
+/// Who asks, and where from: "Claude Code · ~/code/acme-web".
+#[must_use]
+pub fn who_from(e: &Entry) -> String {
+    let who = who_of(e);
+    match e.detail.as_deref().and_then(|d| d.lines().find_map(|l| l.trim().strip_prefix("In:"))) {
+        Some(dir) if !dir.trim().is_empty() => format!("{who} · {}", dir.trim()),
+        _ => who,
+    }
+}
+
+/// A fact about a request, as a row: its key, its value, and whether the value is the machine's (mono).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fact {
+    pub key: String,
+    pub value: String,
+    pub mono: bool,
+}
+
+fn fact(key: &str, value: impl Into<String>, mono: bool) -> Fact {
+    Fact {
+        key: key.to_owned(),
+        value: value.into(),
+        mono,
+    }
+}
+
+/// What a request does, as rows ("Command", "In", "Rule", …), read from its detail's `Key: value` lines; and the
+/// detail's other lines (commit messages, a question's text), for the transcript.
+#[must_use]
+pub fn facts(e: &Entry) -> (Vec<Fact>, Vec<String>) {
+    let mut rows = Vec::new();
+    let mut rest = Vec::new();
+    let mut lines = e.detail.as_deref().unwrap_or("").lines().map(str::trim).peekable();
+    while let Some(line) = lines.next() {
+        if line.is_empty() {
+            continue;
+        }
+        if line == "Command:" {
+            if let Some(cmd) = lines.next_if(|l| !l.is_empty()) {
+                rows.push(fact("Command", cmd, true));
+            }
+            continue;
+        }
+        let known = [
+            ("Command:", "Command", true),
+            ("In:", "In", true),
+            ("File:", "File", true),
+            ("Arguments:", "Arguments", true),
+            ("Secret:", "Secret", true),
+            ("Secrets:", "Secrets", true),
+            ("Key:", "Key", false),
+            ("Lease:", "Held for", false),
+            ("Rule:", "Rule", false),
+            ("Allowed by your rule:", "Rule", true),
+        ];
+        match known.iter().find_map(|(prefix, key, mono)| line.strip_prefix(prefix).map(|v| (key, v.trim(), mono))) {
+            // A built-in rule by its name ("Rewriting git history"), else as written.
+            Some((&"Rule", value, _)) => {
+                let named = value.rsplit_once('(').and_then(|(_, n)| n.strip_suffix(')'));
+                rows.push(named.map_or_else(|| fact("Rule", value, true), |n| fact("Rule", n, false)));
+            }
+            Some((key, value, mono)) => rows.push(fact(key, value, *mono)),
+            None => rest.push(line.to_owned()),
+        }
+    }
+    match e.kind {
+        Kind::Git => {
+            if let Some(host) = e.service.as_deref() {
+                rows.insert(0, fact("Repository", host, true));
+            }
+            // The first line counts the commits ("3 commits to main").
+            if !rest.is_empty() && rest[0].contains("commit") {
+                rows.push(fact("Commits", rest.remove(0), false));
+            }
+            rows.push(fact("The token", "stays on your phone", false));
+        }
+        Kind::Api | Kind::Ssh => {
+            if let Some((label, value)) = Story::of(e).fact {
+                rows.insert(0, fact(label, value, true));
+            }
+            // The API's caller line is the agent's, said above.
+            rest.retain(|l| !l.contains(" calls "));
+            rows.push(fact("The key", "stays on your phone", false));
+        }
+        Kind::Mcp => {
+            if let Some(tool) = e.service.as_deref() {
+                rows.insert(0, fact("Tool", tool, true));
+            }
+        }
+        Kind::Command | Kind::File | Kind::Secrets | Kind::Ask => {}
+    }
+    (rows, rest)
+}
+
+/// The request as a terminal would have shown it: the command, what Reins did, and what the agent was told.
+#[must_use]
+pub fn transcript(e: &Entry, phone: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let (rows, rest) = facts(e);
+    if let Some(cmd) = rows.iter().find(|f| f.key == "Command") {
+        lines.push(format!("$ {}", cmd.value));
+    } else {
+        lines.push(format!("reins: {}", e.what));
+    }
+    lines.extend(rest);
+    let took = e.ended_at.map(|end| crate::format::duration(end - e.at));
+    let after = |words: String| match &took {
+        Some(t) => format!("reins: {words} ({t})"),
+        None => format!("reins: {words}"),
+    };
+    if e.decider == Decider::Phone {
+        lines.push(format!("reins: asking {phone}…"));
+    }
+    match e.outcome {
+        Outcome::Waiting => {}
+        Outcome::Approved => lines.push(after(format!("approved on {phone}"))),
+        Outcome::Denied => lines.push(after(format!("denied on {phone}"))),
+        Outcome::TimedOut => lines.push(after(format!("no answer from {phone}"))),
+        Outcome::Failed => lines.push(format!("reins: couldn't ask {phone}")),
+        Outcome::Allowed => lines.push("reins: allowed by your rules".to_owned()),
+        Outcome::Blocked => lines.push("reins: blocked by your rules".to_owned()),
+    }
+    if let Some(reason) = e.reason.as_deref().filter(|_| e.outcome != Outcome::Approved) {
+        lines.push(format!("{} was told: {reason}", who_of(e)));
+    }
+    lines
 }
 
 /// How long the phone has to answer `e`, in seconds: the hooks' wait for commands and files, the approvals' for the
@@ -558,12 +703,12 @@ mod tests {
     #[test]
     fn endings_and_answers() {
         let mut e = entry(Kind::Git, None, None, "push", None);
-        assert_eq!(ending(&e), Ending::Waiting);
+        assert_eq!(answer(&e, "Dana's iPhone").2, "Waiting on your phone");
         e.outcome = Outcome::Approved;
         assert_eq!(answer(&e, "Dana's iPhone").2, "Approved on Dana's iPhone");
         e.outcome = Outcome::Allowed;
         e.decider = Decider::Settings;
-        assert_eq!(ending(&e), Ending::Rules);
+        assert_eq!(answer(&e, "Dana's iPhone").2, "Allowed by your rules");
         assert_eq!(wait_secs(Kind::Command, 120, 300), 120);
         assert_eq!(wait_secs(Kind::Git, 120, 300), 300);
     }
