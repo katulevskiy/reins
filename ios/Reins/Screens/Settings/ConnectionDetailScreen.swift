@@ -318,7 +318,7 @@ private struct ConnectionAutopilotGroup: View {
         }
     }
 
-    /// Ends this AI's bypass: it goes back to its own setting (an Overnight under it carries on until its end).
+    /// Ends this AI's bypass: it goes back to its own setting (never to Overnight: the bypass ended that).
     private func stopBypass() {
         feedback.play(.bypassOff)
         let (id, s) = (connection.id, settings)
