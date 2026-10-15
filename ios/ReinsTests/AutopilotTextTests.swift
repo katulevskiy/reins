@@ -280,12 +280,6 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertEqual([AutopilotText.whenRiskyWait, AutopilotText.whenRiskyDeny], ["Wait for me", "Deny it"])
     }
 
-    func testAnOvernightThatRunsOnIsStartedAgainForTheMinutesItHasLeft() {
-        XCTAssertNil(AutopilotText.minutesLeft(until: AutopilotText.untilOff, now: 0))
-        XCTAssertEqual(AutopilotText.minutesLeft(until: 1_000 + 61, now: 1_000), 2, "the last minute counts")
-        XCTAssertEqual(AutopilotText.minutesLeft(until: 1_000, now: 1_000), 1, "never 0, which the core refuses")
-    }
-
     func testTheRiskReadsAsItsLevelAndWhy() {
         XCTAssertEqual(AutopilotText.riskLine(RiskView(level: .severe, pCatastrophic: 0.2, why: "force push", held: false)), "Risk: severe · force push")
         XCTAssertEqual(AutopilotText.riskLine(RiskView(level: .catastrophic, pCatastrophic: 0.9, why: "  ", held: true)), "Risk: catastrophic")

@@ -161,7 +161,7 @@ private struct ConnectionAutopilotGroup: View {
             OvernightSheet(who: label, ap: ap) { length in
                 feedback.quietClose()
                 error = nil
-                Task { await ap.startOvernight(connectionId: connection.id, minutes: length.minutes, label: label) }
+                Task { await ap.startOvernight(connectionId: connection.id, minutes: length.minutes) }
             }
             .environment(\.feedback, feedback)
         }
@@ -311,7 +311,7 @@ private struct ConnectionAutopilotGroup: View {
         Task {
             guard await model.authenticator.confirm("Turn on Bypass for \(who)") else { return }
             feedback.play(.bypassOn)
-            model.patchAutopilot { $0.applyBypass(minutes: minutes, connectionId: id) }
+            model.patchAutopilot { $0.applyBypass(minutes: minutes, connectionId: id, overnightReturn: OvernightReturn.mode(id)) }
             run {
                 try await model.core.startBypass(connectionId: id, minutes: minutes)
             }

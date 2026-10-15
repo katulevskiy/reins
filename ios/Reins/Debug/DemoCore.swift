@@ -1120,6 +1120,27 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         return globalBase(s)
     }
 
+    /// A connection's mode in force (the core's `modes::effective`): Lockdown, then a bypass, then its own Overnight,
+    /// then the global one (not for an AI kept on Manual).
+    private static func effective(_ s: State, _ row: ApRow, now: Int64) -> AutopilotMode {
+        let global = globalMode(s)
+        let own = row.base(now)
+        if global == .lockdown || row.mode == .lockdown { return .lockdown }
+        if (row.bypassUntil ?? 0) > now || global == .bypass { return .bypass }
+        if row.overnighting(now) || (s.apGlobal.overnighting(now) && own != .manual) { return .overnight }
+        return own ?? global
+    }
+
+    /// A bypass ends the Overnight of its scope, as in the core: when the bypass ends, the row is back in the mode that
+    /// Overnight interrupted, never in Overnight without the owner.
+    private static func endOvernightForBypass(_ row: inout ApRow) {
+        guard row.mode == .overnight else { return }
+        row.mode = row.overnightReturn
+        row.overnightUntil = nil
+        row.overnightSince = nil
+        row.overnightReturn = nil
+    }
+
     func setModelRuntime(runtime: ModelRuntime) {}
 
     func autopilotSettings() async throws -> AutopilotSettings {
@@ -1128,18 +1149,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             let global = Self.globalMode(s)
             let defaultId = Self.defaultProfile(s)?.id ?? ""
             let rows = s.apConnections.sorted { $0.key < $1.key }.map { id, row in
-                // As the core's `modes::effective`: Lockdown, then a bypass, then its own Overnight, then the global one
-                // (not for an AI kept on Manual).
                 let own = row.base(now)
-                let mode: AutopilotMode = if global == .lockdown || row.mode == .lockdown {
-                    .lockdown
-                } else if (row.bypassUntil ?? 0) > now || global == .bypass {
-                    .bypass
-                } else if row.overnighting(now) || (s.apGlobal.overnighting(now) && own != .manual) {
-                    .overnight
-                } else {
-                    own ?? global
-                }
+                let mode = Self.effective(s, row, now: now)
                 let running = (row.bypassUntil ?? 0) > now
                 let night = row.overnighting(now)
                 return ConnectionAutopilot(connectionId: id, baseMode: own, bypassUntil: running ? row.bypassUntil : nil,
@@ -1159,16 +1170,27 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    /// Bypass runs for `minutes` (15 by default), Overnight for `minutes` or until turned off; Lockdown also refuses every
-    /// request that is waiting.
+    /// Bypass runs for `minutes` (15 by default); Lockdown also refuses every request that is waiting. As in the core,
+    /// it never starts Overnight, nor puts an AI kept on Manual into a global one: that is `startOvernight`, after the
+    /// owner's check.
     func setAutopilotMode(connectionId: String?, mode: AutopilotMode?, minutes: UInt32?) async throws {
         if mode == .overnight {
-            try await startOvernight(connectionId: connectionId, minutes: minutes)
-            return
+            throw CoreError.Invalid(reason: "Overnight starts with start_overnight, after the owner check")
         }
-        locked { s in
+        try locked { s in
             var row = connectionId.map { s.apConnections[$0] ?? ApRow() } ?? s.apGlobal
+            if connectionId != nil && mode != .bypass {
+                let now = Self.now()
+                var after = row
+                after.mode = mode
+                after.bypassUntil = nil
+                after.overnightUntil = nil
+                if Self.effective(s, row, now: now) != .overnight && Self.effective(s, after, now: now) == .overnight {
+                    throw CoreError.Invalid(reason: "this would put the AI in Overnight: start it with start_overnight, after the owner check")
+                }
+            }
             if mode == .bypass {
+                Self.endOvernightForBypass(&row)
                 row.mode = row.mode == .lockdown ? nil : row.mode
                 row.bypassUntil = Self.now() + Int64(minutes ?? 15) * 60
                 row.bypassSince = Self.now()
@@ -1204,6 +1226,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 throw CoreError.Invalid(reason: "a connection paired less than 10 minutes ago cannot be bypassed")
             }
             var row = connectionId.map { s.apConnections[$0] ?? ApRow() } ?? s.apGlobal
+            Self.endOvernightForBypass(&row)
             row.mode = row.mode == .lockdown ? nil : row.mode
             row.bypassUntil = minutes.map { now + Int64($0) * 60 } ?? .max
             row.bypassSince = now
@@ -1211,14 +1234,21 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    /// As the core: a minute to a year, or until turned off; it keeps the mode it interrupted (Lockdown is not kept: it
-    /// returns to the default) and leaves a bypass of the same scope running.
-    func startOvernight(connectionId: String?, minutes: UInt32?) async throws {
+    /// As the core: a minute to a year, or until turned off, after the owner confirmed (asked in the core's words); it
+    /// keeps the mode it interrupted (Lockdown is not kept: it returns to the default) and leaves a bypass of the same
+    /// scope running.
+    func startOvernight(connectionId: String?, minutes: UInt32?, owner: OwnerCheck) async throws {
+        if let minutes, minutes < 1 || minutes > 525_600 {
+            throw CoreError.Invalid(reason: "Overnight lasts between 1 minute and 365 days")
+        }
+        let reason = switch minutes {
+        case let m? where m % 60 == 0: "Start Overnight for \(m / 60) h"
+        case let m?: "Start Overnight for \(m) min"
+        case nil: "Start Overnight until you turn it off"
+        }
+        try await Self.confirmOwner(owner, reason)
         try locked { s in
             let now = Self.now()
-            if let minutes, minutes < 1 || minutes > 525_600 {
-                throw CoreError.Invalid(reason: "Overnight lasts between 1 minute and 365 days")
-            }
             var row = connectionId.map { s.apConnections[$0] ?? ApRow() } ?? s.apGlobal
             let back: AutopilotMode? = switch row.mode {
             case .lockdown?: nil
@@ -1233,7 +1263,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    func setOvernightWhenRisky(risky: OvernightRisky) async throws { locked { $0.overnightWhenRisky = risky } }
+    /// A change either way asks the owner first, as in the core.
+    func setOvernightWhenRisky(risky: OvernightRisky, owner: OwnerCheck) async throws {
+        if locked({ $0.overnightWhenRisky }) == risky { return }
+        try await Self.confirmOwner(owner, risky == .wait ? "Overnight: wait for you when something is too risky" : "Overnight: deny what is too risky")
+        locked { $0.overnightWhenRisky = risky }
+    }
+
+    /// Refuses unless the owner confirmed now (a cancel or an error refuses too).
+    private static func confirmOwner(_ owner: OwnerCheck, _ reason: String) async throws {
+        let confirmed = (try? await owner.confirm(reason: reason)) ?? false
+        if !confirmed { throw CoreError.Invalid(reason: "the owner did not confirm") }
+    }
 
     /// From the profiles' fake numbers: what they remember stands for what was scored this week.
     func autopilotStats(days: UInt32) async throws -> AutopilotStats {

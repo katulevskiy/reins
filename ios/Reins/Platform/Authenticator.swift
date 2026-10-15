@@ -39,6 +39,21 @@ final class Authenticator: Authenticating {
     }
 }
 
+/// The core's `OwnerCheck`: the core asks it itself, in its own words, before what only the owner may do (starting
+/// Overnight or changing its length, changing what it does with what is too risky). It is the same check as a
+/// bypass's, `Authenticator` in the app (Face ID or Touch ID, else the passcode), so it fails closed the same way.
+final class AuthenticatorOwnerCheck: OwnerCheck, @unchecked Sendable {
+    private let authenticator: Authenticating
+
+    init(_ authenticator: Authenticating) {
+        self.authenticator = authenticator
+    }
+
+    func confirm(reason: String) async throws -> Bool {
+        await authenticator.confirm(reason)
+    }
+}
+
 /// Always says yes: the `-demo` build and UI tests (the simulator has no enrolled face by default).
 final class TrustingAuthenticator: Authenticating {
     func confirm(_ reason: String) async -> Bool { true }

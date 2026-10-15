@@ -540,21 +540,19 @@ final class AppModel {
         await refreshAutopilot()
     }
 
-    /// Ends the bypass of `connectionId` (nil: the global one) and puts back the mode under it. An Overnight it ran
-    /// over carries on until its own end: the core clears a bypass only by setting a mode, so this sets the mode that
-    /// Overnight interrupted and starts Overnight again for the time it had left (no new owner check: it was confirmed
-    /// when it started).
-    func endBypass(_ connectionId: String?, in s: AutopilotSettings, now: Int64 = Int64(Date().timeIntervalSince1970)) async throws {
+    /// Ends the bypass of `connectionId` (nil: the global one) and puts back the mode under it. A bypass ended any
+    /// Overnight of its scope when it started (the core returns to the mode that Overnight interrupted), so this never
+    /// lands on Overnight: that only starts again through `startOvernight`, after the owner's check.
+    func endBypass(_ connectionId: String?, in s: AutopilotSettings) async throws {
         let own = connectionId.flatMap { id in s.connections.first { $0.connectionId == id } }
         let base = connectionId == nil ? s.baseMode : own?.baseMode
-        let overnight = connectionId == nil ? s.overnightUntil : own?.overnightUntil
-        if base == .overnight, let until = overnight, until > now {
-            try await core.setAutopilotMode(connectionId: connectionId, mode: OvernightReturn.mode(connectionId), minutes: nil)
-            try await core.startOvernight(connectionId: connectionId, minutes: AutopilotText.minutesLeft(until: until, now: now))
-        } else {
-            try await core.setAutopilotMode(connectionId: connectionId, mode: base, minutes: nil)
-        }
+        let back = base == .overnight ? OvernightReturn.mode(connectionId) : base
+        try await core.setAutopilotMode(connectionId: connectionId, mode: back, minutes: nil)
     }
+
+    /// The owner's check the core asks for itself before starting Overnight, changing its length or what it does with
+    /// what is too risky: the same check as a bypass's.
+    var ownerCheck: OwnerCheck { AuthenticatorOwnerCheck(authenticator) }
 
     /// Stops the Overnight of `connectionId` (nil: every AI's): back to the mode it interrupted. Setting that mode ends
     /// a bypass of the same scope too, which only ever makes Autopilot stricter.

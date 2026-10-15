@@ -160,14 +160,6 @@ enum AutopilotText {
 
     static func overnightText(scope: String) -> String { "For \(scope). Holds what is too risky." }
 
-    /// What an Overnight that runs on still has, in whole minutes (the last one counts), to start it again for that
-    /// long; nil when it runs until turned off.
-    static func minutesLeft(until: Int64, now: Int64) -> UInt32? {
-        if isUntilOff(until) { return nil }
-        let left = Swift.max((until - now + 59) / 60, 1)
-        return UInt32(Swift.min(left, Int64(maxBypassMinutes)))
-    }
-
     /// Under the Overnight sheet's title.
     static let overnightSummary = "Decides like Auto. Holds what is too risky."
 

@@ -69,7 +69,7 @@ struct ConnectionAutopilotContent: View {
         .sheet(isPresented: $bypassAsk) {
             BypassSheet(who: name) { length in
                 feedback.quietClose()
-                Task { await ap.startBypass(connectionId: connectionId, minutes: length.minutes, label: name) }
+                Task { await ap.startBypass(connectionId: connectionId, minutes: length.minutes) }
             }
             .environment(\.feedback, feedback)
         }
@@ -77,7 +77,7 @@ struct ConnectionAutopilotContent: View {
         .sheet(isPresented: $overnightAsk) {
             OvernightSheet(who: name, ap: ap) { length in
                 feedback.quietClose()
-                Task { await ap.startOvernight(connectionId: connectionId, minutes: length.minutes, label: name) }
+                Task { await ap.startOvernight(connectionId: connectionId, minutes: length.minutes) }
             }
             .environment(\.feedback, feedback)
         }
