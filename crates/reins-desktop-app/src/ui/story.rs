@@ -7,7 +7,7 @@ use reins_desktop::guard::GROUPS;
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
 use super::icons::{Brand, Icon, Mark};
-use crate::theme::Tone;
+use crate::theme::{Field, Tone};
 
 /// One piece of a sentence; `bold` ones are the words that matter.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,7 +38,7 @@ pub struct Story {
     pub title: String,
     /// Who and what kind: "Claude Code · Command".
     pub who: String,
-    /// The colour of the request: red for history rewrites and deletes, teal for git, …
+    /// The kind of the request, as its colour: delete for history rewrites and deletes, pair (teal) for git, …
     pub tone: Tone,
     /// The kind's icon, in a square of the tone.
     pub icon: Icon,
@@ -62,16 +62,15 @@ fn group_of(e: &Entry) -> Option<&'static str> {
     GROUPS.iter().find(|g| g.label == label).map(|g| g.id)
 }
 
-/// How risky a built-in rule group is, as its colour: red rewrites or wipes, orange changes infrastructure or data,
-/// yellow publishes or pays, blue reaches secrets.
+/// How risky a built-in rule group is, as its field: what can't be undone (rewrites, wipes, payments) is delete,
+/// what changes infrastructure or data or publishes is push, what reaches secrets is read.
 #[must_use]
 pub fn group_tone(id: &str) -> Tone {
-    match id {
-        "git-history" | "deletes" | "disks" => Tone::Red,
-        "infrastructure" | "databases" => Tone::Orange,
-        "publishing" | "payments" => Tone::Yellow,
-        _ => Tone::Blue,
-    }
+    Tone::Field(match id {
+        "git-history" | "deletes" | "disks" | "payments" => Field::Delete,
+        "infrastructure" | "databases" | "publishing" => Field::Push,
+        _ => Field::Read,
+    })
 }
 
 /// A built-in rule group's icon.
@@ -211,7 +210,7 @@ impl Story {
             sentence: vec![plain(e.what.clone())],
             title: e.what.clone(),
             who: who_line,
-            tone: Tone::Gray,
+            tone: Tone::Field(Field::Push),
             icon: Icon::SquareTerminal,
             agent,
             target: Mark::Icon(Icon::SquareTerminal),
@@ -227,7 +226,7 @@ impl Story {
                 let force_push = first.starts_with(&["git", "push"])
                     && first.iter().any(|a| matches!(*a, "--force" | "-f" | "--force-with-lease"));
                 let delete = first.first().is_some_and(|c| matches!(*c, "rm" | "rd" | "rmdir" | "Remove-Item"));
-                s.tone = group.map_or(Tone::Gray, group_tone);
+                s.tone = group.map_or(Tone::Field(Field::Push), group_tone);
                 s.risk = group.and_then(group_risk);
                 s.icon = group.map_or(Icon::SquareTerminal, group_icon);
                 s.badge = s.icon;
@@ -265,7 +264,7 @@ impl Story {
                     .and_then(|(_, rest)| rest.split_once(' '))
                     .map_or(("open", e.what.as_str()), |(v, p)| (v, p));
                 let group = group_of(e);
-                s.tone = Tone::Orange;
+                s.tone = Tone::Field(Field::Read);
                 s.icon = Icon::FileLock;
                 s.badge = Icon::FileLock;
                 s.target = Mark::Icon(group.map_or(Icon::FileLock, group_icon));
@@ -276,7 +275,12 @@ impl Story {
             Kind::Mcp => {
                 let tool = e.service.clone().unwrap_or_else(|| e.what.clone());
                 let (verb, service, target, badge) = mcp_parts(&tool);
-                s.tone = Tone::Orange;
+                // Reads and searches are read; everything else a tool does acts (push).
+                s.tone = Tone::Field(if badge == Icon::Mail {
+                    Field::Read
+                } else {
+                    Field::Push
+                });
                 s.icon = if target == Mark::Brand(Brand::Gmail) {
                     Icon::Mail
                 } else {
@@ -298,7 +302,7 @@ impl Story {
             Kind::Git => {
                 let (verb, to) = git_parts(&e.what);
                 let host = e.service.as_deref().unwrap_or("");
-                s.tone = Tone::Teal;
+                s.tone = Tone::Field(Field::Pair);
                 s.icon = Icon::GitBranch;
                 s.badge = Icon::GitBranch;
                 s.agent = Mark::Icon(Icon::Laptop);
@@ -312,7 +316,7 @@ impl Story {
             Kind::Api => {
                 let name =
                     e.service.clone().or_else(|| e.what.rsplit(' ').next().map(str::to_owned)).unwrap_or_default();
-                s.tone = Tone::Yellow;
+                s.tone = Tone::Field(Field::Read);
                 s.icon = Icon::KeyRound;
                 s.badge = Icon::KeyRound;
                 s.target = if name.contains("anthropic") {
@@ -339,7 +343,7 @@ impl Story {
             Kind::Ssh => {
                 let host = e.service.clone().unwrap_or_default();
                 let key = e.what.split_once(" with ").map(|(_, k)| k.to_owned());
-                s.tone = Tone::Gray;
+                s.tone = Tone::Neutral;
                 s.icon = Icon::Terminal;
                 s.badge = Icon::KeyRound;
                 s.agent = Mark::Icon(Icon::Laptop);
@@ -354,7 +358,7 @@ impl Story {
             }
             Kind::Secrets => {
                 let what = e.what.strip_prefix("secrets for ").unwrap_or(&e.what).trim_matches('`').to_owned();
-                s.tone = Tone::Violet;
+                s.tone = Tone::Field(Field::Grant);
                 s.icon = Icon::Lock;
                 s.badge = Icon::KeyRound;
                 s.target = Mark::Icon(Icon::Lock);
@@ -369,7 +373,7 @@ impl Story {
                 s.fact = Some(("Command", what));
             }
             Kind::Ask => {
-                s.tone = Tone::Violet;
+                s.tone = Tone::Field(Field::Grant);
                 s.icon = Icon::Question;
                 s.badge = Icon::Question;
                 s.target = Mark::Icon(Icon::Smartphone);
@@ -394,10 +398,10 @@ pub enum Ending {
 pub fn ending(e: &Entry) -> Ending {
     match e.outcome {
         Outcome::Waiting => Ending::Waiting,
-        Outcome::Approved => Ending::Icon(Icon::CircleCheck, Tone::Green),
-        Outcome::Denied | Outcome::Blocked => Ending::Icon(Icon::CircleX, Tone::Red),
-        Outcome::TimedOut => Ending::Icon(Icon::TimerOff, Tone::Yellow),
-        Outcome::Failed => Ending::Icon(Icon::CircleAlert, Tone::Red),
+        Outcome::Approved => Ending::Icon(Icon::CircleCheck, Tone::Success),
+        Outcome::Denied | Outcome::Blocked => Ending::Icon(Icon::CircleX, Tone::Field(Field::Delete)),
+        Outcome::TimedOut => Ending::Icon(Icon::TimerOff, Tone::Field(Field::Warn)),
+        Outcome::Failed => Ending::Icon(Icon::CircleAlert, Tone::Field(Field::Delete)),
         Outcome::Allowed => Ending::Rules,
     }
 }
@@ -411,13 +415,13 @@ pub fn answer(e: &Entry, phone: &str) -> (Icon, Tone, String) {
         Decider::Settings => format!("{word} by your rules"),
     };
     match e.outcome {
-        Outcome::Waiting => (Icon::Smartphone, Tone::Violet, "Waiting on your phone".to_owned()),
-        Outcome::Approved => (Icon::Smartphone, Tone::Green, on("Approved")),
-        Outcome::Denied => (Icon::Smartphone, Tone::Red, on("Denied")),
-        Outcome::TimedOut => (Icon::TimerOff, Tone::Yellow, "No answer".to_owned()),
-        Outcome::Failed => (Icon::CircleAlert, Tone::Red, "Couldn't ask".to_owned()),
-        Outcome::Allowed => (Icon::Check, Tone::Gray, "Allowed by your rules".to_owned()),
-        Outcome::Blocked => (Icon::CircleX, Tone::Red, "Blocked by your rules".to_owned()),
+        Outcome::Waiting => (Icon::Smartphone, Tone::Field(Field::Grant), "Waiting on your phone".to_owned()),
+        Outcome::Approved => (Icon::Smartphone, Tone::Success, on("Approved")),
+        Outcome::Denied => (Icon::Smartphone, Tone::Field(Field::Delete), on("Denied")),
+        Outcome::TimedOut => (Icon::TimerOff, Tone::Field(Field::Warn), "No answer".to_owned()),
+        Outcome::Failed => (Icon::CircleAlert, Tone::Field(Field::Delete), "Couldn't ask".to_owned()),
+        Outcome::Allowed => (Icon::Check, Tone::Neutral, "Allowed by your rules".to_owned()),
+        Outcome::Blocked => (Icon::CircleX, Tone::Field(Field::Delete), "Blocked by your rules".to_owned()),
     }
 }
 
@@ -468,7 +472,7 @@ mod tests {
         );
         let s = Story::of(&e);
         assert_eq!(said(&s), "Claude Code wants to *force-push* to *acme-web · main*");
-        assert_eq!((s.tone, s.risk), (Tone::Red, Some("Rewrites history")));
+        assert_eq!((s.tone, s.risk), (Tone::Field(Field::Delete), Some("Rewrites history")));
         assert_eq!(s.agent, Mark::Brand(Brand::Claude));
         assert_eq!(s.title, "Force-push to acme-web · main");
         assert_eq!(s.who, "Claude Code · Command");
@@ -487,11 +491,11 @@ mod tests {
         rm.outcome = Outcome::Denied;
         let s = Story::of(&rm);
         assert_eq!(said(&s), "Claude Code asked to *delete* */*");
-        assert_eq!((s.tone, s.icon, s.title.as_str()), (Tone::Red, Icon::Trash, "rm -rf /"));
+        assert_eq!((s.tone, s.icon, s.title.as_str()), (Tone::Field(Field::Delete), Icon::Trash, "rm -rf /"));
 
         let ls = Story::of(&entry(Kind::Command, Some("Codex"), None, "Codex wants to run: make deploy", None));
         assert_eq!(said(&ls), "Codex wants to run *make deploy*");
-        assert_eq!(ls.tone, Tone::Gray);
+        assert_eq!(ls.tone, Tone::Field(Field::Push));
 
         let env = Story::of(&entry(Kind::File, Some("Claude Code"), None, "Claude Code wants to read .env", None));
         assert_eq!(said(&env), "Claude Code wants to *read* *.env*");
@@ -543,10 +547,10 @@ mod tests {
         for g in GROUPS {
             let _ = (group_tone(g.id), group_icon(g.id));
         }
-        assert_eq!(group_tone("git-history"), Tone::Red);
-        assert_eq!(group_tone("databases"), Tone::Orange);
-        assert_eq!(group_tone("payments"), Tone::Yellow);
-        assert_eq!(group_tone("env-files"), Tone::Blue);
+        assert_eq!(group_tone("git-history"), Tone::Field(Field::Delete));
+        assert_eq!(group_tone("databases"), Tone::Field(Field::Push));
+        assert_eq!(group_tone("payments"), Tone::Field(Field::Delete));
+        assert_eq!(group_tone("env-files"), Tone::Field(Field::Read));
         let icons: std::collections::HashSet<_> = GROUPS.iter().map(|g| group_icon(g.id)).collect();
         assert_eq!(icons.len(), GROUPS.len());
     }

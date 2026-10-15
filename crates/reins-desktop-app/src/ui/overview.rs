@@ -1,11 +1,11 @@
-//! Overview: a hero first (the request waiting on the phone, in its colour, with its timer and "Open on phone"; or,
-//! when calm, this computer → the phone and what is protected), then three tiles (Health, Work session, Today), what
-//! a tile opens (the checks, the work session form), and the latest requests as the phone shows them.
+//! Home (Overview before Signal): a hero first (the request waiting on the phone, with its timer and "Open on
+//! phone"; or, when calm, this computer → the phone and what is protected), then three tiles (Health, Work session,
+//! Today), what a tile opens (the checks, the work session form), and the latest requests as the phone shows them.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, div, linear_color_stop, linear_gradient, px,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use reins_desktop::doctor::Level;
 use reins_desktop::journal::{Entry, Tally};
@@ -21,7 +21,7 @@ use super::{Data, Root};
 use crate::format;
 use crate::health::{self, Test};
 use crate::model::{Model, Section};
-use crate::theme::{Palette, Tone};
+use crate::theme::{Palette, SERIF, Tone};
 use crate::tray::Look;
 
 /// How many recent requests the overview shows.
@@ -46,28 +46,25 @@ pub fn short_ago(now: i64, at: i64) -> String {
     }
 }
 
-/// A hero's frame, tinted with `color` (a gradient, as on the phone).
+/// A Home tile's value: serif 30 ("All good", "Not running").
+fn stat_value() -> gpui::Div {
+    div().mt(px(8.0)).font_family(SERIF).text_size(px(30.0)).line_height(px(34.0)).font_weight(FontWeight::NORMAL)
+}
+
+/// A hero's frame: a plate on paper (Signal has no gradients; colour is for decisions, which phase 2 makes fields).
 fn hero_frame(color: gpui::Hsla, pal: Palette) -> gpui::Div {
-    let (from, to) = if pal.dark {
-        (0.18, 0.04)
-    } else {
-        (0.12, 0.03)
-    };
+    let _ = color;
     div()
         .flex()
         .flex_wrap()
         .items_center()
-        .gap(px(22.0))
-        .px(px(22.0))
-        .py(px(20.0))
+        .gap(px(28.0))
+        .px(px(28.0))
+        .py(px(26.0))
         .rounded(px(20.0))
-        .bg(linear_gradient(
-            135.0,
-            linear_color_stop(pal.background.blend(color.opacity(from)), 0.0),
-            linear_color_stop(pal.background.blend(color.opacity(to)), 1.0),
-        ))
+        .bg(pal.paper_raised())
         .border_1()
-        .border_color(color.opacity(0.3))
+        .border_color(pal.rule())
 }
 
 impl Root {
@@ -169,7 +166,7 @@ impl Root {
                 selected,
                 |r| {
                     r.bg(pal.accent.opacity(0.10))
-                        .child(div().absolute().left_0().top_0().bottom_0().w(px(3.0)).bg(pal.accent))
+                        .child(div().absolute().left_0().top_0().bottom_0().w(px(3.0)).bg(pal.violet_fill()))
                 },
                 |r| r.hover(|h| h.bg(pal.control_fill.opacity(0.6))),
             )
@@ -225,7 +222,7 @@ impl Root {
                 ),
             ),
             Look::Paused => (
-                pal.warning,
+                pal.danger,
                 vec![("git goes ", false), ("straight to the hosts", true), (" for now", false)],
                 Some(
                     btn_icon("hero-resume", Icon::Play, "Resume", Btn::Primary, pal)
@@ -257,22 +254,22 @@ impl Root {
         if d.look == Look::On {
             let tools = d.snapshot.as_ref().map_or(0, |s| s.harnesses.iter().filter(|h| h.added).count());
             if tools > 0 {
-                chips = chips.child(chip(
-                    Some(Icon::Check),
-                    format::count(tools as u64, "AI tool", "AI tools"),
-                    pal.success,
-                ));
+                chips = chips.child(
+                    chip_plain(Some(Icon::Check), format::count(tools as u64, "AI tool", "AI tools"), pal)
+                        .h(px(28.0))
+                        .font_weight(FontWeight::MEDIUM),
+                );
             }
             if d.snapshot.as_ref().is_some_and(|s| !s.git_routed.is_empty()) {
-                chips = chips.child(chip(Some(Icon::Check), "git via Reins", pal.success));
+                chips = chips.child(chip_plain(None, "git via Reins", pal).h(px(28.0)).font_weight(FontWeight::MEDIUM));
             }
             if d.config().is_some_and(|c| c.ssh.enabled) {
-                chips = chips.child(chip(Some(Icon::Check), "SSH keys", pal.success));
+                chips = chips.child(chip_plain(None, "SSH keys", pal).h(px(28.0)).font_weight(FontWeight::MEDIUM));
             }
         } else if d.look == Look::Paused
             && let Some(left) = d.pause.short(d.now)
         {
-            chips = chips.child(chip(Some(Icon::Pause), left, pal.warning));
+            chips = chips.child(chip(Some(Icon::Pause), left, pal.danger));
         }
         let action = action.unwrap_or_else(|| {
             let sending = matches!(d.test, Test::Waiting(_));
@@ -294,10 +291,11 @@ impl Root {
                     .gap(px(10.0))
                     .child(
                         div()
-                            .text_size(px(19.0))
-                            .line_height(px(25.0))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(pal.secondary)
+                            .font_family(SERIF)
+                            .text_size(px(30.0))
+                            .line_height(px(33.0))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(pal.ink())
                             .child(sentence(&words, pal)),
                     )
                     .child(chips),
@@ -314,7 +312,7 @@ impl Root {
         {
             s.target = Mark::Brand(b);
         }
-        let color = if s.tone == Tone::Gray {
+        let color = if s.tone == Tone::Neutral {
             pal.accent
         } else {
             pal.tone(s.tone)
@@ -362,10 +360,11 @@ impl Root {
                     .gap(px(10.0))
                     .child(
                         div()
-                            .text_size(px(19.0))
-                            .line_height(px(25.0))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(pal.secondary)
+                            .font_family(SERIF)
+                            .text_size(px(30.0))
+                            .line_height(px(33.0))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(pal.ink())
                             .child(sentence(&s.sentence, pal)),
                     )
                     .child(chips),
@@ -420,8 +419,8 @@ impl Root {
             .min_w(px(190.0))
             .cursor_pointer()
             .hover(|s| s.border_color(color.opacity(0.4)))
-            .when(attention, |t| t.bg(color.opacity(0.05)).border_color(color.opacity(0.3)))
-            .child(div().mt(px(6.0)).text_size(px(18.0)).font_weight(FontWeight::SEMIBOLD).child(value));
+            .when(attention, |t| t.border_color(color.opacity(0.45)))
+            .child(stat_value().when(attention, |v| v.text_color(color)).child(value));
         let mut under =
             div().flex().items_center().gap(px(8.0)).min_h(px(26.0)).child(
                 div().flex_1().min_w(px(0.0)).truncate().text_size(px(12.0)).text_color(pal.tertiary).child(line),
@@ -444,15 +443,7 @@ impl Root {
     /// Work session: Start; the request on the phone; or the session running, its ring, reason, time left and End.
     fn work_tile(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let tile = stat(Icon::Timer, pal.accent, "Work session", pal).min_w(px(190.0));
-        let value = |text: String| {
-            div()
-                .mt(px(6.0))
-                .text_size(px(18.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .min_w(px(0.0))
-                .truncate()
-                .child(text)
-        };
+        let value = |text: String| stat_value().min_w(px(0.0)).truncate().child(text);
         let under = || div().flex().items_center().gap(px(8.0)).min_h(px(26.0));
         let line = |text: String| {
             div().flex_1().min_w(px(0.0)).truncate().text_size(px(12.0)).text_color(pal.tertiary).child(text)
@@ -566,7 +557,7 @@ impl Root {
         let n = |v: usize, color: gpui::Hsla| {
             div()
                 .text_color(if v == 0 {
-                    pal.tertiary
+                    pal.ink_meta()
                 } else {
                     color
                 })
@@ -578,10 +569,11 @@ impl Root {
             .child(
                 div()
                     .flex()
-                    .gap(px(14.0))
-                    .mt(px(6.0))
-                    .text_size(px(18.0))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .gap(px(18.0))
+                    .mt(px(8.0))
+                    .font_family(SERIF)
+                    .text_size(px(30.0))
+                    .line_height(px(34.0))
                     .child(n(t.approved, pal.success))
                     .child(n(t.denied, pal.danger))
                     .child(n(t.timed_out, pal.warning)),

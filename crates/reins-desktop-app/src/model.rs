@@ -62,7 +62,7 @@ pub enum Screen {
 /// The status window's sections (the sidebar).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
-    Overview,
+    Home,
     Activity,
     Connections,
     Keys,
@@ -71,16 +71,15 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Self; 6] =
-        [Self::Overview, Self::Activity, Self::Connections, Self::Keys, Self::Rules, Self::Settings];
+    pub const ALL: [Self; 6] = [Self::Home, Self::Activity, Self::Connections, Self::Keys, Self::Rules, Self::Settings];
 
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Self::Overview => "Overview",
+            Self::Home => "Home",
             Self::Activity => "Activity",
             Self::Connections => "Connections",
-            Self::Keys => "Keys & secrets",
+            Self::Keys => "Keys",
             Self::Rules => "Rules",
             Self::Settings => "Settings",
         }
@@ -90,7 +89,7 @@ impl Section {
     #[must_use]
     pub fn id(self) -> &'static str {
         match self {
-            Self::Overview => "overview",
+            Self::Home => "home",
             Self::Activity => "activity",
             Self::Connections => "connections",
             Self::Keys => "keys",
@@ -99,9 +98,13 @@ impl Section {
         }
     }
 
+    /// By its id; `overview`, Home's name before Signal, still opens Home.
     #[must_use]
     pub fn from_id(id: &str) -> Option<Self> {
         let id = id.trim().to_ascii_lowercase();
+        if id == "overview" {
+            return Some(Self::Home);
+        }
         Self::ALL.into_iter().find(|s| s.id() == id)
     }
 }
@@ -268,7 +271,7 @@ impl Model {
             .ok()
             .filter(|_| args.demo)
             .and_then(|s| Section::from_id(&s))
-            .unwrap_or(Section::Overview);
+            .unwrap_or(Section::Home);
         let paired = demo_paired || backend.paired_server().is_some();
         let screen = demo_screen.filter(|_| demo_paired).unwrap_or_else(|| {
             Stage::resume(paired, saved.setup_done, saved.setup_step).map_or(Screen::Status, Screen::Welcome)
@@ -398,7 +401,7 @@ impl Model {
                 if self.screen == Screen::Status {
                     self.show_phone_qr = false;
                     if action == Action::Status {
-                        self.section = Section::Overview;
+                        self.section = Section::Home;
                         cx.notify();
                     }
                 }
@@ -1198,7 +1201,7 @@ impl Model {
         self.saved.setup_step = Stage::Done;
         self.persist();
         self.screen = Screen::Status;
-        self.section = Section::Overview;
+        self.section = Section::Home;
         self.notice = None;
         cx.notify();
     }
@@ -1669,6 +1672,9 @@ mod tests {
         }
         assert_eq!(Section::from_id(" Rules "), Some(Section::Rules));
         assert_eq!(Section::from_id("nope"), None);
+        // Home's name before Signal.
+        assert_eq!(Section::from_id("overview"), Some(Section::Home));
+        assert_eq!((Section::Home.label(), Section::Keys.label()), ("Home", "Keys"));
     }
 
     #[test]
