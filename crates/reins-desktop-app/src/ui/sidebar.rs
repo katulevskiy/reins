@@ -12,7 +12,7 @@ use gpui::{
 };
 
 use super::hold::Held;
-use super::icons::{Brand, Glyph, Icon, brand, glyph};
+use super::icons::{Brand, Glyph, brand, glyph};
 use super::parts::ring;
 use super::story::field_of;
 use super::{Data, Root, kit};
@@ -453,7 +453,7 @@ impl Root {
             })));
         }
         let confirm: AnyElement = if choice == PauseFor::Manual {
-            self.hold_button("sheet-hold", Held::PauseUntilResume, Icon::Pause, "Hold to pause", "Paused", pal, cx)
+            self.hold_button("sheet-hold", Held::PauseUntilResume, Glyph::Pause, "Hold to pause", "Paused", pal, cx)
                 .w_full()
                 .into_any_element()
         } else {

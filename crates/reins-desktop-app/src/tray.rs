@@ -1,9 +1,12 @@
-//! The tray (Windows, Linux) or menu bar (macOS) icon: the Reins shield, with a check while Reins is on, pause bars
-//! while paused, three dots and an amber dot while a request waits on the phone, and an exclamation mark while it
-//! needs the user (not paired, or the background service is not running). Its menu: the state (opens the status
-//! window; "Waiting on your phone: …" while something waits, else "Work session: 1 h 12 min left" while one runs), a
-//! Pause submenu (15 minutes, 1 hour, 4 hours, 24 hours, Until I resume), Resume, End work session, Open Reins, Quit
-//! Reins.
+//! The tray (Windows, Linux) or menu bar (macOS) icon, which speaks Signal (`Desk-Extras.png`): the shield in ink while
+//! Reins is on, and on the field's colour when something needs you: orange while a request waits on the phone, red
+//! while git is paused, amber when Reins needs the user (not paired, or the background service is not running). On
+//! macOS the ink shield is a template image (the menu bar colours it); the coloured ones are drawn as they are.
+//!
+//! Native menus cannot be styled, so the menu follows the board in words and order: two status lines (the first opens
+//! the window: "Reins is on" over "Dana's iPhone approves", or what waits), "Pause git" with the board's lengths (15
+//! minutes, 1 hour, 4 hours, 1 day, then "Until I resume…", which opens the window's pause sheet to be held), Resume,
+//! End work session, Open Reins, Quit Reins.
 //!
 //! macOS and Windows use the `tray-icon` crate (an `NSStatusItem`, a `Shell_NotifyIcon` icon). Linux uses `ksni`, a
 //! StatusNotifierItem on D-Bus (KDE, and GNOME with the AppIndicator extension), which needs no GTK.
@@ -66,12 +69,33 @@ const PAUSE_MENU: &str = "Pause git";
 /// The item that ends a work session.
 const END_SESSION: &str = "End work session";
 
+/// The menu's two status lines (`Desk-Extras.png`): what Reins is doing, then who approves or what waits.
+/// `status` is the window's line (with a work session's time left while one runs); `phone` names the phone that
+/// approves; `pause_left` is a pause's time left ("47 min left").
+#[must_use]
+pub fn status_lines(look: Look, status: String, phone: &str, pause_left: Option<String>) -> (String, String) {
+    match look {
+        Look::Waiting => match status.split_once(": ") {
+            Some((title, what)) => (title.to_owned(), what.to_owned()),
+            None => (status, format!("Answer on {phone}")),
+        },
+        Look::Paused => match pause_left {
+            Some(left) => ("git paused".to_owned(), left),
+            None => (status, "Pushes go straight to the hosts".to_owned()),
+        },
+        Look::Attention => (status, "Open Reins to fix it".to_owned()),
+        Look::On => (status, format!("{phone} approves")),
+    }
+}
+
 /// What the tray shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shown {
     pub look: Look,
     /// The first menu line ("Reins is on").
     pub status: String,
+    /// The second, under it ("Dana's iPhone approves").
+    pub detail: String,
     pub can_pause: bool,
     pub can_resume: bool,
     /// A work session runs: "End work session" ends it.
@@ -107,7 +131,14 @@ pub(crate) fn decode(png_bytes: &[u8]) -> Result<Pixels, String> {
     })
 }
 
-/// The icon for `look`: a template image on macOS (the system colours it for the menu bar), the coloured mark elsewhere.
+/// Whether the icon for `look` is a macOS template image: only the ink shield; the coloured states keep their colour.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn templated(look: Look) -> bool {
+    look == Look::On
+}
+
+/// The icon for `look`: on macOS the menu bar's size (the ink shield a template image, the rest coloured plates), the
+/// tray's elsewhere.
 fn pixels(look: Look) -> Result<Pixels, String> {
     let bytes: &[u8] = match (cfg!(target_os = "macos"), look) {
         (true, Look::On) => include_bytes!("../assets/icons/tray-on.png"),
@@ -135,6 +166,7 @@ mod imp {
     pub struct Tray {
         icon: TrayIcon,
         status: MenuItem,
+        detail: MenuItem,
         pause: Submenu,
         resume: MenuItem,
         end: MenuItem,
@@ -150,10 +182,16 @@ mod imp {
         /// Must run on the main thread, after the app finished launching.
         pub fn new(actions: UnboundedSender<Action>, _runtime: &tokio::runtime::Handle) -> Result<Self, String> {
             let status = MenuItem::with_id(Action::Status.id(), "Reins", true, None);
+            // The second status line says more; it does nothing.
+            let detail = MenuItem::new("", false, None);
             let [quarter, hour, four, day, manual] =
                 PauseFor::ALL.map(|p| MenuItem::with_id(Action::Pause(p).id(), p.label(), true, None));
-            let pause = Submenu::with_items(PAUSE_MENU, true, &[&quarter, &hour, &four, &day, &manual])
-                .map_err(|e| e.to_string())?;
+            let pause = Submenu::with_items(
+                PAUSE_MENU,
+                true,
+                &[&quarter, &hour, &four, &day, &PredefinedMenuItem::separator(), &manual],
+            )
+            .map_err(|e| e.to_string())?;
             let resume = MenuItem::with_id(Action::Resume.id(), "Resume", false, None);
             let end = MenuItem::with_id(Action::EndSession.id(), END_SESSION, false, None);
             let open = MenuItem::with_id(Action::Open.id(), "Open Reins", true, None);
@@ -161,6 +199,7 @@ mod imp {
             let menu = Menu::new();
             menu.append_items(&[
                 &status,
+                &detail,
                 &PredefinedMenuItem::separator(),
                 &pause,
                 &resume,
@@ -176,16 +215,13 @@ mod imp {
                 }
             }));
             let builder = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("Reins");
-            let first = icon(Look::Attention)?;
-            // A template image on macOS: the menu bar colours it.
-            #[cfg(target_os = "macos")]
-            let builder = builder.with_icon_templated(first);
-            #[cfg(not(target_os = "macos"))]
-            let builder = builder.with_icon(first);
+            // Amber until the first status: Reins does not know yet that all is well.
+            let builder = builder.with_icon(icon(Look::Attention)?);
             let icon = builder.build().map_err(|e| e.to_string())?;
             Ok(Self {
                 icon,
                 status,
+                detail,
                 pause,
                 resume,
                 end,
@@ -200,8 +236,14 @@ mod imp {
             if self.shown.as_ref().is_none_or(|s| s.look != shown.look) {
                 match icon(shown.look) {
                     Ok(i) => {
+                        // The ink shield is a template image on macOS (the menu bar colours it); the coloured
+                        // states are drawn as they are.
                         #[cfg(target_os = "macos")]
-                        let set = self.icon.set_icon_templated(Some(i));
+                        let set = if super::templated(shown.look) {
+                            self.icon.set_icon_templated(Some(i))
+                        } else {
+                            self.icon.set_icon(Some(i))
+                        };
                         #[cfg(not(target_os = "macos"))]
                         let set = self.icon.set_icon(Some(i));
                         if let Err(e) = set {
@@ -212,6 +254,7 @@ mod imp {
                 }
             }
             self.status.set_text(&shown.status);
+            self.detail.set_text(&shown.detail);
             self.pause.set_enabled(shown.can_pause);
             self.resume.set_enabled(shown.can_resume);
             self.end.set_enabled(shown.can_end);
@@ -287,13 +330,27 @@ mod imp {
                 }
                 .into()
             };
+            let mut lengths: Vec<ksni::MenuItem<Self>> = PauseFor::ALL
+                .into_iter()
+                .filter(|p| *p != PauseFor::Manual)
+                .map(|p| item(p.label(), Action::Pause(p), true))
+                .collect();
+            lengths.push(ksni::MenuItem::Separator);
+            lengths.push(item(PauseFor::Manual.label(), Action::Pause(PauseFor::Manual), true));
             vec![
                 item(&self.shown.status, Action::Status, true),
+                // The second status line says more; it does nothing.
+                StandardItem {
+                    label: self.shown.detail.clone(),
+                    enabled: false,
+                    ..StandardItem::default()
+                }
+                .into(),
                 ksni::MenuItem::Separator,
                 SubMenu {
                     label: PAUSE_MENU.to_owned(),
                     enabled: self.shown.can_pause,
-                    submenu: PauseFor::ALL.into_iter().map(|p| item(p.label(), Action::Pause(p), true)).collect(),
+                    submenu: lengths,
                     ..SubMenu::default()
                 }
                 .into(),
@@ -318,6 +375,7 @@ mod imp {
                 shown: Shown {
                     look: Look::Attention,
                     status: "Reins".to_owned(),
+                    detail: String::new(),
                     can_pause: false,
                     can_resume: false,
                     can_end: false,
@@ -404,10 +462,36 @@ mod tests {
                 assert_ne!(p.rgba, reference.rgba, "{name}");
             }
         }
-        // The template images are one colour (the menu bar colours them): only their alpha differs.
-        for (name, p) in decoded.iter().filter(|(n, _)| !n.contains("color")) {
-            assert!(p.rgba.chunks(4).filter(|c| c[3] > 0).all(|c| c[..3] == [0, 0, 0]), "{name}");
+        // The template image is one colour (the menu bar colours it): only its alpha differs. The other states keep
+        // their field's colour.
+        let template = &decoded.iter().find(|(n, _)| *n == "tray-on").unwrap().1;
+        assert!(template.rgba.chunks(4).filter(|c| c[3] > 0).all(|c| c[..3] == [0, 0, 0]));
+        for (name, p) in decoded.iter().filter(|(n, _)| *n != "tray-on") {
+            assert!(p.rgba.chunks(4).any(|c| c[3] == 255 && c[..3] != [0, 0, 0]), "{name} has its colour");
         }
+        assert!(templated(Look::On) && !templated(Look::Waiting) && !templated(Look::Paused));
+    }
+
+    #[test]
+    fn the_status_says_two_lines() {
+        let two = |look, status: &str, left: Option<&str>| {
+            status_lines(look, status.to_owned(), "Dana's iPhone", left.map(str::to_owned))
+        };
+        assert_eq!(two(Look::On, "Reins is on", None), ("Reins is on".to_owned(), "Dana's iPhone approves".to_owned()));
+        assert_eq!(
+            two(Look::Waiting, "Waiting on your phone: push to acme/web (main)", None),
+            ("Waiting on your phone".to_owned(), "push to acme/web (main)".to_owned())
+        );
+        assert_eq!(two(Look::Paused, "Paused for 47 min more", Some("47 min left")).0, "git paused");
+        assert_eq!(two(Look::Paused, "Paused: git goes direct", None).0, "Paused: git goes direct");
+        assert_eq!(two(Look::Attention, "Not paired", None).1, "Open Reins to fix it");
+    }
+
+    /// The board's lengths: a day is "1 day", and "Until I resume…" (held in the window) comes last.
+    #[test]
+    fn the_pause_menu_follows_the_board() {
+        let labels: Vec<&str> = PauseFor::ALL.iter().map(|p| p.label()).collect();
+        assert_eq!(labels, ["15 minutes", "1 hour", "4 hours", "1 day", "Until I resume…"]);
     }
 
     #[test]
