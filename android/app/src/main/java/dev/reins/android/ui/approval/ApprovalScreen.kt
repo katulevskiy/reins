@@ -146,6 +146,8 @@ class ApprovalRecord(
     val footer: (@Composable () -> Unit)? = null,
     /** How risky the model rated it, and whether Overnight held it; null when it was not rated. */
     val risk: dev.reins.core.RiskView? = null,
+    /** How the ask is told: done, or (denied, failed) refused. */
+    val tense: dev.reins.android.ui.common.Tense = dev.reins.android.ui.common.Tense.Done,
 )
 
 /** The entry the approval screen shows again, or null for a request that waits. */

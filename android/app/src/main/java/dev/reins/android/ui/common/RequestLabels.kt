@@ -1,29 +1,21 @@
 package dev.reins.android.ui.common
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffColorFilter
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Article
-import androidx.compose.material.icons.automirrored.rounded.Send
-import androidx.compose.material.icons.rounded.Computer
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.Key
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.QuestionMark
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Terminal
-import androidx.compose.material.icons.rounded.Upload
-import androidx.compose.material.icons.rounded.VerifiedUser
-import androidx.compose.material.icons.rounded.Visibility
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -32,33 +24,31 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import dev.reins.android.design.Fonts
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RColors
+import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.design.SvgAssets
+import dev.reins.android.design.askString
 import dev.reins.android.design.serviceName
 import dev.reins.android.design.serviceTint
-import dev.reins.android.design.tileEdge
-import dev.reins.android.design.tilePlate
 import dev.reins.core.RequestLabel
 
-// What a request is, drawn the same in every Activity row, waiting card and entry: the thing it touches as the tile
-// (a terminal, a file, a key, a brand's logo) with what it does as a badge on its corner, and the request itself as the
-// title ("Run `git push --force origin main`"). The core decides all of it (`RequestLabel`); this only draws.
+// What a request is, drawn the same in every Activity row, waiting card, entry and notification (ASK-TEXT.md): the
+// integration's mark on its white plate with the action as a round badge at its bottom-right corner, filled with the
+// kind's field colour, the glyph in white, ringed in the surface behind; and the request in words ([AskSentence]).
 
 /** The title as one line of plain text. */
 fun RequestLabel.plain(): String = buildString {
@@ -70,148 +60,215 @@ fun RequestLabel.plain(): String = buildString {
     append(tail)
 }
 
-/** The provider's own icon when it has no logo: a terminal, a file, a key, a computer. */
-fun providerIcon(provider: String): ImageVector? = when (provider) {
-    "terminal", "ssh" -> Icons.Rounded.Terminal
-    "file" -> Icons.AutoMirrored.Rounded.Article
-    "secrets" -> Icons.Rounded.Key
-    "desktop" -> Icons.Rounded.Computer
-    else -> null
-}
-
-/** The logo's asset: "mcp" for any MCP server, else the integration's own. */
+/** The logo's asset: "mcp" for any MCP server, else the integration's own; null for a local kind (a glyph). */
 fun providerAsset(provider: String): String? = when {
-    providerIcon(provider) != null -> null
-    provider.startsWith("mcp:") -> "mcp"
+    provider in LOCAL -> null
+    provider.startsWith("mcp:") || provider == "mcp" -> "mcp"
     provider.isBlank() -> null
     else -> provider
 }
 
-fun providerTint(provider: String, c: RColors): Color = when (provider) {
-    "secrets" -> c.send
-    "ssh" -> c.read
-    "terminal", "file", "desktop" -> c.text
-    else -> serviceTint(providerAsset(provider) ?: provider, c)
+private val LOCAL = setOf("terminal", "file", "files", "secrets", "ssh", "desktop")
+
+/** The glyph of a local kind: a terminal for commands, a file, a lock for secrets, a key for SSH, a question. */
+fun providerGlyph(provider: String, action: String): Glyph = when (provider) {
+    "terminal" -> Glyph.Terminal
+    "file", "files" -> Glyph.FileText
+    "secrets" -> Glyph.Lock
+    "ssh" -> Glyph.Key
+    else -> when (action) {
+        "ask" -> Glyph.Help
+        "join" -> Glyph.Phone
+        else -> Glyph.Laptop
+    }
 }
 
-/** What the badge on the tile's corner shows. */
-fun actionIcon(action: String): ImageVector = when (action) {
-    "run" -> Icons.Rounded.PlayArrow
-    "read" -> Icons.Rounded.Visibility
-    "send" -> Icons.AutoMirrored.Rounded.Send
-    "delete" -> Icons.Rounded.Delete
-    "secrets" -> Icons.Rounded.Key
-    "push" -> Icons.Rounded.Upload
-    "search" -> Icons.Rounded.Search
-    "grant" -> Icons.Rounded.VerifiedUser
-    "ask" -> Icons.Rounded.QuestionMark
-    else -> Icons.Rounded.Edit
+/** The action on the badge: a branch for a push, an eye for a read, a trash can for a delete, … */
+fun actionGlyph(action: String): Glyph = when (action) {
+    "run" -> Glyph.Play
+    "read" -> Glyph.Eye
+    "send" -> Glyph.Send
+    "delete" -> Glyph.Trash
+    "secrets" -> Glyph.Key
+    "push" -> Glyph.GitBranch
+    "search" -> Glyph.Search
+    "grant" -> Glyph.ShieldCheck
+    "ask" -> Glyph.Help
+    "accounts" -> Glyph.People
+    "pay" -> Glyph.Card
+    "pair" -> Glyph.Link
+    "join" -> Glyph.Phone
+    "create" -> Glyph.Plus
+    else -> Glyph.Pencil
 }
 
-fun actionTint(action: String, c: RColors): Color = when (action) {
-    "read" -> c.read
-    "delete" -> c.danger
-    "secrets" -> c.warning
-    "push", "grant" -> if (c.dark) Color(0xFFA99BFA) else c.accent
-    "search" -> c.search
-    "ask" -> c.secondary
-    else -> c.send
-}
-
-/** "Run", "Read", ... for a screen reader, with the provider's name. */
-fun actionWords(label: RequestLabel): String = "${label.action.replaceFirstChar { it.uppercase() }}, ${providerName(label.provider)}"
+/** "Run, Terminal" for a screen reader. */
+fun actionWords(provider: String, action: String): String = "${action.replaceFirstChar { it.uppercase() }}, ${providerName(provider)}"
 
 fun providerName(provider: String): String = when (provider) {
     "terminal" -> "Terminal"
-    "file" -> "File"
+    "file", "files" -> "File"
     "secrets" -> "Secrets"
     "ssh" -> "SSH"
     "desktop" -> "Computer"
     else -> serviceName(provider)
 }
 
+/** The mark's colour on the white plate: the brand's (as in light), ink for a local kind. */
+private fun markTint(provider: String): Color {
+    val light = RColors.Light
+    val asset = providerAsset(provider) ?: return light.ink
+    return serviceTint(asset, light)
+}
+
 /**
- * The tile: the provider on a round plate, the action on a small badge at its bottom right, ringed in [ring] (the colour
- * behind the tile) so the two read as one.
+ * The integration's mark with the action at its corner. [ring] is the surface behind the icon: the badge is ringed in
+ * it so the two read apart. [field] overrides the badge's colour (a request asked every time is red).
  */
 @Composable
-fun ProviderTile(label: RequestLabel, modifier: Modifier = Modifier, size: Dp = 40.dp, ring: Color = LocalColors.current.background) {
-    val c = LocalColors.current
+fun IntegrationIcon(
+    provider: String,
+    action: String,
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp,
+    ring: Color = LocalColors.current.paper,
+    field: dev.reins.android.design.Field = actionField(action),
+) {
     val context = LocalContext.current
-    val mark = size * 0.5f
+    val mark = size * 0.52f
     val px = with(LocalDensity.current) { mark.roundToPx() }
-    val asset = providerAsset(label.provider)
+    val asset = providerAsset(provider)
     val logo = remember(asset, px) { asset?.let { SvgAssets.bitmap(context, "services/$it.svg", px)?.asImageBitmap() } }
-    val tint = providerTint(label.provider, c)
-    Box(modifier.size(size).testTag("providerTile:${label.provider}:${label.action}")) {
+    val tint = markTint(provider)
+    val words = actionWords(provider, action)
+    Box(modifier.size(size).semantics { contentDescription = words }.testTag("integrationIcon:$provider:$action")) {
         Box(
-            Modifier.size(size).clip(CircleShape).background(tilePlate(c)).border(1.dp, tileEdge(c), CircleShape),
+            Modifier.size(size).clip(CircleShape).background(Color.White).border(1.dp, Color.Black.copy(alpha = 0.08f), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            when {
-                logo != null -> Image(logo, providerName(label.provider), Modifier.size(mark), colorFilter = ColorFilter.tint(tint))
-                else -> Icon(providerIcon(label.provider) ?: Icons.Rounded.Computer, providerName(label.provider), Modifier.size(mark), tint = tint)
+            if (logo != null) {
+                Image(logo, null, Modifier.size(mark), colorFilter = ColorFilter.tint(tint))
+            } else {
+                GlyphIcon(providerGlyph(provider, action), tint, size = mark)
             }
         }
-        val badge = size * 0.5f
-        val action = actionTint(label.action, c)
+        val badge = size * 0.46f
         Box(
             Modifier
                 .align(Alignment.BottomEnd)
                 .offset(x = size * 0.1f, y = size * 0.1f)
-                .size(badge)
-                .clip(RoundedCornerShape(badge * 0.35f))
+                .size(badge + 4.dp)
+                .clip(CircleShape)
                 .background(ring)
-                .border(2.dp, ring, RoundedCornerShape(badge * 0.35f))
-                .testTag("actionBadge:${label.action}"),
+                .padding(2.dp)
+                .clip(CircleShape)
+                .background(field.fill())
+                .testTag("actionBadge:$action"),
             contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                Modifier.size(badge - 4.dp).clip(RoundedCornerShape(badge * 0.28f)).background(lerp(tilePlate(c), action, 0.22f)),
-                contentAlignment = Alignment.Center,
-            ) { Icon(actionIcon(label.action), null, Modifier.size(badge * 0.55f), tint = action) }
+        ) { GlyphIcon(actionGlyph(action), Color.White, size = badge * 0.58f, weight = 2f) }
+    }
+}
+
+/** The same icon for a notification's large icon, drawn without Compose. */
+object IntegrationBitmap {
+    fun draw(context: Context, provider: String, action: String, px: Int, ring: Int = android.graphics.Color.WHITE): Bitmap {
+        val size = px.toFloat()
+        val bitmap = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+        val canvas = AndroidCanvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        // The plate: a little smaller than the bitmap so the badge stays inside it.
+        val plate = size * 0.86f
+        paint.color = android.graphics.Color.WHITE
+        canvas.drawCircle(plate / 2, plate / 2, plate / 2, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = size * 0.012f
+        paint.color = 0x14000000
+        canvas.drawCircle(plate / 2, plate / 2, plate / 2 - paint.strokeWidth / 2, paint)
+        paint.style = Paint.Style.FILL
+        val mark = (plate * 0.52f).toInt().coerceAtLeast(1)
+        val tint = markTint(provider).toArgb()
+        val asset = providerAsset(provider)
+        val logo = asset?.let { SvgAssets.bitmap(context, "services/$it.svg", mark) }
+        val at = (plate - mark) / 2
+        if (logo != null) {
+            canvas.drawBitmap(logo, at, at, Paint(Paint.ANTI_ALIAS_FLAG).apply { colorFilter = PorterDuffColorFilter(tint, PorterDuff.Mode.SRC_IN) })
+        } else {
+            drawGlyph(canvas, providerGlyph(provider, action), at, mark.toFloat(), tint, 1.6f)
         }
+        // The badge: ringed, filled with the field, the glyph in white.
+        val badge = size * 0.46f
+        val cx = size - badge / 2 - size * 0.01f
+        val cy = cx
+        paint.color = ring
+        canvas.drawCircle(cx, cy, badge / 2 + size * 0.035f, paint)
+        paint.color = actionField(action).fill().toArgb()
+        canvas.drawCircle(cx, cy, badge / 2, paint)
+        val g = badge * 0.58f
+        drawGlyph(canvas, actionGlyph(action), cx - g / 2, g, android.graphics.Color.WHITE, 2f)
+        return bitmap
+    }
+
+    private fun drawGlyph(canvas: AndroidCanvas, glyph: Glyph, x: Float, size: Float, color: Int, weight: Float) {
+        val k = size / 24f
+        canvas.save()
+        canvas.translate(x, x)
+        canvas.scale(k, k)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        for (part in glyph.parts) {
+            val path = androidx.core.graphics.PathParser.createPathFromPathData(part.d)
+            if (part.fill) {
+                paint.style = Paint.Style.FILL
+                canvas.drawPath(path, paint)
+            }
+            if (part.stroke) {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = part.width * weight / 1.6f
+                canvas.drawPath(path, paint)
+            }
+        }
+        canvas.restore()
     }
 }
 
 /**
- * The title: the lead in the text colour, the subject set apart (a command or a path in mono, a name in semibold), then
- * the tail. Everything from the AI is passed through [untrusted].
+ * A request in words (ASK-TEXT.md): the sentence in the serif with its one italic target, and the machine details in
+ * mono on their own line under it. Rows cap the lines; the waiting field and entry pages show it whole.
  */
 @Composable
-fun LabelText(
-    label: RequestLabel,
+fun AskSentenceText(
+    sentence: AskSentence,
     modifier: Modifier = Modifier,
-    size: Float = 15f,
-    lineHeight: Float = size * 1.3f,
-    maxLines: Int = 2,
-    align: TextAlign? = null,
-    color: Color = LocalColors.current.text,
+    style: TextStyle = RType.serif(19f, 23f),
+    color: Color = LocalColors.current.ink,
+    detailsColor: Color = LocalColors.current.inkMeta,
+    detailsStyle: TextStyle = RType.mono(12.5f),
+    maxLines: Int = Int.MAX_VALUE,
+    detailsMaxLines: Int = Int.MAX_VALUE,
+    tag: String? = null,
+    detailsTag: String? = null,
 ) {
-    val c = LocalColors.current
-    val text = remember(label, c, size, color) {
-        buildAnnotatedString {
-            val lead = untrusted(label.lead)
-            append(lead)
-            if (label.subject.isNotEmpty()) {
-                if (lead.isNotEmpty()) append(' ')
-                val style = if (label.code) {
-                    SpanStyle(fontFamily = Fonts.mono, fontSize = RType.sans(size * 0.9f).fontSize, fontWeight = FontWeight.Medium)
-                } else {
-                    SpanStyle(fontWeight = FontWeight.SemiBold)
-                }
-                withStyle(style) { append(untrusted(label.subject)) }
-            }
-            append(untrustedLine(label.tail))
+    Column(modifier) {
+        val text = remember(sentence.text, sentence.target) { askString(sentence.text, sentence.target) }
+        BasicText(
+            text,
+            if (tag != null) Modifier.testTag(tag) else Modifier,
+            style = style.copy(color = color),
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+        )
+        sentence.details?.let {
+            RText(
+                it,
+                detailsStyle,
+                detailsColor,
+                Modifier.padding(top = 3.dp).then(if (detailsTag != null) Modifier.testTag(detailsTag) else Modifier),
+                maxLines = detailsMaxLines,
+                ltr = true,
+            )
         }
     }
-    Text(
-        text,
-        modifier,
-        color = color,
-        style = RType.sans(size, FontWeight.Medium, lineHeight = lineHeight),
-        maxLines = maxLines,
-        overflow = TextOverflow.Ellipsis,
-        textAlign = align,
-    )
 }

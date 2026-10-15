@@ -498,14 +498,38 @@ private fun McpFacts(call: dev.reins.core.McpCallView) {
 private fun AskFacts(ask: dev.reins.core.AskView) {
     val detail = ask.detail?.let(::untrusted)?.takeIf { it.isNotBlank() }
     val topic = ask.topic?.let(::untrusted)?.takeIf { it.isNotBlank() }
+    val hook = dev.reins.android.ui.common.hookOf(ask.question, ask.detail)
+    val command = hook?.command?.let(::untrusted)?.trim()?.takeIf { it.isNotEmpty() }
+    if (command != null) {
+        // A command (ASK-TEXT.md): the whole of it as a mono fact row, wrapped, never cut; where it runs and the rule.
+        FactGroup(
+            tag = "ask",
+            rows = buildList<@Composable () -> Unit> {
+                add { CommandRow(command) }
+                hook.cwd?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("In", it, mono = true, valueTag = "askIn", maxLines = 3) } }
+                hook.rule?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("Rule", it, mono = true, valueTag = "askRule", maxLines = 3) } }
+            },
+        )
+        return
+    }
     if (detail == null && topic == null) return
     FactGroup(
         tag = "ask",
         rows = buildList<@Composable () -> Unit> {
-            if (detail != null) add { MonoBlock(detail, "askDetail", maxLines = 30) }
+            if (detail != null) add { MonoBlock(detail, "askDetail") }
             if (topic != null) add { FactRow("About", topic, mono = true, valueTag = "askTopic") }
         },
     )
+}
+
+/** "Command" over the whole command in mono, wrapped. */
+@Composable
+private fun CommandRow(command: String) {
+    val c = LocalColors.current
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        RText("Command", RType.sans(15f), c.ink2, maxLines = 1)
+        RText(command, RType.mono(13.5f), c.ink, Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp).testTag("askCommand"), ltr = true)
+    }
 }
 
 @Composable

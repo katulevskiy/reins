@@ -69,6 +69,8 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.ConnectionIcon
+import dev.reins.android.ui.common.IntegrationIcon
+import dev.reins.android.ui.common.askSentence
 import dev.reins.core.PendingItem
 import dev.reins.core.PendingKind
 import kotlin.math.abs
@@ -344,14 +346,11 @@ private fun CardFace(
     ) {
         if (!showContent) return@Column
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                if (first.kind != PendingKind.PAIRING && first.kind != PendingKind.JOIN) {
-                    // The AI's mark on its white disc, the same in both themes.
-                    CompositionLocalProvider(LocalColors provides RColors.Light) {
-                        ConnectionIcon(first.connectionId, first.connectionLabel, size = 24.dp)
-                    }
-                }
-                LabelText(cardLabel(first), c.onField2, Modifier.weight(1f))
+            val sentence = remember(first, details.views[first.id]) { askSentence(first, details.views[first.id]) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+                // What it touches with what it does on the corner, ringed in the field (ASK-TEXT.md).
+                IntegrationIcon(sentence.provider, sentence.action, Modifier.testTag("cardIcon:${first.id}"), size = 34.dp, ring = field.fill(), field = field)
+                LabelText(sentence.kind, c.onField2, Modifier.weight(1f))
                 val waitUntil = when (card) {
                     is WaitCard.One -> first.waitUntil.takeIf { first.kind != PendingKind.BLOB }
                     is WaitCard.Group -> card.items.mapNotNull { it.waitUntil }.minOrNull()
@@ -359,7 +358,7 @@ private fun CardFace(
                 if (waitUntil != null) CardTimer(first.createdAt, waitUntil)
             }
             val ask = when (card) {
-                is WaitCard.One -> cardAsk(first, details.views[first.id])
+                is WaitCard.One -> CardAsk(sentence.text, sentence.target, sentence.details)
                 is WaitCard.Group -> groupAsk(card.items) { details.views[it] }
             }
             val askText = remember(ask) { askString(ask.text, ask.target) }
@@ -370,9 +369,21 @@ private fun CardFace(
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
+            // The machine part (the command that matched, the branch, the address) in mono; the card opens it whole.
+            ask.details?.let {
+                RText(it, RType.mono(13f), c.onField, Modifier.testTag("cardDetails:${first.id}"), maxLines = 2, ltr = true)
+            }
             when (card) {
                 is WaitCard.One -> {
-                    RText(cardWho(first), RType.sans(13.5f), c.onField2, maxLines = 1)
+                    // Who asks, with their mark on its white disc (the same in both themes).
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        if (first.kind != PendingKind.PAIRING && first.kind != PendingKind.JOIN) {
+                            CompositionLocalProvider(LocalColors provides RColors.Light) {
+                                ConnectionIcon(first.connectionId, first.connectionLabel, size = 18.dp)
+                            }
+                        }
+                        RText(cardWho(first), RType.sans(13.5f), c.onField2, maxLines = 1)
+                    }
                     details.reasons[first.id]?.let { RText(it, RType.sans(13.5f), c.onField2, Modifier.testTag("reason:${first.id}"), maxLines = 2) }
                 }
                 is WaitCard.Group -> {

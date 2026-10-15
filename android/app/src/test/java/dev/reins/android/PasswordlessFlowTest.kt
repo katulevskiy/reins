@@ -519,7 +519,7 @@ class PasswordlessFlowTest : FlowHarness() {
         Foreground.autoPopup = false
         launch()
         awaitTag("pending:join1")
-        rule.onNodeWithTag("sentence:join1", useUnmergedTree = true).assertTextContains("Pixel 9 wants to join", substring = true)
+        rule.onNodeWithTag("sentence:join1", useUnmergedTree = true).assertTextContains("Add “Pixel 9” to your account", substring = true)
     }
 
     @Test

@@ -53,8 +53,6 @@ import dev.reins.android.design.rememberNowState
 import dev.reins.android.design.toneCard
 import dev.reins.android.design.urgency
 import dev.reins.android.ui.common.ConnectionIcon
-import dev.reins.android.ui.common.LabelText
-import dev.reins.android.ui.common.ProviderTile
 import dev.reins.android.ui.settings.PillButton
 import dev.reins.android.ui.settings.primaryFill
 import dev.reins.core.ApprovalView
@@ -123,64 +121,6 @@ private suspend fun <T> quietly(block: suspend () -> T): T? = try {
 
 /** A tone's colour on paper: its Signal field's kind ink, or ink-2 for [Tone.Other]. */
 fun toneColor(tone: Tone, c: RColors): Color = tone.field?.kindInk(c) ?: c.ink2
-
-/** A sentence with its key nouns in the text colour and the rest quieter. */
-@Composable
-fun SentenceText(sentence: Sentence, modifier: Modifier = Modifier, size: Float = 16f, lineHeight: Float = 21f, maxLines: Int = 3, align: androidx.compose.ui.text.style.TextAlign? = null) {
-    val c = LocalColors.current
-    val text = remember(sentence, c) {
-        buildAnnotatedString {
-            sentence.parts.forEach { part ->
-                if (part.bold) withStyle(SpanStyle(color = c.text, fontWeight = FontWeight.SemiBold)) { append(part.text) } else append(part.text)
-            }
-        }
-    }
-    androidx.compose.material3.Text(
-        text,
-        modifier,
-        color = c.secondary,
-        style = RType.sans(size, FontWeight.Medium, lineHeight = lineHeight),
-        maxLines = maxLines,
-        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-        textAlign = align,
-    )
-}
-
-/** The AI's face and the service it asks of, for a waiting request. */
-@Composable
-fun PendingMini(item: PendingItem, ring: Color) {
-    val c = LocalColors.current
-    val fallback = when (item.kind) {
-        PendingKind.PAIRING -> Icons.Rounded.Computer
-        PendingKind.JOIN -> Icons.Rounded.PhoneAndroid
-        PendingKind.BLOB -> Icons.Rounded.UploadFile
-        else -> null
-    }
-    val fromAi = item.kind != PendingKind.PAIRING && item.kind != PendingKind.JOIN
-    MiniLogo(
-        service = if (fromAi) item.service.ifBlank { "gmail" } else "",
-        face = { size -> if (fromAi) ConnectionIcon(item.connectionId, item.connectionLabel, size = size) },
-        ring = ring,
-        fallback = fallback,
-        fallbackTint = c.pair,
-    )
-}
-
-/** What a waiting request touches with what it does on its corner (see [ProviderTile]), and who asks on the other. */
-@Composable
-fun PendingTile(item: PendingItem, label: dev.reins.core.RequestLabel, ring: Color) {
-    Box(Modifier.size(44.dp)) {
-        ProviderTile(label, size = 44.dp, ring = ring)
-        Box(
-            Modifier
-                .align(Alignment.BottomStart)
-                .offset(x = (-6).dp, y = 6.dp)
-                .size(22.dp)
-                .background(ring, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) { ConnectionIcon(item.connectionId, item.connectionLabel, size = 18.dp) }
-    }
-}
 
 /** Seconds left as a ring and a number ("40s", "1:20"), red for the last 15 s. Its clock recomposes only this. */
 @Composable

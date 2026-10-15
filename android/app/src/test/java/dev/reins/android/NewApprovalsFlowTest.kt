@@ -32,8 +32,9 @@ class NewApprovalsFlowTest : FlowHarness() {
         rule.onNodeWithTag("mcpArguments").assertTextContains("\"title\": \"Login fails on Safari\"", substring = true)
         rule.onNodeWithTag("mcpEffect").assertTextEquals("Changes things")
         assertFalse(has("mcpDestructive"))
-        // The tool's title is the headline, with its server.
-        rule.onNodeWithTag("what").assertTextEquals("Create issue on Linear")
+        // The server is the target; the tool, by its name, in mono under it (its title is the server's own words).
+        rule.onNodeWithTag("what").assertTextEquals("Use a tool on Linear")
+        rule.onNodeWithTag("askDetails", useUnmergedTree = true).assertTextEquals("create_issue")
         assertFalse(has("writePreview"))
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
@@ -144,7 +145,8 @@ class NewApprovalsFlowTest : FlowHarness() {
     fun aPushToGitlabNamesGitlab() {
         val ref = TestData.gitRef("old", change = "delete", commitCount = 0u, commits = emptyList(), filesChanged = 0u, files = emptyList(), additions = null, deletions = null)
         openRequest(TestData.gitPushView(TestData.gitPush(ref)).copy(service = "gitlab"))
-        rule.onNodeWithTag("what").assertTextContains("Delete branch old", substring = true)
+        rule.onNodeWithTag("what").assertTextEquals("Delete a branch from octo/app")
+        rule.onNodeWithTag("askDetails", useUnmergedTree = true).assertTextEquals("old")
         rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextContains("GITLAB", substring = true)
     }
 
@@ -161,7 +163,7 @@ class NewApprovalsFlowTest : FlowHarness() {
         launch()
         awaitTag("pending:blob_0123456789abcdef")
         rule.onNodeWithTag("sentence:blob_0123456789abcdef", useUnmergedTree = true)
-            .assertTextContains("Share a file: 18.0 KB · The quarterly numbers for the summary", substring = true)
+            .assertTextEquals("Share report.csv")
         if (!has("uploadSheet")) tap("pending:blob_0123456789abcdef")
         awaitTag("uploadSheet")
         rule.onNodeWithTag("uploadReason").assertTextContains("The quarterly numbers for the summary", substring = true)

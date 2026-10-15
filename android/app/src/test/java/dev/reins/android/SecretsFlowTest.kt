@@ -46,7 +46,7 @@ class SecretsFlowTest : FlowHarness() {
     fun anEnvReleaseShowsTheWholeCommandAndTheVariablesNames() {
         openRequest(TestData.envReleaseView(TestData.envRelease(command = longCommand, purpose = "Seed and run the dev server")))
         awaitTag("envRelease")
-        rule.onNodeWithTag("what").assertTextEquals("Hand over 3 variables of shop · dev")
+        rule.onNodeWithTag("what").assertTextEquals("Use 3 variables of shop · dev")
         rule.onNodeWithTag("envRunner").assertTextEquals("You")
         assertTrue(has("envPerson"))
         rule.onNodeWithTag("envCommand").assertTextEquals(longCommand)
@@ -165,7 +165,8 @@ class SecretsFlowTest : FlowHarness() {
     fun aPrintedValueIsAskedEveryTime() {
         openRequest(TestData.envReleaseView(TestData.envRelease(variables = listOf("STRIPE_KEY"), print = true, command = "reins secrets get STRIPE_KEY")))
         awaitTag("noStanding")
-        rule.onNodeWithTag("what").assertTextEquals("Print STRIPE_KEY from shop · dev")
+        rule.onNodeWithTag("what").assertTextEquals("Print a value from shop · dev")
+        rule.onNodeWithTag("askDetails", useUnmergedTree = true).assertTextEquals("STRIPE_KEY")
         rule.onNodeWithTag("envLease").assertTextEquals("Printed")
         assertFalse(has("alwaysAskToggle"))
     }

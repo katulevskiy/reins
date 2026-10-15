@@ -70,6 +70,10 @@ fun AskField(
     target: String?,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The machine part (a command, a branch, a host) in mono under the ask, whole. */
+    details: String? = null,
+    /** The request's icon beside the label line (an entry's page). */
+    icon: (@Composable () -> Unit)? = null,
     askTag: String = "what",
     closeGlyph: Glyph = Glyph.ArrowBack,
     closeLabel: String = "Back",
@@ -96,19 +100,32 @@ fun AskField(
                 FieldButton(closeGlyph, closeLabel, Modifier.testTag("closeSheet"), onClick = onClose)
                 top()
             }
-            LabelText(label, c.onField2, Modifier.padding(top = 30.dp).testTag("fieldLabel"))
+            if (icon != null) {
+                Row(Modifier.padding(top = 26.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    icon()
+                    LabelText(label, c.onField2, Modifier.testTag("fieldLabel"))
+                }
+            } else {
+                LabelText(label, c.onField2, Modifier.padding(top = 30.dp).testTag("fieldLabel"))
+            }
             AnimatedVisibility(shown, enter = fadeIn(tween(if (reduce) Motion.REDUCED_MS else 240, delayMillis = if (reduce) 0 else Motion.ASK_DELAY_MS))) {
-                // A slash never ends a line ("octo/ app"); what is read out (and tested) is the ask as written.
-                AskText(
-                    noBreakAfterSlash(ask),
-                    c.onField,
-                    Modifier.padding(top = 10.dp).fillMaxWidth().clearAndSetSemantics {
-                        testTag = askTag
-                        text = androidx.compose.ui.text.AnnotatedString(ask)
-                    },
-                    target = target?.let(::noBreakAfterSlash),
-                    style = RType.ask.copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading),
-                )
+                Column {
+                    // A slash never ends a line ("octo/ app"); what is read out (and tested) is the ask as written.
+                    AskText(
+                        noBreakAfterSlash(ask),
+                        c.onField,
+                        Modifier.padding(top = 10.dp).fillMaxWidth().clearAndSetSemantics {
+                            testTag = askTag
+                            text = androidx.compose.ui.text.AnnotatedString(ask)
+                        },
+                        target = target?.let(::noBreakAfterSlash),
+                        style = RType.ask.copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Heading),
+                    )
+                    // The machine part in mono, on its own line, whole (ASK-TEXT.md).
+                    if (!details.isNullOrBlank()) {
+                        RText(details, RType.mono(14f), c.onField, Modifier.padding(top = 8.dp).testTag("askDetails"), ltr = true)
+                    }
+                }
             }
             if (verdict != null) Box(Modifier.padding(top = 14.dp)) { verdict() }
             below?.invoke(this)

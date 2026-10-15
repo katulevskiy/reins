@@ -78,8 +78,10 @@ class SignalShellLogicTest {
         assertEquals("Push 8 commits to octo/app", labelled.text)
         assertEquals("octo/app", labelled.target)
         val code = cardAsk(push.copy(label = TestData.label("terminal", "run", "Run", "git push", code = true)), null)
-        assertNull("a command is set in mono, not italic", code.target)
-        assertEquals("GitHub · push", cardLabel(push.copy(label = TestData.label("github", "push", "Push", "octo/app"))))
+        assertEquals("a command never goes into the serif", "Run a command", code.text)
+        assertNull(code.target)
+        assertEquals("git push", code.details)
+        assertEquals("GitHub · Push", cardLabel(push.copy(label = TestData.label("github", "push", "Push", "octo/app"))))
     }
 
     @Test
