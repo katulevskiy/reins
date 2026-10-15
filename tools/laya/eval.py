@@ -23,6 +23,15 @@ of the `pooled` embedding: leave-one-out kNN label accuracy, class-key purity, a
 includes held-out families and phrasings), raise it to the smallest value with no unsafe automatic approve on val,
 and write both into the checkpoint (rl_agent_config.json `temperature`, `temperature_by_options`, and the
 `temperature` tensor of model.safetensors) before evaluating.
+
+--risk-data (a model with the risk output, docs/autopilot-risk.md): severity metrics per risk split and on the golden
+set (golden.json["risk"]) at the model's risk temperature and Overnight threshold: per-class precision / recall of the
+two-pass distribution, catastrophic recall, false holds (benign, all non-catastrophic), ECE, contrast groups (does
+the more severe member of a pair get the higher expected severity, and is each held exactly when catastrophic),
+and injection robustness (steering text by phrasing split and language, reassurance).
+
+    python eval.py --pkg ~/.cache/reins-laya/pkg/laya-approvals-ml-v2 --data ~/.cache/reins-laya/data/v7 \
+        --risk-data ~/.cache/reins-laya/data/risk-v1 --splits test_iid,test_ood,adv_test
 """
 import argparse
 import json
@@ -51,25 +60,27 @@ class TorchRunner:
         model, self.cfg = lc.load_model(ckpt, "cpu")
         self.model = lc.ExportModel(model.to(self.device).eval())
 
-    def run(self, texts, max_len, bs=64):
+    def run(self, texts, max_len, bs=64, risk=False):
         torch = self.torch
-        out = {"logits": [], "pooled": []}
         idx = np.argsort([len(t) for t in texts])
         res_l = np.zeros((len(texts), 3), np.float32)
+        res_r = np.zeros((len(texts), len(lc.RISK_LABELS)), np.float32)
         res_p = None
         with torch.no_grad():
             for s in range(0, len(texts), bs):
                 sel = idx[s:s + bs]
                 feeds = batch_feeds(self.tok, self.cfg, [texts[i] for i in sel], max_len)
                 with torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.device.type == "cuda"):
-                    lo, act, po = self.model(*[torch.from_numpy(feeds[k]).to(self.device) for k in
-                                               ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")])
-                res_l[sel] = lo.float().cpu().numpy()
-                po = po.float().cpu().numpy()
+                    out = self.model(*[torch.from_numpy(feeds[k]).to(self.device) for k in
+                                       ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")])
+                res_l[sel] = out[0].float().cpu().numpy()
+                po = out[2].float().cpu().numpy()
+                if risk:
+                    res_r[sel] = out[3].float().cpu().numpy()
                 if res_p is None:
                     res_p = np.zeros((len(texts), po.shape[1]), np.float32)
                 res_p[sel] = po
-        return res_l, res_p
+        return (res_l, res_p, res_r) if risk else (res_l, res_p)
 
 
 class OnnxRunner:
@@ -91,19 +102,23 @@ class OnnxRunner:
         so.inter_op_num_threads = 1
         self.sess = ort.InferenceSession(os.path.join(pkg, "model.onnx"), so, providers=["CPUExecutionProvider"])
 
-    def run(self, texts, max_len, bs=32):
+    def run(self, texts, max_len, bs=32, risk=False):
         idx = np.argsort([len(t) for t in texts])
         res_l = np.zeros((len(texts), 3), np.float32)
+        res_r = np.zeros((len(texts), len(lc.RISK_LABELS)), np.float32)
         res_p = None
+        names = ["logits", "act", "pooled"] + (["risk"] if risk else [])
         for s in range(0, len(texts), bs):
             sel = idx[s:s + bs]
             feeds = batch_feeds(self.tok, self.cfg, [texts[i] for i in sel], max_len)
-            lo, act, po = self.sess.run(["logits", "act", "pooled"], feeds)
-            res_l[sel] = lo
+            out = self.sess.run(names, feeds)
+            res_l[sel] = out[0]
+            if risk:
+                res_r[sel] = out[3]
             if res_p is None:
-                res_p = np.zeros((len(texts), po.shape[1]), np.float32)
-            res_p[sel] = po
-        return res_l, res_p
+                res_p = np.zeros((len(texts), out[2].shape[1]), np.float32)
+            res_p[sel] = out[2]
+        return (res_l, res_p, res_r) if risk else (res_l, res_p)
 
 
 def batch_feeds(tok, cfg, texts, max_len):
@@ -185,6 +200,78 @@ def write_temperature(ckpt, t, t_nll):
     save_file(sd, st)
 
 
+def risk_config(cfg):
+    """(temperature, Overnight threshold) of a model with the risk output, from its config."""
+    r = cfg.get("risk") or {}
+    return float(r.get("temperature", 1.0)), float(r.get("thresholds", {}).get("overnight", 0.5))
+
+
+def contrast_report(recs, p):
+    """Golden contrast groups: pairs with different labels ordered by expected severity, and held == catastrophic."""
+    expected = p @ np.arange(p.shape[1])
+    groups = {}
+    for i, r in enumerate(recs):
+        if r.get("pair"):
+            groups.setdefault(r["pair"], []).append(i)
+    pairs = ordered = groups_ok = 0
+    wrong = []
+    for g, idx in groups.items():
+        ok = True
+        for a in idx:
+            for b in idx:
+                if recs[a]["risk_full"] < recs[b]["risk_full"]:
+                    pairs += 1
+                    if expected[a] < expected[b]:
+                        ordered += 1
+                    else:
+                        ok = False
+                        wrong.append("%s < %s" % (recs[a]["id"], recs[b]["id"]))
+        groups_ok += ok
+    return {"groups": len(groups), "groups_ordered": groups_ok, "pairs": pairs,
+            "pair_order_acc": ordered / max(1, pairs), "misordered": wrong}
+
+
+def risk_eval(runner, recs, T_r, theta, max_len, name, show_errors=0):
+    """Risk metrics of one split (and its adversarial subsets)."""
+    _, _, rf = runner.run([r["s_facts"] for r in recs], max_len, risk=True)
+    _, _, ru = runner.run([r["s_full"] for r in recs], max_len, risk=True)
+    out = {name: lc.risk_metrics(recs, rf, ru, T_r, theta)}
+    subsets = []
+    if any(r.get("adversarial") for r in recs):
+        steer = np.array([bool(r.get("steering")) for r in recs])
+        held = np.array([bool(r.get("heldout_phrasing")) for r in recs])
+        adv = np.array([bool(r.get("adversarial")) for r in recs])
+        subsets += [("steering", steer), ("steering.heldout", steer & held), ("reassurance", adv & ~steer),
+                    ("reassurance.heldout", adv & ~steer & held)]
+        for lang in sorted({r.get("lang", "en") for r in recs} - {"en"}):
+            subsets.append(("lang." + lang, np.array([r.get("lang") == lang for r in recs]) & adv))
+    parts = np.array([r.get("part", "") for r in recs])
+    subsets += [("part." + p, parts == p) for p in sorted(set(parts) - {""})]
+    for sub, sel in subsets:
+        if sel.any():
+            ix = np.where(sel)[0]
+            out["%s.%s" % (name, sub)] = lc.risk_metrics([recs[i] for i in ix], rf[ix], ru[ix], T_r, theta)
+    p = lc.risk_combine(lc.softmax(rf, T_r), lc.softmax(ru, T_r))
+    if any(r.get("pair") for r in recs):
+        out[name]["contrast"] = contrast_report(recs, p)
+    for k, m in out.items():
+        print("%-28s " % ("risk." + k) + " ".join("%s=%s" % (a, ("%.4f" % b) if isinstance(b, float) else b) for a, b in m.items()
+                                                   if a in ("n", "acc_combined", "ece", "cat_recall", "cat_missed", "false_holds_benign",
+                                                            "false_holds_noncat", "R_catastrophic", "P_catastrophic")), flush=True)
+    if show_errors:
+        yu = np.array([r["risk_full"] for r in recs])
+        held = p[:, lc.CATASTROPHIC] >= theta
+        bad = np.where(held != (yu == lc.CATASTROPHIC))[0][:show_errors]
+        for i in bad:
+            print("  %s P(cat) %.3f gold %s: %s" % ("FALSE HOLD" if held[i] else "MISSED", p[i, lc.CATASTROPHIC],
+                                                   lc.RISK_LABELS[yu[i]], recs[i]["s_full"].replace("\n", " | ")[:300]))
+    if "contrast" in out[name]:
+        c = out[name]["contrast"]
+        print("  contrast groups ordered %d/%d, pairs %.4f; misordered: %s" % (
+            c["groups_ordered"], c["groups"], c["pair_order_acc"], ", ".join(c["misordered"][:20])))
+    return out
+
+
 def knn_report(recs, pooled, k=8, show=4, seed=0):
     x = pooled / np.linalg.norm(pooled, axis=-1, keepdims=True).clip(1e-9)
     sim = x @ x.T
@@ -256,6 +343,10 @@ def main():
     ap.add_argument("--errors", type=int, default=0, help="print N wrong automatic decisions per split")
     ap.add_argument("--out", help="write results JSON here")
     ap.add_argument("--calibrate", action="store_true", help="fit + write the temperature on val first (--ckpt only)")
+    ap.add_argument("--risk-data", help="gen_risk.py splits: risk metrics (a model with the risk output)")
+    ap.add_argument("--risk-splits", default="val,test_iid,test_ood,adv_test")
+    ap.add_argument("--risk-threshold", type=float, default=None, help="override the model's Overnight threshold")
+    ap.add_argument("--no-golden", action="store_true", help="skip the golden risk set")
     args = ap.parse_args()
 
     if args.ckpt:
@@ -273,7 +364,7 @@ def main():
         print("calibrated on val: T_nll %.4f, T_safe %.4f (written to %s)" % (t_nll, T, args.ckpt), flush=True)
     results = {"model": args.ckpt or args.pkg, "temperature": T, "theta_a": args.theta_a, "theta_d": args.theta_d,
                "splits": {}}
-    for s in args.splits.split(","):
+    for s in [x for x in args.splits.split(",") if x]:
         recs = lc.read_jsonl(os.path.join(args.data, s + ".jsonl"))
         if args.limit:
             recs = [recs[i] for i in np.random.RandomState(0).permutation(len(recs))[:args.limit]]
@@ -312,6 +403,21 @@ def main():
                 print("  Q [%s] %s" % (ex["query"]["label"], ex["query"]["what"]))
                 for nb in ex["neighbours"]:
                     print("     %.3f [%s] %s" % (nb["sim"], nb["label"], nb["what"]))
+    if args.risk_data:
+        T_r, theta = risk_config(runner.cfg)
+        if args.risk_threshold is not None:
+            theta = args.risk_threshold
+        results["risk"] = {"temperature": T_r, "theta": theta, "splits": {}}
+        print("risk: T %.4f, Overnight threshold P(catastrophic) >= %.4f" % (T_r, theta), flush=True)
+        for s in [x for x in args.risk_splits.split(",") if x]:
+            recs = lc.read_jsonl(os.path.join(args.risk_data, s + ".jsonl"))
+            if args.limit:
+                recs = [recs[i] for i in np.random.RandomState(0).permutation(len(recs))[:args.limit]]
+            results["risk"]["splits"].update(risk_eval(runner, recs, T_r, theta, args.max_len, s, args.errors))
+        if not args.no_golden:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden.json")) as f:
+                golden = json.load(f)["risk"]["cases"]
+            results["risk"]["splits"].update(risk_eval(runner, golden, T_r, theta, args.max_len, "golden", max(args.errors, 40)))
     if args.latency and args.pkg:
         results["latency"] = latency(args.pkg)
         print("latency (batch 2 x 200 tokens):", json.dumps(results["latency"]))

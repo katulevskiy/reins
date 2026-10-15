@@ -59,15 +59,16 @@ Splits: `train` 60000 · `val` 4600 · `test_iid` 5000 · `test_ood` 1500 · `ad
   of request, as the reason or inside the content -> ask. This is what taught the model that unfamiliar AI-written
   text is a reason for doubt; it is what made unseen injection wording fail safe (see the run history).
 
-## Risk data (`gen_risk.py`, `risk_golden.py`, risk-v2)
+## Risk data (`gen_risk.py`, `risk_golden.py`, risk-v3)
 
 For the Overnight mode (`docs/autopilot-risk.md`): the same layout as v7 plus `risk_facts` / `risk_full` (0 benign, 1
 risky, 2 severe, 3 catastrophic) and the `context` line the core computes (a fact key after `details`, rendered only
 for a model with the risk output; v7 renders are byte-identical).
 
 ```sh
-python gen_risk.py --out ~/.cache/reins-laya/data/risk-v2 --n 40000
-python risk_golden.py --stats                 # 349 hand-checked cases, 61 contrast groups
+cargo build --release -p reins-laya --bin laya-context   # the core's own context line (core_context.py)
+python gen_risk.py --out ~/.cache/reins-laya/data/risk-v3 --n 40000
+python risk_golden.py --stats                 # 377 hand-checked cases, 74 contrast groups
 python risk_golden.py --write golden.json     # golden.json["risk"]; sequence.py --golden keeps it
 ```
 
@@ -86,6 +87,15 @@ python risk_golden.py --write golden.json     # golden.json["risk"]; sequence.py
   adv_test 3,000.
 - **Golden** (`risk_golden.py`): written case by case, never generated, never trained on; every connector, 61 contrast
   groups, reassurance and steering in 8 languages, 8 cases where a secret in the AI's text raises the class.
+- **v3: what the phone shows.** A hook's question reads as the phone renders it (the command or file, "harness
+  hook", the question line and detail as the AI's part). The context line of commands, files, pushes and the
+  commands secrets go to is the core's own (`laya-context`), and each record says whether the core's rules hold it
+  (`rules_hold`, `tripwire`; the threshold counts those as held). Other connectors keep in `context` only what the
+  core writes. Labels follow what the phone can see: the golden cases that became alike were relabelled by hand
+  (noted), and a check refuses alike cases with different labels. Steering goes into every agent-controlled field (a
+  comment, an echo or a variable in a command, the working folder, folder and file names, branch names, pushed
+  files, commit messages, tool arguments), with names and phrasings split train / val / test. `steer_test` holds
+  1,500 clean and steered twins.
 - **risk-v1 → v2**: v1 labelled steering text catastrophic. Unseen injection wording was not recognised (val held-out
   phrasings, golden zh/ja/pt), and the threshold that still caught it held most benign requests; v2 leaves the class to
   the facts. v2 also puts every context phrase the core writes into training (v1's val-only Windows family used

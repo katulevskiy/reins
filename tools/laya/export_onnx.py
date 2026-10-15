@@ -5,7 +5,9 @@ ONNX I/O (section 6.2):
   inputs   input_ids int64 [B,L], attention_mask int64 [B,L], marker_pos int64 [B,K], marker_mask bool [B,K],
            qtype int64 [B]
   outputs  logits f32 [B,K] (uncalibrated), act f32 [B,2] (raw logits), pooled f32 [B,H] (the [CLS] state
-           after the decision head = h[:,0] after the head layers; the kNN embedding)
+           after the decision head = h[:,0] after the head layers; the kNN embedding), and for a checkpoint with a
+           risk head (finetune.py --risk-data) risk f32 [B,4] (uncalibrated severity logits: benign, risky, severe,
+           catastrophic; docs/autopilot-risk.md)
 
 Steps: fp32 export (legacy TorchScript exporter, dynamic batch/seq/k) -> int8 dynamic quantization
 (MatMul, optionally Gather for the embedding table) -> parity check against PyTorch -> package
@@ -39,6 +41,12 @@ import sequence as sq  # noqa: E402
 
 INPUTS = ["input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype"]
 OUTPUTS = ["logits", "act", "pooled"]
+RISK_OUTPUT = "risk"
+
+
+def outputs_of(model):
+    """The graph's outputs: the risk logits too when the model has a risk head."""
+    return OUTPUTS + ([RISK_OUTPUT] if getattr(model, "risk_head", None) is not None else [])
 
 
 def sample_inputs(tok, cfg, texts, max_len):
@@ -67,9 +75,11 @@ def export_fp32(model, feeds, path, opset):
     args = tuple(torch.from_numpy(feeds[k]) for k in INPUTS)
     dyn = {"input_ids": {0: "batch", 1: "seq"}, "attention_mask": {0: "batch", 1: "seq"},
            "marker_pos": {0: "batch", 1: "k"}, "marker_mask": {0: "batch", 1: "k"}, "qtype": {0: "batch"},
-           "logits": {0: "batch", 1: "k"}, "act": {0: "batch"}, "pooled": {0: "batch"}}
+           "logits": {0: "batch", 1: "k"}, "act": {0: "batch"}, "pooled": {0: "batch"}, RISK_OUTPUT: {0: "batch"}}
+    names = outputs_of(model)
     with torch.no_grad():
-        torch.onnx.export(em, args, path, input_names=INPUTS, output_names=OUTPUTS, dynamic_axes=dyn,
+        torch.onnx.export(em, args, path, input_names=INPUTS, output_names=names,
+                          dynamic_axes={k: v for k, v in dyn.items() if k in INPUTS + names},
                           opset_version=opset, do_constant_folding=True, dynamo=False)
 
 
@@ -199,16 +209,17 @@ def ort_session(path, threads=4):
 
 
 def run_batches(sess, tok, cfg, texts, max_len, bs=16):
-    outs = {k: [] for k in OUTPUTS}
+    names = [o.name for o in sess.get_outputs()]
+    outs = {k: [] for k in names}
     order = np.argsort([len(t) for t in texts])
     for s in range(0, len(texts), bs):
         sel = order[s:s + bs]
         feeds = sample_inputs(tok, cfg, [texts[i] for i in sel], max_len)
-        res = sess.run(OUTPUTS, feeds)
-        for k, v in zip(OUTPUTS, res):
+        res = sess.run(names, feeds)
+        for k, v in zip(names, res):
             outs[k].append((sel, v))
     final = {}
-    for k in OUTPUTS:
+    for k in names:
         dim = outs[k][0][1].shape[1]
         arr = np.zeros((len(texts), dim), np.float32)
         for sel, v in outs[k]:
@@ -219,15 +230,15 @@ def run_batches(sess, tok, cfg, texts, max_len, bs=16):
 
 def torch_batches(model, tok, cfg, texts, max_len, bs=16):
     em = ExportModel(model).eval()
-    outs = {k: np.zeros((len(texts), 0), np.float32) for k in OUTPUTS}
-    res = {k: [None] * len(texts) for k in OUTPUTS}
+    names = outputs_of(model)
+    res = {k: [None] * len(texts) for k in names}
     order = np.argsort([len(t) for t in texts])
     with torch.no_grad():
         for s in range(0, len(texts), bs):
             sel = order[s:s + bs]
             feeds = sample_inputs(tok, cfg, [texts[i] for i in sel], max_len)
             o = em(*[torch.from_numpy(feeds[k]) for k in INPUTS])
-            for k, v in zip(OUTPUTS, o):
+            for k, v in zip(names, o):
                 for r, i in enumerate(sel):
                     res[k][i] = v[r].numpy()
     return {k: np.stack(v) for k, v in res.items()}
@@ -253,6 +264,7 @@ def main():
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--no-recalibrate", action="store_true",
                     help="keep the checkpoint's temperature (default: raise it to the int8 model's safety minimum on val)")
+    ap.add_argument("--risk-data", help="gen_risk.py splits: risk parity texts and the int8 risk calibration on their val")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
 
@@ -278,6 +290,20 @@ def main():
     ptexts += [r["s_facts"] for r in recs] + [r["s_full"] for r in recs]
     labels = np.array([lc.LABEL_ID[r["label_full"]] for r in recs]) if recs else None
     T = float(cfg.get("temperature_by_options", {}).get("choice:3-5", cfg.get("temperature", [1.0])[0]))
+    has_risk = getattr(model, "risk_head", None) is not None
+    risk_cfg = dict(cfg.get("risk") or {})
+    rrecs = []
+    if has_risk and args.risk_data:
+        # risk parity texts: records of each risk test split and the golden set
+        for split in ("test_iid", "test_ood", "adv_test"):
+            path = os.path.join(args.risk_data, split + ".jsonl")
+            if os.path.exists(path):
+                rs = lc.read_jsonl(path)
+                rrecs += [rs[i] for i in np.random.RandomState(1).permutation(len(rs))[:args.parity_n]]
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden.json")) as f:
+            rrecs += json.load(f).get("risk", {}).get("cases", [])
+    n1, nrr = len(ptexts), len(rrecs)
+    ptexts += [r["s_facts"] for r in rrecs] + [r["s_full"] for r in rrecs]
     t0 = time.time()
     ref = torch_batches(model, tok, cfg, ptexts, args.max_len)  # reference: the unmodified PyTorch model
     print("PyTorch reference on %d texts %.0fs" % (len(ptexts), time.time() - t0), flush=True)
@@ -307,12 +333,25 @@ def main():
              "pooled_cos_min": float(cos.min()), "pooled_cos_mean": float(cos.mean())}
         if labels is not None:
             # the decision the phone takes (spec section 3 rule at 0.95 / 0.90), PyTorch vs ONNX
-            dr = lc.autopilot_decide(pr[n0:n0 + nr], pr[n0 + nr:])
-            do = lc.autopilot_decide(po[n0:n0 + nr], po[n0 + nr:])
+            dr = lc.autopilot_decide(pr[n0:n0 + nr], pr[n0 + nr:n0 + 2 * nr])
+            do = lc.autopilot_decide(po[n0:n0 + nr], po[n0 + nr:n0 + 2 * nr])
             d["decision_agree"] = float((dr == do).mean())
-            d["acc_full_torch"] = float((pr[n0 + nr:].argmax(-1) == labels).mean())
-            d["acc_full_onnx"] = float((po[n0 + nr:].argmax(-1) == labels).mean())
+            d["acc_full_torch"] = float((pr[n0 + nr:n0 + 2 * nr].argmax(-1) == labels).mean())
+            d["acc_full_onnx"] = float((po[n0 + nr:n0 + 2 * nr].argmax(-1) == labels).mean())
             d["unsafe_approve_onnx"] = int(((do == 0) & (labels != 0)).sum())
+        if has_risk:
+            Tr = float(risk_cfg.get("temperature", 1.0))
+            theta = float(risk_cfg.get("thresholds", {}).get("overnight", 0.5))
+            qr, qo = lc.softmax(ref[RISK_OUTPUT], Tr), lc.softmax(out[RISK_OUTPUT], Tr)
+            d["risk_argmax_agree"] = float((qr.argmax(-1) == qo.argmax(-1)).mean())
+            d["risk_max_abs_prob_diff"] = float(np.abs(qr - qo).max())
+            d["risk_mean_abs_prob_diff"] = float(np.abs(qr - qo).mean())
+            if nrr:
+                hr = lc.risk_combine(qr[n1:n1 + nrr], qr[n1 + nrr:])[:, lc.CATASTROPHIC] >= theta
+                ho = lc.risk_combine(qo[n1:n1 + nrr], qo[n1 + nrr:])[:, lc.CATASTROPHIC] >= theta
+                cat = np.array([r["risk_full"] == lc.CATASTROPHIC for r in rrecs])
+                d["risk_hold_agree"] = float((hr == ho).mean())
+                d["risk_cat_missed_onnx"] = int((cat & ~ho).sum())
         parity[name] = d
         print(name, json.dumps(d), flush=True)
 
@@ -339,6 +378,33 @@ def main():
         print("int8 calibration on val (%d records, %.0fs): T_nll %.4f T_safe %.4f -> package T %.4f (checkpoint %.4f)" % (
             len(vr), time.time() - t0, t_nll, t_safe, T_pkg, T), flush=True)
 
+    # ---- the int8 model's own risk calibration on the risk val split: its temperature (NLL) and the Overnight
+    # threshold at the checkpoint's recall target; what ships is calibrated on what ships.
+    if has_risk and args.risk_data and not args.no_recalibrate and os.path.exists(os.path.join(args.risk_data, "val.jsonl")):
+        vr = lc.read_jsonl(os.path.join(args.risk_data, "val.jsonl"))
+        sess = ort_session(int8, args.threads)
+        t0 = time.time()
+        vo = run_batches(sess, tok, cfg, [r["s_facts"] for r in vr] + [r["s_full"] for r in vr], args.max_len, bs=32)
+        rf, ru = vo[RISK_OUTPUT][:len(vr)], vo[RISK_OUTPUT][len(vr):]
+        y = np.concatenate([[r["risk_facts"] for r in vr], [r["risk_full"] for r in vr]])
+        Tr = lc.fit_temperature(np.concatenate([rf, ru]), y)
+        p_cat = lc.risk_combine(lc.softmax(rf, Tr), lc.softmax(ru, Tr))[:, lc.CATASTROPHIC]
+        target = float(risk_cfg.get("recall_target", 0.995))
+        # the core's rules count as held (as in finetune.py); the lower threshold of the two ships (more holds, never
+        # fewer)
+        theta_int8 = lc.risk_threshold(p_cat, np.array([r["risk_full"] for r in vr]) == lc.CATASTROPHIC, target,
+                                       lc.rules_of(vr))
+        theta_ckpt = risk_cfg.get("thresholds", {}).get("overnight")
+        theta = min(theta_int8, theta_ckpt) if theta_ckpt is not None else theta_int8
+        calib["risk"] = {"checkpoint_temperature": risk_cfg.get("temperature"),
+                         "checkpoint_overnight": risk_cfg.get("thresholds", {}).get("overnight"),
+                         "int8_temperature": Tr, "int8_overnight": theta_int8, "overnight": theta,
+                         "recall_target": target, "rules_counted": True}
+        risk_cfg["temperature"] = Tr
+        risk_cfg["thresholds"] = {"overnight": theta}
+        print("int8 risk calibration on risk val (%d records, %.0fs): T %.4f, Overnight P(catastrophic) >= %.4f" % (
+            len(vr), time.time() - t0, Tr, theta), flush=True)
+
     # ---- package
     pdir = os.path.join(args.pkg_root, args.id)
     os.makedirs(pdir, exist_ok=True)
@@ -353,6 +419,12 @@ def main():
             "mask_token": sp.mask_token, "options": sq.OPTIONS, "qtype": sq.QTYPE_CHOICE, "quantization": args.quant,
             "smooth_alpha": args.smooth_alpha if args.quant.startswith("smooth") else None,
             "question": sq.QUESTION}
+    if has_risk:
+        # what the phone needs: the output's name and classes, the temperature, the Overnight threshold, and that the
+        # situation carries the `context` line (docs/autopilot-risk.md)
+        lcfg["risk"] = {"output": RISK_OUTPUT, "labels": lc.RISK_LABELS, "temperature": float(risk_cfg.get("temperature", 1.0)),
+                        "thresholds": {"overnight": float(risk_cfg.get("thresholds", {}).get("overnight", 0.5))},
+                        "situation": "context"}
     with open(os.path.join(pdir, "laya_config.json"), "w") as f:
         json.dump(lcfg, f, indent=2, ensure_ascii=False)
         f.write("\n")

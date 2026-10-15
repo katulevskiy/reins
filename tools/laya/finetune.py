@@ -16,7 +16,16 @@ needed, to the smallest value with no unsafe automatic approve on val (`--safe-t
 Laya's layout is written (rl_agent_config.json, encoder/, tokenizer/, model.safetensors), loadable by laya.Agent
 and by export_onnx.py.
 
+With `--risk-data` (gen_risk.py, docs/autopilot-risk.md) the model also gets a risk head (a LayerNorm and a linear
+layer on `pooled`, 4 severity classes) trained jointly: the risk records join the approval records (both heads learn
+from them), v7 records carry no risk label (masked). Model selection adds the risk val NLL; after training the risk
+temperature is fitted on the risk val split and the Overnight threshold on P(catastrophic) is the largest value that
+still holds `--risk-recall` of val's catastrophic records under the two-pass rule (lcommon.risk_combine). Both go
+into the checkpoint's config (`risk`), with the metrics on every risk split and the golden set.
+
     python finetune.py --base ml --data ~/.cache/reins-laya/data/v3 --out ~/.cache/reins-laya/runs/ml-v3
+    python finetune.py --base ~/.cache/reins-laya/runs/ml-v7-s0 --data ~/.cache/reins-laya/data/v7 \
+        --risk-data ~/.cache/reins-laya/data/risk-v1 --out ~/.cache/reins-laya/runs/ml-v8-risk --lr 5e-5 --epochs 1
 """
 import argparse
 import json
@@ -75,6 +84,7 @@ def collate(items, idx, pad_id):
     mmask = torch.ones(mpos.shape, dtype=torch.bool)
     return {"input_ids": ids, "attention_mask": att, "marker_pos": mpos, "marker_mask": mmask,
             "qtype": torch.zeros(n, dtype=torch.long), "label": torch.tensor([it["label"] for it in sel]),
+            "risk": torch.tensor([it.get("risk", -1) for it in sel]),
             "aux_class": torch.tensor([it.get("aux_class", 0) for it in sel])}
 
 
@@ -96,31 +106,72 @@ class Wrapped(nn.Module):
 
     def forward(self, b):
         logits, act = self.model(b["input_ids"], b["attention_mask"], b["marker_pos"], b["marker_mask"], b["qtype"])
-        return logits, act, self._pooled
+        head = getattr(self.model, "risk_head", None)
+        risk = head(self._pooled.float()) if head is not None else None
+        return logits, act, self._pooled, risk
 
 
-def proper_loss(logits, target, w_sph=0.5):
-    """Laya's strictly proper score: log score + w_sph * spherical score (negated, mean over the batch)."""
+def proper_loss(logits, target, w_sph=0.5, weight=None):
+    """Laya's strictly proper score: log score + w_sph * spherical score (negated, mean over the batch; weighted per
+    item when `weight` is given)."""
     q = torch.softmax(logits.float(), -1)
     logq = torch.log(q.clamp_min(1e-12)).clamp_min(-9.21)
     log_score = (target * logq).sum(-1)
     sph = (target * q).sum(-1) / q.norm(dim=-1).clamp_min(1e-9)
-    return -(log_score + w_sph * sph).mean()
+    score = log_score + w_sph * sph
+    if weight is None:
+        return -score.mean()
+    return -(score * weight).sum() / weight.sum().clamp_min(1e-9)
 
 
 @torch.no_grad()
-def predict(model, items, pad_id, device, max_tokens=32768, dtype=torch.bfloat16):
+def predict(model, items, pad_id, device, max_tokens=32768, dtype=torch.bfloat16, risk=False):
+    """Approval logits [N, 3]; with `risk`, (approval logits, risk logits [N, 4])."""
     model.eval()
+    em = lc.ExportModel(model)
     out_logits = np.zeros((len(items), 3), np.float32)
-    out_pooled = None
+    out_risk = np.zeros((len(items), len(lc.RISK_LABELS)), np.float32)
     for idx in token_batches(items, max_tokens, 512, None, shuffle=False):
         b = collate(items, idx, pad_id)
         b = {k: v.to(device) for k, v in b.items()}
         with torch.autocast("cuda", dtype=dtype, enabled=device.type == "cuda"):
-            logits, act = model(b["input_ids"], b["attention_mask"], b["marker_pos"], b["marker_mask"], b["qtype"])
-        out_logits[idx] = logits.float().cpu().numpy()
+            out = em(b["input_ids"], b["attention_mask"], b["marker_pos"], b["marker_mask"], b["qtype"])
+        out_logits[idx] = out[0].float().cpu().numpy()
+        if risk:
+            out_risk[idx] = out[3].float().cpu().numpy()
     model.train()
-    return out_logits
+    return (out_logits, out_risk) if risk else out_logits
+
+
+def risk_views(recs, items, rlog):
+    """Item risk logits -> (facts view [R, 4], full view [R, 4]) per record."""
+    rf = np.zeros((len(recs), rlog.shape[1]), np.float32)
+    ru = np.zeros_like(rf)
+    for it, z in zip(items, rlog):
+        (rf if it["variant"] == "s_facts" else ru)[it["rec"]] = z
+    return rf, ru
+
+
+def risk_report(recs, items, rlog, T, theta):
+    """Risk metrics for the whole split and its val parts (steer_test: the twins' metrics too)."""
+    rf, ru = risk_views(recs, items, rlog)
+    out = {"all": lc.risk_metrics(recs, rf, ru, T, theta)}
+    if any(r.get("part") == "steered" for r in recs):
+        out["steer"] = lc.steer_metrics(recs, rf, ru, T, theta)
+        return out
+    parts = np.array([r.get("part", "") for r in recs])
+    for p in sorted(set(parts) - {""}):
+        sel = np.where(parts == p)[0]
+        out[p] = lc.risk_metrics([recs[i] for i in sel], rf[sel], ru[sel], T, theta)
+    return out
+
+
+def golden_risk_records(path=None):
+    """golden.json["risk"] cases as records (approval labels are placeholders: the golden set is about risk)."""
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden.json")
+    with open(path) as f:
+        cases = json.load(f).get("risk", {}).get("cases", [])
+    return [dict(c, label_facts="ask", label_full="ask") for c in cases]
 
 
 def split_scores(recs, items, logits, temperature, name="", sel=None):
@@ -190,6 +241,23 @@ def main():
     ap.add_argument("--eval-every", type=int, default=300, help="val evaluation + best-state tracking (0 = off)")
     ap.add_argument("--smooth", type=float, default=0.0, help="label smoothing of the target distribution")
     ap.add_argument("--safe-temperature", type=int, default=1, help="raise T until val has no unsafe approve (1/0)")
+    ap.add_argument("--safe-temperature-risk", type=int, default=1,
+                    help="the risk records' val counts for the safe temperature too (1/0); 0 sets it on v7's val alone, "
+                         "as laya-approvals-ml-v1 was, and reports the risk val's unsafe approvals")
+    ap.add_argument("--risk-data", help="gen_risk.py splits: adds and trains the risk head (docs/autopilot-risk.md)")
+    ap.add_argument("--risk-weight", type=float, default=1.0, help="weight of the risk cross-entropy")
+    ap.add_argument("--risk-approval-weight", type=float, default=0.3,
+                    help="weight of the approval loss on risk records (v7 records weigh 1): they teach the approval head "
+                         "the context line without pulling it away from v7's behaviour")
+    ap.add_argument("--risk-lr", type=float, default=1e-3, help="lr of the risk head")
+    ap.add_argument("--risk-recall", type=float, default=0.995,
+                    help="catastrophic recall on risk val the Overnight threshold is set for")
+    ap.add_argument("--risk-limit", type=int, default=0, help="debug: use only N risk training records")
+    ap.add_argument("--risk-theta-on", default="val",
+                    help="split the Overnight threshold is set on: val, or val parts joined by + (heldout_family+...)")
+    ap.add_argument("--distill-from", help="a checkpoint whose approval answers on the v7 records the new one keeps "
+                                           "close to (KL), so that the risk head does not cost approvals")
+    ap.add_argument("--distill-weight", type=float, default=1.0)
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -211,6 +279,16 @@ def main():
     if args.limit:
         random.Random(args.seed).shuffle(train_recs)
         train_recs = train_recs[:args.limit]
+    risk_splits = {}
+    if args.risk_data:
+        for s in ("train", "val", "test_iid", "test_ood", "adv_test", "steer_test"):
+            p = os.path.join(args.risk_data, s + ".jsonl")
+            if os.path.exists(p):
+                risk_splits[s] = lc.read_jsonl(p)
+        if args.risk_limit:
+            random.Random(args.seed + 1).shuffle(risk_splits["train"])
+            risk_splits["train"] = risk_splits["train"][:args.risk_limit]
+        train_recs = train_recs + risk_splits["train"]
     class_keys = sorted({r["class_key"] for r in train_recs})
     ck_id = {k: i for i, k in enumerate(class_keys)}
     t0 = time.time()
@@ -218,6 +296,20 @@ def main():
     for it in train:
         it["aux_class"] = ck_id[train_recs[it["rec"]]["class_key"]]
     evals = {s: (splits[s], lc.items_from_records(tok, splits[s], args.max_len, hml)) for s in splits if s != "train"}
+    risk_evals = {s: (risk_splits[s], lc.items_from_records(tok, risk_splits[s], args.max_len, hml)) for s in risk_splits if s != "train"}
+    if args.risk_data:
+        golden = golden_risk_records()
+        risk_evals["golden"] = (golden, lc.items_from_records(tok, golden, args.max_len, hml))
+        if getattr(model, "risk_head", None) is None:
+            model.risk_head = lc.make_risk_head(model.encoder.config.hidden_size)
+    teacher = None
+    if args.distill_from:
+        tmodel, _ = lc.load_model(args.distill_from, device="cpu")
+        tmodel.to(device)
+        teacher = torch.tensor(predict(tmodel, train, pad_id, device), dtype=torch.float32)
+        del tmodel
+        torch.cuda.empty_cache()
+        print("teacher logits from %s on %d items" % (args.distill_from, len(train)), flush=True)
     lens = [len(it["ids"]) for it in train]
     print("encoded %d train items in %.0fs; len mean %.0f p95 %.0f max %d; truncated %d" % (
         len(train), time.time() - t0, np.mean(lens), np.percentile(lens, 95), max(lens),
@@ -240,15 +332,17 @@ def main():
     if args.grad_ckpt:
         enc = model.encoder.base_model.model if not args.full else model.encoder
         enc.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-    head_params = [p for n, p in model.named_parameters() if not n.startswith("encoder.")]
-    for p in head_params:
+    head_params = [p for n, p in model.named_parameters() if not n.startswith("encoder.") and not n.startswith("risk_head.")]
+    risk_params = [p for n, p in model.named_parameters() if n.startswith("risk_head.")]
+    for p in head_params + risk_params:
         p.requires_grad_(True)
     wrapped = Wrapped(model, len(class_keys)).to(device)
     aux_params = list(wrapped.aux_label.parameters()) + list(wrapped.aux_class.parameters())
-    opt = torch.optim.AdamW([
-        {"params": enc_params, "lr": args.lr, "weight_decay": 0.01},
-        {"params": head_params + aux_params, "lr": args.head_lr, "weight_decay": 0.01},
-    ], betas=(0.9, 0.98), eps=1e-6)
+    groups = [{"params": enc_params, "lr": args.lr, "weight_decay": 0.01},
+              {"params": head_params + aux_params, "lr": args.head_lr, "weight_decay": 0.01}]
+    if risk_params:
+        groups.append({"params": risk_params, "lr": args.risk_lr, "weight_decay": 0.01})
+    opt = torch.optim.AdamW(groups, betas=(0.9, 0.98), eps=1e-6)
     rng = random.Random(args.seed)
     n_epochs_int = math.ceil(args.epochs)
     per_epoch = len(token_batches(train, args.max_tokens, args.max_seqs, random.Random(0)))
@@ -271,8 +365,32 @@ def main():
         nll = float(np.mean([v["nll"] for k, v in rep.items() if k != "all"]))
         print("  val@%d T=%.3f " % (step, T) + " | ".join("%s acc %.4f nll %.4f cov %.3f unsafe %d wdeny %d" % (
             k, v["item_acc"], v["nll"], v["coverage"], v["unsafe_approve"], v["wrong_deny"]) for k, v in rep.items()), flush=True)
+        if risk_evals:
+            rrecs, ritems = risk_evals["val"]
+            _, rlog = predict(model, ritems, pad_id, device, risk=True)
+            Tr = lc.fit_temperature(rlog, np.array([it["risk"] for it in ritems]))
+            theta = theta_on(rrecs, ritems, rlog, Tr)
+            rrep = risk_report(rrecs, ritems, rlog, Tr, theta)
+            rnll = float(np.mean([v["nll"] for k, v in rrep.items() if k != "all"]))
+            print("  risk@%d T=%.3f theta=%.4f " % (step, Tr, theta) + " | ".join(
+                "%s acc %.4f nll %.4f ece %.3f catR %.4f fh-benign %.4f fh-noncat %.4f" % (
+                    k, v["acc_combined"], v["nll"], v["ece"], v["cat_recall"], v["false_holds_benign"], v["false_holds_noncat"])
+                for k, v in rrep.items()), flush=True)
+            nll += args.risk_weight * rnll
         if nll < best["nll"]:
             best.update(nll=nll, step=step, state={n: p.detach().to("cpu", copy=True) for n, p in trainable.items()})
+
+    def theta_on(rrecs, ritems, rlog, Tr):
+        """The Overnight threshold on the split `--risk-theta-on` names (val, or some of its parts), the records the
+        core's rules hold counted as held."""
+        rf, ru = risk_views(rrecs, ritems, rlog)
+        p_cat = lc.risk_combine(lc.softmax(rf, Tr), lc.softmax(ru, Tr))[:, lc.CATASTROPHIC]
+        sel = np.ones(len(rrecs), bool)
+        if args.risk_theta_on != "val":
+            parts = set(args.risk_theta_on.split("+"))
+            sel = np.array([r.get("part", "iid") in parts for r in rrecs])
+        is_cat = np.array([r["risk_full"] for r in rrecs]) == lc.CATASTROPHIC
+        return lc.risk_threshold(p_cat[sel], is_cat[sel], args.risk_recall, lc.rules_of(rrecs)[sel])
 
     step, t0, run_loss = 0, time.time(), []
     wrapped.train()
@@ -281,9 +399,17 @@ def main():
         for idx in token_batches(train, args.max_tokens, args.max_seqs, rng):
             b = {k: v.to(device) for k, v in collate(train, idx, pad_id).items()}
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                logits, act, pooled = wrapped(b)
+                logits, act, pooled, risk = wrapped(b)
                 tgt = F.one_hot(b["label"], 3).float() * (1 - args.smooth) + args.smooth / 3
-                loss = proper_loss(logits, tgt)
+                has_risk = b["risk"] >= 0
+                loss = proper_loss(logits, tgt, weight=torch.where(has_risk, args.risk_approval_weight, 1.0).float())
+                if risk is not None and has_risk.any():
+                    loss = loss + args.risk_weight * F.cross_entropy(risk.float()[has_risk], b["risk"][has_risk])
+                if teacher is not None and (~has_risk).any():
+                    # the v7 records: keep the approval answers of the checkpoint distilled from
+                    t = teacher[idx].to(device)[~has_risk]
+                    s = logits.float()[~has_risk]
+                    loss = loss + args.distill_weight * F.kl_div(F.log_softmax(s, -1), F.softmax(t, -1), reduction="batchmean")
                 # act head: act (0) when the answer is right, escalate (1) otherwise
                 right = (logits.detach().argmax(-1) == b["label"]).long()
                 loss = loss + 0.1 * F.cross_entropy(act.float(), 1 - right)
@@ -329,7 +455,20 @@ def main():
     T_nll = lc.fit_temperature(vlog, vlab)
     print("temperature %.4f (val NLL %.4f -> %.4f)" % (T_nll, -np.log(lc.softmax(vlog)[np.arange(len(vlab)), vlab] + 1e-12).mean(),
                                                     -np.log(lc.softmax(vlog, T_nll)[np.arange(len(vlab)), vlab] + 1e-12).mean()))
+    # The weights are saved before anything is evaluated (a failing report must not lose a run); the configuration
+    # follows at the end.
+    os.makedirs(args.out, exist_ok=True)
+    from safetensors.torch import save_file
+    save_file({k: v.detach().cpu().contiguous() for k, v in model.state_dict().items()},
+              os.path.join(args.out, "model.safetensors"))
+    shutil.copytree(os.path.join(ckpt, "tokenizer"), os.path.join(args.out, "tokenizer"), dirs_exist_ok=True)
+    shutil.copytree(os.path.join(ckpt, "encoder"), os.path.join(args.out, "encoder"), dirs_exist_ok=True)
     T = safe_temperature(val_recs, val_items, vlog, T_nll) if args.safe_temperature else T_nll
+    if args.safe_temperature and args.safe_temperature_risk and risk_evals:
+        # the risk records carry approval labels too: no unsafe automatic approve on their val either
+        rv_recs, rv_items = risk_evals["val"]
+        rvlog = predict(model, rv_items, pad_id, device)
+        T = safe_temperature(rv_recs, rv_items, rvlog, T)
     print("temperature used %.4f (safety on val: %s)" % (T, "raised" if T > T_nll else "unchanged"), flush=True)
     for k, v in val_report(val_recs, val_items, vlog, T).items():
         print("  val.%s" % k, v, flush=True)
@@ -338,15 +477,38 @@ def main():
         r, _ = evaluate_split(model, tok, recs, items, pad_id, device, T, name=s)
         results[s] = r
         print(r, flush=True)
+    risk_cfg = None
+    if risk_evals:
+        rrecs, ritems = risk_evals["val"]
+        _, rlog = predict(model, ritems, pad_id, device, risk=True)
+        T_r = lc.fit_temperature(rlog, np.array([it["risk"] for it in ritems]))
+        theta = theta_on(rrecs, ritems, rlog, T_r)
+        print("risk temperature %.4f, Overnight threshold P(catastrophic) >= %.4f (recall target %.3f on %s, the core's "
+              "rules counted as held)" % (T_r, theta, args.risk_recall, args.risk_theta_on), flush=True)
+        risk_results = {}
+        for s, (recs, items) in risk_evals.items():
+            # approval on the risk records too (their own labels), then the risk metrics
+            if s != "golden":
+                ra, _ = evaluate_split(model, tok, recs, items, pad_id, device, T, name="risk." + s)
+                print(ra, flush=True)
+                results["risk." + s] = ra
+            _, rl = predict(model, items, pad_id, device, risk=True)
+            risk_results[s] = risk_report(recs, items, rl, T_r, theta)
+            for k, v in risk_results[s].items():
+                print("  risk.%s.%s %s" % (s, k, json.dumps({a: (round(b, 4) if isinstance(b, float) else b) for a, b in v.items()})), flush=True)
+        risk_cfg = {"labels": lc.RISK_LABELS, "temperature": T_r, "thresholds": {"overnight": theta},
+                    "recall_target": args.risk_recall, "theta_on": args.risk_theta_on, "rules_counted": True,
+                    "distill_from": args.distill_from, "situation": "context", "data": args.risk_data,
+                    "approval_weight": args.risk_approval_weight, "results": risk_results}
 
-    os.makedirs(args.out, exist_ok=True)
-    from safetensors.torch import save_file
     sd = {k: v.detach().cpu().contiguous() for k, v in model.state_dict().items()}
     sd["temperature"] = torch.tensor([T, 1.0, 1.0])
     save_file(sd, os.path.join(args.out, "model.safetensors"))
     shutil.copytree(os.path.join(ckpt, "tokenizer"), os.path.join(args.out, "tokenizer"), dirs_exist_ok=True)
     shutil.copytree(os.path.join(ckpt, "encoder"), os.path.join(args.out, "encoder"), dirs_exist_ok=True)
     new_cfg = dict(cfg)
+    if risk_cfg:
+        new_cfg["risk"] = risk_cfg
     new_cfg.update({"model_name": "laya-approvals", "max_len": args.max_len, "temperature": [T, 1.0, 1.0],
                     "temperature_by_options": {"choice:3-5": T}, "fine_tuned": True,
                     "autopilot": {"base": args.base, "base_dir": ckpt, "data": args.data, "full": args.full,
