@@ -288,9 +288,9 @@ impl Root {
         trigger.child(kit::open_menu("activity-filter-menu", menu, Anchor::TopRight)).into_any_element()
     }
 
-    /// The push kept for `e`, read when it is picked (again once it is answered); the commits and files open are
-    /// another request's no more.
-    fn load_push(&mut self, e: &Entry, cx: &Context<'_, Self>) {
+    /// The push kept for `e`, read when it is picked or waits (again once it is answered: a push that was not
+    /// approved is not kept); the commits and files open are another request's no more.
+    pub(super) fn load_push(&mut self, e: &Entry, cx: &Context<'_, Self>) {
         if self.push.as_ref().is_some_and(|(id, outcome, _)| *id == e.id && *outcome == e.outcome) {
             return;
         }
@@ -298,7 +298,7 @@ impl Root {
             self.commits_open.clear();
             self.files_open.clear();
         }
-        let kept = (is_push(e) && !e.outcome.open()).then(|| self.model.read(cx).kept_push(&e.id)).flatten();
+        let kept = is_push(e).then(|| self.model.read(cx).kept_push(&e.id)).flatten();
         self.push = Some((e.id.clone(), e.outcome, kept.map(Arc::new)));
     }
 
@@ -428,9 +428,10 @@ impl Root {
         rows.extend(s.facts);
         plate = plate.child(fact_rows(&rows, 0.0, Some(130.0), pal));
 
-        let kept = self.push.as_ref().filter(|(id, _, _)| *id == e.id).and_then(|(_, _, push)| push.as_deref());
-        if let Some(push) = kept.filter(|p| p.summary.updates.iter().any(|u| !u.commits.is_empty())) {
-            plate = plate.child(self.commits(push, pal, cx));
+        if let Some(push) = self.kept_for(e) {
+            // The host has the commits once the push went through.
+            let pushed = matches!(e.outcome, Outcome::Approved | Outcome::Allowed);
+            plate = plate.child(self.commits(&push, pushed, pal, cx));
         }
 
         let mut well = div()
@@ -452,13 +453,23 @@ impl Root {
         plate.child(well).into_any_element()
     }
 
-    /// A push's commits: "Commits · N" and the host's link, then a row each that opens into its files, and each file
-    /// into its diff. All of it is the repository's text: shown through [`diff::visible`], never interpreted.
-    fn commits(&self, push: &Push, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
+    /// The push read for `e` ([`Self::load_push`]), when it lists commits.
+    pub(super) fn kept_for(&self, e: &Entry) -> Option<Arc<Push>> {
+        self.push
+            .as_ref()
+            .filter(|(id, _, _)| *id == e.id)
+            .and_then(|(_, _, push)| push.clone())
+            .filter(|p| p.summary.updates.iter().any(|u| !u.commits.is_empty()))
+    }
+
+    /// A push's commits: "Commits · N" and, once `pushed`, the host's link, then a row each that opens into its
+    /// files, and each file into its diff. All of it is the repository's text: shown through [`diff::visible`], never
+    /// interpreted.
+    pub(super) fn commits(&self, push: &Push, pushed: bool, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
         let updates = &push.summary.updates;
         let total: u64 = updates.iter().map(|u| u64::from(u.commit_count)).sum();
         let branch = updates.iter().find(|u| u.change != RefChange::Delete).and_then(|u| u.branch());
-        let link = branch.and_then(|b| diff::commits_link(&push.repo, b));
+        let link = branch.filter(|_| pushed).and_then(|b| diff::commits_link(&push.repo, b));
         let mut list = div().flex().flex_col();
         let mut shown = 0_u64;
         for (ci, c) in updates.iter().flat_map(|u| &u.commits).enumerate() {

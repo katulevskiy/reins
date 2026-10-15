@@ -149,7 +149,7 @@ impl Root {
     /// Home, its own padding: the waiting field runs to the content's edges, under the title bar.
     pub(super) fn home(&mut self, d: &Data, pal: Palette, window: &Window, cx: &mut Context<'_, Self>) -> AnyElement {
         if let Some(e) = d.waiting().last() {
-            return Self::home_waiting(e, d, pal, cx);
+            return self.home_waiting(e, d, pal, cx);
         }
         let device = if cfg!(target_os = "macos") {
             "Mac"
@@ -438,8 +438,11 @@ impl Root {
     }
 
     /// Home while a request waits: its field, then what will happen and the latest requests.
-    fn home_waiting(e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn home_waiting(&mut self, e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let s = Ask::of(e);
+        // A push's commits, files and diffs, as the desktop app read them from the pack it holds.
+        self.load_push(e, cx);
+        let commits = self.kept_for(e).map(|push| self.commits(&push, false, pal, cx));
         let field = s.field;
         let on = pal.on_field();
         let (total, left) = d.wait_left(e);
@@ -588,7 +591,8 @@ impl Root {
             .flex()
             .flex_col()
             .child(kit::section_label("What will happen", pal))
-            .child(fact_rows(&rows, 48.0, None, pal).mt(px(6.0)));
+            .child(fact_rows(&rows, 48.0, None, pal).mt(px(6.0)))
+            .when_some(commits, |w, c| w.child(c.mt(px(18.0))));
         let recent: Vec<&Entry> =
             d.activity().iter().filter(|e| e.outcome != Outcome::Waiting).take(RECENT_WAITING).collect();
         let mut below = div().flex().flex_col().gap(px(24.0));

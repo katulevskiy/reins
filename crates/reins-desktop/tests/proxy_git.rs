@@ -100,6 +100,16 @@ async fn an_approved_push_lands_upstream_with_the_push_digest() {
     assert!(summary.pack_bytes > 0);
     assert_eq!(digest.len(), 64);
     assert_no_secret(&logs());
+    // The entry has the push's numbers, and this computer keeps its commits for Activity (the files need the host's
+    // API for what the pack builds on, which this upstream has not: `analyze` tests them).
+    let log = reins_desktop::journal::read(&proxy.paths, 20, 3_600);
+    let entry = log.iter().find(|e| e.what.starts_with("push to ")).expect("the push is logged");
+    assert_eq!(entry.what, "push to github.com/me/priv: main (1 commit)");
+    assert!(entry.detail.as_deref().unwrap_or_default().starts_with("Commits: 1\n"), "{entry:?}");
+    let kept = reins_desktop::pushes::load(&proxy.paths.state_dir, &entry.id).expect("the push is kept");
+    assert_eq!(kept.repo, "github.com/me/priv");
+    let commit = &kept.summary.updates[0].commits[0];
+    assert_eq!((commit.sha.as_str(), commit.subject.as_str()), (new.as_str(), "Add a"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -121,6 +131,10 @@ async fn a_denied_push_is_rejected_by_git_and_nothing_reaches_upstream() {
     assert_eq!(up.head("me/priv", "main"), before);
     assert_eq!(up.head("me/priv", "feature"), None);
     assert!(up.seen().iter().all(|s| !(s.method == "POST" && s.path.ends_with("git-receive-pack"))));
+    // Kept while it was asked, gone once denied: only approved pushes stay on this computer.
+    let log = reins_desktop::journal::read(&proxy.paths, 20, 3_600);
+    let entry = log.iter().find(|e| e.what.starts_with("push to ")).expect("the push is logged");
+    assert_eq!(reins_desktop::pushes::load(&proxy.paths.state_dir, &entry.id), None);
 
     *auth.push.lock().unwrap() =
         Answer::Wait("Waiting for approval on your phone. Approve it, then run git push again.");
