@@ -12,7 +12,7 @@ final class IntegrationsUITests: XCTestCase {
     }
 
     private func launch(_ integration: String? = nil) {
-        app.launchArguments = ["-demo", "-noPopup", "-open", "reins://integrations"]
+        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities", "-open", "reins://integrations"]
             + (integration.map { ["-integration", $0] } ?? [])
         app.launch()
     }

@@ -309,6 +309,13 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(s.lastBypassEnd(now: 1_500), .max)
     }
 
+    /// `-noLiveActivities` keeps UI tests from starting Live Activities in a Debug build; a Release build ignores it.
+    func testOnlyADebugBuildTurnsLiveActivitiesOffForTests() {
+        XCTAssertTrue(LiveActivityController.offForTests(["Reins", "-demo", "-noLiveActivities"], debug: true))
+        XCTAssertFalse(LiveActivityController.offForTests(["Reins", "-noLiveActivities"], debug: false), "Release ignores it")
+        XCTAssertFalse(LiveActivityController.offForTests(["Reins", "-demo"], debug: true), "only when asked")
+    }
+
     // MARK: Sign-in helpers
 
     func testOnlyTheCoresRedirectGoesToTheCore() {

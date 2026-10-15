@@ -1025,8 +1025,7 @@ final class AppModel {
         s.updatedAt = Int64(Date().timeIntervalSince1970)
         s.save()
         published = AppGroup.defaults.data(forKey: Snapshot.key).map { (snapshot: s, sealed: $0) }
-        WidgetCenter.shared.reloadAllTimelines()
-        ControlCenter.shared.reloadAllControls()
+        WidgetReloads.shared.request()
     }
 
     /// The snapshot `publish` saved last, and the sealed bytes it stored.

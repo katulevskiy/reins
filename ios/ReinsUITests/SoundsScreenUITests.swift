@@ -8,7 +8,8 @@ final class SoundsScreenUITests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-demo", "-noPopup", "-show", "sounds"]
+        // From the default settings: a run cut short can leave the Sounds switch off for the next one.
+        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities", "-resetFeedback", "-show", "sounds"]
         app.launch()
     }
 

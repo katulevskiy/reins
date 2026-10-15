@@ -1,3 +1,4 @@
+import os
 import SwiftUI
 import WidgetKit
 
@@ -28,6 +29,21 @@ struct SnapshotEntry: TimelineEntry {
     var now: Int64 { Int64(date.timeIntervalSince1970) }
 }
 
+/// The saved snapshot, opened once per change. A reload asks every widget kind and family (and each control) for its
+/// timeline, and each would otherwise decrypt and decode the same bytes again; nothing is read before a provider asks.
+enum SnapshotCache {
+    private static let opened = OSAllocatedUnfairLock<(sealed: Data, snapshot: Snapshot)?>(initialState: nil)
+
+    static func current(from defaults: UserDefaults = AppGroup.defaults) -> Snapshot {
+        guard let sealed = defaults.data(forKey: Snapshot.key) else { return Snapshot() }
+        if let hit = opened.withLock({ $0 }), hit.sealed == sealed { return hit.snapshot }
+        let snapshot = Snapshot.load(from: defaults)
+        // Not kept when it could not be opened (the keychain locked, say): the next ask tries again.
+        if snapshot != Snapshot() { opened.withLock { $0 = (sealed, snapshot) } }
+        return snapshot
+    }
+}
+
 /// One entry now, and one at every moment something runs out by itself (an answer window, a bypass). New requests
 /// and answers come with a new snapshot: the app (and the notification extension) reload every timeline then.
 struct SnapshotProvider: TimelineProvider {
@@ -36,14 +52,14 @@ struct SnapshotProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (SnapshotEntry) -> Void) {
-        let saved = Snapshot.load()
+        let saved = SnapshotCache.current()
         // The widget picker shows a filled example rather than "Sign in" on a phone that has not signed in yet.
         let snapshot = context.isPreview && !saved.signedIn ? Glance.sample(now: Glance.now()) : saved
         completion(SnapshotEntry(date: .now, snapshot: snapshot))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SnapshotEntry>) -> Void) {
-        let snapshot = Snapshot.load()
+        let snapshot = SnapshotCache.current()
         let entries = Glance.timelineDates(snapshot, now: Glance.now()).map {
             SnapshotEntry(date: Date(timeIntervalSince1970: TimeInterval($0)), snapshot: snapshot)
         }

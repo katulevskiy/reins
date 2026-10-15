@@ -12,7 +12,7 @@ final class OnboardingUITests: XCTestCase {
 
     private func launch(_ extra: [String] = []) {
         app = XCUIApplication()
-        app.launchArguments = ["-demo", "-noPopup"] + extra
+        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities"] + extra
         app.launch()
     }
 

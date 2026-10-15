@@ -11,7 +11,7 @@ final class AutopilotUITests: XCTestCase {
     }
 
     private func launch(_ extra: [String] = []) {
-        app.launchArguments = ["-demo", "-noPopup"] + extra
+        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities"] + extra
         app.launch()
         // Autopilot is part of Trust (a tab on a phone, the sidebar on a regular width).
         XCTAssertTrue(app.openTab("trust"), "no Trust tab")
