@@ -85,7 +85,7 @@ final class ApprovalModel {
         error = nil
         let allow = view.kind == .grant || view.kind == .accounts
         let reason = "\(allow ? "Allow access for" : "Approve the request from") \(untrusted(view.connectionLabel))"
-        switch await OwnerCheck.confirm(app, reason: reason) {
+        switch await OwnerPrompt.confirm(app, reason: reason) {
         case .confirmed:
             // A permission that stays is a bigger step than one answer, and sounds like it.
             let standing = choice.standing != nil || view.kind == .grant
@@ -100,7 +100,7 @@ final class ApprovalModel {
         case .unavailable:
             app.feedback.play(.error)
             busy = false
-            error = OwnerCheck.unavailableMessage
+            error = OwnerPrompt.unavailableMessage
         }
     }
 

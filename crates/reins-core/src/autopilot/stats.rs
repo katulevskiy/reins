@@ -81,6 +81,7 @@ mod tests {
 
     fn suggestion(id: &str, approve: f32, deny: f32, decided: Option<(&str, Verdict)>) -> Suggestion {
         Suggestion {
+            deletes: false,
             request_id: id.to_owned(),
             at: 0,
             kind: "request".to_owned(),
@@ -106,6 +107,9 @@ mod tests {
                 e_facts: Embedding::from_vector(&[1.0]),
                 e_full: Embedding::from_vector(&[1.0]),
                 neighbours: vec![],
+                risk: None,
+                risk_declared: false,
+                risk_threshold: None,
             }),
             verdict: Verdict::Ask,
             reason: String::new(),
@@ -114,6 +118,7 @@ mod tests {
                 verdict,
                 at: 0,
             }),
+            risk: None,
         }
     }
 

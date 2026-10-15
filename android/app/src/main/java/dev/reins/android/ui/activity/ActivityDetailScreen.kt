@@ -86,6 +86,8 @@ import dev.reins.android.ui.approval.ApprovalRecord
 import dev.reins.android.ui.approval.ApprovalScreen
 import dev.reins.android.ui.approval.ApprovalViewModel
 import dev.reins.android.ui.autopilot.modeTint
+import dev.reins.android.ui.autopilot.OvernightIcon
+import dev.reins.android.ui.autopilot.RiskChip
 import dev.reins.android.ui.common.LabelText
 import dev.reins.android.ui.common.LocalConnections
 import dev.reins.android.ui.common.ProviderTile
@@ -170,6 +172,7 @@ fun ActivityDetailScreen(
                     }
                 },
                 footer = dock,
+                risk = entry.autopilot?.risk,
             ),
         )
     } else if (looked) {
@@ -243,6 +246,8 @@ private fun EntryDock(correctable: Boolean, thanked: Boolean, busy: Boolean, err
 private fun outcomeLook(entry: ActivityEntry): Pair<ImageVector, (dev.reins.android.design.RColors) -> Color> = when (outcomeOf(entry)) {
     Outcome.Auto -> Icons.Rounded.Bolt to { c -> c.accent }
     Outcome.AutoDenied -> Icons.Rounded.Bolt to { c -> c.danger }
+    Outcome.Overnight -> OvernightIcon to { c -> c.night }
+    Outcome.OvernightDenied -> OvernightIcon to { c -> c.danger }
     Outcome.Bypass -> Icons.Rounded.Bolt to { c -> c.danger }
     Outcome.Lockdown -> Icons.Rounded.Lock to { c -> c.secondary }
     Outcome.Grant -> Icons.Rounded.Key to { c -> c.accent }
@@ -273,6 +278,7 @@ private fun Hero(entry: ActivityEntry) {
             Column(Modifier.weight(1f)) {
                 LabelText(label, Modifier.testTag("detailTitle"), size = 17f, lineHeight = 22f, maxLines = 4)
                 OutcomePill(entry, Modifier.padding(top = 8.dp))
+                RiskChip(entry.autopilot?.risk, Modifier.padding(top = 8.dp))
             }
         }
         return
@@ -302,6 +308,7 @@ private fun Hero(entry: ActivityEntry) {
             RText(it, RType.sans(13.5f, lineHeight = 18f), c.tertiary, Modifier.padding(top = 6.dp).testTag("detailSummary"), maxLines = 2, align = TextAlign.Center)
         }
         OutcomePill(entry, Modifier.padding(top = 14.dp))
+        RiskChip(entry.autopilot?.risk, Modifier.padding(top = 10.dp))
     }
 }
 
@@ -402,6 +409,8 @@ private fun OutcomePill(entry: ActivityEntry, modifier: Modifier = Modifier) {
     val (icon: ImageVector, tint: Color) = when (outcomeOf(entry)) {
         Outcome.Auto -> Icons.Rounded.Bolt to c.accent
         Outcome.AutoDenied -> Icons.Rounded.Bolt to c.danger
+        Outcome.Overnight -> OvernightIcon to c.night
+        Outcome.OvernightDenied -> OvernightIcon to c.danger
         Outcome.Bypass -> Icons.Rounded.Bolt to c.danger
         Outcome.Lockdown -> Icons.Rounded.Lock to c.secondary
         Outcome.Grant -> Icons.Rounded.Key to c.accent

@@ -81,11 +81,12 @@ enum EntryText {
     }
 
     /// How an entry ended, as the history row's trailing mark.
-    enum Mark: Equatable { case approved, denied, failed, auto, grant, bypass, lockdown }
+    enum Mark: Equatable { case approved, denied, failed, auto, grant, overnight, bypass, lockdown }
 
     static func mark(_ entry: ActivityEntry) -> Mark {
         switch entry.decidedBy {
         case "autopilot": return .auto
+        case "overnight": return .overnight
         case "bypass": return .bypass
         case "lockdown": return .lockdown
         default: break
@@ -143,6 +144,7 @@ struct EntryMark: View {
         case .failed: ("exclamationmark.triangle", nil, Palette.warning)
         case .auto: ("bolt", "Auto", Palette.accent)
         case .grant: ("key.horizontal", "Grant", Palette.accent)
+        case .overnight: (AutopilotText.overnightSymbol, AutopilotText.overnightName, Palette.overnight)
         case .bypass: ("bolt.fill", "Bypass", Palette.danger)
         case .lockdown: ("lock.fill", "Lockdown", Palette.warning)
         }
@@ -207,6 +209,9 @@ struct HistoryRow: View {
                         .font(RFont.sans(12.5))
                         .foregroundStyle(Palette.tertiary)
                         .lineLimit(1)
+                }
+                if let risk = entry.autopilot?.risk, RiskLook.listed(risk) {
+                    RiskLine(risk: risk)
                 }
             }
             .padding(.top, label == nil ? 0 : 1)

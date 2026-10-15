@@ -116,6 +116,9 @@ pub struct Facts {
     pub count: u32,
     /// Joined with "; ".
     pub details: Vec<String>,
+    /// What the core worked out about the action's consequences (`docs/autopilot-risk.md` §3), joined with "; ".
+    /// Only for a model that rates risk; empty otherwise, and then not rendered at all.
+    pub context: Vec<String>,
 }
 
 /// The AI-written (or otherwise untrusted) part: the reason the AI gave and the content it carries.
@@ -161,9 +164,11 @@ pub fn render_facts(f: &Facts) -> String {
     if f.count > 1 {
         push("count", &f.count.to_string());
     }
-    let details: Vec<String> =
-        f.details.iter().map(|d| clean_value(d, VALUE_MAX_CHARS)).filter(|d| !d.is_empty()).collect();
-    push("details", &details.join("; "));
+    let joined = |parts: &[String]| {
+        parts.iter().map(|d| clean_value(d, VALUE_MAX_CHARS)).filter(|d| !d.is_empty()).collect::<Vec<_>>().join("; ")
+    };
+    push("details", &joined(&f.details));
+    push("context", &joined(&f.context));
     lines.join("\n")
 }
 
@@ -243,7 +248,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     }
 }
 
-fn label_of(operation: &str, target: &str) -> String {
+pub(crate) fn label_of(operation: &str, target: &str) -> String {
     let label = if target.is_empty() {
         operation.to_owned()
     } else {
@@ -519,6 +524,7 @@ mod tests {
                 "7 files changed".to_owned(),
                 "no force".to_owned(),
             ],
+            context: Vec::new(),
         };
         let ai = AiPart {
             reason: "fix flaky test".to_owned(),
@@ -535,6 +541,12 @@ mod tests {
         assert_eq!(full, format!("{facts}\n--- written by the AI ---\nreason: fix flaky test"));
         assert_eq!(split(&full), (facts.clone(), full.clone()));
         assert_eq!(render(&f, &AiPart::default()), (facts.clone(), facts));
+        let with_context = Facts {
+            context: vec!["deletes the default branch main".to_owned(), String::new(), "public repository".to_owned()],
+            ..f
+        };
+        let (facts, _) = render(&with_context, &ai);
+        assert!(facts.ends_with("no force\ncontext: deletes the default branch main; public repository"), "{facts}");
     }
 
     #[test]

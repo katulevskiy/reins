@@ -47,10 +47,10 @@ const val CONNECTION_AUTOPILOT_HELP =
 
 /**
  * The Autopilot part of an AI's page: like every AI, or its own mode (Manual, Auto) in a connected button group, then
- * a bypass for just this AI and a lockdown for just this AI, each after its own confirmation.
+ * Overnight, a bypass and a lockdown for just this AI, each after its own confirmation.
  */
 @Composable
-fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewModel, onBypass: () -> Unit) {
+fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewModel, onBypass: () -> Unit, onOvernight: () -> Unit = {}) {
     val c = LocalColors.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -59,14 +59,19 @@ fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewMod
     val own = s.connections.firstOrNull { it.connectionId == connectionId }
     val mode = own?.mode ?: s.mode
     val bypassUntil = own?.bypassUntil
-    val chosen: AutopilotMode? = if (bypassUntil != null) AutopilotMode.BYPASS else own?.baseMode
+    val overnightUntil = own?.overnightUntil
+    val chosen: AutopilotMode? = when {
+        bypassUntil != null -> AutopilotMode.BYPASS
+        overnightUntil != null -> AutopilotMode.OVERNIGHT
+        else -> own?.baseMode
+    }
     val lockedDown = chosen == AutopilotMode.LOCKDOWN
     val globalLockdown = mode == AutopilotMode.LOCKDOWN && s.mode == AutopilotMode.LOCKDOWN && own?.baseMode != AutopilotMode.LOCKDOWN
     var help by rememberSaveable { mutableStateOf(false) }
 
-    // The choices of the group: like every AI (null), then the modes that are not one of the two buttons below.
+    // The choices of the group: like every AI (null), then the modes that are not one of the buttons below.
     val choices: List<AutopilotMode?> = listOf<AutopilotMode?>(null) +
-        AutopilotText.modes.filter { it != AutopilotMode.BYPASS && it != AutopilotMode.LOCKDOWN }
+        AutopilotText.modes.filter { it != AutopilotMode.BYPASS && it != AutopilotMode.LOCKDOWN && it != AutopilotMode.OVERNIGHT }
 
     SettingsGroup(header = "Autopilot", help = CONNECTION_AUTOPILOT_HELP, helpOpen = help, onHelp = { help = it }) {
         Column(Modifier.padding(12.dp).testTag("connectionMode")) {
@@ -78,9 +83,20 @@ fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewMod
                 tag = { if (it == null) "connMode:follow" else "connMode:${it.name}" },
                 icon = { m -> m?.let { settingsModeIcon(it) to if (it == AutopilotMode.MANUAL) modeTint(it, c) else c.secondary } },
             ) { m -> viewModel.setMode(m, connectionId = connectionId) }
-            Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (overnightUntil != null) {
+                Countdown(TimedKind.Overnight, overnightUntil, Modifier.padding(top = 12.dp).fillMaxWidth()) { viewModel.stopOvernight(connectionId) }
+            } else {
+                PillButton(
+                    AutopilotText.OVERNIGHT,
+                    Modifier.padding(top = 12.dp).fillMaxWidth().testTag("connMode:OVERNIGHT"),
+                    icon = OvernightIcon,
+                    background = c.night.copy(alpha = 0.13f),
+                    foreground = c.night,
+                ) { onOvernight() }
+            }
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (bypassUntil != null) {
-                    BypassCountdown(bypassUntil, Modifier.weight(1f)) { viewModel.stopBypass(connectionId) }
+                    Countdown(TimedKind.Bypass, bypassUntil, Modifier.weight(1f)) { viewModel.stopBypass(connectionId) }
                 } else {
                     PillButton(
                         "Bypass",
@@ -123,20 +139,21 @@ fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewMod
 }
 
 /**
- * A running bypass in place of its button: "Stop · 12 min left" (or "Stop · until you stop it" without an end). It
+ * A running bypass or Overnight in place of its button: "Stop · 12 min left" (or "Stop · no end"), in its colour. It
  * has a clock of its own, so the countdown recomposes this button and not the section.
  */
 @Composable
-private fun BypassCountdown(until: Long, modifier: Modifier, onStop: () -> Unit) {
+private fun Countdown(kind: TimedKind, until: Long, modifier: Modifier, onStop: () -> Unit) {
     val c = LocalColors.current
+    val tint = kind.tint(c)
     val now = if (AutopilotText.isUntilOff(until)) 0L else rememberNowState(1_000, untilMillis = until * 1000).value / 1000
     PillButton(
         if (AutopilotText.isUntilOff(until)) "Stop · no end" else "Stop · " + AutopilotText.timeLeft(until, now),
-        modifier.testTag("stopConnectionBypass"),
-        icon = Icons.Rounded.Stop,
-        background = c.danger.copy(alpha = 0.16f),
-        foreground = c.danger,
-        textTag = "connectionModeLine",
+        modifier.testTag(kind.action("stopConnection")),
+        icon = if (kind == TimedKind.Bypass) Icons.Rounded.Stop else OvernightIcon,
+        background = tint.copy(alpha = 0.16f),
+        foreground = tint,
+        textTag = if (kind == TimedKind.Bypass) "connectionModeLine" else "connectionOvernightLine",
         onClick = onStop,
     )
 }

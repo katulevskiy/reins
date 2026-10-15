@@ -118,14 +118,27 @@ final class AutopilotModel {
 
     static let newConnectionSecs: Int64 = 600
 
-    /// Sets the global mode or a connection's (`mode` nil: back to following the global mode). Bypass takes
-    /// `minutes` and goes through `startBypass`. Lockdown is a plain tap: it only holds requests back. The change is
-    /// felt at once; a refusal from the core says why.
+    /// The mode set for `connectionId` when no bypass runs (nil = the global one); nil when it follows every AI.
+    func baseOf(_ connectionId: String?) -> AutopilotMode? {
+        guard let s = settings else { return nil }
+        guard let connectionId else { return s.baseMode }
+        return s.connections.first { $0.connectionId == connectionId }?.baseMode
+    }
+
+    /// Sets the global mode or a connection's (`mode` nil: back to following the global mode). Bypass and Overnight
+    /// take `minutes` and go through `startBypass` and `startOvernight`, with the owner's check. Lockdown is a plain
+    /// tap: it only holds requests back. The change is felt at once; a refusal from the core says why.
     func setMode(_ mode: AutopilotMode?, minutes: UInt32? = nil, connectionId: String? = nil, label: String? = nil) async {
         if mode == .bypass {
             await startBypass(connectionId: connectionId, minutes: minutes ?? AutopilotText.bypassMinutes[0], label: label)
             return
         }
+        if mode == .overnight {
+            await startOvernight(connectionId: connectionId, minutes: minutes)
+            return
+        }
+        // Leaving an Overnight by picking another mode: what it interrupted no longer matters.
+        if baseOf(connectionId) == .overnight { OvernightReturn.forget(connectionId) }
         guard let app else { return }
         let old = modeOf(connectionId)
         let new = mode ?? settings?.mode ?? .manual
@@ -165,28 +178,69 @@ final class AutopilotModel {
             app.feedback.play(event)
         }
         let length = minutes.map { min(max($0, 1), AutopilotText.maxBypassMinutes) }
-        app.patchAutopilot { $0.applyBypass(minutes: length, connectionId: connectionId) }
+        let back = OvernightReturn.mode(connectionId)
+        app.patchAutopilot { $0.applyBypass(minutes: length, connectionId: connectionId, overnightReturn: back) }
         await run {
             try await app.core.startBypass(connectionId: connectionId, minutes: length)
             await app.refreshAutopilot()
         }
     }
 
-    /// Ends a bypass: the global one goes back to the mode it interrupted, a connection's to its own setting.
+    /// Ends a bypass: the global one goes back to the mode it interrupted, a connection's to its own setting (an
+    /// Overnight it replaced does not come back: only the owner starts that again).
     func stopBypass(_ connectionId: String? = nil) async {
         guard let app, let s = settings else { return }
         app.feedback.play(.bypassOff)
-        let back: AutopilotMode?
-        if let connectionId {
-            back = s.connections.first { $0.connectionId == connectionId }?.baseMode
-        } else {
-            back = s.baseMode
+        app.patchAutopilot { $0.applyBypassEnd(connectionId: connectionId) }
+        await run {
+            try await app.endBypass(connectionId, in: s)
+            await app.refreshAutopilot()
+        }
+    }
+
+    /// Starts Overnight for every AI (`connectionId` nil) or one, for `minutes` or, nil, until the user turns it off;
+    /// a restart or a new length is a start too. The sheet has already been held to confirm; the core then asks the
+    /// phone's owner itself (Face ID or the passcode, in its own words), and without that nothing changes, not even for
+    /// a moment. It remembers the mode it interrupts, for Stop.
+    func startOvernight(connectionId: String? = nil, minutes: UInt32?) async {
+        guard let app else { return }
+        let old = modeOf(connectionId)
+        let base = baseOf(connectionId)
+        let length = minutes.map { min(max($0, 1), AutopilotText.maxBypassMinutes) }
+        let started = await run {
+            try await app.core.startOvernight(connectionId: connectionId, minutes: length, owner: app.ownerCheck)
+            await app.refreshAutopilot()
+        }
+        guard started else { return }
+        OvernightReturn.remember(base, connectionId: connectionId)
+        if let event = AutopilotFeedback.modeChange(from: old, to: .overnight) {
+            app.feedback.play(event)
+        }
+    }
+
+    /// Stops an Overnight: back to the mode it interrupted (see `OvernightReturn`).
+    func stopOvernight(_ connectionId: String? = nil) async {
+        guard let app else { return }
+        let back = OvernightReturn.mode(connectionId)
+        if let event = AutopilotFeedback.modeChange(from: .overnight, to: back ?? settings?.mode ?? .manual) {
+            app.feedback.play(event)
         }
         app.patchAutopilot { $0.applyMode(back, minutes: 0, connectionId: connectionId) }
         await run {
-            try await app.core.setAutopilotMode(connectionId: connectionId, mode: back, minutes: nil)
+            try await app.endOvernight(connectionId)
             await app.refreshAutopilot()
         }
+    }
+
+    /// What Overnight does with what it rates too risky: waits for the user, or denies it. A change either way is the
+    /// owner's to make: the core asks for the check itself, and it shows once confirmed.
+    func setOvernightWhenRisky(_ risky: OvernightRisky) async {
+        guard let app, settings?.overnightWhenRisky != risky else { return }
+        let changed = await run {
+            try await app.core.setOvernightWhenRisky(risky: risky, owner: app.ownerCheck)
+            await app.refreshAutopilot()
+        }
+        if changed { app.feedback.play(.selection) }
     }
 
     /// Ends the global Lockdown: back to the mode picked before it, or Manual.
@@ -453,30 +507,82 @@ extension AutopilotSettings {
             applyBypass(minutes: minutes, connectionId: connectionId, now: now)
             return
         }
+        if mode == .overnight {
+            applyOvernight(minutes: minutes, connectionId: connectionId, now: now)
+            return
+        }
         if let connectionId {
             let i = ownIndex(connectionId)
             connections[i].baseMode = mode
             connections[i].bypassUntil = nil
             connections[i].bypassSince = nil
+            connections[i].overnightUntil = nil
+            connections[i].overnightSince = nil
         } else {
             // A mode never picked is Manual.
             baseMode = mode ?? .manual
+            bypassUntil = nil
+            bypassSince = nil
+            overnightUntil = nil
+            overnightSince = nil
+        }
+        settle(now: now)
+    }
+
+    /// Overnight for every AI (`connectionId` nil) or one, from `now` for `minutes`, or until turned off (nil). It is
+    /// the mode set there while it runs (a lockdown it replaces ends); a bypass of the same scope stays on top.
+    mutating func applyOvernight(minutes: UInt32?, connectionId: String?, now: Int64 = Int64(Date().timeIntervalSince1970)) {
+        let until = minutes.map { now + Int64($0) * 60 } ?? AutopilotText.untilOff
+        if let connectionId {
+            let i = ownIndex(connectionId)
+            connections[i].baseMode = .overnight
+            connections[i].overnightUntil = until
+            connections[i].overnightSince = now
+        } else {
+            baseMode = .overnight
+            overnightUntil = until
+            overnightSince = now
+        }
+        settle(now: now)
+    }
+
+    /// The bypass of every AI (`connectionId` nil) or of one ends; the mode under it stays (never an Overnight: the
+    /// bypass ended that).
+    mutating func applyBypassEnd(connectionId: String?, now: Int64 = Int64(Date().timeIntervalSince1970)) {
+        if let connectionId {
+            let i = ownIndex(connectionId)
+            connections[i].bypassUntil = nil
+            connections[i].bypassSince = nil
+        } else {
             bypassUntil = nil
             bypassSince = nil
         }
         settle(now: now)
     }
 
-    /// A bypass of every AI (`connectionId` nil) or of one, from `now` for `minutes`, or until turned off (nil).
-    mutating func applyBypass(minutes: UInt32?, connectionId: String?, now: Int64 = Int64(Date().timeIntervalSince1970)) {
+    /// A bypass of every AI (`connectionId` nil) or of one, from `now` for `minutes`, or until turned off (nil). It
+    /// ends a lockdown of its scope, and an Overnight: under the bypass is then `overnightReturn`, the mode that
+    /// Overnight interrupted (nil: the default, or following every AI).
+    mutating func applyBypass(minutes: UInt32?, connectionId: String?, overnightReturn: AutopilotMode? = nil,
+                              now: Int64 = Int64(Date().timeIntervalSince1970)) {
         let until = minutes.map { now + Int64($0) * 60 } ?? AutopilotText.untilOff
         if let connectionId {
             let i = ownIndex(connectionId)
             if connections[i].baseMode == .lockdown { connections[i].baseMode = nil }
+            if connections[i].baseMode == .overnight {
+                connections[i].baseMode = overnightReturn
+                connections[i].overnightUntil = nil
+                connections[i].overnightSince = nil
+            }
             connections[i].bypassUntil = until
             connections[i].bypassSince = now
         } else {
             if baseMode == .lockdown { baseMode = .manual }
+            if baseMode == .overnight {
+                baseMode = overnightReturn ?? .manual
+                overnightUntil = nil
+                overnightSince = nil
+            }
             bypassUntil = until
             bypassSince = now
         }
@@ -486,6 +592,7 @@ extension AutopilotSettings {
     /// The modes in force after a change (the core's `modes::effective`).
     private mutating func settle(now: Int64) {
         mode = baseMode == .lockdown ? .lockdown : (bypassUntil ?? 0) > now ? .bypass : baseMode
+        let globalOvernight = baseMode == .overnight && (overnightUntil ?? 0) > now
         for i in connections.indices {
             let c = connections[i]
             if mode == .lockdown || c.baseMode == .lockdown {
@@ -493,6 +600,9 @@ extension AutopilotSettings {
             } else if (c.bypassUntil ?? 0) > now || (bypassUntil ?? 0) > now {
                 // Its own bypass, or the global one: a global bypass applies whatever mode an AI has of its own.
                 connections[i].mode = .bypass
+            } else if (c.baseMode == .overnight && (c.overnightUntil ?? 0) > now) || (globalOvernight && c.baseMode != .manual) {
+                // Its own Overnight, or the global one, which never loosens an AI kept on Manual.
+                connections[i].mode = .overnight
             } else {
                 connections[i].mode = c.baseMode ?? mode
             }

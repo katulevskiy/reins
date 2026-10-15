@@ -24,7 +24,11 @@ class ModelRuntimeTest {
     )
 
     /** Answers with tensors of the right shapes for the batch it gets, numbered so their order can be checked. */
-    private class FakeSession(val hidden: Int = 5) : InferenceSession {
+    private class FakeSession(
+        val hidden: Int = 5,
+        /** The risk tensor for a batch of this size; null: a model without the output (laya-approvals-ml-v1). */
+        val risk: ((Int) -> RawTensor)? = null,
+    ) : InferenceSession {
         val runs = CopyOnWriteArrayList<PackedInput>()
         var closed = false
 
@@ -35,6 +39,7 @@ class ModelRuntimeTest {
                 RawTensor(FloatArray(input.batch * input.k) { it.toFloat() }, longArrayOf(b, input.k.toLong())),
                 RawTensor(FloatArray(input.batch * 2) { (-it).toFloat() }, longArrayOf(b, 2)),
                 RawTensor(FloatArray(input.batch * hidden) { it / 10f }, longArrayOf(b, hidden.toLong())),
+                risk?.invoke(input.batch),
             )
         }
 
@@ -43,7 +48,7 @@ class ModelRuntimeTest {
         }
     }
 
-    private class FakeEngine : InferenceEngine {
+    private class FakeEngine(val risk: ((Int) -> RawTensor)? = null) : InferenceEngine {
         val opened = CopyOnWriteArrayList<String>()
         val sessions = CopyOnWriteArrayList<FakeSession>()
         var failure: Exception? = null
@@ -51,7 +56,63 @@ class ModelRuntimeTest {
         override fun open(path: String): InferenceSession {
             failure?.let { throw it }
             opened += path
-            return FakeSession().also { sessions += it }
+            return FakeSession(risk = risk).also { sessions += it }
+        }
+    }
+
+    /** Severity logits [B,4], numbered so their order can be checked. */
+    private fun riskTensor(batch: Int) = RawTensor(FloatArray(batch * 4) { it * 0.5f }, longArrayOf(batch.toLong(), 4))
+
+    @Test
+    fun `the risk output is passed through, row by row, from a model that has it`() {
+        val runtime = OnnxModelRuntime(FakeEngine(risk = ::riskTensor))
+        runtime.load("/v2/model.onnx")
+        val out = runtime.run(input(batch = 2))
+        assertEquals(List(8) { it * 0.5f }, out.risk)
+        assertEquals("the rest is as before", 4, out.act.size)
+    }
+
+    @Test
+    fun `a model without the risk output gives none`() {
+        val runtime = OnnxModelRuntime(FakeEngine())
+        runtime.load("/v1/model.onnx")
+        assertTrue(runtime.run(input(batch = 2)).risk.isEmpty())
+    }
+
+    @Test
+    fun `a risk output of the wrong size or shape fails, it is never dropped`() {
+        val packed = ModelTensors.pack(input(batch = 2))
+        fun unpackWith(risk: RawTensor) = ModelTensors.unpack(
+            packed,
+            RawOutput(
+                RawTensor(FloatArray(6), longArrayOf(2, 3)),
+                RawTensor(FloatArray(4), longArrayOf(2, 2)),
+                RawTensor(FloatArray(10), longArrayOf(2, 5)),
+                risk,
+            ),
+        )
+        for (bad in listOf(
+            RawTensor(FloatArray(4), longArrayOf(1, 4)), // one row for a batch of two
+            RawTensor(FloatArray(6), longArrayOf(2, 3)), // three classes
+            RawTensor(FloatArray(8), longArrayOf(4, 2)), // the right count in another shape
+        )) {
+            try {
+                unpackWith(bad)
+                fail("unpacked a risk tensor of shape ${bad.shape.toList()}")
+            } catch (e: IllegalArgumentException) {
+                assertTrue(e.message!!.contains("risk"))
+            }
+        }
+        assertEquals(8, unpackWith(RawTensor(FloatArray(8), longArrayOf(2, 4))).risk.size)
+
+        // Through the runtime it crosses to the core as a foreign error, which leaves the request to the user.
+        val runtime = OnnxModelRuntime(FakeEngine(risk = { b -> RawTensor(FloatArray(b * 3), longArrayOf(b.toLong(), 3)) }))
+        runtime.load("/v2/model.onnx")
+        try {
+            runtime.run(input(batch = 2))
+            fail("ran with a malformed risk output")
+        } catch (e: ForeignException.Failed) {
+            assertTrue(e.reason.contains("risk"))
         }
     }
 

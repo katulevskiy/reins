@@ -20,6 +20,8 @@ struct ApprovalRecord: Equatable {
     var outcome: String
     var symbol: String
     var tint: Color
+    /// The risk the model saw in it, when it rated one.
+    var risk: RiskView? = nil
 }
 
 private struct ApprovalRecordKey: EnvironmentKey {
@@ -175,15 +177,18 @@ private struct HeroPills: View {
         let danger = ApprovalWords.dangerTag(view)
         if let record {
             let outcome = EntryOutcomePill(text: record.outcome, symbol: record.symbol, tint: record.tint)
-            if let danger {
-                let tag = WarnTag(text: danger.label, tint: danger.destructive ? Palette.danger : Palette.warning, symbol: danger.symbol)
-                    .accessibilityIdentifier(danger.id)
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { tag; outcome }
-                    VStack(spacing: 8) { tag; outcome }
+            VStack(spacing: 8) {
+                if let danger {
+                    let tag = WarnTag(text: danger.label, tint: danger.destructive ? Palette.danger : Palette.warning, symbol: danger.symbol)
+                        .accessibilityIdentifier(danger.id)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { tag; outcome }
+                        VStack(spacing: 8) { tag; outcome }
+                    }
+                } else {
+                    outcome
                 }
-            } else {
-                outcome
+                if let risk = record.risk { RiskChips(risk: risk) }
             }
         } else {
             VStack(spacing: 10) {
@@ -197,6 +202,10 @@ private struct HeroPills: View {
                 // A guard rule that can be undone is an ordinary question: Autopilot's score shows under it.
                 if danger?.destructive != true {
                     pills
+                }
+                // The risk the model rated, the destructive ones above all: what Overnight weighs.
+                if let risk = vm.suggestion?.risk {
+                    RiskChips(risk: risk)
                 }
             }
         }

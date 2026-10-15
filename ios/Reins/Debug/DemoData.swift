@@ -582,7 +582,9 @@ enum DemoData {
         RequestLabel(provider: provider, action: action, lead: lead, subject: subject, code: code, tail: tail)
     }
 
-    static func note(_ suggested: Verdict = .approve, pApprove: Float = 0.98, correctable: Bool = true, mode: AutopilotMode = .auto) -> AutopilotNote {
+    static func note(
+        _ suggested: Verdict = .approve, pApprove: Float = 0.98, correctable: Bool = true, mode: AutopilotMode = .auto, risk: RiskView? = nil
+    ) -> AutopilotNote {
         AutopilotNote(
             mode: mode, suggested: suggested, pApprove: pApprove, pDeny: 1 - pApprove, confidence: 0.93, profileId: "personal",
             profileName: "Personal",
@@ -592,7 +594,8 @@ enum DemoData {
             reason: suggested == .approve
                 ? "Like 4 times you approved: Push to a branch · dkat/reins"
                 : "Like 2 times you denied: Send an email · unknown recipient",
-            correctable: correctable
+            correctable: correctable,
+            risk: risk
         )
     }
 
@@ -619,7 +622,8 @@ enum DemoData {
             entry(13, at: now - 300, conn: "c4", label: "notes-bot", action: "send", outcome: "denied",
                   detail: "To backup-svc@protonmail.example", count: 1,
                   info: info(email: EmailView(to: ["backup-svc@protonmail.example"], cc: [], subject: "Export", body: "All notes attached."), note: "Autopilot denied this"),
-                  decidedBy: "autopilot", autopilot: note(.deny, pApprove: 0.04),
+                  decidedBy: "autopilot",
+                  autopilot: note(.deny, pApprove: 0.04, risk: RiskView(level: .severe, pCatastrophic: 0.18, why: "a recipient not in your contacts", held: false)),
                   requestLabel: requestLabel("gmail", "send", "Send an email to", "backup-svc@protonmail.example")),
             entry(12, at: now - 600, conn: "c2", label: "My ChatGPT", action: "read", outcome: "released", detail: "2 emails",
                   count: 2, info: info(messages: Array(statements.prefix(2))), decidedBy: "bypass"),
@@ -807,12 +811,12 @@ enum DemoData {
     static func suggestion(
         _ id: String, _ verdict: Verdict = .approve, pApprove: Float = 0.97, pDeny: Float = 0.02, confidence: Float = 0.91,
         floor: Bool = false, novel: Bool = false, judged: Bool = true, reason: String = "Like 4 times you approved: Push to a branch · dkat/reins",
-        neighbours: [NeighbourView], classKey: String = "github/write/push"
+        neighbours: [NeighbourView], classKey: String = "github/write/push", risk: RiskView? = nil
     ) -> SuggestionView {
         SuggestionView(
             requestId: id, verdict: verdict, mode: .manual, pApprove: pApprove, pDeny: pDeny, confidence: confidence, reason: reason,
             neighbours: neighbours, profileId: "personal", profileName: "Personal", classKey: classKey, novel: novel, floor: floor,
-            judged: judged
+            judged: judged, risk: risk
         )
     }
 
@@ -822,7 +826,8 @@ enum DemoData {
             "req8": suggestion("req8", floor: true, judged: false, reason: "", neighbours: [], classKey: "vault/get"),
             "req10": suggestion("req10", .ask, pApprove: 0.61, pDeny: 0.3, confidence: 0.42, novel: true,
                                 reason: "Nothing like this before: Commit a file · octo/app", neighbours: Array(neighbours(now).suffix(1)),
-                                classKey: "github/write/code"),
+                                classKey: "github/write/code",
+                                risk: RiskView(level: .severe, pCatastrophic: 0.12, why: "a commit to the default branch main", held: true)),
         ]
     }
 }

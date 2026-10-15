@@ -10,7 +10,7 @@ final class AutopilotTextTests: XCTestCase {
 
     private func settings(bypass: Int64? = nil, since: Int64? = nil, connections: [ConnectionAutopilot] = []) -> AutopilotSettings {
         AutopilotSettings(mode: bypass != nil ? .bypass : .manual, baseMode: .manual, bypassUntil: bypass, bypassSince: since,
-                          defaultProfileId: "personal", wifiOnly: true, model: model(.installed), connections: connections)
+                          overnightWhenRisky: .wait, defaultProfileId: "personal", wifiOnly: true, model: model(.installed), connections: connections)
     }
 
     private func connection(_ id: String, until: Int64?, since: Int64? = nil, profile: String = "personal") -> ConnectionAutopilot {
@@ -196,6 +196,9 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertEqual(AutopilotText.decisionTitle(decision(.deny)), "Autopilot denied")
         XCTAssertEqual(AutopilotText.decisionTitle(decision(by: "bypass")), "Approved by Bypass")
         XCTAssertEqual(AutopilotText.decisionTitle(decision(.deny, by: "lockdown")), "Denied by Lockdown")
+        XCTAssertEqual(AutopilotText.decisionTitle(decision(by: "overnight")), "Approved by Overnight")
+        XCTAssertEqual(AutopilotText.decisionTitle(decision(.deny, by: "overnight")), "Denied by Overnight")
+        XCTAssertEqual(AutopilotText.decisionDetail(decision(by: "overnight")), "91% sure", "Overnight judges as Auto does")
         XCTAssertEqual(AutopilotText.decisionDetail(decision()), "91% sure")
         XCTAssertNil(AutopilotText.decisionDetail(decision(by: "bypass")))
         XCTAssertEqual(AutopilotText.decisionText(decision()), "Push to a branch · dkat/reins — Claude Code")
@@ -246,12 +249,50 @@ final class AutopilotTextTests: XCTestCase {
         }
     }
 
+    func testOvernightIsNamedOnceAndSaysWhatItDoes() {
+        XCTAssertEqual(AutopilotText.overnightName, "Overnight")
+        XCTAssertEqual(AutopilotText.name(.overnight), AutopilotText.overnightName)
+        XCTAssertEqual(AutopilotText.name(key: "overnight"), AutopilotText.overnightName)
+        XCTAssertEqual(AutopilotText.key(.overnight), "overnight")
+        XCTAssertEqual(AutopilotText.symbol(.overnight), "moon.stars.fill")
+        XCTAssertEqual(AutopilotText.line(.overnight), "Holds what is too risky")
+        XCTAssertTrue(AutopilotText.needsModel(.overnight), "it decides like Auto")
+        XCTAssertEqual(AutopilotText.overnightMinutes.map { AutopilotText.lengthLabel(minutes: $0) }, ["4 hours", "8 hours", "12 hours"])
+        XCTAssertEqual(AutopilotText.overnightTitle(until: 1_000 + 5 * 3_600, now: 1_000), "Overnight on · 5 h left")
+        XCTAssertEqual(AutopilotText.overnightLine(until: 9_000, since: 1_000, now: 1_000), "Holds what is too risky")
+        XCTAssertEqual(AutopilotText.overnightLine(until: AutopilotText.untilOff, since: 1_000, now: 1_720), "On until you stop it · 12 min so far")
+        XCTAssertEqual(AutopilotText.overnightText(scope: "every AI"), "For every AI. Holds what is too risky.")
+    }
+
+    func testOvernightSitsBetweenAutoAndBypassAndFeelsSo() {
+        XCTAssertEqual(AutopilotFeedback.modeChange(from: .auto, to: .overnight), .autopilotOn)
+        XCTAssertEqual(AutopilotFeedback.modeChange(from: .overnight, to: .auto), .autopilotOff)
+        XCTAssertEqual(AutopilotFeedback.modeChange(from: .overnight, to: .bypass), .bypassOn)
+        XCTAssertEqual(AutopilotFeedback.modeChange(from: .overnight, to: .lockdown), .lockdownOn)
+        XCTAssertGreaterThan(AutopilotText.autonomy(.overnight), AutopilotText.autonomy(.auto))
+        XCTAssertLessThan(AutopilotText.autonomy(.overnight), AutopilotText.autonomy(.bypass))
+    }
+
+    func testOvernightsHelpSaysItDecidesLikeAutoWithoutARiskModel() {
+        XCTAssertEqual(AutopilotText.overnightHelpText(riskRated: false), "This model does not rate risk, so Overnight decides like Auto.")
+        XCTAssertTrue(AutopilotText.overnightHelpText(riskRated: true).contains("catastrophic"))
+        XCTAssertTrue(AutopilotText.modeHelp.contains(AutopilotText.overnightName))
+        XCTAssertEqual([AutopilotText.whenRiskyWait, AutopilotText.whenRiskyDeny], ["Wait for me", "Deny it"])
+    }
+
+    func testTheRiskReadsAsItsLevelAndWhy() {
+        XCTAssertEqual(AutopilotText.riskLine(RiskView(level: .severe, pCatastrophic: 0.2, why: "force push", held: false)), "Risk: severe · force push")
+        XCTAssertEqual(AutopilotText.riskLine(RiskView(level: .catastrophic, pCatastrophic: 0.9, why: "  ", held: true)), "Risk: catastrophic")
+        XCTAssertEqual([RiskLevel.benign, .risky, .severe, .catastrophic].map(AutopilotText.riskWord), ["low", "moderate", "severe", "catastrophic"])
+        XCTAssertEqual(AutopilotText.heldLine, "Held by Overnight")
+    }
+
     func testModesHaveNamesLinesAndSymbolsByKey() {
         XCTAssertEqual(AutopilotText.modes.map(AutopilotText.key), AutopilotText.modeKeys)
-        XCTAssertEqual(AutopilotText.modes.map(AutopilotText.name), ["Manual", "Auto", "Bypass", "Lockdown"])
+        XCTAssertEqual(AutopilotText.modes.map(AutopilotText.name), ["Manual", "Auto", "Overnight", "Bypass", "Lockdown"])
         XCTAssertEqual(AutopilotText.line(.lockdown), "Deny everything")
         XCTAssertEqual(AutopilotText.line(.manual), "Ask, with a hint")
-        XCTAssertEqual(AutopilotText.byRisk, [.lockdown, .manual, .auto, .bypass])
+        XCTAssertEqual(AutopilotText.byRisk, [.lockdown, .manual, .auto, .overnight, .bypass])
         XCTAssertEqual(AutopilotText.name(key: "nonsense"), "Manual")
         // "assisted", from an older version, is Manual now.
         XCTAssertEqual(AutopilotText.name(key: "assisted"), "Manual")

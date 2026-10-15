@@ -87,7 +87,7 @@ final class PairingModel {
         busy = true
         error = nil
         let name = untrusted(view?.clientName ?? "")
-        switch await OwnerCheck.confirm(app, reason: "Connect \(name.isEmpty ? "this AI" : name)") {
+        switch await OwnerPrompt.confirm(app, reason: "Connect \(name.isEmpty ? "this AI" : name)") {
         case .confirmed:
             app.feedback.play(.connected)
             do {
@@ -111,7 +111,7 @@ final class PairingModel {
         case .unavailable:
             app.feedback.play(.error)
             busy = false
-            error = OwnerCheck.unavailableMessage
+            error = OwnerPrompt.unavailableMessage
         }
     }
 

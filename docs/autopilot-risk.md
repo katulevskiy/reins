@@ -15,7 +15,7 @@ deleting `main` is not; `rm -rf build/` is fine, `rm -rf ~` is not.
 |---|---|---|
 | Manual | nothing (shows the suggestion and the risk) | |
 | Auto | what it is confident about, in kinds the user's history unlocked; the hard floor asks | model |
-| **Overnight** | **approves everything, the hard floor included, except what the risk model rates catastrophic in context; those wait for the user, or are denied (a setting)** | **model with the risk output** |
+| **Overnight** | **Auto, except that the part of the hard floor about what an action does (a destructive tool, a push that rewrites history, a far-reaching change, an upload that may run) is weighed by the risk model instead of always asked; and what the risk model rates catastrophic in context, a tripwire fires on, or the core could not read with certainty is held: it waits for the user, or is denied (a setting; uncertain always waits)** | **model with the risk output** |
 | Bypass | approves everything (pairings and other phones still ask) | |
 | Lockdown | denies everything | |
 
@@ -118,18 +118,38 @@ decision head and the new risk head; loss = Laya's proper score on approvals (v7
 
 ## 6. Policy, thresholds, calibration
 
-Per request in Overnight, after Lockdown, Bypass and pairings, which keep their rules:
+**Overnight is never looser than Auto except on the hard floor it may weigh**, and only for a request a verified
+model rated and the core read with certainty. Everything Auto sends to the user for another reason still goes to the
+user. A test runs the same requests through both and allows exactly these differences
+(`overnight_decides_like_auto_but_weighs_part_of_the_floor`). Per request in Overnight, after Lockdown, Bypass and
+pairings, which keep their rules:
 
-1. No model, a model without the risk output, or inference failed: **behave like Auto** (the Activity note says so).
-2. Connection paired less than 10 minutes ago: waits (as today).
-3. Risk: `P(catastrophic)` with the two-pass rule, raised to 1 by a tripwire. At or above **θ_c**: held, it waits for
-   the user ("wait for me", the default) or is denied ("deny it"); the note reads
-   `Waited: risk catastrophic · deletes the default branch main`.
-4. Safety valves for the connection: at most 60 approvals per 10 minutes and 600 per day; a pause when it reaches 5
-   severe requests in 30 minutes, or right after something of it was held. While paused its requests wait, and the
-   app gets `Paused` as today.
-5. Otherwise approved once (the default selection; a standing permission it asks for is marked as Overnight's and
-   ends with it, like Bypass's): `Allowed overnight · risk low` / `· risk severe`.
+1. No model, a model without the risk output, or inference failed: **behave like Auto**, the floor included (the
+   Activity note says so).
+2. Connection paired less than 10 minutes ago: waits (as in Auto).
+3. The hard floor: a reason about who decides (a standing permission, the accounts an AI sees), money, secrets
+   released, sign-ins, what could not be read (a question the phone could not read, hidden characters) or sensitive
+   items always waits, as in Auto (`gates::overnight_weighs`, every reason checked). A reason about what the action does
+   (a destructive MCP tool, a push that rewrites or deletes history, a far-reaching change such as a recursive delete,
+   an upload that may run) is weighed below instead.
+4. Hold. What the core read is an `Outcome`: a **tripwire** (catastrophic, whatever the model says), **uncertain**, or
+   read. Uncertain is held and always waits, whatever the setting (never "no tripwire, so the model decides"): the
+   tokenizer's uncertainty, a hook detail that cannot be taken out or is not shown as it runs, a path or a value only
+   known when it runs (a variable, a command's output), a program named at run time, a value changed to be shown, a
+   target placed after the command changes folder, code handed to an interpreter, scheduled jobs it does not show. A
+   missing risk or threshold is uncertain too. Otherwise `P(catastrophic)` with the two-pass rule; at or above **θ_c**:
+   held, it waits for the user ("wait for me", the default) or is denied ("deny it"); the note reads
+   `Waited: risk catastrophic · deletes the default branch main`. An unresolved delete target that an empty value
+   turns into the root (`rm -rf "$DIR/"`) is a tripwire.
+5. **Auto's rules**: the approval verdict, the class gates (a class still learning waits), Auto's rate limit (30 per
+   10 minutes, 200 a day). Approved by Overnight only on an Approve verdict; a weighed floor is never denied by the
+   verdict (it waits).
+6. Safety valves on top: at most 60 approvals per 10 minutes and 600 per day; severe requests pause after 5 severe
+   requests in 30 minutes, or right after something of the AI was held. While paused its requests wait, and the app
+   gets `Paused` as today.
+7. Approved once, the default selection, as Auto approves (`Allowed overnight · risk low`): Overnight never makes a
+   standing permission (it keeps that floor); anything granted while carrying out its decision carries its origin and
+   ends with it.
 
 Thresholds and calibration:
 - `T_risk`: a scalar temperature fitted on val (NLL). Targets: ECE ≤ 0.05 on val and test.
@@ -169,11 +189,16 @@ points).
   (`autopilot_overnight_until:<scope>`, `…_since:`), so the settings table keeps its columns and an older version
   reads the interrupted mode (never more permissive). When it ends it returns to that mode.
 - Precedence: Lockdown (global, then the connection's) > Bypass > **Overnight** (the connection's, else the global
-  one: a global Overnight applies to every AI not locked down or bypassed) > the connection's mode > the global mode.
-- Permissions granted during it carry the origin `overnight` / `overnight:<connection>` and end with it, through
-  the bypass-origin mechanism.
+  one for every AI not kept on Manual: a global Overnight is never looser than what the user chose for an AI) > the
+  connection's mode > the global mode.
+- It approves once, as Auto does; what is granted while carrying out its decision carries the origin `overnight` /
+  `overnight:<connection>` and ends with it, through the bypass-origin mechanism.
 - Setting `overnight_when_risky`: `Wait` (default) or `Deny`.
-- Turning it on is an owner check in the app (hold, then biometrics), like Bypass. The app shows it like Bypass
+- Only the owner starts it: `start_overnight` and `set_overnight_when_risky` take an `OwnerCheck` (biometrics or the
+  device passcode) that the core asks itself, in its own words, before anything changes. Every start, restart, new
+  length and change of the setting either way is asked; turning it off is not. `set_autopilot_mode` never starts it,
+  nor puts an AI kept on Manual in a global Overnight; a bypass ends the Overnight of its scope, so nothing returns to
+  Overnight without the owner. The app also holds to start, like Bypass. The app shows it like Bypass
   (pill, persistent notification, Stop), with a moon icon and its own color.
 - `SuggestionView` and `AutopilotNote` gain `risk` (class, probability, one-line why); the approval screen and
   Activity show `Risk: catastrophic · deletes the default branch main`.

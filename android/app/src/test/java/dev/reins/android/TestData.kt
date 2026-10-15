@@ -631,7 +631,15 @@ object TestData {
         size: ULong = 0u,
         error: String? = null,
         runtimeReady: Boolean = true,
-    ) = ModelStatus(state, "laya-approvals-base-v1", "Laya approvals (base)", "1", size, downloaded, error, runtimeReady)
+        risk: Boolean = false,
+    ) = ModelStatus(state, "laya-approvals-base-v1", "Laya approvals (base)", "1", size, downloaded, error, runtimeReady, risk)
+
+    fun risk(
+        level: dev.reins.core.RiskLevel = dev.reins.core.RiskLevel.SEVERE,
+        why: String = "force push",
+        held: Boolean = false,
+        pCatastrophic: Float = 0.04f,
+    ) = dev.reins.core.RiskView(level, pCatastrophic, why, held)
 
     fun classView(
         key: String = "github/write/push",
@@ -698,17 +706,19 @@ object TestData {
         mode: AutopilotMode = AutopilotMode.MANUAL,
         reason: String = "Like 4 times you approved: Push to a branch · dkat/reins",
         neighbours: List<NeighbourView> = neighbours(),
-    ) = SuggestionView(id, verdict, mode, pApprove, pDeny, confidence, reason, neighbours, "personal", "Personal", "github/write/push", novel, floor, judged)
+        risk: dev.reins.core.RiskView? = null,
+    ) = SuggestionView(id, verdict, mode, pApprove, pDeny, confidence, reason, neighbours, "personal", "Personal", "github/write/push", novel, floor, judged, risk)
 
     fun note(
         mode: AutopilotMode = AutopilotMode.AUTO,
         suggested: Verdict = Verdict.APPROVE,
         pApprove: Float = 0.98f,
         correctable: Boolean = true,
+        risk: dev.reins.core.RiskView? = null,
     ) = AutopilotNote(
         mode, suggested, pApprove, 1f - pApprove, 0.93f, "personal", "Personal",
         listOf("approved: Push to a branch · dkat/reins", "approved: Push to a branch · dkat/laya"),
-        "Like 4 times you approved: Push to a branch · dkat/reins", correctable,
+        "Like 4 times you approved: Push to a branch · dkat/reins", correctable, risk,
     )
 
     fun autoDecision(

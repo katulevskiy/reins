@@ -10,6 +10,7 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
+import dev.reins.android.platform.OwnerPrompt
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
@@ -17,6 +18,7 @@ import dev.reins.core.AutopilotStats
 import dev.reins.core.ThresholdReplay
 import dev.reins.core.ModelState
 import dev.reins.core.ModelStatus
+import dev.reins.core.OvernightRisky
 import dev.reins.core.Preset
 import dev.reins.core.ProfileView
 import dev.reins.core.SuggestionView
@@ -135,13 +137,13 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /**
-     * Sets the global mode or a connection's ([mode] null: back to following the global mode); never Bypass, which
-     * [startBypass] turns on.
+     * Sets the global mode or a connection's ([mode] null: back to following the global mode); never Bypass or
+     * Overnight, which [startBypass] and [startOvernight] turn on.
      * The change is felt at once; a refusal from the core (a just-paired connection cannot be bypassed) says why.
      */
     fun setMode(mode: AutopilotMode?, connectionId: String? = null) {
-        // A bypass starts only through [startBypass], after the owner's check.
-        if (mode == AutopilotMode.BYPASS) return
+        // A bypass or an Overnight starts only through its own start, after the owner's check.
+        if (AutopilotText.isTimed(mode)) return
         val old = modeOf(connectionId)
         val new = mode ?: settings.value?.mode ?: AutopilotMode.MANUAL
         AutopilotText.modeChangeEvent(old, new)?.let { container.feedback.play(it) }
@@ -160,26 +162,103 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun startBypass(minutes: UInt?, connectionId: String? = null, who: String? = null, authenticator: Authenticator) {
         viewModelScope.launch {
-            val result = try {
-                authenticator.authenticate(AutopilotText.bypassAuthTitle(who), AutopilotText.bypassAuthDetail(minutes))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                AuthResult.Cancelled
-            }
-            when (result) {
-                AuthResult.Success -> Unit
-                AuthResult.Cancelled -> return@launch
-                AuthResult.Unavailable -> {
-                    _ui.update { it.copy(error = "Set a screen lock or fingerprint on this phone to turn on Bypass.") }
-                    return@launch
-                }
-            }
+            if (!ownerChecked(authenticator, AutopilotText.bypassAuthTitle(who), minutes)) return@launch
             container.feedback.play(Event.BypassOn)
             draft { AutopilotDraft.withBypass(it, connectionId, minutes, System.currentTimeMillis() / 1000) }
             perform {
                 container.core.startBypass(connectionId, minutes)
                 container.refreshAutopilot()
+            }
+        }
+    }
+
+    /**
+     * Starts Overnight for every AI ([connectionId] null) or one ([who] names it), for [minutes] or, with null, until
+     * the user stops it. The core itself asks the owner ([OwnerPrompt] over [authenticator], with its own reason) and
+     * changes nothing without a pass; so it shows once the core said yes. The mode it interrupts is remembered for Stop.
+     */
+    fun startOvernight(minutes: UInt?, connectionId: String? = null, who: String? = null, authenticator: Authenticator) {
+        val owner = OwnerPrompt(authenticator, AutopilotText.overnightAuthTitle(who))
+        val before = settings.value
+        val old = modeOf(connectionId)
+        ownerAsked(owner) {
+            container.core.startOvernight(connectionId, minutes, owner)
+            AutopilotText.modeChangeEvent(old, AutopilotMode.OVERNIGHT)?.let { container.feedback.play(it) }
+            if (before != null) container.overnightReturns.started(connectionId, AutopilotDraft.interrupted(before, connectionId))
+            draft { AutopilotDraft.withOvernight(it, connectionId, minutes, System.currentTimeMillis() / 1000) }
+            container.refreshAutopilot()
+        }
+    }
+
+    /** Ends an Overnight: back to the mode it interrupted (the global one) or the AI's own setting before it. */
+    fun stopOvernight(connectionId: String? = null) {
+        val back = container.overnightReturns.stopMode(connectionId)
+        val new = back ?: if (connectionId == null) AutopilotMode.MANUAL else settings.value?.mode ?: AutopilotMode.MANUAL
+        AutopilotText.modeChangeEvent(AutopilotMode.OVERNIGHT, new)?.let { container.feedback.play(it) }
+        draft { AutopilotDraft.withMode(it, connectionId, back, null, System.currentTimeMillis() / 1000) }
+        perform {
+            container.stopOvernight(connectionId)
+            container.refreshAutopilot()
+        }
+    }
+
+    /**
+     * What Overnight does with a request too risky to decide: wait for the user, or deny it. Either way the core asks
+     * the owner first; the choice shows once it is made.
+     */
+    fun setOvernightWhenRisky(risky: OvernightRisky, authenticator: Authenticator) {
+        if (settings.value?.overnightWhenRisky == risky) return
+        val owner = OwnerPrompt(authenticator, "Change ${AutopilotText.OVERNIGHT}")
+        ownerAsked(owner) {
+            container.core.setOvernightWhenRisky(risky, owner)
+            draft { it.copy(overnightWhenRisky = risky) }
+            container.refreshAutopilot()
+        }
+    }
+
+    /**
+     * Runs [block], a call the core answers only after asking [owner]. A cancel says nothing; a phone without a
+     * screen lock says how to get one; any other refusal says why. What shows is re-read either way.
+     */
+    private fun ownerAsked(owner: OwnerPrompt, block: suspend () -> Unit) {
+        _ui.update { it.copy(busy = true, error = null, notice = null) }
+        viewModelScope.launch {
+            try {
+                block()
+                _ui.update { it.copy(busy = false) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val error = when (owner.last) {
+                    AuthResult.Cancelled -> null
+                    AuthResult.Unavailable -> "Set a screen lock or fingerprint on this phone to turn on ${AutopilotText.OVERNIGHT}."
+                    else -> e.userMessage()
+                }
+                if (error != null && owner.last != AuthResult.Unavailable) container.feedback.play(Event.Error)
+                _ui.update { it.copy(busy = false, error = error) }
+                container.refreshAutopilot()
+            }
+        }
+    }
+
+    /**
+     * Holding the button proves intent, not identity: the phone's owner is checked before a bypass turns on. Without a
+     * pass nothing changes; without a screen lock at all it says so. (Overnight's check is asked by the core itself.)
+     */
+    private suspend fun ownerChecked(authenticator: Authenticator, title: String, minutes: UInt?): Boolean {
+        val result = try {
+            authenticator.authenticate(title, AutopilotText.bypassAuthDetail(minutes))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            AuthResult.Cancelled
+        }
+        return when (result) {
+            AuthResult.Success -> true
+            AuthResult.Cancelled -> false
+            AuthResult.Unavailable -> {
+                _ui.update { it.copy(error = "Set a screen lock or fingerprint on this phone to turn on Bypass.") }
+                false
             }
         }
     }

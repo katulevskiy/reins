@@ -17,6 +17,7 @@ enum GlanceStyle {
         switch mode {
         case .manual: Palette.search
         case .auto: Palette.accent
+        case .overnight: Palette.overnight
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
@@ -709,28 +710,37 @@ struct ApprovalLiveViews {
 // MARK: Live Activity: bypass
 
 /// A running bypass, drawn as the "surge" state: red, the bolt, a countdown and Stop. One that runs until turned off
-/// shows an infinity sign and a full bar instead of counting down.
+/// shows an infinity sign and a full bar instead of counting down. An Overnight is drawn the same way in its night
+/// indigo, with the moon.
 struct BypassLiveViews {
     var state: BypassActivityAttributes.ContentState
     var stale: Bool
 
     var untilOff: Bool { state.untilOff ?? false }
 
+    var overnight: Bool { state.overnight ?? false }
+
     var ended: Bool { stale || (!untilOff && state.until <= Date()) }
 
+    var name: String { overnight ? AutopilotText.overnightName : "Bypass" }
+
+    var tint: Color { overnight ? Palette.overnight : Palette.danger }
+
+    var symbol: String { overnight ? AutopilotText.overnightSymbol : "bolt.fill" }
+
     var title: String {
-        if ended { return "Bypass ended" }
-        return untilOff ? "Bypass on · until you stop it" : "Bypass on"
+        if ended { return "\(name) ended" }
+        return untilOff ? "\(name) on · until you stop it" : "\(name) on"
     }
 
-    var line: String { AutopilotText.bypassText(scope: state.scope) }
+    var line: String { overnight ? AutopilotText.overnightText(scope: state.scope) : AutopilotText.bypassText(scope: state.scope) }
 
     var approved: String { state.approvedCount == 0 ? "Nothing approved yet" : "\(state.approvedCount) approved so far" }
 
     var bolt: some View {
         Circle()
-            .fill(Palette.danger.opacity(0.18))
-            .overlay(Image(systemName: "bolt.fill").font(.system(size: 18, weight: .bold)).foregroundStyle(Palette.danger))
+            .fill(tint.opacity(0.18))
+            .overlay(Image(systemName: symbol).font(.system(size: 18, weight: .bold)).foregroundStyle(tint))
             .frame(width: 40, height: 40)
             .accessibilityHidden(true)
     }
@@ -739,14 +749,14 @@ struct BypassLiveViews {
         if untilOff {
             Image(systemName: "infinity")
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Palette.danger)
+                .foregroundStyle(tint)
                 .frame(maxWidth: 90, alignment: .trailing)
                 .accessibilityLabel("until you stop it")
         } else {
             Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
                 .font(RFont.fixedMono(22, .semibold))
                 .monospacedDigit()
-                .foregroundStyle(Palette.danger)
+                .foregroundStyle(tint)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: 90, alignment: .trailing)
         }
@@ -756,7 +766,7 @@ struct BypassLiveViews {
         if untilOff {
             ProgressView(value: 1)
                 .progressViewStyle(.linear)
-                .tint(Palette.danger)
+                .tint(tint)
         } else {
             ProgressView(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true) {
                 EmptyView()
@@ -764,13 +774,21 @@ struct BypassLiveViews {
                 EmptyView()
             }
             .progressViewStyle(.linear)
-            .tint(Palette.danger)
+            .tint(tint)
         }
     }
 
-    var stop: some View {
-        Button(intent: StopBypassIntent()) {
-            GlanceButtonLabel(title: "Stop", symbol: nil, tint: Palette.danger, filled: true)
+    @ViewBuilder var stop: some View {
+        Group {
+            if overnight {
+                Button(intent: StopOvernightIntent()) {
+                    GlanceButtonLabel(title: "Stop", symbol: nil, tint: tint, filled: true)
+                }
+            } else {
+                Button(intent: StopBypassIntent()) {
+                    GlanceButtonLabel(title: "Stop", symbol: nil, tint: tint, filled: true)
+                }
+            }
         }
         .buttonStyle(.plain)
         .frame(width: 112)
@@ -800,20 +818,20 @@ struct BypassLiveViews {
     }
 
     var compactLeading: some View {
-        Image(systemName: "bolt.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.danger)
+        Image(systemName: symbol).font(.system(size: 14, weight: .bold)).foregroundStyle(tint)
     }
 
     @ViewBuilder var compactTrailing: some View {
         if untilOff {
             Image(systemName: "infinity")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Palette.danger)
+                .foregroundStyle(tint)
                 .frame(maxWidth: 46)
         } else {
             Text(timerInterval: min(state.startedAt, state.until)...state.until, countsDown: true)
                 .font(RFont.fixedMono(13, .semibold))
                 .monospacedDigit()
-                .foregroundStyle(Palette.danger)
+                .foregroundStyle(tint)
                 .frame(maxWidth: 46)
         }
     }
@@ -821,11 +839,11 @@ struct BypassLiveViews {
     var minimal: some View {
         ZStack {
             if untilOff {
-                Circle().stroke(Palette.danger, lineWidth: 3).padding(1.5)
+                Circle().stroke(tint, lineWidth: 3).padding(1.5)
             } else {
-                TimerRing(from: state.startedAt, to: state.until, tint: Palette.danger, lineWidth: 3)
+                TimerRing(from: state.startedAt, to: state.until, tint: tint, lineWidth: 3)
             }
-            Image(systemName: "bolt.fill").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.danger)
+            Image(systemName: symbol).font(.system(size: 10, weight: .bold)).foregroundStyle(tint)
         }
         .accessibilityLabel(title)
     }

@@ -194,7 +194,7 @@ struct DecisionHeader<Extra: View>: View {
 
 /// The phone's owner confirms an approval first (Face ID, Touch ID or the passcode). Fails closed: anything but a
 /// confirmation approves nothing.
-enum OwnerCheck {
+enum OwnerPrompt {
     enum Result { case confirmed, cancelled, unavailable }
 
     @MainActor

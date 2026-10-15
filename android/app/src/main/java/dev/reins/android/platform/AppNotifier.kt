@@ -60,6 +60,8 @@ class AppNotifier(
         val private: Boolean,
         /** The settings group the channel is listed under. */
         val group: String? = null,
+        /** A string resource for the channel's name, which then wins over [label]. */
+        val labelRes: Int? = null,
     ) {
         Approvals(
             "approvals", "Approvals", "Requests from your AI clients that wait for your approval", NotificationManager.IMPORTANCE_HIGH,
@@ -90,6 +92,12 @@ class AppNotifier(
         Bypass(
             "autopilot-bypass", "Bypass", "Shown while a bypass runs, with Stop", NotificationManager.IMPORTANCE_LOW,
             null, CueCategory.Autopilot, null, private = false, group = GROUP_AUTOPILOT,
+        ),
+
+        /** An Overnight that runs, like a bypass: seen, never heard. Named by `R.string.overnight_name`. */
+        Overnight(
+            "autopilot-overnight", AutopilotText.OVERNIGHT, "Shown while it runs, with Stop", NotificationManager.IMPORTANCE_LOW,
+            null, CueCategory.Autopilot, null, private = false, group = GROUP_AUTOPILOT, labelRes = R.string.overnight_name,
         ),
 
         /** The model coming down. */
@@ -224,6 +232,8 @@ class AppNotifier(
         onAutopilot(event)
         when (event) {
             is AutopilotEvent.BypassEnded -> if (Foreground.focused) feedback().play(Event.BypassOff)
+            // Back to the mode it interrupted, which lets less happen.
+            is AutopilotEvent.OvernightEnded -> if (Foreground.focused) feedback().play(Event.AutopilotOff)
             is AutopilotEvent.Paused -> paused(event)
             is AutopilotEvent.ModeChanged -> Unit
         }
@@ -278,19 +288,26 @@ class AppNotifier(
      * takes it away. It also times itself out at the end (the core ends the bypass by itself either way). A bypass
      * without an end shows how long it has run instead, and stays until it is stopped.
      */
-    fun showBypass(notice: AutopilotText.BypassNotice?, nowMillis: Long = System.currentTimeMillis()) {
+    fun showBypass(notice: AutopilotText.BypassNotice?, nowMillis: Long = System.currentTimeMillis()) =
+        showRunning(BYPASS_ID, Kind.Bypass, BypassStopReceiver.ACTION_STOP, BYPASS_RED, notice, nowMillis)
+
+    /** The ongoing "Overnight on" notification, as [showBypass] (its own channel, colour and Stop); null takes it away. */
+    fun showOvernight(notice: AutopilotText.BypassNotice?, nowMillis: Long = System.currentTimeMillis()) =
+        showRunning(OVERNIGHT_ID, Kind.Overnight, BypassStopReceiver.ACTION_STOP_OVERNIGHT, OVERNIGHT_INDIGO, notice, nowMillis)
+
+    private fun showRunning(id: Int, kind: Kind, stopAction: String, color: Int, notice: AutopilotText.BypassNotice?, nowMillis: Long) {
         if (notice == null || !notice.untilOff && notice.until * 1000 <= nowMillis) {
-            manager.cancel(BYPASS_ID)
+            manager.cancel(id)
             return
         }
         if (!manager.areNotificationsEnabled()) return
         val stop = PendingIntent.getBroadcast(
             context,
-            BYPASS_ID,
-            Intent(context, BypassStopReceiver::class.java).setAction(BypassStopReceiver.ACTION_STOP),
+            id,
+            Intent(context, BypassStopReceiver::class.java).setAction(stopAction),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val builder = Notification.Builder(context, channel(Kind.Bypass))
+        val builder = Notification.Builder(context, channel(kind))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(notice.title)
             .setContentText(notice.text)
@@ -306,12 +323,12 @@ class AppNotifier(
             builder.setWhen(notice.until * 1000).setChronometerCountDown(true).setTimeoutAfter(notice.until * 1000 - nowMillis)
         }
         val notification = builder
-            .setColor(BYPASS_RED)
+            .setColor(color)
             .setCategory(Notification.CATEGORY_STATUS)
             .setContentIntent(openAutopilot())
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .build()
-        manager.notify(BYPASS_ID, notification)
+        manager.notify(id, notification)
     }
 
     /** The model download as a progress bar (the foreground notification of its job). */
@@ -486,6 +503,7 @@ class AppNotifier(
         const val BYPASS_ID = 3
         const val DOWNLOAD_ID = 4
         private const val DOWNLOAD_DONE_ID = 5
+        const val OVERNIGHT_ID = 6
         private const val SUMMARY_LINES = 6
 
         /** The settings group of Autopilot's channels, and the group its notifications fold into. */
@@ -493,6 +511,9 @@ class AppNotifier(
 
         /** The bypass notification's accent: Reins's danger red. */
         private const val BYPASS_RED = 0xFFDC2626.toInt()
+
+        /** The Overnight notification's accent: its night indigo. */
+        private const val OVERNIGHT_INDIGO = 0xFF3F51B5.toInt()
 
         /** A channel id, e.g. `approvals-v2-sv` (sound and vibration), `-s`, `-v` or `-q` (quiet). */
         fun channelId(kind: Kind, sound: Boolean, vibrate: Boolean): String =
@@ -518,7 +539,8 @@ class AppNotifier(
                 vibrate -> " (vibration only)"
                 else -> " (silent)"
             }
-            val channel = NotificationChannel(id, kind.label + suffix, kind.importance)
+            val label = kind.labelRes?.let(context::getString) ?: kind.label
+            val channel = NotificationChannel(id, label + suffix, kind.importance)
             channel.description = kind.description
             kind.group?.let { channel.group = it }
             if (kind.private) channel.lockscreenVisibility = Notification.VISIBILITY_PRIVATE

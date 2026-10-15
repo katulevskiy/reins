@@ -24,6 +24,12 @@ const SALT_AAD: &str = "autopilot.salt";
 const BYPASS_SINCE_KEY: &str = "autopilot_bypass_since:";
 /// `meta` key prefix (then the connection) of when the server says a connection was made.
 const CREATED_KEY: &str = "autopilot_created:";
+/// `meta` key prefixes (then the scope) of an Overnight's end, start, and the mode it returns to.
+const OVERNIGHT_UNTIL_KEY: &str = "autopilot_overnight_until:";
+const OVERNIGHT_SINCE_KEY: &str = "autopilot_overnight_since:";
+const OVERNIGHT_RETURN_KEY: &str = "autopilot_overnight_return:";
+/// `meta` key: what Overnight does with what is too risky ("wait" | "deny").
+pub const OVERNIGHT_RISKY_KEY: &str = "autopilot.overnight_risky";
 
 /// A profile as stored (sealed).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -106,12 +112,21 @@ pub struct Judged {
     pub e_facts: Embedding,
     pub e_full: Embedding,
     pub neighbours: Vec<NeighbourNote>,
+    /// Severity after the two-pass rule (benign, risky, severe, catastrophic), when the model rates risk.
+    #[serde(default)]
+    pub risk: Option<[f32; 4]>,
+    /// The verified package that judged it declares the risk output (whether or not this run returned it).
+    #[serde(default)]
+    pub risk_declared: bool,
+    /// That package's Overnight threshold, when it names a valid one.
+    #[serde(default)]
+    pub risk_threshold: Option<f32>,
 }
 
 /// How a request was finally decided.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Decided {
-    /// "" (the user) | "autopilot" | "bypass" | "lockdown"
+    /// "" (the user) | "autopilot" | "overnight" | "bypass" | "lockdown"
     pub by: String,
     pub verdict: Verdict,
     pub at: i64,
@@ -143,6 +158,12 @@ pub struct Suggestion {
     pub verdict: Verdict,
     pub reason: String,
     pub decided: Option<Decided>,
+    /// The risk, when the model rated it.
+    #[serde(default)]
+    pub risk: Option<super::risk::RiskNote>,
+    /// It was read to delete, move away or overwrite something (the connection's last hour counts these).
+    #[serde(default)]
+    pub deletes: bool,
 }
 
 /// A stored profile with its id.
@@ -172,11 +193,11 @@ fn to_json<T: Serialize>(v: &T) -> Result<Vec<u8>, CoreError> {
 /// A row of `autopilot_settings`: its mode and bypass end.
 type SettingRow = (Option<String>, Option<i64>);
 
-/// Whether a permission with this origin may be used now: always, unless a bypass granted it; then only while that
-/// bypass (the global one, or the connection's own) is in force and no lockdown holds. Read with `conn`, inside the
-/// caller's transaction, so that a bypass stopped a moment ago is seen stopped.
+/// Whether a permission with this origin may be used now: always, unless a bypass or an Overnight granted it; then
+/// only while that bypass or Overnight (the global one, or the connection's own) is in force and no lockdown holds.
+/// Read with `conn`, inside the caller's transaction, so that one stopped a moment ago is seen stopped.
 pub(crate) fn origin_in_force(conn: &Connection, origin: &str, now: i64) -> Result<bool, CoreError> {
-    let Some(scope) = super::modes::bypass_scope(origin) else {
+    let Some((kind, scope)) = super::modes::temporary_scope(origin) else {
         return Ok(true);
     };
     let row = |scope: &str| -> Result<Option<SettingRow>, CoreError> {
@@ -198,7 +219,24 @@ pub(crate) fn origin_in_force(conn: &Connection, origin: &str, now: i64) -> Resu
     } else {
         row(scope)?
     };
-    Ok(!lockdown(&own) && own.and_then(|(_, until)| until).is_some_and(|until| until > now))
+    if lockdown(&own) {
+        return Ok(false);
+    }
+    Ok(match kind {
+        super::modes::Temporary::Bypass => own.and_then(|(_, until)| until).is_some_and(|until| until > now),
+        super::modes::Temporary::Overnight => {
+            let overnight =
+                own.as_ref().is_some_and(|(mode, _)| mode.as_deref() == Some(AutopilotMode::Overnight.as_str()));
+            let until: Option<String> = conn
+                .query_row(
+                    "SELECT value FROM meta WHERE key = ?1",
+                    params![format!("{OVERNIGHT_UNTIL_KEY}{scope}")],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            overnight && until.and_then(|v| v.parse::<i64>().ok()).is_none_or(|until| until > now)
+        }
+    })
 }
 
 /// Revokes, in `conn`'s transaction, every active permission a bypass granted whose bypass is no longer in force;
@@ -207,11 +245,12 @@ fn revoke_ended_bypass_grants(conn: &Connection, now: i64) -> Result<Vec<StoredG
     let rows: Vec<(String, String, String, String, Option<i64>, String)> = {
         let mut stmt = conn.prepare(
             "SELECT id, connection_id, connection_label, grant_json, last_used_at, origin FROM grants \
-             WHERE origin = ?1 OR origin LIKE ?2",
+             WHERE origin = ?1 OR origin LIKE ?2 OR origin = ?3 OR origin LIKE ?4",
         )?;
-        stmt.query_map(params![super::modes::BYPASS_ORIGIN, "bypass:%"], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
-        })?
+        stmt.query_map(
+            params![super::modes::BYPASS_ORIGIN, "bypass:%", super::modes::OVERNIGHT_ORIGIN, "overnight:%"],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )?
         .collect::<Result<Vec<_>, _>>()?
     };
     let mut revoked = Vec::new();
@@ -259,24 +298,40 @@ impl Store {
     pub fn ap_mode_rows(&self) -> Result<Vec<(String, ModeRow)>, CoreError> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT s.scope, s.mode, s.bypass_until, s.profile_id, m.value FROM autopilot_settings s
-                 LEFT JOIN meta m ON m.key = ?1 || s.scope ORDER BY s.scope",
+            "SELECT s.scope, s.mode, s.bypass_until, s.profile_id, m.value, ou.value, os.value, orr.value
+                 FROM autopilot_settings s
+                 LEFT JOIN meta m ON m.key = ?1 || s.scope
+                 LEFT JOIN meta ou ON ou.key = ?2 || s.scope
+                 LEFT JOIN meta os ON os.key = ?3 || s.scope
+                 LEFT JOIN meta orr ON orr.key = ?4 || s.scope
+                 ORDER BY s.scope",
         )?;
         let rows = stmt
-            .query_map(params![BYPASS_SINCE_KEY], |r| {
-                let bypass_until: Option<i64> = r.get(2)?;
-                Ok((
-                    r.get::<_, String>(0)?,
-                    ModeRow {
-                        mode: r.get::<_, Option<String>>(1)?.as_deref().and_then(AutopilotMode::parse),
-                        bypass_since: bypass_until
-                            .and(r.get::<_, Option<String>>(4).ok().flatten())
-                            .and_then(|v| v.parse().ok()),
-                        bypass_until,
-                        profile_id: r.get(3)?,
-                    },
-                ))
-            })?
+            .query_map(
+                params![BYPASS_SINCE_KEY, OVERNIGHT_UNTIL_KEY, OVERNIGHT_SINCE_KEY, OVERNIGHT_RETURN_KEY],
+                |r| {
+                    let bypass_until: Option<i64> = r.get(2)?;
+                    let mode = r.get::<_, Option<String>>(1)?.as_deref().and_then(AutopilotMode::parse);
+                    let overnight = mode == Some(AutopilotMode::Overnight);
+                    let meta = |i: usize| -> Option<String> {
+                        r.get::<_, Option<String>>(i).ok().flatten().filter(|_| overnight)
+                    };
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        ModeRow {
+                            mode,
+                            bypass_since: bypass_until
+                                .and(r.get::<_, Option<String>>(4).ok().flatten())
+                                .and_then(|v| v.parse().ok()),
+                            bypass_until,
+                            profile_id: r.get(3)?,
+                            overnight_until: meta(5).and_then(|v| v.parse().ok()),
+                            overnight_since: meta(6).and_then(|v| v.parse().ok()),
+                            overnight_return: meta(7).as_deref().and_then(AutopilotMode::parse),
+                        },
+                    ))
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
@@ -287,14 +342,26 @@ impl Store {
     pub fn ap_set_mode_row(&self, scope: &str, row: &ModeRow, now: i64) -> Result<Vec<StoredGrant>, CoreError> {
         let mut guard = self.lock()?;
         let conn = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let since_key = format!("{BYPASS_SINCE_KEY}{scope}");
-        match row.bypass_since.filter(|_| row.bypass_until.is_some()) {
-            Some(since) => conn.execute(
-                "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2",
-                params![since_key, since.to_string()],
-            )?,
-            None => conn.execute("DELETE FROM meta WHERE key = ?1", params![since_key])?,
+        let put = |key: String, value: Option<String>| -> Result<usize, rusqlite::Error> {
+            match value {
+                Some(v) => conn.execute(
+                    "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2",
+                    params![key, v],
+                ),
+                None => conn.execute("DELETE FROM meta WHERE key = ?1", params![key]),
+            }
         };
+        put(
+            format!("{BYPASS_SINCE_KEY}{scope}"),
+            row.bypass_since.filter(|_| row.bypass_until.is_some()).map(|t| t.to_string()),
+        )?;
+        let overnight = row.mode == Some(AutopilotMode::Overnight);
+        put(format!("{OVERNIGHT_UNTIL_KEY}{scope}"), row.overnight_until.filter(|_| overnight).map(|t| t.to_string()))?;
+        put(format!("{OVERNIGHT_SINCE_KEY}{scope}"), row.overnight_since.filter(|_| overnight).map(|t| t.to_string()))?;
+        put(
+            format!("{OVERNIGHT_RETURN_KEY}{scope}"),
+            row.overnight_return.filter(|_| overnight).map(|m| m.as_str().to_owned()),
+        )?;
         if row.mode.is_none() && row.bypass_until.is_none() && row.profile_id.is_none() {
             conn.execute("DELETE FROM autopilot_settings WHERE scope = ?1", params![scope])?;
         } else {

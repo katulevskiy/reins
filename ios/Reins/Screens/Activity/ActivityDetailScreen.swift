@@ -170,6 +170,7 @@ struct ActivityDetailScreen: View {
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("detailTitle")
                 EntryOutcomePill(entry: entry)
+                if let risk = entry.autopilot?.risk { RiskChips(risk: risk) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -217,6 +218,9 @@ struct ActivityDetailScreen: View {
             }
             EntryOutcomePill(entry: entry)
                 .padding(.top, 14)
+            if let risk = entry.autopilot?.risk {
+                RiskChips(risk: risk).padding(.top, 8)
+            }
             Text(untrusted(entry.connectionLabel))
                 .font(RFont.sans(13))
                 .foregroundStyle(Palette.tertiary)

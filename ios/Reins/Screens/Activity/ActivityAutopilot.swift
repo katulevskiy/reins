@@ -9,6 +9,7 @@ enum ModeLook {
         switch mode {
         case .manual: "Manual"
         case .auto: "Auto"
+        case .overnight: AutopilotText.overnightName
         case .bypass: "Bypass"
         case .lockdown: "Lockdown"
         }
@@ -18,6 +19,7 @@ enum ModeLook {
         switch mode {
         case .manual: Palette.search
         case .auto: Palette.accent
+        case .overnight: Palette.overnight
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
@@ -27,6 +29,7 @@ enum ModeLook {
         switch mode {
         case .manual: "person.fill.checkmark"
         case .auto: "bolt"
+        case .overnight: AutopilotText.overnightSymbol
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
         }
@@ -44,8 +47,8 @@ enum ModeLook {
     }
 }
 
-/// The header's Autopilot pill: the global mode at a glance. Red with a live countdown while a bypass runs, amber in
-/// Lockdown, quiet otherwise.
+/// The header's Autopilot pill: the global mode at a glance. Red with a live countdown while a bypass runs, night
+/// indigo with the moon and its countdown during an Overnight, amber in Lockdown, quiet otherwise.
 struct ActivityModePill: View {
     var settings: AutopilotSettings
     var action: () -> Void
@@ -58,22 +61,22 @@ struct ActivityModePill: View {
 }
 
 /// What the mode pill shows: the mode's symbol and name, or a pulse and the time left while a bypass runs (a pulse
-/// and "Bypass" for one without an end).
+/// and "Bypass" for one without an end); the moon and the time left during an Overnight.
 struct ModePillLabel: View {
     var settings: AutopilotSettings
 
     var body: some View {
         let mode = settings.mode
         let tint = ModeLook.tint(mode)
-        let strong = mode == .bypass
+        let strong = ModeLook.running(settings)
         HStack(spacing: 6) {
-            if strong {
+            if strong && mode == .bypass {
                 PulseDot()
             } else {
                 Image(systemName: ModeLook.symbol(mode)).font(.system(size: 13, weight: .semibold))
             }
-            // A bypass without an end has nothing to count down: it reads as the mode, as on Android.
-            if strong, let until = settings.bypassUntil, !AutopilotText.isUntilOff(until) {
+            // One without an end has nothing to count down: it reads as the mode, as on Android.
+            if strong, let until = ModeLook.runningUntil(settings), !AutopilotText.isUntilOff(until) {
                 LiveClock(interval: 1) { now in
                     Text(ModeLook.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
                 }
@@ -82,19 +85,40 @@ struct ModePillLabel: View {
             }
         }
         .lineLimit(1)
-        .foregroundStyle(strong ? Color.white : tint)
+        .foregroundStyle(strong ? ModeLook.onTint(mode) : tint)
         .padding(.horizontal, 13)
         .frame(height: HeaderControl.height)
     }
 }
 
+extension ModeLook {
+    /// A bypass or an Overnight runs: the pill turns solid in its colour and counts down.
+    static func running(_ settings: AutopilotSettings) -> Bool { runningUntil(settings) != nil }
+
+    /// The end of the bypass or Overnight in force (`AutopilotText.untilOff` without one), nil otherwise.
+    static func runningUntil(_ settings: AutopilotSettings) -> Int64? {
+        switch settings.mode {
+        case .bypass: settings.bypassUntil
+        case .overnight: settings.overnightUntil
+        default: nil
+        }
+    }
+
+    /// What reads on the mode's solid colour: white on Bypass's red, and on Overnight's indigo a deep night in dark mode,
+    /// where the indigo is light.
+    static func onTint(_ mode: AutopilotMode) -> Color {
+        mode == .overnight ? Palette.dynamic(0xFFFFFF, 0x0E1033) : Color.white
+    }
+}
+
 extension View {
-    /// The mode pill's glass: red during a bypass, the mode's tint otherwise, with its label and identifier.
+    /// The mode pill's glass: solid in its colour during a bypass or an Overnight, the mode's tint otherwise, with its
+    /// label and identifier.
     func modePillGlass(_ settings: AutopilotSettings) -> some View {
         let mode = settings.mode
         let tint = ModeLook.tint(mode)
-        let strong = mode == .bypass
-        return glassEffect(.regular.tint(strong ? Palette.danger : tint.opacity(0.16)).interactive(), in: Capsule())
+        let strong = ModeLook.running(settings)
+        return glassEffect(.regular.tint(strong ? tint : tint.opacity(0.16)).interactive(), in: Capsule())
             .accessibilityLabel("Autopilot: \(ModeLook.name(mode))")
             .accessibilityIdentifier("modePill")
     }
@@ -130,6 +154,7 @@ enum EntryOutcome {
             let base = denied ? "Denied by Autopilot" : "Allowed by Autopilot"
             return p.map { $0 > 0 ? "\(base) · \(SuggestionText.percent($0))" : base } ?? base
         case "bypass": return "Allowed during a bypass"
+        case "overnight": return denied ? "Denied by \(AutopilotText.overnightName)" : "Allowed by \(AutopilotText.overnightName)"
         case "lockdown": return "Denied by Lockdown"
         default: break
         }
@@ -146,6 +171,7 @@ enum EntryOutcome {
     static func symbol(_ entry: ActivityEntry) -> String {
         switch EntryText.mark(entry) {
         case .auto: "bolt"
+        case .overnight: AutopilotText.overnightSymbol
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
         case .grant: "key.horizontal"
@@ -158,6 +184,7 @@ enum EntryOutcome {
     static func tint(_ entry: ActivityEntry) -> Color {
         switch EntryText.mark(entry) {
         case .auto, .grant: Palette.accent
+        case .overnight: Palette.overnight
         case .bypass, .denied: Palette.danger
         case .lockdown, .failed: Palette.warning
         case .approved: Palette.success
@@ -168,7 +195,7 @@ enum EntryOutcome {
     /// suggested".
     static func whyTitle(_ entry: ActivityEntry) -> String {
         switch entry.decidedBy {
-        case "autopilot": entry.outcome == "denied" ? "Why Autopilot denied it" : "Why Autopilot allowed it"
+        case "autopilot", "overnight": entry.outcome == "denied" ? "Why Autopilot denied it" : "Why Autopilot allowed it"
         default: "What Autopilot suggested"
         }
     }
@@ -202,9 +229,82 @@ extension EntryOutcomePill {
 }
 
 extension ApprovalRecord {
-    /// How `entry` ended, for the approval's hero.
+    /// How `entry` ended, for the approval's hero, with the risk the model saw in it.
     static func of(_ entry: ActivityEntry) -> ApprovalRecord {
-        ApprovalRecord(outcome: EntryOutcome.text(entry), symbol: EntryOutcome.symbol(entry), tint: EntryOutcome.tint(entry))
+        ApprovalRecord(outcome: EntryOutcome.text(entry), symbol: EntryOutcome.symbol(entry), tint: EntryOutcome.tint(entry),
+                       risk: entry.autopilot?.risk)
+    }
+}
+
+/// A risk level's colour and symbol: low reads as fine, then amber, orange and red.
+enum RiskLook {
+    static func tint(_ level: RiskLevel) -> Color {
+        switch level {
+        case .benign: Palette.success
+        case .risky: Palette.warning
+        case .severe: Palette.send
+        case .catastrophic: Palette.danger
+        }
+    }
+
+    static func symbol(_ level: RiskLevel) -> String {
+        switch level {
+        case .benign: "checkmark.shield"
+        case .risky: "exclamationmark.shield"
+        case .severe: "exclamationmark.triangle.fill"
+        case .catastrophic: "xmark.octagon.fill"
+        }
+    }
+
+    /// Worth a line in the history: anything above low, and whatever Overnight held.
+    static func listed(_ risk: RiskView?) -> Bool {
+        guard let risk else { return false }
+        return risk.held || risk.level != .benign
+    }
+}
+
+/// "Risk: severe · force push" in the level's colour, and, when Overnight held the request, "Held by Overnight" with
+/// the moon. Shown only where the model rated the risk.
+struct RiskChips: View {
+    var risk: RiskView
+
+    var body: some View {
+        let level = WarnTag(text: AutopilotText.riskLine(risk), tint: RiskLook.tint(risk.level), symbol: RiskLook.symbol(risk.level))
+            .truncationMode(.tail)
+            .accessibilityIdentifier("risk")
+        if risk.held {
+            let held = WarnTag(text: AutopilotText.heldLine, tint: Palette.overnight, symbol: AutopilotText.overnightSymbol)
+                .accessibilityIdentifier("riskHeld")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { level; held }
+                VStack(spacing: 8) { level; held }
+            }
+        } else {
+            level
+        }
+    }
+}
+
+/// The history row's risk: the level in a few words in its colour, the moon when Overnight held it.
+struct RiskLine: View {
+    var risk: RiskView
+
+    var body: some View {
+        let tint = RiskLook.tint(risk.level)
+        HStack(spacing: 4) {
+            Image(systemName: RiskLook.symbol(risk.level)).font(.system(size: 11, weight: .semibold))
+            Text("Risk: \(AutopilotText.riskWord(risk.level))").font(RFont.sans(12.5, .medium))
+            if risk.held {
+                Image(systemName: AutopilotText.overnightSymbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Palette.overnight)
+                    .accessibilityLabel(AutopilotText.heldLine)
+            }
+        }
+        .foregroundStyle(tint)
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("entryRisk")
     }
 }
 

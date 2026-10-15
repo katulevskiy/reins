@@ -140,6 +140,7 @@ fn summary(updates: Vec<RefUpdate>) -> Value {
         pack_bytes: 512,
         push_options: vec![],
         notes: vec![],
+        default_branch: None,
     })
     .unwrap()
 }

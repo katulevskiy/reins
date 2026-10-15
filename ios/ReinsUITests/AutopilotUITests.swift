@@ -128,6 +128,35 @@ final class AutopilotUITests: XCTestCase {
         selected("mode:manual")
     }
 
+    /// Overnight opens the bypass sheet in its own look: its (?) says it decides like Auto when the model does not rate
+    /// risk (the demo's does not), it takes what to do with what is too risky, it is held to start, runs with its ring
+    /// and stops back to the mode it interrupted.
+    func testOvernightIsHeldRunsAndStopsBackToTheModeItInterrupted() {
+        launch()
+        tap("mode:auto")
+        selected("mode:auto")
+        tap("mode:overnight")
+        let sheet = waitFor("overnightDialog")
+        waitFor("overnight:480")
+        selected("overnight:480")
+        sheet.buttons["help"].firstMatch.tap()
+        XCTAssertTrue(waitFor("helpText").label.contains("decides like Auto"))
+        selected("whenRisky:wait")
+        tap("whenRisky:deny")
+        selected("whenRisky:deny")
+        shot("autopilot-overnight-sheet")
+        // A tap is not enough: held for two seconds.
+        waitFor("confirmOvernight").tap()
+        XCTAssertTrue(element("confirmOvernight").exists, "a tap does not start Overnight")
+        waitFor("confirmOvernight").press(forDuration: 2.6)
+        waitFor("overnightClock")
+        text("Holds what is too risky")
+        selected("whenRisky:deny")
+        shot("autopilot-overnight")
+        tap("stopOvernight")
+        selected("mode:auto")
+    }
+
     func testABypassCanRunUntilTurnedOff() {
         launch()
         tap("mode:bypass")

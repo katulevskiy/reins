@@ -1,6 +1,7 @@
 //! `laya-try <package-dir> [situation-file ...]`: what a Laya package says about situations in the Autopilot format
 //! (spec §4). Without files, one situation is read from standard input. For each one: the probabilities from the facts
-//! alone and with the AI-written part, after the prompt-injection rule, and the verdict with no memory.
+//! alone and with the AI-written part, after the prompt-injection rule, and the verdict with no memory; for a model that
+//! rates risk, the severity after the two-pass rule and whether Overnight holds it.
 
 use std::io::Read;
 use std::path::Path;
@@ -69,6 +70,20 @@ fn main() -> ExitCode {
                     pct(c.confidence()),
                     j.verdict
                 );
+                if let Some(r) = j.risk {
+                    println!(
+                        "risk      benign {}  risky {}  severe {}  catastrophic {}{}",
+                        pct(r[0]),
+                        pct(r[1]),
+                        pct(r[2]),
+                        pct(r[3]),
+                        if j.held {
+                            "  (Overnight holds it)"
+                        } else {
+                            ""
+                        }
+                    );
+                }
             }
             Err(e) => {
                 eprintln!("{name}: {e}");

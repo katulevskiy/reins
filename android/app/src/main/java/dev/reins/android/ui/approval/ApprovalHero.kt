@@ -92,6 +92,7 @@ import dev.reins.core.AskRuleView
 import dev.reins.core.ModelState
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
+import dev.reins.android.ui.autopilot.RiskChip
 
 fun toneColor(tone: HeroTone, c: RColors): Color = when (tone) {
     HeroTone.Write -> c.send
@@ -233,6 +234,7 @@ private fun HeroPills(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
             }
             OutcomePill(record.outcome, record.icon, record.tint(c))
         }
+        RiskChip(record.risk, Modifier.padding(top = 10.dp))
         return
     }
     if (danger != null) {
@@ -241,9 +243,11 @@ private fun HeroPills(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
             Spacer(Modifier.width(8.dp))
             HelpDot(danger.tag, danger.help)
         }
-        // A guard rule that can be undone is an ordinary question: Autopilot's score shows under it.
-        if (danger.destructive) return
     }
+    // The model's risk, and whether Overnight held it: most often on just what cannot be undone.
+    RiskChip(s?.risk, Modifier.padding(top = if (danger != null) 10.dp else 16.dp))
+    // A guard rule that can be undone is an ordinary question: Autopilot's score shows under it.
+    if (danger != null && danger.destructive) return
     val content: (@Composable () -> Unit)? = when {
         s != null && s.judged && !s.floor -> {
             { AutopilotPill(s) { nav.overlay = ApprovalOverlay.Autopilot; feedback.play(Event.Open) } }

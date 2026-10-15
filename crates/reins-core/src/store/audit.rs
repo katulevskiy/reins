@@ -93,6 +93,9 @@ pub struct AuditAutopilot {
     pub neighbours: Vec<String>,
     #[serde(default)]
     pub reason: String,
+    /// The risk, when the model rated it (`docs/autopilot-risk.md`).
+    #[serde(default)]
+    pub risk: Option<crate::autopilot::risk::RiskNote>,
 }
 
 /// What the activity screen shows when an entry is opened. Sealed with the data key.

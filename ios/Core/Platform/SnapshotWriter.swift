@@ -44,6 +44,7 @@ enum SnapshotWriter {
         switch m {
         case .manual: "manual"
         case .auto: "auto"
+        case .overnight: "overnight"
         case .bypass: "bypass"
         case .lockdown: "lockdown"
         }
@@ -73,6 +74,7 @@ enum SnapshotWriter {
             s.bypassUntil = a.bypassUntil
             s.baseMode = modeKey(a.baseMode)
             s.anyBypassUntil = a.lastBypassEnd
+            s.overnightUntil = a.overnightUntil
         }
         if let grants = try? await core.grants() { s.activeGrants = grants.filter(\.active).count }
         s.updatedAt = Int64(Date().timeIntervalSince1970)

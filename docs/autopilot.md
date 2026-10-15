@@ -13,6 +13,7 @@ There is a global mode, and each connection can have its own (in that connection
 |---|---|
 | **Manual** | Every request waits for you, and once the model is installed the approval screen shows what Autopilot would do and why ("Autopilot would approve · 97%", "Like 4 times you approved: ..."). Each of your answers teaches it. The default. |
 | **Auto** | Autopilot approves what it is confident is safe, denies what it is confident is harmful, and asks you about the rest. Only for kinds of request that have earned it ([below](#how-auto-earns-trust)). |
+| **Overnight** | For agents left working: Auto, plus the risky actions Auto always leaves to you (a recursive delete, a force push, a destructive tool), weighed by a risk model instead. What it rates **catastrophic in context** (deleting the default branch, `rm -rf ~`, dropping a production database, a key sent to an unknown host, a mass email), and anything the phone cannot read with certainty, waits for you; catastrophic ones are denied instead if you choose "If something is too risky: deny it". Runs until you turn it off or until a time you pick, then returns to the mode it interrupted. Turning it on, changing its length and changing "If something is too risky" each ask for your fingerprint, face or screen lock; turning it off does not. Needs a model that rates risk; without one it decides like Auto. [Details](#overnight). |
 | **Bypass** | Approves everything at once, every kind of request (the hard floor below included), for any length from a minute to a year (15 minutes by default), or **until you turn it off**. Only new connections and new phones still ask. A standing permission an AI asks for during it is taken back the moment the bypass ends, however it ends (stopped, run out, locked down, another mode), and says "Ended with the bypass" in Activity; a timed bypass also caps it at its planned end. Turning it on approves what already waits, too. It applies to every AI, whatever mode an AI has of its own, except one locked down. A persistent notification with a countdown (or, without an end, how long it has run) and **Stop** stays up while it is on. Turning it on is a hold, then your fingerprint, face or screen lock. Needs no model, so it answers even when the app is not open. A bypass of a single AI is not available in its first 10 minutes. |
 | **Lockdown** | Denies everything at once, including what is already waiting. New connection requests still reach you. A global Lockdown overrides every connection's own mode. Needs no model. |
 
@@ -20,10 +21,42 @@ All modes work with the app closed. The push notification wakes the app, and Aut
 Automatic approvals show up as quiet, grouped notifications on an "Autopilot" channel. Automatic denials use normal
 importance.
 
+## Overnight
+
+Overnight is for letting an agent work while you are away. It decides like Auto (what you taught it, in kinds you
+unlocked, within Auto's limits), and the risky actions Auto always leaves to you are weighed instead: it asks a second
+model output, the **risk**, how bad a request would be if it were a mistake, in its context:
+
+| Risk | Examples | Overnight |
+|---|---|---|
+| benign | tests, builds, `rm -rf build/`, a push to a feature branch, one email to someone you know | as Auto would |
+| risky | `git reset --hard`, a push to `main` without force, deleting a scratch repository | as Auto would |
+| severe | `terraform apply` in production, reading a private key, a reply-all to 40 people | as Auto would, and counted (below) |
+| catastrophic | force-pushing or deleting the default branch, `rm -rf ~` or `.git`, `DROP TABLE` on a production-looking host, a key or `.env` sent to an unknown host, `curl \| sh` from an unknown host, mailing every contact | waits for you, or is denied |
+
+The same action can be fine or catastrophic: deleting `feature/x` is approved, deleting `main` waits. To judge that,
+the phone adds a `context:` line to what the model reads, from what it verified or can read in the action itself: the
+default branch, whether a path is inside the project or your home directory, production-looking hosts, recipients,
+the amount against your budget, and how many deletes the agent made in the last hour. A few certain facts (deleting
+your home directory, force-pushing the default branch, a key sent to an unknown host) hold a request whatever the
+model says. So does anything the phone cannot read with certainty (a variable, a command's output, a folder changed to
+first, a name it had to shorten to show): it waits for you.
+
+What the agent wrote can never lower the risk: the phone reads the request twice, with and without the agent's text,
+and keeps the higher risk. A password in an email body makes it catastrophic.
+
+Auto's limits stay on, and Overnight's on top: after something of an AI was held, or after 5 severe requests of it in
+30 minutes, its severe requests wait for 30 minutes. Standing permissions, which accounts an AI sees, purchases,
+secrets and sign-ins still wait for you, as in Auto. A connection paired less than 10 minutes ago still waits. Each decision says why in
+Activity ("Allowed overnight · risk low", "Waited: risk catastrophic · deletes the default branch main").
+
+A global Overnight applies to every AI that is not locked down, bypassed or kept on Manual.
+
 ## The hard floor
 
 These always wait for you in Manual and Auto (Lockdown denies them; Bypass approves them, except new connections, which
-always reach you, as does another phone joining your account):
+always reach you, as does another phone joining your account; Overnight weighs the destructive ones (a destructive
+tool, a push that rewrites history, a far-reaching change, an upload that may run) by their risk and keeps the rest):
 
 - new connections, requests for standing permissions, and requests to see which accounts you have;
 - secrets for the desktop app and SSH signatures;
@@ -164,4 +197,7 @@ Results on held-out synthetic test sets, at the Balanced thresholds (details in 
 - **Not a security boundary.** The hard floor, the per-kind unlocking, the novelty rule and the rate limit are what
   keep Autopilot safe. A model score alone never approves anything on the floor.
 - **Fails safe.** Without a model, or if inference fails or times out, Manual shows no suggestion and Auto asks you,
-  for that request. Bypass and Lockdown keep working.
+  for that request. Overnight without a model that rates risk decides like Auto. Bypass and Lockdown keep working.
+- **Risk is a model too.** Overnight's risk model was trained on generated situations (`tools/laya/RUBRIC.md`, "Risk")
+  and checked on a hand-written set; see the [design](autopilot-risk.md). It holds a request when it is fairly sure it
+  is catastrophic, so some catastrophic requests can still pass, and some harmless ones wait.

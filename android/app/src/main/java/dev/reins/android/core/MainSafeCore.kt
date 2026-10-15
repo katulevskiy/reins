@@ -291,6 +291,12 @@ class MainSafeCore(
 
     override suspend fun startBypass(connectionId: String?, minutes: UInt?) = io { startBypass(connectionId, minutes) }
 
+    override suspend fun startOvernight(connectionId: String?, minutes: UInt?, owner: dev.reins.core.OwnerCheck) =
+        io { startOvernight(connectionId, minutes, owner) }
+
+    override suspend fun setOvernightWhenRisky(risky: dev.reins.core.OvernightRisky, owner: dev.reins.core.OwnerCheck) =
+        io { setOvernightWhenRisky(risky, owner) }
+
     override suspend fun autopilotStats(days: UInt): dev.reins.core.AutopilotStats = io { autopilotStats(days) }
 
     override suspend fun setAutopilotWifiOnly(wifiOnly: Boolean) = io { setAutopilotWifiOnly(wifiOnly) }

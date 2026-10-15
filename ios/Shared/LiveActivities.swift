@@ -26,7 +26,7 @@ struct ApprovalActivityAttributes: ActivityAttributes {
     }
 }
 
-/// A bypass that runs: what it covers and when it ends, with Stop.
+/// A bypass that runs, or an Overnight (`overnight`): what it covers and when it ends, with Stop.
 struct BypassActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         var until: Date
@@ -37,6 +37,8 @@ struct BypassActivityAttributes: ActivityAttributes {
         var approvedCount: Int
         /// It runs until the user turns it off: `until` is then only a date far off, never counted down to.
         var untilOff: Bool? = nil
+        /// An Overnight, not a bypass: its moon and colour, and its own Stop.
+        var overnight: Bool? = nil
     }
 }
 

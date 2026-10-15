@@ -127,13 +127,14 @@ fun AutopilotScreen(
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val connections = state?.connections?.collectAsStateWithLifecycle()?.value.orEmpty()
     var bypassOpen by remember { mutableStateOf(false) }
+    var overnightOpen by remember { mutableStateOf(false) }
     var modelOpen by remember { mutableStateOf(false) }
     var deleteAsk by remember { mutableStateOf(false) }
     var newProfile by remember { mutableStateOf(false) }
     var modeHelp by rememberSaveable { mutableStateOf(false) }
     val model = ui.model ?: settings?.model
     val modelReady = model?.state == ModelState.INSTALLED
-    val covered = bypassOpen || modelOpen
+    val covered = bypassOpen || overnightOpen || modelOpen
     LaunchedEffect(covered) { onCovered(covered) }
     DisposableEffect(Unit) { onDispose { onCovered(false) } }
 
@@ -150,9 +151,10 @@ fun AutopilotScreen(
                 modelReady,
                 onPick = { mode -> if (mode != s.mode) viewModel.setMode(mode) },
                 onBypass = { bypassOpen = true },
+                onOvernight = { overnightOpen = true },
                 onLockdown = { viewModel.setMode(AutopilotMode.LOCKDOWN) },
                 onEndLockdown = { viewModel.setMode(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL) },
-                onStopBypass = { viewModel.stopBypass() },
+                onStop = { kind -> if (kind == TimedKind.Bypass) viewModel.stopBypass() else viewModel.stopOvernight() },
             )
             Column(Modifier.padding(horizontal = 16.dp)) {
                 ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "autopilotError") }
@@ -210,6 +212,15 @@ fun AutopilotScreen(
         }
 
         BypassSheets(bypassOpen, who = null, onStart = { minutes -> viewModel.startBypass(minutes, authenticator = authenticator) }, onClose = { bypassOpen = false })
+        OvernightSheets(
+            overnightOpen,
+            who = null,
+            risky = settings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
+            ratesRisk = model?.risk == true,
+            onRisky = { viewModel.setOvernightWhenRisky(it, authenticator) },
+            onStart = { minutes -> viewModel.startOvernight(minutes, authenticator = authenticator) },
+            onClose = { overnightOpen = false },
+        )
         BottomSheet(modelOpen, "On-device model", onClose = { modelOpen = false }, tag = "modelSheet") {
             ModelDetails(
                 model,
@@ -278,10 +289,20 @@ internal fun SectionHeader(text: String, modifier: Modifier = Modifier, trailing
     }
 }
 
+/** A bypass or an Overnight in force: which, its end ([AutopilotText.UNTIL_OFF] without one) and its start. */
+internal data class Running(val kind: TimedKind, val until: Long, val since: Long?)
+
+/** The global bypass in force, else the global Overnight; null when neither is. */
+internal fun running(s: AutopilotSettings): Running? = when {
+    s.mode == AutopilotMode.BYPASS && s.bypassUntil != null -> Running(TimedKind.Bypass, s.bypassUntil!!, s.bypassSince)
+    s.mode == AutopilotMode.OVERNIGHT && s.overnightUntil != null -> Running(TimedKind.Overnight, s.overnightUntil!!, s.overnightSince)
+    else -> null
+}
+
 /**
- * The mode, large. Manual and Auto side by side (the one in force tinted), Bypass and Lock down under them. During a
- * bypass it turns red: its countdown (or, without an end, how long it has run) and Stop now. During a lockdown it
- * turns amber and Lock down reads End lockdown.
+ * The mode, large. Manual and Auto side by side (the one in force tinted), then Overnight, then Bypass and Lock down.
+ * During a bypass it turns red, during an Overnight night indigo: its countdown (or, without an end, how long it has
+ * run) and Stop now. During a lockdown it turns amber and Lock down reads End lockdown.
  */
 @Composable
 private fun ModeHero(
@@ -289,15 +310,16 @@ private fun ModeHero(
     modelReady: Boolean,
     onPick: (AutopilotMode) -> Unit,
     onBypass: () -> Unit,
+    onOvernight: () -> Unit,
     onLockdown: () -> Unit,
     onEndLockdown: () -> Unit,
-    onStopBypass: () -> Unit,
+    onStop: (TimedKind) -> Unit,
 ) {
     val c = LocalColors.current
-    val bypass = s.mode == AutopilotMode.BYPASS && s.bypassUntil != null
+    val run = running(s)
     val lockdown = s.mode == AutopilotMode.LOCKDOWN
     val tint = when {
-        bypass -> c.danger
+        run != null -> run.kind.tint(c)
         lockdown -> c.warning
         else -> null
     }
@@ -313,29 +335,30 @@ private fun ModeHero(
             .testTag("modeHero"),
     ) {
         AnimatedContent(
-            bypass,
+            run?.kind,
             transitionSpec = { (fadeIn(tween(220)) + scaleIn(spring(dampingRatio = 0.8f, stiffness = 400f), initialScale = 0.97f)) togetherWith fadeOut(tween(120)) },
             label = "hero",
-        ) { inBypass ->
+        ) { kind ->
             Column(Modifier.fillMaxWidth().padding(18.dp)) {
-                if (inBypass) {
-                    val until = s.bypassUntil ?: return@Column
+                if (kind != null) {
+                    val r = running(s)?.takeIf { it.kind == kind } ?: return@Column
+                    val color = kind.tint(c)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        BypassClock(until, s.bypassSince)
+                        TimedClock(kind, r.until, r.since)
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
-                            RText("Bypass", RType.sans(22f, FontWeight.SemiBold), c.danger, Modifier.testTag("heroMode"), maxLines = 1)
-                            BypassLine(until, s.bypassSince)
+                            RText(AutopilotText.name(kind.mode), RType.sans(22f, FontWeight.SemiBold), color, Modifier.testTag("heroMode"), maxLines = 1)
+                            RunningLine(kind, r.until, r.since)
                         }
                     }
                     PillButton(
-                        "Stop bypass",
-                        Modifier.padding(top = 14.dp).fillMaxWidth().testTag("stopBypass"),
-                        background = c.danger,
-                        foreground = if (c.dark) Color(0xFF2A0606) else Color.White,
+                        if (kind == TimedKind.Bypass) "Stop bypass" else "Stop ${AutopilotText.OVERNIGHT}",
+                        Modifier.padding(top = 14.dp).fillMaxWidth().testTag(kind.action("stop")),
+                        background = color,
+                        foreground = onTimed(kind, c),
                         height = 46.dp,
                         textSize = 15f,
-                        onClick = onStopBypass,
+                        onClick = { onStop(kind) },
                     )
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
@@ -350,7 +373,15 @@ private fun ModeHero(
                             ) { onPick(mode) }
                         }
                     }
-                    Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton(
+                        AutopilotText.OVERNIGHT,
+                        Modifier.padding(top = 10.dp).fillMaxWidth().testTag("mode:OVERNIGHT"),
+                        icon = OvernightIcon,
+                        background = c.night.copy(alpha = 0.13f),
+                        foreground = c.night,
+                        onClick = onOvernight,
+                    )
+                    Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PillButton(
                             "Bypass",
                             Modifier.weight(1f).testTag("mode:BYPASS"),
@@ -415,29 +446,45 @@ private fun ModeCard(mode: AutopilotMode, selected: Boolean, dimmed: Boolean, li
     }
 }
 
-/** The bypass ring: the share left with m:ss in it, or a full ring around an infinity sign when it has no end. */
+/** What reads on a timed mode's solid colour: near black on the light dark-mode tints, white on the others. */
+internal fun onTimed(kind: TimedKind, c: dev.reins.android.design.RColors): Color = when {
+    !c.dark -> Color.White
+    kind == TimedKind.Bypass -> Color(0xFF2A0606)
+    else -> Color(0xFF0E1230)
+}
+
+/**
+ * A timed mode's ring in its colour: the share left with m:ss in it, or a full ring around an infinity sign when it
+ * has no end. Tags "bypassClock" / "overnightClock" and "bypassUntilOff" / "overnightUntilOff".
+ */
 @Composable
-fun BypassClock(until: Long, since: Long?, size: androidx.compose.ui.unit.Dp = 76.dp) {
+fun TimedClock(kind: TimedKind, until: Long, since: Long?, size: androidx.compose.ui.unit.Dp = 76.dp) {
     val c = LocalColors.current
+    val color = kind.tint(c)
     if (AutopilotText.isUntilOff(until)) {
         Box(
-            Modifier.size(size).clip(CircleShape).border(5.dp, c.danger, CircleShape).semantics { contentDescription = "Bypass until you stop it" }.testTag("bypassUntilOff"),
+            Modifier
+                .size(size)
+                .clip(CircleShape)
+                .border(5.dp, color, CircleShape)
+                .semantics { contentDescription = "${AutopilotText.name(kind.mode)} until you stop it" }
+                .testTag(kind.tag("UntilOff")),
             contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Rounded.AllInclusive, null, Modifier.size(size * 0.4f), tint = c.danger) }
+        ) { Icon(Icons.Rounded.AllInclusive, null, Modifier.size(size * 0.4f), tint = color) }
         return
     }
     val now = rememberNowState(1_000, untilMillis = until * 1000).value / 1000
-    ProgressRing(AutopilotText.bypassFraction(until, since, now), c.danger, size = size, stroke = 5.dp) {
-        RText(AutopilotText.clock(until, now), RType.mono(if (until - now < 3_600) 16f else 13f, FontWeight.SemiBold), c.danger, Modifier.testTag("bypassClock"), maxLines = 1)
+    ProgressRing(AutopilotText.bypassFraction(until, since, now), color, size = size, stroke = 5.dp) {
+        RText(AutopilotText.clock(until, now), RType.mono(if (until - now < 3_600) 16f else 13f, FontWeight.SemiBold), color, Modifier.testTag(kind.tag("Clock")), maxLines = 1)
     }
 }
 
 /** "Approving without asking", or "On until you stop it · 2 days so far" (its own clock, so only it recomposes). */
 @Composable
-private fun BypassLine(until: Long, since: Long?) {
+private fun RunningLine(kind: TimedKind, until: Long, since: Long?) {
     val c = LocalColors.current
     val now = rememberNowMillis(60_000) / 1000
-    RText(AutopilotText.bypassLine(until, since, now), RType.sans(13.5f), c.secondary, Modifier.padding(top = 3.dp).testTag("bypassLine"), maxLines = 2)
+    RText(AutopilotText.runningLine(kind.mode, until, since, now), RType.sans(13.5f), c.secondary, Modifier.padding(top = 3.dp).testTag(kind.tag("Line")), maxLines = 2)
 }
 
 /** One number of a strip, with what it counts. */

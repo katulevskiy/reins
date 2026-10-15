@@ -48,6 +48,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var profileId: String?
         /// When the running bypass started.
         var bypassSince: Int64?
+        /// With `mode` Overnight: its end (`Int64.max` until turned off), its start and the mode it interrupted.
+        var overnightUntil: Int64?
+        var overnightSince: Int64?
+        var overnightReturn: AutopilotMode?
+
+        /// Overnight is set and has not reached its end.
+        func overnighting(_ now: Int64) -> Bool { mode == .overnight && (overnightUntil ?? .max) > now }
+
+        /// The mode set when no bypass runs: an Overnight that ended reads as the mode it interrupted.
+        func base(_ now: Int64) -> AutopilotMode? {
+            mode == .overnight && !overnighting(now) ? overnightReturn.flatMap { $0 == .overnight ? nil : $0 } : mode
+        }
     }
 
     struct State {
@@ -74,6 +86,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var model: ModelStatus
         var profiles: [ProfileView] = []
         var wifiOnly = true
+        var overnightWhenRisky: OvernightRisky = .wait
         var suggestions: [String: SuggestionView] = [:]
         var arriveAt: Int64?
         var nextGrant = 100
@@ -1124,13 +1137,34 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     private static func defaultProfile(_ s: State) -> ProfileView? { s.profiles.first { $0.isDefault } ?? s.profiles.first }
 
     private static func globalBase(_ s: State) -> AutopilotMode {
-        s.apGlobal.mode ?? .manual
+        s.apGlobal.base(now()) ?? .manual
     }
 
     private static func globalMode(_ s: State) -> AutopilotMode {
         if s.apGlobal.mode == .lockdown { return .lockdown }
         if (s.apGlobal.bypassUntil ?? 0) > now() { return .bypass }
         return globalBase(s)
+    }
+
+    /// A connection's mode in force (the core's `modes::effective`): Lockdown, then a bypass, then its own Overnight,
+    /// then the global one (not for an AI kept on Manual).
+    private static func effective(_ s: State, _ row: ApRow, now: Int64) -> AutopilotMode {
+        let global = globalMode(s)
+        let own = row.base(now)
+        if global == .lockdown || row.mode == .lockdown { return .lockdown }
+        if (row.bypassUntil ?? 0) > now || global == .bypass { return .bypass }
+        if row.overnighting(now) || (s.apGlobal.overnighting(now) && own != .manual) { return .overnight }
+        return own ?? global
+    }
+
+    /// A bypass ends the Overnight of its scope, as in the core: when the bypass ends, the row is back in the mode that
+    /// Overnight interrupted, never in Overnight without the owner.
+    private static func endOvernightForBypass(_ row: inout ApRow) {
+        guard row.mode == .overnight else { return }
+        row.mode = row.overnightReturn
+        row.overnightUntil = nil
+        row.overnightSince = nil
+        row.overnightReturn = nil
     }
 
     func setModelRuntime(runtime: ModelRuntime) {}
@@ -1141,31 +1175,48 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             let global = Self.globalMode(s)
             let defaultId = Self.defaultProfile(s)?.id ?? ""
             let rows = s.apConnections.sorted { $0.key < $1.key }.map { id, row in
-                let mode: AutopilotMode = if global == .lockdown || row.mode == .lockdown {
-                    .lockdown
-                } else if (row.bypassUntil ?? 0) > now || global == .bypass {
-                    .bypass
-                } else {
-                    row.mode ?? global
-                }
+                let own = row.base(now)
+                let mode = Self.effective(s, row, now: now)
                 let running = (row.bypassUntil ?? 0) > now
-                return ConnectionAutopilot(connectionId: id, baseMode: row.mode, bypassUntil: running ? row.bypassUntil : nil,
-                                           bypassSince: running ? row.bypassSince : nil, mode: mode, profileId: row.profileId ?? defaultId)
+                let night = row.overnighting(now)
+                return ConnectionAutopilot(connectionId: id, baseMode: own, bypassUntil: running ? row.bypassUntil : nil,
+                                           bypassSince: running ? row.bypassSince : nil,
+                                           overnightUntil: night ? row.overnightUntil ?? .max : nil, overnightSince: night ? row.overnightSince : nil,
+                                           mode: mode, profileId: row.profileId ?? defaultId)
             }
             let running = (s.apGlobal.bypassUntil ?? 0) > now
+            let night = s.apGlobal.overnighting(now)
             return AutopilotSettings(
                 mode: global, baseMode: Self.globalBase(s), bypassUntil: running ? s.apGlobal.bypassUntil : nil,
                 bypassSince: running ? s.apGlobal.bypassSince : nil,
+                overnightUntil: night ? s.apGlobal.overnightUntil ?? .max : nil, overnightSince: night ? s.apGlobal.overnightSince : nil,
+                overnightWhenRisky: s.overnightWhenRisky,
                 defaultProfileId: defaultId, wifiOnly: s.wifiOnly, model: s.model, connections: rows
             )
         }
     }
 
-    /// Bypass runs for `minutes` (15 by default); Lockdown also refuses every request that is waiting.
+    /// Bypass runs for `minutes` (15 by default); Lockdown also refuses every request that is waiting. As in the core,
+    /// it never starts Overnight, nor puts an AI kept on Manual into a global one: that is `startOvernight`, after the
+    /// owner's check.
     func setAutopilotMode(connectionId: String?, mode: AutopilotMode?, minutes: UInt32?) async throws {
-        locked { s in
+        if mode == .overnight {
+            throw CoreError.Invalid(reason: "Overnight starts with start_overnight, after the owner check")
+        }
+        try locked { s in
             var row = connectionId.map { s.apConnections[$0] ?? ApRow() } ?? s.apGlobal
+            if connectionId != nil && mode != .bypass {
+                let now = Self.now()
+                var after = row
+                after.mode = mode
+                after.bypassUntil = nil
+                after.overnightUntil = nil
+                if Self.effective(s, row, now: now) != .overnight && Self.effective(s, after, now: now) == .overnight {
+                    throw CoreError.Invalid(reason: "this would put the AI in Overnight: start it with start_overnight, after the owner check")
+                }
+            }
             if mode == .bypass {
+                Self.endOvernightForBypass(&row)
                 row.mode = row.mode == .lockdown ? nil : row.mode
                 row.bypassUntil = Self.now() + Int64(minutes ?? 15) * 60
                 row.bypassSince = Self.now()
@@ -1173,6 +1224,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 row.mode = mode
                 row.bypassUntil = nil
                 row.bypassSince = nil
+                row.overnightUntil = nil
+                row.overnightSince = nil
+                row.overnightReturn = nil
             }
             if let connectionId { s.apConnections[connectionId] = row } else { s.apGlobal = row }
             if mode == .lockdown {
@@ -1198,11 +1252,54 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 throw CoreError.Invalid(reason: "a connection paired less than 10 minutes ago cannot be bypassed")
             }
             var row = connectionId.map { s.apConnections[$0] ?? ApRow() } ?? s.apGlobal
+            Self.endOvernightForBypass(&row)
             row.mode = row.mode == .lockdown ? nil : row.mode
             row.bypassUntil = minutes.map { now + Int64($0) * 60 } ?? .max
             row.bypassSince = now
             if let connectionId { s.apConnections[connectionId] = row } else { s.apGlobal = row }
         }
+    }
+
+    /// As the core: a minute to a year, or until turned off, after the owner confirmed (asked in the core's words); it
+    /// keeps the mode it interrupted (Lockdown is not kept: it returns to the default) and leaves a bypass of the same
+    /// scope running.
+    func startOvernight(connectionId: String?, minutes: UInt32?, owner: OwnerCheck) async throws {
+        if let minutes, minutes < 1 || minutes > 525_600 {
+            throw CoreError.Invalid(reason: "Overnight lasts between 1 minute and 365 days")
+        }
+        let reason = switch minutes {
+        case let m? where m % 60 == 0: "Start Overnight for \(m / 60) h"
+        case let m?: "Start Overnight for \(m) min"
+        case nil: "Start Overnight until you turn it off"
+        }
+        try await Self.confirmOwner(owner, reason)
+        try locked { s in
+            let now = Self.now()
+            var row = connectionId.map { s.apConnections[$0] ?? ApRow() } ?? s.apGlobal
+            let back: AutopilotMode? = switch row.mode {
+            case .lockdown?: nil
+            case .overnight?: row.overnightReturn
+            default: row.mode
+            }
+            row.mode = .overnight
+            row.overnightUntil = minutes.map { now + Int64($0) * 60 } ?? .max
+            row.overnightSince = now
+            row.overnightReturn = back
+            if let connectionId { s.apConnections[connectionId] = row } else { s.apGlobal = row }
+        }
+    }
+
+    /// A change either way asks the owner first, as in the core.
+    func setOvernightWhenRisky(risky: OvernightRisky, owner: OwnerCheck) async throws {
+        if locked({ $0.overnightWhenRisky }) == risky { return }
+        try await Self.confirmOwner(owner, risky == .wait ? "Overnight: wait for you when something is too risky" : "Overnight: deny what is too risky")
+        locked { $0.overnightWhenRisky = risky }
+    }
+
+    /// Refuses unless the owner confirmed now (a cancel or an error refuses too).
+    private static func confirmOwner(_ owner: OwnerCheck, _ reason: String) async throws {
+        let confirmed = (try? await owner.confirm(reason: reason)) ?? false
+        if !confirmed { throw CoreError.Invalid(reason: "the owner did not confirm") }
     }
 
     /// From the profiles' fake numbers: what they remember stands for what was scored this week.

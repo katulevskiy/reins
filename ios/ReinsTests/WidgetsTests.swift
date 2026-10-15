@@ -92,6 +92,39 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(Glance.mode(s, now: now), .manual)
     }
 
+    func testAnOvernightThatRanOutNoLongerShows() {
+        var s = Snapshot()
+        s.autopilotMode = "overnight"
+        s.baseMode = "overnight"
+        s.overnightUntil = now + 60
+        XCTAssertEqual(Glance.mode(s, now: now), .overnight)
+        XCTAssertEqual(Glance.Mode.overnight.name, "Overnight")
+        XCTAssertEqual(Glance.Mode.overnight.symbol, "moon.stars.fill")
+        XCTAssertEqual(Glance.timelineDates(s, now: now), [now, now + 60], "it redraws when it ends")
+        XCTAssertEqual(Glance.mode(s, now: now + 61), .manual)
+        s.overnightUntil = AutopilotText.untilOff
+        XCTAssertEqual(Glance.mode(s, now: now + 86_400 * 400), .overnight, "one until turned off does not run out")
+        XCTAssertEqual(Glance.timelineDates(s, now: now), [now])
+    }
+
+    func testAnOvernightIsALiveActivityOfItsOwnLook() throws {
+        let state = try XCTUnwrap(Glance.bypassState(
+            global: now + 8 * 3_600, connections: [], previous: nil, approvedSince: { _ in 3 }, now: now, since: now - 60, overnight: true
+        ))
+        XCTAssertEqual(state.overnight, true)
+        XCTAssertEqual(state.scope, "every AI")
+        XCTAssertEqual(state.approvedCount, 3)
+        let views = BypassLiveViews(state: state, stale: false)
+        XCTAssertEqual(views.title, "Overnight on")
+        XCTAssertEqual(views.symbol, "moon.stars.fill")
+        XCTAssertEqual(views.line, "For every AI. Holds what is too risky.")
+        // The same end of a bypass, after it, is a new ring.
+        let bypass = try XCTUnwrap(Glance.bypassState(global: now + 8 * 3_600, connections: [], previous: state, approvedSince: { _ in 0 }, now: now + 10))
+        XCTAssertNil(bypass.overnight)
+        XCTAssertNotEqual(bypass.startedAt, state.startedAt)
+        XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).title, "Bypass on")
+    }
+
     func testAssistedFromAnOlderSnapshotShowsAsManual() {
         var s = Snapshot()
         s.autopilotMode = "assisted"
@@ -140,6 +173,7 @@ final class WidgetsTests: XCTestCase {
             XCTAssertEqual(AutopilotModeOption(option.mode), option)
         }
         XCTAssertNil(AutopilotModeOption(AutopilotMode.bypass))
+        XCTAssertNil(AutopilotModeOption(AutopilotMode.overnight), "Overnight starts in the app, after the owner's check")
         XCTAssertEqual(AutopilotModeOption(stored: "assisted"), .manual, "saved by an older version")
         XCTAssertEqual(AutopilotModeOption(stored: "auto"), .auto)
         XCTAssertNil(AutopilotModeOption(stored: "bypass"))
@@ -327,6 +361,8 @@ final class WidgetsTests: XCTestCase {
             entry(5, at: now + 40, outcome: "sent", by: "bypass"),
         ]
         XCTAssertEqual(LiveActivityController.approvedDuringBypass(list, since: Date(timeIntervalSince1970: TimeInterval(now))), 2)
+        let night = [entry(6, at: now + 10, outcome: "released", by: "overnight"), entry(7, at: now + 20, outcome: "released", by: "bypass")]
+        XCTAssertEqual(LiveActivityController.approvedDuringBypass(night, since: Date(timeIntervalSince1970: TimeInterval(now)), by: "overnight"), 1)
     }
 
     // MARK: Snapshot

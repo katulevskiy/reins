@@ -33,13 +33,13 @@ struct ApprovalLiveActivity: Widget {
     }
 }
 
-/// A bypass that runs: red, the countdown to its end, Stop.
+/// A bypass that runs: red, the countdown to its end, Stop. An Overnight the same, in its night indigo.
 struct BypassLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: BypassActivityAttributes.self) { context in
             BypassLiveViews(state: context.state, stale: context.isStale).lockScreen
                 .activityBackgroundTint(GlanceStyle.liveBackground)
-                .activitySystemActionForegroundColor(Palette.danger)
+                .activitySystemActionForegroundColor(BypassLiveViews(state: context.state, stale: context.isStale).tint)
                 .widgetURL(DeepLink.autopilot.url)
         } dynamicIsland: { context in
             let v = BypassLiveViews(state: context.state, stale: context.isStale)
@@ -56,7 +56,7 @@ struct BypassLiveActivity: Widget {
                 v.minimal
             }
             .widgetURL(DeepLink.autopilot.url)
-            .keylineTint(Palette.danger)
+            .keylineTint(v.tint)
         }
     }
 }

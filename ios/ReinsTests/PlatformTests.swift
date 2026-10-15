@@ -227,6 +227,9 @@ final class PlatformTests: XCTestCase {
         XCTAssertEqual(NotificationText.decisionTitle(decision(.deny, by: "bypass")), "Denied in Bypass")
         XCTAssertEqual(NotificationText.decisionTitle(decision(.deny, by: "lockdown")), "Denied by Lockdown")
         XCTAssertNil(NotificationText.decisionDetail(decision(.approve, by: "bypass")), "bypass does not judge")
+        XCTAssertEqual(NotificationText.decisionTitle(decision(.approve, by: "overnight")), "Approved by Overnight")
+        XCTAssertEqual(NotificationText.decisionTitle(decision(.deny, by: "overnight")), "Denied by Overnight")
+        XCTAssertNotNil(NotificationText.decisionDetail(decision(.approve, by: "overnight")), "Overnight judges as Auto does")
         let none = NotificationContent.decision(decision(.approve, activity: nil), settings: FeedbackSettings())
         XCTAssertEqual(none.userInfo[NotificationKey.link] as? String, "reins://home", "without an entry it opens the app")
         XCTAssertNil(none.userInfo[NotificationKey.activity])
@@ -280,7 +283,7 @@ final class PlatformTests: XCTestCase {
     func testTheExtensionLeavesModelWorkToTheApp() {
         func settings(_ mode: AutopilotMode, connection: AutopilotMode = .manual, model: ModelState = .installed) -> AutopilotSettings {
             AutopilotSettings(
-                mode: mode, baseMode: mode, bypassUntil: nil, bypassSince: nil, defaultProfileId: "p", wifiOnly: true,
+                mode: mode, baseMode: mode, bypassUntil: nil, bypassSince: nil, overnightWhenRisky: .wait, defaultProfileId: "p", wifiOnly: true,
                 model: ModelStatus(state: model, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true),
                 connections: [ConnectionAutopilot(connectionId: "c1", baseMode: connection, bypassUntil: nil, bypassSince: nil, mode: connection, profileId: "p")]
             )
@@ -295,7 +298,7 @@ final class PlatformTests: XCTestCase {
     func testTheLiveActivityKnowsWhenTheLastBypassStarted() {
         let model = ModelStatus(state: .installed, id: "m", label: "m", version: "1", sizeBytes: 1, downloadedBytes: 1, error: nil, runtimeReady: true)
         let s = AutopilotSettings(
-            mode: .bypass, baseMode: .manual, bypassUntil: 2_000, bypassSince: 1_000, defaultProfileId: "p", wifiOnly: true, model: model,
+            mode: .bypass, baseMode: .manual, bypassUntil: 2_000, bypassSince: 1_000, overnightWhenRisky: .wait, defaultProfileId: "p", wifiOnly: true, model: model,
             connections: [
                 ConnectionAutopilot(connectionId: "c1", baseMode: nil, bypassUntil: .max, bypassSince: 900, mode: .bypass, profileId: "p"),
                 ConnectionAutopilot(connectionId: "c2", baseMode: nil, bypassUntil: 1_200, bypassSince: 100, mode: .manual, profileId: "p"),

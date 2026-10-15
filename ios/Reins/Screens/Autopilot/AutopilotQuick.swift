@@ -43,6 +43,7 @@ struct AutopilotQuickPill: View {
     @State private var ap = AutopilotModel()
     @State private var sliderOpen = false
     @State private var bypassAsk = false
+    @State private var overnightAsk = false
 
     var body: some View {
         Group {
@@ -69,7 +70,12 @@ struct AutopilotQuickPill: View {
                             sliderOpen = false
                             bypassAsk = true
                         },
+                        onOvernight: {
+                            sliderOpen = false
+                            overnightAsk = true
+                        },
                         onStop: { Task { await ap.stopBypass() } },
+                        onStopOvernight: { Task { await ap.stopOvernight() } },
                         onMore: {
                             sliderOpen = false
                             model.show(.autopilot)
@@ -93,6 +99,14 @@ struct AutopilotQuickPill: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(bypassAsk)
+        .sheet(isPresented: $overnightAsk) {
+            OvernightSheet(who: nil, ap: ap) { length in
+                feedback.quietClose()
+                Task { await ap.startOvernight(minutes: length.minutes) }
+            }
+            .environment(\.feedback, feedback)
+        }
+        .presentationFeedback(overnightAsk)
     }
 }
 
@@ -114,8 +128,8 @@ extension View {
 }
 
 /// The quick menu's place on the page: the scrim, the card under the pill with its right edge on the pill's, and the
-/// bypass sheet its Bypass opens (the same sheet as the Autopilot page's: 15 min, 1 hour, 1 day or Custom, held to
-/// confirm, then the owner's check).
+/// sheets its Bypass and Overnight open (the same sheets as the Autopilot page's: a length, held to confirm, then the
+/// owner's check).
 struct AutopilotQuickMenu: ViewModifier {
     @Binding var isPresented: Bool
 
@@ -124,6 +138,7 @@ struct AutopilotQuickMenu: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     @State private var ap = AutopilotModel()
     @State private var bypassAsk = false
+    @State private var overnightAsk = false
 
     func body(content: Content) -> some View {
         content
@@ -161,6 +176,14 @@ struct AutopilotQuickMenu: ViewModifier {
                                     close()
                                     Task { await ap.stopBypass() }
                                 },
+                                onOvernight: {
+                                    close()
+                                    overnightAsk = true
+                                },
+                                onStopOvernight: {
+                                    close()
+                                    Task { await ap.stopOvernight() }
+                                },
                                 onLockdown: {
                                     close()
                                     Task { await ap.setMode(.lockdown) }
@@ -194,6 +217,14 @@ struct AutopilotQuickMenu: ViewModifier {
                 .environment(\.feedback, feedback)
             }
             .presentationFeedback(bypassAsk)
+            .sheet(isPresented: $overnightAsk) {
+                OvernightSheet(who: nil, ap: ap) { length in
+                    feedback.quietClose()
+                    Task { await ap.startOvernight(minutes: length.minutes) }
+                }
+                .environment(\.feedback, feedback)
+            }
+            .presentationFeedback(overnightAsk)
     }
 
     private func pick(_ mode: AutopilotMode) {
@@ -207,15 +238,17 @@ struct AutopilotQuickMenu: ViewModifier {
 }
 
 /// The quick menu, dropped from the header's mode pill (the Android app's `MenuCard`): Manual and Auto side by side
-/// (the one in force outlined in its colour), Bypass and Lock down under them, then the Autopilot page. A running
-/// bypass is the Bypass button itself ("Bypass on · 8:12", tap to stop), a lockdown the Lock down button: there is no
-/// other Stop.
+/// (the one in force outlined in its colour), Overnight under them, then Bypass and Lock down, then the Autopilot
+/// page. A running bypass is the Bypass button itself ("Bypass on · 8:12", tap to stop), a running Overnight the
+/// Overnight button, a lockdown the Lock down button: there is no other Stop.
 private struct QuickMenuCard: View {
     var settings: AutopilotSettings
     var modelReady: Bool
     var onMode: (AutopilotMode) -> Void
     var onBypass: () -> Void
     var onStopBypass: () -> Void
+    var onOvernight: () -> Void
+    var onStopOvernight: () -> Void
     var onLockdown: () -> Void
     var onEndLockdown: () -> Void
     var onMore: () -> Void
@@ -227,6 +260,7 @@ private struct QuickMenuCard: View {
     var body: some View {
         let bypass = settings.mode == .bypass
         let lockdown = settings.mode == .lockdown
+        let overnight = settings.mode == .overnight && settings.overnightUntil != nil
         let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -235,7 +269,7 @@ private struct QuickMenuCard: View {
                     QuickModeCard(
                         mode: mode,
                         selected: settings.mode == mode,
-                        quiet: bypass || lockdown,
+                        quiet: bypass || lockdown || overnight,
                         line: needs ? "Needs the model" : AutopilotText.line(mode)
                     ) {
                         onMode(mode)
@@ -243,6 +277,25 @@ private struct QuickMenuCard: View {
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
+            Group {
+                if overnight {
+                    QuickStateButton(
+                        title: "\(AutopilotText.overnightName) on",
+                        until: settings.overnightUntil.flatMap { AutopilotText.isUntilOff($0) ? nil : $0 },
+                        hint: "Tap to stop",
+                        fill: Palette.overnight,
+                        text: Palette.dynamic(0xFFFFFF, 0x0E1033),
+                        action: onStopOvernight
+                    )
+                } else {
+                    QuickMenuButton(
+                        title: AutopilotText.overnightName, symbol: AutopilotText.overnightSymbol, fill: Palette.overnight.opacity(0.13),
+                        text: Palette.overnight, action: onOvernight
+                    )
+                }
+            }
+            .accessibilityIdentifier("quick:OVERNIGHT")
+            .padding(.top, 8)
             HStack(spacing: 8) {
                 if bypass {
                     QuickStateButton(
@@ -421,7 +474,9 @@ struct RiskSliderCard: View {
     var modelReady: Bool
     var onSet: (AutopilotMode) -> Void
     var onBypass: () -> Void
+    var onOvernight: () -> Void
     var onStop: () -> Void
+    var onStopOvernight: () -> Void
     var onMore: () -> Void
 
     @Environment(\.feedback) private var feedback
@@ -434,13 +489,16 @@ struct RiskSliderCard: View {
 
     init(
         settings: AutopilotSettings, modelReady: Bool, onSet: @escaping (AutopilotMode) -> Void,
-        onBypass: @escaping () -> Void, onStop: @escaping () -> Void, onMore: @escaping () -> Void
+        onBypass: @escaping () -> Void, onOvernight: @escaping () -> Void, onStop: @escaping () -> Void,
+        onStopOvernight: @escaping () -> Void, onMore: @escaping () -> Void
     ) {
         self.settings = settings
         self.modelReady = modelReady
         self.onSet = onSet
         self.onBypass = onBypass
+        self.onOvernight = onOvernight
         self.onStop = onStop
+        self.onStopOvernight = onStopOvernight
         self.onMore = onMore
         let at = AutopilotText.byRisk.firstIndex(of: settings.mode) ?? 1
         _pos = State(initialValue: CGFloat(at))
@@ -448,6 +506,15 @@ struct RiskSliderCard: View {
     }
 
     private var current: Int { modes.firstIndex(of: settings.mode) ?? 1 }
+
+    /// The end of the bypass or Overnight in force, counted down beside its name.
+    private var runningUntil: Int64? {
+        switch settings.mode {
+        case .bypass: settings.bypassUntil
+        case .overnight: settings.overnightUntil
+        default: nil
+        }
+    }
 
     var body: some View {
         let last = CGFloat(modes.count - 1)
@@ -470,10 +537,10 @@ struct RiskSliderCard: View {
                         .foregroundStyle(Palette.secondary)
                 }
                 Spacer(minLength: 0)
-                if settings.mode == .bypass, let until = settings.bypassUntil {
+                if let until = runningUntil {
                     LiveClock(interval: 1) { now in
                         Text(AutopilotText.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
-                            .foregroundStyle(Palette.danger)
+                            .foregroundStyle(ModeLook.tint(settings.mode))
                     }
                 }
             }
@@ -500,17 +567,19 @@ struct RiskSliderCard: View {
                 }
             }
 
-            if settings.mode == .bypass {
+            if settings.mode == .bypass || (settings.mode == .overnight && settings.overnightUntil != nil) {
+                let overnight = settings.mode == .overnight
+                let tint = ModeLook.tint(settings.mode)
                 Button {
-                    onStop()
+                    if overnight { onStopOvernight() } else { onStop() }
                     dismiss()
                 } label: {
                     // Words only, as everywhere a bypass is stopped.
-                    Text("Stop bypass")
+                    Text(overnight ? "Stop \(AutopilotText.overnightName)" : "Stop bypass")
                         .font(RFont.sans(14, .semibold))
-                        .foregroundStyle(Palette.danger)
+                        .foregroundStyle(tint)
                         .frame(maxWidth: .infinity, minHeight: 36)
-                        .background(Palette.danger.opacity(0.12), in: Capsule())
+                        .background(tint.opacity(0.12), in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -590,11 +659,11 @@ struct RiskSliderCard: View {
 
     private func land(_ i: Int) {
         let mode = modes[i]
-        if mode == .bypass && settings.mode != .bypass {
-            // No bypass from a slide: back to where it was, and the sheet asks for a length and a hold.
+        if (mode == .bypass || mode == .overnight) && settings.mode != mode {
+            // No bypass or Overnight from a slide: back to where it was, and the sheet asks for a length and a hold.
             move(to: current)
             withAnimation(.spring(duration: 0.3, bounce: 0.25)) { pos = CGFloat(current) }
-            onBypass()
+            if mode == .bypass { onBypass() } else { onOvernight() }
         } else {
             withAnimation(.spring(duration: 0.3, bounce: 0.3)) { pos = CGFloat(i) }
             if mode != settings.mode {

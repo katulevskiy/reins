@@ -51,19 +51,22 @@ enum Glance {
     /// snapshot, and the app reloads the timelines.
     static func timelineDates(_ s: Snapshot, now: Int64, limit: Int = 40) -> [Int64] {
         var later = Set(s.pending.map(\.expiresAt).filter { $0 > now })
-        for b in [s.bypassUntil, s.anyBypassUntil].compactMap({ $0 }) where b > now && !AutopilotText.isUntilOff(b) { later.insert(b) }
+        for b in [s.bypassUntil, s.anyBypassUntil, s.overnightUntil].compactMap({ $0 }) where b > now && !AutopilotText.isUntilOff(b) {
+            later.insert(b)
+        }
         return [now] + later.sorted().prefix(limit)
     }
 
     // MARK: Autopilot
 
     enum Mode: String, CaseIterable {
-        case manual, auto, bypass, lockdown
+        case manual, auto, overnight, bypass, lockdown
 
         var name: String {
             switch self {
             case .manual: "Manual"
             case .auto: "Auto"
+            case .overnight: AutopilotText.overnightName
             case .bypass: "Bypass"
             case .lockdown: "Lockdown"
             }
@@ -74,6 +77,7 @@ enum Glance {
             switch self {
             case .manual: "Waits for you, with a suggestion"
             case .auto: "Decides what it is sure of, asks the rest"
+            case .overnight: "Decides like Auto, holds what is too risky"
             case .bypass: "Approves everything, for a while"
             case .lockdown: "Denies everything at once"
             }
@@ -83,17 +87,24 @@ enum Glance {
             switch self {
             case .manual: "person.fill.checkmark"
             case .auto: "bolt.fill"
+            case .overnight: AutopilotText.overnightSymbol
             case .bypass: "bolt.fill"
             case .lockdown: "lock.fill"
             }
         }
     }
 
-    /// The global mode in force at `now`: a bypass that ran out before the next snapshot shows the mode it went back to.
+    /// The global mode in force at `now`: a bypass that ran out before the next snapshot shows the mode it went back to;
+    /// an Overnight that ran out, the mode under it when the snapshot knew it, else Manual (the core's default).
     static func mode(_ s: Snapshot, now: Int64) -> Mode {
         let mode = Mode(rawValue: s.autopilotMode) ?? .manual
         if mode == .bypass, (s.bypassUntil ?? 0) <= now {
-            return Mode(rawValue: s.baseMode ?? "") ?? .manual
+            let base = Mode(rawValue: s.baseMode ?? "") ?? .manual
+            if base == .overnight, let end = s.overnightUntil, end <= now { return .manual }
+            return base
+        }
+        if mode == .overnight, let end = s.overnightUntil, end <= now {
+            return .manual
         }
         return mode
     }
@@ -164,13 +175,16 @@ enum Glance {
     /// the same end keeps its start (so the ring does not jump), a new or restarted bypass starts a new ring. `since`
     /// is when the bypass that ends last started, when known. One that runs until turned off has no end to count down
     /// to: its state says so (`untilOff`), and `until` is a date far off rather than the core's `i64::MAX`.
+    /// `overnight` makes it an Overnight's state (the same activity, in Overnight's look and with its Stop); a previous
+    /// state of the other kind starts a new ring.
     static func bypassState(
         global: Int64?,
         connections: [(label: String, until: Int64?)],
         previous: BypassActivityAttributes.ContentState?,
         approvedSince: (Date) -> Int,
         now: Int64,
-        since: Int64? = nil
+        since: Int64? = nil,
+        overnight: Bool = false
     ) -> BypassActivityAttributes.ContentState? {
         let globalUntil = global.flatMap { $0 > now ? $0 : nil }
         let running = connections.filter { ($0.until ?? 0) > now }
@@ -178,7 +192,7 @@ enum Glance {
         let untilOff = AutopilotText.isUntilOff(end)
         let until = untilOff ? Date.distantFuture : Date(timeIntervalSince1970: TimeInterval(end))
         let startedAt: Date
-        if let previous, previous.until == until, (previous.untilOff ?? false) == untilOff {
+        if let previous, previous.until == until, (previous.untilOff ?? false) == untilOff, (previous.overnight ?? false) == overnight {
             startedAt = previous.startedAt
         } else if let since, since <= now {
             startedAt = Date(timeIntervalSince1970: TimeInterval(since))
@@ -192,7 +206,8 @@ enum Glance {
             startedAt: startedAt,
             scope: bypassScope(global: globalUntil != nil, connections: running.map(\.label)),
             approvedCount: approvedSince(startedAt),
-            untilOff: untilOff ? true : nil
+            untilOff: untilOff ? true : nil,
+            overnight: overnight ? true : nil
         )
     }
 

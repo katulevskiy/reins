@@ -24,6 +24,11 @@ struct AutopilotSheet: View {
                     if !s.reason.trimmingCharacters(in: .whitespaces).isEmpty {
                         Text(untrusted(s.reason)).font(RFont.sans(14.5)).foregroundStyle(Palette.secondary).lineLimit(3).padding(.top, 4)
                     }
+                    if let risk = s.risk {
+                        RiskChips(risk: risk)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 12)
+                    }
                     if s.judged {
                         VStack(spacing: 12) {
                             LikelihoodRow(label: "Approve", p: s.pApprove, color: Palette.success)

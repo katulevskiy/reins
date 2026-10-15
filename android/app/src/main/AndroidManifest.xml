@@ -130,7 +130,7 @@
                 tools:node="remove" />
         </provider>
 
-        <!-- "Stop" on the bypass notification. -->
+        <!-- "Stop" on the bypass and Overnight notifications. -->
         <receiver
             android:name=".platform.BypassStopReceiver"
             android:exported="false" />

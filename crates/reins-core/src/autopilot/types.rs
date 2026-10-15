@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::PendingKind;
 
-/// How requests of a connection (or of all connections) are decided (spec §1).
+/// The name of the Overnight mode wherever the core writes it (notes, reasons). The apps have their own constant;
+/// renaming the mode is these constants plus strings.
+pub const OVERNIGHT_NAME: &str = "Overnight";
+
+/// How requests of a connection (or of all connections) are decided (spec §1, `docs/autopilot-risk.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum AutopilotMode {
     /// Every request waits, with Autopilot's suggestion shown when a model is installed; the user's answers train it.
@@ -13,6 +17,12 @@ pub enum AutopilotMode {
     Manual,
     /// Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
     Auto,
+    /// For agents left working: Auto, plus the destructive part of the hard floor weighed by the risk model instead of
+    /// always asked. What it rates catastrophic in context, a tripwire, or what the phone cannot read with certainty
+    /// waits for the user (catastrophic ones are denied instead with `OvernightRisky::Deny`). Needs a model with the risk
+    /// output; without one it decides like Auto. Runs until turned off or until `overnight_until`, then returns to the
+    /// mode it interrupted.
+    Overnight,
     /// Everything is approved at once (only pairings and other phones still ask), until `bypass_until` (or until the
     /// user turns it off).
     Bypass,
@@ -25,6 +35,7 @@ impl AutopilotMode {
         match self {
             Self::Manual => "manual",
             Self::Auto => "auto",
+            Self::Overnight => "overnight",
             Self::Bypass => "bypass",
             Self::Lockdown => "lockdown",
         }
@@ -35,11 +46,78 @@ impl AutopilotMode {
             // Older versions had an "assisted" mode: what Manual does now.
             "manual" | "assisted" => Self::Manual,
             "auto" => Self::Auto,
+            "overnight" => Self::Overnight,
             "bypass" => Self::Bypass,
             "lockdown" => Self::Lockdown,
             _ => return None,
         })
     }
+}
+
+/// What Overnight does with a request its risk model rates catastrophic.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
+pub enum OvernightRisky {
+    /// It waits for the user (the default).
+    #[default]
+    Wait,
+    /// It is denied at once.
+    Deny,
+}
+
+impl OvernightRisky {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Wait => "wait",
+            Self::Deny => "deny",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "wait" => Some(Self::Wait),
+            "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+}
+
+/// How bad it would be if a request were a mistake, in its context (`docs/autopilot-risk.md` §2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, uniffi::Enum)]
+pub enum RiskLevel {
+    /// Routine; nothing is lost if it is wrong.
+    Benign,
+    /// Changes or deletes something easily undone, or limited to the agent's own work.
+    Risky,
+    /// Hard to undo, shared or production things, or one secret exposed; bounded.
+    Severe,
+    /// Irreversible loss, outages, mass messages, secrets leaving, persistence, protections turned off.
+    Catastrophic,
+}
+
+impl RiskLevel {
+    pub const ALL: [Self; 4] = [Self::Benign, Self::Risky, Self::Severe, Self::Catastrophic];
+
+    /// In a note ("risk low", "risk catastrophic").
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Benign => "low",
+            Self::Risky => "risky",
+            Self::Severe => "severe",
+            Self::Catastrophic => "catastrophic",
+        }
+    }
+}
+
+/// The risk of a request: its class, how likely catastrophic it is, and why in a few words.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct RiskView {
+    pub level: RiskLevel,
+    /// Calibrated P(catastrophic), with the AI's text only able to raise it.
+    pub p_catastrophic: f32,
+    /// The fact that weighs most ("deletes the default branch main"); may be empty.
+    pub why: String,
+    /// Overnight held it (it waited for the user or was denied).
+    pub held: bool,
 }
 
 /// What to do with a request.
@@ -91,6 +169,15 @@ pub struct AutopilotSettings {
     pub bypass_until: Option<i64>,
     /// When the global bypass started.
     pub bypass_since: Option<i64>,
+    /// A global Overnight runs until then (`i64::MAX` while it runs until the user turns it off); `None` when the
+    /// global mode is not Overnight.
+    #[uniffi(default)]
+    pub overnight_until: Option<i64>,
+    /// When the global Overnight started.
+    #[uniffi(default)]
+    pub overnight_since: Option<i64>,
+    /// What Overnight does with what its risk model rates catastrophic.
+    pub overnight_when_risky: OvernightRisky,
     /// The profile of every connection that has none of its own.
     pub default_profile_id: String,
     /// Download the model on Wi-Fi only (the app's download job honours it).
@@ -110,6 +197,11 @@ pub struct ConnectionAutopilot {
     pub bypass_until: Option<i64>,
     /// When that bypass started.
     pub bypass_since: Option<i64>,
+    /// Its own Overnight runs until then (`i64::MAX`: until the user turns it off).
+    #[uniffi(default)]
+    pub overnight_until: Option<i64>,
+    #[uniffi(default)]
+    pub overnight_since: Option<i64>,
     /// What applies to its requests now (global lockdown and bypass included).
     pub mode: AutopilotMode,
     /// The profile its decisions train (the default profile when it has none of its own).
@@ -140,6 +232,9 @@ pub struct ModelStatus {
     pub error: Option<String>,
     /// The app gave the core a runtime to run it with (`set_model_runtime`).
     pub runtime_ready: bool,
+    /// The model rates risk, which Overnight needs (without it Overnight decides like Auto).
+    #[uniffi(default)]
+    pub risk: bool,
 }
 
 /// One decision personality (spec §5.1).
@@ -227,6 +322,9 @@ pub struct SuggestionView {
     pub floor: bool,
     /// The model ran (false: no model, floor, or a failure — see `reason`).
     pub judged: bool,
+    /// The risk, when the model rates it.
+    #[uniffi(default)]
+    pub risk: Option<RiskView>,
 }
 
 /// What Autopilot knew about an activity entry (spec §8).
@@ -246,6 +344,9 @@ pub struct AutopilotNote {
     pub reason: String,
     /// "This was wrong" can be recorded for this entry (`correct_decision`).
     pub correctable: bool,
+    /// The risk, when the model rated it.
+    #[uniffi(default)]
+    pub risk: Option<RiskView>,
 }
 
 /// A request Autopilot decided, for the quiet "Autopilot" notification (spec §7).
@@ -259,7 +360,7 @@ pub struct AutoDecisionView {
     pub title: String,
     /// `Approve` or `Deny`.
     pub verdict: Verdict,
-    /// "autopilot" | "bypass" | "lockdown"
+    /// "autopilot" | "overnight" | "bypass" | "lockdown"
     pub decided_by: String,
     pub p_approve: f32,
     pub confidence: f32,
@@ -276,6 +377,10 @@ pub enum AutopilotEvent {
     },
     /// A bypass reached its end and was switched off by the core.
     BypassEnded {
+        connection_id: Option<String>,
+    },
+    /// An Overnight reached its end and the core returned to the mode it interrupted.
+    OvernightEnded {
         connection_id: Option<String>,
     },
     /// Auto-approvals stopped for a connection (unusual volume); its requests wait for the user.
@@ -345,4 +450,8 @@ pub struct ModelOutput {
     /// f32 [batch, hidden], the [CLS] state after the decision head.
     pub pooled: Vec<f32>,
     pub hidden: u32,
+    /// f32 [batch, 4], uncalibrated severity logits (benign, risky, severe, catastrophic), from a model whose
+    /// `laya_config.json` declares the `risk` output; empty otherwise.
+    #[uniffi(default)]
+    pub risk: Vec<f32>,
 }

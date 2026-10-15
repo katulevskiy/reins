@@ -89,9 +89,10 @@ fun FloatingNavBar(
         NavItem("Grants", Icons.Rounded.Key, Icons.Outlined.Key, selected == Tab.Grants, grantCount, c.accent, "tabGrants", Modifier.weight(1f)) {
             onSelect(Tab.Grants)
         }
-        // A bypass that runs shows on the tab: a red dot over its icon.
+        // A bypass or an Overnight that runs shows on the tab: a dot in its colour over its icon.
         NavItem(
-            "Autopilot", Icons.Rounded.Bolt, Icons.Outlined.Bolt, selected == Tab.Autopilot, if (mode == AutopilotMode.BYPASS) 1 else 0, c.danger,
+            "Autopilot", Icons.Rounded.Bolt, Icons.Outlined.Bolt, selected == Tab.Autopilot, if (AutopilotText.isTimed(mode)) 1 else 0,
+            if (mode == AutopilotMode.OVERNIGHT) c.night else c.danger,
             "tabAutopilot", Modifier.weight(1f), dotOnly = true,
         ) { onSelect(Tab.Autopilot) }
         NavItem("Settings", Icons.Rounded.Settings, Icons.Outlined.Settings, selected == Tab.Settings, 0, c.accent, "tabSettings", Modifier.weight(1f)) {
@@ -107,16 +108,23 @@ object ModePillAnchor {
 
 /**
  * The Autopilot mode at a glance, beside the Activity title: its icon in its colour and its name (the time left during
- * a bypass, on red). It opens the quick switcher.
+ * a bypass, on red, or an Overnight, on night indigo). It opens the quick switcher.
  */
 @Composable
 fun ModePill(settings: AutopilotSettings?, onClick: () -> Unit) {
     val c = LocalColors.current
     val mode = settings?.mode ?: AutopilotMode.MANUAL
     val tint = modeTint(mode, c)
-    val bypass = mode == AutopilotMode.BYPASS
-    val wash by animateColorAsState(if (bypass) c.danger else tint.copy(alpha = 0.16f), label = "modeWash")
-    val fg by animateColorAsState(if (bypass) Color.White else tint, label = "modeFg")
+    val timed = AutopilotText.isTimed(mode)
+    val wash by animateColorAsState(if (timed) tint else tint.copy(alpha = 0.16f), label = "modeWash")
+    val fg by animateColorAsState(
+        when {
+            mode == AutopilotMode.OVERNIGHT -> dev.reins.android.ui.autopilot.onTimed(dev.reins.android.ui.autopilot.TimedKind.Overnight, c)
+            timed -> Color.White
+            else -> tint
+        },
+        label = "modeFg",
+    )
     Row(
         Modifier
             .height(HeaderControlHeight)
@@ -129,12 +137,16 @@ fun ModePill(settings: AutopilotSettings?, onClick: () -> Unit) {
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val until = settings?.bypassUntil
-        if (bypass && until != null) {
-            PulseDot(Color.White, size = 6.dp)
+        val until = when (mode) {
+            AutopilotMode.BYPASS -> settings?.bypassUntil
+            AutopilotMode.OVERNIGHT -> settings?.overnightUntil
+            else -> null
+        }
+        if (timed && until != null) {
+            PulseDot(fg, size = 6.dp)
             Spacer(Modifier.width(7.dp))
             // Without an end there is nothing to count down: it reads as the mode.
-            if (AutopilotText.isUntilOff(until)) RText("Bypass", RType.sans(14.5f, FontWeight.SemiBold), fg, maxLines = 1) else BypassTime(until, fg)
+            if (AutopilotText.isUntilOff(until)) RText(AutopilotText.name(mode), RType.sans(14.5f, FontWeight.SemiBold), fg, maxLines = 1) else BypassTime(until, fg)
         } else {
             Icon(modeIcon(mode), null, Modifier.size(18.dp), tint = fg)
             Spacer(Modifier.width(6.dp))

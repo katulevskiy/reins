@@ -164,6 +164,22 @@ struct StopBypassIntent: LiveActivityIntent {
     }
 }
 
+/// Stops every running Overnight: the Overnight Live Activity's Stop. Each goes back to the mode it interrupted. (The
+/// title is a literal, as App Intents need; it names the mode as `AutopilotText.overnightName` does.)
+struct StopOvernightIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Stop Overnight"
+    static var description = IntentDescription("Ends Overnight now. Requests are decided as before it started.")
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        #if REINS_APP
+        let stopped = try await IntentBridge.stopOvernight()
+        return .result(dialog: stopped ? "\(AutopilotText.overnightName) is off." : "\(AutopilotText.overnightName) is not running.")
+        #else
+        return .result(dialog: "\(AutopilotText.overnightName) is off.")
+        #endif
+    }
+}
+
 /// "Deny" on the requests Live Activity. Denying needs an unlocked phone but no Face ID (as the notification's Deny).
 struct DenyRequestIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "Deny request"

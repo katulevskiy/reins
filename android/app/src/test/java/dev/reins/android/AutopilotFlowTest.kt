@@ -629,6 +629,225 @@ class AutopilotFlowTest : FlowHarness() {
         assertEquals("back to its own mode", Triple("c1", AutopilotMode.AUTO, null), core.modeCalls.single())
     }
 
+    // ---- Overnight ----------------------------------------------------------------------------------------------------
+
+    @Test
+    fun overnightAsksHowLongIsHeldCheckedAndStopsToTheModeItInterrupted() {
+        installModel()
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.AUTO)
+        openAutopilot()
+        tap("mode:OVERNIGHT")
+        awaitTag("overnightSheet")
+        rule.onNodeWithTag("overnightTitle").assertTextContains("Overnight for every AI?")
+        assertTrue("nothing changes before the hold", core.modeCalls.isEmpty())
+        rule.onNodeWithTag("overnightLength:60").assertIsSelected()
+        tap("overnightLength:15")
+        heard.clear()
+        hold("confirmOvernight")
+        awaitCore { core.overnightCalls.isNotEmpty() }
+        assertEquals(null to 15u, core.overnightCalls.single())
+        assertEquals("the core asks the owner, in its own words", listOf("Turn on Overnight for every AI" to "Start Overnight for 15 min"), promptTexts.toList())
+        assertTrue("through the phone's own prompt", core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
+        assertTrue(heard.played(Event.AutopilotOn))
+        awaitTag("overnightClock")
+        rule.onNodeWithTag("overnightClock").assertTextContains("15:00")
+        rule.onNodeWithTag("heroMode").assertTextContains("Overnight")
+        tap("stopOvernight")
+        awaitCore { core.modeCalls.size == 2 }
+        assertEquals("back to the mode it interrupted", Triple(null, AutopilotMode.AUTO, null), core.modeCalls.last())
+        assertEquals("stopping needs no check", 1, prompts.get())
+        awaitGone("overnightClock")
+    }
+
+    @Test
+    fun overnightWithoutTheOwnersCheckChangesNothing() {
+        installModel()
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
+        openAutopilot()
+        tap("mode:OVERNIGHT")
+        heard.clear()
+        hold("confirmOvernight")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertTrue("the core was asked, with an owner check", core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
+        assertTrue("and it refused", core.overnightCalls.isEmpty() && core.modeCalls.isEmpty())
+        assertEquals(AutopilotMode.MANUAL, container.state.autopilot.value?.mode)
+        assertFalse(has("overnightClock"))
+        assertFalse("a cancel says nothing", has("autopilotError"))
+        assertFalse(heard.played(Event.AutopilotOn))
+
+        // No screen lock at all: it says so, and still nothing changes.
+        authResult = dev.reins.android.platform.AuthResult.Unavailable
+        tap("mode:OVERNIGHT")
+        hold("confirmOvernight")
+        awaitTag("autopilotError")
+        awaitText("screen lock", substring = true)
+        assertTrue(core.overnightCalls.isEmpty())
+        assertEquals(AutopilotMode.MANUAL, container.state.autopilot.value?.mode)
+    }
+
+    @Test
+    fun anAIsOwnOvernightUnderAGlobalOneIsCheckedToo() {
+        installModel()
+        // A running Overnight shows only Stop; any other length is a new start, and every start asks the owner.
+        // Refused, the running one stays as it was.
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.OVERNIGHT, overnightUntil = now + 600, overnightSince = now - 60, overnightReturn = AutopilotMode.AUTO)
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
+        launch()
+        tap("tabSettings")
+        tap("connection:c1")
+        tap("connMode:OVERNIGHT")
+        hold("confirmOvernight")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertTrue(core.overnightCalls.isEmpty())
+        assertEquals(now + 600, core.apGlobal.overnightUntil)
+    }
+
+    @Test
+    fun overnightUntilTurnedOffShowsHowLongItRan() {
+        installModel()
+        openAutopilot()
+        tap("mode:OVERNIGHT")
+        tap("overnightLength:custom")
+        tap("overnightFor:untilOff")
+        awaitTag("overnightUntilOffWarning")
+        awaitText("Hold to start until off")
+        hold("confirmOvernightFor")
+        awaitCore { core.overnightCalls.isNotEmpty() }
+        assertEquals("no end", null to null, core.overnightCalls.single())
+        awaitTag("overnightUntilOff")
+        rule.onNodeWithTag("overnightLine", useUnmergedTree = true).assertTextContains("On until you stop it", substring = true)
+        assertEquals(Long.MAX_VALUE, container.state.autopilot.value?.overnightUntil)
+    }
+
+    @Test
+    fun ifSomethingIsTooRiskyIsChosenInTheOvernightSheet() {
+        installModel()
+        openAutopilot()
+        tap("mode:OVERNIGHT")
+        awaitText("If something is too risky:")
+        rule.onNodeWithTag("overnightRisky:WAIT").assertIsSelected()
+        tap("overnightRisky:DENY")
+        awaitCore { core.whenRiskyCalls.isNotEmpty() }
+        assertEquals(listOf(dev.reins.core.OvernightRisky.DENY), core.whenRiskyCalls.toList())
+        assertEquals("the owner is asked", "Change Overnight" to "Overnight: deny what is too risky", promptTexts.single())
+        awaitText("Decides like Auto. Too risky is denied.")
+        assertTrue("a setting, not a start", core.overnightCalls.isEmpty())
+
+        // Back to Wait is asked too; refused, it stays.
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
+        tap("overnightRisky:WAIT")
+        awaitCore { prompts.get() == 2 }
+        settle()
+        assertEquals(dev.reins.core.OvernightRisky.DENY, core.whenRisky)
+        rule.onNodeWithTag("overnightRisky:DENY").assertIsSelected()
+        assertTrue(core.overnightOwners.all { it is dev.reins.android.platform.OwnerPrompt })
+    }
+
+    @Test
+    fun withoutAModelThatRatesRiskOvernightsHelpSaysItDecidesLikeAuto() {
+        installModel()
+        openAutopilot()
+        tap("mode:OVERNIGHT")
+        tap("help:Overnight")
+        awaitTag("overnightHelp")
+        awaitText("Your model doesn't rate risk yet", substring = true)
+        tap("cancelOvernight")
+        awaitGone("overnightSheet")
+        core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, risk = true)
+        kotlinx.coroutines.runBlocking { container.refreshAutopilot() }
+        awaitCore { container.state.autopilot.value?.model?.risk == true }
+        tap("mode:OVERNIGHT")
+        tap("help:Overnight")
+        awaitText("weighed by their risk", substring = true)
+    }
+
+    @Test
+    fun overnightFromTheQuickMenuIsItsOwnButtonAndStopsThere() {
+        installModel()
+        launch()
+        tap("modePill")
+        tap("quick:OVERNIGHT")
+        awaitTag("overnightSheet")
+        awaitGone("autopilotQuick")
+        hold("confirmOvernight")
+        awaitCore { core.overnightCalls.isNotEmpty() }
+        assertEquals(null to 60u, core.overnightCalls.single())
+        assertEquals("checked from the quick menu too", "Start Overnight for 1 h", promptTexts.single().second)
+        assertTrue(core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
+        awaitGone("overnightSheet")
+        rule.onNodeWithContentDescription("Autopilot: Overnight").assertExists()
+        tap("modePill")
+        awaitText("Tap to stop")
+        tap("quick:OVERNIGHT")
+        awaitCore { core.modeCalls.size == 2 }
+        assertEquals("back to the mode it interrupted", Triple(null, AutopilotMode.MANUAL, null), core.modeCalls.last())
+    }
+
+    @Test
+    fun aRunningOvernightTurnsThePillIntoACountdown() {
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.OVERNIGHT, overnightUntil = now + 8 * 3_600, overnightSince = now - 60, overnightReturn = AutopilotMode.AUTO)
+        launch()
+        awaitTag("modePill")
+        rule.onNodeWithContentDescription("Autopilot: Overnight").assertExists()
+        awaitText("8:00:00")
+    }
+
+    @Test
+    fun anOvernightPostsItsNotificationWhoseStopEndsIt() {
+        // Without an end, so the notice does not depend on the phone's own clock.
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.OVERNIGHT, overnightUntil = Long.MAX_VALUE, overnightSince = now - 60, overnightReturn = AutopilotMode.AUTO)
+        launch()
+        awaitTag("modePill")
+        rule.onNodeWithContentDescription("Autopilot: Overnight").assertExists()
+        val manager = context.getSystemService(android.app.NotificationManager::class.java)
+        awaitCore { org.robolectric.Shadows.shadowOf(manager).getNotification(dev.reins.android.platform.AppNotifier.OVERNIGHT_ID) != null }
+        val n = org.robolectric.Shadows.shadowOf(manager).getNotification(dev.reins.android.platform.AppNotifier.OVERNIGHT_ID)
+        assertEquals("Overnight on · until you stop it", n.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
+        // Its Stop, started on another phone: back to the default, never to something looser.
+        kotlinx.coroutines.runBlocking { container.stopOvernights() }
+        assertEquals(Triple(null, null, null), core.modeCalls.last())
+        awaitCore { org.robolectric.Shadows.shadowOf(manager).getNotification(dev.reins.android.platform.AppNotifier.OVERNIGHT_ID) == null }
+    }
+
+    @Test
+    fun theSlidersOvernightOpensItsSheet() {
+        installModel()
+        QuickStyles.set(context, QuickStyle.Slider)
+        launch()
+        tap("modePill")
+        tap("detent:OVERNIGHT")
+        awaitTag("overnightSheet")
+        assertTrue(core.modeCalls.isEmpty())
+        hold("confirmOvernight")
+        awaitCore { core.overnightCalls.isNotEmpty() }
+        assertEquals(1, prompts.get())
+        assertTrue(core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
+    }
+
+    @Test
+    fun aConnectionsOwnOvernightIsCheckedShowsItsTimeAndStops() {
+        installModel()
+        core.apConnections["c1"] = FakeCore.ApRow(mode = AutopilotMode.MANUAL)
+        launch()
+        tap("tabSettings")
+        tap("connection:c1")
+        tap("connMode:OVERNIGHT")
+        awaitTag("overnightSheet")
+        awaitText("Overnight for Claude?")
+        hold("confirmOvernight")
+        awaitCore { core.overnightCalls.isNotEmpty() }
+        assertEquals("c1" to 60u, core.overnightCalls.single())
+        assertEquals("Turn on Overnight for Claude" to "Start Overnight for 1 h", promptTexts.single())
+        assertTrue(core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
+        awaitTag("stopConnectionOvernight")
+        rule.onNodeWithTag("connectionOvernightLine", useUnmergedTree = true).assertTextContains("1 h left", substring = true)
+        tap("stopConnectionOvernight")
+        awaitCore { core.modeCalls.size == 2 }
+        assertEquals("back to its own mode", Triple("c1", AutopilotMode.MANUAL, null), core.modeCalls.last())
+    }
+
     // ---- approvals ----------------------------------------------------------------------------------------------------
 
     @Test
@@ -698,7 +917,72 @@ class AutopilotFlowTest : FlowHarness() {
         assertEquals("Deny needs no check", 1, prompts.get())
     }
 
+    @Test
+    fun theApprovalScreenShowsTheRiskAndThatOvernightHeldIt() {
+        installModel()
+        core.suggestions["req1"] = TestData.suggestion(
+            "req1",
+            mode = AutopilotMode.OVERNIGHT,
+            risk = TestData.risk(dev.reins.core.RiskLevel.CATASTROPHIC, "deletes the default branch main", held = true),
+        )
+        openRequest(TestData.searchView())
+        awaitTag("risk")
+        rule.onNodeWithTag("riskLine", useUnmergedTree = true).assertTextContains("Risk: catastrophic · deletes the default branch main")
+        rule.onNodeWithTag("riskHeld").assertTextContains("Held by Overnight")
+    }
+
+    @Test
+    fun withoutARiskTheApprovalScreenShowsNone() {
+        installModel()
+        core.suggestions["req1"] = TestData.suggestion("req1")
+        openRequest(TestData.searchView())
+        awaitTag("suggestion")
+        assertFalse(has("risk"))
+    }
+
     // ---- activity -----------------------------------------------------------------------------------------------------
+
+    @Test
+    fun activityShowsOvernightsDecisionsAndTheirRisk() {
+        core.activity = listOf(
+            TestData.entry(5, "write", "denied", 1u, decidedBy = "overnight", autopilot = TestData.note(AutopilotMode.OVERNIGHT, risk = TestData.risk(dev.reins.core.RiskLevel.CATASTROPHIC, "force push to main", held = true))),
+            TestData.entry(4, "write", "released", 1u, decidedBy = "overnight", autopilot = TestData.note(AutopilotMode.OVERNIGHT, risk = TestData.risk(dev.reins.core.RiskLevel.BENIGN, "a feature branch"))),
+            TestData.entry(2, "read", "released", 1u),
+        )
+        launch()
+        awaitTag("entry:5")
+        // In the list (inside each row's one tap target): only the risk that says something.
+        fun inRow(tag: String) = rule.onAllNodes(androidx.compose.ui.test.hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        assertTrue(inRow("rowRisk:5"))
+        assertTrue(
+            rule.onAllNodes(androidx.compose.ui.test.hasTestTag("riskLine") and androidx.compose.ui.test.hasText("Risk: catastrophic · force push to main"), useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty(),
+        )
+        assertFalse("a low risk is left to the entry's page", inRow("rowRisk:4"))
+        assertFalse(inRow("rowRisk:2"))
+        assertTrue("its marker", rule.onAllNodes(androidx.compose.ui.test.hasText("Overnight"), useUnmergedTree = true).fetchSemanticsNodes().size >= 2)
+        assertEquals(dev.reins.android.ui.activity.Outcome.Overnight, dev.reins.android.ui.activity.outcomeOf(core.activity[1]))
+        assertEquals(dev.reins.android.ui.activity.Outcome.OvernightDenied, dev.reins.android.ui.activity.outcomeOf(core.activity[0]))
+        assertEquals("Denied by Overnight", dev.reins.android.ui.activity.outcomeLine(core.activity[0]))
+        tap("entry:4")
+        awaitTag("entryAutopilot")
+        rule.onNodeWithTag("entryAutopilotTitle", useUnmergedTree = true).assertTextContains("Allowed by Overnight")
+        awaitTag("risk")
+        rule.onNodeWithTag("riskLine", useUnmergedTree = true).assertTextContains("Risk: low · a feature branch")
+        assertFalse(has("riskHeld"))
+    }
+
+    @Test
+    fun aRequestOvernightDeniedSaysSoAndThatItHeldIt() {
+        core.activity = listOf(
+            TestData.entry(5, "write", "denied", 1u, decidedBy = "overnight", autopilot = TestData.note(AutopilotMode.OVERNIGHT, risk = TestData.risk(dev.reins.core.RiskLevel.CATASTROPHIC, "force push to main", held = true))),
+        )
+        launch()
+        tap("entry:5")
+        awaitTag("entryAutopilot")
+        rule.onNodeWithTag("entryAutopilotTitle", useUnmergedTree = true).assertTextContains("Denied by Overnight")
+        rule.onNodeWithTag("riskHeld").assertTextContains("Held by Overnight")
+    }
 
     private fun automaticEntries() {
         core.activity = listOf(

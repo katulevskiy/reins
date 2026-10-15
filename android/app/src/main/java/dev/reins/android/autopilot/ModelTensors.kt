@@ -27,8 +27,11 @@ class PackedInput(
 /** A float tensor the model returned: its values and its shape. */
 class RawTensor(val values: FloatArray, val shape: LongArray)
 
-/** The three outputs of a forward pass, as the runtime handed them back. */
-class RawOutput(val logits: RawTensor, val act: RawTensor, val pooled: RawTensor)
+/**
+ * The outputs of a forward pass, as the runtime handed them back. [risk] only from a model that has the output
+ * (`docs/autopilot-risk.md`); older models (laya-approvals-ml-v1) have none.
+ */
+class RawOutput(val logits: RawTensor, val act: RawTensor, val pooled: RawTensor, val risk: RawTensor? = null)
 
 /** Turns the core's records into tensors and the model's tensors back into a record. Pure, so it is tested on the JVM. */
 object ModelTensors {
@@ -40,6 +43,10 @@ object ModelTensors {
     const val LOGITS = "logits"
     const val ACT = "act"
     const val POOLED = "pooled"
+    const val RISK = "risk"
+
+    /** The risk output's classes per row: benign, risky, severe, catastrophic. */
+    const val RISK_CLASSES = 4
 
     /** Checks every array has the size its shape says; a mismatch is the core's bug, not something to guess around. */
     fun pack(input: ModelInput): PackedInput {
@@ -63,7 +70,11 @@ object ModelTensors {
         )
     }
 
-    /** `logits` [B,K], `act` [B,2], `pooled` [B,H]; the hidden size comes from the pooled tensor's last dimension. */
+    /**
+     * `logits` [B,K], `act` [B,2], `pooled` [B,H]; the hidden size comes from the pooled tensor's last dimension.
+     * `risk` [B,4] when the model has it, else empty. A risk tensor of another shape is refused, never dropped: the core
+     * then leaves the request to the user, where an empty one would only read as a model without the output.
+     */
     fun unpack(input: PackedInput, raw: RawOutput): ModelOutput {
         val b = input.batch
         require(raw.logits.values.size == b * input.k) { "$LOGITS has ${raw.logits.values.size} values, expected ${b * input.k}" }
@@ -72,6 +83,13 @@ object ModelTensors {
         require(hidden > 0 && raw.pooled.values.size == b * hidden) {
             "$POOLED has ${raw.pooled.values.size} values in shape ${raw.pooled.shape.toList()}, expected $b × hidden"
         }
-        return ModelOutput(raw.logits.values.toList(), raw.act.values.toList(), raw.pooled.values.toList(), hidden.toUInt())
+        val risk = raw.risk?.let { r ->
+            val shapeFits = r.shape.isEmpty() || r.shape.contentEquals(longArrayOf(b.toLong(), RISK_CLASSES.toLong()))
+            require(shapeFits && r.values.size == b * RISK_CLASSES) {
+                "$RISK has ${r.values.size} values in shape ${r.shape.toList()}, expected $b × $RISK_CLASSES"
+            }
+            r.values.toList()
+        } ?: emptyList()
+        return ModelOutput(raw.logits.values.toList(), raw.act.values.toList(), raw.pooled.values.toList(), hidden.toUInt(), risk)
     }
 }

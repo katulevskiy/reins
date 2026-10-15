@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::decide::{Pass, softmax};
+use super::decide::{Pass, softmax, softmax4};
 use super::memory::normalized;
 use super::runtime::{DownloadProgress, ModelRuntime};
 use super::sequence::{LayaTokenizer, QTYPE_CHOICE, Special, build_sequence};
@@ -114,6 +114,43 @@ pub struct LayaConfig {
     pub cls_id: u32,
     pub sep_id: u32,
     pub pad_id: u32,
+    /// The risk output (`docs/autopilot-risk.md`), when the model has one.
+    #[serde(default)]
+    pub risk: Option<RiskConfig>,
+}
+
+/// `laya_config.json` → `risk`: what the phone needs to read the severity output.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct RiskConfig {
+    /// The ONNX output's name ("risk").
+    #[serde(default)]
+    pub output: String,
+    /// The classes in output order; must be benign, risky, severe, catastrophic.
+    pub labels: Vec<String>,
+    pub temperature: f32,
+    /// Per mode: Overnight holds at or above `thresholds["overnight"]` of P(catastrophic).
+    #[serde(default)]
+    pub thresholds: BTreeMap<String, f32>,
+}
+
+/// Risk classes in the order the model returns them.
+pub const RISK_LABELS: [&str; 4] = ["benign", "risky", "severe", "catastrophic"];
+
+impl RiskConfig {
+    /// The classes are the four this core knows, in its order.
+    pub fn valid(&self) -> bool {
+        self.labels.iter().map(String::as_str).eq(RISK_LABELS)
+    }
+
+    pub fn temperature(&self) -> f32 {
+        Some(self.temperature).filter(|t| t.is_finite() && *t > 0.0).unwrap_or(1.0).clamp(0.05, 20.0)
+    }
+
+    /// Overnight holds a request at or above this P(catastrophic). `None` when the package names none, or one that is
+    /// not a number in (0, 1]: there is no default, and Overnight then holds everything it judges.
+    pub fn overnight_threshold(&self) -> Option<f32> {
+        self.thresholds.get("overnight").copied().filter(|t| t.is_finite() && *t > 0.0 && *t <= 1.0)
+    }
 }
 
 impl LayaConfig {
@@ -121,6 +158,11 @@ impl LayaConfig {
     pub fn temperature(&self) -> f32 {
         let t = self.temperature_by_options.get("choice:3-5").or_else(|| self.temperature.first()).copied();
         t.filter(|t| t.is_finite() && *t > 0.0).unwrap_or(1.0).clamp(0.05, 20.0)
+    }
+
+    /// The risk output, when the model has one this core can read.
+    pub fn risk(&self) -> Option<&RiskConfig> {
+        self.risk.as_ref().filter(|r| r.valid())
     }
 }
 
@@ -196,6 +238,15 @@ pub fn installed(data_dir: &Path, known: &KnownModel) -> bool {
         })
 }
 
+/// Whether the installed package declares the risk output (read from its configuration, without opening it).
+pub fn rates_risk(data_dir: &Path, known: &KnownModel) -> bool {
+    model_dir(data_dir, &known.id)
+        .ok()
+        .and_then(|dir| fs::read(dir.join(CONFIG_FILE)).ok())
+        .and_then(|b| serde_json::from_slice::<LayaConfig>(&b).ok())
+        .is_some_and(|c| c.risk().is_some())
+}
+
 /// Deletes a package (whatever state it is in).
 pub fn remove(data_dir: &Path, id: &str) -> Result<(), CoreError> {
     let dir = model_dir(data_dir, id)?;
@@ -244,6 +295,7 @@ impl DownloadState {
                 None
             },
             runtime_ready,
+            risk: false,
         }
     }
 }
@@ -472,7 +524,13 @@ impl Laya {
         Ok(input)
     }
 
-    /// One forward pass per state (batched), calibrated.
+    /// The model rates risk (and reads the `context` line of the situation).
+    pub fn has_risk(&self) -> bool {
+        self.config.risk().is_some()
+    }
+
+    /// One forward pass per state (batched), calibrated. The risk of each pass is read when the package declares the
+    /// output and the runtime returned it (an app whose runtime does not read the output gives none: no risk).
     pub fn run(&self, runtime: &dyn ModelRuntime, states: &[&str]) -> Result<Vec<Pass>, CoreError> {
         let input = self.input(states)?;
         let batch = states.len();
@@ -486,10 +544,15 @@ impl Laya {
         {
             return Err(CoreError::service("the model returned something of the wrong shape"));
         }
-        if out.logits.iter().chain(&out.act).chain(&out.pooled).any(|x| !x.is_finite()) {
+        if out.logits.iter().chain(&out.act).chain(&out.pooled).chain(&out.risk).any(|x| !x.is_finite()) {
             return Err(CoreError::service("the model returned something that is not a number"));
         }
         let t = self.config.temperature();
+        let risk =
+            self.config.risk().filter(|_| out.risk.len() == batch * RISK_LABELS.len()).map(RiskConfig::temperature);
+        if self.config.risk().is_some() && risk.is_none() {
+            log::warn!("the model has a risk output but the runtime returned none; risk is not rated");
+        }
         Ok((0..batch)
             .map(|b| {
                 let logits = [out.logits[b * 3] / t, out.logits[b * 3 + 1] / t, out.logits[b * 3 + 2] / t];
@@ -499,6 +562,10 @@ impl Laya {
                     probs: softmax(logits),
                     escalate: 1.0 / (1.0 + (answer - escalate).exp()),
                     pooled: normalized(&out.pooled[b * hidden..(b + 1) * hidden]),
+                    risk: risk.map(|tr| {
+                        let z: [f32; 4] = std::array::from_fn(|i| out.risk[b * 4 + i] / tr);
+                        softmax4(z)
+                    }),
                 }
             })
             .collect())
@@ -529,6 +596,31 @@ mod tests {
     }
 
     #[test]
+    fn the_risk_output_is_read_only_with_the_classes_this_core_knows() {
+        let cfg: LayaConfig = serde_json::from_value(serde_json::json!({
+            "max_len": 512, "head_max_len": 256, "mask_id": 4, "cls_id": 2, "sep_id": 1, "pad_id": 0,
+            "risk": {"output": "risk", "labels": RISK_LABELS, "temperature": 1.7, "thresholds": {"overnight": 0.31}}
+        }))
+        .unwrap();
+        let risk = cfg.risk().unwrap();
+        assert!((risk.temperature() - 1.7).abs() < 1e-6 && (risk.overnight_threshold().unwrap() - 0.31).abs() < 1e-6);
+        let mut other = cfg.clone();
+        other.risk.as_mut().unwrap().labels.reverse();
+        assert!(other.risk().is_none(), "classes in another order are not read");
+        let mut none = cfg.clone();
+        none.risk.as_mut().unwrap().thresholds.clear();
+        assert_eq!(none.risk().unwrap().overnight_threshold(), None, "no default threshold");
+        for odd in [f32::NAN, 0.0, -0.5, 1.5] {
+            none.risk.as_mut().unwrap().thresholds.insert("overnight".to_owned(), odd);
+            assert_eq!(none.risk().unwrap().overnight_threshold(), None, "{odd}");
+        }
+        let v1: LayaConfig = serde_json::from_value(serde_json::json!({
+            "max_len": 512, "head_max_len": 256, "mask_id": 4, "cls_id": 2, "sep_id": 1, "pad_id": 0}))
+        .unwrap();
+        assert!(v1.risk().is_none(), "laya-approvals-ml-v1 has no risk output");
+    }
+
+    #[test]
     fn temperature_of_a_three_option_choice() {
         let mut cfg = LayaConfig {
             id: String::new(),
@@ -541,6 +633,7 @@ mod tests {
             cls_id: 0,
             sep_id: 0,
             pad_id: 0,
+            risk: None,
         };
         assert!((cfg.temperature() - 1.6).abs() < 1e-6);
         cfg.temperature_by_options.insert("choice:3-5".to_owned(), 1.76);

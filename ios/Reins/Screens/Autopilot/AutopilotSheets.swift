@@ -104,6 +104,54 @@ enum BypassLength: Hashable {
     var holdTitle: String { self == .untilOff ? "Hold to bypass until off" : "Hold to bypass" }
 }
 
+/// The two modes that run for a while and start only after a hold and the owner's check: Bypass and Overnight. Their
+/// sheets are one sheet, in each one's symbol, colour, lengths and words.
+enum TimedMode: Hashable {
+    case bypass, overnight
+
+    var symbol: String { self == .bypass ? "bolt.fill" : AutopilotText.overnightSymbol }
+
+    var tint: Color { self == .bypass ? Palette.danger : Palette.overnight }
+
+    /// The lengths offered first, and the one picked at first.
+    var presets: [UInt32] { self == .bypass ? AutopilotText.bypassMinutes : AutopilotText.overnightMinutes }
+    var initial: UInt32 { self == .bypass ? 60 : 480 }
+
+    /// The longer ones its Custom offers.
+    var more: [UInt32] { self == .bypass ? AutopilotText.bypassMoreMinutes : AutopilotText.overnightMoreMinutes }
+
+    /// "Bypass every AI?", "Overnight for Claude?".
+    func title(who: String?) -> String {
+        switch self {
+        case .bypass: who.map { "Bypass \(untrusted($0))?" } ?? "Bypass every AI?"
+        case .overnight: "\(AutopilotText.overnightName) for \(who.map(untrusted) ?? "every AI")?"
+        }
+    }
+
+    /// The title of its Custom sheet.
+    var forTitle: String { self == .bypass ? "Bypass for" : "\(AutopilotText.overnightName) for" }
+
+    func holdTitle(_ length: BypassLength) -> String {
+        switch self {
+        case .bypass: length.holdTitle
+        case .overnight: length == .untilOff ? "Hold to start until off" : "Hold to start"
+        }
+    }
+
+    /// The warning under "Until I turn it off", in two lines.
+    var untilOffWarning: (title: String, detail: String) {
+        switch self {
+        case .bypass: ("Everything is approved without asking until you stop it.", AutopilotText.bypassStillAsks)
+        case .overnight: ("\(AutopilotText.overnightName) runs until you stop it.", "What is too risky is still held.")
+        }
+    }
+
+    /// Bypass's accessibility identifier, or the same with Overnight in its place ("confirmBypass", "confirmOvernight").
+    func id(_ bypassId: String) -> String {
+        self == .bypass ? bypassId : bypassId.replacingOccurrences(of: "bypass", with: "overnight").replacingOccurrences(of: "Bypass", with: "Overnight")
+    }
+}
+
 /// Turning a bypass on, for every AI (`who` nil) or one (its name): 15 min, 1 hour, 1 day or Custom (which opens
 /// "Bypass for": 4 hours, 1 week, a number and unit of the user's own, or until turned off), held for two seconds to
 /// confirm. Used by the Autopilot page, the mode pill's menu and an AI's page; no bypass starts with one tap.
@@ -111,9 +159,69 @@ struct BypassSheet: View {
     var who: String?
     var onConfirm: (BypassLength) -> Void
 
+    var body: some View {
+        TimedModeSheet(kind: .bypass, who: who, line: "Approved without asking. Sent means sent.", help: AutopilotText.bypassHelp,
+                       onConfirm: onConfirm) { EmptyView() }
+    }
+}
+
+/// Turning Overnight on, as a bypass is: 4, 8 or 12 hours or Custom, what to do with what is too risky, held for two
+/// seconds, then the owner's check. Its (?) says it decides like Auto when the model does not rate risk.
+struct OvernightSheet: View {
+    var who: String?
+    var ap: AutopilotModel
+    var onConfirm: (BypassLength) -> Void
+
+    var body: some View {
+        TimedModeSheet(
+            kind: .overnight, who: who, line: AutopilotText.overnightSummary,
+            help: AutopilotText.overnightHelpText(riskRated: ap.settings?.model.risk ?? false), onConfirm: onConfirm
+        ) {
+            WhenRiskyPicker(selected: ap.settings?.overnightWhenRisky ?? .wait) { risky in
+                Task { await ap.setOvernightWhenRisky(risky) }
+            }
+            .padding(.top, 18)
+        }
+    }
+}
+
+/// "If something is too risky:" Wait for me, or Deny it (Overnight's setting, for every AI).
+struct WhenRiskyPicker: View {
+    var selected: OvernightRisky
+    var onPick: (OvernightRisky) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(AutopilotText.whenRiskyTitle)
+                .font(RFont.sans(13.5, .medium))
+                .foregroundStyle(Palette.secondary)
+                .padding(.horizontal, 4)
+            Segments(items: [
+                SegmentItem(id: OvernightRisky.wait, title: AutopilotText.whenRiskyWait, identifier: "whenRisky:wait"),
+                SegmentItem(id: OvernightRisky.deny, title: AutopilotText.whenRiskyDeny, identifier: "whenRisky:deny"),
+            ], selected: selected) { pick in
+                if pick != selected { onPick(pick) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("whenRisky")
+    }
+}
+
+/// A timed mode's sheet (see `BypassSheet`, `OvernightSheet`): its symbol and question, a line with its (?), the
+/// lengths, what `extra` adds, Cancel and the hold that starts it.
+struct TimedModeSheet<Extra: View>: View {
+    var kind: TimedMode
+    var who: String?
+    var line: String
+    var help: String
+    var onConfirm: (BypassLength) -> Void
+    @ViewBuilder var extra: Extra
+
     private enum Pick: Hashable { case preset(UInt32), custom }
 
-    @State private var picked: Pick = .preset(60)
+    @State private var picked: Pick?
     /// What Custom holds once "Bypass for" chose it.
     @State private var custom: BypassLength?
     @State private var choosing = false
@@ -122,21 +230,23 @@ struct BypassSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.feedback) private var feedback
 
+    private var pick: Pick { picked ?? .preset(kind.initial) }
+
     private var length: BypassLength {
-        switch picked {
+        switch pick {
         case let .preset(m): .minutes(m)
         case .custom: custom ?? .minutes(AutopilotText.customMinutes(count: 3, unit: .days))
         }
     }
 
     private var items: [SegmentItem<Pick>] {
-        let presets = AutopilotText.bypassMinutes.map { m in
-            SegmentItem(id: Pick.preset(m), title: AutopilotText.lengthLabel(minutes: m), identifier: "bypass:\(m)")
+        let presets = kind.presets.map { m in
+            SegmentItem(id: Pick.preset(m), title: AutopilotText.lengthLabel(minutes: m), identifier: kind.id("bypass:\(m)"))
         }
         let off = custom == .untilOff
         return presets + [SegmentItem(
             id: Pick.custom, title: custom?.label ?? "Custom", symbol: off ? "infinity" : nil, chevron: true,
-            tint: off ? Palette.danger : nil, identifier: "bypass:custom"
+            tint: off ? kind.tint : nil, identifier: kind.id("bypass:custom")
         )]
     }
 
@@ -144,37 +254,38 @@ struct BypassSheet: View {
         ScrollView {
             VStack(spacing: 0) {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Palette.danger.opacity(0.16))
+                    .fill(kind.tint.opacity(0.16))
                     .frame(width: 56, height: 56)
                     .overlay {
-                        Image(systemName: "bolt.fill")
+                        Image(systemName: kind.symbol)
                             .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(Palette.danger)
+                            .foregroundStyle(kind.tint)
                     }
                     .accessibilityHidden(true)
-                Text(who.map { "Bypass \(untrusted($0))?" } ?? "Bypass every AI?")
+                Text(kind.title(who: who))
                     .font(RFont.sans(22, .semibold))
                     .foregroundStyle(Palette.text)
                     .multilineTextAlignment(.center)
                     .padding(.top, 14)
                     .accessibilityAddTraits(.isHeader)
-                HelpLine(text: "Approved without asking. Sent means sent.", help: AutopilotText.bypassHelp, alignment: .center)
+                HelpLine(text: line, help: help, alignment: .center)
                     .padding(.top, 6)
-                Segments(items: items, selected: picked) { pick in
-                    if pick == .custom {
+                Segments(items: items, selected: pick) { choice in
+                    if choice == .custom {
                         choosing = true
                     } else {
-                        picked = pick
+                        picked = choice
                     }
                 }
                 .padding(.top, 18)
+                extra
                 HStack(spacing: 10) {
                     Button("Cancel") { dismiss() }
                         .buttonStyle(CapsuleButtonStyle(kind: .secondary, height: 50))
-                        .accessibilityIdentifier("cancelBypass")
-                    HoldButton(title: length.holdTitle, symbol: "bolt.fill", height: 50) { confirm(length) }
+                        .accessibilityIdentifier(kind.id("cancelBypass"))
+                    HoldButton(title: kind.holdTitle(length), symbol: kind.symbol, height: 50) { confirm(length) }
                         .layoutPriority(1)
-                        .accessibilityIdentifier("confirmBypass")
+                        .accessibilityIdentifier(kind.id("confirmBypass"))
                 }
                 .padding(.top, 20)
                 Text("Hold for 2 seconds")
@@ -191,13 +302,13 @@ struct BypassSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationSizing(.form)
-        .accessibilityIdentifier("bypassDialog")
+        .accessibilityIdentifier(kind.id("bypassDialog"))
         .sheet(isPresented: $choosing, onDismiss: {
             guard let chosen = confirmedInside else { return }
             confirmedInside = nil
             confirm(chosen)
         }) {
-            BypassForSheet(initial: custom) { chosen in
+            BypassForSheet(kind: kind, initial: custom) { chosen in
                 custom = chosen
                 picked = .custom
             } onConfirm: { chosen in
@@ -216,6 +327,7 @@ struct BypassSheet: View {
 /// "Bypass for": the longer lengths, one of the user's own (a number and a unit), and, apart in red, until turned
 /// off, which warns. Every change shows on the first sheet's Custom segment; held here, the bypass starts at once.
 struct BypassForSheet: View {
+    var kind: TimedMode = .bypass
     var initial: BypassLength?
     var onPick: (BypassLength) -> Void
     var onConfirm: (BypassLength) -> Void
@@ -240,7 +352,7 @@ struct BypassForSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text("Bypass for")
+                    Text(kind.forTitle)
                         .font(RFont.sans(18, .semibold))
                         .foregroundStyle(Palette.text)
                         .accessibilityAddTraits(.isHeader)
@@ -257,19 +369,19 @@ struct BypassForSheet: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close")
-                    .accessibilityIdentifier("closeBypassFor")
+                    .accessibilityIdentifier(kind.id("closeBypassFor"))
                 }
                 .padding(.bottom, 14)
 
                 card(border: Palette.hairline) {
-                    ForEach(AutopilotText.bypassMoreMinutes, id: \.self) { m in
-                        radioRow(.preset(m), identifier: "bypassFor:\(m)") {
+                    ForEach(kind.more, id: \.self) { m in
+                        radioRow(.preset(m), identifier: kind.id("bypassFor:\(m)")) {
                             Text(AutopilotText.lengthLabel(minutes: m)).font(RFont.sans(15.5)).foregroundStyle(Palette.text)
                         }
                         RowDivider()
                     }
                     // Its stepper and unit menu stay controls of their own for VoiceOver.
-                    radioRow(.custom, identifier: "bypassFor:custom", combine: false) {
+                    radioRow(.custom, identifier: kind.id("bypassFor:custom"), combine: false) {
                         HStack(spacing: 8) {
                             Text("Custom").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
                             Spacer(minLength: 4)
@@ -279,14 +391,14 @@ struct BypassForSheet: View {
                     }
                 }
 
-                card(border: Palette.danger.opacity(0.3)) {
-                    radioRow(.untilOff, tint: Palette.danger, identifier: "bypassFor:untilOff") {
+                card(border: kind.tint.opacity(0.3)) {
+                    radioRow(.untilOff, tint: kind.tint, identifier: kind.id("bypassFor:untilOff")) {
                         HStack(spacing: 12) {
                             Image(systemName: "infinity")
                                 .font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(Palette.danger)
+                                .foregroundStyle(kind.tint)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Until I turn it off").font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.danger)
+                                Text("Until I turn it off").font(RFont.sans(15.5, .semibold)).foregroundStyle(kind.tint)
                                 Text("No end time").font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
                             }
                         }
@@ -298,14 +410,14 @@ struct BypassForSheet: View {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Palette.danger)
+                            .foregroundStyle(kind.tint)
                             .padding(.top, 1)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Everything is approved without asking until you stop it.")
+                            Text(kind.untilOffWarning.title)
                                 .font(RFont.sans(13.5, .semibold))
-                                .foregroundStyle(Palette.danger)
-                            Text(AutopilotText.bypassStillAsks)
+                                .foregroundStyle(kind.tint)
+                            Text(kind.untilOffWarning.detail)
                                 .font(RFont.sans(13.5))
                                 .foregroundStyle(Palette.text)
                         }
@@ -314,19 +426,19 @@ struct BypassForSheet: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Palette.danger.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.danger.opacity(0.28), lineWidth: 1))
+                    .background(kind.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(kind.tint.opacity(0.28), lineWidth: 1))
                     .padding(.top, 10)
                     .transition(.opacity)
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("untilOffWarning")
                 }
 
-                HoldButton(title: length.holdTitle, symbol: "bolt.fill", height: 50) {
+                HoldButton(title: kind.holdTitle(length), symbol: kind.symbol, height: 50) {
                     onConfirm(length)
                     dismiss()
                 }
-                .accessibilityIdentifier("confirmBypassFor")
+                .accessibilityIdentifier(kind.id("confirmBypassFor"))
                 .padding(.top, 16)
                 Text("Hold for 2 seconds")
                     .font(RFont.sans(12))
@@ -342,12 +454,12 @@ struct BypassForSheet: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationSizing(.form)
-        .accessibilityIdentifier("bypassForDialog")
+        .accessibilityIdentifier(kind.id("bypassForDialog"))
         .onAppear {
             switch initial {
             case .untilOff?:
                 pick = .untilOff
-            case let .minutes(m)? where AutopilotText.bypassMoreMinutes.contains(m):
+            case let .minutes(m)? where kind.more.contains(m):
                 pick = .preset(m)
             case let .minutes(m)?:
                 let stepper = AutopilotText.countAndUnit(minutes: m)

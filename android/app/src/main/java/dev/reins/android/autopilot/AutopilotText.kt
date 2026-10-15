@@ -8,16 +8,28 @@ import dev.reins.core.AutopilotSettings
 import dev.reins.core.ClassView
 import dev.reins.core.ModelState
 import dev.reins.core.ModelStatus
+import dev.reins.core.OvernightRisky
 import dev.reins.core.Preset
 import dev.reins.core.ProfileView
+import dev.reins.core.RiskLevel
+import dev.reins.core.RiskView
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 import kotlin.math.roundToInt
 
 /** Autopilot's words, kept apart from the screens so they can be tested on the JVM. */
 object AutopilotText {
+    /**
+     * The Overnight mode's name, the one place the app spells it (the core has its own `OVERNIGHT_NAME`; what Android
+     * shows itself reads `R.string.overnight_name`). Renaming the mode is these and the strings around them.
+     */
+    const val OVERNIGHT = "Overnight"
+
     /** The modes in the order the picker shows them, from the user deciding everything to Autopilot refusing everything. */
-    val modes = listOf(AutopilotMode.MANUAL, AutopilotMode.AUTO, AutopilotMode.BYPASS, AutopilotMode.LOCKDOWN)
+    val modes = listOf(AutopilotMode.MANUAL, AutopilotMode.AUTO, AutopilotMode.OVERNIGHT, AutopilotMode.BYPASS, AutopilotMode.LOCKDOWN)
+
+    /** The modes that are turned on for a while, after a hold and the owner's check, and stopped like each other. */
+    fun isTimed(mode: AutopilotMode?): Boolean = mode == AutopilotMode.BYPASS || mode == AutopilotMode.OVERNIGHT
 
     /** The bypass lengths offered first, in minutes: 15 min, 1 hour, 1 day (the core allows a minute to a year). */
     val bypassMinutes = listOf(15u, 60u, 1440u)
@@ -48,6 +60,9 @@ object AutopilotText {
     /** What the owner's check says when a bypass is turned on: "Turn on Bypass for every AI" / "for Claude". */
     fun bypassAuthTitle(who: String?): String = "Turn on Bypass for ${who?.let(::untrusted) ?: "every AI"}"
 
+    /** The owner's check before Overnight: "Turn on Overnight for every AI" / "for Claude". */
+    fun overnightAuthTitle(who: String?): String = "Turn on $OVERNIGHT for ${who?.let(::untrusted) ?: "every AI"}"
+
     /** "For 1 hour", "Until you turn it off". */
     fun bypassAuthDetail(minutes: UInt?): String = if (minutes == null) "Until you turn it off" else "For ${lengthLabel(minutes)}"
 
@@ -67,6 +82,7 @@ object AutopilotText {
     fun name(mode: AutopilotMode): String = when (mode) {
         AutopilotMode.MANUAL -> "Manual"
         AutopilotMode.AUTO -> "Auto"
+        AutopilotMode.OVERNIGHT -> OVERNIGHT
         AutopilotMode.BYPASS -> "Bypass"
         AutopilotMode.LOCKDOWN -> "Lockdown"
     }
@@ -75,6 +91,7 @@ object AutopilotText {
     fun line(mode: AutopilotMode): String = when (mode) {
         AutopilotMode.MANUAL -> "Ask, with a hint"
         AutopilotMode.AUTO -> "Decides the easy ones"
+        AutopilotMode.OVERNIGHT -> "Auto while you're away"
         AutopilotMode.BYPASS -> "Approve everything"
         AutopilotMode.LOCKDOWN -> "Deny everything"
     }
@@ -89,15 +106,19 @@ object AutopilotText {
     /** The modes from least to most left to Autopilot: the quick switcher's order, left to right and top to bottom. */
     val byRisk = modes.sortedBy(::autonomy)
 
-    /** Auto decides nothing without the model (requests simply wait); Manual only goes without its hints, and the others never need it. */
-    fun needsModel(mode: AutopilotMode): Boolean = mode == AutopilotMode.AUTO
+    /**
+     * Auto and Overnight (which decides like it) decide nothing without the model (requests simply wait); Manual only
+     * goes without its hints, and the others never need it.
+     */
+    fun needsModel(mode: AutopilotMode): Boolean = mode == AutopilotMode.AUTO || mode == AutopilotMode.OVERNIGHT
 
-    /** How much a mode lets happen without the user: Lockdown least, Bypass most. */
+    /** How much a mode lets happen without the user: Lockdown least, Bypass most, Overnight just under it. */
     fun autonomy(mode: AutopilotMode): Int = when (mode) {
         AutopilotMode.LOCKDOWN -> 0
         AutopilotMode.MANUAL -> 1
         AutopilotMode.AUTO -> 2
-        AutopilotMode.BYPASS -> 3
+        AutopilotMode.OVERNIGHT -> 3
+        AutopilotMode.BYPASS -> 4
     }
 
     /** What switching from [old] to [new] sounds and feels like; null when nothing changes. */
@@ -135,8 +156,11 @@ object AutopilotText {
     }
 
     /** The line under "Bypass" while one runs. */
-    fun bypassLine(until: Long, since: Long?, nowSeconds: Long): String = when {
-        !isUntilOff(until) -> "Approving without asking"
+    fun bypassLine(until: Long, since: Long?, nowSeconds: Long): String = runningLine(AutopilotMode.BYPASS, until, since, nowSeconds)
+
+    /** The line under a timed mode's name while it runs: what it does, or how long it has run without an end. */
+    fun runningLine(mode: AutopilotMode, until: Long, since: Long?, nowSeconds: Long): String = when {
+        !isUntilOff(until) -> if (mode == AutopilotMode.OVERNIGHT) "Deciding while you're away" else "Approving without asking"
         since != null -> "On until you stop it · ${ranFor(since, nowSeconds)}"
         else -> "On until you stop it"
     }
@@ -165,8 +189,8 @@ object AutopilotText {
     }
 
     /**
-     * A bypass that runs anywhere: the global one, or any connection's. [until] is the latest end ([UNTIL_OFF] when
-     * one runs until turned off); [since] when the earliest of them started.
+     * A bypass (or, with [mode] Overnight, an Overnight) that runs anywhere: the global one, or any connection's.
+     * [until] is the latest end ([UNTIL_OFF] when one runs until turned off); [since] when the earliest of them started.
      */
     data class BypassNotice(
         val title: String,
@@ -177,6 +201,7 @@ object AutopilotText {
         val since: Long? = null,
         /** The end of each of them. */
         val ends: List<Long> = listOf(until),
+        val mode: AutopilotMode = AutopilotMode.BYPASS,
     ) {
         val untilOff: Boolean get() = isUntilOff(until)
 
@@ -189,28 +214,129 @@ object AutopilotText {
         settings ?: return null
         val global = settings.bypassUntil?.takeIf { it > nowSeconds }
         val connections = settings.connections.filter { (it.bypassUntil ?: 0) > nowSeconds }
+        return runningNotice(
+            AutopilotMode.BYPASS,
+            global?.let { it to settings.bypassSince },
+            connections.map { Triple(it.connectionId, it.bypassUntil!!, it.bypassSince) },
+            label,
+            nowSeconds,
+            BYPASS_STILL_ASKS,
+        )
+    }
+
+    /**
+     * What the ongoing notification says while an Overnight runs; null when none does. One that is in force only: a
+     * bypass or a lockdown over it shows instead (a global one, until that ends; an AI's own, until it ends).
+     */
+    fun overnightNotice(settings: AutopilotSettings?, label: (String) -> String, nowSeconds: Long): BypassNotice? {
+        settings ?: return null
+        val global = settings.overnightUntil?.takeIf { it > nowSeconds && settings.mode == AutopilotMode.OVERNIGHT }
+        val connections = settings.connections.filter { (it.overnightUntil ?: 0) > nowSeconds && it.mode == AutopilotMode.OVERNIGHT }
+        return runningNotice(
+            AutopilotMode.OVERNIGHT,
+            global?.let { it to settings.overnightSince },
+            connections.map { Triple(it.connectionId, it.overnightUntil!!, it.overnightSince) },
+            label,
+            nowSeconds,
+            overnightStillAsks(settings.overnightWhenRisky),
+        )
+    }
+
+    private fun runningNotice(
+        mode: AutopilotMode,
+        global: Pair<Long, Long?>?,
+        connections: List<Triple<String, Long, Long?>>,
+        label: (String) -> String,
+        nowSeconds: Long,
+        stillAsks: String,
+    ): BypassNotice? {
         if (global == null && connections.isEmpty()) return null
-        val until = (listOfNotNull(global) + connections.mapNotNull { it.bypassUntil }).max()
+        val ends = listOfNotNull(global?.first) + connections.map { it.second }
+        val until = ends.max()
         val who = when {
             global != null -> "every AI"
-            connections.size == 1 -> untrusted(label(connections.single().connectionId))
+            connections.size == 1 -> untrusted(label(connections.single().first))
             else -> "${connections.size} AIs"
         }
         return BypassNotice(
-            title = "Bypass on · ${timeLeft(until, nowSeconds)}",
-            text = "For $who. $BYPASS_STILL_ASKS",
+            title = "${name(mode)} on · ${timeLeft(until, nowSeconds)}",
+            text = "For $who. $stillAsks",
             until = until,
             global = global != null,
-            connectionIds = connections.map { it.connectionId },
-            since = (listOfNotNull(settings.bypassSince.takeIf { global != null }) + connections.mapNotNull { it.bypassSince }).minOrNull(),
-            ends = listOfNotNull(global) + connections.mapNotNull { it.bypassUntil },
+            connectionIds = connections.map { it.first },
+            since = (listOfNotNull(global?.second) + connections.mapNotNull { it.third }).minOrNull(),
+            ends = ends,
+            mode = mode,
         )
     }
+
+    // ---- Overnight ----------------------------------------------------------------------------------------------
+
+    /** The Overnight sheet's question: "Overnight for every AI?" / "Overnight for Claude?". */
+    fun overnightTitle(who: String?): String = "$OVERNIGHT for ${who?.let(::untrusted) ?: "every AI"}?"
+
+    /** What Overnight does, in one line under its title. */
+    fun overnightLine(risky: OvernightRisky): String = when (risky) {
+        OvernightRisky.WAIT -> "Decides like Auto. Too risky waits."
+        OvernightRisky.DENY -> "Decides like Auto. Too risky is denied."
+    }
+
+    /** What still reaches the user while Overnight runs. */
+    fun overnightStillAsks(risky: OvernightRisky): String = when (risky) {
+        OvernightRisky.WAIT -> "Too risky or unclear waits for you."
+        OvernightRisky.DENY -> "Too risky is denied. Unclear waits for you."
+    }
+
+    /**
+     * Behind the (?) of the Overnight sheet. Without a model that rates risk ([ratesRisk] false) Overnight decides like
+     * Auto, and says so.
+     */
+    fun overnightHelp(ratesRisk: Boolean): String = if (ratesRisk) {
+        "$OVERNIGHT decides like Auto, for agents left working. Deletions, force pushes and destructive tools are weighed " +
+            "by their risk instead of always asked. Anything catastrophic, a tripwire, or what this phone can't read for " +
+            "sure is held: it waits for you, or is denied if you chose that. Purchases, secrets, sign-ins and new connections still ask."
+    } else {
+        "Your model doesn't rate risk yet, so $OVERNIGHT decides like Auto: deletions, force pushes and the rest of what " +
+            "Auto always asks still wait for you."
+    }
+
+    /** The setting's question, with [whenRiskyLabel]'s two answers. */
+    const val WHEN_RISKY = "If something is too risky:"
+
+    val whenRiskyChoices = listOf(OvernightRisky.WAIT, OvernightRisky.DENY)
+
+    fun whenRiskyLabel(r: OvernightRisky): String = when (r) {
+        OvernightRisky.WAIT -> "Wait for me"
+        OvernightRisky.DENY -> "Deny it"
+    }
+
+    // ---- risk ---------------------------------------------------------------------------------------------------
+
+    /** A risk level in a word, as the core writes it in its notes ("risk low"). */
+    fun riskWord(level: RiskLevel): String = when (level) {
+        RiskLevel.BENIGN -> "low"
+        RiskLevel.RISKY -> "risky"
+        RiskLevel.SEVERE -> "severe"
+        RiskLevel.CATASTROPHIC -> "catastrophic"
+    }
+
+    /** "Risk: severe · force push" (the why comes from the request, so it is cleaned). */
+    fun riskLine(r: RiskView): String {
+        val why = untrusted(r.why).trim()
+        return "Risk: ${riskWord(r.level)}" + if (why.isEmpty()) "" else " · $why"
+    }
+
+    /** "Held by Overnight" when Overnight held the request (it waited for the user, or was denied). */
+    fun heldLine(r: RiskView): String? = if (r.held) "Held by $OVERNIGHT" else null
+
+    /** A list row shows the risk only when it says something: above low, or held. */
+    fun riskWorthListing(r: RiskView?): Boolean = r != null && (r.held || r.level != RiskLevel.BENIGN)
 
     /** The headline of an automatic decision's notification. */
     fun decisionTitle(d: AutoDecisionView): String {
         val approved = d.verdict == Verdict.APPROVE
         return when (d.decidedBy) {
+            "overnight" -> if (approved) "Approved by $OVERNIGHT" else "Denied by $OVERNIGHT"
             "bypass" -> if (approved) "Approved by Bypass" else "Denied in Bypass"
             "lockdown" -> "Denied by Lockdown"
             "spend limit" -> "Bought within your spend limit"
@@ -221,9 +347,9 @@ object AutopilotText {
     /** "Push to a branch · dkat/reins — Claude Code" (both parts come from outside, so they are cleaned). */
     fun decisionText(d: AutoDecisionView): String = "${untrusted(d.title)} — ${untrusted(d.connectionLabel)}"
 
-    /** "97% sure" for Autopilot's own decisions; bypass and lockdown do not judge. */
+    /** "97% sure" for Autopilot's own decisions (Overnight's too); bypass and lockdown do not judge. */
     fun decisionDetail(d: AutoDecisionView): String? =
-        if (d.decidedBy == "autopilot" && d.confidence > 0f) "${percent(d.confidence)} sure" else null
+        if ((d.decidedBy == "autopilot" || d.decidedBy == "overnight") && d.confidence > 0f) "${percent(d.confidence)} sure" else null
 
     /** The approval screen's line: "Autopilot would approve · 97%". */
     fun suggestionHeadline(s: SuggestionView): String = when {
@@ -265,7 +391,7 @@ object AutopilotText {
         "Approves when ${percent(p.approveAt)} sure, denies when ${percent(p.denyAt)} sure"
 
     /** What "How sure" explains behind its (?). */
-    const val MODE_HELP = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. Bypass approves for a while without asking; Lock down denies everything that would ask."
+    const val MODE_HELP = "Manual: you answer every request; Autopilot only suggests. Auto: Autopilot answers the ones it is sure of and asks you about the rest. $OVERNIGHT is Auto for agents left working: risky requests are weighed, and too risky ones held. Bypass approves for a while without asking; Lock down denies everything that would ask."
 
     const val HOW_SURE_HELP = "How sure Autopilot must be to approve or deny on its own in Auto. Requests that always ask still ask."
 

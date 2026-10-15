@@ -532,10 +532,44 @@ final class AppModel {
         guard let settings = await refreshAutopilot() else { return }
         let now = Int64(Date().timeIntervalSince1970)
         if (settings.bypassUntil ?? 0) > now {
-            try? await core.setAutopilotMode(connectionId: nil, mode: settings.baseMode, minutes: nil)
+            try? await endBypass(nil, in: settings)
         }
         for c in settings.connections where (c.bypassUntil ?? 0) > now {
-            try? await core.setAutopilotMode(connectionId: c.connectionId, mode: c.baseMode, minutes: nil)
+            try? await endBypass(c.connectionId, in: settings)
+        }
+        await refreshAutopilot()
+    }
+
+    /// Ends the bypass of `connectionId` (nil: the global one) and puts back the mode under it. A bypass ended any
+    /// Overnight of its scope when it started (the core returns to the mode that Overnight interrupted), so this never
+    /// lands on Overnight: that only starts again through `startOvernight`, after the owner's check.
+    func endBypass(_ connectionId: String?, in s: AutopilotSettings) async throws {
+        let own = connectionId.flatMap { id in s.connections.first { $0.connectionId == id } }
+        let base = connectionId == nil ? s.baseMode : own?.baseMode
+        let back = base == .overnight ? OvernightReturn.mode(connectionId) : base
+        try await core.setAutopilotMode(connectionId: connectionId, mode: back, minutes: nil)
+    }
+
+    /// The owner's check the core asks for itself before starting Overnight, changing its length or what it does with
+    /// what is too risky: the same check as a bypass's.
+    var ownerCheck: OwnerCheck { AuthenticatorOwnerCheck(authenticator) }
+
+    /// Stops the Overnight of `connectionId` (nil: every AI's): back to the mode it interrupted. Setting that mode ends
+    /// a bypass of the same scope too, which only ever makes Autopilot stricter.
+    func endOvernight(_ connectionId: String?) async throws {
+        try await core.setAutopilotMode(connectionId: connectionId, mode: OvernightReturn.mode(connectionId), minutes: nil)
+        OvernightReturn.forget(connectionId)
+    }
+
+    /// Stops every Overnight now (the Live Activity's Stop, Siri): each goes back to the mode it interrupted.
+    func stopOvernights() async {
+        guard let settings = await refreshAutopilot() else { return }
+        let now = Int64(Date().timeIntervalSince1970)
+        if (settings.overnightUntil ?? 0) > now {
+            try? await endOvernight(nil)
+        }
+        for c in settings.connections where (c.overnightUntil ?? 0) > now {
+            try? await endOvernight(c.connectionId)
         }
         await refreshAutopilot()
     }
@@ -935,6 +969,7 @@ final class AppModel {
             s.bypassUntil = a.bypassUntil
             s.baseMode = a.baseMode.key
             s.anyBypassUntil = a.lastBypassEnd
+            s.overnightUntil = a.overnightUntil
         }
         s.activeGrants = activeGrants
         // What this process wrote last, while it is still what is stored (the notification extension writes it too):
@@ -992,20 +1027,14 @@ extension AutopilotMode {
         switch self {
         case .manual: "manual"
         case .auto: "auto"
+        case .overnight: "overnight"
         case .bypass: "bypass"
         case .lockdown: "lockdown"
         }
     }
 
-    /// Manual < Auto < Bypass; Lockdown is the least autonomous.
-    var autonomy: Int {
-        switch self {
-        case .lockdown: 0
-        case .manual: 1
-        case .auto: 2
-        case .bypass: 3
-        }
-    }
+    /// Manual < Auto < Overnight < Bypass; Lockdown is the least autonomous.
+    var autonomy: Int { AutopilotText.autonomy(self) }
 }
 
 extension PendingItem {

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Autopilot: the mode (Manual or Auto, with Bypass and Lock down at hand), this week in numbers, the model that runs
+/// Autopilot: the mode (Manual or Auto, with Overnight, Bypass and Lock down at hand), this week in numbers, the model that runs
 /// on this phone, "Try it", and the profiles that learn from the user's answers. The Autopilot section's root
 /// (`root`), and also pushed from Activity's mode pill and Settings.
 struct AutopilotScreen: View {
@@ -10,6 +10,7 @@ struct AutopilotScreen: View {
     @Environment(\.feedback) private var feedback
     @State private var ap = AutopilotModel()
     @State private var bypassAsk = false
+    @State private var overnightAsk = false
     @State private var mobileDataAsk = false
     @State private var modelOpen = false
     @State private var newProfile = false
@@ -46,6 +47,14 @@ struct AutopilotScreen: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(bypassAsk)
+        .sheet(isPresented: $overnightAsk) {
+            OvernightSheet(who: nil, ap: ap) { length in
+                feedback.quietClose()
+                Task { await ap.startOvernight(minutes: length.minutes) }
+            }
+            .environment(\.feedback, feedback)
+        }
+        .presentationFeedback(overnightAsk)
         .sheet(isPresented: $modelOpen) {
             ModelSheet(ap: ap)
                 .environment(\.feedback, feedback)
@@ -88,9 +97,12 @@ struct AutopilotScreen: View {
                     modelReady: ap.modelReady,
                     onPick: { pick($0, s) },
                     onBypass: { bypassAsk = true },
+                    onOvernight: { overnightAsk = true },
                     onLockdown: { Task { await ap.setMode(.lockdown) } },
                     onEndLockdown: { Task { await ap.endLockdown() } },
-                    onStopBypass: { Task { await ap.stopBypass() } }
+                    onStopBypass: { Task { await ap.stopBypass() } },
+                    onStopOvernight: { Task { await ap.stopOvernight() } },
+                    onWhenRisky: { risky in Task { await ap.setOvernightWhenRisky(risky) } }
                 )
             }
             .padding(.top, -8)
@@ -150,10 +162,11 @@ struct AutopilotScreen: View {
                 }
             }
         }
-        .task(id: s.bypassUntil) {
-            // The core ends a bypass when it is read after its time; read it then, so the screen moves on by itself.
-            // One without an end waits for the user.
-            guard let until = s.bypassUntil, !AutopilotText.isUntilOff(until) else { return }
+        .task(id: [s.bypassUntil, s.overnightUntil]) {
+            // The core ends a bypass or an Overnight when it is read after its time; read it then, so the screen moves
+            // on by itself. One without an end waits for the user.
+            let ends = [s.bypassUntil, s.overnightUntil].compactMap { $0 }.filter { !AutopilotText.isUntilOff($0) }
+            guard let until = ends.min() else { return }
             let left = Double(until) - Date().timeIntervalSince1970
             try? await Task.sleep(for: .seconds(max(left, 0) + 1))
             if !Task.isCancelled { await model.refreshAutopilot() }
@@ -173,26 +186,30 @@ struct AutopilotScreen: View {
     }
 }
 
-/// The mode, large. Manual and Auto side by side (the chosen one tinted), Bypass and Lock down under them; amber in
-/// Lockdown, where neither is chosen and the second button ends it. During a bypass: red, its ring, what it does and
-/// Stop bypass.
+/// The mode, large. Manual and Auto side by side (the chosen one tinted), then Overnight, then Bypass and Lock down;
+/// amber in Lockdown, where neither is chosen and the last button ends it. During a bypass: red, its ring, what it
+/// does and Stop bypass; during an Overnight the same in night indigo, with what it does with what is too risky.
 private struct ModeHero: View {
     var settings: AutopilotSettings
     var modelReady: Bool
     var onPick: (AutopilotMode) -> Void
     var onBypass: () -> Void
+    var onOvernight: () -> Void
     var onLockdown: () -> Void
     var onEndLockdown: () -> Void
     var onStopBypass: () -> Void
+    var onStopOvernight: () -> Void
+    var onWhenRisky: (OvernightRisky) -> Void
     @Environment(\.colorScheme) private var scheme
     @Environment(\.feedback) private var feedback
 
     private var mode: AutopilotMode { settings.mode }
 
-    /// The colour the whole card takes on: red in a bypass, amber in Lockdown.
+    /// The colour the whole card takes on: red in a bypass, night indigo in an Overnight, amber in Lockdown.
     private var wash: Color? {
         switch mode {
         case .bypass: Palette.danger
+        case .overnight: settings.overnightUntil != nil ? Palette.overnight : nil
         case .lockdown: Palette.warning
         default: nil
         }
@@ -202,6 +219,8 @@ private struct ModeHero: View {
         Group {
             if mode == .bypass, let until = settings.bypassUntil {
                 bypass(until: until)
+            } else if mode == .overnight, let until = settings.overnightUntil {
+                overnight(until: until)
             } else {
                 choices
             }
@@ -235,6 +254,13 @@ private struct ModeHero: View {
             HStack(spacing: 8) {
                 ModeCard(mode: .manual, selected: mode == .manual, dimmed: false) { onPick(.manual) }
                 ModeCard(mode: .auto, selected: mode == .auto, dimmed: !modelReady) { onPick(.auto) }
+            }
+            HeroButton(
+                title: AutopilotText.overnightName, symbol: AutopilotText.overnightSymbol, fill: Palette.overnight.opacity(0.13),
+                text: Palette.overnight, identifier: "mode:overnight"
+            ) {
+                feedback.play(.tap)
+                onOvernight()
             }
             HStack(spacing: 8) {
                 HeroButton(title: "Bypass", symbol: "bolt.fill", fill: Palette.danger.opacity(0.12), text: Palette.danger, identifier: "mode:bypass") {
@@ -280,6 +306,43 @@ private struct ModeHero: View {
             }
             .buttonStyle(PressDim())
             .accessibilityIdentifier("stopBypass")
+        }
+    }
+
+    private func overnight(until: Int64) -> some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 16) {
+                BypassRing(
+                    until: until, since: settings.overnightSince, size: 76, tint: Palette.overnight,
+                    name: AutopilotText.overnightName, identifier: "overnightClock"
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(AutopilotText.overnightName)
+                        .font(RFont.sans(22, .semibold))
+                        .foregroundStyle(Palette.overnight)
+                        .accessibilityIdentifier("heroMode")
+                    LiveClock(interval: AutopilotText.isUntilOff(until) ? 30 : 60) { now in
+                        Text(AutopilotText.overnightLine(until: until, since: settings.overnightSince, now: Int64(now)))
+                            .font(RFont.sans(13.5))
+                            .foregroundStyle(Palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("overnightLine")
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            WhenRiskyPicker(selected: settings.overnightWhenRisky, onPick: onWhenRisky)
+            // Words only, as a bypass is stopped.
+            Button(action: onStopOvernight) {
+                Text("Stop \(AutopilotText.overnightName)")
+                    .font(RFont.sans(16, .semibold))
+                    .foregroundStyle(Palette.dynamic(0xFFFFFF, 0x0E1033))
+                    .frame(maxWidth: .infinity, minHeight: 46)
+                    .background(Palette.overnight, in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(PressDim())
+            .accessibilityIdentifier("stopOvernight")
         }
     }
 }
@@ -340,7 +403,7 @@ private struct ModeCard: View {
     }
 }
 
-/// Bypass, Lock down and End lockdown: a pill in its colour.
+/// Overnight, Bypass, Lock down and End lockdown: a pill in its colour.
 private struct HeroButton: View {
     var title: String
     var symbol: String

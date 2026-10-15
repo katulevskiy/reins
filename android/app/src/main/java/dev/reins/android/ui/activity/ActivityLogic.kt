@@ -309,9 +309,10 @@ fun historyParts(entry: ActivityEntry): Sentence {
 }
 
 /** How an entry ended, as the marker at the end of its row. */
-enum class Outcome { Approved, Denied, Auto, AutoDenied, Grant, Bypass, Lockdown, Failed }
+enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Bypass, Lockdown, Failed }
 
 fun outcomeOf(entry: ActivityEntry): Outcome = when {
+    entry.decidedBy == "overnight" -> if (entry.outcome == "denied") Outcome.OvernightDenied else Outcome.Overnight
     entry.decidedBy == "bypass" -> Outcome.Bypass
     entry.decidedBy == "lockdown" -> Outcome.Lockdown
     entry.decidedBy.isNotEmpty() -> if (entry.outcome == "denied") Outcome.AutoDenied else Outcome.Auto
@@ -374,6 +375,7 @@ fun outcomeLine(entry: ActivityEntry): String {
             val p = note?.let { if (denied) it.pDeny else it.pApprove }?.takeIf { it > 0f }
             (if (denied) "Denied by Autopilot" else "Allowed by Autopilot") + (p?.let { " · ${Math.round(it * 100)}%" } ?: "")
         }
+        "overnight" -> if (denied) "Denied by ${dev.reins.android.autopilot.AutopilotText.OVERNIGHT}" else "Allowed by ${dev.reins.android.autopilot.AutopilotText.OVERNIGHT}"
         "bypass" -> "Allowed during a bypass"
         "lockdown" -> "Denied by Lockdown"
         else -> when {
