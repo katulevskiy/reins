@@ -3,15 +3,12 @@
 //! kind tiles, switches, pills, segmented controls, the (?) and its bubble, rings that count down, and the "stage"
 //! (who → what) of a request. Icons are the Signal glyphs, logos the brands' own marks ([`super::icons`]).
 
-use std::sync::{Arc, LazyLock};
-
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, Div, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, Image, ImageFormat,
-    InteractiveElement as _, IntoElement, ParentElement, PathBuilder, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, StyledText, anchored, canvas, deferred, div, img, point, px,
+    AnyElement, Context, Div, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement as _,
+    IntoElement, ParentElement, PathBuilder, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
+    StyledText, anchored, canvas, deferred, div, point, px,
 };
-use reins_desktop::doctor::Level;
 
 use super::icons::{Icon, Mark, avatar, icon};
 use super::story::Words;
@@ -19,17 +16,7 @@ use super::{Data, Root};
 use crate::model::Step;
 use crate::theme::text::tracked;
 use crate::theme::{MONO, Palette, SERIF, SignalText as _, Tone, motion};
-use crate::tray::Look;
 use crate::welcome::Stage;
-
-static MARK: LazyLock<Arc<Image>> = LazyLock::new(|| {
-    Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../../assets/icons/app-256.png").to_vec()))
-});
-
-/// The Reins mark (the app icon).
-pub fn mark(side: f32) -> impl IntoElement {
-    img(MARK.clone()).size(px(side)).flex_none()
-}
 
 /// "this Mac", "this computer": what the window calls the computer it runs on.
 #[must_use]
@@ -39,11 +26,6 @@ pub fn this_computer() -> &'static str {
     } else {
         "this computer"
     }
-}
-
-/// A check mark.
-pub fn check(side: f32, color: Hsla) -> impl IntoElement {
-    icon(Icon::Check, side, color)
 }
 
 /// A check in a soft circle of `color`: something went well.
@@ -212,27 +194,6 @@ pub fn page_header(title: &'static str, help: Option<Stateful<Div>>) -> Div {
         .when_some(help, ParentElement::child)
 }
 
-/// A block's label ("LATEST"): mono capitals, tracked, `ink-meta`; with room after it for a link.
-pub fn group_title(title: &str, pal: Palette) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(8.0))
-        .px(px(4.0))
-        .h(px(18.0))
-        .child(div().flex_1().min_w(px(0.0)).child(tracked(title.to_owned()).text_color(pal.ink_meta())))
-}
-
-/// A titled block of a page: its small capitals title (and a (?) about it), then `body` (usually a card).
-pub fn group(title: &str, help: Option<Stateful<Div>>, body: impl IntoElement, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(8.0))
-        .child(group_title(title, pal).when_some(help, ParentElement::child))
-        .child(body)
-}
-
 /// What a button looks like (Signal's looks: [`super::kit::Look`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Btn {
@@ -242,8 +203,6 @@ pub enum Btn {
     Accent,
     /// `inverse`: continue, resume, confirm.
     Primary,
-    /// Red on `danger-wash`: end, disconnect.
-    Danger,
 }
 
 impl Btn {
@@ -254,7 +213,6 @@ impl Btn {
             Self::Plain => super::kit::Look::Soft,
             Self::Accent => super::kit::Look::Violet,
             Self::Primary => super::kit::Look::Inverse,
-            Self::Danger => super::kit::Look::DangerWash,
         }
     }
 }
@@ -297,31 +255,6 @@ pub fn btn_icon(
 ) -> Stateful<Div> {
     let (b, fg) = btn_frame(id, look, pal);
     b.child(icon(i, 14.0, fg)).child(label.into())
-}
-
-/// A button: violet when `primary`, grey otherwise; faded and inert when not `enabled`.
-pub fn button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    pal: Palette,
-    primary: bool,
-    enabled: bool,
-) -> Stateful<Div> {
-    let b = btn(
-        id,
-        label,
-        if primary {
-            Btn::Accent
-        } else {
-            Btn::Plain
-        },
-        pal,
-    );
-    if enabled {
-        b
-    } else {
-        super::kit::disabled(b)
-    }
 }
 
 /// A smaller [`btn`], for tiles and chips' rows.
@@ -395,17 +328,6 @@ pub fn toggle(on: bool, pal: Palette) -> Div {
         .child(knob)
 }
 
-/// What Reins is doing, as a colour (as the shield says it): green on, violet waiting, red paused (the desktop's
-/// bypass), amber when it needs you.
-pub fn look_color(look: Look, pal: Palette) -> Hsla {
-    match look {
-        Look::On => pal.success,
-        Look::Paused => pal.danger,
-        Look::Waiting => pal.violet(),
-        Look::Attention => pal.warning,
-    }
-}
-
 /// A dot that breathes (35% to 100%, still under Reduce Motion): something waits.
 pub fn waiting_dot(id: impl Into<ElementId>, color: Hsla, side: f32) -> impl IntoElement {
     motion::breathe(div().flex_none().size(px(side)).rounded_full().bg(color), id)
@@ -414,11 +336,6 @@ pub fn waiting_dot(id: impl Into<ElementId>, color: Hsla, side: f32) -> impl Int
 /// A chip: an icon and a few words, tinted with `color`.
 pub fn chip(i: Option<Icon>, label: impl Into<SharedString>, color: Hsla) -> Div {
     chip_frame(i.is_some(), color).when_some(i, |c, i| c.child(icon(i, 13.0, color))).child(label.into())
-}
-
-/// A chip with something else before its words (a ring).
-pub fn chip_lead(lead: impl IntoElement, label: impl Into<SharedString>, color: Hsla) -> Div {
-    chip_frame(true, color).child(lead).child(label.into())
 }
 
 fn chip_frame(lead: bool, color: Hsla) -> Div {
@@ -445,92 +362,6 @@ fn chip_frame(lead: bool, color: Hsla) -> Div {
 /// A grey chip ("Asks next time", "By your rules").
 pub fn chip_plain(i: Option<Icon>, label: impl Into<SharedString>, pal: Palette) -> Div {
     chip(i, label, pal.ink_2()).bg(pal.paper_sunken())
-}
-
-/// A filter's choice: its label, how many, selected or not.
-pub fn filter_chip(
-    id: impl Into<ElementId>,
-    label: &str,
-    count: Option<usize>,
-    selected: bool,
-    pal: Palette,
-) -> Stateful<Div> {
-    div()
-        .id(id.into())
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(6.0))
-        .h(px(26.0))
-        .px(px(10.0))
-        .rounded_full()
-        .text_size(px(12.0))
-        .font_weight(FontWeight::MEDIUM)
-        .cursor_pointer()
-        .active(|s| s.opacity(super::kit::button::PRESSED))
-        .when_else(
-            selected,
-            |c| c.bg(pal.inverse()).text_color(pal.on_inverse()),
-            |c| {
-                c.bg(pal.paper_raised())
-                    .border_1()
-                    .border_color(pal.rule())
-                    .text_color(pal.ink_2())
-                    .hover(|s| s.text_color(pal.ink()))
-            },
-        )
-        .child(label.to_owned())
-        .when_some(count, |c, n| {
-            c.child(
-                div()
-                    .text_size(px(11.0))
-                    .opacity(if n == 0 {
-                        0.5
-                    } else {
-                        0.8
-                    })
-                    .child(n.to_string()),
-            )
-        })
-}
-
-/// The track of a segmented control: a `paper-sunken` pill.
-pub fn segmented(pal: Palette) -> Div {
-    div().flex().flex_none().items_center().p(px(3.0)).gap(px(2.0)).rounded_full().bg(pal.paper_sunken())
-}
-
-/// One choice of a segmented control, without its label (for one with an icon too).
-pub fn segment_frame(id: impl Into<ElementId>, selected: bool, pal: Palette) -> Stateful<Div> {
-    div()
-        .id(id.into())
-        .flex()
-        .flex_1()
-        .items_center()
-        .justify_center()
-        .gap(px(4.0))
-        .h(px(30.0))
-        .px(px(10.0))
-        .rounded_full()
-        .text_size(px(13.0))
-        .font_weight(FontWeight::MEDIUM)
-        .whitespace_nowrap()
-        .cursor_pointer()
-        .active(|s| s.opacity(super::kit::button::PRESSED))
-        .when_else(
-            selected,
-            |s| s.bg(pal.paper_raised()).border_1().border_color(pal.rule()).text_color(pal.ink()).shadow_xs(),
-            |s| s.text_color(pal.ink_2()).hover(|h| h.text_color(pal.ink())),
-        )
-}
-
-/// One choice of a segmented control.
-pub fn segment(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    selected: bool,
-    pal: Palette,
-) -> Stateful<Div> {
-    segment_frame(id, selected, pal).child(label.into())
 }
 
 /// A ring that shows how much is left: `fraction` of it in `color`, the rest a faint track. Starts at the top and
@@ -654,6 +485,177 @@ pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
     StyledText::new(text).with_highlights(highlights)
 }
 
+/// Words with the important ones in italic and nothing else changed (the colour is the caller's: white on a field).
+pub fn italic(words: &[Words]) -> StyledText {
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+    for w in words {
+        let start = text.len();
+        text.push_str(&w.text);
+        if w.bold {
+            highlights.push((
+                start..text.len(),
+                HighlightStyle {
+                    font_style: Some(FontStyle::Italic),
+                    ..HighlightStyle::default()
+                },
+            ));
+        }
+    }
+    StyledText::new(text).with_highlights(highlights)
+}
+
+/// The quiet line under a page's title: serif italic 21 in `ink-2` (the desktop boards' size).
+pub fn mood(text: impl Into<SharedString>, pal: Palette) -> Div {
+    div()
+        .mt(px(8.0))
+        .font_family(SERIF)
+        .text_size(px(21.0))
+        .line_height(px(26.0))
+        .italic()
+        .text_color(pal.ink_2())
+        .child(text.into())
+}
+
+/// A page's title (serif 44, `words` with the italic ones in italic) and the mood line under it; `right` beside them,
+/// at the bottom (a button).
+pub fn page_title(words: &[Words], line: Option<&str>, right: Option<AnyElement>, pal: Palette) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .items_end()
+        .gap(px(16.0))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w(px(260.0))
+                .child(div().title().text_color(pal.ink()).child(italic(words)))
+                .when_some(line, |c, l| c.child(mood(l.to_owned(), pal))),
+        )
+        .when_some(right, ParentElement::child)
+}
+
+/// A row of a page's list (the desktop boards' `.row`): 54 px at least, a hairline under it but the last. Rows divide
+/// lists; they are never cards.
+pub fn list_row(pal: Palette, last: bool) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(12.0))
+        .min_h(px(54.0))
+        .py(px(6.0))
+        .min_w(px(0.0))
+        .text_size(px(14.0))
+        .when(!last, |r| r.border_b_1().border_color(pal.rule()))
+}
+
+/// A row's title (14.5, 500) and its meta line (12.5, `ink-meta`) under it.
+pub fn title_meta(title: impl IntoElement, meta: Option<AnyElement>, pal: Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_w(px(0.0))
+        .child(
+            div()
+                .min_w(px(0.0))
+                .truncate()
+                .text_size(px(14.5))
+                .line_height(px(19.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(pal.ink())
+                .child(title),
+        )
+        .when_some(meta, |c, m| {
+            c.child(
+                div()
+                    .min_w(px(0.0))
+                    .truncate()
+                    .text_size(px(12.5))
+                    .line_height(px(17.0))
+                    .text_color(pal.ink_meta())
+                    .child(m),
+            )
+        })
+}
+
+/// A mono line (a path, a vault reference, a SHA) as a row's title or meta.
+pub fn mono(text: impl Into<SharedString>, size: f32) -> Div {
+    div().min_w(px(0.0)).truncate().font_family(MONO).text_size(px(size)).child(text.into())
+}
+
+/// A section of a page: its label (and a (?) about it), then `body` 4 px under.
+pub fn section(label: &str, help: Option<Stateful<Div>>, body: impl IntoElement, pal: Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .h(px(22.0))
+                .child(tracked(label.to_owned()).text_color(pal.ink_meta()))
+                .when_some(help, ParentElement::child),
+        )
+        .child(div().mt(px(2.0)).child(body))
+}
+
+/// Two columns 40 px apart while each has 380 px, else one under the other (the boards' `auto-fit` grids).
+pub fn columns(left: Div, right: Div, min: f32) -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .items_start()
+        .gap(px(40.0))
+        .child(left.flex_1().min_w(px(min)))
+        .child(right.flex_1().min_w(px(min)))
+}
+
+/// The facts of a request as hairline rows: the key in `ink-2` (`key_width` wide, or pushing the value right), the
+/// value in `ink`, mono for the machine's.
+pub fn fact_rows(rows: &[super::story::Fact], min_h: f32, key_width: Option<f32>, pal: Palette) -> Div {
+    let mut list = div().flex().flex_col();
+    for (i, f) in rows.iter().enumerate() {
+        let key = div().flex_none().text_color(pal.ink_2()).child(f.key.clone());
+        let key = match key_width {
+            Some(w) => key.w(px(w)),
+            None => key.flex_1(),
+        };
+        let value = div()
+            .min_w(px(0.0))
+            .text_color(pal.ink())
+            .when_else(
+                f.mono,
+                |v| v.font_family(MONO).text_size(px(13.0)),
+                |v| {
+                    v.text_size(if key_width.is_some() {
+                        px(14.0)
+                    } else {
+                        px(13.5)
+                    })
+                },
+            )
+            .when(key_width.is_some(), gpui::Styled::flex_1)
+            .child(f.value.clone());
+        list = list.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .min_h(px(min_h))
+                .py(px(6.0))
+                .text_size(px(14.0))
+                .when(i + 1 < rows.len() || key_width.is_some(), |r| r.border_b_1().border_color(pal.rule()))
+                .child(key)
+                .child(value),
+        );
+    }
+    list
+}
+
 /// A block of mono text in a well (a request's detail, a code sample).
 pub fn well(pal: Palette) -> Div {
     div()
@@ -674,13 +676,6 @@ pub fn well(pal: Palette) -> Div {
         .overflow_hidden()
 }
 
-/// A label on the left, its value on the right.
-pub fn info_row(label: &str, value: impl IntoElement, pal: Palette, first: bool) -> Div {
-    row(pal, first)
-        .child(div().flex_1().text_color(pal.ink_2()).child(label.to_owned()))
-        .child(div().min_w(px(0.0)).flex().justify_end().text_color(pal.ink()).child(value))
-}
-
 /// A note that something needs doing first.
 pub fn warning(text: impl Into<SharedString>, pal: Palette) -> Div {
     card(pal)
@@ -695,34 +690,9 @@ pub fn warning(text: impl Into<SharedString>, pal: Palette) -> Div {
         .child(caption(text, pal).text_color(pal.ink()).flex_1().min_w(px(0.0)))
 }
 
-/// Lines of code to copy, in a well.
-pub fn code_block(lines: &[String], pal: Palette) -> Div {
-    let mut block = well(pal).text_size(px(12.0)).line_height(px(18.0));
-    for line in lines {
-        block = block.child(div().whitespace_nowrap().child(line.clone()));
-    }
-    block
-}
-
 /// What a card says while it has nothing to show.
 pub fn empty(text: impl Into<SharedString>, pal: Palette) -> Div {
     div().px(px(14.0)).py(px(16.0)).child(caption(text, pal).text_color(pal.ink_meta()))
-}
-
-/// A small mono tag (`vault:OpenAI/api key`).
-pub fn tag(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div()
-        .flex_none()
-        .px(px(7.0))
-        .py(px(1.0))
-        .rounded(px(6.0))
-        .bg(pal.paper_sunken())
-        .font_family(MONO)
-        .text_size(px(11.5))
-        .line_height(px(17.0))
-        .text_color(pal.ink_2())
-        .whitespace_nowrap()
-        .child(text.into())
 }
 
 /// A step of "Turn on Reins" as it goes: a breathing dot, a check, or a cross, and what happened.
@@ -763,27 +733,6 @@ pub fn phone_qr(pal: Palette) -> Div {
                 .child(icon(Icon::Smartphone, 16.0, pal.ink_2()))
                 .child(caption("Scan to open Activity on your phone", pal)),
         )
-}
-
-/// The colour of a health check's level.
-pub fn level_color(level: Level, pal: Palette) -> Hsla {
-    match level {
-        Level::Ok => pal.success,
-        Level::Warn => pal.warning,
-        Level::Fail => pal.danger,
-        Level::Skip => pal.ink_meta(),
-    }
-}
-
-/// A check's level as an icon in a soft square of its colour.
-pub fn level_mark(level: Level, side: f32, pal: Palette) -> Div {
-    let i = match level {
-        Level::Ok => Icon::CircleCheck,
-        Level::Warn => Icon::TriangleAlert,
-        Level::Fail => Icon::CircleX,
-        Level::Skip => Icon::CircleAlert,
-    };
-    tile(i, level_color(level, pal), side)
 }
 
 /// The welcome flow's steps: "1 Pair — 2 AI tools — 3 Turn on — Done", the ones behind ticked.
@@ -861,58 +810,4 @@ pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette)
                 .child(sentence(words, pal)),
         )
         .when_some(help, ParentElement::child)
-}
-
-/// A card's empty state: an icon in a soft square and a title (with a (?) about it); the caller adds an action.
-pub fn empty_state(i: Icon, title: impl Into<SharedString>, help: Option<Stateful<Div>>, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(10.0))
-        .px(px(28.0))
-        .py(px(24.0))
-        .child(tone_tile(i, Tone::Neutral, pal, 40.0))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(4.0))
-                .child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).text_center().child(title.into()))
-                .when_some(help, ParentElement::child),
-        )
-}
-
-/// A key on the keyboard ("Ctrl+1").
-pub fn kbd(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div()
-        .flex_none()
-        .font_family(MONO)
-        .text_size(px(12.0))
-        .text_color(pal.ink_2())
-        .whitespace_nowrap()
-        .child(text.into())
-}
-
-/// A tile on Home: a plate with its label (mono capitals, tracked), a value, and a line or an action under it.
-pub fn stat(i: Icon, color: Hsla, label: &str, pal: Palette) -> Div {
-    let _ = (i, color);
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w(px(0.0))
-        .gap(px(3.0))
-        .px(px(20.0))
-        .py(px(18.0))
-        .rounded(px(20.0))
-        .bg(pal.paper_raised())
-        .border_1()
-        .border_color(pal.rule())
-        .child(tracked(label.to_owned()).text_color(pal.ink_meta()))
-}
-
-/// A popover's frame: a menu's paper ([`super::kit::menu`]), with room inside.
-pub fn popover(pal: Palette) -> Div {
-    super::kit::menu(pal).w_auto().p(px(14.0))
 }

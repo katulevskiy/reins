@@ -207,25 +207,24 @@ impl Root {
             .track_focus(&focus)
             .flex_1()
             .min_w(px(0.0))
-            .h(px(34.0))
-            .px(px(11.0))
+            // The boards' input: 38 px, 12 px corners, paper with a hairline (violet while focused).
+            .h(px(38.0))
+            .px(px(12.0))
             .flex()
             .items_center()
             .overflow_hidden()
-            .rounded(px(9.0))
-            .bg(pal.paper_sunken())
+            .rounded(px(12.0))
+            .bg(pal.paper())
             .border_1()
             .border_color(if focused {
                 pal.violet()
-            } else if pal.dark {
-                pal.rule().opacity(0.8)
             } else {
                 pal.rule()
             })
             .font_family(MONO)
             .text_size(px(12.5))
             .text_color(if input.is_empty() && !focused {
-                pal.ink_meta()
+                pal.ink_faint()
             } else {
                 pal.ink()
             })
