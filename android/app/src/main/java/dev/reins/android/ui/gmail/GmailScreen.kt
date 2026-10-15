@@ -131,23 +131,15 @@ private fun AccountRow(account: AccountView, status: GmailStatus?, busy: Boolean
             when (status) {
                 null -> RText("Checking…", RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp))
                 GmailStatus.Ready -> RText("Connected", RType.sans(13f, FontWeight.Medium), c.success, Modifier.padding(top = 2.dp))
-                GmailStatus.NeedsConsent -> RText(
-                    "Needs your permission again",
-                    RType.sans(13f, FontWeight.Medium),
-                    c.warning,
-                    Modifier.padding(top = 2.dp),
+                // Google's sign-in expired or was revoked (as on iOS); "Allow again" is only the button beside it.
+                GmailStatus.NeedsConsent -> dev.reins.android.ui.services.ConsentLine(
+                    dev.reins.android.ui.services.needsAgain("google"),
+                    account.account,
+                    canAllow = true,
+                    busy = busy,
+                    onAllow = onReconnect,
                 )
                 is GmailStatus.Unavailable -> RText(untrusted(status.message), RType.sans(13f), c.danger, Modifier.padding(top = 2.dp), maxLines = 3)
-            }
-            if (status == GmailStatus.NeedsConsent) {
-                CapsuleButton(
-                    "Allow again",
-                    Modifier.padding(top = 8.dp).testTag("reconnect:${account.account}"),
-                    style = ButtonStyle.Secondary,
-                    compact = true,
-                    enabled = !busy,
-                    onClick = onReconnect,
-                )
             }
         }
         Spacer(Modifier.width(8.dp))
