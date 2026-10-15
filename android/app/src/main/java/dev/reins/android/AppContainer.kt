@@ -213,8 +213,34 @@ class AppContainer(private val context: Context) {
         }
         state.markSessionChecked()
         if (info != null && !state.keysLocked.value) {
+            refreshSyncNotice()
             refreshPending()
             refreshConnections()
+        }
+    }
+
+    /** The core's sync notice, if any (a banner on Activity). One already shown stays until it is dismissed. */
+    suspend fun refreshSyncNotice() {
+        val epoch = state.accountEpoch.value
+        val notice = try {
+            core.accountSyncNotice()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (notice != null && state.isCurrent(epoch)) state.setSyncNotice(notice)
+    }
+
+    /** The sync banner's OK. */
+    suspend fun dismissSyncNotice() {
+        state.setSyncNotice(null)
+        try {
+            core.dismissAccountSyncNotice()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Shown again at the next start at most.
         }
     }
 

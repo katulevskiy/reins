@@ -218,9 +218,19 @@ async fn alice(server: &MockServer, dir: &std::path::Path) -> Arc<ReinsCore> {
     app
 }
 
+/// The accounts with encrypted data on this phone (each also keeps sealed side files: its sync base and backup).
 fn sealed_accounts(dir: &std::path::Path) -> usize {
-    std::fs::read_dir(dir.join("accounts"))
-        .map_or(0, |d| d.filter(|e| e.as_ref().unwrap().path().extension().is_some_and(|x| x == "sealed")).count())
+    sealed_files(dir).iter().filter(|name| !name.contains(".sync-")).count()
+}
+fn sealed_files(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(dir.join("accounts")).map_or_else(
+        |_| Vec::new(),
+        |d| {
+            d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".sealed"))
+                .collect()
+        },
+    )
 }
 
 async fn uploads(server: &MockServer) -> usize {
@@ -258,7 +268,7 @@ async fn deleting_the_account_refreshes_an_old_token_then_signs_out_and_forgets_
     assert_ne!(tokens[0], tokens[1], "the second attempt carries a newly issued token");
     assert!(app.session().await.is_none());
     assert_eq!(old.register_account("github", "late").unwrap_err(), CoreError::NotLoggedIn);
-    assert_eq!(sealed_accounts(dir.path()), 0, "the encrypted account file is gone");
+    assert_eq!(sealed_files(dir.path()), Vec::<String>::new(), "the encrypted account file and its sync base are gone");
     assert_eq!(app.accounts().await.unwrap().len(), 0);
     assert_eq!(uploads(&server).await, uploaded, "nothing is uploaded for a deleted account");
 }

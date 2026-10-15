@@ -180,7 +180,13 @@ impl AccountRuntime {
         if !Arc::ptr_eq(&previous, &engine) {
             previous.retire()?;
         }
-        engine.restore_account_state().await?;
+        // Sync never keeps the account closed: the phone opens with its own data (merged with the other phones' when
+        // the server can be read), and what is left is retried by the next upload or sign-in.
+        match engine.restore_account_state().await {
+            Err(CoreError::NotLoggedIn) => return Err(CoreError::NotLoggedIn),
+            Err(e) => log::warn!("account sync at sign-in did not finish; the phone opens with its own data: {e}"),
+            Ok(()) => {}
+        }
         engine.keep_vault_key(&email, key)?;
         Ok(engine)
     }
@@ -398,7 +404,17 @@ impl AccountRuntime {
         self.control.secret_delete(SECRET_CACHE, &owner.id())?;
         self.control.secret_delete(sso::SECRET_SERVICE, &owner.user_id)?;
         let sealed = self.directory.join("accounts").join(format!("{}.sealed", owner.id()));
-        for path in [sealed.with_extension("tmp"), sealed.clone(), sealed.with_extension("lock")] {
+        let side = |name: &str| sealed.with_extension(format!("{name}.sealed"));
+        let side_tmp = |name: &str| sealed.with_extension(format!("{name}.tmp"));
+        for path in [
+            sealed.with_extension("tmp"),
+            sealed.clone(),
+            sealed.with_extension("lock"),
+            side("sync-base"),
+            side_tmp("sync-base"),
+            side("sync-backup"),
+            side_tmp("sync-backup"),
+        ] {
             match std::fs::remove_file(&path) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                     return Err(CoreError::storage("cannot remove the account's data"));

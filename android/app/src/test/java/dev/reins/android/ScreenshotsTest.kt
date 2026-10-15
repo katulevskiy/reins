@@ -1972,6 +1972,20 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("sg-03-activity-quiet-warn")
     }
 
+    /** #101's sync notice on Activity, the Signal way: a soft row with the sync glyph and OK. */
+    @Test
+    fun sgActivitySyncNotice() {
+        agConnections()
+        agHistory()
+        core.model = installed
+        core.syncNotice = "Synced with your other phone. A backup of this phone's changes is kept."
+        launch()
+        top()
+        await("syncNotice")
+        frames()
+        shoot("sg-08-activity-sync-notice")
+    }
+
     @Test
     fun sgActivityMenuAndFilters() {
         sgWaiting()

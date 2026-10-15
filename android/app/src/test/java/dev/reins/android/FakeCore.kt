@@ -442,6 +442,9 @@ class FakeCore : ReinsCoreInterface {
         ssoEmail = "me@example.com"
         ssoBeginError = null
         ssoFinishError = null
+        ssoFinishErrorAfterSignIn = null
+        syncNotice = null
+        syncNoticeDismissals.set(0)
         ssoBegins.clear()
         serverInfos.clear()
         ssoFinishes.clear()
@@ -487,7 +490,24 @@ class FakeCore : ReinsCoreInterface {
         session = info
         keys = ssoKeys
         recoveryCode = if (ssoKeys == AccountKeys.LOCKED) null else RECOVERY_CODE
+        ssoFinishErrorAfterSignIn?.let { throw it }
         return SsoOutcome(info, ssoKeys)
+    }
+
+    /** Thrown by `ssoFinish` once the account is open, as a core before the sync merge did on a sync conflict. */
+    @Volatile var ssoFinishErrorAfterSignIn: CoreException? = null
+
+    /** The core's sync notice, and how often it was dismissed. */
+    @Volatile var syncNotice: String? = null
+    val syncNoticeDismissals = java.util.concurrent.atomic.AtomicInteger()
+
+    override suspend fun accountSyncNotice(): String? = syncNotice
+
+    override suspend fun restoreAccountSyncBackup(): Boolean = false
+
+    override suspend fun dismissAccountSyncNotice() {
+        syncNoticeDismissals.incrementAndGet()
+        syncNotice = null
     }
 
     /** Like the core: the signed-in account's vault starts over with new keys and a new recovery code. */

@@ -2726,6 +2726,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func accountStatus(account: String) async  -> GmailStatus
     
     /**
+     * A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
+     * Sync never keeps the app closed or signed out; this is all it ever shows.
+     */
+    func accountSyncNotice() async  -> String?
+    
+    /**
      * The accounts the user connected, oldest first.
      */
     func accounts() async throws  -> [AccountView]
@@ -2867,6 +2873,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func devices() async throws  -> [DeviceView]
     
     /**
+     * The banner of [`Self::account_sync_notice`] was dismissed.
+     */
+    func dismissAccountSyncNotice() async throws 
+    
+    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
     func downloadModel(progress: DownloadProgress) async throws  -> ModelStatus
@@ -2993,6 +3004,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Forgets what a profile learned: memory, adapter, classes locked or unlocked by hand.
      */
     func resetProfile(profileId: String) async throws 
+    
+    /**
+     * Only when the user asks: brings back this phone's own changes that a sync without a merge base kept aside (the
+     * notice says so), merged with the data as it is now by the sync's rules (never a grant only the backup has).
+     * False when there is nothing to bring back. What comes back is uploaded like any change.
+     */
+    func restoreAccountSyncBackup() async throws  -> Bool
     
     /**
      * Starts a grant that ended (expired, used up or deleted) over for `duration_secs`.
@@ -3398,6 +3416,27 @@ open func accountStatus(account: String)async  -> GmailStatus  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeGmailStatus_lift,
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
+     * Sync never keeps the app closed or signed out; this is all it ever shows.
+     */
+open func accountSyncNotice()async  -> String?  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_account_sync_notice(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
             errorHandler: nil
             
         )
@@ -3979,6 +4018,25 @@ open func devices()async throws  -> [DeviceView]  {
 }
     
     /**
+     * The banner of [`Self::account_sync_notice`] was dismissed.
+     */
+open func dismissAccountSyncNotice()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_dismiss_account_sync_notice(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
      */
 open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus  {
@@ -4510,6 +4568,27 @@ open func resetProfile(profileId: String)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Only when the user asks: brings back this phone's own changes that a sync without a merge base kept aside (the
+     * notice says so), merged with the data as it is now by the sync's rules (never a grant only the backup has).
+     * False when there is nothing to bring back. What comes back is uploaded like any change.
+     */
+open func restoreAccountSyncBackup()async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_restore_account_sync_backup(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_i8,
+            completeFunc: ffi_reins_core_rust_future_complete_i8,
+            freeFunc: ffi_reins_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -18970,6 +19049,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_account_status() != 62124) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_account_sync_notice() != 55961) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_accounts() != 48644) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19063,6 +19145,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_devices() != 30266) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_dismiss_account_sync_notice() != 25355) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19148,6 +19233,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_reset_profile() != 9460) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_restore_account_sync_backup() != 28215) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_resume_grant() != 58497) {

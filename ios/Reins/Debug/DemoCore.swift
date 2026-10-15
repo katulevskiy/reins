@@ -182,6 +182,13 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func session() async -> SessionInfo? { locked { $0.session } }
 
+    /// The demo has one phone: nothing to sync with, so never a notice.
+    func accountSyncNotice() async -> String? { nil }
+
+    func dismissAccountSyncNotice() async throws {}
+
+    func restoreAccountSyncBackup() async throws -> Bool { false }
+
     func login(serverUrl: String, email: String, password: String, totp: String?) async throws -> SessionInfo {
         try await latency(0.6)
         guard serverUrl.hasPrefix("http") else { throw CoreError.Network(reason: "could not reach \(serverUrl)") }
