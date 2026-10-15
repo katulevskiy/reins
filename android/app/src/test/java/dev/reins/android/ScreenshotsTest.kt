@@ -2051,6 +2051,10 @@ abstract class ScreenshotsBase(private val suffix: String) {
         fun e(id: Long, label: dev.reins.core.RequestLabel, service: String, minutes: Long) =
             TestData.entry(id, "write", "released", 1u, at = now - minutes * 60, label = label, service = service).copy(connectionId = "c1", connectionLabel = "Claude Code")
         core.activity = listOf(
+            // People's names in one script are shown as they are; a name that mixes scripts is not.
+            e(56, TestData.label("gmail", "read", "Read 2 emails from", "Дмитрий"), "gmail", 1),
+            e(57, TestData.label("telegram", "read", "Read messages in", "Αλέξανδρος"), "telegram", 1),
+            e(58, TestData.label("gmail", "read", "Read 1 email from", "Pаvel"), "gmail", 1),
             e(50, TestData.label("github", "push", "Push 2 commits to", "katulevskiy/reаins"), "github", 2).copy(op = "git_push"),
             e(51, TestData.label("file", "read", "Read", "/tmp/../home/dana/.ssh/id_ed25519", code = true), "desktop", 5),
             e(52, TestData.label("file", "read", "Read", "/home/dana/pаypal-invoice.pdf", code = true), "desktop", 9),
@@ -2060,7 +2064,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         )
         launch()
         top()
-        await("entry:55")
+        await("entry:56")
         frames()
         shoot("sg-25-asktext-spoofs")
     }

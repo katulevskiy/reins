@@ -35,6 +35,14 @@ import java.text.Normalizer
 //   falls back to its generic words and the mono line shows the raw form, escaped.
 // - Nothing is shortened here; a long target is cut only where it is drawn, and the page shows it whole.
 
+/**
+ * What kind of value a target is, for the look-alike rule ([lookalikeFlag]). An [Identifier] (a host, a repository,
+ * a file or folder, a branch, an MCP server) is normally ASCII: any letter that can pass for another leaves the
+ * serif. A [Name] (a person, a contact, a chat, free words) may be wholly Cyrillic, Greek, CJK…: only a name that
+ * mixes scripts is flagged; one in a single script is shown as it is.
+ */
+enum class ValueKind { Identifier, Name }
+
 /** When the request is told: still waiting, done, or refused (denied, failed, timed out). */
 enum class Tense { Waiting, Done, Refused }
 
@@ -66,6 +74,8 @@ private data class Phrase(
     /** Told as it is in any tense: a question from the computer, an access that ended. */
     val question: Boolean = false,
     val stand: String? = null,
+    /** What kind of value [target] (or a question's words) is: an identifier unless said otherwise. */
+    val kind: ValueKind = ValueKind.Identifier,
 )
 
 // ---- from the core's label (waiting cards, rows, notifications, widgets) -------------------------------------------
@@ -95,13 +105,13 @@ fun askSentence(
         provider == "secrets" && subject.isNotEmpty() -> Phrase("${dropPreposition(lead)} for a command", details = subject, full = subject)
         provider == "ssh" && subject.isNotEmpty() -> Phrase("Sign in to a server", details = hostLine(subject))
         provider.startsWith("mcp:") -> mcpPhrase(subject, tail.removePrefix("on ").trim(), host = null)
-        provider == "desktop" && action == "ask" -> Phrase(lead, question = true)
+        provider == "desktop" && action == "ask" -> Phrase(lead, question = true, kind = ValueKind.Name)
         action == "push" || (action == "delete" && GIT_DELETE.matches(lead)) -> gitPhrase(lead, subject, git)
         provider == "gmail" && action == "send" -> sendPhrase(listOf(subject), moreOf(tail))
         lead.startsWith("Share a file") -> if (subject.isEmpty()) Phrase("Share a file") else Phrase("Share ", subject, stand = "a file")
-        lead.endsWith(":") -> if (subject.isEmpty()) Phrase(lead.removeSuffix(":")) else Phrase("$lead ", subject, question = true, stand = "")
+        lead.endsWith(":") -> if (subject.isEmpty()) Phrase(lead.removeSuffix(":")) else Phrase("$lead ", subject, question = true, stand = "", kind = ValueKind.Name)
         subject.isEmpty() -> Phrase(joinTail(lead, tail))
-        else -> subjectPhrase(lead, subject, label.code, tail)
+        else -> subjectPhrase(lead, subject, label.code, tail, if (provider in NAME_PROVIDERS) ValueKind.Name else ValueKind.Identifier)
     }
     return phrase.told(tense, who, kindOf(provider, action), provider, action)
 }
@@ -195,7 +205,7 @@ fun askSentence(
         return when {
             label != null && (label.provider == "terminal" || label.provider == "file") ->
                 askSentence(label, tense, who, cwd = cwd, matched = ask.rule?.matched, uncertain = ask.uncertain)
-            else -> Phrase(untrusted(ask.question), question = true).told(tense, who, viewKind(view), "desktop", "ask")
+            else -> Phrase(untrusted(ask.question), question = true, kind = ValueKind.Name).told(tense, who, viewKind(view), "desktop", "ask")
         }
     }
     val (phrase, provider, action) = when {
@@ -382,18 +392,21 @@ private fun personPhrase(lead: String, from: String): Phrase {
     val line = addressLine(address).ifEmpty { null }
     return when {
         name.isBlank() || looksMachine(name) -> Phrase(dropPreposition(lead), details = line)
-        else -> Phrase("$lead ", name, details = line?.takeIf { it != serifLine(name) }, stand = "a sender")
+        else -> Phrase("$lead ", name, details = line?.takeIf { it != serifLine(name) }, stand = "a sender", kind = ValueKind.Name)
     }
 }
 
 /** A label's subject: a human one is the target; a command, URL, path or address moves to the mono line. */
-private fun subjectPhrase(lead: String, subject: String, code: Boolean, tail: String): Phrase {
+private fun subjectPhrase(lead: String, subject: String, code: Boolean, tail: String, kind: ValueKind): Phrase {
     if ('<' in subject && '>' in subject && !code) return personPhrase(lead, subject).copy(after = spaced(tail))
     if (code || looksMachine(subject)) {
         return Phrase(joinTail(dropPreposition(lead), tail), details = oneLine(subject), full = if (code && '\n' in subject) subject.trim() else null)
     }
-    return Phrase(withSpace(lead), subject, spaced(tail), stand = "")
+    return Phrase(withSpace(lead), subject, spaced(tail), stand = "", kind = kind)
 }
+
+/** Integrations whose subjects are people, chats, events or words (a chat's name, a contact): [ValueKind.Name]. */
+private val NAME_PROVIDERS = setOf("telegram", "sms", "gmail", "gcontacts", "device_contacts", "gcalendar", "device_calendar")
 
 /** An entry from before labels: built from what the operation is called and what the core kept of it. */
 private fun legacy(entry: ActivityEntry, tense: Tense): AskSentence {
@@ -407,7 +420,7 @@ private fun legacy(entry: ActivityEntry, tense: Tense): AskSentence {
             // Told as it ended, in any tense: "Got access: …", "Asked for access: …".
             val head = if (entry.outcome == "granted") "Got access" else "Asked for access"
             val summary = info.grantSummary?.let(::untrusted)?.takeIf { it.isNotBlank() }
-            if (summary == null) Phrase(head, question = true) else Phrase("$head: ", summary, question = true, stand = "")
+            if (summary == null) Phrase(head, question = true) else Phrase("$head: ", summary, question = true, stand = "", kind = ValueKind.Name)
         }
         svc.startsWith(dev.reins.android.design.MCP_PREFIX) -> mcpPhrase(untrusted(entry.op), serviceName(svc), host = null)
         mail && kind == ActionKind.Search -> info.query?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { forPhrase("Search Gmail for", it) } ?: Phrase("Search Gmail")
@@ -434,7 +447,7 @@ private fun legacy(entry: ActivityEntry, tense: Tense): AskSentence {
 private fun Phrase.told(tense: Tense, who: String?, kind: String, provider: String, action: String): AskSentence {
     val raw = target?.let { untrusted(it).trim() }?.takeIf { it.isNotEmpty() }
     val shown = raw?.let(::serifLine)
-    val flag = raw?.let(::lookalikeFlag)
+    val flag = raw?.let { lookalikeFlag(it, this.kind) }
     val target = if (flag == null) shown else null
     val body = when {
         target != null -> head + target + after
@@ -443,8 +456,9 @@ private fun Phrase.told(tense: Tense, who: String?, kind: String, provider: Stri
         raw != null -> dropPreposition(head.trimEnd().removeSuffix(":")) + after
         else -> head + after
     }.let(::serifLine)
-    val questionFlag = if (question && target == null && raw == null) lookalikeFlag(body) else null
-    val name = who?.let { untrustedName(serifLine(it)) }?.takeIf { it.isNotEmpty() && lookalikeFlag(it) == null }
+    val questionFlag = if (question && target == null && raw == null) lookalikeFlag(body, this.kind) else null
+    // The asker's display name is a name: left out only when it mixes scripts.
+    val name = who?.let { untrustedName(serifLine(it)) }?.takeIf { it.isNotEmpty() && lookalikeFlag(it, ValueKind.Name) == null }
     val text = when {
         questionFlag != null -> if (tense == Tense.Waiting) "Answer a question from your computer" else "A question from your computer"
         question -> body
@@ -522,7 +536,7 @@ private fun kindWord(action: String, provider: String): String = when (action) {
 private fun cleanKind(kind: String): String {
     val where = kind.substringBefore(" · ")
     val what = kind.substringAfter(" · ", "")
-    val safe = serifLine(where).takeIf { it.isNotEmpty() && lookalikeFlag(it) == null } ?: "Service"
+    val safe = serifLine(where).takeIf { it.isNotEmpty() && lookalikeFlag(it, ValueKind.Identifier) == null } ?: "Service"
     return if (what.isEmpty()) safe else "$safe · $what"
 }
 
@@ -530,7 +544,7 @@ private fun cleanKind(kind: String): String {
 private fun viewKind(view: ApprovalView): String {
     val mcp = view.mcp
     val where = when {
-        mcp != null -> untrustedName(mcp.serverName).let { if (it.isEmpty() || lookalikeFlag(it) != null) "MCP server" else it }
+        mcp != null -> untrustedName(mcp.serverName).let { if (it.isEmpty() || lookalikeFlag(it, ValueKind.Identifier) != null) "MCP server" else it }
         view.purchase != null -> "Payments"
         view.ask != null -> "Computer"
         view.secrets != null || dev.reins.android.ui.approval.isSecretsMove(view) -> "Vault"
@@ -590,20 +604,33 @@ fun serifLine(s: String): String = Normalizer.normalize(oneLine(untrusted(s)), N
 private fun cleanLines(s: String): String = s.lines().map(::serifLine).filter { it.isNotEmpty() }.joinToString("\n")
 
 /**
- * Why [s] cannot be set in the serif, with its raw form ("Look-alike letters: p[U+0430]ypal"), or null when it can:
- * letters of more than one script, a letter known to pass for a Latin one (Cyrillic а, Greek ο, …), a compatibility
- * form (fullwidth, mathematical, ligatures). (Accents NFC composes are fine: the sentence is set in NFC.)
+ * Why [s] cannot be set in the serif, with its raw form ("Look-alike letters: p[U+0430]ypal"), or null when it can.
+ * Any [kind]: letters of scripts that do not go together (Latin with a Cyrillic letter; Latin, Han, kana and Hangul go
+ * together as Unicode TR39 allows). An [ValueKind.Identifier] also: a letter known to pass for a Latin one (Cyrillic
+ * а, Greek ο, … even when the whole name is in that script) or a compatibility form (fullwidth, mathematical).
+ * (Accents NFC composes are fine: the sentence is set in NFC.)
  */
-fun lookalikeFlag(s: String): String? {
+fun lookalikeFlag(s: String, kind: ValueKind = ValueKind.Identifier): String? {
     val t = oneLine(untrusted(s)).trim()
     if (t.isEmpty()) return null
     val nfc = Normalizer.normalize(t, Normalizer.Form.NFC)
-    val compat = Normalizer.normalize(nfc, Normalizer.Form.NFKC) != nfc
-    val confusable = nfc.any { it in CONFUSABLE }
-    return if (compat || confusable || mixedScripts(nfc)) "Look-alike letters: ${rawForm(t)}" else null
+    val flagged = when (kind) {
+        ValueKind.Name -> mixedScripts(nfc)
+        ValueKind.Identifier -> mixedScripts(nfc) || nfc.any { it in CONFUSABLE } || Normalizer.normalize(nfc, Normalizer.Form.NFKC) != nfc
+    }
+    return if (flagged) "Look-alike letters: ${rawForm(t)}" else null
 }
 
-/** Letters of more than one script (Common and Inherited marks aside). */
+/** The CJK scripts, which TR39 lets a name mix with each other and with Latin (Japanese, Chinese, Korean names). */
+private val CJK = setOf(
+    Character.UnicodeScript.HAN, Character.UnicodeScript.HIRAGANA, Character.UnicodeScript.KATAKANA,
+    Character.UnicodeScript.HANGUL, Character.UnicodeScript.BOPOMOFO,
+)
+
+/**
+ * Letters of scripts that do not go together (Common and Inherited marks aside). Latin with the CJK scripts, and the
+ * CJK scripts with each other, go together (TR39's highly restrictive level); anything else mixed does not.
+ */
 fun mixedScripts(s: String): Boolean {
     val scripts = mutableSetOf<Character.UnicodeScript>()
     var i = 0
@@ -614,7 +641,11 @@ fun mixedScripts(s: String): Boolean {
         val script = Character.UnicodeScript.of(cp)
         if (script != Character.UnicodeScript.COMMON && script != Character.UnicodeScript.INHERITED) scripts += script
     }
-    return scripts.size > 1
+    val other = scripts - CJK - Character.UnicodeScript.LATIN
+    return when {
+        other.isEmpty() -> false // Latin, CJK, or Latin with CJK
+        else -> scripts.size > 1 // one other script alone is fine; with anything else it is mixed
+    }
 }
 
 /** Letters of other scripts that pass for Latin ones (the common Cyrillic, Greek and Armenian look-alikes). */
@@ -646,7 +677,7 @@ fun asciiHost(host: String): AsciiHost? {
     val port = Regex(":(\\d{1,5})$").find(h)?.value.orEmpty()
     val name = h.removeSuffix(port)
     val ascii = try {
-        java.net.IDN.toASCII(Normalizer.normalize(name, Normalizer.Form.NFC), java.net.IDN.USE_STD3_ASCII_RULES).lowercase()
+        java.net.IDN.toASCII(Normalizer.normalize(name, Normalizer.Form.NFC), java.net.IDN.USE_STD3_ASCII_RULES or java.net.IDN.ALLOW_UNASSIGNED).lowercase()
     } catch (_: Exception) {
         return null
     }
@@ -697,7 +728,7 @@ private val OPERATOR = Regex("(^|\\s)[A-Za-z_]+:\\S")
 
 /** "Search Gmail for *invoice*"; a query of operators goes to the mono line ("Search Gmail", `from:bank`). */
 private fun forPhrase(lead: String, value: String): Phrase =
-    if (looksMachine(value)) Phrase(dropPreposition(lead), details = oneLine(value)) else Phrase("$lead ", value, stand = "something")
+    if (looksMachine(value)) Phrase(dropPreposition(lead), details = oneLine(value)) else Phrase("$lead ", value, stand = "something", kind = ValueKind.Name)
 
 /** A repository as the core accepts one (`connector/git.rs`, `repo_ok` with nesting): checked the same way here. */
 fun repoOk(repo: String): Boolean {

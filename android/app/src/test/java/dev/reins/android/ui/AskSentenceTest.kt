@@ -447,8 +447,8 @@ class AskSentenceTest {
         val folder = askSentence(TestData.label("terminal", "run", "Run", "ls", code = true), cwd = "/home/me/r${cyrillicA}ins")
         assertEquals("Run a command", folder.text)
         assertTrue(folder.details!!.startsWith("Look-alike letters: r[U+0430]ins"))
-        val fullwidth = askSentence(TestData.label("telegram", "read", "Read messages in", "ｏｃｔｏ"))
-        assertNull("fullwidth letters pass for ASCII ones", fullwidth.target)
+        val fullwidth = askSentence(TestData.label("github", "read", "Read issues in", "ｏｃｔｏ/app"))
+        assertNull("fullwidth letters pass for ASCII ones in an identifier", fullwidth.target)
     }
 
     @Test
@@ -508,5 +508,46 @@ class AskSentenceTest {
         assertTrue(mixedQuestion.details!!.contains("[U+0430]"))
         val who = askSentence(TestData.label("github", "push", "Push 1 commit to", "octo/app"), Tense.Done, who = "Cl${cyrillicA}ude")
         assertEquals("a look-alike asker's name is left out", "Pushed 1 commit to octo/app", who.text)
+    }
+
+    // ---- names of people are not identifiers ----------------------------------------------------------------------------
+
+    @Test
+    fun aNameInOneScriptIsShownAsItIs() {
+        for (name in listOf("Дмитрий", "Αλέξανδρος", "Արամ", "山田たろう", "김민준")) {
+            val read = askSentence(TestData.label("gmail", "read", "Read 2 emails from", name))
+            assertEquals("$name is the target", name, read.target)
+            assertEquals("Read 2 emails from $name", read.text)
+            assertNull(read.details)
+            val chat = askSentence(TestData.label("telegram", "read", "Read messages in", name))
+            assertEquals(name, chat.target)
+            assertEquals("Read 2 emails", askSentence(TestData.label("gmail", "read", "Read 2 emails from", "$name <x@example.com>")).text.substringBefore(" from"))
+        }
+        val who = askSentence(TestData.label("github", "push", "Push 1 commit to", "octo/app"), Tense.Done, who = "Дмитрий")
+        assertEquals("Дмитрий pushed 1 commit to octo/app", who.text)
+        val greekSender = askSentence(TestData.entry(1, "read", "released", info = TestData.info(null, listOf(dev.reins.core.ActivityMessage("m1", "", "Αλέξανδρος <alex@example.gr>", "Γεια", 0)), null, null, null)))
+        assertEquals("Αλέξανδρος", greekSender.target)
+    }
+
+    @Test
+    fun aNameThatMixesScriptsIsFlagged() {
+        val s = askSentence(TestData.label("gmail", "read", "Read 2 emails from", "Pаvel"))
+        assertNull(s.target)
+        assertEquals("Read 2 emails", s.text)
+        assertEquals("Look-alike letters: P[U+0430]vel", s.details!!.lines().first())
+        val who = askSentence(TestData.label("github", "push", "Push 1 commit to", "octo/app"), Tense.Done, who = "Pаvel")
+        assertEquals("Pushed 1 commit to octo/app", who.text)
+        assertEquals("Latin with CJK is one name", "Dana 山田", askSentence(TestData.label("telegram", "read", "Read messages in", "Dana 山田")).target)
+    }
+
+    @Test
+    fun aLookAlikeHostIsPunycodedEvenWhenItIsAllOneScript() {
+        val mixed = askSentence(TestData.purchaseView().let { it.copy(purchase = it.purchase!!.copy(domain = "pаypal.com")) })
+        assertTrue(mixed.target!!.startsWith("xn--"))
+        assertTrue(mixed.details!!.contains("p[U+0430]ypal.com"))
+        val whole = askSentence(TestData.purchaseView().let { it.copy(purchase = it.purchase!!.copy(domain = "раураӏ.com")) })
+        assertTrue("an all-Cyrillic host that reads as paypal is punycode too", whole.target!!.startsWith("xn--"))
+        val file = askSentence(TestData.label("file", "read", "Read", "/home/me/Дмитрий.pdf", code = true))
+        assertNull("a file name is an identifier: a whole-script look-alike leaves the serif", file.target)
     }
 }
