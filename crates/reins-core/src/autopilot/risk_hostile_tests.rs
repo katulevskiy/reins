@@ -256,23 +256,37 @@ fn every_tripwire_is_held_however_it_is_disguised() {
 
 #[test]
 fn harmless_lookalikes_do_not_trip() {
-    for cmd in [
-        "rm -rf build/",
-        "rm -rf ./node_modules",
-        "rm -- -rf",
-        "git push origin feature/main-cleanup",
-        "git push -f origin feature/x",
-        "git push origin --delete feature/old",
-        "dd if=/dev/zero of=disk.img bs=1M count=8",
-        "mkfs.ext4 -F build/rootfs.ext4",
-        "find . -name '*.o' -delete",
-        "rsync -a --delete dist/ public/",
-        "curl -sI https://example.com",
-        "curl -F file=@dist/report.json https://uploads.github.com/",
-        "echo hi > notes.txt",
-        "mv build dist",
-    ] {
+    for cmd in LOOKALIKES {
         let c = command_context(cmd);
         assert_eq!(c.outcome(), Outcome::Read, "`{cmd}`: {c:?}");
     }
 }
+
+/// Every fixture of this file, as JSON, for `tools/laya/regression.py` (main's reading against this branch's):
+/// `RISK_FIXTURES_OUT=/tmp/f.json cargo test -p reins-core --lib dump_fixtures -- --ignored`.
+#[test]
+#[ignore = "writes the fixtures for tools/laya/regression.py"]
+fn dump_fixtures() {
+    if let Ok(path) = std::env::var("RISK_FIXTURES_OUT") {
+        let mut all = fixtures();
+        all.extend(LOOKALIKES.iter().map(|c| (*c).to_owned()));
+        std::fs::write(path, serde_json::to_string(&all).unwrap()).unwrap();
+    }
+}
+
+const LOOKALIKES: [&str; 14] = [
+    "rm -rf build/",
+    "rm -rf ./node_modules",
+    "rm -- -rf",
+    "git push origin feature/main-cleanup",
+    "git push -f origin feature/x",
+    "git push origin --delete feature/old",
+    "dd if=/dev/zero of=disk.img bs=1M count=8",
+    "mkfs.ext4 -F build/rootfs.ext4",
+    "find . -name '*.o' -delete",
+    "rsync -a --delete dist/ public/",
+    "curl -sI https://example.com",
+    "curl -F file=@dist/report.json https://uploads.github.com/",
+    "echo hi > notes.txt",
+    "mv build dist",
+];
