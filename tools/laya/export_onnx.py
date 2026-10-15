@@ -333,11 +333,11 @@ def main():
              "pooled_cos_min": float(cos.min()), "pooled_cos_mean": float(cos.mean())}
         if labels is not None:
             # the decision the phone takes (spec section 3 rule at 0.95 / 0.90), PyTorch vs ONNX
-            dr = lc.autopilot_decide(pr[n0:n0 + nr], pr[n0 + nr:])
-            do = lc.autopilot_decide(po[n0:n0 + nr], po[n0 + nr:])
+            dr = lc.autopilot_decide(pr[n0:n0 + nr], pr[n0 + nr:n0 + 2 * nr])
+            do = lc.autopilot_decide(po[n0:n0 + nr], po[n0 + nr:n0 + 2 * nr])
             d["decision_agree"] = float((dr == do).mean())
-            d["acc_full_torch"] = float((pr[n0 + nr:].argmax(-1) == labels).mean())
-            d["acc_full_onnx"] = float((po[n0 + nr:].argmax(-1) == labels).mean())
+            d["acc_full_torch"] = float((pr[n0 + nr:n0 + 2 * nr].argmax(-1) == labels).mean())
+            d["acc_full_onnx"] = float((po[n0 + nr:n0 + 2 * nr].argmax(-1) == labels).mean())
             d["unsafe_approve_onnx"] = int(((do == 0) & (labels != 0)).sum())
         if has_risk:
             Tr = float(risk_cfg.get("temperature", 1.0))
