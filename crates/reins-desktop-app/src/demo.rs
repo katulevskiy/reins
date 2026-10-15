@@ -11,6 +11,7 @@ use reins_desktop::api_proxy::ApiConfig;
 use reins_desktop::control::{ApiInfo, SshKeyInfo};
 use reins_desktop::harness::Harness;
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
+use reins_desktop::pushes::{CommitInfo, FileChange, FileStatus, Push, PushSummary, RefChange, RefUpdate};
 use reins_desktop::run::Profile;
 use reins_desktop::secrets_import::{Change, Done, Existing, Moved, Receipt, VaultProject};
 use reins_desktop::secrets_scan::{
@@ -366,6 +367,18 @@ impl Demo {
                 fingerprint: "SHA256:Zt7nB2cQ9xW4eR1yU6iO3pA8sD5fG0hJ2kL7zX4cV9b".to_owned(),
             },
         ]
+    }
+
+    /// The push kept for the sample push to `acme/web` (entry `id`): three commits with their files and diff text, one
+    /// line of it with a right-to-left override, to see it shown rather than obeyed.
+    #[must_use]
+    pub fn push(self, id: &str) -> Option<Push> {
+        let entry = self.activity().into_iter().find(|e| e.id == id)?;
+        (entry.service.as_deref() == Some("github.com/acme/web") && entry.outcome == Outcome::Approved).then(|| Push {
+            at: entry.ended_at.unwrap_or(entry.at),
+            repo: "github.com/acme/web".to_owned(),
+            summary: sample_push(entry.at),
+        })
     }
 
     /// `REINS_DEMO_SESSION=1`: a work session that started a while ago, 1 h 12 min left.
@@ -850,6 +863,128 @@ impl Demo {
     }
 }
 
+/// A file of the sample push, its lines counted from its diff.
+fn sample_file(name: &str, status: FileStatus, diff: &str) -> FileChange {
+    let count = |c: char| u32::try_from(diff.lines().filter(|l| l.starts_with(c)).count()).unwrap_or(u32::MAX);
+    FileChange {
+        patch: Some(diff.to_owned()),
+        ..FileChange::new(name.to_owned(), status, Some(count('+')), Some(count('-')), false)
+    }
+}
+
+/// A commit of the sample push, its lines the sum of its files'.
+fn sample_commit(sha: &str, subject: &str, date: i64, files: Vec<FileChange>) -> CommitInfo {
+    let sum = |f: fn(&FileChange) -> Option<u32>| Some(files.iter().filter_map(f).map(u64::from).sum());
+    CommitInfo {
+        sha: sha.to_owned(),
+        subject: subject.to_owned(),
+        author: "Dana Reyes <dana@acme.dev>".to_owned(),
+        date,
+        files_changed: u32::try_from(files.len()).ok(),
+        additions: sum(|f| f.additions),
+        deletions: sum(|f| f.deletions),
+        files,
+    }
+}
+
+/// The sample push to `acme/web`: a new branch of three commits, newest first.
+fn sample_push(at: i64) -> PushSummary {
+    let commits = vec![
+        sample_commit(
+            "e753156a0c4b9e2d17f8a3b6c5d4e2f1a0b9c8d7",
+            "checkout: totals round to the cent, once, at the end",
+            at - 600,
+            vec![sample_file(
+                "src/cart/totals.ts",
+                FileStatus::Modified,
+                "@@ -12,9 +12,10 @@ export function lineTotal(item: Item): number {\n   return item.price * \
+                 item.quantity;\n }\n \n-export function orderTotal(items: Item[]): number {\n-  const sum = \
+                 items.reduce((t, i) => t + lineTotal(i), 0);\n-  return Math.round(sum);\n+/** The order's total, \
+                 rounded once to the cent. */\n+export function orderTotal(items: Item[]): number {\n+  const cents = \
+                 items.reduce((t, i) => t + lineTotal(i) * 100, 0);\n+  return Math.round(cents) / 100;\n }\n \n \
+                 export function tax(total: number, rate: number): number {\n@@ -40,4 +41,5 @@ export function \
+                 discount(total: number, code: Code): number {\n-  return code.admin ? 0 : total; // admin\n+  // \
+                 \u{202e}nimda\u{2066} codes are free\n+  return code.admin ? 0 : total;\n }",
+            )],
+        ),
+        sample_commit(
+            "2fd4dd65b1e0c9a8f7d6e5c4b3a2918f7e6d5c4b",
+            "checkout: the page, its form and the order summary",
+            at - 3_000,
+            vec![
+                sample_file(
+                    "src/checkout/page.tsx",
+                    FileStatus::Added,
+                    "@@ -0,0 +1,14 @@\n+import { Form } from './form';\n+import { Summary } from './summary';\n+\n+export \
+                     default function Checkout() {\n+  return (\n+    <main className=\"checkout\">\n+      \
+                     <h1>Checkout</h1>\n+      <Form />\n+      <Summary />\n+    </main>\n+  );\n+}\n+\n+export \
+                     const title = 'Checkout';",
+                ),
+                sample_file(
+                    "src/checkout/form.tsx",
+                    FileStatus::Added,
+                    "@@ -0,0 +1,8 @@\n+export function Form() {\n+  return (\n+    <form method=\"post\">\n+      \
+                     <input name=\"email\" type=\"email\" required />\n+      <button>Pay</button>\n+    \
+                     </form>\n+  );\n+}",
+                ),
+                sample_file(
+                    "src/routes.ts",
+                    FileStatus::Modified,
+                    "@@ -3,6 +3,7 @@ import Home from './home';\n import Cart from './cart';\n+import Checkout from \
+                     './checkout/page';\n \n export const routes = [\n   { path: '/', page: Home },\n@@ -9,3 +10,4 @@ \
+                     export const routes = [\n-  { path: '/cart', page: Cart }\n+  { path: '/cart', page: Cart },\n+  \
+                     { path: '/checkout', page: Checkout },\n ];",
+                ),
+                sample_file(
+                    "src/legacy/checkout.js",
+                    FileStatus::Deleted,
+                    "@@ -1,4 +0,0 @@\n-// The old checkout, a form posted to /pay.\n-module.exports = function \
+                     checkout() {\n-  return '<form action=\"/pay\"></form>';\n-};",
+                ),
+            ],
+        ),
+        sample_commit(
+            "86fbe7d7a9c8b7e6d5f4a3b2c1d0e9f8a7b6c5d4",
+            "build: bump the bundler to 5.2",
+            at - 7_200,
+            vec![sample_file(
+                "package.json",
+                FileStatus::Modified,
+                "@@ -14,7 +14,7 @@\n   \"devDependencies\": {\n     \"eslint\": \"^9.4.0\",\n-    \"bundler\": \
+                 \"^5.1.3\",\n+    \"bundler\": \"^5.2.0\",\n     \"typescript\": \"^5.6.2\"\n   }\n }",
+            )],
+        ),
+    ];
+    let files: Vec<FileChange> = commits
+        .iter()
+        .flat_map(|c| &c.files)
+        .map(|f| FileChange {
+            patch: None,
+            ..f.clone()
+        })
+        .collect();
+    let sum = |f: fn(&CommitInfo) -> Option<u64>| commits.iter().map(f).sum::<Option<u64>>();
+    PushSummary {
+        updates: vec![RefUpdate {
+            name: "refs/heads/checkout-page".to_owned(),
+            change: RefChange::Create,
+            old: "0".repeat(40),
+            new: commits[0].sha.clone(),
+            fast_forward: None,
+            commit_count: 3,
+            files_changed: u32::try_from(files.len()).unwrap_or(u32::MAX),
+            additions: sum(|c| c.additions),
+            deletions: sum(|c| c.deletions),
+            files,
+            commits,
+        }],
+        pack_bytes: 9_412,
+        push_options: Vec::new(),
+        notes: Vec::new(),
+        default_branch: Some("main".to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use reins_desktop::control::Overview;
@@ -878,6 +1013,27 @@ mod tests {
             activity: Arc::new(Vec::new()),
             work_session: None,
         }
+    }
+
+    #[test]
+    fn the_sample_push_is_kept_as_its_entry_says() {
+        let demo = Demo::new(1_700_000_000);
+        let entries = demo.activity();
+        let pushes: Vec<(&Entry, Push)> = entries.iter().filter_map(|e| Some((e, demo.push(&e.id)?))).collect();
+        let [(entry, push)] = pushes.as_slice() else {
+            panic!("one sample push is kept, not {}", pushes.len());
+        };
+        let u = &push.summary.updates[0];
+        let changes = format!(
+            "Changes: +{} −{} · {} files",
+            u.additions.unwrap_or_default(),
+            u.deletions.unwrap_or_default(),
+            u.files_changed
+        );
+        assert_eq!(entry.detail.as_deref(), Some(format!("Ref: checkout-page · new branch\n{changes}").as_str()));
+        assert_eq!(u.commits.len(), usize::try_from(u.commit_count).unwrap());
+        assert!(u.commits.iter().all(|c| c.files.iter().all(|f| f.patch.is_some())));
+        assert!(entry.what.ends_with("checkout-page (3 commits)"));
     }
 
     #[test]

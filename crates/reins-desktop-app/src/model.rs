@@ -650,6 +650,15 @@ impl Model {
         self.demo.is_some()
     }
 
+    /// The push this computer kept for activity entry `id` (with `--demo`, the sample's), read from disk.
+    #[must_use]
+    pub fn kept_push(&self, id: &str) -> Option<reins_desktop::pushes::Push> {
+        match self.demo {
+            Some(demo) if id.starts_with("demo") => demo.push(id),
+            _ => reins_desktop::pushes::load(&self.backend.paths().state_dir, id),
+        }
+    }
+
     /// The server shown and paired with.
     #[must_use]
     pub fn server(&self) -> String {

@@ -7,6 +7,7 @@
 
 mod activity;
 mod connections;
+mod diff;
 mod field;
 mod gallery;
 mod health;
@@ -33,6 +34,7 @@ pub(crate) fn ask_line(e: &Entry) -> String {
     story::Ask::of(e).line()
 }
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,6 +45,7 @@ use gpui::{
 use reins_desktop::config::Config;
 use reins_desktop::control::Overview;
 use reins_desktop::journal::{Entry, Kind, Outcome};
+use reins_desktop::pushes::Push;
 
 use crate::backend::{Snapshot, Update};
 use crate::health::{Health, Test};
@@ -92,6 +95,12 @@ pub struct Root {
     /// The request Activity shows on the right (by journal id; `None`: the first one).
     selected: Option<String>,
     rows_shown: usize,
+    /// The push kept for the request Activity shows (its id and how it ended when read), read once when picked.
+    push: Option<(String, Outcome, Option<Arc<Push>>)>,
+    /// That push's commits open to their files, and its files open to their diff (commit, file; commits counted
+    /// across its refs).
+    commits_open: BTreeSet<usize>,
+    files_open: BTreeSet<(usize, usize)>,
     /// The "Pause git" sheet is open, and the length picked in it.
     pause_sheet: bool,
     pause_choice: PauseFor,
@@ -250,8 +259,8 @@ impl Root {
             ((m.screen, m.section), m.demo())
         };
         // `--demo` with `REINS_DEMO_HELP=<id>`: that (?) open, `REINS_DEMO_PAUSE=1`: the pause sheet open (`manual`:
-        // at "Until I resume"), `REINS_DEMO_SELECT=<id>`: that request in Activity, for
-        // screenshots.
+        // at "Until I resume"), `REINS_DEMO_SELECT=<id>`: that request in Activity, `REINS_DEMO_DIFF=<c>:<f>`: its push's
+        // commit c open, and file f of it, for screenshots.
         let demo_var = |name: &str| std::env::var(name).ok().filter(|h| demo && !h.is_empty());
         let help = demo_var("REINS_DEMO_HELP").map(|h| &*Box::leak(h.into_boxed_str()));
         let pause_demo = demo_var("REINS_DEMO_PAUSE");
@@ -272,6 +281,15 @@ impl Root {
             menu_closed: None,
             selected: demo_var("REINS_DEMO_SELECT"),
             rows_shown: ROWS,
+            push: None,
+            commits_open: demo_var("REINS_DEMO_DIFF")
+                .and_then(|d| d.split(':').next().and_then(|c| c.parse().ok()))
+                .into_iter()
+                .collect(),
+            files_open: demo_var("REINS_DEMO_DIFF")
+                .and_then(|d| d.split_once(':').and_then(|(c, f)| Some((c.parse().ok()?, f.parse().ok()?))))
+                .into_iter()
+                .collect(),
             pause_sheet: pause_demo.is_some(),
             pause_choice: if matches!(pause_demo.as_deref(), Some("manual" | "hold")) {
                 PauseFor::Manual

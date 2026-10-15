@@ -2,8 +2,10 @@
 //! as a plate beside. The list has what waits for the phone first, then the days; its filter is an inverse button
 //! that opens a menu of outcomes and kinds, each outcome with how many. The plate: the integration's icon and the
 //! label line with the time, the request in the serif with its target in italic and its details in mono, how it ended
-//! and where, the facts as rows, and the request as a terminal showed it, in a mono well.
+//! and where, the facts as rows, a push's commits (each opening into its files and their diff), and the request as a
+//! terminal showed it, in a mono well.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder as _;
@@ -13,6 +15,9 @@ use gpui::{
 };
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
+use reins_desktop::pushes::{CommitInfo, FileStatus, Push, RefChange};
+
+use super::diff::{self, visible};
 use super::icons::{Glyph, glyph};
 use super::parts::{fact_rows, italic, phone_qr, wrapped};
 use super::story::{Ask, Fact, FactStyle, answer, transcript};
@@ -20,7 +25,7 @@ use super::{Data, ROWS, Root, kit};
 use crate::backend::ACTIVITY_LIMIT;
 use crate::format;
 use crate::model::Model;
-use crate::theme::{MONO, Palette, SERIF, SignalText as _};
+use crate::theme::{MONO, Palette, SANS, SERIF, SignalText as _};
 
 /// The outcome filters, in order: the board's, then the rarer ones (shown when there are some).
 const OUTCOMES: [(Option<Outcome>, &str); 8] = [
@@ -191,7 +196,10 @@ impl Root {
         let page =
             div().flex().flex_wrap().items_start().gap(px(32.0)).child(div().flex_1().min_w(px(360.0)).child(list));
         match selected {
-            Some(e) => page.child(div().flex_1().min_w(px(360.0)).child(Self::entry_detail(e, d, pal, cx))),
+            Some(e) => {
+                self.load_push(e, cx);
+                page.child(div().flex_1().min_w(px(360.0)).child(self.entry_detail(e, d, pal, cx)))
+            }
             None => page,
         }
         .into_any_element()
@@ -280,9 +288,23 @@ impl Root {
         trigger.child(kit::open_menu("activity-filter-menu", menu, Anchor::TopRight)).into_any_element()
     }
 
+    /// The push kept for `e`, read when it is picked (again once it is answered); the commits and files open are
+    /// another request's no more.
+    fn load_push(&mut self, e: &Entry, cx: &Context<'_, Self>) {
+        if self.push.as_ref().is_some_and(|(id, outcome, _)| *id == e.id && *outcome == e.outcome) {
+            return;
+        }
+        if self.push.as_ref().is_some_and(|(id, _, _)| *id != e.id) {
+            self.commits_open.clear();
+            self.files_open.clear();
+        }
+        let kept = (is_push(e) && !e.outcome.open()).then(|| self.model.read(cx).kept_push(&e.id)).flatten();
+        self.push = Some((e.id.clone(), e.outcome, kept.map(Arc::new)));
+    }
+
     /// One request, as a plate: the integration's icon and the label line, the request in the serif with its details
-    /// in mono, how it ended, the facts and the transcript.
-    fn entry_detail(e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    /// in mono, how it ended, the facts, a push's commits, and the transcript.
+    fn entry_detail(&self, e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let s = Ask::of(e);
         let (ic, tone, said) = answer(e, &d.phone());
         let verdict = pal.tone(tone);
@@ -406,6 +428,11 @@ impl Root {
         rows.extend(s.facts);
         plate = plate.child(fact_rows(&rows, 0.0, Some(130.0), pal));
 
+        let kept = self.push.as_ref().filter(|(id, _, _)| *id == e.id).and_then(|(_, _, push)| push.as_deref());
+        if let Some(push) = kept.filter(|p| p.summary.updates.iter().any(|u| !u.commits.is_empty())) {
+            plate = plate.child(self.commits(push, pal, cx));
+        }
+
         let mut well = div()
             .flex()
             .flex_col()
@@ -424,6 +451,224 @@ impl Root {
         }
         plate.child(well).into_any_element()
     }
+
+    /// A push's commits: "Commits · N" and the host's link, then a row each that opens into its files, and each file
+    /// into its diff. All of it is the repository's text: shown through [`diff::visible`], never interpreted.
+    fn commits(&self, push: &Push, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
+        let updates = &push.summary.updates;
+        let total: u64 = updates.iter().map(|u| u64::from(u.commit_count)).sum();
+        let branch = updates.iter().find(|u| u.change != RefChange::Delete).and_then(|u| u.branch());
+        let link = branch.and_then(|b| diff::commits_link(&push.repo, b));
+        let mut list = div().flex().flex_col();
+        let mut shown = 0_u64;
+        for (ci, c) in updates.iter().flat_map(|u| &u.commits).enumerate() {
+            shown += 1;
+            let open = self.commits_open.contains(&ci);
+            let files = c.files_changed.map_or(c.files.len(), |n| n as usize);
+            let row = div()
+                .id(("commit", ci))
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .min_h(px(40.0))
+                .py(px(6.0))
+                .border_b_1()
+                .border_color(pal.rule())
+                .cursor_pointer()
+                .hover(|r| r.bg(pal.paper_sunken()))
+                .child(
+                    div()
+                        .flex_none()
+                        .font_family(MONO)
+                        .text_size(px(12.5))
+                        .text_color(pal.violet())
+                        .child(visible(&c.sha.chars().take(8).collect::<String>())),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .truncate()
+                        .text_size(px(14.0))
+                        .text_color(pal.ink())
+                        .child(visible(&c.subject)),
+                )
+                .when_some(lines(c.additions, c.deletions), |r, (a, d)| r.child(added_removed(&a, &d, pal)))
+                .child(div().flex_none().text_size(px(12.5)).text_color(pal.ink_meta()).child(if files == 1 {
+                    "1 file".to_owned()
+                } else {
+                    format!("{files} files")
+                }))
+                .child(glyph(
+                    if open {
+                        Glyph::ChevronDown
+                    } else {
+                        Glyph::ChevronRight
+                    },
+                    14.0,
+                    pal.ink_faint(),
+                ))
+                .on_click(Self::on_view(cx, move |this, _| {
+                    if !this.commits_open.remove(&ci) {
+                        this.commits_open.insert(ci);
+                    }
+                }));
+            list = list.child(row);
+            if open {
+                list = list.child(self.commit_files(ci, c, pal, cx));
+            }
+        }
+        if total > shown {
+            let more = total - shown;
+            list = list.child(div().py(px(8.0)).text_size(px(12.5)).text_color(pal.ink_meta()).child(if more == 1 {
+                "and 1 more commit".to_owned()
+            } else {
+                format!("and {more} more commits")
+            }));
+        }
+        let head = div()
+            .flex()
+            .items_center()
+            .gap(px(12.0))
+            .pb(px(6.0))
+            .child(div().flex_1().child(kit::section_label(format!("Commits · {total}"), pal)))
+            .when_some(link, |h, link| {
+                let url = link.url.clone();
+                h.child(
+                    super::parts::link("open-host", format!("Open on {}", link.name), pal)
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                )
+            });
+        div().flex().flex_col().pt(px(6.0)).child(head).child(list)
+    }
+
+    /// An open commit's files, each opening into its diff.
+    fn commit_files(&self, ci: usize, c: &CommitInfo, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
+        let mut files =
+            div().flex().flex_col().ml(px(18.0)).pl(px(16.0)).py(px(6.0)).border_l_1().border_color(pal.rule());
+        for (fi, f) in c.files.iter().enumerate() {
+            let open = self.files_open.contains(&(ci, fi));
+            let tag = match (f.binary, f.status, &f.patch) {
+                (true, _, _) => Some("binary"),
+                (_, FileStatus::Added, _) => Some("new"),
+                (_, FileStatus::Deleted, _) => Some("deleted"),
+                (_, _, None) => Some("no diff kept"),
+                _ => None,
+            };
+            let row = div()
+                .id(SharedString::from(format!("file-{ci}-{fi}")))
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .min_h(px(30.0))
+                .font_family(MONO)
+                .text_size(px(12.5))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .truncate()
+                        .text_color(if open {
+                            pal.ink()
+                        } else {
+                            pal.ink_2()
+                        })
+                        .child(visible(&f.path)),
+                )
+                .when_some(tag, |r, t| r.child(div().flex_none().text_color(pal.ink_meta()).child(t)))
+                .when_some(lines(f.additions.map(u64::from), f.deletions.map(u64::from)), |r, (a, d)| {
+                    r.child(added_removed(&a, &d, pal))
+                })
+                .when(f.patch.is_some(), |r| {
+                    r.cursor_pointer().hover(|r| r.text_color(pal.ink())).on_click(Self::on_view(cx, move |this, _| {
+                        if !this.files_open.remove(&(ci, fi)) {
+                            this.files_open.insert((ci, fi));
+                        }
+                    }))
+                });
+            files = files.child(row);
+            if let Some(patch) = f.patch.as_deref().filter(|_| open) {
+                files = files.child(patch_block(patch, f.patch_cut, pal));
+            }
+        }
+        let listed = c.files.len();
+        if let Some(more) = c.files_changed.map(|n| n as usize).filter(|n| *n > listed).map(|n| n - listed) {
+            files = files.child(div().py(px(4.0)).text_size(px(12.5)).text_color(pal.ink_meta()).child(if more == 1 {
+                "and 1 more file".to_owned()
+            } else {
+                format!("and {more} more files")
+            }));
+        }
+        files
+    }
+}
+
+/// Whether `e` is a push to a host (not a fetch): the kind of request that keeps its commits.
+fn is_push(e: &Entry) -> bool {
+    e.kind == Kind::Git && e.what.starts_with("push to ")
+}
+
+/// `+a` and `−b`, when both were counted.
+fn lines(additions: Option<u64>, deletions: Option<u64>) -> Option<(String, String)> {
+    Some((format!("+{}", additions?), format!("−{}", deletions?)))
+}
+
+/// Lines added in green and removed in red, in mono.
+fn added_removed(added: &str, removed: &str, pal: Palette) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .gap(px(6.0))
+        .font_family(MONO)
+        .text_size(px(12.5))
+        .child(div().text_color(pal.success).child(added.to_owned()))
+        .child(div().text_color(pal.danger).child(removed.to_owned()))
+}
+
+/// A file's diff as plain text: hunk headers in violet, removed lines on a red wash, added ones on a green one; every
+/// line made [`visible`] and wrapped whole.
+fn patch_block(patch: &str, cut: bool, pal: Palette) -> Div {
+    let mut block = div()
+        .flex()
+        .flex_col()
+        .my(px(6.0))
+        .py(px(8.0))
+        .rounded(px(10.0))
+        .bg(pal.paper())
+        .border_1()
+        .border_color(pal.rule())
+        .font_family(MONO)
+        .text_size(px(11.5))
+        .line_height(px(17.0))
+        .min_w(px(0.0))
+        .overflow_hidden();
+    for line in patch.lines() {
+        let (color, wash) = match line.chars().next() {
+            Some('+') => (pal.ink(), Some(pal.success.opacity(0.12))),
+            Some('-') => (pal.ink(), Some(pal.danger.opacity(0.12))),
+            Some('@') => (pal.violet(), None),
+            _ => (pal.ink_2(), None),
+        };
+        block = block.child(
+            div()
+                .px(px(12.0))
+                .min_w(px(0.0))
+                .text_color(color)
+                .when_some(wash, gpui::Styled::bg)
+                .child(wrapped(&visible(line))),
+        );
+    }
+    if cut {
+        block = block.child(
+            div()
+                .px(px(12.0))
+                .pt(px(4.0))
+                .font_family(SANS)
+                .text_color(pal.ink_meta())
+                .child("The rest of this diff was not kept."),
+        );
+    }
+    block
 }
 
 #[cfg(test)]
