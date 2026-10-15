@@ -376,10 +376,10 @@ enum ApprovalWords {
     }
 
     /// Held, not tapped: a request that can't be undone, or that carries a red warning (a force push, unchecked
-    /// history, hidden characters, a destructive tool, a destructive guard rule). It is approved by holding, asked every
-    /// time, and never remembered.
+    /// history, hidden characters, a destructive tool, a destructive guard rule), or a payment: money can't come back.
+    /// It is approved by holding, asked every time, and never remembered.
     static func held(_ view: ApprovalView) -> Bool {
-        destructive(view) || dangerTags(view).contains(where: \.destructive)
+        view.purchase != nil || destructive(view) || dangerTags(view).contains(where: \.destructive)
     }
 
     static let hiddenHelp = "Invisible characters can make code read unlike what it does. They show as \u{FFFD} here."
