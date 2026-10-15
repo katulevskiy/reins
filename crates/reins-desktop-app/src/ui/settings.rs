@@ -7,8 +7,8 @@ use std::time::Instant;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Anchor, AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, div, px,
+    Anchor, AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
 use super::health::checked;
@@ -22,7 +22,7 @@ use crate::format::host;
 use crate::health;
 use crate::model::{Model, Section};
 use crate::shortcuts;
-use crate::theme::{Appearance, Palette, SERIF, SignalText as _, Tone};
+use crate::theme::{Appearance, MONO, Palette, SERIF, SignalText as _, Tone};
 
 /// The keyboard card's lines: the sections in one line ("Home … Settings", "⌘1 – ⌘6"), then the rest but Quit.
 #[must_use]
@@ -360,15 +360,14 @@ impl Root {
         trigger.child(kit::open_menu("appearance-menu", menu, Anchor::TopRight)).into_any_element()
     }
 
-    /// Who this computer is paired as (the account, and the name the phone shows for it), the server and its key, which phone approves, and the service; a hairline
-    /// under it.
+    /// Who this computer is paired as (the account, and the name the phone shows for it), the server and its key,
+    /// which phone approves, and the service; a hairline under it.
     fn account_card(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let account = d.saved.account.clone().unwrap_or_else(|| host(&d.server));
-        // The name the phone knows this computer by, then the server and the key compared when pairing.
-        let mut line = format!("{} · {}", d.shown_as, host(&d.server));
-        if let Some(fp) = &d.fingerprint {
-            line = format!("{line} · key {fp}");
-        }
+        // The name the phone knows this computer by and the server; under them, on a line of its own that is never
+        // cut, the key compared when pairing.
+        let line = format!("{} · {}", d.shown_as, host(&d.server));
+        let key = d.fingerprint.as_ref().map(|fp| format!("key {fp}"));
         let service = match d.snapshot.as_ref().map(|s| &s.daemon) {
             Some(DaemonState::Running {
                 ..
@@ -428,11 +427,17 @@ impl Root {
                             .truncate()
                             .child(account),
                     )
-                    .child(mono(line, 12.5).text_color(pal.ink_meta())),
+                    .child(mono(line, 12.5).text_color(pal.ink_meta()))
+                    .when_some(key, |col, key| col.child(fingerprint_line(key, pal))),
             )
             .child(pills)
             .into_any_element()
     }
+}
+
+/// The key's eight digits as the phone shows them, whole at any width: they wrap rather than being cut.
+fn fingerprint_line(key: String, pal: Palette) -> Div {
+    div().flex_none().font_family(MONO).text_size(px(12.5)).text_color(pal.ink_meta()).child(key)
 }
 
 #[cfg(test)]
