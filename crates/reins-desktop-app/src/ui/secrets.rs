@@ -9,10 +9,11 @@ use std::fmt::Write as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, div, linear_color_stop, linear_gradient, px, relative,
+    StatefulInteractiveElement as _, Styled as _, Window, div, linear_color_stop, linear_gradient, px, relative,
 };
 use reins_desktop::secrets_scan::{Confidence, Detector, Finding, Group, Risk, Source, Stage, StageState};
 
+use super::field::Field;
 use super::hold::Held;
 use super::icons::{Brand, Icon, Mark, icon};
 use super::parts::{
@@ -22,7 +23,7 @@ use super::parts::{
 use super::story::Words;
 use super::{Data, Root};
 use crate::model::Model;
-use crate::secrets::{self, Finished, Flow, Moving, Review, Scanning};
+use crate::secrets::{self, Finished, Flow, Moving, PhoneKey, Review, Scanning};
 use crate::theme::{MONO, Palette};
 
 fn words(parts: &[(&str, bool)]) -> Vec<Words> {
@@ -210,6 +211,7 @@ impl Root {
         &self,
         d: &Data,
         pal: Palette,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> Option<(AnyElement, bool)> {
         match &d.secrets {
@@ -217,7 +219,7 @@ impl Root {
             Flow::Scanning(s) => Some((Self::scanning(s, pal, cx), false)),
             Flow::Review(r) => match r.open.as_ref().and_then(|id| r.report.finding(id)) {
                 Some(f) => Some((Self::finding_detail(r, f, d, pal, cx), false)),
-                None => Some((Self::review_page(r, d, pal, cx), true)),
+                None => Some((self.review_page(r, d, pal, window, cx), true)),
             },
             Flow::Moving(m) => Some((Self::moving(m, d, pal), false)),
             Flow::Done(done) => Some((self.secrets_done(done, d, pal, cx), false)),
@@ -357,7 +359,14 @@ impl Root {
             .into_any_element()
     }
 
-    fn review_page(r: &Review, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn review_page(
+        &self,
+        r: &Review,
+        d: &Data,
+        pal: Palette,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let top = if cfg!(target_os = "macos") {
             40.0
         } else {
@@ -435,11 +444,25 @@ impl Root {
             .h_full()
             .overflow_y_scroll()
             .child(div().px(px(34.0)).pt(px(top)).pb(px(34.0)).child(list));
-        div().size_full().flex().flex_row().child(left).child(Self::review_panel(r, d, pal, top, cx)).into_any_element()
+        div()
+            .size_full()
+            .flex()
+            .flex_row()
+            .child(left)
+            .child(self.review_panel(r, d, pal, top, window, cx))
+            .into_any_element()
     }
 
     /// The review's right panel: how many move, into which folder, what happens after, and Move.
-    fn review_panel(r: &Review, d: &Data, pal: Palette, top: f32, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn review_panel(
+        &self,
+        r: &Review,
+        d: &Data,
+        pal: Palette,
+        top: f32,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let n = r.count();
         let plan = r.plan(&d.computer, &d.machine);
         let computer = d.computer.clone();
@@ -469,7 +492,7 @@ impl Root {
         };
         let move_label = format!("Move {n} · approve on phone");
         let mv = big(btn_icon("secrets-move", Icon::Smartphone, move_label, Btn::Primary, pal)).w_full().h(px(42.0));
-        let mv = if n == 0 {
+        let mv = if n == 0 || r.key.is_some() {
             mv.opacity(0.45).cursor_default()
         } else {
             mv.on_click(Self::on_model(cx, Model::move_secrets))
@@ -542,10 +565,45 @@ impl Root {
             .when(!plan.clashes.is_empty() || !plan.conflicts.is_empty(), |p| {
                 p.child(small_caps("Names").mt(px(18.0))).child(Self::names_card(&plan, pal, cx))
             })
+            .when_some(r.key.as_ref(), |p, key| {
+                p.child(small_caps("Your phone's key").mt(px(18.0))).child(self.phone_key_card(key, pal, window, cx))
+            })
             .when_some(r.error.clone(), |p, e| p.child(caption(e, pal).mt(px(12.0)).text_color(pal.danger)))
             .child(div().flex_1())
             .child(mv)
             .into_any_element()
+    }
+
+    /// The first time only: the twelve digits the phone shows for its key, typed here, then checked with the phone.
+    fn phone_key_card(&self, key: &PhoneKey, pal: Palette, window: &Window, cx: &mut Context<'_, Self>) -> Div {
+        let check = small(btn(
+            "secrets-key-check",
+            if key.checking {
+                "Approve on phone"
+            } else {
+                "Check"
+            },
+            Btn::Plain,
+            pal,
+        ));
+        let check = if key.checking || key.digits().is_none() {
+            check.opacity(0.45).cursor_default()
+        } else {
+            check.on_click(Self::on_model(cx, Model::check_phone_key))
+        };
+        card(pal)
+            .mt(px(8.0))
+            .p(px(12.0))
+            .gap(px(8.0))
+            .child(caption("12 digits: Reins on your phone, Settings › Devices", pal).text_color(pal.tertiary))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(self.text_field(Field::PhoneKey, "0000-0000-0000", pal, window, cx))
+                    .child(check),
+            )
     }
 
     /// What the review says about names: a project the vault already has from another folder (a new name, or merge

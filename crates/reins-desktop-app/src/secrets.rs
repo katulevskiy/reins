@@ -51,6 +51,24 @@ pub struct Review {
     pub existing: Existing,
     /// Projects the person chose to merge into although the vault's came from elsewhere.
     pub merge: BTreeSet<String>,
+    /// The phone's key was never checked on this computer: its twelve digits are typed here first.
+    pub key: Option<PhoneKey>,
+}
+
+/// The phone's key digits, as typed, and whether the phone is being asked for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PhoneKey {
+    pub typed: String,
+    pub checking: bool,
+}
+
+impl PhoneKey {
+    /// The digits typed (`4821-9930-1274`, with spaces or not): twelve make a key to check.
+    #[must_use]
+    pub fn digits(&self) -> Option<String> {
+        let d: String = self.typed.chars().filter(char::is_ascii_digit).collect();
+        (d.len() == 12).then_some(d)
+    }
 }
 
 impl Review {
@@ -65,6 +83,7 @@ impl Review {
             error: None,
             existing,
             merge: BTreeSet::new(),
+            key: None,
         }
     }
 
@@ -244,5 +263,18 @@ mod tests {
         assert_eq!(plan.clashes.len(), 1);
         r.toggle_merge("api");
         assert_eq!(project_in(&r.plan("x", "machine-x-0000"), api), "api");
+    }
+
+    #[test]
+    fn the_phone_key_is_twelve_digits_however_they_are_typed() {
+        let key = |t: &str| PhoneKey {
+            typed: t.to_owned(),
+            checking: false,
+        };
+        for typed in ["4821-9930-1274", "4821 9930 1274", "482199301274"] {
+            assert_eq!(key(typed).digits().as_deref(), Some("482199301274"), "{typed}");
+        }
+        assert_eq!(key("4821-9930-127").digits(), None);
+        assert_eq!(key("").digits(), None);
     }
 }

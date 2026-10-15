@@ -25,6 +25,20 @@ impl PhoneWriter {
     fn phone(&self) -> PhoneVaultWriter {
         PhoneVaultWriter::new(&self.paths, &self.config, self.phone_key_digits.clone())
     }
+
+    /// The phone's key has never been checked here: a window asks for its digits first.
+    #[must_use]
+    pub fn phone_key_unchecked(&self) -> bool {
+        self.phone().phone_key_unchecked()
+    }
+
+    /// Checks the phone's key against the digits given (one approval on the phone) and keeps it.
+    ///
+    /// # Errors
+    /// Why not, as the person can read it.
+    pub async fn check_phone_key(&self) -> Result<(), String> {
+        self.phone().check_phone_key().await.map_err(|e| e.to_string())
+    }
 }
 
 #[async_trait::async_trait]

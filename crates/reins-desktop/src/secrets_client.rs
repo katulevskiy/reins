@@ -349,6 +349,26 @@ impl PhoneVaultWriter {
         Ok((phone, key))
     }
 
+    /// Whether the phone's key has never been checked on this computer (for the paired phone): a window without a
+    /// terminal must then ask for its twelve digits before anything is sent. False when not signed in.
+    #[must_use]
+    pub fn phone_key_unchecked(&self) -> bool {
+        crate::vault_cli::logged_in(&self.paths, &self.config)
+            .is_ok_and(|phone| crate::vault_cli::pinned(&self.paths, phone.server()).is_none())
+    }
+
+    /// Checks the phone's key against the digits given (the phone approves handing it over) and keeps it, so later
+    /// stores and listings need no digits.
+    ///
+    /// # Errors
+    /// [`StoreError::PhoneKeyNeeded`] without digits; the reason when the digits do not match or the phone declined.
+    pub async fn check_phone_key(&self) -> Result<(), StoreError> {
+        if self.phone_key_digits.is_none() && self.phone_key_unchecked() {
+            return Err(StoreError::PhoneKeyNeeded);
+        }
+        self.phone().await.map(|_| ())
+    }
+
     fn timeout(&self) -> Duration {
         Duration::from_secs(self.config.approval_timeout_secs)
     }

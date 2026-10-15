@@ -68,6 +68,8 @@ pub struct Root {
     /// The work session form's fields: what it is for, and a branch for each repository (made as rows appear).
     session_reason: FocusHandle,
     branch_fields: Vec<FocusHandle>,
+    /// The secrets review's field for the phone key's digits.
+    phone_key_field: FocusHandle,
     /// Activity's filters: one outcome, one kind (`None`: all), and whether their popover is open.
     outcome_filter: Option<Outcome>,
     kind_filter: Option<Kind>,
@@ -243,6 +245,7 @@ impl Root {
             guard_error: [None, None],
             session_reason: cx.focus_handle(),
             branch_fields: Vec::new(),
+            phone_key_field: cx.focus_handle(),
             outcome_filter: None,
             kind_filter: None,
             filter_open: demo_var("REINS_DEMO_FILTER").is_some(),
@@ -367,7 +370,7 @@ impl Root {
             30.0
         };
         let secrets_page = if d.section == Section::Keys {
-            self.secrets_page(d, pal, cx)
+            self.secrets_page(d, pal, window, cx)
         } else {
             None
         };
