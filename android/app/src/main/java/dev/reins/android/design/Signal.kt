@@ -984,10 +984,12 @@ fun SignalDialog(
     destructive: Boolean = false,
     italic: String? = null,
     cancelLabel: String = "Cancel",
+    /** The answer button's test tag. */
+    confirmTag: String? = null,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         DialogFeedback()
-        SignalDialogPanel(title, text, confirmLabel, onConfirm, onDismiss, Modifier.padding(horizontal = 24.dp), destructive, italic, cancelLabel)
+        SignalDialogPanel(title, text, confirmLabel, onConfirm, onDismiss, Modifier.padding(horizontal = 24.dp), destructive, italic, cancelLabel, confirmTag)
     }
 }
 
@@ -1003,6 +1005,7 @@ fun SignalDialogPanel(
     destructive: Boolean = false,
     italic: String? = null,
     cancelLabel: String = "Cancel",
+    confirmTag: String? = null,
 ) {
     val c = LocalColors.current
     val shape = RoundedCornerShape(28.dp)
@@ -1015,7 +1018,12 @@ fun SignalDialogPanel(
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SignalButton(cancelLabel, Modifier.weight(1f), style = ButtonStyle.Outline, onClick = onDismiss)
-            SignalButton(confirmLabel, Modifier.weight(1f), style = if (destructive) ButtonStyle.DangerWash else ButtonStyle.Inverse, onClick = onConfirm)
+            SignalButton(
+                confirmLabel,
+                Modifier.weight(1f).then(if (confirmTag != null) Modifier.testTag(confirmTag) else Modifier),
+                style = if (destructive) ButtonStyle.DangerWash else ButtonStyle.Inverse,
+                onClick = onConfirm,
+            )
         }
     }
 }

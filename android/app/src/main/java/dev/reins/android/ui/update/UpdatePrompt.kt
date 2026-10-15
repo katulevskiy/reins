@@ -112,20 +112,16 @@ fun UpdatePrompt(status: UpdateStatus, onInstall: () -> Unit, onLater: () -> Uni
 /** Before Android's "install unknown apps" screen: why it is needed and what to turn on. */
 @Composable
 fun InstallPermissionDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit) {
-    val c = LocalColors.current
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        DialogFeedback()
-        Column(Modifier.padding(horizontal = 28.dp).fillMaxWidth().glass(c, RoundedCornerShape(26.dp), 16.dp).padding(22.dp)) {
-            RText("Allow updates", RType.sans(19f, FontWeight.SemiBold), c.text)
-            Spacer(Modifier.height(6.dp))
-            RText("Android asks once. Turn on “Allow from this source”.", RType.sans(15f, lineHeight = 21f), c.secondary)
-            Spacer(Modifier.height(20.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CapsuleButton("Not now", Modifier.weight(1f), style = ButtonStyle.Secondary, onClick = onDismiss)
-                CapsuleButton("Allow", Modifier.weight(1f).testTag("allowInstalls"), style = ButtonStyle.Accent, onClick = onOpenSettings)
-            }
-        }
-    }
+    dev.reins.android.design.SignalDialog(
+        title = "Allow updates",
+        text = "Android asks once. Turn on “Allow from this source”.",
+        confirmLabel = "Allow",
+        onConfirm = onOpenSettings,
+        onDismiss = onDismiss,
+        italic = "updates",
+        cancelLabel = "Not now",
+        confirmTag = "allowInstalls",
+    )
 }
 
 /** The update prompt for [updates]. [allowed] is false while something more important is on screen (an approval sheet). */
