@@ -45,7 +45,7 @@ struct RecoveryCodeRow: View {
         feedback.play(.tap)
         Task {
             defer { busy = false }
-            switch await OwnerCheck.confirm(model, reason: "Show your recovery code") {
+            switch await OwnerPrompt.confirm(model, reason: "Show your recovery code") {
             case .confirmed:
                 do {
                     code = try await model.core.accountRecoveryCode()
@@ -56,7 +56,7 @@ struct RecoveryCodeRow: View {
             case .cancelled:
                 break
             case .unavailable:
-                error = OwnerCheck.unavailableMessage
+                error = OwnerPrompt.unavailableMessage
             }
         }
     }

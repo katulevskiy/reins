@@ -63,7 +63,7 @@ final class JoinModel {
         busy = true
         error = nil
         let name = untrusted(view?.deviceName ?? "")
-        switch await OwnerCheck.confirm(app, reason: "Add \(name.isEmpty ? "this phone" : name) to your account") {
+        switch await OwnerPrompt.confirm(app, reason: "Add \(name.isEmpty ? "this phone" : name) to your account") {
         case .confirmed:
             do {
                 try await app.core.answerJoin(id: joinId, approve: true)
@@ -82,7 +82,7 @@ final class JoinModel {
         case .unavailable:
             app.feedback.play(.error)
             busy = false
-            error = OwnerCheck.unavailableMessage
+            error = OwnerPrompt.unavailableMessage
         }
     }
 

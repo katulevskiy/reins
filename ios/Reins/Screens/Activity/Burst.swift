@@ -41,12 +41,12 @@ struct Burst: Equatable {
         guard !ids.isEmpty else { return }
         if approve {
             let what = ids.count == 1 ? "the request" : "\(ids.count) requests"
-            switch await OwnerCheck.confirm(app, reason: "Approve \(what) from \(untrusted(label))") {
+            switch await OwnerPrompt.confirm(app, reason: "Approve \(what) from \(untrusted(label))") {
             case .confirmed: break
             case .cancelled: return
             case .unavailable:
                 app.feedback.play(.error)
-                app.notice = OwnerCheck.unavailableMessage
+                app.notice = OwnerPrompt.unavailableMessage
                 return
             }
         }

@@ -67,7 +67,7 @@ final class UploadModel {
         guard let view, !busy else { return }
         busy = true
         error = nil
-        switch await OwnerCheck.confirm(app, reason: "Approve the file from \(untrusted(view.connectionLabel))") {
+        switch await OwnerPrompt.confirm(app, reason: "Approve the file from \(untrusted(view.connectionLabel))") {
         case .confirmed:
             app.feedback.play(.uploadApproved)
             await answer(app, approve: true)
@@ -76,7 +76,7 @@ final class UploadModel {
         case .unavailable:
             app.feedback.play(.error)
             busy = false
-            error = OwnerCheck.unavailableMessage
+            error = OwnerPrompt.unavailableMessage
         }
     }
 
