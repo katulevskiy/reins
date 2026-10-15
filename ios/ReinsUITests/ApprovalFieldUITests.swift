@@ -46,7 +46,7 @@ final class ApprovalFieldUITests: XCTestCase {
 
     func testAForcePushToMainSaysEveryWarningAndIsHeld() {
         let app = open("req21")
-        XCTAssertTrue(element(app, "what").label.hasPrefix("Push 2 commits to"))
+        XCTAssertTrue(element(app, "what").label.hasPrefix("Force-push 2 commits to"))
         assertShown(app, "forceWarning:0", says: "rewrites history")
         assertShown(app, "defaultBranch", says: "default branch main")
         XCTAssertFalse(element(app, "onceWarning").exists, "the red line already says why it always asks")

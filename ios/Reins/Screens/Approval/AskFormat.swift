@@ -43,31 +43,50 @@ enum AskFormat {
     static func waiting(_ view: ApprovalView, core: RequestLabel? = nil, computer: String? = nil) -> AskLine {
         let kind = label(view, core: core)
         let icon = self.icon(view, core: core)
-        func line(_ lead: String, _ target: String?, _ after: String = "", mono: String? = nil) -> AskLine {
-            // A name mixing scripts (a Cyrillic "а" in "octo/аpp") also shows as it really is, below.
-            let raw = target.flatMap(mixedScriptRaw).map { "\($0) · mixed scripts" }
-            let mono = [mono?.trimmingCharacters(in: .whitespacesAndNewlines), raw].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+        /// `stand`: what the sentence says instead of a target that can pass for something else ("a repository"):
+        /// an identifier (a repository, a project, a server) that is not plain ASCII, or a name mixing scripts (a
+        /// Cyrillic "а" in "octo/аpp"). Its raw form, escaped, then leads the mono line.
+        func line(_ lead: String, _ target: String?, _ after: String = "", mono: String? = nil, stand: String? = nil) -> AskLine {
+            var target = target
+            var lead = lead
+            var flag: String?
+            if let t = target, let stand {
+                let lookalike = !t.unicodeScalars.allSatisfy(\.isASCII) || mixedScriptRaw(t) != nil
+                if lookalike {
+                    flag = "\(stand.split(separator: " ").last.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Name"): \(rawForm(t))"
+                    lead += stand
+                    target = nil
+                }
+            } else if let t = target, let raw = mixedScriptRaw(t) {
+                flag = "\(raw) · mixed scripts"
+            }
+            let mono = [flag, mono?.trimmingCharacters(in: .whitespacesAndNewlines)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
             return AskLine(kind: kind, lead: lead, target: target, after: after, mono: mono.isEmpty ? nil : mono, icon: icon)
         }
         let service = serviceName(view.service.isEmpty ? "gmail" : view.service)
 
         if let p = view.purchase {
             // The store's name is what the AI typed; the domain is the page the purchase is on.
-            return line("Pay \(untrusted(p.total)) at ", asciiHost(untrustedName(p.domain)), mono: untrusted(p.merchant))
+            let domain = untrustedName(p.domain)
+            let ascii = asciiHost(domain)
+            // A host beyond ASCII is shown as punycode; what it was, below.
+            let shown = ascii == domain ? nil : "Store: \(rawForm(domain))"
+            return line("Pay \(untrusted(p.total)) at ", ascii, mono: [shown, untrusted(p.merchant)].compactMap { $0 }.joined(separator: "\n"), stand: "a store")
         }
         if let git = view.git {
-            let repo = untrusted(git.repo)
+            let repo = untrustedName(git.repo, limit: .max)
             let refs = git.refs
             let mono = refs.map(refWords).joined(separator: ", ")
             if !refs.isEmpty && refs.allSatisfy({ $0.change == "delete" }) {
-                let what = refs.count > 1 ? "Delete \(refs.count) refs of " : refs[0].kind == "tag" ? "Delete a tag of " : "Delete a branch of "
-                return line(what, repo, mono: mono)
+                let what = refs.count > 1 ? "Delete \(refs.count) refs from " : refs[0].kind == "tag" ? "Delete a tag from " : "Delete a branch from "
+                return line(what, repo, mono: mono, stand: "a repository")
             }
             if !refs.isEmpty && refs.allSatisfy({ $0.kind == "tag" }) {
-                return line(refs.count == 1 ? "Push a tag to " : "Push \(refs.count) tags to ", repo, mono: mono)
+                return line(refs.count == 1 ? "Push a tag to " : "Push \(refs.count) tags to ", repo, mono: mono, stand: "a repository")
             }
             let commits = refs.filter { $0.change != "delete" }.reduce(0) { $0 + Int($1.commitCount) }
-            return line(commits == 0 ? "Push to " : "Push \(plural(commits, "commit")) to ", repo, mono: mono)
+            let verb = refs.contains(where: \.force) ? "Force-push" : "Push"
+            return line(commits == 0 ? "\(verb) to " : "\(verb) \(plural(commits, "commit")) to ", repo, mono: mono, stand: "a repository")
         }
         if let ask = view.ask {
             let place = computer.flatMap { $0.isEmpty ? nil : untrustedName($0) } ?? "your computer"
@@ -88,11 +107,12 @@ enum AskFormat {
         }
         if let mcp = view.mcp {
             // The tool's title is the server's own description of it: the tool's name is what runs.
-            return line("Use a tool on ", untrustedName(mcp.serverName), mono: untrusted(mcp.tool))
+            return line("Use a tool on ", untrustedName(mcp.serverName), mono: untrusted(mcp.tool), stand: "a server")
         }
         if let r = view.envRelease {
             let what = r.allVariables ? "every variable" : r.variables.count == 1 ? "a variable" : plural(r.variables.count, "variable")
-            return line("\(r.print ? "Print" : "Release") \(what) of ", "\(untrustedName(r.project)) · \(untrustedName(r.env))", mono: untrusted(r.command))
+            return line("\(r.print ? "Print" : "Release") \(what) of ", "\(untrustedName(r.project)) · \(untrustedName(r.env))", mono: untrusted(r.command),
+                        stand: "a project")
         }
         if let s = view.secrets {
             return line("Release \(plural(s.items.count, "secret")) from ", "your vault", mono: untrusted(s.command))

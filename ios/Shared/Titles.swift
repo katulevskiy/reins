@@ -303,5 +303,10 @@ func mixedScriptRaw(_ text: String) -> String? {
     }
     let scripts = Set(text.unicodeScalars.compactMap(script))
     guard scripts.count > 1 else { return nil }
-    return text.unicodeScalars.map { $0.isASCII ? String($0) : "\\u{\(String($0.value, radix: 16))}" }.joined()
+    return rawForm(text)
+}
+
+/// A value as its code points show it: ASCII as it is, anything else escaped ("octo/\u{430}pp").
+func rawForm(_ text: String) -> String {
+    text.unicodeScalars.map { $0.isASCII ? String($0) : "\\u{\(String($0.value, radix: 16))}" }.joined()
 }

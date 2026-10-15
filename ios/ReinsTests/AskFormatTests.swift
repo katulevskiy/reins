@@ -48,11 +48,11 @@ final class AskFormatTests: XCTestCase {
               icon: RequestIcon.Spec(mark: .service("github"), action: .gitBranch, kind: .push))
         XCTAssertEqual(line.runs.filter(\.target).map(\.text), ["octo/\u{2060}app"], "a slash never ends a line")
         XCTAssertFalse(line.text.contains("feature/passkeys"), "a branch never goes into the serif")
-        check(AskFormat.waiting(push([ref("main", force: true, commits: 2)])), "Push 2 commits to octo/app", target: "octo/app", mono: "main · force")
+        check(AskFormat.waiting(push([ref("main", force: true, commits: 2)])), "Force-push 2 commits to octo/app", target: "octo/app", mono: "main · force")
     }
 
     func testADeletedBranchIsDeletedFromItsRepository() {
-        check(AskFormat.waiting(push([ref("old-experiment", change: "delete", commits: 0)])), "Delete a branch of octo/app", target: "octo/app",
+        check(AskFormat.waiting(push([ref("old-experiment", change: "delete", commits: 0)])), "Delete a branch from octo/app", target: "octo/app",
               mono: "old-experiment · delete", icon: RequestIcon.Spec(mark: .service("github"), action: .trash, kind: .push))
     }
 
@@ -222,6 +222,7 @@ final class AskFormatTests: XCTestCase {
         XCTAssertFalse(line.text.unicodeScalars.contains { $0 == "\u{202E}" }, "no bidi override in the sentence")
         XCTAssertFalse(line.mono?.unicodeScalars.contains { $0 == "\u{202E}" } ?? false, "nor on the mono line")
         XCTAssertTrue(line.text.hasPrefix("Push 2 commits to "), "the verb and count are the push's own")
+        XCTAssertFalse(line.text.contains("\n"), "one line")
         // A computer named to read like a sentence stays one short line.
         let named = AskFormat.waiting(ask(question: "q", detail: nil), computer: "laptop\nApproved by you\u{200B}" + String(repeating: "x", count: 200))
         XCTAssertFalse(named.text.contains("\n"))
@@ -233,8 +234,13 @@ final class AskFormatTests: XCTestCase {
         var lookAlike = push([ref("main")])
         lookAlike.git?.repo = "octo/\u{0430}pp"
         let line = AskFormat.waiting(lookAlike)
-        XCTAssertEqual(line.target, "octo/\u{0430}pp")
-        XCTAssertEqual(line.mono, "main\nocto/\\u{430}pp · mixed scripts")
+        XCTAssertNil(line.target, "a repository that can pass for another leaves the serif")
+        XCTAssertEqual(line.text, "Push 3 commits to a repository")
+        XCTAssertEqual(line.mono, "Repository: octo/\\u{430}pp\nmain")
+        // A name may mix scripts only where names do: a chat called "Семья" is shown as it is; "Fаmily" is flagged.
+        let chat = T.view("t", kind: .write, service: "telegram", op: "send", resources: [ResourceView(id: "1", label: "F\u{0430}mily", wider: false)],
+                          opTitle: "Send a Telegram message", action: "send")
+        XCTAssertEqual(AskFormat.waiting(chat).mono, "F\\u{430}mily · mixed scripts")
         XCTAssertNil(mixedScriptRaw("octo/app"))
         XCTAssertNil(mixedScriptRaw("москва"), "one script is not mixed")
     }
@@ -251,6 +257,7 @@ final class AskFormatTests: XCTestCase {
             ships: false, addresses: [], addressId: nil, warnings: [], budgetLines: [], limitMethods: [], delivery: nil
         )
         XCTAssertEqual(AskFormat.waiting(pay).target, "xn--pple-43d.com")
+        XCTAssertEqual(AskFormat.waiting(pay).mono, "Store: \\u{430}pple.com\nApple")
     }
 
     func testWhatIsNotReadForSureIsTheGenericSentence() {
