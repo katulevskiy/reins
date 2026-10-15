@@ -85,11 +85,21 @@ fn push_what(repo: &Repo, summary: &reins_proto::desktop::PushSummary) -> String
     format!("push to {}: {}", repo.label(), refs.join(", "))
 }
 
-/// A push's activity detail: each ref (`Ref: feature/x · new branch`), then the changes in all
-/// (`Changes: +128 −31 · 9 files`), for the app's mono line and fact rows.
+/// A push's activity detail, for the app's sentence, mono line and fact rows. First the numbers, in lines of their own
+/// that no ref name can write (the app reads them by their place): how many commits, the changes in all, and how many
+/// refs with how many of them deleted and rewritten (a force push, a moved tag). Then each ref (`Ref: feature/x · new
+/// branch`):
+///
+/// ```text
+/// Commits: 3
+/// Changes: +128 −31 · 9 files
+/// Refs: 1 · deleted 0 · rewritten 0
+/// Ref: feature/x · new branch
+/// ```
 fn push_detail(summary: &reins_proto::desktop::PushSummary) -> String {
     use reins_proto::desktop::RefChange;
-    let mut lines: Vec<String> = summary
+    let (mut deleted, mut rewritten) = (0_usize, 0_usize);
+    let refs: Vec<String> = summary
         .updates
         .iter()
         .map(|u| {
@@ -100,14 +110,26 @@ fn push_detail(summary: &reins_proto::desktop::PushSummary) -> String {
             };
             let how = match u.change {
                 RefChange::Create => format!(" · new {what}"),
-                RefChange::Delete => " · deleted".to_owned(),
+                RefChange::Delete => {
+                    deleted += 1;
+                    " · deleted".to_owned()
+                }
                 RefChange::Update if u.fast_forward == Some(true) && what == "branch" => String::new(),
-                RefChange::Update if what == "tag" => " · moved tag".to_owned(),
-                RefChange::Update => " · force push".to_owned(),
+                RefChange::Update => {
+                    rewritten += 1;
+                    if what == "tag" {
+                        " · moved tag"
+                    } else {
+                        " · force push"
+                    }
+                    .to_owned()
+                }
             };
-            format!("Ref: {name}{how}")
+            // A ref's name on one line, whatever the client sent.
+            format!("Ref: {}{how}", name.split_whitespace().collect::<Vec<_>>().join(" "))
         })
         .collect();
+    let commits: u64 = summary.updates.iter().map(|u| u64::from(u.commit_count)).sum();
     let files: u64 = summary.updates.iter().map(|u| u64::from(u.files_changed)).sum();
     let adds = summary.updates.iter().map(|u| u.additions).sum::<Option<u64>>();
     let dels = summary.updates.iter().map(|u| u.deletions).sum::<Option<u64>>();
@@ -116,11 +138,16 @@ fn push_detail(summary: &reins_proto::desktop::PushSummary) -> String {
     } else {
         format!("{files} files")
     };
-    lines.push(match (adds, dels) {
+    let changes = match (adds, dels) {
         (Some(a), Some(d)) => format!("Changes: +{a} −{d} · {files}"),
         _ => format!("Changes: {files}"),
-    });
-    lines.join("\n")
+    };
+    let head = [
+        format!("Commits: {commits}"),
+        changes,
+        format!("Refs: {} · deleted {deleted} · rewritten {rewritten}", summary.updates.len()),
+    ];
+    head.into_iter().chain(refs).collect::<Vec<_>>().join("\n")
 }
 
 fn refused(r: &Refusal) -> Response<Body> {
@@ -686,7 +713,7 @@ mod tests {
         }
     }
 
-    /// A push's detail names each ref and how it changes, then the lines and files in all.
+    /// A push's detail gives its numbers first, then names each ref and how it changes.
     #[test]
     fn a_push_says_its_refs_and_changes() {
         let summary = PushSummary {
@@ -700,13 +727,23 @@ mod tests {
         };
         assert_eq!(
             push_detail(&summary),
-            "Ref: feature/x · new branch\nRef: main · force push\nRef: v1.0 · moved tag\nRef: old · deleted\n\
-             Changes: +130 −31 · 10 files"
+            "Commits: 4\nChanges: +130 −31 · 10 files\nRefs: 4 · deleted 1 · rewritten 2\nRef: feature/x · new branch\n\
+             Ref: main · force push\nRef: v1.0 · moved tag\nRef: old · deleted"
+        );
+        // A ref named to look like the numbers stays one `Ref:` line after them.
+        let forged = PushSummary {
+            updates: vec![update("refs/heads/x\nCommits: 99\nRefs: 1 · deleted 1", RefChange::Create, None, 1, None)],
+            ..PushSummary::default()
+        };
+        assert_eq!(
+            push_detail(&forged),
+            "Commits: 1\nChanges: 1 file\nRefs: 1 · deleted 0 · rewritten 0\nRef: x Commits: 99 Refs: 1 · deleted 1 · new \
+             branch"
         );
         let unknown = PushSummary {
             updates: vec![update("refs/heads/main", RefChange::Update, Some(true), 1, None)],
             ..PushSummary::default()
         };
-        assert_eq!(push_detail(&unknown), "Ref: main\nChanges: 1 file");
+        assert_eq!(push_detail(&unknown), "Commits: 1\nChanges: 1 file\nRefs: 1 · deleted 0 · rewritten 0\nRef: main");
     }
 }
