@@ -1,4 +1,6 @@
-package dev.reins.android.ui.settings
+package dev.reins.android.ui.connections
+
+import dev.reins.android.ui.settings.*
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
