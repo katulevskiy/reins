@@ -75,7 +75,11 @@ class AppContainer(private val context: Context) {
         context,
         settings = { feedbackStore.current },
         feedback = { feedback },
-        onAutopilot = { appScope.launch { refreshAutopilot() } },
+        onAutopilot = { event ->
+            // An Overnight that ended by itself went back to what it interrupted: nothing is left for Stop.
+            if (event is dev.reins.core.AutopilotEvent.OvernightEnded) overnightReturns.stopped(event.connectionId)
+            appScope.launch { refreshAutopilot() }
+        },
     ) { appScope.launch { refreshPending() } }
 
     /** Runs Autopilot's model on this phone; handed to the core as it is built, so background pushes can use it. */
@@ -361,13 +365,30 @@ class AppContainer(private val context: Context) {
         if (!state.isCurrent(epoch)) return null
         state.setAutopilot(settings)
         val labels = state.connections.value.associate { it.id to it.label }
-        val notice = AutopilotText.bypassNotice(settings, { labels[it] ?: "an AI" }, System.currentTimeMillis() / 1000)
+        val now = System.currentTimeMillis() / 1000
+        val notice = AutopilotText.bypassNotice(settings, { labels[it] ?: "an AI" }, now)
+        val overnight = AutopilotText.overnightNotice(settings, { labels[it] ?: "an AI" }, now)
         withContext(Dispatchers.IO) {
             if (!state.isCurrent(epoch)) return@withContext
             notifier.showBypass(notice)
-            BypassEndWorker.schedule(context, notice?.nextEnd)
+            notifier.showOvernight(overnight)
+            BypassEndWorker.schedule(context, listOfNotNull(notice?.nextEnd, overnight?.nextEnd).minOrNull())
         }
         return settings
+    }
+
+    /** Ends every Overnight now (the Overnight notification's Stop): each goes back to the mode it interrupted. */
+    suspend fun stopOvernights() {
+        val settings = refreshAutopilot() ?: return
+        try {
+            if (settings.overnightUntil != null) stopOvernight(null)
+            settings.connections.filter { it.overnightUntil != null }.forEach { stopOvernight(it.connectionId) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Whatever could not be stopped still ends at its time; the refresh below shows what is left.
+        }
+        refreshAutopilot()
     }
 
     /** What Stop returns each Overnight to, remembered as it starts. */
@@ -566,6 +587,7 @@ class AppContainer(private val context: Context) {
             GrantReminders.sync(context, emptyList())
             BypassEndWorker.schedule(context, null)
             notifier.showBypass(null)
+            notifier.showOvernight(null)
             overnightReturns.clear()
             context.getSystemService(android.app.NotificationManager::class.java).cancelAll()
             mcpSignIn.clear()

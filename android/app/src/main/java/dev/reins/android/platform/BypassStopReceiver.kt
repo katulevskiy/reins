@@ -12,15 +12,19 @@ import dev.reins.android.ReinsApp
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.launch
 
-/** "Stop" on the bypass notification: every bypass ends now. Not exported; only the notification's intent reaches it. */
+/**
+ * "Stop" on the bypass notification (every bypass ends now) or on the Overnight one (every Overnight ends now). Not
+ * exported; only the notifications' intents reach it.
+ */
 class BypassStopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ACTION_STOP) return
+        val action = intent.action
+        if (action != ACTION_STOP && action != ACTION_STOP_OVERNIGHT) return
         val container = (context.applicationContext as ReinsApp).container
         val pending = goAsync()
         container.appScope.launch {
             try {
-                container.stopBypasses()
+                if (action == ACTION_STOP) container.stopBypasses() else container.stopOvernights()
             } finally {
                 pending.finish()
             }
@@ -29,12 +33,13 @@ class BypassStopReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_STOP = "dev.reins.android.STOP_BYPASS"
+        const val ACTION_STOP_OVERNIGHT = "dev.reins.android.STOP_OVERNIGHT"
     }
 }
 
 /**
- * Re-reads Autopilot when a bypass is due to end, so the notification and the header follow. The core ends the bypass
- * at its time whatever happens here; this only keeps the phone's display in step.
+ * Re-reads Autopilot when a bypass or an Overnight is due to end, so the notifications and the header follow. The core
+ * ends them at their time whatever happens here; this only keeps the phone's display in step.
  */
 class BypassEndWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {

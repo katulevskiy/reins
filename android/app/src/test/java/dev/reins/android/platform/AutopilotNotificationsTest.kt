@@ -143,6 +143,49 @@ class AutopilotNotificationsTest {
     }
 
     @Test
+    fun `an Overnight shows its own ongoing countdown with a Stop of its own, beside a bypass's`() {
+        val nowMillis = 1_700_000_000_000L
+        notifier.showBypass(AutopilotText.BypassNotice("Bypass on · 15 min left", "For Claude.", 1_700_000_900, false, listOf("c1")), nowMillis)
+        val notice = AutopilotText.BypassNotice(
+            "Overnight on · 8 h left", "For every AI. Too risky or unclear waits for you.", 1_700_028_800, true, emptyList(),
+            since = 1_699_999_000, mode = dev.reins.core.AutopilotMode.OVERNIGHT,
+        )
+        notifier.showOvernight(notice, nowMillis)
+        assertEquals(2, posted().size)
+        val n = shadowOf(manager).getNotification(AppNotifier.OVERNIGHT_ID)
+        assertEquals("Overnight on · 8 h left", n.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertTrue((n.flags and Notification.FLAG_ONGOING_EVENT) != 0)
+        assertTrue(n.extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN))
+        assertEquals(28_800_000L, n.timeoutAfter)
+        val channel = manager.getNotificationChannel(n.channelId)
+        assertTrue(channel.id.startsWith("autopilot-overnight-"))
+        assertEquals("named by its string resource", context.getString(dev.reins.android.R.string.overnight_name), channel.name.toString())
+        assertEquals(NotificationManager.IMPORTANCE_LOW, channel.importance)
+        val stop = n.actions.single()
+        assertEquals("Stop", stop.title.toString())
+        assertEquals(BypassStopReceiver.ACTION_STOP_OVERNIGHT, shadowOf(stop.actionIntent).savedIntent.action)
+        notifier.showOvernight(null)
+        assertEquals("the bypass's stays", 1, posted().size)
+        assertNull(shadowOf(manager).getNotification(AppNotifier.OVERNIGHT_ID))
+    }
+
+    @Test
+    fun `the Overnight name is one constant and its string resource says the same`() {
+        assertEquals(AutopilotText.OVERNIGHT, context.getString(dev.reins.android.R.string.overnight_name))
+    }
+
+    @Test
+    fun `an Overnight ending reaches the app and in front is heard as less autonomy`() {
+        notifier.autopilotChanged(AutopilotEvent.OvernightEnded("c1"))
+        assertEquals(AutopilotEvent.OvernightEnded("c1"), events.single())
+        assertFalse(heard.played(Event.AutopilotOff))
+        Foreground.focused = true
+        notifier.autopilotChanged(AutopilotEvent.OvernightEnded(null))
+        assertTrue(heard.played(Event.AutopilotOff))
+        assertTrue("nothing is posted", posted().isEmpty())
+    }
+
+    @Test
     fun `a pending item carries Autopilot's suggestion`() {
         notifier.itemPending(TestData.pending("req1", "read", 3u, suggestion = "Autopilot would approve · 97%"))
         val big = posted().single().extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
@@ -165,7 +208,7 @@ class AutopilotNotificationsTest {
     @Test
     fun `Autopilot's channels are listed together`() {
         notifier.createChannels()
-        for (kind in listOf(AppNotifier.Kind.AutoApproved, AppNotifier.Kind.AutoDenied, AppNotifier.Kind.Bypass, AppNotifier.Kind.ModelDownload)) {
+        for (kind in listOf(AppNotifier.Kind.AutoApproved, AppNotifier.Kind.AutoDenied, AppNotifier.Kind.Bypass, AppNotifier.Kind.Overnight, AppNotifier.Kind.ModelDownload)) {
             assertEquals(kind.name, AppNotifier.GROUP_AUTOPILOT, manager.getNotificationChannel(notifier.channel(kind)).group)
         }
         assertEquals("Autopilot", manager.getNotificationChannelGroup(AppNotifier.GROUP_AUTOPILOT).name.toString())

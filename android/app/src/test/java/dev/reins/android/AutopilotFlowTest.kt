@@ -742,6 +742,32 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
+    fun aRunningOvernightTurnsThePillIntoACountdown() {
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.OVERNIGHT, overnightUntil = now + 8 * 3_600, overnightSince = now - 60, overnightReturn = AutopilotMode.AUTO)
+        launch()
+        awaitTag("modePill")
+        rule.onNodeWithContentDescription("Autopilot: Overnight").assertExists()
+        awaitText("8:00:00")
+    }
+
+    @Test
+    fun anOvernightPostsItsNotificationWhoseStopEndsIt() {
+        // Without an end, so the notice does not depend on the phone's own clock.
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.OVERNIGHT, overnightUntil = Long.MAX_VALUE, overnightSince = now - 60, overnightReturn = AutopilotMode.AUTO)
+        launch()
+        awaitTag("modePill")
+        rule.onNodeWithContentDescription("Autopilot: Overnight").assertExists()
+        val manager = context.getSystemService(android.app.NotificationManager::class.java)
+        awaitCore { org.robolectric.Shadows.shadowOf(manager).getNotification(dev.reins.android.platform.AppNotifier.OVERNIGHT_ID) != null }
+        val n = org.robolectric.Shadows.shadowOf(manager).getNotification(dev.reins.android.platform.AppNotifier.OVERNIGHT_ID)
+        assertEquals("Overnight on · until you stop it", n.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
+        // Its Stop, started on another phone: back to the default, never to something looser.
+        kotlinx.coroutines.runBlocking { container.stopOvernights() }
+        assertEquals(Triple(null, null, null), core.modeCalls.last())
+        awaitCore { org.robolectric.Shadows.shadowOf(manager).getNotification(dev.reins.android.platform.AppNotifier.OVERNIGHT_ID) == null }
+    }
+
+    @Test
     fun theSlidersOvernightOpensItsSheet() {
         installModel()
         QuickStyles.set(context, QuickStyle.Slider)
