@@ -1,13 +1,34 @@
 import Foundation
 
-/// Text that came from outside the app (senders, subjects, snippets, client names). Bidirectional controls are
-/// removed so it cannot reorder what is shown around it, and other control characters become spaces.
+/// Text that came from outside the app (senders, subjects, snippets, client names, commands). Bidirectional controls and
+/// every other invisible format character (zero-width spaces and joiners, the byte-order mark, soft hyphens, tag
+/// characters) are removed so it cannot reorder or hide what is shown around it; other control characters become
+/// spaces. Never cut: what the user approves (a command, its arguments, a recipient, a path) is shown whole. Names and
+/// labels that should stay short use `untrustedName`.
 func untrusted(_ text: String) -> String {
-    untrustedLine(text).trimmingCharacters(in: .whitespacesAndNewlines)
+    cleaned(text, showHidden: false).trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// `untrusted` for a line whose leading spaces matter (a line of code in a diff): nothing is trimmed.
+/// `untrusted` for a line whose leading spaces matter (a line of code in a diff): nothing is trimmed, and an invisible
+/// format character shows as U+FFFD, so it can be seen rather than silently change what the line reads as.
+/// Bidirectional controls are still removed.
 func untrustedLine(_ text: String) -> String {
+    cleaned(text, showHidden: true)
+}
+
+/// A name or label from outside (an AI's or a device's name, a host): `untrusted`, on one line (line breaks and tabs
+/// become spaces, runs of spaces one), and at most `limit` characters, ending in "…" when longer. Only for names and
+/// titles, never for anything approved.
+func untrustedName(_ text: String, limit: Int = 64) -> String {
+    let flat = untrusted(text)
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+    guard flat.count > limit, limit > 1 else { return flat }
+    return String(flat.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…"
+}
+
+private func cleaned(_ text: String, showHidden: Bool) -> String {
     var out = String.UnicodeScalarView()
     for scalar in text.unicodeScalars {
         switch scalar.value {
@@ -18,7 +39,11 @@ func untrustedLine(_ text: String) -> String {
         case 0x00...0x1F, 0x7F...0x9F, 0x2028, 0x2029:
             out.append(" ")
         default:
-            out.append(scalar)
+            if scalar.properties.generalCategory == .format {
+                if showHidden { out.append("\u{FFFD}") }
+            } else {
+                out.append(scalar)
+            }
         }
     }
     return String(out)
