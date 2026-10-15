@@ -882,6 +882,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             ],
             warning: nil, favorite: false
         ),
+        VaultItemDetail(
+            id: "deploy", name: "Deploy key", kind: .sshKey,
+            fields: [
+                VaultField(key: "private_key", label: "Private key", value: nil, secret: true, multiline: true),
+                VaultField(key: "public_key", label: "Public key", value: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoDeployKey00000000000000000000000000 Deploy key", secret: false, multiline: true),
+                VaultField(key: "fingerprint", label: "Fingerprint", value: "SHA256:x1PqDemo0000000000000000000000000009fZk", secret: false, multiline: false),
+            ],
+            uses: [VaultUse(reference: "vault:Deploy key/public", hint: "Offered by the SSH agent of the desktop app (reins ssh setup); the private key stays on the phone")],
+            warning: nil, favorite: false
+        ),
     ]
 
     func devices() async throws -> [DeviceView] { locked { $0.devices } }
@@ -901,7 +911,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
                 .sorted { $0.name.lowercased() < $1.name.lowercased() }
                 .map { d in
-                    VaultItemSummary(id: d.id, name: d.name, kind: d.kind, subtitle: d.fields.first { !$0.secret }?.value ?? "", favorite: d.favorite)
+                    VaultItemSummary(
+                        id: d.id, name: d.name, kind: d.kind,
+                        subtitle: d.kind == .sshKey ? "SSH key · ed25519" : d.fields.first { !$0.secret }?.value ?? "", favorite: d.favorite
+                    )
                 }
         }
     }
