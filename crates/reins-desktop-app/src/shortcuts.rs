@@ -113,7 +113,7 @@ mod tests {
     fn the_list_names_every_shortcut() {
         let list = list();
         assert_eq!(list.len(), Section::ALL.len() + 4);
-        assert!(list[0].0.ends_with('1') && list[0].1 == "Overview");
+        assert!(list[0].0.ends_with('1') && list[0].1 == "Home");
         assert!(list.iter().all(|(k, what)| !k.is_empty() && !what.is_empty()));
     }
 }

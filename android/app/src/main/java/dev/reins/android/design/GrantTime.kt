@@ -104,7 +104,7 @@ fun ExpiryPie(clock: GrantClock, modifier: Modifier = Modifier, size: Dp = 52.dp
             }
             drawCircle(color.copy(alpha = 0.55f), radius = (this.size.minDimension - stroke) / 2, style = Stroke(stroke / 2))
         }
-        RText(clock.label, RType.sans(size.value * 0.27f, FontWeight.Bold), color, maxLines = 1, ltr = true)
+        RText(clock.label, RType.sans(size.value * 0.27f, FontWeight.SemiBold), color, maxLines = 1, ltr = true)
     }
 }
 

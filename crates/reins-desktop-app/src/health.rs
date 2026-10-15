@@ -187,7 +187,7 @@ pub fn test_result(answer: &Answer, timed_out: bool, checks_here: bool) -> (bool
                 if checks_here {
                     format!("No answer in {secs} s. See Health.")
                 } else {
-                    format!("No answer in {secs} s. See Health in Overview.")
+                    format!("No answer in {secs} s. See Health in Home.")
                 },
             )
         }
@@ -314,7 +314,7 @@ mod tests {
         let (ok, text) = test_result(&Answer::Unanswered("late".to_owned()), true, true);
         assert!(!ok);
         assert_eq!(text, "No answer in 90 s. See Health.");
-        assert!(test_result(&Answer::Unanswered("late".to_owned()), true, false).1.contains("Overview"));
+        assert!(test_result(&Answer::Unanswered("late".to_owned()), true, false).1.contains("Home"));
         assert_eq!(
             test_result(&Answer::Unanswered("Cannot ask your phone: offline".to_owned()), false, true).1,
             "Cannot ask your phone: offline"

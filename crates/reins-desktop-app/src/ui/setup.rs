@@ -218,7 +218,7 @@ impl Root {
                 .child(option(
                     "turn-service",
                     Icon::Server,
-                    Tone::Violet,
+                    Tone::Neutral,
                     "Background service",
                     "Hooks, git and API keys go through it. It starts again when you log in.",
                     None,
@@ -226,7 +226,7 @@ impl Root {
                 .child(option(
                     "turn-git",
                     Icon::GitBranch,
-                    Tone::Teal,
+                    Tone::Neutral,
                     "Send git through Reins",
                     "Pushes to GitHub wait for your OK on your phone; agents never see your token.",
                     Some((TurnOn::Git, git)),
@@ -234,7 +234,7 @@ impl Root {
                 .child(option(
                     "turn-login",
                     Icon::Power,
-                    Tone::Pink,
+                    Tone::Neutral,
                     "Open at login",
                     "The shield in the menu bar or tray shows that Reins is on.",
                     Some((TurnOn::Autostart, login)),

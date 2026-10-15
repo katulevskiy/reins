@@ -50,7 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
@@ -330,7 +329,7 @@ private fun ModeHero(
             .fillMaxWidth()
             .clip(shape)
             .background(if (c.dark) Color(0xFF121215) else c.elevated)
-            .then(if (tint != null) Modifier.background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.20f), tint.copy(alpha = 0.05f)))) else Modifier)
+            .then(if (tint != null) Modifier.background(tint.copy(alpha = 0.12f)) else Modifier)
             .border(1.dp, tint?.copy(alpha = 0.32f) ?: if (c.dark) Color(0xFF1C1C20) else c.hairline, shape)
             .testTag("modeHero"),
     ) {
@@ -545,7 +544,7 @@ private fun GetScoreCard(model: ModelStatus, job: DownloadJob, wifiOnly: Boolean
             .padding(start = 12.dp, end = 12.dp, top = 12.dp)
             .fillMaxWidth()
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(c.search.copy(alpha = 0.14f), c.search.copy(alpha = 0.03f))))
+            .background(c.search.copy(alpha = 0.08f))
             .border(1.dp, c.search.copy(alpha = 0.26f), shape)
             .padding(16.dp)
             .testTag("getScore"),

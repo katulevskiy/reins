@@ -1,4 +1,4 @@
-//! Overview's work session card: start one (how long, what for, what to read, which branches to push to), wait for
+//! Home's work session card: start one (how long, what for, what to read, which branches to push to), wait for
 //! the phone, then the session running (its time left, what it allows) with "End now".
 
 use gpui::prelude::FluentBuilder as _;
@@ -14,7 +14,7 @@ use super::parts::{button, caption, card, check, fine, group, help, level_mark, 
 use super::{Data, Root};
 use crate::format;
 use crate::model::Model;
-use crate::theme::{FONT, MONO, Palette};
+use crate::theme::{MONO, Palette, SANS};
 use crate::work::{self, Asking, Form, Length, PushRow, READS};
 
 /// What a work session leaves out, whatever it allows.
@@ -152,7 +152,7 @@ impl Root {
             );
         }
 
-        let reason = self.text_field(Field::SessionReason, work::DEFAULT_REASON, pal, window, cx).font_family(FONT);
+        let reason = self.text_field(Field::SessionReason, work::DEFAULT_REASON, pal, window, cx).font_family(SANS);
 
         let mut reads = div().flex().flex_wrap().gap(px(8.0));
         for (id, label) in READS {
@@ -300,7 +300,7 @@ impl Root {
     fn work_running(session: &Session, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
         let head = row(pal, true)
             .py(px(14.0))
-            .child(badge(div().size(px(10.0)).rounded_full().bg(pal.accent), pal))
+            .child(badge(div().size(px(10.0)).rounded_full().bg(pal.violet_fill()), pal))
             .child(titled(
                 session.reason.clone(),
                 format!("Until {} · started {}", format::clock(session.expires_at), format::clock(session.started_at)),

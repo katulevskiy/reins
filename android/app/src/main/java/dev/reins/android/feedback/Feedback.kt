@@ -112,6 +112,12 @@ enum class Event(val haptic: Haptic?, val cue: Cue?) {
 
     /** A chip, a picker option, a tab. */
     Selection(Haptic.Select, Cue.Select),
+
+    /** A tab picked in the tab bar: the pill slides under the thumb. Felt, not heard. */
+    TabSelect(Haptic.Select, null),
+
+    /** A finger crossing into another row of an open menu. Felt, not heard. */
+    MenuRow(Haptic.Select, null),
     ToggleOn(Haptic.ToggleOn, Cue.ToggleOn),
     ToggleOff(Haptic.ToggleOff, Cue.ToggleOff),
 

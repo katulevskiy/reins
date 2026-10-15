@@ -27,7 +27,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
@@ -116,12 +115,12 @@ fun MiniLogo(
     }
 }
 
-/** A card washed in [tone] like the approval hero: a gradient from 16 % to 4 % and a 24 % edge. */
+/** A card washed in [tone] like the approval hero: a flat wash between [top] and [bottom] (no gradients) and an edge. */
 fun Modifier.toneCard(tone: Color, radius: Dp = 24.dp, top: Float = 0.16f, bottom: Float = 0.04f, edge: Float = 0.24f): Modifier {
     val shape = RoundedCornerShape(radius)
     return this
         .clip(shape)
-        .background(Brush.verticalGradient(listOf(tone.copy(alpha = top), tone.copy(alpha = bottom))), shape)
+        .background(tone.copy(alpha = (top + bottom) / 2f), shape)
         .border(1.dp, tone.copy(alpha = edge), shape)
 }
 

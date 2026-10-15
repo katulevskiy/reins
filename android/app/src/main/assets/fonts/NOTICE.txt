@@ -1,1 +1,2 @@
 Geist and Geist Mono (c) Vercel, licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
+Instrument Sans and Instrument Serif (c) The Instrument Sans / Instrument Serif Project Authors, licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).

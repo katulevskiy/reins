@@ -5,12 +5,13 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, div, linear_color_stop, linear_gradient, px,
+    StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
 use super::health::checked;
-use super::hold::{Held, fill, progress_ring};
+use super::hold::Held;
 use super::icons::{Icon, icon};
+use super::kit::hold::{fill, progress_ring};
 use super::parts::{
     Btn, btn, caption, card, chip, group, kbd, page_header, row, row_text, solid_tile, this_computer, tile, toggle,
 };
@@ -22,7 +23,7 @@ use crate::model::{Model, Section};
 use crate::shortcuts;
 use crate::theme::{MONO, Palette, Tone};
 
-/// The keyboard card's lines: the sections in one line ("Overview … Settings", "⌘1 – ⌘6"), then the rest.
+/// The keyboard card's lines: the sections in one line ("Home … Settings", "⌘1 – ⌘6"), then the rest.
 #[must_use]
 pub fn keyboard_lines() -> Vec<(String, String)> {
     let list = shortcuts::list();
@@ -64,14 +65,14 @@ impl Root {
                 row(pal, true)
                     .id("autostart")
                     .cursor_pointer()
-                    .child(solid_tile(Icon::Power, Tone::Violet, pal, 30.0))
+                    .child(solid_tile(Icon::Power, Tone::Neutral, pal, 30.0))
                     .child(row_text("Open at login", None, pal))
                     .child(toggle(autostart, pal))
                     .on_click(Self::on_model(cx, Model::toggle_autostart)),
             )
             .child(
                 row(pal, false)
-                    .child(solid_tile(Icon::SquareTerminal, Tone::Teal, pal, 30.0))
+                    .child(solid_tile(Icon::SquareTerminal, Tone::Neutral, pal, 30.0))
                     .child(row_text(
                         "Command line tool",
                         Some(
@@ -91,7 +92,7 @@ impl Root {
                 row(pal, false)
                     .id("notify")
                     .cursor_pointer()
-                    .child(solid_tile(Icon::Bell, Tone::Pink, pal, 30.0))
+                    .child(solid_tile(Icon::Bell, Tone::Neutral, pal, 30.0))
                     .child(row_text("Notifications", None, pal))
                     .child(div().text_size(px(13.0)).text_color(pal.secondary).child(notify_word))
                     .child(icon(
@@ -147,7 +148,7 @@ impl Root {
         }
         computer = computer.child(
             row(pal, false)
-                .child(solid_tile(Icon::HeartPulse, Tone::Yellow, pal, 30.0))
+                .child(solid_tile(Icon::HeartPulse, Tone::Neutral, pal, 30.0))
                 .child(row_text("Health checks", Some(health_line.into_any_element()), pal))
                 .child(Self::check_again("run-checks", "Run", d, pal, cx)),
         );
@@ -170,9 +171,9 @@ impl Root {
         let disconnect = if d.paired {
             let area = row(pal, true).id("disconnect").relative().overflow_hidden();
             let area = Self::hold_area(area, Held::Disconnect, cx);
-            match self.holding(Held::Disconnect) {
-                Some(press) => area
-                    .child(fill(press, pal.danger.opacity(0.16)))
+            match self.hold_progress(Held::Disconnect) {
+                Some(progress) => area
+                    .child(fill(progress, pal.danger_fill_2()))
                     .child(div().relative().child(tile(Icon::Unlink, pal.danger, 30.0)))
                     .child(
                         div()
@@ -182,7 +183,7 @@ impl Root {
                             .font_weight(FontWeight::MEDIUM)
                             .child("Keep holding"),
                     )
-                    .child(div().relative().child(progress_ring(press, pal.danger, 16.0))),
+                    .child(div().relative().child(progress_ring(progress, pal.danger, pal.danger_fill_2(), 16.0))),
                 None => area
                     .hover(|s| s.bg(pal.danger.opacity(0.05)))
                     .child(tile(Icon::Unlink, pal.danger, 30.0))
@@ -293,30 +294,31 @@ impl Root {
                     .on_click(Self::on_model(cx, Model::start_service)),
             ),
         };
-        let (from, to) = if pal.dark {
-            (0.16, 0.03)
-        } else {
-            (0.12, 0.02)
-        };
+        let initial = account.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
         div()
             .flex()
             .flex_wrap()
             .items_center()
             .gap(px(14.0))
             .p(px(16.0))
-            .rounded(px(18.0))
-            .bg(linear_gradient(
-                160.0,
-                linear_color_stop(pal.background.blend(pal.accent.opacity(from)), 0.0),
-                linear_color_stop(pal.background.blend(pal.accent.opacity(to)), 0.7),
-            ))
+            .rounded(px(20.0))
+            .bg(pal.paper_raised())
             .border_1()
-            .border_color(pal.accent.opacity(0.24))
-            .child(div().flex_none().size(px(46.0)).rounded_full().bg(linear_gradient(
-                150.0,
-                linear_color_stop(gpui::rgb(0x00C4_B5FD), 0.0),
-                linear_color_stop(gpui::rgb(0x004C_1D95), 1.0),
-            )))
+            .border_color(pal.rule())
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(46.0))
+                    .rounded_full()
+                    .bg(pal.paper_sunken())
+                    .font_family(crate::theme::SERIF)
+                    .text_size(px(24.0))
+                    .text_color(pal.ink())
+                    .child(initial),
+            )
             .child(
                 div()
                     .flex()
@@ -341,7 +343,7 @@ mod tests {
     #[test]
     fn the_keyboard_card_folds_the_sections_into_one_line() {
         let lines = keyboard_lines();
-        assert_eq!(lines[0].0, "Overview … Settings");
+        assert_eq!(lines[0].0, "Home … Settings");
         assert!(lines[0].1.contains('–'));
         assert_eq!(lines.len(), shortcuts::list().len() - Section::ALL.len() + 1);
     }

@@ -79,14 +79,14 @@ pub struct Shown {
 }
 
 /// The icon's pixels: RGBA, `width` by `height`.
-struct Pixels {
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
+pub(crate) struct Pixels {
+    pub(crate) rgba: Vec<u8>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
 /// Decodes one of the bundled PNGs (8-bit gray, gray and alpha, RGB or RGBA) to RGBA.
-fn decode(png_bytes: &[u8]) -> Result<Pixels, String> {
+pub(crate) fn decode(png_bytes: &[u8]) -> Result<Pixels, String> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().map_err(|e| e.to_string())?;

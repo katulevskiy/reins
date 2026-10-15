@@ -49,7 +49,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
@@ -94,13 +93,8 @@ import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
 import dev.reins.android.ui.autopilot.RiskChip
 
-fun toneColor(tone: HeroTone, c: RColors): Color = when (tone) {
-    HeroTone.Write -> c.send
-    HeroTone.Search -> c.search
-    HeroTone.Send -> c.send
-    HeroTone.Grant -> c.accent
-    HeroTone.Danger -> c.danger
-}
+/** The hero's colour on paper: its Signal field's kind ink. */
+fun toneColor(tone: HeroTone, c: RColors): Color = tone.field.kindInk(c)
 
 fun badgeIcon(badge: Badge): ImageVector = when (badge) {
     Badge.Pen -> Icons.Rounded.Edit
@@ -129,7 +123,7 @@ internal fun Hero(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewMod
             .padding(start = 12.dp, end = 12.dp, top = 4.dp)
             .fillMaxWidth()
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(tone.copy(alpha = if (danger) 0.22f else 0.20f), tone.copy(alpha = 0.05f))))
+            .background(tone.copy(alpha = if (danger) 0.13f else 0.12f))
             .border(1.dp, tone.copy(alpha = if (danger) 0.32f else 0.26f), shape)
             .padding(start = 22.dp, end = 22.dp, top = 26.dp, bottom = 20.dp)
             .testTag("hero"),

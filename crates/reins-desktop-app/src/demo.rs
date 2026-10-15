@@ -28,7 +28,7 @@ pub struct Demo {
     base: i64,
     /// No samples: a computer where nothing happened yet.
     empty: bool,
-    /// Nothing waiting on the phone (the calm Overview).
+    /// Nothing waiting on the phone (the calm Home).
     calm: bool,
 }
 
