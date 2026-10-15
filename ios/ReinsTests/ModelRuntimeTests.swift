@@ -103,6 +103,42 @@ final class ModelRuntimeTests: XCTestCase {
         XCTAssertThrowsError(try ModelTensors.unpack(packed, raw)) { XCTAssertTrue(String(describing: $0).contains("logits")) }
     }
 
+    private func raw(_ packed: PackedInput, risk: RawTensor? = nil) throws -> RawOutput {
+        var out = try FakeSession().run(packed)
+        out.risk = risk
+        return out
+    }
+
+    func testTheRiskHeadIsPassedThroughWhenTheModelHasIt() throws {
+        let packed = try ModelTensors.pack(input())
+        let logits: [Float] = [2, 0.5, -1, -3, -2, -1, 0.5, 3]
+        let out = try ModelTensors.unpack(packed, try raw(packed, risk: RawTensor(values: logits, shape: [2, 4])))
+        XCTAssertEqual(out.risk, logits, "benign, risky, severe, catastrophic per request, as the model gave them")
+    }
+
+    func testAModelWithoutTheRiskHeadGivesNoRisk() throws {
+        let packed = try ModelTensors.pack(input())
+        let out = try ModelTensors.unpack(packed, try raw(packed))
+        XCTAssertEqual(out.risk, [], "the core then holds what Overnight would weigh")
+        XCTAssertEqual(ModelTensors.outputs(available: ["logits", "act", "pooled"]), ["logits", "act", "pooled"],
+                       "an older model is asked for what it was before")
+        XCTAssertEqual(ModelTensors.outputs(available: ["logits", "act", "pooled", "risk"]), ["logits", "act", "pooled", "risk"])
+    }
+
+    func testARiskOfTheWrongSizeIsRefusedNamingIt() throws {
+        let packed = try ModelTensors.pack(input())
+        for bad in [
+            RawTensor(values: Array(repeating: 0, count: 4), shape: [1, 4]),
+            RawTensor(values: Array(repeating: 0, count: 6), shape: [2, 3]),
+            RawTensor(values: Array(repeating: 0, count: 8), shape: [8]),
+            RawTensor(values: Array(repeating: 0, count: 7), shape: [2, 4]),
+        ] {
+            XCTAssertThrowsError(try ModelTensors.unpack(packed, try raw(packed, risk: bad)), "\(bad.shape)") {
+                XCTAssertTrue(String(describing: $0).contains("risk"))
+            }
+        }
+    }
+
     // MARK: The session
 
     func testTheSessionIsOpenedOnceAndReusedAndANewFileReplacesIt() throws {

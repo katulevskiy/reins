@@ -27,11 +27,13 @@ struct RawTensor: Equatable {
     var shape: [Int64]
 }
 
-/// The three outputs of a forward pass, as the runtime handed them back.
+/// The outputs of a forward pass, as the runtime handed them back: always three, and the risk when the model has it.
 struct RawOutput: Equatable {
     var logits: RawTensor
     var act: RawTensor
     var pooled: RawTensor
+    /// The risk head's severity logits [B,4]; nil for a model without it (laya-approvals-ml-v1).
+    var risk: RawTensor? = nil
 }
 
 /// Turns the core's records into tensors and the model's tensors back into a record (the Android app's
@@ -45,9 +47,19 @@ enum ModelTensors {
     static let logits = "logits"
     static let act = "act"
     static let pooled = "pooled"
+    static let risk = "risk"
+
+    /// The risk head's classes: benign, risky, severe, catastrophic.
+    static let riskClasses = 4
 
     /// The outputs every run asks for, in this order.
     static let outputs = [logits, act, pooled]
+
+    /// What a run asks a model with these output names for: the three every model has, then the risk when it has one
+    /// (asking a model for an output it lacks is an error, so an older model is asked for exactly what it was before).
+    static func outputs(available: Set<String>) -> [String] {
+        available.contains(risk) ? outputs + [risk] : outputs
+    }
 
     /// A batch or an output whose sizes do not add up; the message names the tensor.
     struct Mismatch: Error, Equatable, CustomStringConvertible {
@@ -81,7 +93,8 @@ enum ModelTensors {
         )
     }
 
-    /// `logits` [B,K], `act` [B,2], `pooled` [B,H]; the hidden size comes from the pooled tensor's last dimension.
+    /// `logits` [B,K], `act` [B,2], `pooled` [B,H]; the hidden size comes from the pooled tensor's last dimension. The
+    /// optional `risk` must be [B,4]; without it the record's risk is empty (the core then holds what it would weigh).
     static func unpack(_ input: PackedInput, _ raw: RawOutput) throws -> ModelOutput {
         let b = input.batch
         guard raw.logits.values.count == b * input.k else {
@@ -94,6 +107,16 @@ enum ModelTensors {
         guard hidden > 0, raw.pooled.values.count == b * hidden else {
             throw Mismatch(description: "\(pooled) has \(raw.pooled.values.count) values in shape \(raw.pooled.shape), expected \(b) × hidden")
         }
-        return ModelOutput(logits: raw.logits.values, act: raw.act.values, pooled: raw.pooled.values, hidden: UInt32(hidden))
+        var riskValues: [Float] = []
+        if let r = raw.risk {
+            let expected = b * riskClasses
+            guard r.shape == [Int64(b), Int64(riskClasses)], r.values.count == expected else {
+                throw Mismatch(description: "\(risk) has \(r.values.count) values in shape \(r.shape), expected \(b) × \(riskClasses)")
+            }
+            riskValues = r.values
+        }
+        return ModelOutput(
+            logits: raw.logits.values, act: raw.act.values, pooled: raw.pooled.values, hidden: UInt32(hidden), risk: riskValues
+        )
     }
 }

@@ -23,7 +23,7 @@ struct OrtEngine: InferenceEngine {
         try ort.check(ort.api.CreateSession(ort.env, path, options, &session))
         guard let session else { throw OrtFailure(message: "ONNX Runtime opened no session") }
         do {
-            return OrtSession(ort: ort, session: session, inputs: try ort.inputNames(session))
+            return OrtSession(ort: ort, session: session, inputs: try ort.inputNames(session), outputs: try ort.outputNames(session))
         } catch {
             ort.api.ReleaseSession(session)
             throw error
@@ -100,6 +100,24 @@ final class Ort: @unchecked Sendable {
         }
         return names
     }
+
+    /// The model's output names, read as its inputs are: a model with the risk head has a `risk` output.
+    func outputNames(_ session: OpaquePointer) throws -> Set<String> {
+        var count = 0
+        try check(api.SessionGetOutputCount(session, &count))
+        var allocator: UnsafeMutablePointer<OrtAllocator>?
+        try check(api.GetAllocatorWithDefaultOptions(&allocator))
+        var names = Set<String>()
+        for i in 0..<count {
+            var name: UnsafeMutablePointer<CChar>?
+            try check(api.SessionGetOutputName(session, i, allocator, &name))
+            if let name {
+                names.insert(String(cString: name))
+                _ = api.AllocatorFree(allocator, name).map { api.ReleaseStatus($0) }
+            }
+        }
+        return names
+    }
 }
 
 /// One open model file. ONNX Runtime allows concurrent runs of a session.
@@ -108,11 +126,14 @@ final class OrtSession: InferenceSession, @unchecked Sendable {
     private var session: OpaquePointer?
     /// A model exported without an input (an older export without `qtype`, say) simply does not get it.
     let inputs: Set<String>
+    /// Its outputs: `risk` is asked for only when the model has it.
+    let outputs: Set<String>
 
-    init(ort: Ort, session: OpaquePointer, inputs: Set<String>) {
+    init(ort: Ort, session: OpaquePointer, inputs: Set<String>, outputs: Set<String>) {
         self.ort = ort
         self.session = session
         self.inputs = inputs
+        self.outputs = outputs
     }
 
     deinit { close() }
@@ -143,9 +164,10 @@ final class OrtSession: InferenceSession, @unchecked Sendable {
             try tensors.add(ModelTensors.qtype, input.qtype, input.batchShape, ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, ort)
         }
 
-        let outputNames = CStrings(ModelTensors.outputs)
+        let wanted = ModelTensors.outputs(available: self.outputs)
+        let outputNames = CStrings(wanted)
         defer { outputNames.free() }
-        var outputs = [OpaquePointer?](repeating: nil, count: ModelTensors.outputs.count)
+        var outputs = [OpaquePointer?](repeating: nil, count: wanted.count)
         defer { outputs.forEach { if let v = $0 { api.ReleaseValue(v) } } }
         let inputNames = CStrings(tensors.names)
         defer { inputNames.free() }
@@ -155,15 +177,18 @@ final class OrtSession: InferenceSession, @unchecked Sendable {
                 try ort.check(api.Run(
                     session, nil,
                     inputNames.pointers, valuePtr.baseAddress, values.count,
-                    outputNames.pointers, ModelTensors.outputs.count, outPtr.baseAddress
+                    outputNames.pointers, wanted.count, outPtr.baseAddress
                 ))
             }
         }
         func read(_ index: Int) throws -> RawTensor {
-            guard let value = outputs[index] else { throw OrtFailure(message: "the model has no output \(ModelTensors.outputs[index])") }
+            guard let value = outputs[index] else { throw OrtFailure(message: "the model has no output \(wanted[index])") }
             return try floats(value)
         }
-        return RawOutput(logits: try read(0), act: try read(1), pooled: try read(2))
+        // Asked for only when the model declares it, so a missing value is a broken run, not an older model.
+        var risk: RawTensor?
+        if wanted.count > ModelTensors.outputs.count { risk = try read(ModelTensors.outputs.count) }
+        return RawOutput(logits: try read(0), act: try read(1), pooled: try read(2), risk: risk)
     }
 
     /// A float tensor's values and shape, copied out of ONNX Runtime's memory.
