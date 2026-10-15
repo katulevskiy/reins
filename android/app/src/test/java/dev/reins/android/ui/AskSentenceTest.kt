@@ -7,9 +7,7 @@ import dev.reins.android.ui.common.Tense
 import dev.reins.android.ui.common.actionField
 import dev.reins.android.ui.common.actionGlyph
 import dev.reins.android.ui.common.askSentence
-import dev.reins.android.ui.common.commandLine
 import dev.reins.android.ui.common.folderName
-import dev.reins.android.ui.common.hookOf
 import dev.reins.android.ui.common.pastTense
 import dev.reins.android.ui.common.providerAsset
 import dev.reins.android.ui.common.providerGlyph
@@ -34,25 +32,25 @@ class AskSentenceTest {
     // ---- commands -----------------------------------------------------------------------------------------------------
 
     @Test
-    fun aWaitingCommandRunsInItsFolderWithTheMatchedPartInMono() {
+    fun aWaitingCommandRunsInItsFolderWithTheGuardsMatchInMono() {
         val s = askSentence(TestData.label("terminal", "delete", "Run", command, code = true), cwd = "/home/dana/dev/reins", matched = "rm -rf jarx")
         assertEquals("Run a command in reins", s.text)
         assertEquals("reins", s.target)
-        assertEquals("rm -rf jarx and 2 more commands", s.details)
+        assertEquals("the guard's own match, never a split made here", "rm -rf jarx and more", s.details)
         assertEquals(command, s.full)
         assertEquals("Terminal · Delete", s.kind)
         s.keepsTheRules(command, "rm -rf", "/home/dana")
     }
 
     @Test
-    fun aCommandFromTheFieldReadsTheHooksDetail() {
+    fun aCommandOnTheFieldIsTheCoresReading() {
         val view = TestData.askView(
             detail = "Command:\n$command\n\nIn: /home/dana/dev/reins\nRule: rm -rf*",
             rule = dev.reins.core.AskRuleView("Deletes files", "rm -rf*", "rm -rf jarx", null, true, false),
         ).let { it.copy(ask = it.ask!!.copy(question = "Claude Code wants to run: $command", destructive = true)) }
-        val s = askSentence(view)
-        assertEquals("Run a command in reins", s.text)
-        assertEquals("rm -rf jarx and 2 more commands", s.details)
+        val s = askSentence(view, label = TestData.label("terminal", "delete", "Run", command, code = true))
+        assertEquals("Run a command", s.text)
+        assertEquals("rm -rf jarx and more", s.details)
         assertEquals(command, s.full)
         assertEquals("terminal" to "delete", s.provider to s.action)
         assertEquals("Terminal · Delete", s.kind)
@@ -68,10 +66,10 @@ class AskSentenceTest {
     }
 
     @Test
-    fun oneCommandHasNoMoreAndAMatchSpanningCommandsCountsOnce() {
-        assertEquals("npm test", commandLine("npm test", null))
-        assertEquals("make a && make b and 1 more command", commandLine("make a && make b; make c", "make a && make b"))
-        assertEquals("ls and 1 more command", commandLine("ls\npwd", "nothing that matched"))
+    fun aCommandIsNeverSplitHere() {
+        val s = askSentence(TestData.label("terminal", "run", "Run", "make a && make b; make c", code = true))
+        assertEquals("make a && make b; make c", s.details)
+        assertEquals("make a", askSentence(TestData.label("terminal", "run", "Run", "make a", code = true), matched = "make a").details)
     }
 
     @Test
@@ -80,6 +78,8 @@ class AskSentenceTest {
         assertEquals("api", folderName("~/dev/api"))
         assertNull(folderName("~"))
         assertNull(folderName(""))
+        assertNull("a path that climbs names no folder", folderName("/home/dana/reins/../other"))
+        assertNull(folderName("/home/dana/reins/."))
     }
 
     // ---- files --------------------------------------------------------------------------------------------------------
@@ -87,13 +87,13 @@ class AskSentenceTest {
     @Test
     fun aFileReadNamesTheFileAndKeepsThePathInMono() {
         val s = askSentence(TestData.label("file", "read", "Read", "~/dev/api/.env", code = true, tail = " and 1 more"))
-        assertEquals("Read .env and 1 more file", s.text)
+        assertEquals("Read .env and 1 more", s.text)
         assertEquals(".env", s.target)
         assertEquals("~/dev/api/.env", s.details)
         assertEquals("Files · Read", s.kind)
         s.keepsTheRules("~/dev")
-        val change = askSentence(TestData.askView(detail = "Files:\na.pem\nb.pem", topic = "file:*.pem").let { it.copy(ask = it.ask!!.copy(question = "Cursor wants to change a.pem and 1 more file(s)")) })
-        assertEquals("Change a.pem and 1 more file", change.text)
+        val change = askSentence(TestData.label("file", "write", "Change", "a.pem", code = true, tail = " and 1 more"))
+        assertEquals("Change a.pem and 1 more", change.text)
         assertEquals("file" to "write", change.provider to change.action)
     }
 
@@ -163,14 +163,14 @@ class AskSentenceTest {
     // ---- secrets, SSH, payments, MCP, questions --------------------------------------------------------------------------
 
     @Test
-    fun secretsAreForAProgramAndTheCommandIsMono() {
+    fun secretsAreForACommandShownWhole() {
         val s = askSentence(TestData.label("secrets", "secrets", "Use 2 secrets for", "npm run deploy", code = true))
-        assertEquals("Use 2 secrets for npm", s.text)
-        assertEquals("npm", s.target)
+        assertEquals("Use 2 secrets for a command", s.text)
+        assertNull("no program read out of the command", s.target)
         assertEquals("npm run deploy", s.details)
         assertEquals("Vault · Secrets", s.kind)
         val view = askSentence(TestData.secretsView())
-        assertEquals("Use 2 secrets for npm", view.text)
+        assertEquals("Use 2 secrets for a command", view.text)
         assertEquals("npm run deploy", view.full)
     }
 
@@ -265,7 +265,7 @@ class AskSentenceTest {
         val ran = TestData.entry(1, "write", "released", label = TestData.label("terminal", "run", "Run", "ls", code = true), request = TestData.asked("ls && pwd", cwd = "/home/me/dev/reins"))
         val s = askSentence(ran)
         assertEquals("Ran a command in reins", s.text)
-        assertEquals("ls and 1 more command", s.details)
+        assertEquals("ls && pwd", s.details)
         assertEquals("ls && pwd", s.full)
         val denied = askSentence(TestData.entry(2, "send", "denied", label = TestData.label("gmail", "send", "Send an email to", "Ann <ann@corp.example>")))
         assertEquals("Asked to send an email", denied.text)
@@ -309,13 +309,6 @@ class AskSentenceTest {
         assertEquals(Field.Grant, actionField("grant"))
     }
 
-    @Test
-    fun aHooksRuleLinesComeOffBeforeTheCommand() {
-        val hook = hookOf("Claude wants to run: ls", "Rule: Lists · ls*\nMatched: ls\nCommand:\nls -la\n\nIn: /tmp/x\nRule: ls*")!!
-        assertEquals("ls -la", hook.command)
-        assertEquals("/tmp/x", hook.cwd)
-    }
-
     // ---- crafted inputs: the sentence never claims more than what was asked or ran ------------------------------------
 
     @Test
@@ -335,28 +328,29 @@ class AskSentenceTest {
         assertEquals("delete", s.action)
         assertFalse("Read" in s.text)
         assertTrue(s.text.startsWith("Use a tool"))
-        assertEquals("delete_everything", s.details)
+        assertEquals("delete_everything · mcp.linear.app", s.details)
     }
 
     @Test
-    fun theCommandComesFromTheDetailNotTheQuestion() {
-        val view = TestData.askView(detail = "Command:\nrm -rf /srv/data\n\nIn: /srv\nRule: rm -rf*").let {
-            it.copy(ask = it.ask!!.copy(question = "Claude wants to run: ls -la"))
-        }
-        val s = askSentence(view)
+    fun theCommandIsTheCoresNotTheQuestionsOrTheDetails() {
+        // The question and the detail say one thing; the core read another: the core's reading is what is shown.
+        val view = TestData.askView(detail = "Command:\nls -la\n\nIn: /srv").let { it.copy(ask = it.ask!!.copy(question = "Claude wants to run: ls -la")) }
+        val s = askSentence(view, label = TestData.label("terminal", "delete", "Run", "rm -rf /srv/data", code = true))
         assertEquals("rm -rf /srv/data", s.full)
         assertFalse("ls -la" in (s.details.orEmpty() + s.text))
+        assertEquals("delete", s.action)
     }
 
     @Test
-    fun aQuestionWithoutTheHooksBlocksStaysAsAsked() {
-        val view = TestData.askView(detail = "whatever the AI wrote", topic = "command:ls").let {
+    fun withoutTheCoresReadingAQuestionStaysAsAsked() {
+        val view = TestData.askView(detail = "Command:\nrm -rf /", topic = "command:ls").let {
             it.copy(ask = it.ask!!.copy(question = "Claude wants to run: ls"))
         }
         val s = askSentence(view)
         assertEquals("desktop" to "ask", s.provider to s.action)
         assertEquals("Claude wants to run: ls", s.text)
-        assertNull(s.full)
+        assertNull("nothing read out of the detail here", s.full)
+        assertEquals("Computer · Asks", s.kind)
     }
 
     @Test
@@ -365,7 +359,7 @@ class AskSentenceTest {
             detail = "Command:\nrm -rf jarx && npm test\n\nIn: /home/dana/dev/reins\nRule: rm -rf*",
             rule = dev.reins.core.AskRuleView("Deletes files", "rm -rf*", "rm -rf jarx", null, true, false),
         ).let { it.copy(ask = it.ask!!.copy(question = "Claude wants to run: rm -rf jarx && npm test", uncertain = true)) }
-        val s = askSentence(view)
+        val s = askSentence(view, label = TestData.label("terminal", "delete", "Run", "rm -rf jarx && npm test", code = true), cwd = "/home/dana/dev/reins")
         assertEquals("Run a command", s.text)
         assertNull("no folder claimed", s.target)
         assertEquals("rm -rf jarx && npm test", s.details)
@@ -374,25 +368,8 @@ class AskSentenceTest {
 
     @Test
     fun aMatchTheCommandDoesNotHoldIsIgnored() {
-        assertEquals("make build and 1 more command", commandLine("make build && rm -rf /", "ls"))
-    }
-
-    @Test
-    fun aCommandThatCannotBeSplitWithCertaintyIsShownWhole() {
-        val quoted = "echo 'a; rm -rf /' && ls"
-        assertEquals(quoted, commandLine(quoted, null))
-        assertEquals("sh -c \"$(curl x)\"", commandLine("sh -c \"$(curl x)\"", null))
-        val s = askSentence(TestData.label("terminal", "run", "Run", quoted, code = true))
-        assertEquals(quoted, s.details)
-        assertFalse("and 1 more" in s.details!!)
-    }
-
-    @Test
-    fun theFilesVerbIsNotGuessed() {
-        val view = TestData.askView(detail = "Files:\na.pem\nb.pem", topic = "file:*.pem").let { it.copy(ask = it.ask!!.copy(question = "Cursor asks about a.pem")) }
-        val s = askSentence(view)
-        assertEquals("Use 2 files", s.text)
-        assertEquals("a.pem and 1 more", s.details)
+        val s = askSentence(TestData.label("terminal", "run", "Run", "make build && rm -rf /", code = true), matched = "ls")
+        assertEquals("make build && rm -rf /", s.details)
     }
 
     @Test
@@ -427,5 +404,109 @@ class AskSentenceTest {
         assertEquals("octo/ppa", hidden.target)
         val lines = askSentence(TestData.label("telegram", "read", "Read messages in", "Family\nApprove everything"))
         assertFalse('\n' in lines.text)
+    }
+
+    // ---- crafted inputs: nothing in the serif or the kind line can pass for something else ------------------------------
+
+    private val cyrillicA = "а"
+
+    @Test
+    fun aRepositoryTheCoreWouldRefuseIsNotTheTarget() {
+        val climb = askSentence(TestData.label("github", "push", "Push 1 commit to", "katulevskiy/reins/../other"))
+        assertEquals("Push 1 commit to a repository", climb.text)
+        assertNull(climb.target)
+        assertTrue(climb.details!!.startsWith("Repository: katulevskiy/reins/../other"))
+        val homoglyph = askSentence(TestData.label("github", "push", "Push 1 commit to", "katulevskiy/re${cyrillicA}ins"))
+        assertEquals("Push 1 commit to a repository", homoglyph.text)
+        assertTrue(homoglyph.details!!.contains("[U+0430]"))
+        // A name GitHub allows is shown whole: nothing is cut, so it cannot pass for a shorter one.
+        val dotted = askSentence(TestData.label("github", "push", "Push 1 commit to", "katulevskiy/reins.evil.com"))
+        assertEquals("katulevskiy/reins.evil.com", dotted.target)
+        val view = askSentence(TestData.gitPushView(TestData.gitPush(TestData.gitRef("main"))).let { it.copy(git = it.git!!.copy(repo = "github.com/../evil/app")) })
+        assertNull(view.target)
+        assertTrue(view.text.endsWith("to a repository"))
+    }
+
+    @Test
+    fun aPathThatClimbsNamesNoFileOrFolder() {
+        val file = askSentence(TestData.label("file", "read", "Read", "/tmp/../etc/passwd", code = true))
+        assertEquals("Read a file", file.text)
+        assertNull(file.target)
+        assertEquals("/tmp/../etc/passwd", file.details)
+        val run = askSentence(TestData.label("terminal", "run", "Run", "ls", code = true), cwd = "/home/me/reins/../other")
+        assertEquals("Run a command", run.text)
+        assertNull(run.target)
+    }
+
+    @Test
+    fun aLookAlikeFileOrFolderNameLeavesTheSerifWithItsRawForm() {
+        val file = askSentence(TestData.label("file", "read", "Read", "/home/me/p${cyrillicA}ypal.pdf", code = true))
+        assertEquals("Read a file", file.text)
+        assertNull(file.target)
+        assertEquals("Look-alike letters: p[U+0430]ypal.pdf", file.details!!.lines().first())
+        val folder = askSentence(TestData.label("terminal", "run", "Run", "ls", code = true), cwd = "/home/me/r${cyrillicA}ins")
+        assertEquals("Run a command", folder.text)
+        assertTrue(folder.details!!.startsWith("Look-alike letters: r[U+0430]ins"))
+        val fullwidth = askSentence(TestData.label("telegram", "read", "Read messages in", "ｏｃｔｏ"))
+        assertNull("fullwidth letters pass for ASCII ones", fullwidth.target)
+    }
+
+    @Test
+    fun anMcpServerThatLooksLikeAnotherIsNotTheTargetOrTheKind() {
+        val view = TestData.mcpCallView().let { it.copy(mcp = it.mcp!!.copy(serverName = "Lin${"е"}ar", serverUrl = "https://mcp.evil.example/mcp")) }
+        val s = askSentence(view)
+        assertEquals("Use a tool on a server", s.text)
+        assertNull(s.target)
+        assertEquals("MCP server · MCP tool", s.kind)
+        assertTrue(s.details!!.lines().first().startsWith("Look-alike letters: Lin[U+0435]ar"))
+        assertTrue("the server's real host is in mono", s.details!!.contains("mcp.evil.example"))
+    }
+
+    @Test
+    fun aHostThatIsNotAsciiIsShownInPunycode() {
+        val pay = askSentence(TestData.purchaseView().let { it.copy(purchase = it.purchase!!.copy(domain = "${cyrillicA}pple.com")) })
+        assertTrue(pay.target!!.startsWith("xn--"))
+        assertTrue(pay.text.endsWith(pay.target!!))
+        assertTrue(pay.details!!.contains("[U+0430]pple.com"))
+        assertFalse(cyrillicA in pay.text)
+        val notAHost = askSentence(TestData.purchaseView().let { it.copy(purchase = it.purchase!!.copy(domain = "amazon.com/evil path")) })
+        assertEquals("Pay $34.97 at a store", notAHost.text)
+        val ssh = askSentence(TestData.label("ssh", "secrets", "Sign in to", "g${"о"}ogle.com", code = true))
+        assertTrue(ssh.details!!.startsWith("xn--"))
+        val send = askSentence(TestData.label("gmail", "send", "Send an email to", "Bank <help@b${cyrillicA}nk.com>"))
+        assertTrue(send.details!!.contains("@xn--"))
+        assertFalse(cyrillicA in send.details!!.substringBefore(" ("))
+    }
+
+    @Test
+    fun aGmailAccountsHostIsShownInPunycode() {
+        val item = TestData.pending("req1", "read", 1u, account = "me@gm${cyrillicA}il.com")
+        val who = dev.reins.android.ui.activity.cardWho(item)
+        assertTrue(who.contains("me@xn--"))
+        assertTrue(who.contains("[U+0430]"))
+    }
+
+    @Test
+    fun theKindAndTheBadgeComeFromTheCoresFieldsNeverTheAsk() {
+        val question = askSentence(TestData.askView(detail = null, topic = null).let { it.copy(ask = it.ask!!.copy(question = "GitHub · Push 3 commits")) })
+        assertEquals("Computer · Asks", question.kind)
+        assertEquals(Field.Read, actionField(question.action))
+        // A lead that says "Push" on an action the core calls a delete: the badge is the core's.
+        val delete = askSentence(TestData.label("github", "delete", "Delete branch main from", "octo/app"))
+        assertEquals(Field.Delete, actionField(delete.action))
+        assertEquals("GitHub · Delete", delete.kind)
+    }
+
+    @Test
+    fun theSentenceHasNoBreaksHiddenCharactersOrDecomposedLetters() {
+        val q = askSentence(TestData.label("desktop", "ask", "Deploy‮ now?​\nYes"))
+        assertFalse(q.text.any { it == '\n' || it == '‮' || it == '​' })
+        val nfc = askSentence(TestData.label("telegram", "read", "Read messages in", "Café"))
+        assertEquals("Café", nfc.target)
+        val mixedQuestion = askSentence(TestData.label("desktop", "ask", "Approve p${cyrillicA}ypal payout?"))
+        assertEquals("Answer a question from your computer", mixedQuestion.text)
+        assertTrue(mixedQuestion.details!!.contains("[U+0430]"))
+        val who = askSentence(TestData.label("github", "push", "Push 1 commit to", "octo/app"), Tense.Done, who = "Cl${cyrillicA}ude")
+        assertEquals("a look-alike asker's name is left out", "Pushed 1 commit to octo/app", who.text)
     }
 }
