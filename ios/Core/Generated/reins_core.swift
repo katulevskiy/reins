@@ -3006,6 +3006,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func resetProfile(profileId: String) async throws 
     
     /**
+     * Only when the user asks: brings back this phone's own changes that a sync without a merge base kept aside (the
+     * notice says so), merged with the data as it is now by the sync's rules (never a grant only the backup has).
+     * False when there is nothing to bring back. What comes back is uploaded like any change.
+     */
+    func restoreAccountSyncBackup() async throws  -> Bool
+    
+    /**
      * Starts a grant that ended (expired, used up or deleted) over for `duration_secs`.
      */
     func resumeGrant(grantId: String, durationSecs: UInt64) async throws 
@@ -4561,6 +4568,27 @@ open func resetProfile(profileId: String)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Only when the user asks: brings back this phone's own changes that a sync without a merge base kept aside (the
+     * notice says so), merged with the data as it is now by the sync's rules (never a grant only the backup has).
+     * False when there is nothing to bring back. What comes back is uploaded like any change.
+     */
+open func restoreAccountSyncBackup()async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_restore_account_sync_backup(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_i8,
+            completeFunc: ffi_reins_core_rust_future_complete_i8,
+            freeFunc: ffi_reins_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -19205,6 +19233,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_reset_profile() != 9460) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_restore_account_sync_backup() != 28215) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_resume_grant() != 58497) {

@@ -503,6 +503,8 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun accountSyncNotice(): String? = syncNotice
 
+    override suspend fun restoreAccountSyncBackup(): Boolean = false
+
     override suspend fun dismissAccountSyncNotice() {
         syncNoticeDismissals.incrementAndGet()
         syncNotice = null

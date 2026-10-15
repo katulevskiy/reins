@@ -228,6 +228,8 @@ class MainSafeCore(
 
     override suspend fun dismissAccountSyncNotice() = io { dismissAccountSyncNotice() }
 
+    override suspend fun restoreAccountSyncBackup(): Boolean = io { restoreAccountSyncBackup() }
+
     override suspend fun sync(waitSecs: UInt): List<PendingItem> = io { sync(waitSecs) }
 
     override suspend fun blobView(id: String): BlobView = io { blobView(id) }
