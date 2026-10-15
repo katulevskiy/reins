@@ -22,7 +22,7 @@ fun Throwable.userMessage(): String = when (this) {
     is CoreException.Server -> if (status.toInt() == 403) {
         "Another phone is your approval device now."
     } else {
-        "The server had a problem (${status}). ${untrusted(reason)}".trim()
+        "The server had a problem. ${untrusted(reason)}".trim().also { android.util.Log.w("Reins", "server status $status") }
     }
     is CoreException.GmailNeedsConsent -> "Gmail needs your permission. Open Settings and connect Gmail."
     is CoreException.Gmail -> "Gmail: ${untrusted(reason)}"
@@ -35,5 +35,6 @@ fun Throwable.userMessage(): String = when (this) {
     is PasskeyException -> message
     is ForeignException.Failed -> untrusted(reason)
     is ForeignException.NeedsUserInteraction -> "Gmail needs your permission. Open Settings and connect Gmail."
-    else -> "Something went wrong (${javaClass.simpleName})."
+    // The kind of failure is for the log, not the screen.
+    else -> "Something went wrong. Try again.".also { android.util.Log.w("Reins", "unexpected ${javaClass.simpleName}", this) }
 }
