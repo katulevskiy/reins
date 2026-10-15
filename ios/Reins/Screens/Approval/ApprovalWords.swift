@@ -10,7 +10,7 @@ struct SentenceSpan: Equatable {
 }
 
 /// The hero's colour: what kind of thing is asked.
-enum HeroTone { case write, search, send, grant, danger }
+enum HeroTone { case write, search, send, grant, accounts, danger }
 
 /// The small badge on the service's tile: the action.
 enum HeroBadge {
@@ -58,7 +58,8 @@ enum ApprovalWords {
     static func tone(_ view: ApprovalView) -> HeroTone {
         if held(view) { return .danger }
         switch view.kind {
-        case .grant, .accounts: return .grant
+        case .grant: return .grant
+        case .accounts: return .accounts
         case .send: return .send
         case .search, .read, .fetch: return .search
         case .write:

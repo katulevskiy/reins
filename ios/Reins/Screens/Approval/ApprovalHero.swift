@@ -10,6 +10,7 @@ extension HeroTone {
         case .write, .send: .push
         case .search: .read
         case .grant: .grant
+        case .accounts: .accounts
         case .danger: .delete
         }
     }

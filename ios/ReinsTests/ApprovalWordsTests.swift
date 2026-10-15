@@ -100,7 +100,7 @@ final class ApprovalWordsTests: XCTestCase {
         XCTAssertEqual(ApprovalWords.tone(push([ref()])), .write)
         XCTAssertEqual(ApprovalWords.tone(T.view(kind: .search)), .search)
         XCTAssertEqual(ApprovalWords.tone(T.grantView()), .grant)
-        XCTAssertEqual(ApprovalWords.tone(T.accountsView()), .grant)
+        XCTAssertEqual(ApprovalWords.tone(T.accountsView()), .accounts, "an account change is pink, not a grant")
         XCTAssertEqual(ApprovalWords.tone(deleteRepo), .danger)
         XCTAssertEqual(ApprovalWords.tone(T.view(kind: .fetch, service: "vault", noStanding: true, action: "read")), .search, "a password changes nothing")
         XCTAssertEqual(ApprovalWords.badge(deleteRepo), .trash)
