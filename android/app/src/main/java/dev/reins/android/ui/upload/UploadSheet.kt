@@ -1,5 +1,18 @@
 package dev.reins.android.ui.upload
 
+import dev.reins.android.ui.approval.AskField
+import dev.reins.android.ui.approval.AskWho
+import dev.reins.android.ui.approval.AskDock
+import dev.reins.android.ui.approval.AskButtons
+import dev.reins.android.ui.approval.AskLoading
+import dev.reins.android.ui.approval.FieldVerdict
+import dev.reins.android.design.Field
+import dev.reins.android.design.Glyph
+import dev.reins.android.design.GlyphIcon
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.clip
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -39,80 +52,56 @@ import dev.reins.android.design.Spinner
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.ui.common.FileCard
 import dev.reins.android.ui.common.formatTime
+import dev.reins.android.ui.common.quotedName
 import dev.reins.android.ui.common.untrusted
 
-/** A file an AI uploaded through the server: who, what, why, and a preview, then approve or deny. */
+/**
+ * A file an AI uploaded through the server (Reins Signal, iOS-Connect 05): the orange share field with the AI's
+ * purpose in its own words where the verdict usually is, then the file itself (its first lines, the image, or a kind
+ * line) and what approving does. [onClose] leaves it waiting.
+ */
 @Composable
-fun UploadSheet(viewModel: UploadViewModel, authenticator: Authenticator, onDone: () -> Unit) {
+fun UploadSheet(viewModel: UploadViewModel, authenticator: Authenticator, onDone: () -> Unit, onClose: () -> Unit = onDone) {
     val c = LocalColors.current
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     LaunchedEffect(ui.finished) { if (ui.finished) onDone() }
     val view = ui.view
     if (view == null) {
-        Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (ui.loading) Spinner(c.secondary, size = 32.dp)
-            ui.error?.let {
-                Banner(it, Modifier.padding(top = 32.dp), BannerKind.Error, tag = "uploadError")
-                CapsuleButton("Close", Modifier.padding(top = 16.dp), style = ButtonStyle.Secondary, onClick = onDone)
-            }
-        }
+        AskLoading(ui.loading, ui.error, onClose, errorTag = "uploadError")
         return
     }
-    val who = untrusted(view.connectionLabel)
-    Column(Modifier.fillMaxWidth().testTag("uploadSheet")) {
+    // The AI names itself and the file: Reins' own words go in the ask, the AI's name only quoted on one short line.
+    val who = quotedName(view.connectionLabel)
+    Column(Modifier.fillMaxSize().background(c.paper).testTag("uploadSheet")) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Column(Modifier.padding(start = 20.dp, end = 60.dp, top = 8.dp, bottom = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ConnectionAvatar(who, null, size = 40.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        RText(who, RType.sans(17f, FontWeight.SemiBold), c.text, maxLines = 1)
-                        RText(formatTime(view.createdAt), RType.sans(12.5f), c.tertiary, maxLines = 1)
-                    }
-                }
-                Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ActionTile(ActionKind.Upload, 1, size = 48.dp)
-                    Spacer(Modifier.width(14.dp))
-                    RText("Share a file", RType.sans(26f, FontWeight.SemiBold), c.text, Modifier.weight(1f).testTag("what"), maxLines = 2)
-                }
-                ConnectorTags("files", null, Modifier.padding(top = 12.dp))
-            }
-            if (view.purpose.isNotBlank()) {
-                Column(
-                    Modifier
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .fillMaxWidth()
-                        .background(c.controlFill, RoundedCornerShape(14.dp))
-                        .padding(12.dp)
-                        .testTag("uploadReason")
-                        .semantics(mergeDescendants = true) {},
-                ) {
-                    RText("$who says it is for", RType.sans(12f, FontWeight.Medium), c.tertiary)
-                    RText("“${untrusted(view.purpose)}”", RType.sans(15f, lineHeight = 21f), c.text, Modifier.padding(top = 2.dp))
-                }
-            }
-            FileCard(view, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-            RText(
-                "$who uploaded this file to your Reins server. If you approve, its download link works and $who can hand " +
-                    "it to another tool. If you deny, the server deletes it. Either way it is gone at ${formatTime(view.expiresAt)}.",
-                RType.sans(13.5f, lineHeight = 19f),
-                c.secondary,
-                Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+            AskField(
+                Field.Push,
+                "Files · Share",
+                "Share a file",
+                "file",
+                onClose = onClose,
+                closeGlyph = Glyph.Close,
+                closeLabel = "Close",
+                top = {
+                    AskWho(who, null) { ConnectionAvatar(who, null, size = 28.dp) }
+                    RText(formatTime(view.createdAt), RType.mono(13f), c.onField, maxLines = 1)
+                },
+                // The AI's reason, quoted: its words, not Reins'.
+                verdict = if (view.purpose.isNotBlank()) {
+                    { FieldVerdict("“${untrusted(view.purpose)}”", Modifier.testTag("uploadReason"), maxLines = 3) }
+                } else {
+                    null
+                },
             )
-            ui.error?.let { Banner(it, Modifier.padding(16.dp), BannerKind.Error) }
+            FileCard(view, Modifier.padding(horizontal = 22.dp).padding(top = 22.dp))
+            RText(
+                "If you approve, its download link works and $who can hand it to another tool. Either way it is deleted at ${formatTime(view.expiresAt)}.",
+                RType.meta,
+                c.inkMeta,
+                Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
+            )
+            ui.error?.let { Banner(it, Modifier.padding(horizontal = 22.dp), BannerKind.Error) }
         }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(c.background)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            CapsuleButton("Deny", Modifier.weight(1f).testTag("deny"), style = ButtonStyle.Secondary, enabled = !ui.busy, onClick = viewModel::deny)
-            CapsuleButton("Approve", Modifier.weight(1.3f).testTag("approve"), enabled = !ui.busy, busy = ui.busy) {
-                viewModel.approve(authenticator)
-            }
-        }
+        AskDock { AskButtons("Approve", onDeny = viewModel::deny, onApprove = { viewModel.approve(authenticator) }, busy = ui.busy) }
     }
 }

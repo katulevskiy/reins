@@ -481,13 +481,14 @@ class PasswordlessFlowTest : FlowHarness() {
     @Test
     fun approvingAnotherPhoneAsksForBiometricsFirst() {
         openJoin()
-        rule.onNodeWithTag("joinTitle").assertTextEquals("Add Pixel 9?")
+        rule.onNodeWithTag("joinTitle").assertTextEquals("Add a phone to your account")
+        rule.onNodeWithTag("joinDevice").assertTextEquals("“Pixel 9”")
         rule.onNodeWithTag("joinCode").assertTextEquals("482 193")
         tap("approve")
         awaitCore { core.joinAnswers.isNotEmpty() }
         assertEquals("join1" to true, core.joinAnswers.single())
         assertEquals(1, prompts.get())
-        awaitText("Pixel 9 can open your account now. It approves from now on once it's set up.")
+        awaitText("“Pixel 9” can open your account now. It approves from now on once it's set up.")
         assertFalse(has("sheet"))
     }
 

@@ -1,5 +1,8 @@
 package dev.reins.android.ui.sheet
 
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.graphicsLayer
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -103,24 +106,56 @@ fun <T : Any> SheetHost(target: T?, onClose: () -> Unit, content: @Composable (T
 }
 
 /**
- * A screen that slides up over the whole app (an approval): it brings its own close button and bars. Back closes it
- * unless the screen handles Back itself first (a page pushed inside it, a sheet over it).
+ * An ask over the whole app (an approval, a pairing, a new phone, a file): its paper appears and its field slides
+ * down from the top by itself (it does not rise from the bottom). Back means "not now": the predictive back gesture
+ * shrinks the screen toward the edge it comes from as a preview, and letting go dismisses it without answering (the
+ * item stays waiting). A page pushed inside it, or a sheet over it, handles Back first.
  */
 @Composable
 fun <T : Any> FullScreenHost(target: T?, onClose: () -> Unit, content: @Composable (T) -> Unit) {
     val feedback = LocalFeedback.current
+    val reduce = dev.reins.android.design.LocalReduceMotion.current
     var shown by remember { mutableStateOf(target) }
     if (target != null) shown = target
     SheetOpenFeedback(target != null)
-    BackHandler(enabled = target != null) {
-        feedback.play(Event.Close)
-        onClose()
+    // How far the back gesture has gone (0..1) and from which edge.
+    var back by remember { mutableStateOf(0f) }
+    var fromLeft by remember { mutableStateOf(true) }
+    androidx.activity.compose.PredictiveBackHandler(enabled = target != null) { events ->
+        try {
+            events.collect { e ->
+                back = e.progress
+                fromLeft = e.swipeEdge == androidx.activity.BackEventCompat.EDGE_LEFT
+            }
+            feedback.play(Event.Close)
+            onClose()
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            // Let go short of the end: it stays.
+            back = 0f
+            throw e
+        }
     }
+    LaunchedEffect(target) { if (target == null) back = 0f }
     AnimatedVisibility(
         target != null,
-        enter = slideInVertically(tween(280)) { it / 3 } + fadeIn(tween(200)),
-        exit = slideOutVertically(tween(220)) { it / 3 } + fadeOut(tween(180)),
+        enter = fadeIn(tween(if (reduce) dev.reins.android.design.Motion.REDUCED_MS else 120)),
+        exit = fadeOut(tween(if (reduce) dev.reins.android.design.Motion.REDUCED_MS else 180)),
     ) {
-        Box(Modifier.fillMaxSize().testTag("sheet")) { shown?.let { content(it) } }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    // The preview of "not now": smaller, toward the edge the gesture comes from, with round corners.
+                    val p = back
+                    val s = 1f - 0.08f * p
+                    scaleX = s
+                    scaleY = s
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (fromLeft) 1f else 0f, 0.5f)
+                    translationX = (if (fromLeft) 1f else -1f) * 14.dp.toPx() * p
+                    shape = RoundedCornerShape((34 * p).dp)
+                    clip = p > 0f
+                }
+                .testTag("sheet"),
+        ) { shown?.let { content(it) } }
     }
 }

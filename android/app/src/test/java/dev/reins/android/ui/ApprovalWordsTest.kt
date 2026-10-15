@@ -68,7 +68,7 @@ class ApprovalWordsTest {
         assertEquals(HeroTone.Search, heroTone(TestData.searchView()))
         assertEquals(HeroTone.Send, heroTone(TestData.sendView()))
         assertEquals(HeroTone.Grant, heroTone(TestData.grantView()))
-        assertEquals(HeroTone.Grant, heroTone(TestData.accountsView()))
+        assertEquals(HeroTone.Accounts, heroTone(TestData.accountsView()))
         assertEquals(HeroTone.Danger, heroTone(TestData.designDeleteView()))
         assertEquals(HeroTone.Search, heroTone(TestData.vaultView()), "a password is asked every time but changes nothing")
         assertEquals(Badge.Trash, badge(TestData.designDeleteView()))

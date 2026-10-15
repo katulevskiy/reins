@@ -1,5 +1,10 @@
 package dev.reins.android.ui.pairing
 
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.verticalScroll
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -60,9 +65,19 @@ import kotlinx.coroutines.launch
 fun ConnectComputerScreen(app: AppViewModel, onBack: () -> Unit) {
     // An error from this visit does not greet the next one.
     DisposableEffect(app) { onDispose { app.resetConnect() } }
-    Screen(title = "Connect a computer", onBack = onBack) {
+    val c = LocalColors.current
+    // Signal (iOS-Connect 02): a back button on paper, the serif title, what to do on the computer, then the scanner.
+    Column(Modifier.fillMaxSize().background(c.paper).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+        Box(Modifier.windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(start = 24.dp, top = 8.dp)) {
+            dev.reins.android.design.RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+        }
+        androidx.compose.foundation.text.BasicText(
+            dev.reins.android.design.askString("Connect a computer", "computer"),
+            Modifier.padding(start = 24.dp, end = 24.dp, top = 14.dp),
+            style = RType.title.copy(color = c.ink),
+        )
         ComputerHowTo(Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp))
-        ConnectComputerPanel(app, Modifier.padding(horizontal = 16.dp, vertical = 18.dp))
+        ConnectComputerPanel(app, Modifier.padding(horizontal = 24.dp, vertical = 20.dp))
         DesktopAppLink()
         Spacer(Modifier.height(32.dp))
     }
@@ -102,13 +117,11 @@ fun ConnectComputerPanel(app: AppViewModel, modifier: Modifier = Modifier) {
     }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         justPaired?.let { ConnectedCard(it) }
-        CapsuleButton(
+        dev.reins.android.design.SignalButton(
             "Scan QR code",
             Modifier.fillMaxWidth().testTag("scanQr"),
-            style = ButtonStyle.Accent,
-            glyph = Glyph.Qr,
+            glyph = Glyph.QrCode,
             enabled = !ui.busy,
-            busy = ui.busy && !ui.manual,
             onClick = scan,
         )
         ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "connectError") }
@@ -126,19 +139,18 @@ fun ConnectComputerPanel(app: AppViewModel, modifier: Modifier = Modifier) {
                     keyboardType = KeyboardType.Ascii,
                 ),
             )
-            CapsuleButton(
+            dev.reins.android.design.SignalButton(
                 "Connect",
                 Modifier.fillMaxWidth().testTag("submitCode"),
-                style = ButtonStyle.Secondary,
+                style = dev.reins.android.design.ButtonStyle.Soft,
                 enabled = !ui.busy && PairingCode.normalize(typed) != null,
-                busy = ui.busy,
             ) { app.connectTyped(typed) }
         } else {
-            CapsuleButton(
+            dev.reins.android.design.SignalButton(
                 "Type the code instead",
                 Modifier.fillMaxWidth().testTag("typeCode"),
-                style = ButtonStyle.Ghost,
-                compact = true,
+                style = dev.reins.android.design.ButtonStyle.Ghost,
+                size = dev.reins.android.design.ButtonSize.Small,
                 onClick = app::showCodeField,
             )
         }
