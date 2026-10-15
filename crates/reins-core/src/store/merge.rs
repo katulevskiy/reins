@@ -3,19 +3,24 @@
 //!
 //! | table | merge |
 //! |---|---|
-//! | `grants` | security: never more permissive than either side or the base (see [`merge_grant`]); deleted on either side, or tombstoned, stays deleted |
-//! | `autopilot_settings` | security: lockdown on either side wins; otherwise the more restrictive mode; a bypass ends at the earlier time and one stopped on either side stays stopped; clocks never decide |
+//! | `grants` | security: never more permissive than either side or the base (see [`merge_grant`]); deleted on either side stays deleted |
+//! | `autopilot_settings` | changed on one side: that side's (a cleared lockdown or a stopped bypass stays so); on both, security: lockdown wins, else the less permissive mode, the earlier bypass end, one stopped stays stopped; clocks never decide |
 //! | `audit` (Activity) | grow-only: the union of both phones' entries, trimmed to the newest [`AUDIT_RETENTION`]; never a conflict |
 //! | `autopilot_memory` | entries added on either side are kept; one forgotten on either side goes |
-//! | `meta` | per key; grant tombstones are a grow-only set; JSON settings merge entry by entry (always-ask: asking wins) |
+//! | `meta` | per key; tombstones too (kept on either side when there is no base); JSON settings merge entry by entry (always-ask: asking wins) |
 //! | `accounts`, `secrets`, `desktop_keys`, `mcp_servers`, `connection_prefs`, `autopilot_profiles`, `autopilot_targets` | per row: a change on one side wins; on both, deleted beats edited, else the server's |
+//!
+//! Removing a guarded record ([`super::GUARDED`]: grants, accounts, tokens, paired computers' keys, MCP servers,
+//! approved targets) leaves a synced tombstone; [`bury`] drops every guarded record that has one, from every merge
+//! and every snapshot read (the server's, a base, a backup). Tombstones last [`super::TOMBSTONE_HORIZON_SECS`]; a base
+//! older than that is not used (`sync.rs`).
 //!
 //! Not synced at all (this phone's own, `snapshot.rs`): `session`, `pending`, `handled`, `autopilot_suggestions`,
 //! `autopilot_rate`, installation keys and metadata, and `audit_snapshots`.
 //!
-//! Without a base (an older version kept only a hash of it, or it was lost) the server's version wins, except that
-//! grants and modes still only tighten and logs keep both phones' entries. [`Merged::dropped_local`] then says whether
-//! anything of this phone's was lost.
+//! Without a base (an older version kept only a hash of it, it was lost, or it is older than the tombstone horizon)
+//! the server's version wins: what only this phone has is dropped (kept in a backup), grants and modes still only
+//! tighten, and logs keep both phones' entries. [`Merged::dropped_local`] then says whether anything was lost.
 use super::AUDIT_RETENTION;
 use super::snapshot::{Cell, Snapshot, Table, identity};
 use reins_policy::Grant;
@@ -54,7 +59,8 @@ fn kind(table: &str) -> Option<Kind> {
     })
 }
 
-pub(super) fn merge(base: Option<&Snapshot>, local: &Snapshot, server: &Snapshot) -> Merged {
+/// `now` (unix seconds) only decides which tombstones are past [`super::TOMBSTONE_HORIZON_SECS`] and go.
+pub(super) fn merge(base: Option<&Snapshot>, local: &Snapshot, server: &Snapshot, now: i64) -> Merged {
     let mut dropped_local = false;
     let mut tables = BTreeMap::new();
     let names: BTreeSet<&String> = local.tables.keys().chain(server.tables.keys()).collect();
@@ -79,37 +85,75 @@ pub(super) fn merge(base: Option<&Snapshot>, local: &Snapshot, server: &Snapshot
         };
         tables.insert(name.clone(), merged);
     }
-    bury_tombstoned_grants(&mut tables);
+    let mut snapshot = Snapshot {
+        version: 1,
+        tables,
+    };
+    prune_tombstones(&mut snapshot, now);
+    bury(&mut snapshot);
     Merged {
-        snapshot: Snapshot {
-            version: 1,
-            tables,
-        },
+        snapshot,
         dropped_local,
     }
 }
 
-/// A grant with a tombstone on either side was deleted for good.
-fn bury_tombstoned_grants(tables: &mut BTreeMap<String, Table>) {
-    let Some(meta) = tables.get("meta") else {
-        return;
-    };
-    let Some(key) = meta.column("key") else {
-        return;
-    };
-    let buried: BTreeSet<String> = meta
-        .rows
+/// The tombstone key of a guarded record (as the store's triggers write it), if `table` is guarded.
+fn tombstone_of(table: &str, columns: &[String], row: &Row) -> Option<String> {
+    let (_, key) = super::GUARDED.iter().find(|(t, _)| *t == table)?;
+    let parts: Vec<String> = key
         .iter()
-        .filter_map(|r| match r.get(key) {
-            Some(Cell::Text(k)) => k.strip_prefix(super::GRANT_TOMBSTONE_PREFIX).map(str::to_owned),
-            _ => None,
+        .map(|k| match cell(columns, row, k) {
+            Some(Cell::Text(v)) => v.clone(),
+            Some(Cell::Integer(v)) => v.to_string(),
+            _ => String::new(),
         })
         .collect();
-    if let Some(grants) = tables.get_mut("grants")
-        && let Some(id) = grants.column("id")
-    {
-        grants.rows.retain(|r| !matches!(r.get(id), Some(Cell::Text(g)) if buried.contains(g)));
+    Some(format!("{}{table}:{}", super::TOMBSTONE_PREFIX, serde_json::to_string(&parts).ok()?))
+}
+
+fn tombstones(snapshot: &Snapshot) -> BTreeSet<String> {
+    let Some(meta) = snapshot.tables.get("meta") else {
+        return BTreeSet::new();
+    };
+    let Some(key) = meta.column("key") else {
+        return BTreeSet::new();
+    };
+    meta.rows
+        .iter()
+        .filter_map(|r| match r.get(key) {
+            Some(Cell::Text(k)) if k.starts_with(super::TOMBSTONE_PREFIX) => Some(k.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Drops every guarded record that has a tombstone: removed on some phone, it stays removed, whatever any snapshot
+/// (a merge's side, a base, a backup, the server's) still holds.
+pub(super) fn bury(snapshot: &mut Snapshot) {
+    let buried = tombstones(snapshot);
+    if buried.is_empty() {
+        return;
     }
+    for (name, table) in &mut snapshot.tables {
+        let columns = table.columns.clone();
+        table.rows.retain(|r| tombstone_of(name, &columns, r).is_none_or(|t| !buried.contains(&t)));
+    }
+}
+
+/// Tombstones older than the horizon go: a phone whose base is older than that keeps only what the server has
+/// (`sync.rs`), so nothing they guarded can come back through it.
+fn prune_tombstones(snapshot: &mut Snapshot, now: i64) {
+    let Some(meta) = snapshot.tables.get_mut("meta") else {
+        return;
+    };
+    let (Some(key), Some(value)) = (meta.column("key"), meta.column("value")) else {
+        return;
+    };
+    let cutoff = now.saturating_sub(super::TOMBSTONE_HORIZON_SECS);
+    meta.rows.retain(|r| {
+        let stone = matches!(r.get(key), Some(Cell::Text(k)) if k.starts_with(super::TOMBSTONE_PREFIX));
+        !stone || !matches!(r.get(value), Some(Cell::Integer(at)) if *at < cutoff)
+    });
 }
 
 fn whole(base: Option<&Table>, local: Table, server: Table, dropped_local: &mut bool) -> Table {
@@ -172,7 +216,11 @@ fn keyed(
             match name {
                 "grants" => grant_versions(&server.columns, &v),
                 "autopilot_settings" => setting_versions(&server.columns, &v),
-                "meta" if is_tombstone(&server.columns, v.local.or(v.server)) => v.local.or(v.server).cloned(),
+                // Without a base nothing tells a tombstone added on one side from one cleared on the other (by adding
+                // the record again): kept. With one, the usual rules, so that adding a record again carries.
+                "meta" if !v.has_base && is_tombstone(&server.columns, v.local.or(v.server)) => {
+                    v.local.or(v.server).cloned()
+                }
                 _ => plain_versions(name, &server.columns, &v),
             }
         };
@@ -187,7 +235,7 @@ fn keyed(
 }
 
 fn is_tombstone(columns: &[String], row: Option<&Row>) -> bool {
-    matches!(row.and_then(|r| cell(columns, r, "key")), Some(Cell::Text(k)) if k.starts_with(super::GRANT_TOMBSTONE_PREFIX))
+    matches!(row.and_then(|r| cell(columns, r, "key")), Some(Cell::Text(k)) if k.starts_with(super::TOMBSTONE_PREFIX))
 }
 
 /// An ordinary record: changed on one side, that side's; changed on both, deleted beats edited, else the server's.
@@ -307,12 +355,22 @@ fn permissiveness(mode: Option<&Cell>) -> u8 {
     }
 }
 
-/// Autopilot's mode for one scope, merged for security whichever side changed: lockdown on either side wins; else the
-/// less permissive mode; a bypass ends at the earlier time, and one stopped on either side stays stopped. Clocks
-/// (`updated_at`) decide nothing. Deleted on one side (back to the default): deleted.
+/// Autopilot's mode for one scope. Changed on one side only: that side's (a lockdown cleared or a bypass stopped on one
+/// phone stays so). Changed on both, merged for security: lockdown on either side wins; else the less permissive mode;
+/// a bypass ends at the earlier time, and one stopped on either side stays stopped. Clocks (`updated_at`) decide
+/// nothing. Deleted on one side (back to the default): deleted.
 fn setting_versions(columns: &[String], v: &Versions<'_>) -> Option<Row> {
+    // Changed on one side only: that side's. So a lockdown cleared, or a bypass stopped, on one phone is not brought
+    // back by the other phone's unchanged copy.
+    if v.has_base && v.base == v.local {
+        return v.server.cloned();
+    }
+    if v.has_base && v.base == v.server {
+        return v.local.cloned();
+    }
     let (Some(l), Some(s)) = (v.local, v.server) else {
-        return if v.base.is_some() || !v.has_base && v.server.is_none() {
+        // Deleted (back to the default) on one side: deleted. New on one side: kept, unless there is no base.
+        return if v.base.is_some() || (!v.has_base && v.server.is_none()) {
             None
         } else {
             v.local.or(v.server).cloned()
@@ -474,6 +532,8 @@ mod tests {
     use super::*;
     use reins_policy::Scope;
 
+    const NOW: i64 = 1_800_000_000;
+
     fn grant_row(g: &Grant) -> Row {
         vec![
             Cell::Text(g.id.0.clone()),
@@ -491,7 +551,12 @@ mod tests {
             .to_vec();
         let meta = tombstones
             .iter()
-            .map(|id| vec![Cell::Text(format!("{}{id}", super::super::GRANT_TOMBSTONE_PREFIX)), Cell::Integer(10)])
+            .map(|id| {
+                vec![
+                    Cell::Text(format!("{}grants:[\"{id}\"]", super::super::TOMBSTONE_PREFIX)),
+                    Cell::Integer(NOW - 10),
+                ]
+            })
             .collect();
         Snapshot {
             version: 1,
@@ -514,7 +579,7 @@ mod tests {
         crate::store::grants::tests::read_grant(id, "c1", Some(1_000))
     }
     fn merged_grants(base: Option<&Snapshot>, local: &Snapshot, server: &Snapshot) -> (Vec<Grant>, bool) {
-        let m = merge(base, local, server);
+        let m = merge(base, local, server, NOW);
         let t = &m.snapshot.tables["grants"];
         (t.rows.iter().map(|r| grant_of(&t.columns, r).unwrap()).collect(), m.dropped_local)
     }
@@ -576,7 +641,7 @@ mod tests {
         let local = grants_and_meta(vec![], &["g1"]);
         let (out, _) = merged_grants(None, &local, &grants(vec![grant_row(&used)]));
         assert!(out.is_empty());
-        let m = merge(None, &local, &grants(vec![grant_row(&used)]));
+        let m = merge(None, &local, &grants(vec![grant_row(&used)]), NOW);
         assert_eq!(m.snapshot.tables["meta"].rows.len(), 1, "the tombstone is kept");
     }
 
@@ -657,7 +722,7 @@ mod tests {
         let local = one("audit", table(&cols, vec![entry(1, "old"), entry(3, "here a"), entry(4, "here b")]));
         let server = one("audit", table(&cols, vec![entry(1, "old"), entry(2, "gone here"), entry(3, "there")]));
         for base in [Some(&base), None] {
-            let m = merge(base, &local, &server);
+            let m = merge(base, &local, &server, NOW);
             assert_eq!(
                 m.snapshot.tables["audit"].rows,
                 [entry(1, "old"), entry(2, "gone here"), entry(3, "there"), entry(4, "here a"), entry(5, "here b")]
@@ -670,7 +735,7 @@ mod tests {
                 table(&cols, (from..from + AUDIT_RETENTION).map(|i| entry(i, &format!("{what}{i}"))).collect()),
             )
         };
-        let m = merge(None, &many(1, "here"), &many(1, "there"));
+        let m = merge(None, &many(1, "here"), &many(1, "there"), NOW);
         let rows = &m.snapshot.tables["audit"].rows;
         assert_eq!(rows.len(), usize::try_from(AUDIT_RETENTION).unwrap());
         assert_eq!(rows.last().unwrap(), &entry(2 * AUDIT_RETENTION, &format!("here{AUDIT_RETENTION}")));
@@ -683,7 +748,7 @@ mod tests {
         let local = one("autopilot_memory", table(&cols, vec![entry(1, "kept")]));
         let server =
             one("autopilot_memory", table(&cols, vec![entry(1, "kept"), entry(2, "forgotten here"), entry(3, "new")]));
-        let m = merge(Some(&base), &local, &server);
+        let m = merge(Some(&base), &local, &server, NOW);
         assert_eq!(m.snapshot.tables["autopilot_memory"].rows, [entry(1, "kept"), entry(3, "new")]);
     }
 
@@ -700,19 +765,34 @@ mod tests {
         one("autopilot_settings", table(&["scope", "mode", "bypass_until", "profile_id", "updated_at"], vec![row]))
     }
     fn merged_mode(base: Row, local: Row, server: Row) -> Row {
-        merge(Some(&modes(base)), &modes(local), &modes(server)).snapshot.tables["autopilot_settings"].rows[0].clone()
+        merge(Some(&modes(base)), &modes(local), &modes(server), NOW).snapshot.tables["autopilot_settings"].rows[0]
+            .clone()
     }
 
     #[test]
     fn lockdown_wins_and_a_stopped_bypass_never_restarts_whatever_the_clocks() {
-        // Lockdown on one side (even the unchanged one, with an older clock) wins.
+        // Lockdown set on one side while the other changed too (with a newer clock) wins.
         let m = merged_mode(
-            setting(Some("lockdown"), None, 1),
-            setting(Some("lockdown"), None, 1),
+            setting(Some("manual"), None, 1),
+            setting(Some("lockdown"), None, 2),
             setting(Some("bypass"), Some(9_999), 50),
         );
         assert_eq!(m[1], Cell::Text("lockdown".to_owned()));
         assert_eq!(m[2], Cell::Null);
+        // A lockdown cleared on one phone is not brought back by the other phone's unchanged copy; nor is a bypass
+        // that ended there brought back by a stale copy here.
+        let m = merged_mode(
+            setting(Some("lockdown"), None, 1),
+            setting(Some("lockdown"), None, 1),
+            setting(Some("manual"), None, 50),
+        );
+        assert_eq!(m[1], Cell::Text("manual".to_owned()));
+        let m = merged_mode(
+            setting(Some("bypass"), Some(9_999), 1),
+            setting(Some("bypass"), Some(9_999), 1),
+            setting(Some("manual"), None, 2),
+        );
+        assert_eq!((m[1].clone(), m[2].clone()), (Cell::Text("manual".to_owned()), Cell::Null));
         // Bypass stopped here (older clock), extended there (newer): stopped.
         let m = merged_mode(
             setting(Some("bypass"), Some(100), 1),
@@ -743,13 +823,13 @@ mod tests {
         let base = one("meta", table(&cols, vec![kv(r#"[{"id":"p1"}]"#)]));
         let local = one("meta", table(&cols, vec![kv(r#"[{"id":"p1"},{"id":"here"}]"#)]));
         let server = one("meta", table(&cols, vec![kv(r#"[{"id":"there"},{"id":"p1"}]"#)]));
-        let m = merge(Some(&base), &local, &server);
+        let m = merge(Some(&base), &local, &server, NOW);
         assert_eq!(m.snapshot.tables["meta"].rows, [kv(r#"[{"id":"there"},{"id":"p1"},{"id":"here"}]"#)]);
         let kv = |v: &str| vec![Cell::Text("app.secrets.always-ask".to_owned()), Cell::Text(v.to_owned())];
         let base = one("meta", table(&cols, vec![kv(r#"{"a/prod":false}"#)]));
         let local = one("meta", table(&cols, vec![kv(r#"{"a/prod":true,"b/prod":true}"#)]));
         let server = one("meta", table(&cols, vec![kv(r#"{"a/prod":false,"c/dev":false}"#)]));
-        let m = merge(Some(&base), &local, &server);
+        let m = merge(Some(&base), &local, &server, NOW);
         assert_eq!(m.snapshot.tables["meta"].rows, [kv(r#"{"a/prod":true,"b/prod":true,"c/dev":false}"#)]);
     }
 

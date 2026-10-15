@@ -15,11 +15,13 @@ What is synced and how each table merges:
 | table | merge |
 |---|---|
 | `grants` | Never more permissive than either phone or the base, whatever the clocks: revoked in any version stays revoked; a scope, account or connection that differs is revoked; the earliest expiry, the smallest use limit, every use counted. A grant deleted on either phone stays deleted: deletions leave tombstones (`meta`, kept for good), so a merge without a base cannot bring one back. |
-| `autopilot_settings` | Lockdown on either side wins. Otherwise the less permissive mode, and a bypass ends at the earlier time; one stopped on either side stays stopped. Clocks decide nothing. |
+| `autopilot_settings` | Changed on one side only: that side's, so a lockdown cleared or a bypass stopped on one phone stays so. Changed on both: lockdown wins; otherwise the less permissive mode, and a bypass ends at the earlier time, so one stopped on either side stays stopped. Clocks decide nothing. |
 | `audit` (Activity) | A grow-only union of both phones' entries, trimmed to the retention. Never a conflict. |
 | `autopilot_memory` | Entries added on either side are kept; one forgotten on either side is gone. |
 | `meta` | Per key. JSON settings merge entry by entry, and "ask every time" wins. |
 | `accounts`, `secrets`, `desktop_keys`, `mcp_servers`, `connection_prefs`, `autopilot_profiles`, `autopilot_targets` | Per row: a change on one side wins; on both, a deletion beats an edit, else the server's version. |
+
+Removing a security record leaves a tombstone in the synced `meta`: a grant, a connected account, a token, a paired computer's key, an MCP server, or an approved Autopilot target. Adding the record again on purpose clears its tombstone. Every merge drops a record that has a tombstone, and so does every snapshot read, whether the server's, a base or a backup. So nothing removed on one phone comes back from another phone's copy, a stale base, the server-wins fallback, a restore or an import. Tombstones last 180 days. A phone whose base is older than that, such as one that was offline longer, does not use its base: whatever only that phone has is dropped unless the server has it too, and it is kept in the inert backup.
 
 These are never synced, because they only mean something on one phone: `session`, `pending`, `handled`, `autopilot_suggestions`, `autopilot_rate`, `audit_snapshots`, installation keys and installation metadata.
 

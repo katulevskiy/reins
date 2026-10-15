@@ -37,9 +37,10 @@ pub(super) const DEVICE_META: &[&str] = &[
     "app.account-state.synced",
     "app.account-state.notice",
     "app.account-state.seen",
+    "app.account-state.agreed-at",
 ];
 /// Installation keys (`secrets.service`): never in a portable snapshot, and refused in one.
-const DEVICE_SECRETS: &[&str] = &[
+pub(super) const DEVICE_SECRETS: &[&str] = &[
     "reins.device-key",
     "reins.inbox-key",
     "reins.account-secret",
@@ -242,7 +243,7 @@ pub(super) fn import_snapshot(conn: &mut Connection, snapshot: Snapshot, portabl
     }
     let tx = conn.transaction()?;
     // Rows replaced here were not deleted by anyone: no tombstones for them.
-    tx.execute_batch("DROP TRIGGER IF EXISTS grant_tombstone")?;
+    super::drop_tombstone_triggers(&tx)?;
     for (name, table) in snapshot.tables {
         if !TABLES.contains(&name.as_str()) {
             return Err(Unreadable::Newer);
@@ -303,7 +304,7 @@ pub(super) fn import_snapshot(conn: &mut Connection, snapshot: Snapshot, portabl
             move_audit_snapshots(&tx, kept_snapshots, &mut new_seqs)?;
         }
     }
-    tx.execute_batch(super::GRANT_TOMBSTONES)?;
+    tx.execute_batch(&super::tombstone_triggers())?;
     tx.commit()?;
     Ok(())
 }

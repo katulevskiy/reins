@@ -15,6 +15,8 @@ use zeroize::Zeroizing;
 const REVISION: &str = "account-state.revision";
 const SEEN: &str = "account-state.seen";
 const SYNCED: &str = "account-state.synced";
+/// When this phone last agreed with the server (its own clock): a base older than the tombstone horizon is not used.
+const AGREED_AT: &str = "account-state.agreed-at";
 const NOTICE: &str = "account-state.notice";
 /// The side files (see [`Store::write_side`]): the last state both sides agreed on, and this phone's own state as it
 /// was before a merge without a base replaced parts of it. The backup is never uploaded; only
@@ -45,12 +47,17 @@ pub(crate) enum Pulled {
 
 /// Brings a snapshot written by any version to this version's tables, columns and data rules: read into an empty
 /// database of this schema (missing columns take their defaults), with every data rewrite of the migrations applied.
+/// Whatever it is (the server's, a base, a backup), what it carries that has a tombstone is dropped.
 fn normalize(plain: &[u8]) -> Result<Snapshot, Unreadable> {
     let parsed = snapshot::parse(plain)?;
     let mut conn = super::protected::memory()?;
     snapshot::import_snapshot(&mut conn, parsed, true)?;
+    // Rewrites, not removals by anyone: no tombstones (nor ones stamped with today's date in every copy).
+    super::drop_tombstone_triggers(&conn)?;
     conn.execute_batch(super::DATA_FIXUPS)?;
-    Ok(snapshot::parse(&snapshot::export(&conn, true)?)?)
+    let mut normalized = snapshot::parse(&snapshot::export(&conn, true)?)?;
+    merge::bury(&mut normalized);
+    Ok(normalized)
 }
 
 fn empty_like(snapshot: &Snapshot) -> Snapshot {
@@ -141,11 +148,19 @@ impl Store {
             log::warn!("could not keep the synced account state as a merge base: {e}");
         }
         self.meta_set(SYNCED, &canonical_hash(state))?;
+        self.meta_set(AGREED_AT, &super::unix_now().to_string())?;
         self.meta_set(REVISION, &revision.to_string())?;
         self.saw(revision)
     }
-    /// The base this phone kept for `revision`, if it has one that opens for exactly that revision.
+    /// The base this phone kept for `revision`, if it has one that opens for exactly that revision and is younger than
+    /// the tombstone horizon. An older one may predate removals whose tombstones are gone: without it, what only this
+    /// phone has is dropped (the server's state wins), so nothing removed elsewhere comes back.
     fn sync_base(&self, revision: u64) -> Option<Snapshot> {
+        let agreed = self.meta_get(AGREED_AT).ok().flatten().and_then(|s| s.parse::<i64>().ok())?;
+        if agreed < super::unix_now().saturating_sub(super::TOMBSTONE_HORIZON_SECS) {
+            log::warn!("the account sync base is older than the tombstone horizon; merging without it");
+            return None;
+        }
         match self.read_side(BASE, &base_context(revision)) {
             Ok(Some(plain)) => normalize(&plain).ok(),
             Ok(None) => None,
@@ -201,7 +216,7 @@ impl Store {
                 None => !synced.is_some_and(|h| h == canonical_hash(&local) || h == raw_hash(&local_plain)),
             };
             if changed {
-                let merged = merge::merge(base.as_ref(), &local, &server);
+                let merged = merge::merge(base.as_ref(), &local, &server, super::unix_now());
                 if base.is_none() {
                     // Nothing tells what the server's version replaced on purpose: keep this phone's as it was, inert.
                     self.write_side(BACKUP, BACKUP, &local_plain)?;
@@ -221,9 +236,10 @@ impl Store {
     }
 
     /// The user asked for this phone's backup (kept by a merge without a base) back: it is merged into the data as it
-    /// is now, as another phone's would be. What only the backup has comes back, except grants (a grant only the backup
-    /// has may be one deleted since); the rest merges by the usual rules, so nothing becomes more permissive.
-    /// False when there is no backup. What comes back is uploaded like any change made on this phone.
+    /// is now, as another phone's would be. Records only the backup has come back, except security records (grants,
+    /// accounts and tokens, paired computers' keys, MCP servers, approved targets, Autopilot modes): one of those only
+    /// the backup has may be one removed since. The rest merges by the usual rules and tombstones apply, so nothing
+    /// becomes more permissive. False when there is no backup. What comes back is uploaded like any change.
     pub(crate) fn restore_sync_backup(&self) -> Result<bool, CoreError> {
         let Some(plain) = self.read_side(BACKUP, BACKUP)? else {
             return Ok(false);
@@ -231,13 +247,18 @@ impl Store {
         let backup = normalize(&plain).map_err(CoreError::from)?;
         let mut conn = self.lock()?;
         let current = snapshot::parse(&snapshot::export(&conn, true)?)?;
-        let mut merged = merge::merge(Some(&empty_like(&current)), &backup, &current).snapshot;
-        if let (Some(now), Some(grants)) = (current.tables.get("grants"), merged.tables.get_mut("grants"))
-            && let Some(id) = now.column("id")
-        {
-            let present: std::collections::BTreeSet<_> =
-                now.rows.iter().filter_map(|r| r.get(id).cloned().map(|c| format!("{c:?}"))).collect();
-            grants.rows.retain(|r| r.get(id).is_some_and(|c| present.contains(&format!("{c:?}"))));
+        let mut merged = merge::merge(Some(&empty_like(&current)), &backup, &current, super::unix_now()).snapshot;
+        let guarded = super::GUARDED.iter().map(|(t, k)| (*t, *k)).chain([("autopilot_settings", &["scope"][..])]);
+        for (table, key) in guarded {
+            let (Some(now), Some(out)) = (current.tables.get(table), merged.tables.get_mut(table)) else {
+                continue;
+            };
+            let Some(at) = key.iter().map(|k| now.column(k)).collect::<Option<Vec<_>>>() else {
+                continue;
+            };
+            let key_of = |r: &Vec<snapshot::Cell>| at.iter().map(|i| format!("{:?}", r.get(*i))).collect::<Vec<_>>();
+            let present: std::collections::BTreeSet<_> = now.rows.iter().map(key_of).collect();
+            out.rows.retain(|r| present.contains(&key_of(r)));
         }
         snapshot::import_snapshot(&mut conn, merged, true)?;
         Ok(true)
@@ -536,9 +557,10 @@ mod tests {
     }
 
     /// The backup a merge without a base kept is never uploaded; restoring it (the user's choice) merges it in by
-    /// the usual rules: what only it has comes back, but never a grant, and nothing becomes more permissive.
+    /// the usual rules: what only it has comes back, but never a security record (a grant, an account or its token, a
+    /// paired computer's key), which may be one removed since.
     #[test]
-    fn the_backup_is_inert_until_restored_and_restoring_never_revives_a_grant() {
+    fn the_backup_is_inert_until_restored_and_restoring_never_revives_a_security_record() {
         let dir = tempfile::tempdir().unwrap();
         let phone = Phone::new(dir.path());
         let store = phone.open();
@@ -546,6 +568,9 @@ mod tests {
         store.insert_grant(&g, "Claude").unwrap();
         synced_by_an_older_version(&store, 4);
         store.add_account("github", "only-here", 3).unwrap();
+        store.secret_put("github", "only-here", b"token-only-here").unwrap();
+        store.pin_desktop_key("c9", "key-only-here", "Laptop", 1).unwrap();
+        store.set_connection_icon("c1", Some("icon-only-here")).unwrap();
         let other = tempfile::tempdir().unwrap();
         let other = Phone::new(other.path()).open();
         other.add_account("github", "from-the-other-phone", 2).unwrap();
@@ -553,14 +578,141 @@ mod tests {
         assert!(store.grants().unwrap().is_empty(), "the server's state won");
         let upload = store.pending_upload().unwrap();
         assert!(
-            upload.is_none_or(|(_, plain)| !String::from_utf8_lossy(&plain).contains("only-here")),
+            upload.is_none_or(|(_, plain)| !String::from_utf8_lossy(&plain).contains("icon-only-here")),
             "the backup is never uploaded on its own"
         );
         assert!(store.restore_sync_backup().unwrap());
-        assert_eq!(names(&store), ["from-the-other-phone", "only-here"], "restored by the merge rules");
-        assert!(store.grants().unwrap().is_empty(), "a grant only the backup has is not brought back");
+        assert_eq!(store.connection_icon("c1").unwrap().as_deref(), Some("icon-only-here"), "restored");
+        assert_eq!(names(&store), ["from-the-other-phone"], "an account only the backup has is not brought back");
+        assert_eq!(store.secret_get("github", "only-here").unwrap(), None, "nor its token");
+        assert_eq!(store.desktop_key("c9").unwrap(), None, "nor a computer's key");
+        assert!(store.grants().unwrap().is_empty(), "nor a grant");
         let (_, plain) = store.pending_upload().unwrap().expect("what came back is uploaded like a change");
-        assert!(String::from_utf8_lossy(&plain).contains("only-here"));
+        assert!(String::from_utf8_lossy(&plain).contains("icon-only-here"));
+    }
+
+    /// One phone removes things (a grant, an account and its token, a paired computer, an MCP server) while the other
+    /// is offline for 30 days with its old copy of them, which it even uses. Back online, nothing removed comes back:
+    /// not through the merge, nor the upload that follows, nor the other phone's next pull.
+    #[test]
+    fn a_phone_offline_for_30_days_comes_back_with_an_old_grant_and_it_stays_removed() {
+        let (a_dir, b_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (Phone::new(a_dir.path()).open(), Phone::new(b_dir.path()).open());
+        let mut server = Server::default();
+        let id = |s: &str| reins_proto::ids::GrantId(s.to_owned());
+        a.insert_grant(&crate::store::grants::tests::read_grant("old", "c1", Some(50)), "Claude").unwrap();
+        a.add_account("github", "work", 1).unwrap();
+        a.secret_put("github", "work", b"work-token").unwrap();
+        a.pin_desktop_key("c1", "laptop-key", "Laptop", 1).unwrap();
+        a.lock()
+            .unwrap()
+            .execute("INSERT INTO mcp_servers (id, name, url, auth, added_at) VALUES ('m1', 'Old', 'https://m.example', 'none', 1)", [])
+            .unwrap();
+        server.sync(&a);
+        server.pull(&b);
+        // B goes offline (its base: this revision). A removes everything, and keeps syncing for a month.
+        assert!(a.revoke_grant(&id("old")).unwrap());
+        assert!(a.delete_ended_grant(&id("old"), 100).unwrap());
+        a.remove_account("github", "work").unwrap();
+        a.secret_delete("github", "work").unwrap();
+        a.lock().unwrap().execute_batch("DELETE FROM desktop_keys; DELETE FROM mcp_servers;").unwrap();
+        server.sync(&a);
+        for day in 0..30 {
+            a.add_account("github", &format!("day-{day}"), day).unwrap();
+            server.sync(&a);
+        }
+        // B, offline, keeps using its copy of the grant and the token.
+        b.lock()
+            .unwrap()
+            .execute("UPDATE grants SET grant_json = json_set(grant_json, '$.uses', 7), last_used_at = 99", [])
+            .unwrap();
+        b.secret_put("github", "work", b"refreshed-work-token").unwrap();
+        server.sync(&b);
+        server.pull(&a);
+        for store in [&a, &b] {
+            assert!(store.grants().unwrap().is_empty(), "the grant stays removed");
+            assert!(!names(store).contains(&"work".to_owned()), "the account stays removed");
+            assert_eq!(store.secret_get("github", "work").unwrap(), None, "and its token");
+            assert_eq!(store.desktop_key("c1").unwrap(), None, "and the computer's key");
+            assert!(store.mcp_servers().unwrap().is_empty(), "and the MCP server");
+            assert_eq!(names(store).len(), 30);
+        }
+    }
+
+    /// Past the tombstone horizon a phone cannot know what was removed while it was away: what only it has is dropped,
+    /// unless the server has it too.
+    #[test]
+    fn a_base_older_than_the_tombstone_horizon_keeps_only_what_the_server_has() {
+        let (a_dir, b_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (Phone::new(a_dir.path()).open(), Phone::new(b_dir.path()).open());
+        let mut server = Server::default();
+        let id = |s: &str| reins_proto::ids::GrantId(s.to_owned());
+        a.insert_grant(&crate::store::grants::tests::read_grant("ancient", "c1", None), "Claude").unwrap();
+        a.insert_grant(&crate::store::grants::tests::read_grant("kept", "c1", None), "Claude").unwrap();
+        server.sync(&a);
+        server.pull(&b);
+        assert!(a.revoke_grant(&id("ancient")).unwrap());
+        assert!(a.delete_ended_grant(&id("ancient"), 100).unwrap());
+        // The removal is older than the horizon by now: its tombstone is gone, and so is B's base's usefulness.
+        let long_ago = crate::store::unix_now() - crate::store::TOMBSTONE_HORIZON_SECS - 86_400;
+        a.lock().unwrap().execute("UPDATE meta SET value = ?1 WHERE key LIKE 'app.tombstone.%'", [long_ago]).unwrap();
+        a.add_account("github", "touch", 1).unwrap();
+        server.sync(&a);
+        server.pull(&a); // nothing new; the tombstone is still there until a merge prunes it
+        let mut state: serde_json::Value = serde_json::from_slice(server.state.as_ref().unwrap()).unwrap();
+        state["tables"]["meta"]["rows"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|r| !r[0]["Text"].as_str().unwrap().starts_with("app.tombstone."));
+        server.state = Some(Zeroizing::new(serde_json::to_vec(&state).unwrap()));
+        b.meta_set(AGREED_AT, &long_ago.to_string()).unwrap();
+        b.add_account("github", "b-offline", 2).unwrap();
+        server.sync(&b);
+        let left: Vec<String> = b.grants().unwrap().into_iter().map(|g| g.grant.id.0).collect();
+        assert_eq!(left, ["kept"], "the old grant only B had is dropped; the one the server has stays");
+        assert!(!names(&b).contains(&"b-offline".to_owned()), "B's own extras are suspect too (kept in the backup)");
+        assert!(b.read_side(BACKUP, BACKUP).unwrap().is_some());
+    }
+
+    /// Adding a record again on purpose clears its tombstone, and that reaches the other phone.
+    #[test]
+    fn adding_a_removed_account_again_syncs() {
+        let (a_dir, b_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (Phone::new(a_dir.path()).open(), Phone::new(b_dir.path()).open());
+        let mut server = Server::default();
+        a.add_account("github", "work", 1).unwrap();
+        server.sync(&a);
+        a.remove_account("github", "work").unwrap();
+        a.secret_delete("github", "work").unwrap();
+        server.sync(&a);
+        server.pull(&b);
+        assert!(names(&b).is_empty());
+        b.add_account("github", "work", 5).unwrap();
+        b.add_account("github", "other", 6).unwrap();
+        a.add_account("github", "concurrent", 7).unwrap();
+        server.sync(&a);
+        server.sync(&b);
+        server.pull(&a);
+        assert_eq!(names(&a), ["concurrent", "other", "work"]);
+        assert_eq!(names(&b), ["concurrent", "other", "work"]);
+    }
+
+    /// A state that still carries something removed elsewhere (an older version uploaded it) brings it in nowhere:
+    /// whatever has a tombstone is dropped from every snapshot read.
+    #[test]
+    fn an_import_never_brings_back_a_tombstoned_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Phone::new(dir.path()).open();
+        store.insert_grant(&crate::store::grants::tests::read_grant("g", "c1", None), "Claude").unwrap();
+        let mut state: serde_json::Value = serde_json::from_slice(&store.export_account().unwrap()).unwrap();
+        state["tables"]["meta"]["rows"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!([{"Text": "app.tombstone.grants:[\"g\"]"}, {"Integer": crate::store::unix_now()}]));
+        let fresh_dir = tempfile::tempdir().unwrap();
+        let fresh = Phone::new(fresh_dir.path()).open();
+        assert_eq!(fresh.pull(1, Some(&serde_json::to_vec(&state).unwrap())).unwrap(), Pulled::Imported);
+        assert!(fresh.grants().unwrap().is_empty());
     }
 
     /// The tables that only mean something on this phone are never in what is synced; Activity is.

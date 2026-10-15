@@ -83,15 +83,66 @@ CREATE TABLE IF NOT EXISTS handled (id TEXT PRIMARY KEY, at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS connection_prefs (connection_id TEXT PRIMARY KEY, icon TEXT);
 CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB NOT NULL);
 ";
-/// Every deleted grant leaves a tombstone (`meta` key `app.grant-tombstone.<id>`, kept for good: a grant may have no
-/// end), so that no merge with another phone's copy brings it back (see `merge.rs`). In `meta`, which every version
-/// syncs, rather than a table of its own that older versions would refuse. Imports drop it while they replace rows.
-const GRANT_TOMBSTONES: &str = "
-CREATE TRIGGER IF NOT EXISTS grant_tombstone AFTER DELETE ON grants BEGIN
-    INSERT OR IGNORE INTO meta (key, value) VALUES ('app.grant-tombstone.' || old.id, old.created_at);
-END;
-";
-pub(crate) const GRANT_TOMBSTONE_PREFIX: &str = "app.grant-tombstone.";
+/// The records whose removal is a security decision (a permission, a connected account or its token, a paired
+/// computer's key, an MCP server, an approved target), with their primary keys: each removal leaves a tombstone, so
+/// that no merge, import or restore brings the record back (see `merge.rs` and `sync.rs`).
+pub(crate) const GUARDED: &[(&str, &[&str])] = &[
+    ("grants", &["id"]),
+    ("accounts", &["service", "account"]),
+    ("secrets", &["service", "account"]),
+    ("desktop_keys", &["connection_id"]),
+    ("mcp_servers", &["id"]),
+    ("autopilot_targets", &["key"]),
+];
+/// A tombstone is a `meta` row `app.tombstone.<table>:<JSON array of the key>` holding when the record was removed:
+/// in `meta`, which every version syncs, rather than a table of its own that older versions would refuse. Adding the
+/// record again (on purpose) removes its tombstone. Tombstones are kept for [`TOMBSTONE_HORIZON_SECS`]; a phone whose
+/// merge base is older than that cannot rely on them and keeps only what the server also has.
+pub(crate) const TOMBSTONE_PREFIX: &str = "app.tombstone.";
+pub(crate) const TOMBSTONE_HORIZON_SECS: i64 = 180 * 86_400;
+
+fn tombstone_key_sql(table: &str, key: &[&str], row: &str) -> String {
+    let parts = key.iter().map(|k| format!("{row}.\"{k}\"")).collect::<Vec<_>>().join(", ");
+    format!("'{TOMBSTONE_PREFIX}{table}:' || json_array({parts})")
+}
+/// The triggers that keep the tombstones. Removed while an import replaces rows (nobody removed those).
+fn tombstone_triggers() -> String {
+    use std::fmt::Write as _;
+    let device_secrets = snapshot::DEVICE_SECRETS.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(",");
+    let mut sql = String::new();
+    for (table, key) in GUARDED {
+        // An installation key is this phone's own: its removal is no one else's business (nor in the synced state).
+        let (when, when_new) = if *table == "secrets" {
+            (
+                format!("WHEN old.service NOT IN ({device_secrets})"),
+                format!("WHEN new.service NOT IN ({device_secrets})"),
+            )
+        } else {
+            (String::new(), String::new())
+        };
+        write!(
+            sql,
+            "CREATE TRIGGER IF NOT EXISTS tombstone_{table} AFTER DELETE ON {table} {when} BEGIN
+                 INSERT OR REPLACE INTO meta (key, value) VALUES ({}, CAST(strftime('%s', 'now') AS INTEGER));
+             END;
+             CREATE TRIGGER IF NOT EXISTS untombstone_{table} AFTER INSERT ON {table} {when_new} BEGIN
+                 DELETE FROM meta WHERE key = {};
+             END;",
+            tombstone_key_sql(table, key, "old"),
+            tombstone_key_sql(table, key, "new"),
+        )
+        .expect("writing to a String");
+    }
+    sql
+}
+fn drop_tombstone_triggers(conn: &Connection) -> Result<(), rusqlite::Error> {
+    for (table, _) in GUARDED {
+        conn.execute_batch(&format!(
+            "DROP TRIGGER IF EXISTS tombstone_{table}; DROP TRIGGER IF EXISTS untombstone_{table};"
+        ))?;
+    }
+    Ok(())
+}
 
 /// Columns and tables added after the first release, applied once each (`PRAGMA user_version`). A table added to
 /// [`SCHEMA`] needs one here too: a sealed database restored from disk keeps the tables it was written with.
@@ -249,8 +300,10 @@ const DATA_FIXUPS: &str = DROP_TOPIC_DESKTOP_GRANTS;
 /// restored from disk (written by this version, an older one, or another process).
 fn prepare(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch(SCHEMA)?;
-    conn.execute_batch(GRANT_TOMBSTONES)?;
     migrate(conn)?;
+    // After the migrations: the tables they add need to exist. Migration 11's drops are no one's to merge back
+    // either, but `DATA_FIXUPS` drops those again on every snapshot that still has them.
+    conn.execute_batch(&tombstone_triggers())?;
     conn.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON;")?;
     Ok(())
 }
