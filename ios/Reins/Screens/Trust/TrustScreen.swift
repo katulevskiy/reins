@@ -81,6 +81,18 @@ struct TrustScreen: View {
             ap.bind(model)
             await ap.refresh()
             await ap.loadStats()
+            #if DEBUG
+            // `-openSheet bypass|overnight|model` (screenshots): open that sheet at launch.
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-openSheet"), i + 1 < args.count {
+                switch args[i + 1] {
+                case "bypass": bypassAsk = true
+                case "overnight": overnightAsk = true
+                case "model": modelOpen = true
+                default: break
+                }
+            }
+            #endif
         }
         .task(id: [ap.settings?.bypassUntil, ap.settings?.overnightUntil]) {
             // The core ends a bypass or an Overnight when it is read after its time; read it then, so the screen moves
