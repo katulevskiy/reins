@@ -138,6 +138,13 @@ async fn confirm_owner(owner: &dyn OwnerCheck, reason: String) -> Result<(), Cor
     }
 }
 
+/// What the risk reads of a request (a model that rates it): the refined request's two views, and the neutral one.
+struct RiskStates {
+    facts: String,
+    full: String,
+    neutral: Option<String>,
+}
+
 /// Who carries out a decision. An Overnight approval needs the proof its gate made for that very request
 /// ([`overnight::gate`]); nothing else can make one.
 enum By {
@@ -742,49 +749,57 @@ impl Engine {
             AutopilotMode::Bypass | AutopilotMode::Manual | AutopilotMode::Auto | AutopilotMode::Overnight => {}
         }
 
-        // A model that rates risk reads a hook's question as the action it is about, with the context line the core
-        // works out (docs/autopilot-risk.md §3), the connection's last hour included.
+        // A model that rates risk reads, for the risk only, a hook's question as the action it is about, with the context
+        // line the core works out (docs/autopilot-risk.md §3), the connection's last hour included. The approval head
+        // reads the request as it always did: nothing Overnight adds reaches Manual's or Auto's verdicts.
         // (Read from the package's configuration: opening it, which verifies it, is the judging's job. This reading
         // only decides what the model is shown; nothing is decided on it.)
         let rates_risk = mode != AutopilotMode::Bypass && model::rates_risk(&self.data_dir, &self.ap_known());
+        let mut for_risk = subject.described.clone();
         let context = if rates_risk {
             let context = match &subject.view {
                 Some(view) => {
-                    let c = risk::refine(&mut subject.described, view);
-                    subject.described.label =
-                        situation::label_of(&subject.described.facts.operation, &subject.described.facts.target);
-                    s.label.clone_from(&subject.described.label);
+                    let c = risk::refine(&mut for_risk, view);
+                    s.label = situation::label_of(&for_risk.facts.operation, &for_risk.facts.target);
                     c
                 }
                 None => risk::upload_context(),
             };
             s.deletes = context.deletes();
             if let Some(line) = self.ap_recent_line(&subject, context.deletes(), now)? {
-                subject.described.facts.context.push(line);
+                for_risk.facts.context.push(line);
             }
             Some(context)
         } else {
             None
         };
 
-        // What the model reads, also kept for corrections.
+        // What the approval head reads, also kept for corrections.
         let age = Box::pin(self.ap_age(ctx, &subject.connection_id)).await;
-        let mut facts = subject.described.facts.clone();
-        facts.connection.clone_from(&subject.connection_label);
-        facts.connection_age = age;
-        facts.connection_history = self.store.ap_history(&subject.connection_id).ok();
-        facts.target_is_new = (!facts.target.is_empty()).then_some(novel);
+        let with_connection = |f: &situation::Facts| {
+            let mut f = f.clone();
+            f.connection.clone_from(&subject.connection_label);
+            f.connection_age = age;
+            f.connection_history = self.store.ap_history(&subject.connection_id).ok();
+            f.target_is_new = (!f.target.is_empty()).then_some(novel);
+            f
+        };
+        let facts = with_connection(&subject.described.facts);
         (s.s_facts, s.s_full) = situation::render(&facts, &subject.described.ai);
-        // The risk's third view: the facts with what the agent wrote into them as placeholders (risk::neutral_facts),
-        // read in the same run when it differs; its class can only raise the risk.
-        // (the AI's part with them too: a hook's question and detail repeat the command)
-        let neutral = rates_risk
-            .then(|| {
-                let n = risk::neutral_facts(&facts);
-                let ai = risk::neutral_ai(&facts, &n, &subject.described.ai);
-                situation::render(&n, &ai).1
-            })
-            .filter(|n| *n != s.s_facts && *n != s.s_full);
+        // What the risk reads: the refined request (above) in two views, and a third with what the agent wrote into it
+        // as placeholders (risk::neutral_facts, risk::neutral_ai), whose class can only raise the risk.
+        let risk_states = rates_risk.then(|| {
+            let rf = with_connection(&for_risk.facts);
+            let (r_facts, r_full) = situation::render(&rf, &for_risk.ai);
+            let n = risk::neutral_facts(&rf);
+            let nai = risk::neutral_ai(&rf, &n, &for_risk.ai);
+            let neutral = Some(situation::render(&n, &nai).1).filter(|x| *x != r_facts && *x != r_full);
+            RiskStates {
+                facts: r_facts,
+                full: r_full,
+                neutral,
+            }
+        });
 
         let young = gates::young(age, self.cfg.new_connection_secs)
             .then(|| "a connection paired less than 10 minutes ago".to_owned());
@@ -803,7 +818,7 @@ impl Engine {
 
         let judged = {
             let profile = self.ap_profile_loaded(ctx, &subject.connection_id)?;
-            Box::pin(self.ap_judge(&s, neutral.as_deref(), profile, now)).await
+            Box::pin(self.ap_judge(&s, risk_states.as_ref(), profile, now)).await
         };
         let (judged, probs) = match judged {
             Ok(j) => j,
@@ -1030,11 +1045,11 @@ impl Engine {
     }
 
     /// Runs the model on the two texts and scores them against the profile.
-    /// `neutral`: the risk's third view (risk::neutral_facts), when it differs from the facts.
+    /// `risk`: what the risk reads, when the model rates it (else the risk of the approval's passes, if any).
     async fn ap_judge(
         &self,
         s: &Suggestion,
-        neutral: Option<&str>,
+        risk: Option<&RiskStates>,
         profile: &mut (StoredProfile, Vec<MemoryRow>),
         now: i64,
     ) -> Result<(Judged, Probs), String> {
@@ -1043,9 +1058,22 @@ impl Engine {
             states.push(s.s_full.clone());
         }
         let full_at = states.len() - 1;
-        if let Some(n) = neutral {
-            states.push(n.to_owned());
-        }
+        // the risk's views, in the same run: facts, full, neutral
+        let risk_at = risk.map(|r| {
+            let rf = states.len();
+            states.push(r.facts.clone());
+            let ru = if r.full == r.facts {
+                rf
+            } else {
+                states.push(r.full.clone());
+                states.len() - 1
+            };
+            let rn = r.neutral.as_ref().map(|n| {
+                states.push(n.clone());
+                states.len() - 1
+            });
+            (rf, ru, rn)
+        });
         let n_states = states.len();
         let (laya, passes) = self.ap_infer(states).await?;
         if passes.len() != n_states {
@@ -1055,10 +1083,15 @@ impl Engine {
         let risk_config = laya.config.risk();
         let facts = passes.first().cloned().ok_or("the model returned nothing")?;
         let full = passes.get(full_at).cloned().unwrap_or_else(|| facts.clone());
-        // The neutral view's risk joins the two-pass rule; a view without a risk leaves none (held in Overnight).
-        let neutral_risk = neutral.map(|_| passes.last().and_then(|p| p.risk));
-        // The highest class any view gives on its own (the shown class is never below it).
-        let risk_view_max = passes.iter().filter_map(|p| p.risk).map(|p| risk::level(p, false)).max();
+        // The risk: the cumulative max of its views (a view without a risk leaves none: held in Overnight), and the
+        // highest class any of them gives on its own (the shown class is never below it).
+        let (risk_passes, rf, ru, rn) = match risk_at {
+            Some((rf, ru, rn)) => (vec![rf, ru].into_iter().chain(rn).collect::<Vec<_>>(), rf, ru, rn),
+            None => (vec![0, full_at], 0, full_at, None),
+        };
+        let neutral_risk = rn.map(|i| passes[i].risk);
+        let risk_view_max = risk_passes.iter().filter_map(|i| passes[*i].risk).map(|p| risk::level(p, false)).max();
+        let (risk_facts, risk_full) = (passes[rf].risk, passes[ru].risk);
         self.ap_train_if_due(profile, &model_id, now).await;
         let dim = facts.pooled.len();
         let rows: Vec<&MemoryRow> =
@@ -1097,7 +1130,7 @@ impl Engine {
                 e_facts: Embedding::from_vector(&facts.pooled),
                 e_full: Embedding::from_vector(&full.pooled),
                 neighbours,
-                risk: facts.risk.zip(full.risk).map(|(f, u)| decide::risk_combine(f, u)).and_then(
+                risk: risk_facts.zip(risk_full).map(|(f, u)| decide::risk_combine(f, u)).and_then(
                     |r| match neutral_risk {
                         None => Some(r),
                         Some(n) => n.map(|n| decide::risk_combine(r, n)),

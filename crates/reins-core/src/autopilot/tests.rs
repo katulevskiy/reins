@@ -1148,6 +1148,25 @@ async fn steering_in_a_command_cannot_lower_the_risk() {
     assert!(seen.iter().any(|t| t.contains("target: make clean") && !t.contains("pre-approved")), "{seen:?}");
 }
 
+/// The neutral view can only add: when it alone reads the request as harmless, the other views' catastrophic rating
+/// still holds it.
+#[tokio::test]
+async fn the_neutral_view_never_lowers_the_risk() {
+    let env = env_risk().await;
+    let key = desktop_key(&env);
+    known_and_unlocked(&env).await;
+    // catastrophic in every view but the neutral one (the command without its comment), which reads as harmless
+    env.model.set_risk_default(testing::risk(0.01, 0.01, 0.03, 0.95));
+    env.model.risk_rule("target: make clean\ntarget is new", testing::risk(0.97, 0.01, 0.01, 0.01));
+    env.mode(None, AutopilotMode::Overnight).await;
+    env.relay("r1", OLD, hook_ask(&key, "", "command:make", "make clean  # tidy up")).await;
+    let seen = env.model.seen.lock().unwrap().clone();
+    assert!(seen.iter().any(|t| t.contains("target: make clean\ntarget is new")), "a neutral view was read: {seen:?}");
+    let risk = env.suggestion("r1").await.risk.unwrap();
+    assert!(risk.held && risk.level == RiskLevel::Catastrophic, "{risk:?}");
+    assert!(env.decided().is_empty());
+}
+
 /// The class shown is never below what any one view (facts, full, neutral) gave on its own.
 #[tokio::test]
 async fn the_class_is_the_highest_any_view_gives() {
@@ -1301,7 +1320,12 @@ async fn the_model_reads_the_context_line_only_when_it_rates_risk() {
     let env = env_risk().await;
     env.relay("r1", OLD, email_to(&["a@x.com", "b@y.com", "c@z.com"], "hi all")).await;
     let seen = env.model.seen.lock().unwrap().clone();
-    assert!(seen.iter().all(|t| t.contains("\ncontext: 3 recipients")), "{seen:?}");
+    // the risk's views read it; the approval's two views read the request as they always did, so nothing Overnight
+    // adds reaches Manual's or Auto's verdicts
+    let (with, without): (Vec<&String>, Vec<&String>) =
+        seen.iter().partition(|t| t.contains("\ncontext: 3 recipients"));
+    assert_eq!((with.len(), without.len()), (2, 2), "{seen:?}");
+    assert!(without.iter().all(|t| !t.contains("context:")), "{seen:?}");
     // Manual shows the risk and decides nothing.
     let s = env.suggestion("r1").await;
     assert_eq!((s.risk.clone().unwrap().level, s.risk.unwrap().held), (RiskLevel::Benign, false));
@@ -2024,4 +2048,57 @@ async fn a_bypass_approves_even_when_the_entry_snapshot_cannot_be_written() {
         assert_eq!(env.answer(id).await.unwrap()["outcome"], "result", "{id}");
     }
     assert!(env.waiting().await.is_empty());
+}
+
+// ---- engine-level non-regression (tools/laya/regression.py --decisions) ----------------------------------------------
+
+/// Every command of `REINS_DECISIONS_IN` (a JSON list) as a hook's question, decided in Manual, Auto, Overnight and
+/// Bypass with a model that approves and rates everything low, after the user approved the same command once (so the
+/// target is known) and with every class unlocked. Writes {mode: {command: "approve" | "deny" | "wait"}} to
+/// `REINS_DECISIONS_OUT`; the same test on main and on a branch shows what the branch decides more loosely.
+#[tokio::test]
+#[ignore = "writes decisions for tools/laya/regression.py"]
+async fn dump_decisions() {
+    let (Ok(input), Ok(output)) = (std::env::var("REINS_DECISIONS_IN"), std::env::var("REINS_DECISIONS_OUT")) else {
+        return;
+    };
+    let commands: Vec<String> = serde_json::from_str(&std::fs::read_to_string(input).unwrap()).unwrap();
+    let mut out = serde_json::Map::new();
+    for mode in [AutopilotMode::Manual, AutopilotMode::Auto, AutopilotMode::Overnight, AutopilotMode::Bypass] {
+        let env = env_risk().await;
+        env.model.set_default(logits(0.999, 0.0005, 0.0005));
+        env.model.set_risk_default(testing::risk(0.97, 0.01, 0.01, 0.01));
+        let key = desktop_key(&env);
+        let profile = env.profile_id().await;
+        let mut decided = serde_json::Map::new();
+        for (i, cmd) in commands.iter().enumerate() {
+            env.mode(None, AutopilotMode::Manual).await;
+            let topic = format!("command:{}", cmd.split_whitespace().take(2).collect::<Vec<_>>().join(" "));
+            let seed = format!("seed-{i}");
+            env.relay(&seed, OLD, hook_ask(&key, "", &topic, cmd)).await;
+            if env.waiting().await.contains(&seed) {
+                env.approve(&seed).await;
+            }
+            let class = env.store().ap_suggestion(&seed).ok().flatten().map(|s| s.class_key);
+            if let Some(class) = class {
+                env.core.set_class_lock(profile.clone(), class, Some(false)).await.unwrap();
+            }
+            // each command on its own: no rate limit carried over from the ones before
+            env.store().lock().unwrap().execute_batch("DELETE FROM autopilot_rate;").unwrap();
+            env.mode(None, mode).await;
+            let id = format!("r-{i}");
+            env.relay(&id, OLD, hook_ask(&key, "", &topic, cmd)).await;
+            let end = match env.decided().iter().find(|(d, _, _)| *d == id) {
+                Some((_, Verdict::Approve, _)) => "approve",
+                Some((_, Verdict::Deny, _)) => "deny",
+                _ => "wait",
+            };
+            decided.insert(cmd.clone(), Value::from(end));
+            if std::env::var("REINS_DECISIONS_WHY").is_ok() {
+                eprintln!("{mode:?} {end} {cmd:?}: {}", env.suggestion(&id).await.reason);
+            }
+        }
+        out.insert(format!("{mode:?}"), Value::Object(decided));
+    }
+    std::fs::write(output, serde_json::to_string_pretty(&Value::Object(out)).unwrap()).unwrap();
 }

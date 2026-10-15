@@ -13,6 +13,10 @@ ranked read < uncertain < tripwire, and the run fails when any input ranks lower
 hold on main, so whatever the branch reads is at least as guarded. More holds are reported, never failed.
 
     python regression.py --main /path/laya-context-main --branch /path/laya-context --fixtures /tmp/fixtures.json
+
+Engine-level decisions too: the ignored test `dump_decisions` (crates/reins-core/src/autopilot/tests.rs), run on main
+and on the branch over the same commands, writes each command's end in Manual, Auto, Overnight and Bypass;
+`--decisions main.json branch.json` fails when the branch approves anything main left waiting or denied.
 """
 import argparse
 import collections
@@ -52,7 +56,24 @@ def main():
     ap.add_argument("--fixtures", required=True)
     ap.add_argument("--golden", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden.json"))
     ap.add_argument("--corpus", type=int, default=20000)
+    ap.add_argument("--decisions", nargs=2, metavar=("MAIN", "BRANCH"), help="dump_decisions outputs to compare")
     args = ap.parse_args()
+    looser_decisions = 0
+    if args.decisions:
+        old_d, new_d = (json.load(open(p)) for p in args.decisions)
+        changed = collections.Counter()
+        for mode, ends in old_d.items():
+            for cmd, end in ends.items():
+                new_end = new_d.get(mode, {}).get(cmd)
+                if new_end == "approve" and end != "approve":
+                    looser_decisions += 1
+                    print("  LOOSER decision in %s: main %s -> branch approve | %s" % (mode, end, cmd[:200]))
+                elif new_end != end:
+                    changed[(mode, end, new_end)] += 1
+        print("decisions: %d commands x %d modes; approved on the branch but not on main: %d" % (
+            len(next(iter(old_d.values()))), len(old_d), looser_decisions))
+        for k, n in changed.most_common():
+            print("  %5d %s" % (n, k))
     old, new = CoreContext(args.main), CoreContext(args.branch)
 
     inputs = []  # (source, branch query)
@@ -117,7 +138,7 @@ def main():
     print("what holds them now:")
     for k, n in why.most_common(40):
         print("  %5d %s" % (n, k))
-    sys.exit(1 if looser else 0)
+    sys.exit(1 if looser or looser_decisions else 0)
 
 
 if __name__ == "__main__":
