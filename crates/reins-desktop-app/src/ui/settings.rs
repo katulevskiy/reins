@@ -360,11 +360,12 @@ impl Root {
         trigger.child(kit::open_menu("appearance-menu", menu, Anchor::TopRight)).into_any_element()
     }
 
-    /// Who this computer is paired as, the server and its key, which phone approves, and the service; a hairline
+    /// Who this computer is paired as (the account, and the name the phone shows for it), the server and its key, which phone approves, and the service; a hairline
     /// under it.
     fn account_card(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let account = d.saved.account.clone().unwrap_or_else(|| host(&d.server));
-        let mut line = host(&d.server);
+        // The name the phone knows this computer by, then the server and the key compared when pairing.
+        let mut line = format!("{} · {}", d.shown_as, host(&d.server));
         if let Some(fp) = &d.fingerprint {
             line = format!("{line} · key {fp}");
         }

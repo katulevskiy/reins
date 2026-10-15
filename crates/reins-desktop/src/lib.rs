@@ -7,6 +7,7 @@ pub mod agents_cli;
 pub mod api_proxy;
 pub mod ask;
 pub mod auth;
+pub mod computer;
 pub mod config;
 pub mod control;
 pub mod daemon;

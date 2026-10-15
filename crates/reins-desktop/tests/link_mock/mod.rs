@@ -192,7 +192,8 @@ fn register(s: &mut State, body: &[u8]) -> Resp {
         || doc["token_endpoint_auth_method"] != "none"
         || doc["grant_types"]
             != json!(["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"])
-        || !name.starts_with("Reins desktop app on ")
+        || name.is_empty()
+        || name.starts_with("Reins desktop app on ")
     {
         return json_resp(400, &json!({"error": "invalid_client_metadata", "error_description": doc.to_string()}));
     }

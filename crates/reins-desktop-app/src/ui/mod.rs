@@ -161,6 +161,8 @@ struct Data {
     /// This computer's name, and its machine project.
     computer: String,
     machine: String,
+    /// The name the phone shows for this computer.
+    shown_as: String,
     /// `--demo`, and the gallery showing.
     demo: bool,
     gallery: bool,
@@ -195,6 +197,7 @@ impl Data {
             secrets: m.secrets.clone(),
             computer: m.computer.clone(),
             machine: m.machine.clone(),
+            shown_as: m.shown_as.clone(),
             demo: m.demo(),
             gallery: false,
         }

@@ -3,6 +3,7 @@
 //! Pure data and validation: no IO, no async.
 
 pub mod blob;
+pub mod computer;
 pub mod connector;
 pub mod desktop;
 pub mod device;
