@@ -20,7 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
-import androidx.compose.material.icons.rounded.Laptop
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
@@ -28,22 +29,36 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.reins.android.design.BLOB_ICON
+import dev.reins.android.design.BlobAvatar
+import dev.reins.android.design.ButtonSize
+import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.ConnectionAvatar
 import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
+import dev.reins.android.design.LabelText
 import dev.reins.android.design.LocalColors
+import dev.reins.android.design.Platforms
 import dev.reins.android.design.Providers
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
+import dev.reins.android.design.SignalButton
+import dev.reins.android.design.autoIcon
+import dev.reins.android.design.blobatar.Blobatar
+import dev.reins.android.design.iconName
 import dev.reins.android.design.pressable
+import dev.reins.android.design.shownIcon
 import dev.reins.android.state.AppState
 import dev.reins.android.ui.autopilot.AutopilotViewModel
 import dev.reins.android.platform.Authenticator
@@ -86,11 +101,7 @@ fun ConnectionDetailScreen(
                 return@SettingsPage
             }
             Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 6.dp, start = 24.dp, end = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (connection.keyFingerprint != null && connection.icon == null) {
-                    IconPlate(Icons.Rounded.Laptop, c.pair, size = 76.dp)
-                } else {
-                    ConnectionAvatar(untrusted(connection.label), connection.icon, size = 76.dp)
-                }
+                ConnectionAvatar(connection, Modifier.testTag("connectionAvatar:${shownIcon(connection)}"), size = 76.dp)
                 RText(
                     untrusted(connection.label),
                     RType.serif(34f, 38f),
@@ -137,7 +148,7 @@ fun ConnectionDetailScreen(
                     Modifier.testTag("connectionIcon"),
                     leading = {
                         Box(Modifier.size(40.dp).background(c.controlFill, CircleShape), contentAlignment = Alignment.Center) {
-                            ConnectionAvatar(untrusted(connection.label), connection.icon, size = 28.dp)
+                            ConnectionAvatar(connection, size = 28.dp)
                         }
                     },
                     value = iconName(connection.icon),
@@ -155,9 +166,17 @@ fun ConnectionDetailScreen(
 
         val shown = picking
         BottomSheet(shown == Picker.Icon && connection != null, "Icon", onClose = { picking = null }, tag = "iconSheet") {
-            if (connection != null) IconPicker(connection) { icon ->
-                viewModel.pickIcon(connection.id, icon)
-                picking = null
+            if (connection != null) {
+                IconPicker(
+                    connection,
+                    onPick = { icon ->
+                        viewModel.pickIcon(connection.id, icon)
+                        picking = null
+                    },
+                    onShape = { viewModel.editBlobatar(connection.id, shownIcon(connection), shape = it) },
+                    onColour = { viewModel.editBlobatar(connection.id, shownIcon(connection), colour = it) },
+                    onShuffle = { viewModel.editBlobatar(connection.id, shownIcon(connection)) },
+                )
             }
         }
         BottomSheet(shown == Picker.Profile && autopilot != null, "Learns into", onClose = { picking = null }, tag = "profileSheet") {
@@ -194,40 +213,117 @@ internal fun connectionHeadline(connection: ConnectionView): String {
     return "$where · $used"
 }
 
-/** The name of an icon choice: Auto (from the name), Blobatar, or the provider's. */
-internal fun iconName(pick: String?): String = when (pick) {
-    null -> "Auto"
-    "blob" -> "Blobatar"
-    else -> Providers.byKey(pick)?.name ?: "Auto"
-}
-
+/**
+ * The Icon sheet: the icons to pick (Auto, drawn as what it resolves to; the blobatar; for a computer the platforms'
+ * logos; the providers'), then the blobatar's shape and colour and a shuffle.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun IconPicker(connection: ConnectionView, onPick: (String?) -> Unit) {
+private fun IconPicker(
+    connection: ConnectionView,
+    onPick: (String?) -> Unit,
+    onShape: (Int) -> Unit,
+    onColour: (Int) -> Unit,
+    onShuffle: () -> Unit,
+) {
     FlowRow(
         Modifier.padding(horizontal = 20.dp, vertical = 8.dp).fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        IconChoice("auto", "Auto", selected = connection.icon == null, avatarPick = null, label = connection.label) { onPick(null) }
-        IconChoice("blob", "Blobatar", selected = connection.icon == "blob", avatarPick = "blob", label = connection.label) { onPick("blob") }
-        Providers.all.forEach { provider ->
-            IconChoice(provider.key, provider.name, selected = connection.icon == provider.key, avatarPick = provider.key, label = provider.name) {
-                onPick(provider.key)
+        IconChoice("auto", "Auto", selected = connection.icon == null, connection, autoIcon(connection)) { onPick(null) }
+        IconChoice(BLOB_ICON, "Blobatar", selected = connection.icon == BLOB_ICON, connection, BLOB_ICON) { onPick(BLOB_ICON) }
+        if (connection.keyFingerprint != null) {
+            Platforms.all.forEach { platform ->
+                IconChoice(platform.key, platform.name, selected = connection.icon == platform.key, connection, platform.key) { onPick(platform.key) }
             }
         }
+        Providers.all.forEach { provider ->
+            IconChoice(provider.key, provider.name, selected = connection.icon == provider.key, connection, provider.key) { onPick(provider.key) }
+        }
     }
+    BlobatarEditor(connection, onShape, onColour, onShuffle)
 }
 
 @Composable
-private fun IconChoice(tag: String, name: String, selected: Boolean, avatarPick: String?, label: String, onClick: () -> Unit) {
+private fun IconChoice(tag: String, name: String, selected: Boolean, connection: ConnectionView, shown: String, onClick: () -> Unit) {
     val c = LocalColors.current
     Column(Modifier.pressable(shape = CircleShape, onClick = onClick).testTag("icon:$tag"), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             Modifier
                 .border(if (selected) 2.5.dp else 0.dp, if (selected) c.accent else Color.Transparent, CircleShape)
                 .padding(3.dp),
-        ) { ConnectionAvatar(untrusted(label), avatarPick, size = 52.dp) }
+        ) { ConnectionAvatar(connection, size = 52.dp, shown = shown) }
         RText(name, RType.sans(12f, if (selected) FontWeight.SemiBold else FontWeight.Normal), if (selected) c.accent else c.secondary, Modifier.padding(top = 4.dp), maxLines = 1)
     }
 }
+
+/**
+ * The blobatar's own choices: its shapes (each drawn in its colour), its colours, and Shuffle (a new figure, shape and
+ * colour). The one it keeps is ringed.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BlobatarEditor(connection: ConnectionView, onShape: (Int) -> Unit, onColour: (Int) -> Unit, onShuffle: () -> Unit) {
+    val c = LocalColors.current
+    val kept = connection.blobatar
+    val seed = kept?.seed ?: untrusted(connection.label)
+    val colour = kept?.colour?.toInt()
+    Column(Modifier.padding(horizontal = 20.dp).padding(top = 18.dp).fillMaxWidth().testTag("blobatarEditor")) {
+        LabelText("Blobatar", c.inkMeta, Modifier.padding(bottom = 10.dp))
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            maxItemsInEachRow = 5,
+        ) {
+            Blobatar.SHAPES.indices.forEach { i ->
+                Ringed("shape:$i", "Shape ${i + 1}", selected = kept?.shape?.toInt() == i, onClick = { onShape(i) }) {
+                    BlobAvatar(seed, size = 46.dp, shape = i, colour = colour)
+                }
+            }
+        }
+        FlowRow(
+            Modifier.fillMaxWidth().padding(top = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            maxItemsInEachRow = 6,
+        ) {
+            Blobatar.COLOURS.forEachIndexed { i, swatch ->
+                Ringed("colour:$i", swatch.name, selected = colour == i, onClick = { onColour(i) }) {
+                    Box(Modifier.size(34.dp).clip(CircleShape).background(headColor(swatch)))
+                }
+            }
+        }
+        val (_, fg) = ButtonStyle.Soft.colors(c)
+        SignalButton(
+            "Shuffle",
+            Modifier.padding(top = 16.dp).align(Alignment.CenterHorizontally).testTag("shuffleBlobatar"),
+            style = ButtonStyle.Soft,
+            size = ButtonSize.Small,
+            leading = { Icon(Icons.Rounded.Shuffle, null, Modifier.size(18.dp), tint = fg) },
+            onClick = onShuffle,
+        )
+    }
+}
+
+/** One choice of the blobatar editor, ringed when it is the one kept; [label] is what a screen reader says. */
+@Composable
+private fun Ringed(tag: String, label: String, selected: Boolean, onClick: () -> Unit, content: @Composable () -> Unit) {
+    val c = LocalColors.current
+    Box(
+        Modifier
+            .pressable(shape = CircleShape, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = label
+                this.selected = selected
+            }
+            .testTag(tag)
+            .border(2.dp, if (selected) c.accent else Color.Transparent, CircleShape)
+            .padding(4.dp),
+        contentAlignment = Alignment.Center,
+    ) { content() }
+}
+
+/** A palette colour as the blobatar draws its head. */
+private fun headColor(colour: Blobatar.Colour): Color = Color(android.graphics.Color.parseColor(Blobatar.headHex(colour)))

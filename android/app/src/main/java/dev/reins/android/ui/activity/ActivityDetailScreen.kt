@@ -309,6 +309,16 @@ private fun Hero(entry: ActivityEntry) {
 }
 
 /**
+ * The "Who" of what an entry asked: with an agent, it and the computer (or app) it asked through, by name ("Claude
+ * Code · M2A"); without, the connection and its [host] (where it connects from).
+ */
+internal fun askedWho(entry: ActivityEntry, host: String?): String {
+    if (!entry.request?.agent?.let(::untrusted).isNullOrBlank()) return askerLine(entry)
+    val where = host?.let(::untrusted)?.takeIf { it.isNotBlank() }
+    return listOfNotNull(untrusted(entry.connectionLabel), where).distinct().joinToString(" · ")
+}
+
+/**
  * What the entry asked: who (the agent and its computer), where it ran, why it was asked and when (with how long the
  * answer took); then the full request, the whole command or tool call wrapped in a mono well with what the agent said,
  * and a copy button.
@@ -317,10 +327,8 @@ private fun Hero(entry: ActivityEntry) {
 internal fun AskedSections(entry: ActivityEntry) {
     val r = entry.request ?: return
     val c = LocalColors.current
-    val host = findConnection(LocalConnections.current, entry.connectionId, entry.connectionLabel)?.clientHost?.let(::untrusted)?.takeIf { it.isNotBlank() }
-    val agent = untrusted(r.agent)
-    val label = untrusted(entry.connectionLabel)
-    val who = listOfNotNull(agent.takeIf { it.isNotBlank() } ?: label, host ?: label.takeIf { agent.isNotBlank() && it != agent }).distinct().joinToString(" · ")
+    val host = findConnection(LocalConnections.current, entry.connectionId, entry.connectionLabel)?.clientHost
+    val who = askedWho(entry, host)
     SettingsGroup(header = "What it asked", gap = 18.dp) {
         AskedRow("Who", who, Modifier.testTag("askedWho")) { ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 18.dp) }
         if (r.cwd.isNotBlank()) AskedRow("In", untrusted(r.cwd), Modifier.testTag("askedIn"), mono = true)
@@ -359,7 +367,7 @@ internal fun AskedSections(entry: ActivityEntry) {
     ) {
         if (full.isNotBlank()) RText(full, RType.mono(12.5f).copy(lineHeight = 20.sp), c.text, Modifier.testTag("fullRequestText"), ltr = true)
         if (purpose.isNotBlank()) {
-            val who = agent.ifBlank { label }
+            val who = untrusted(r.agent).ifBlank { untrusted(entry.connectionLabel) }
             RText(
                 "# $who: “$purpose”",
                 RType.mono(12.5f).copy(lineHeight = 20.sp),
