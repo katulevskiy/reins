@@ -460,10 +460,34 @@ impl Review {
         self.ticked.len()
     }
 
-    /// How many could be (every item that may be a secret).
+    /// The one total the review counts in (its title, each group, each file, "N of M"): every item that may be a
+    /// secret, and any other one ticked on purpose (so what moves is never more than the total).
     #[must_use]
     pub fn total(&self) -> usize {
-        self.report.findings.iter().flat_map(|f| &f.items).filter(|i| i.confidence > Confidence::None).count()
+        self.report.findings.iter().map(|f| self.total_in(f)).sum()
+    }
+
+    /// [`Review::total`] of one finding.
+    #[must_use]
+    pub fn total_in(&self, f: &Finding) -> usize {
+        f.items.iter().filter(|i| i.confidence > Confidence::None || self.ticked.contains(&i.id)).count()
+    }
+
+    /// What the total leaves out: settings that are not secrets (`LOG_LEVEL`, `PORT`) and were not ticked.
+    #[must_use]
+    pub fn left_out(&self) -> usize {
+        self.report.findings.iter().flat_map(|f| &f.items).count() - self.total()
+    }
+
+    /// Of the total, those the scan is unsure of ("maybe a secret"): counted, not ticked unless picked.
+    #[must_use]
+    pub fn unsure(&self) -> usize {
+        self.report
+            .findings
+            .iter()
+            .flat_map(|f| &f.items)
+            .filter(|i| i.confidence > Confidence::None && !i.suggested)
+            .count()
     }
 
     /// How many of `f`'s items are ticked.
@@ -694,6 +718,35 @@ mod tests {
         assert_eq!(r.move_state(), MoveState::NothingSelected);
         r.toggle_all();
         assert_eq!(r.ticked, suggested, "back to the suggested ones");
+    }
+
+    #[test]
+    fn every_count_is_of_one_total() {
+        let mut r = large();
+        // The groups and the files add up to the total the title and "N of M" say.
+        let in_groups: usize = Group::ALL
+            .iter()
+            .map(|g| r.report.findings.iter().filter(|f| f.group == *g).map(|f| r.total_in(f)).sum::<usize>())
+            .sum();
+        assert_eq!(in_groups, r.total());
+        let items: usize = r.report.findings.iter().map(|f| f.items.len()).sum();
+        assert_eq!(r.total() + r.left_out(), items);
+        assert!(r.left_out() > 0 && r.unsure() > 0, "the demo has both, for the (?)");
+        assert!(r.count() <= r.total());
+        // A non-secret ticked on purpose joins the total: what moves is never more than it.
+        let total = r.total();
+        let log_level = r
+            .report
+            .findings
+            .iter()
+            .flat_map(|f| &f.items)
+            .find(|i| i.confidence == Confidence::None)
+            .unwrap()
+            .id
+            .clone();
+        r.toggle_item(&log_level);
+        assert_eq!((r.total(), r.left_out()), (total + 1, items - total - 1));
+        assert!(r.count() <= r.total());
     }
 
     #[test]

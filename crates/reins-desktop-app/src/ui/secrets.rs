@@ -139,6 +139,25 @@ fn risk_look(risk: Risk, pal: Palette) -> (Glyph, Hsla) {
     }
 }
 
+/// The (?) beside "N of M selected".
+const COUNT_HELP: &str = "secrets-count";
+
+/// What the one total leaves out or counts without ticking, in a quiet line (`None`: nothing to say).
+fn count_note(r: &Review) -> Option<String> {
+    let (unsure, out) = (r.unsure(), r.left_out());
+    let mut parts = vec!["Every count here is of values that may be secrets.".to_owned()];
+    if unsure > 0 {
+        parts.push(format!("{unsure} the scan is unsure of are counted but not ticked."));
+    }
+    if out > 0 {
+        parts.push(format!(
+            "{} that are not secrets (LOG_LEVEL, PORT…) are left out; open a file to move one anyway.",
+            plural(out, "setting", "settings")
+        ));
+    }
+    (unsure + out > 0).then(|| parts.join(" "))
+}
+
 /// A danger as a small icon in its colour: what the chips over the list say in words.
 fn risk_mark(risk: Risk, pal: Palette) -> Div {
     let (i, color) = risk_look(risk, pal);
@@ -496,7 +515,8 @@ impl Root {
                 let Flow::Review(r) = &m.secrets else {
                     return div().into_any_element();
                 };
-                Self::review_line(r, ix, top, pal, cx)
+                let count_help = this.help == Some(COUNT_HELP);
+                Self::review_line(r, ix, top, count_help, pal, cx)
             }),
         )
         .size_full();
@@ -510,12 +530,19 @@ impl Root {
     }
 
     /// One row of the review's left side.
-    fn review_line(r: &Review, ix: usize, top: f32, pal: Palette, cx: &Context<'_, Self>) -> AnyElement {
+    fn review_line(
+        r: &Review,
+        ix: usize,
+        top: f32,
+        count_help: bool,
+        pal: Palette,
+        cx: &Context<'_, Self>,
+    ) -> AnyElement {
         let Some(line) = r.lines.get(ix) else {
             return div().into_any_element();
         };
         let inner: AnyElement = match line {
-            Line::Head => Self::review_head(r, top, pal, cx),
+            Line::Head => Self::review_head(r, top, count_help, pal, cx),
             Line::Group {
                 group,
                 findings,
@@ -552,7 +579,7 @@ impl Root {
     }
 
     /// The title, the risks found, step 1 and the whole selection's tick.
-    fn review_head(r: &Review, top: f32, pal: Palette, cx: &Context<'_, Self>) -> AnyElement {
+    fn review_head(r: &Review, top: f32, count_help: bool, pal: Palette, cx: &Context<'_, Self>) -> AnyElement {
         let report = &r.report;
         let title = div()
             .flex()
@@ -568,7 +595,7 @@ impl Root {
                     .font_weight(FontWeight::NORMAL)
                     .child(format!(
                         "{} in {}",
-                        plural(report.secrets(), "secret", "secrets"),
+                        plural(r.total(), "secret", "secrets"),
                         plural(report.findings.len(), "place", "places")
                     )),
             )
@@ -600,6 +627,9 @@ impl Root {
                 r.count(),
                 r.total()
             )))
+            .when_some(count_note(r), |row, note| {
+                row.child(super::parts::help_open(COUNT_HELP, note, count_help, pal, cx))
+            })
             .on_click(Self::on_model(cx, |m, cx| m.review(cx, Review::toggle_all)));
         let mut head = div().flex().flex_col().gap(px(10.0)).pt(px(top)).child(title);
         if report.findings.is_empty() {
@@ -630,7 +660,7 @@ impl Root {
         cx: &Context<'_, Self>,
     ) -> AnyElement {
         let ids = findings.to_vec();
-        let n: usize = findings.iter().filter_map(|id| r.report.finding(id)).map(Finding::secrets).sum();
+        let n: usize = findings.iter().filter_map(|id| r.report.finding(id)).map(|f| r.total_in(f)).sum();
         let with = |risk: Risk| {
             findings.iter().filter_map(|id| r.report.finding(id)).filter(|f| f.risks.contains(&risk)).count()
         };
@@ -676,7 +706,7 @@ impl Root {
         let ids = findings.to_vec();
         let files: Vec<&Finding> = findings.iter().filter_map(|id| r.report.finding(id)).collect();
         let on: usize = files.iter().map(|f| r.ticked_in(f)).sum();
-        let all: usize = files.iter().map(|f| f.items.len()).sum();
+        let all: usize = files.iter().map(|f| r.total_in(f)).sum();
         div()
             .id(SharedString::from(format!("repo-{place}")))
             .flex()
@@ -761,7 +791,7 @@ impl Root {
                 )
         };
         let right: AnyElement = if f.source == Source::Dotenv {
-            count(r.ticked_in(f), f.items.len(), pal).into_any_element()
+            count(r.ticked_in(f), r.total_in(f), pal).into_any_element()
         } else {
             div()
                 .flex_none()
@@ -1228,7 +1258,7 @@ impl Root {
             .items_center()
             .gap(px(2.0))
             .child(glyph(Glyph::ChevronLeft, 16.0, pal.violet()))
-            .child(format!("{} found", r.report.secrets()))
+            .child(format!("{} found", r.total()))
             .on_click(Self::on_model(cx, |m, cx| m.review(cx, |r| r.open = None)));
         let mut place = f.place.clone();
         if let Some(c) = &f.git_commit {

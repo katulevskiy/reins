@@ -109,6 +109,20 @@ pub fn help(
     help_with(id, move || text.into_any_element(), width, d, pal, cx)
 }
 
+/// [`help`] where the window's [`Data`] is not at hand (a row a list draws): `open` says whether its bubble shows.
+pub fn help_open(
+    id: &'static str,
+    text: impl Into<SharedString>,
+    open: bool,
+    pal: Palette,
+    cx: &Context<'_, Root>,
+) -> Stateful<Div> {
+    let text = text.into();
+    #[allow(clippy::cast_precision_loss, reason = "a few hundred characters")]
+    let width = (text.len() as f32).mul_add(6.3, 28.0).clamp(150.0, 320.0);
+    help_bubble(id, move || text.into_any_element(), width, open, pal, cx)
+}
+
 /// [`help`] with something else than a line in its bubble (built only while open), `width` wide.
 pub fn help_with(
     id: &'static str,
@@ -118,7 +132,18 @@ pub fn help_with(
     pal: Palette,
     cx: &Context<'_, Root>,
 ) -> Stateful<Div> {
-    let open = d.help == Some(id);
+    help_bubble(id, content, width, d.help == Some(id), pal, cx)
+}
+
+/// The (?) and, while `open`, its bubble.
+fn help_bubble(
+    id: &'static str,
+    content: impl FnOnce() -> AnyElement,
+    width: f32,
+    open: bool,
+    pal: Palette,
+    cx: &Context<'_, Root>,
+) -> Stateful<Div> {
     let mark = div()
         .id(SharedString::from(format!("help-{id}")))
         .flex()
