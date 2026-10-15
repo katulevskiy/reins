@@ -194,7 +194,11 @@ points).
 - It approves once, as Auto does; what is granted while carrying out its decision carries the origin `overnight` /
   `overnight:<connection>` and ends with it, through the bypass-origin mechanism.
 - Setting `overnight_when_risky`: `Wait` (default) or `Deny`.
-- Turning it on is an owner check in the app (hold, then biometrics), like Bypass. The app shows it like Bypass
+- Only the owner starts it: `start_overnight` and `set_overnight_when_risky` take an `OwnerCheck` (biometrics or the
+  device passcode) that the core asks itself, in its own words, before anything changes. Every start, restart, new
+  length and change of the setting either way is asked; turning it off is not. `set_autopilot_mode` never starts it,
+  nor puts an AI kept on Manual in a global Overnight; a bypass ends the Overnight of its scope, so nothing returns to
+  Overnight without the owner. The app also holds to start, like Bypass. The app shows it like Bypass
   (pill, persistent notification, Stop), with a moon icon and its own color.
 - `SuggestionView` and `AutopilotNote` gain `risk` (class, probability, one-line why); the approval screen and
   Activity show `Risk: catastrophic · deletes the default branch main`.

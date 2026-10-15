@@ -31,7 +31,6 @@ use super::types::{
     ConnectionAutopilot, ModelStatus, NeighbourView, OVERNIGHT_NAME, OvernightRisky, Preset, ProfileView, RiskLevel,
     SuggestionView, ThresholdReplay, Verdict,
 };
-use crate::CoreError;
 use crate::engine::Engine;
 use crate::phone_api::check_id;
 use crate::store::{AuditAutopilot, AuditRecord, PendingRow, unix_now};
@@ -39,6 +38,7 @@ use crate::types::{
     ApprovalChoice, ApprovalKind, ApprovalView, GrantScopeChoice, PendingItem, PendingKind, StandingGrant,
 };
 use crate::views::{self, ParkedRequest};
+use crate::{CoreError, OwnerCheck};
 
 /// Neighbours kept with an evaluation and shown.
 const SHOWN_NEIGHBOURS: usize = 5;
@@ -127,6 +127,15 @@ fn verb(v: Verdict) -> &'static str {
 #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a percentage of a probability")]
 fn pct(p: f32) -> u32 {
     (p.clamp(0.0, 1.0) * 100.0).round() as u32
+}
+
+/// Asks the owner; refuses unless the owner confirmed now.
+async fn confirm_owner(owner: &dyn OwnerCheck, reason: String) -> Result<(), CoreError> {
+    match owner.confirm(reason).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(CoreError::invalid("the owner did not confirm")),
+        Err(e) => Err(CoreError::invalid(format!("the owner check failed: {e}"))),
+    }
 }
 
 /// Who carries out a decision. An Overnight approval needs the proof its gate made for that very request
@@ -1571,7 +1580,20 @@ impl Engine {
             .unwrap_or_default())
     }
 
-    pub fn set_overnight_when_risky(&self, risky: OvernightRisky) -> Result<(), CoreError> {
+    /// A change either way asks the owner first.
+    pub async fn set_overnight_when_risky(
+        &self,
+        risky: OvernightRisky,
+        owner: &dyn OwnerCheck,
+    ) -> Result<(), CoreError> {
+        if self.ap_overnight_risky()? == risky {
+            return Ok(());
+        }
+        let reason = match risky {
+            OvernightRisky::Wait => format!("{OVERNIGHT_NAME}: wait for you when something is too risky"),
+            OvernightRisky::Deny => format!("{OVERNIGHT_NAME}: deny what is too risky"),
+        };
+        confirm_owner(owner, reason).await?;
         self.store.meta_set(super::store::OVERNIGHT_RISKY_KEY, risky.as_str())
     }
 
@@ -1670,7 +1692,9 @@ impl Engine {
             return self.start_bypass(connection_id, Some(minutes.unwrap_or(DEFAULT_BYPASS_MINUTES))).await;
         }
         if mode == Some(AutopilotMode::Overnight) {
-            return self.start_overnight(connection_id, minutes).await;
+            return Err(CoreError::invalid(format!(
+                "{OVERNIGHT_NAME} starts with start_overnight, after the owner check"
+            )));
         }
         if let Some(id) = &connection_id {
             check_id(id)?;
@@ -1678,6 +1702,22 @@ impl Engine {
         let now = unix_now();
         let scope = connection_id.clone().unwrap_or_default();
         let mut row = self.store.ap_mode_row(&scope)?;
+        if let Some(id) = &connection_id {
+            // An AI kept on Manual under a global Overnight that this change would put in it: that is starting
+            // Overnight for it, which only start_overnight does (after the owner check).
+            let global = self.store.ap_mode_row("")?;
+            let mut after = row.clone();
+            after.mode = mode;
+            after.bypass_until = None;
+            after.overnight_until = None;
+            if self.ap_mode_for(id, now)? != AutopilotMode::Overnight
+                && modes::effective(&global, Some(&after), now) == AutopilotMode::Overnight
+            {
+                return Err(CoreError::invalid(format!(
+                    "this would put the AI in {OVERNIGHT_NAME}: start it with start_overnight, after the owner check"
+                )));
+            }
+        }
         row.mode = mode;
         row.bypass_until = None;
         row.bypass_since = None;
@@ -1718,6 +1758,13 @@ impl Engine {
         if row.mode == Some(AutopilotMode::Lockdown) {
             row.mode = None;
         }
+        if row.mode == Some(AutopilotMode::Overnight) {
+            // A bypass ends the Overnight of its scope: when the bypass ends, the mode it returns to is the one
+            // Overnight interrupted, never Overnight again without the owner.
+            row.mode = row.overnight_return.take();
+            row.overnight_until = None;
+            row.overnight_since = None;
+        }
         row.bypass_until = Some(until);
         row.bypass_since = Some(now);
         self.ap_write_mode(&scope, &row, now)?;
@@ -1731,10 +1778,24 @@ impl Engine {
     /// Starts Overnight for every AI (`connection_id` = `None`) or one: for `minutes` (1 minute to a year), or until
     /// the user turns it off (`None`). It returns to the mode it interrupted when it ends (a lockdown it ends is not
     /// returned to), and looks again at what already waits in its scope.
-    pub async fn start_overnight(&self, connection_id: Option<String>, minutes: Option<u32>) -> Result<(), CoreError> {
+    /// Every start, restart or change of its length asks the owner first; without the owner's confirmation nothing
+    /// changes.
+    pub async fn start_overnight(
+        &self,
+        connection_id: Option<String>,
+        minutes: Option<u32>,
+        owner: &dyn OwnerCheck,
+    ) -> Result<(), CoreError> {
         if let Some(id) = &connection_id {
             check_id(id)?;
         }
+        modes::overnight_end(minutes, unix_now()).map_err(CoreError::invalid)?;
+        let reason = match minutes {
+            Some(m) if m % 60 == 0 => format!("Start {OVERNIGHT_NAME} for {} h", m / 60),
+            Some(m) => format!("Start {OVERNIGHT_NAME} for {m} min"),
+            None => format!("Start {OVERNIGHT_NAME} until you turn it off"),
+        };
+        confirm_owner(owner, reason).await?;
         let now = unix_now();
         let until = modes::overnight_end(minutes, now).map_err(CoreError::invalid)?;
         let scope = connection_id.clone().unwrap_or_default();

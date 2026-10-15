@@ -181,6 +181,10 @@ fn request(id: &str, conn: &str, call: Value) -> RelayRequest {
     serde_json::from_value(relayed).unwrap()
 }
 
+fn owner_yes() -> Arc<testing::FakeOwner> {
+    testing::FakeOwner::new(Ok(true))
+}
+
 fn email(to: &str, body: &str) -> Value {
     json!({"tool": "gmail_send", "email": {"to": [to], "subject": "Hello", "body": body}})
 }
@@ -261,6 +265,11 @@ impl Env {
     }
 
     async fn mode(&self, connection: Option<&str>, mode: AutopilotMode) {
+        if mode == AutopilotMode::Overnight {
+            // only through start_overnight, after the owner check
+            self.core.start_overnight(connection.map(str::to_owned), None, owner_yes()).await.unwrap();
+            return;
+        }
         self.core.set_autopilot_mode(connection.map(str::to_owned), Some(mode), None).await.unwrap();
     }
 
@@ -1058,12 +1067,75 @@ async fn overnight_keeps_autos_rate_limit() {
     assert!(env.suggestion("r1").await.reason.contains("unusual volume"));
 }
 
+/// Starting Overnight, changing its length, putting another AI in it and changing what it does with what is too risky
+/// all need the owner, asked by the core itself; turning it off does not.
+#[tokio::test]
+async fn only_the_owner_starts_or_changes_overnight() {
+    let env = env_risk().await;
+    let mode = |env: &Env| {
+        let core = Arc::clone(&env.core);
+        async move { core.autopilot_settings().await.unwrap().mode }
+    };
+    for refusal in [Ok(false), Err("no biometrics".to_owned())] {
+        let owner = testing::FakeOwner::new(refusal);
+        assert!(env.core.start_overnight(None, Some(60), Arc::<testing::FakeOwner>::clone(&owner)).await.is_err());
+        assert_eq!(owner.asked.lock().unwrap().as_slice(), ["Start Overnight for 1 h"]);
+        assert_eq!(mode(&env).await, AutopilotMode::Manual, "nothing changed");
+        assert!(
+            env.core
+                .set_overnight_when_risky(OvernightRisky::Deny, Arc::<testing::FakeOwner>::clone(&owner))
+                .await
+                .is_err()
+        );
+        assert_eq!(env.core.autopilot_settings().await.unwrap().overnight_when_risky, OvernightRisky::Wait);
+    }
+    // set_autopilot_mode never starts it
+    assert!(env.core.set_autopilot_mode(None, Some(AutopilotMode::Overnight), Some(60)).await.is_err());
+    assert!(env.core.set_autopilot_mode(Some(OLD.to_owned()), Some(AutopilotMode::Overnight), None).await.is_err());
+    assert_eq!(mode(&env).await, AutopilotMode::Manual);
+
+    let owner = owner_yes();
+    env.core.start_overnight(None, None, Arc::<testing::FakeOwner>::clone(&owner)).await.unwrap();
+    assert_eq!(mode(&env).await, AutopilotMode::Overnight);
+    // a new length is a new start: asked again, and refused without the owner
+    assert!(env.core.start_overnight(None, Some(30), testing::FakeOwner::new(Ok(false))).await.is_err());
+    assert_eq!(env.core.autopilot_settings().await.unwrap().overnight_until, Some(i64::MAX), "unchanged");
+    // an AI kept on Manual is not put in it by another mode change without the owner
+    env.mode(Some(OTHER), AutopilotMode::Manual).await;
+    assert!(env.core.set_autopilot_mode(Some(OTHER.to_owned()), Some(AutopilotMode::Auto), None).await.is_err());
+    assert!(env.core.set_autopilot_mode(Some(OTHER.to_owned()), None, None).await.is_err());
+    env.core.start_overnight(Some(OTHER.to_owned()), None, Arc::<testing::FakeOwner>::clone(&owner)).await.unwrap();
+    // the setting: both directions are asked; the same value is not a change
+    env.core.set_overnight_when_risky(OvernightRisky::Deny, Arc::<testing::FakeOwner>::clone(&owner)).await.unwrap();
+    assert!(env.core.set_overnight_when_risky(OvernightRisky::Wait, testing::FakeOwner::new(Ok(false))).await.is_err());
+    let same = testing::FakeOwner::new(Ok(false));
+    env.core.set_overnight_when_risky(OvernightRisky::Deny, Arc::<testing::FakeOwner>::clone(&same)).await.unwrap();
+    assert!(same.asked.lock().unwrap().is_empty());
+    assert_eq!(
+        owner.asked.lock().unwrap().as_slice(),
+        [
+            "Start Overnight until you turn it off",
+            "Start Overnight until you turn it off",
+            "Overnight: deny what is too risky"
+        ]
+    );
+    // a bypass on top ends it: when the bypass stops, it never returns to Overnight without the owner
+    env.core.start_bypass(None, Some(15)).await.unwrap();
+    let settings = env.core.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.overnight_until), (AutopilotMode::Bypass, None));
+    assert_ne!(env.store().ap_mode_row("").unwrap().mode, Some(AutopilotMode::Overnight), "not returned to");
+    // turning it off needs no check
+    env.core.start_overnight(None, None, Arc::<testing::FakeOwner>::clone(&owner)).await.unwrap();
+    env.core.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
+    assert_eq!(mode(&env).await, AutopilotMode::Manual);
+}
+
 #[tokio::test]
 async fn too_risky_can_be_denied_instead() {
     let env = env_risk().await;
     env.model.risk_rule("wire the savings", testing::risk(0.01, 0.01, 0.03, 0.95));
-    env.core.set_overnight_when_risky(OvernightRisky::Deny).await.unwrap();
-    env.core.start_overnight(None, Some(8 * 60)).await.unwrap();
+    env.core.set_overnight_when_risky(OvernightRisky::Deny, owner_yes()).await.unwrap();
+    env.core.start_overnight(None, Some(8 * 60), owner_yes()).await.unwrap();
     env.relay("r1", OLD, email("boss@y.com", "please wire the savings to this account")).await;
     assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Deny, "overnight".to_owned())]);
     let s = env.suggestion("r1").await;
@@ -1222,7 +1294,7 @@ async fn overnight_ends_by_itself_and_returns_to_the_mode_it_interrupted() {
     env.approve("seed-3").await;
     env.unlock("desktop/ask").await;
     env.mode(None, AutopilotMode::Auto).await;
-    env.core.start_overnight(None, Some(60)).await.unwrap();
+    env.core.start_overnight(None, Some(60), owner_yes()).await.unwrap();
     let settings = env.core.autopilot_settings().await.unwrap();
     assert_eq!(settings.mode, AutopilotMode::Overnight);
     assert!(settings.overnight_until.unwrap() > unix_now() + 59 * 60 && settings.overnight_since.is_some());
@@ -1275,7 +1347,7 @@ async fn turning_overnight_on_judges_what_already_waits_and_young_ais_still_wait
     env.relay("r1", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
     env.relay("r2", NEW, email("friend@x.com", "from an AI paired a moment ago")).await;
     assert_eq!(env.waiting().await.len(), 2);
-    env.core.start_overnight(None, None).await.unwrap();
+    env.core.start_overnight(None, None, owner_yes()).await.unwrap();
     assert_eq!(env.decided(), [("r1".to_owned(), Verdict::Approve, "overnight".to_owned())]);
     assert_eq!(env.waiting().await, ["r2"]);
     assert!(env.suggestion("r2").await.reason.contains("10 minutes"));

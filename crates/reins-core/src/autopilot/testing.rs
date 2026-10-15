@@ -257,6 +257,31 @@ impl FakeRuntime {
     }
 }
 
+/// The owner check, answered as told; what it was asked is kept.
+pub struct FakeOwner {
+    pub answer: Mutex<Result<bool, String>>,
+    pub asked: Mutex<Vec<String>>,
+}
+
+impl FakeOwner {
+    pub fn new(answer: Result<bool, String>) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            answer: Mutex::new(answer),
+            asked: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::OwnerCheck for FakeOwner {
+    async fn confirm(&self, reason: String) -> Result<bool, ForeignError> {
+        self.asked.lock().expect("asked").push(reason);
+        self.answer.lock().expect("answer").clone().map_err(|reason| ForeignError::Failed {
+            reason,
+        })
+    }
+}
+
 impl ModelRuntime for FakeRuntime {
     fn load(&self, path: String) -> Result<(), ForeignError> {
         if self.fail.load(Ordering::SeqCst) {

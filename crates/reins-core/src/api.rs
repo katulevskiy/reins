@@ -23,7 +23,7 @@ use crate::types::{
 };
 use crate::vault_editor::{VaultItemDetail, VaultItemInput, VaultItemSummary, VaultSshKey};
 use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
-use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, rt};
+use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck, rt};
 
 #[derive(uniffi::Object)]
 pub struct ReinsCore {
@@ -1167,27 +1167,41 @@ impl ReinsCore {
     /// of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
     /// held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
     /// its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
-    /// rates risk it decides like Auto. The app asks the owner (biometrics) before calling this, as for a bypass.
-    pub async fn start_overnight(&self, connection_id: Option<String>, minutes: Option<u32>) -> Result<(), CoreError> {
+    /// rates risk it decides like Auto. Every start, restart or change of its length asks `owner` first (the core asks
+    /// it, with its own words); without the owner's confirmation nothing changes. Turning it off needs no check.
+    pub async fn start_overnight(
+        &self,
+        connection_id: Option<String>,
+        minutes: Option<u32>,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.start_overnight(connection_id, minutes).await }).await;
+            let result = engine
+                .run_account(async { engine.start_overnight(connection_id, minutes, owner.as_ref()).await })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
     }
 
     /// What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
-    pub async fn set_overnight_when_risky(&self, risky: OvernightRisky) -> Result<(), CoreError> {
+    /// A change either way asks `owner` first.
+    pub async fn set_overnight_when_risky(
+        &self,
+        risky: OvernightRisky,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.set_overnight_when_risky(risky) }).await;
+            let result =
+                engine.run_account(async { engine.set_overnight_when_risky(risky, owner.as_ref()).await }).await;
             runtime.finish(&engine, result)
         })
         .await
