@@ -158,6 +158,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         s.approvalElsewhere = approvalElsewhere
         s.passkeys = passkeys ? [Self.demoPasskey] : []
         s.passkeysOffline = passkeysOffline
+        // `-demoMode bypass|overnight|lockdown` (screenshots): start with that mode running, as if started 12 minutes ago.
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-demoMode"), i + 1 < args.count {
+            switch args[i + 1] {
+            case "bypass": s.apGlobal = ApRow(mode: .manual, bypassUntil: now + 47 * 60 + 12, bypassSince: now - 12 * 60)
+            case "overnight": s.apGlobal = ApRow(mode: .overnight, overnightUntil: now + 6 * 3_600, overnightSince: now - 12 * 60, overnightReturn: .manual)
+            case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
+            default: break
+            }
+        }
         if joinWaiting {
             let join = DemoData.join(now)
             s.joins[join.id] = join

@@ -248,8 +248,11 @@ final class AutopilotModel {
     }
 
     /// Ends the global Lockdown: back to the mode picked before it, or Manual.
+    /// Ending a lockdown loosens what runs, so it asks for the owner's check first (Face ID, Touch ID or the passcode),
+    /// as approving does; locking down never asks.
     func endLockdown() async {
-        guard let s = settings else { return }
+        guard let s = settings, let app else { return }
+        guard await OwnerPrompt.confirm(app, reason: "End lockdown") == .confirmed else { return }
         await setMode(s.baseMode != .lockdown ? s.baseMode : .manual)
     }
 
