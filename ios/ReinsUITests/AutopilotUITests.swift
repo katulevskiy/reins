@@ -194,8 +194,10 @@ final class AutopilotUITests: XCTestCase {
         tap("downloadModel")
         waitFor("modelProgress")
         shot("autopilot-downloading")
-        waitFor("modelInstalled", timeout: 15)
-        waitFor("stat:scored")
+        // Installed: the week's numbers take the offer's place; the model's row is further down Trust, under the grants.
+        waitFor("stat:scored", timeout: 15)
+        scrollTo("modelInstalled")
+        waitFor("modelInstalled")
         tap("modelRow")
         waitFor("modelSheet")
         tap("deleteModel")
@@ -203,6 +205,8 @@ final class AutopilotUITests: XCTestCase {
         app.alerts.buttons["Delete"].tap()
         waitFor("downloadModelDetails")
         tap("closeModel")
+        app.swipeDown()
+        app.swipeDown()
         waitFor("downloadModel")
     }
 
