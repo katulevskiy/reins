@@ -67,6 +67,36 @@ extension AppModel {
         }
     }
 
+    /// Reins Secrets, "Revoke on all computers": the permissions for `project` (and `env`) end on this phone and every
+    /// paired computer is told to drop the values it holds. Returns what the core did (`notDelivered` names the computers
+    /// not told yet), or the reason it did not happen.
+    func revokeSecretsEverywhere(project: String?, env: String?) async -> (revoked: SecretsRevoked?, error: String?) {
+        do {
+            let revoked = try await core.revokeSecretsEverywhere(project: project, env: env)
+            feedback.play(revoked.notDelivered.isEmpty ? .revoked : .alert)
+            refreshPendingSoon()
+            return (revoked, nil)
+        } catch {
+            feedback.play(.error)
+            return (nil, error.userMessage)
+        }
+    }
+
+    /// Reins Secrets: `project · env` is asked every time (`always`), or left to the computer's reins.toml and the
+    /// environment's name again. Asking less needs the same authentication as approving. `done` is false when nothing
+    /// changed (a cancelled prompt, or `error`).
+    func setSecretsAlwaysAsk(project: String, env: String, always: Bool) async -> (done: Bool, error: String?) {
+        if !always, let refusal = await confirmOwner("Stop asking every time") { return (false, refusal.message) }
+        do {
+            try await core.setSecretsAlwaysAsk(project: project, env: env, always: always ? true : nil)
+            feedback.play(.toggle(always))
+            return (true, nil)
+        } catch {
+            feedback.play(.error)
+            return (false, error.userMessage)
+        }
+    }
+
     /// Why the owner could not confirm: nil when they did. A cancelled prompt is not an error (`message` nil).
     struct OwnerRefusal {
         var message: String?

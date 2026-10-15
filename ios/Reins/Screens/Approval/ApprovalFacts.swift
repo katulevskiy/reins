@@ -21,6 +21,12 @@ struct Facts: View {
                     McpFacts(call: mcp)
                 } else if let ask = view.ask {
                     AskFacts(ask: ask)
+                } else if let release = view.envRelease {
+                    EnvReleaseFacts(vm: vm, release: release)
+                } else if let store = view.secretsStore {
+                    SecretsStoreFacts(store: store)
+                } else if let token = view.tokenStore {
+                    TokenStoreFacts(token: token)
                 } else if let secrets = view.secrets {
                     SecretsFacts(secrets: secrets)
                 } else if let ssh = view.ssh {

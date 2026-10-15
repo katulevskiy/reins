@@ -22,6 +22,10 @@ struct ActivityDetailScreen: View {
                 EntryApprovalPage(entry: entry, vm: vm, view: view) {
                     AskedSections(entry: entry)
                     extras(entry)
+                    // A project's environment released to a computer: its values can be dropped everywhere.
+                    if let release = view.envRelease {
+                        RevokeEverywhereSection(project: release.project, env: release.env).padding(.top, 14)
+                    }
                 }
                 .pageDock(when: dockShown) { ThisWasWrongDock(entry: entry) }
             } else if let entry {

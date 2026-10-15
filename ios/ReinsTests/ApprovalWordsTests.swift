@@ -48,6 +48,49 @@ final class ApprovalWordsTests: XCTestCase {
         XCTAssertEqual(sentence(T.grantView()), "Wants to **read emails**\n**without asking**")
     }
 
+    private func storeView() -> ApprovalView {
+        var v = T.view("req44", kind: .write, service: "vault", op: "secrets_store", noStanding: true, opTitle: "Save a project's secrets from the computer", action: "write")
+        v.secretsStore = SecretsStoreView(
+            envs: [EnvStoreView(project: "web", env: "dev", newEnv: false, added: ["A"], replaced: ["B"], removed: ["C"], renamed: ["D → E"], copiedFrom: nil, copied: 0)],
+            check: "4821", total: 4, ssh: [], tokens: []
+        )
+        return v
+    }
+
+    func testReinsSecretsSaysWhoGetsWhatOfWhichEnvironment() {
+        XCTAssertEqual(sentence(T.envReleaseView()), "**Claude Code** wants **2 variables**\nof **web · dev**")
+        XCTAssertEqual(sentence(T.envReleaseView(allVariables: true)), "**Claude Code** wants **every variable**\nof **web · dev**")
+        var person = T.envReleaseView(print: true)
+        person.envRelease?.agent = false
+        person.envRelease?.runnerLabel = "You"
+        person.envRelease?.variables = ["STRIPE_KEY"]
+        XCTAssertEqual(sentence(person), "Wants to **print STRIPE_KEY**\nof **web · dev**")
+        XCTAssertEqual(sentence(storeView()), "Wants to save **4 secrets**\nin **your vault**")
+        var token = T.view(kind: .write, service: "github", noStanding: true, action: "write")
+        token.tokenStore = TokenStoreView(service: "github", host: "github.com", scopes: ["repo"], check: "7302")
+        XCTAssertEqual(sentence(token), "Wants to add a **GitHub token**\nfor **github.com**")
+    }
+
+    func testReinsSecretsIsAskedEveryTimeWithoutBeingCalledIrreversible() {
+        XCTAssertFalse(ApprovalWords.destructive(storeView()))
+        XCTAssertNil(ApprovalWords.dangerTag(storeView()))
+        XCTAssertFalse(ApprovalWords.destructive(T.envReleaseView(alwaysAsk: true)))
+        XCTAssertEqual(ApprovalWords.badge(storeView()), .key)
+        XCTAssertEqual(ApprovalWords.badge(T.envReleaseView()), .key)
+        XCTAssertTrue(ApprovalWords.rememberLocked(storeView()))
+    }
+
+    func testAStoreListsEachEnvironmentsNamesCompactly() {
+        let env = EnvStoreView(project: "web", env: "dev", newEnv: false, added: ["A"], replaced: ["B"], removed: ["C"], renamed: ["D → E"], copiedFrom: "staging", copied: 3)
+        XCTAssertEqual(ApprovalWords.storeChanges(env), "+A, ~B, −C, D → E, 3 from staging")
+        var copied = env
+        copied.copiedFrom = nil
+        copied.added = []
+        XCTAssertEqual(ApprovalWords.storeChanges(copied), "~B, −C, D → E, 3 copied")
+        XCTAssertEqual(ApprovalWords.kept(3_600), "1 hour")
+        XCTAssertEqual(ApprovalWords.kept(5_400), "1 h 30 min")
+    }
+
     func testUntrustedTextCannotReorderTheSentence() {
         let view = T.view(kind: .search, messages: [T.message("m1", "Ev\u{202E}il <a@b.c>")])
         XCTAssertFalse(ApprovalWords.sentence(view).contains { $0.text.unicodeScalars.contains { $0.value == 0x202E } })
