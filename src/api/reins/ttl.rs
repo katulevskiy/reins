@@ -35,6 +35,24 @@ impl<K: Eq + Hash, V> TtlMap<K, V> {
         Ok(())
     }
 
+    /// Inserts or replaces `key`; when the map is full, the entry closest to expiring (the oldest) makes room. Only
+    /// for maps whose entries may be dropped early without harm: caches and rate-limit marks.
+    pub fn insert_evicting(&mut self, key: K, value: V)
+    where
+        K: Clone,
+    {
+        self.purge();
+        if self.entries.len() >= self.capacity && !self.entries.contains_key(&key) {
+            let oldest = self.entries.iter().min_by_key(|(_, (expires, _))| *expires).map(|(k, _)| k.clone());
+            if let Some(oldest) = oldest {
+                self.entries.remove(&oldest);
+            }
+        }
+        if self.capacity > 0 {
+            self.entries.insert(key, (Instant::now() + self.ttl, value));
+        }
+    }
+
     pub fn get(&self, key: &K) -> Option<&V> {
         let now = Instant::now();
         self.entries.get(key).filter(|(expires, _)| now < *expires).map(|(_, v)| v)
@@ -115,6 +133,22 @@ mod tests {
         tokio::time::advance(Duration::from_secs(10)).await;
         m.insert("c", 3).unwrap();
         assert_eq!(m.values().copied().collect::<Vec<_>>(), vec![3]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_evicting_insert_drops_the_oldest_entry_when_full() {
+        let mut m = TtlMap::new(Duration::from_secs(10), 2);
+        m.insert_evicting("a", 1);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        m.insert_evicting("b", 2);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        m.insert_evicting("c", 3);
+        assert_eq!((m.get(&"a"), m.get(&"b"), m.get(&"c")), (None, Some(&2), Some(&3)));
+        m.insert_evicting("b", 20);
+        assert_eq!((m.get(&"b"), m.get(&"c"), m.len()), (Some(&20), Some(&3), 2), "replacing evicts nothing");
+        let mut none = TtlMap::new(Duration::from_secs(10), 0);
+        none.insert_evicting("a", 1);
+        assert!(none.is_empty());
     }
 
     #[tokio::test(start_paused = true)]

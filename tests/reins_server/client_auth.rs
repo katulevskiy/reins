@@ -191,20 +191,19 @@ async fn a_private_key_jwt_client_connects_refreshes_and_revokes() {
     assert_eq!(page.status(), StatusCode::OK);
     assert!(page.text().await.unwrap().contains("ChatGPT"));
 
-    // Without an assertion the code is refused (and burnt).
+    // Without an assertion the code is refused, but not burnt: only the client's key can use it.
     let code = authorize_code(&server, &phone, "ivy@example.com", &chatgpt.id).await;
     let missing = server.token(&code_form(&code, Some(&chatgpt.id), None)).await;
     assert_invalid_client(&missing, "no assertion");
-    let (_, again) = server.token(&code_form(&code, Some(&chatgpt.id), Some(&chatgpt.assertion(&server, "a0")))).await;
-    assert_eq!(again["error"], "invalid_grant", "the code is single-use even when authentication failed");
 
     // With one, it is exchanged; client_id may be left out (the assertion names the client).
-    let code = authorize_code(&server, &phone, "ivy@example.com", &chatgpt.id).await;
     let assertion = chatgpt.assertion(&server, "a1");
     let (status, tokens) = server.token(&code_form(&code, None, Some(&assertion))).await;
     assert_eq!(status, StatusCode::OK, "{tokens}");
     let refresh = tokens["refresh_token"].as_str().unwrap().to_owned();
     assert_eq!(chatgpt.jwks_fetches(), 1);
+    let (_, again) = server.token(&code_form(&code, None, Some(&chatgpt.assertion(&server, "a0")))).await;
+    assert_eq!(again["error"], "invalid_grant", "the code is single-use");
 
     // Refreshing needs the client's assertion too; failures do not burn the refresh token.
     assert_invalid_client(&server.token(&refresh_form(&refresh, None)).await, "refresh without an assertion");
@@ -227,9 +226,8 @@ async fn a_private_key_jwt_client_connects_refreshes_and_revokes() {
     };
     let denied = revoke(vec![("token", refresh.clone())]).await;
     assert_invalid_client(&denied, "revocation without an assertion");
-    // Two connections: the phone approved both flows, though the first never got tokens.
     let count = async || phone.get("/connections").await.1["connections"].as_array().map_or(0, Vec::len);
-    assert_eq!(count().await, 2, "a refused revocation revokes nothing");
+    assert_eq!(count().await, 1, "a refused revocation revokes nothing");
     let (status, _) = revoke(vec![
         ("token", refresh.clone()),
         ("client_assertion_type", JWT_BEARER.to_owned()),
@@ -237,7 +235,7 @@ async fn a_private_key_jwt_client_connects_refreshes_and_revokes() {
     ])
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(count().await, 1);
+    assert_eq!(count().await, 0);
     let (_, gone) = server.token(&refresh_form(&refresh, Some(&chatgpt.assertion(&server, "a5")))).await;
     assert_eq!(gone["error"], "invalid_grant");
 }
@@ -323,12 +321,11 @@ async fn a_public_client_must_not_send_an_assertion() {
     phone.register_device().await;
     let chatgpt = JwtClient::start().await;
     let public = server.register_client().await;
-    // Its own (or anyone's) assertion at the code exchange: invalid_client.
+    // Its own (or anyone's) assertion at the code exchange: invalid_client, and the code stays usable.
     let code = authorize_code(&server, &phone, "liam@example.com", &public).await;
     let assertion = chatgpt.assertion(&server, "p1");
     assert_invalid_client(&server.token(&code_form(&code, Some(&public), Some(&assertion))).await, "code exchange");
     // And at refresh.
-    let code = authorize_code(&server, &phone, "liam@example.com", &public).await;
     let (status, tokens) = server.token(&code_form(&code, Some(&public), None)).await;
     assert_eq!(status, StatusCode::OK, "{tokens}");
     let refresh = tokens["refresh_token"].as_str().unwrap();
@@ -341,6 +338,87 @@ async fn a_public_client_must_not_send_an_assertion() {
     let theirs = chatgpt.assertion(&server, "p3");
     let (_, body) = server.token(&code_form(&code, Some(&chatgpt.id), Some(&theirs))).await;
     assert_eq!(body["error"], "invalid_grant");
+}
+
+/// Valid assertions that come without a valid grant of their own client (a made-up code or refresh token, another
+/// client's token, an unknown token at revocation) record nothing: the same `jti` still works afterwards.
+#[tokio::test]
+async fn assertions_without_a_valid_grant_record_nothing() {
+    let server = start_server().await;
+    let phone = server.phone("mia@example.com").await;
+    phone.register_device().await;
+    let chatgpt = JwtClient::start().await;
+    let public = server.register_client().await;
+    let free = chatgpt.assertion(&server, "free");
+    let bogus_code = code_form("made-up-code", None, Some(&free));
+    assert_eq!(server.token(&bogus_code).await.1["error"], "invalid_grant");
+    let bogus_refresh = refresh_form("made-up-refresh-token", Some(&free));
+    assert_eq!(server.token(&bogus_refresh).await.1["error"], "invalid_grant");
+    let r = client()
+        .post(server.url("/reins/oauth/revoke"))
+        .form(&[("token", "made-up-token"), ("client_assertion_type", JWT_BEARER), ("client_assertion", &free)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    // Another client's code, named as that client: the assertion (ChatGPT's) is refused, recording nothing.
+    let other = authorize_code(&server, &phone, "mia@example.com", &public).await;
+    let (status, body) = server.token(&code_form(&other, Some(&public), Some(&free))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(chatgpt.jwks_fetches(), 0, "nothing above even fetched ChatGPT's keys");
+    // The same jti is still fresh for a real exchange.
+    let code = authorize_code(&server, &phone, "mia@example.com", &chatgpt.id).await;
+    let (status, tokens) = server.token(&code_form(&code, None, Some(&free))).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+}
+
+/// A flood of valid assertions from another client (its own metadata document and keys) with made-up grants does not
+/// stop ChatGPT from connecting.
+#[tokio::test]
+async fn another_clients_flood_does_not_block_chatgpt() {
+    let server = Server::start_with(Options {
+        allow_loopback: true,
+        env: vec![("UNAUTHENTICATED_RATELIMIT_MAX_BURST", "1000".to_owned())],
+        ..Options::default()
+    })
+    .await;
+    let phone = server.phone("noah@example.com").await;
+    phone.register_device().await;
+    let chatgpt = JwtClient::start().await;
+    let attacker = JwtClient::start().await;
+    for i in 0..300 {
+        let assertion = attacker.assertion(&server, &format!("flood-{i}"));
+        let form = if i % 2 == 0 {
+            code_form("made-up-code", Some(&attacker.id), Some(&assertion))
+        } else {
+            refresh_form("made-up-refresh-token", Some(&assertion))
+        };
+        assert_eq!(server.token(&form).await.1["error"], "invalid_grant");
+    }
+    let code = authorize_code(&server, &phone, "noah@example.com", &chatgpt.id).await;
+    let (status, tokens) = server.token(&code_form(&code, None, Some(&chatgpt.assertion(&server, "c1")))).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    let refresh = tokens["refresh_token"].as_str().unwrap();
+    let (status, body) = server.token(&refresh_form(refresh, Some(&chatgpt.assertion(&server, "c2")))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// `/token` and `/revoke` share the per-address limit for unauthenticated requests.
+#[tokio::test]
+async fn token_and_revocation_are_rate_limited_per_address() {
+    let server = Server::start_with(Options {
+        env: vec![("UNAUTHENTICATED_RATELIMIT_MAX_BURST", "5".to_owned())],
+        ..Options::default()
+    })
+    .await;
+    let mut statuses = Vec::new();
+    for _ in 0..4 {
+        statuses.push(server.token(&refresh_form("made-up", None)).await.0);
+        let r = client().post(server.url("/reins/oauth/revoke")).form(&[("token", "made-up")]).send().await.unwrap();
+        statuses.push(r.status());
+    }
+    assert!(statuses[..5].iter().all(|s| *s != StatusCode::TOO_MANY_REQUESTS), "{statuses:?}");
+    assert!(statuses[5..].iter().all(|s| *s == StatusCode::TOO_MANY_REQUESTS), "{statuses:?}");
 }
 
 #[tokio::test]

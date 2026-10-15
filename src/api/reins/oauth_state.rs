@@ -1,16 +1,18 @@
 //! In-memory OAuth state (spec §4.1): authorize-page sessions (5 min), single-use
 //! authorization codes (60 s, stored only as SHA-256 hashes), fetched client
 //! metadata (1 h), fetched client key sets (5 min) and the `jti`s of client assertions
-//! already used (until they expire). Nothing here is written to disk; the server runs
-//! as one instance, so in memory is enough for replay protection.
+//! already used (until they expire, per client). Nothing here is written to disk; the server
+//! runs as one instance, so in memory is enough for replay protection.
 
 use std::{
+    collections::HashMap,
     sync::{LazyLock, Mutex, MutexGuard, PoisonError},
     time::Duration,
 };
 
 use jsonwebtoken::jwk::JwkSet;
 use reins_proto::ids::PairingId;
+use tokio::time::Instant;
 
 use super::{
     CIMD_TTL, CODE_TTL, SESSION_TTL,
@@ -23,9 +25,15 @@ use crate::auth::reins::{hash_token, random_token};
 pub const MAX_SESSIONS: usize = 5_000;
 pub const MAX_CODES: usize = 5_000;
 pub const MAX_CLIENT_CACHE: usize = 1_000;
+/// Key sets cached, and key sets with a recent refetch mark. Both evict their oldest entry when full: they only
+/// save fetches and limit their rate, so dropping one early costs a fetch, never a refusal.
 pub const MAX_JWKS_CACHE: usize = 1_000;
-/// Client assertions remembered at once; when full, new assertions are refused until old ones expire (fail closed).
-pub const MAX_USED_ASSERTIONS: usize = 50_000;
+/// Live `jti`s remembered per client. A `jti` is only recorded for an assertion that verified and came with a grant
+/// (code or refresh token) of its own client, so filling this takes approved connections; when one client's quota is
+/// full, only that client is refused (fail closed) until its `jti`s expire.
+pub const MAX_ASSERTIONS_PER_CLIENT: usize = 5_000;
+/// Clients with live `jti`s at once. Clients whose `jti`s have all expired make room; live ones are never dropped.
+pub const MAX_ASSERTION_CLIENTS: usize = 500;
 /// A client's key set is fetched again after this long.
 pub const JWKS_TTL: Duration = Duration::from_secs(300);
 /// An unknown `kid` refetches a key set at most this often (anyone can send one).
@@ -39,7 +47,63 @@ pub const USED_ASSERTION_TTL: Duration =
 #[derive(Debug, PartialEq, Eq)]
 pub enum JtiError {
     Replayed,
+    /// This client's quota, or the number of clients, is used up by live `jti`s.
     Full,
+}
+
+/// The `jti`s of client assertions already used, partitioned by client: each client has its own quota, so one
+/// client's assertions can never crowd out another's. A `jti` lives [`USED_ASSERTION_TTL`] and is never dropped
+/// before that; a client is dropped only once none of its `jti`s is live.
+pub struct UsedAssertions {
+    ttl: Duration,
+    per_client: usize,
+    max_clients: usize,
+    /// Hashed client id -> hashed `jti` -> expiry.
+    clients: HashMap<String, HashMap<String, Instant>>,
+}
+
+impl UsedAssertions {
+    pub fn new(ttl: Duration, per_client: usize, max_clients: usize) -> Self {
+        Self {
+            ttl,
+            per_client,
+            max_clients,
+            clients: HashMap::new(),
+        }
+    }
+
+    /// Records `jti` for `client_id`; fails if it is live already, or if there is no room without dropping a live one.
+    pub fn record(&mut self, client_id: &str, jti: &str) -> Result<(), JtiError> {
+        let now = Instant::now();
+        let (client, jti) = (hash_token(client_id), hash_token(jti));
+        if !self.clients.contains_key(&client) && self.clients.len() >= self.max_clients {
+            self.purge_at(now);
+            if self.clients.len() >= self.max_clients {
+                return Err(JtiError::Full);
+            }
+        }
+        let used = self.clients.entry(client).or_default();
+        used.retain(|_, expires| now < *expires);
+        if used.contains_key(&jti) {
+            return Err(JtiError::Replayed);
+        }
+        if used.len() >= self.per_client {
+            return Err(JtiError::Full);
+        }
+        used.insert(jti, now + self.ttl);
+        Ok(())
+    }
+
+    fn purge_at(&mut self, now: Instant) {
+        for used in self.clients.values_mut() {
+            used.retain(|_, expires| now < *expires);
+        }
+        self.clients.retain(|_, used| !used.is_empty());
+    }
+
+    pub fn purge(&mut self) {
+        self.purge_at(Instant::now());
+    }
 }
 
 /// The pairing started for a session, once the user has submitted their email.
@@ -68,7 +132,7 @@ pub struct OAuthState {
     clients: Mutex<TtlMap<String, ClientInfo>>,
     jwks: Mutex<TtlMap<String, JwkSet>>,
     jwks_refetches: Mutex<TtlMap<String, ()>>,
-    used_assertions: Mutex<TtlMap<String, ()>>,
+    used_assertions: Mutex<UsedAssertions>,
 }
 
 impl OAuthState {
@@ -77,17 +141,29 @@ impl OAuthState {
     }
 
     pub fn with_capacity(sessions: usize, codes: usize, clients: usize) -> Self {
-        Self::with_assertion_capacity(sessions, codes, clients, MAX_USED_ASSERTIONS)
-    }
-
-    pub fn with_assertion_capacity(sessions: usize, codes: usize, clients: usize, assertions: usize) -> Self {
         Self {
             sessions: Mutex::new(TtlMap::new(SESSION_TTL, sessions)),
             codes: Mutex::new(TtlMap::new(CODE_TTL, codes)),
             clients: Mutex::new(TtlMap::new(CIMD_TTL, clients)),
             jwks: Mutex::new(TtlMap::new(JWKS_TTL, MAX_JWKS_CACHE)),
             jwks_refetches: Mutex::new(TtlMap::new(JWKS_REFETCH_INTERVAL, MAX_JWKS_CACHE)),
-            used_assertions: Mutex::new(TtlMap::new(USED_ASSERTION_TTL, assertions)),
+            used_assertions: Mutex::new(UsedAssertions::new(
+                USED_ASSERTION_TTL,
+                MAX_ASSERTIONS_PER_CLIENT,
+                MAX_ASSERTION_CLIENTS,
+            )),
+        }
+    }
+
+    /// Small limits for the key-set caches and the replay memory (tests).
+    #[cfg(test)]
+    pub fn with_assertion_limits(key_sets: usize, per_client: usize, max_clients: usize) -> Self {
+        let state = Self::new();
+        Self {
+            jwks: Mutex::new(TtlMap::new(JWKS_TTL, key_sets)),
+            jwks_refetches: Mutex::new(TtlMap::new(JWKS_REFETCH_INTERVAL, key_sets)),
+            used_assertions: Mutex::new(UsedAssertions::new(USED_ASSERTION_TTL, per_client, max_clients)),
+            ..state
         }
     }
 
@@ -147,13 +223,18 @@ impl OAuthState {
         self.codes().remove(&hash_token(token))
     }
 
+    /// The code, without using it up: the token endpoint checks the request against it first.
+    pub fn peek_code(&self, token: &str) -> Option<AuthCode> {
+        self.codes().get(&hash_token(token)).cloned()
+    }
+
     pub fn cached_client(&self, client_id: &str) -> Option<ClientInfo> {
         self.clients().get(&client_id.to_owned()).cloned()
     }
 
     pub fn cache_client(&self, client: ClientInfo) {
-        // A full cache just means the next request fetches again.
-        self.clients().insert(client.client_id.clone(), client).ok();
+        // A full cache drops its oldest document, which is fetched again when needed.
+        self.clients().insert_evicting(client.client_id.clone(), client);
     }
 
     pub fn cached_jwks(&self, jwks_uri: &str) -> Option<JwkSet> {
@@ -161,29 +242,27 @@ impl OAuthState {
     }
 
     pub fn cache_jwks(&self, jwks_uri: &str, set: JwkSet) {
-        // A full cache just means the next assertion fetches again.
-        Self::lock(&self.jwks).insert(jwks_uri.to_owned(), set).ok();
+        // A full cache drops its oldest key set, which is fetched again when needed.
+        Self::lock(&self.jwks).insert_evicting(jwks_uri.to_owned(), set);
     }
 
     /// Whether an unknown `kid` may fetch `jwks_uri` again now: once per [`JWKS_REFETCH_INTERVAL`] and URI, so
-    /// made-up key ids cannot turn this server into a fetcher of the client's key set.
+    /// made-up key ids cannot turn this server into a fetcher of the client's key set. The marks are per URI and the
+    /// oldest is dropped when there are too many, so other clients' marks can never block this one's refetch.
     pub fn may_refetch_jwks(&self, jwks_uri: &str) -> bool {
         let mut marks = Self::lock(&self.jwks_refetches);
         let key = jwks_uri.to_owned();
         if marks.get(&key).is_some() {
             return false;
         }
-        marks.insert(key, ()).is_ok()
+        marks.insert_evicting(key, ());
+        true
     }
 
-    /// Records a verified assertion's `jti` for `client_id`; a second use while it could still be valid fails.
+    /// Records a verified assertion's `jti` for `client_id` (per-client quota); a second use while it could still be
+    /// valid fails. Call it only once the request's grant is known to belong to `client_id`.
     pub fn use_assertion(&self, client_id: &str, jti: &str) -> Result<(), JtiError> {
-        let key = hash_token(&format!("{client_id}\n{jti}"));
-        let mut used = Self::lock(&self.used_assertions);
-        if used.get(&key).is_some() {
-            return Err(JtiError::Replayed);
-        }
-        used.insert(key, ()).map_err(|Full| JtiError::Full)
+        Self::lock(&self.used_assertions).record(client_id, jti)
     }
 
     pub fn purge(&self) {
@@ -339,17 +418,65 @@ mod tests {
         assert!(state.may_refetch_jwks(uri));
     }
 
+    const A: &str = "https://a.example/c.json";
+    const B: &str = "https://b.example/c.json";
+    const CHATGPT: &str = "https://chatgpt.com/oauth/client.json";
+
     #[tokio::test(start_paused = true)]
     async fn an_assertion_id_is_single_use_while_it_can_be_valid() {
-        let state = OAuthState::with_assertion_capacity(1, 1, 1, 2);
-        assert_eq!(state.use_assertion("https://a.example/c.json", "j1"), Ok(()));
-        assert_eq!(state.use_assertion("https://a.example/c.json", "j1"), Err(JtiError::Replayed));
-        assert_eq!(state.use_assertion("https://b.example/c.json", "j1"), Ok(()), "per client");
-        assert_eq!(state.use_assertion("https://a.example/c.json", "j2"), Err(JtiError::Full), "full fails closed");
+        let state = OAuthState::new();
+        assert_eq!(state.use_assertion(A, "j1"), Ok(()));
+        assert_eq!(state.use_assertion(A, "j1"), Err(JtiError::Replayed));
+        assert_eq!(state.use_assertion(B, "j1"), Ok(()), "per client");
         assert_eq!(USED_ASSERTION_TTL, Duration::from_secs(420));
         tokio::time::advance(Duration::from_secs(419)).await;
-        assert_eq!(state.use_assertion("https://a.example/c.json", "j1"), Err(JtiError::Replayed));
+        assert_eq!(state.use_assertion(A, "j1"), Err(JtiError::Replayed));
         tokio::time::advance(Duration::from_secs(1)).await;
-        assert_eq!(state.use_assertion("https://a.example/c.json", "j1"), Ok(()), "forgotten once it has expired");
+        assert_eq!(state.use_assertion(A, "j1"), Ok(()), "forgotten once it has expired");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn another_clients_flood_does_not_block_chatgpts_assertions() {
+        let state = OAuthState::with_assertion_limits(4, 3, 2);
+        // ChatGPT has a live jti; another client fills its own quota.
+        assert_eq!(state.use_assertion(CHATGPT, "c0"), Ok(()));
+        for i in 0..3 {
+            assert_eq!(state.use_assertion(A, &format!("flood-{i}")), Ok(()));
+        }
+        for i in 3..1000 {
+            assert_eq!(state.use_assertion(A, &format!("flood-{i}")), Err(JtiError::Full), "only A is refused");
+        }
+        assert_eq!(state.use_assertion(CHATGPT, "c1"), Ok(()));
+        assert_eq!(state.use_assertion(CHATGPT, "c2"), Ok(()));
+        assert_eq!(state.use_assertion(CHATGPT, "c0"), Err(JtiError::Replayed), "its live jtis are all kept");
+        // Two clients with live jtis is the limit here: a third client waits, the existing ones are untouched.
+        assert_eq!(state.use_assertion(B, "b0"), Err(JtiError::Full));
+        assert_eq!(state.use_assertion(A, "flood-0"), Err(JtiError::Replayed), "A's live jtis were not evicted");
+        // Nothing is dropped while live; once the jtis have expired, A's slot is free for B.
+        tokio::time::advance(Duration::from_secs(300)).await;
+        assert_eq!(state.use_assertion(CHATGPT, "c3"), Err(JtiError::Full), "ChatGPT's own quota, still live");
+        tokio::time::advance(Duration::from_secs(120)).await;
+        assert_eq!(state.use_assertion(B, "b0"), Ok(()));
+        assert_eq!(state.use_assertion(CHATGPT, "c3"), Ok(()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_refetch_throttle_cannot_be_filled_by_other_key_sets() {
+        let state = OAuthState::with_assertion_limits(4, 1, 1);
+        let chatgpt = "https://chatgpt.com/oauth/jwks.json";
+        assert!(state.may_refetch_jwks(chatgpt));
+        assert!(!state.may_refetch_jwks(chatgpt), "throttled");
+        // Someone else marks far more key sets than there is room for.
+        for i in 0..100 {
+            assert!(state.may_refetch_jwks(&format!("https://evil-{i}.example/jwks.json")));
+        }
+        tokio::time::advance(JWKS_REFETCH_INTERVAL).await;
+        assert!(state.may_refetch_jwks(chatgpt), "never refused because the marks are full");
+        // The key-set cache likewise keeps taking new sets, dropping the oldest.
+        for i in 0..10 {
+            state.cache_jwks(&format!("https://evil-{i}.example/jwks.json"), JwkSet::default());
+        }
+        state.cache_jwks(chatgpt, JwkSet::default());
+        assert!(state.cached_jwks(chatgpt).is_some());
     }
 }

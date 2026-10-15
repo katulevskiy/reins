@@ -641,17 +641,19 @@ async fn verify_with_client_keys(
     }
 }
 
-/// Client authentication at the token and revocation endpoints. `required` is the method bound to the grant (the
-/// authorization code or refresh token): a public client must not send an assertion, and a `private_key_jwt` client
-/// must send one that verifies against its current keys, with a `jti` never seen before.
-async fn authenticate_client(
+/// Client authentication at the token and revocation endpoints, step 1: `required` is the method bound to the grant
+/// (the authorization code or refresh token, already looked up and known to belong to `client_id`). A public client
+/// must not send an assertion; a `private_key_jwt` client must send one that verifies against its current keys. Its
+/// `jti` is not recorded here: [`record_assertion`] does that once nothing else can fail, right before the grant is
+/// used, so assertions that come without a valid grant of their own client leave no trace.
+async fn verify_client(
     client_id: &str,
     required: AuthMethod,
     assertion: Option<&str>,
     conn: &DbConn,
-) -> Result<(), OAuthError> {
+) -> Result<Option<VerifiedAssertion>, OAuthError> {
     let assertion = match (required, assertion) {
-        (AuthMethod::None, None) => return Ok(()),
+        (AuthMethod::None, None) => return Ok(None),
         (AuthMethod::None, Some(_)) => {
             return Err(OAuthError::invalid_client("this client is public and must not send a client assertion"));
         }
@@ -670,7 +672,14 @@ async fn authenticate_client(
     else {
         return Err(OAuthError::invalid_client("the client does not declare private_key_jwt"));
     };
-    let verified = verify_with_client_keys(client_id, jwks, *alg, assertion).await?;
+    verify_with_client_keys(client_id, jwks, *alg, assertion).await.map(Some)
+}
+
+/// Step 2: burns the verified assertion's `jti` (in `client_id`'s own share of the replay memory). A replay fails.
+fn record_assertion(client_id: &str, verified: Option<&VerifiedAssertion>) -> Result<(), OAuthError> {
+    let Some(verified) = verified else {
+        return Ok(());
+    };
     match OAUTH.use_assertion(client_id, &verified.jti) {
         Ok(()) => Ok(()),
         Err(JtiError::Replayed) => Err(OAuthError::invalid_client("the client assertion was already used")),
@@ -706,6 +715,9 @@ async fn issue_tokens(
     Ok(token_response(&access, &refresh))
 }
 
+/// Order matters for every grant: find the grant without using it up (unknown grants end here, before any key is
+/// fetched or anything is recorded), check that it belongs to the requesting client, verify the client, and only
+/// then burn the assertion's `jti` and use up the grant.
 async fn exchange(request: TokenRequest, conn: &DbConn) -> Result<Value, OAuthError> {
     let assertion = request.client_assertion.as_deref();
     match request.grant {
@@ -715,11 +727,18 @@ async fn exchange(request: TokenRequest, conn: &DbConn) -> Result<Value, OAuthEr
             client_id,
             code_verifier,
         } => {
-            let issued =
-                OAUTH.redeem_code(&code).ok_or_else(|| OAuthError::invalid_grant("unknown, used or expired code"))?;
-            check_code_redemption(&issued, &client_id, &redirect_uri, &code_verifier)?;
-            // The client the code was issued to, authenticating the way it did when it started the flow.
-            authenticate_client(&issued.client_id, issued.client_auth, assertion, conn).await?;
+            let unknown = || OAuthError::invalid_grant("unknown, used or expired code");
+            let issued = OAUTH.peek_code(&code).ok_or_else(unknown)?;
+            if let Err(e) = check_code_redemption(&issued, &client_id, &redirect_uri, &code_verifier) {
+                // A wrong client, redirect URI or verifier still burns the code: it cannot be retried.
+                OAUTH.redeem_code(&code);
+                return Err(e);
+            }
+            // The client the code was issued to, authenticating the way it did when it started the flow. A failure
+            // here leaves the code alone: whoever lacks the client's key cannot use it, nor take it from the client.
+            let verified = verify_client(&issued.client_id, issued.client_auth, assertion, conn).await?;
+            record_assertion(&issued.client_id, verified.as_ref())?;
+            let issued = OAUTH.redeem_code(&code).ok_or_else(unknown)?;
             let user = UserId::from(issued.user_uuid.clone());
             let connection = ReinsConnection::find_by_uuid_and_user(&issued.connection_uuid, &user, conn)
                 .await
@@ -744,7 +763,8 @@ async fn exchange(request: TokenRequest, conn: &DbConn) -> Result<Value, OAuthEr
             }
             // Authenticated before the token is used up, so a request without the client's key cannot burn it.
             let client_auth = AuthMethod::from_stored(&row.client_auth);
-            authenticate_client(&connection.client_id, client_auth, assertion, conn).await?;
+            let verified = verify_client(&connection.client_id, client_auth, assertion, conn).await?;
+            record_assertion(&connection.client_id, verified.as_ref())?;
             ReinsRefreshToken::take(&token_hash, now_unix(), conn).await.ok_or_else(invalid)?;
             issue_tokens(&connection, client_auth, conn).await
         }
@@ -752,8 +772,8 @@ async fn exchange(request: TokenRequest, conn: &DbConn) -> Result<Value, OAuthEr
             device_code,
             client_id,
         } => {
-            // Only public clients get device codes (`device_authorization`).
-            authenticate_client(&client_id, AuthMethod::None, assertion, conn).await?;
+            // Only public clients get device codes (`device_authorization`): an assertion is refused unchecked.
+            verify_client(&client_id, AuthMethod::None, assertion, conn).await?;
             poll_device_code(&device_code, &client_id, conn).await
         }
     }
@@ -786,6 +806,7 @@ async fn token(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
 /// Client authentication: a refresh token of a `private_key_jwt` client is revoked only with a valid client
 /// assertion of that client; any assertion that is sent is verified (a public client sending one is refused), and a
 /// failure is 401 `invalid_client` with nothing revoked. An access token alone is enough for public clients, as before.
+/// An unknown token, or one of another client, is answered 200 before any assertion is looked at, so it records nothing.
 #[post("/reins/oauth/revoke", data = "<data>")]
 async fn revoke(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
     if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
@@ -818,7 +839,13 @@ async fn revoke(data: Data<'_>, ip: ClientIp, conn: DbConn) -> JsonResponse {
             } else {
                 bound
             };
-            if let Err(e) = authenticate_client(&connection.client_id, required, assertion.as_deref(), &conn).await {
+            // The token exists and is this client's: only now is the assertion's jti burnt.
+            let authenticated = match verify_client(&connection.client_id, required, assertion.as_deref(), &conn).await
+            {
+                Ok(verified) => record_assertion(&connection.client_id, verified.as_ref()),
+                Err(e) => Err(e),
+            };
+            if let Err(e) = authenticated {
                 return oauth_error(&e);
             }
             match connection.delete(&conn).await {
