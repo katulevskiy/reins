@@ -22,7 +22,7 @@ class CoreContext:
         self.proc = subprocess.Popen([path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
         self.cache: Dict[str, Dict] = {}
 
-    def ask(self, query: Dict) -> Dict:
+    def ask_raw(self, query: Dict) -> Dict:
         key = json.dumps(query, sort_keys=True)
         if key not in self.cache:
             self.proc.stdin.write(key + "\n")
@@ -31,10 +31,24 @@ class CoreContext:
         return self.cache[key]
 
     def command(self, command: str) -> Dict:
-        return self.ask({"command": command})
+        return self.ask_raw({"command": command})
 
     def files(self, paths: List[str]) -> Dict:
-        return self.ask({"files": paths})
+        return self.ask_raw({"files": paths})
 
     def push(self, refs: List[Dict], default_branch: Optional[str] = None) -> Dict:
-        return self.ask({"push": {"refs": refs, "default_branch": default_branch}})
+        return self.ask_raw({"push": {"refs": refs, "default_branch": default_branch}})
+
+    def ask(self, question: str, detail: str, topic: Optional[str]) -> Dict:
+        """A desktop question, read as the phone reads it (risk::ask_context)."""
+        return self.ask_raw({"ask": {"question": question, "detail": detail, "topic": topic}})
+
+    def mcp(self, tool: str, arguments: str) -> Dict:
+        return self.ask_raw({"mcp": {"tool": tool, "arguments": arguments}})
+
+    def neutral(self, cls: str, target: str, details: List[str], context: List[str], reason: str = "",
+                content: str = "") -> Dict:
+        """The risk's third view (risk::neutral_facts, risk::neutral_ai): {"target", "details", "context", "reason",
+        "content"}."""
+        return self.ask_raw({"neutral": {"class": cls, "target": target, "details": details, "context": context,
+                                         "reason": reason, "content": content}})

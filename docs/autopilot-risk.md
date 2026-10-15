@@ -96,6 +96,50 @@ on the cumulative distribution:
 AI-written text can only raise the risk. A full pass that says "benign" cannot hide what the facts pass saw, and a
 reason or body that leaks a secret raises it to catastrophic.
 
+The agent also writes into the facts: its command (a comment, what `echo` prints, a commit message), the names it
+chooses (folders, files, branches), the values the context line quotes. So a third view, `S_neutral`, renders the
+facts with those set to fixed placeholders (`risk::neutral_facts`): the command as the guard's tokenizer reads it
+(comments gone) with printed text and messages as `…`, every quoted value of the context line as `"…"`, branch and
+tag names as `…`, a file's folders as `…`. It is read in the same run as the other two whenever it differs from
+`S_facts` (one batch of three instead of two), and joins the rule:
+
+    P(class ≥ k) = max over S_facts, S_full, S_neutral
+
+Steering in a name can then lower neither the class nor the hold: the view without it decides as much as the views
+with it. A model or runtime that returns no risk for the third view leaves no risk at all (Overnight holds).
+
+A database dropped or emptied (`DROP`, `TRUNCATE`, `FLUSHALL`, `dropDatabase`, or an MCP tool named so, or the SQL a
+query tool runs) on any host but this computer is a tripwire, staging and development ones included, and for an MCP
+tool, arguments that name no host at all. Only a loopback host (below) and a command line without a host (the local
+socket) are left to the model.
+
+**Allow-lists match exactly.** What can lower the risk is matched against the normalized value, never by prefix,
+suffix or substring. Hosts are parsed as hosts: a URL with a URL parser (`ssh://localhost@evil` is `evil`), a
+`user@host:port` spec without its user and port. "This computer" is exactly `localhost`, or an address in
+127.0.0.0/8 or `::1` checked as a number; `localhost.evil.com`, `127.0.0.1.nip.io` and names that only say "local" or
+"dev" are not. The known upload hosts and installers are a short exact list, with none anyone can publish or receive
+under (no `raw.githubusercontent.com`, storage buckets or chat webhooks). Every sink of a line counts, and every host
+of a download that is run must be a known installer. Paths are placed after lexical normalization (`/tmp/../home` is
+`/home`). What a validator cannot place counts as not safe.
+
+**Agent fields only add.** No string the agent controls can lower a class or remove a hold:
+- The views combine by the cumulative max (so the higher `P(catastrophic)` wins). The class shown is never below what
+  any one view gave on its own, and a tripwire or an uncertain reading holds whichever text produced it.
+- Names only ever escalate. A host is "local" only when it is this computer. "Production" is the one environment read
+  off a name; "staging", "dev" or "test" never are, whether in a host, a workspace, a var file or a variable such as
+  `ENV=test`. Terraform's environment is read from every word of the line.
+- The default branch: the desktop's fact adds a branch to the long-lived names, never removes one.
+- A file's name cannot make a secret a sample (`.env.example` and `*.pub` count as secret files).
+- The hook's working folder (`In:`) only adds: relative paths deleted from a home directory, the root or a system
+  folder are uncertain, not "inside the project".
+- The topic is read for holds only, and a prose question never adds a phrase.
+- Commit messages, question lines and details are never read for anything that could lower the risk.
+
+**One reading.** A desktop question's commands are read in the texts the guard reads for its rules and certainty
+(`connector::desktop::ask_texts`: the detail after a reported rule, the topic's rule, and the question's command
+when it says something the detail does not), with the same tokenizer; a question that names another command than
+its detail is held. A test feeds every hostile fixture through both readings and compares the segments.
+
 ## 5. Model architecture
 
 | option | phone cost | calibration | data | regressions |
