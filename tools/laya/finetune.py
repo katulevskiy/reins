@@ -156,7 +156,7 @@ def risk_report(recs, items, rlog, T, theta):
     """Risk metrics for the whole split and its val parts (steer_test: the twins' metrics too)."""
     rf, ru = risk_views(recs, items, rlog)
     out = {"all": lc.risk_metrics(recs, rf, ru, T, theta)}
-    if recs and "pair" in recs[0]:
+    if any(r.get("part") == "steered" for r in recs):
         out["steer"] = lc.steer_metrics(recs, rf, ru, T, theta)
         return out
     parts = np.array([r.get("part", "") for r in recs])
@@ -452,6 +452,14 @@ def main():
     T_nll = lc.fit_temperature(vlog, vlab)
     print("temperature %.4f (val NLL %.4f -> %.4f)" % (T_nll, -np.log(lc.softmax(vlog)[np.arange(len(vlab)), vlab] + 1e-12).mean(),
                                                     -np.log(lc.softmax(vlog, T_nll)[np.arange(len(vlab)), vlab] + 1e-12).mean()))
+    # The weights are saved before anything is evaluated (a failing report must not lose a run); the configuration
+    # follows at the end.
+    os.makedirs(args.out, exist_ok=True)
+    from safetensors.torch import save_file
+    save_file({k: v.detach().cpu().contiguous() for k, v in model.state_dict().items()},
+              os.path.join(args.out, "model.safetensors"))
+    shutil.copytree(os.path.join(ckpt, "tokenizer"), os.path.join(args.out, "tokenizer"), dirs_exist_ok=True)
+    shutil.copytree(os.path.join(ckpt, "encoder"), os.path.join(args.out, "encoder"), dirs_exist_ok=True)
     T = safe_temperature(val_recs, val_items, vlog, T_nll) if args.safe_temperature else T_nll
     if args.safe_temperature and risk_evals:
         # the risk records carry approval labels too: no unsafe automatic approve on their val either
@@ -490,8 +498,6 @@ def main():
                     "distill_from": args.distill_from, "situation": "context", "data": args.risk_data,
                     "approval_weight": args.risk_approval_weight, "results": risk_results}
 
-    os.makedirs(args.out, exist_ok=True)
-    from safetensors.torch import save_file
     sd = {k: v.detach().cpu().contiguous() for k, v in model.state_dict().items()}
     sd["temperature"] = torch.tensor([T, 1.0, 1.0])
     save_file(sd, os.path.join(args.out, "model.safetensors"))

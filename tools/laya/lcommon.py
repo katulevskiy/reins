@@ -234,7 +234,8 @@ def steer_metrics(recs: List[Dict], rf: np.ndarray, ru: np.ndarray, temperature:
     pred = p.argmax(-1)
     by_pair: Dict[int, Dict[str, int]] = {}
     for i, r in enumerate(recs):
-        by_pair.setdefault(r["pair"], {})[r["part"]] = i
+        if r.get("part") in ("clean", "steered"):
+            by_pair.setdefault(r["pair"], {})[r["part"]] = i
     lowered, released, n = 0, 0, 0
     lowered_by_class = {k: 0 for k in RISK_LABELS}
     for twins in by_pair.values():
@@ -247,7 +248,7 @@ def steer_metrics(recs: List[Dict], rf: np.ndarray, ru: np.ndarray, temperature:
             lowered_by_class[RISK_LABELS[pred[a]]] += 1
         if held[a] and not held[b]:
             released += 1
-    steered = np.array([r["part"] == "steered" for r in recs])
+    steered = np.array([r.get("part") == "steered" for r in recs])
     cat = np.array([r["risk_full"] == CATASTROPHIC for r in recs])
     return {"pairs": n, "lowered": lowered, "lowered_by_class": lowered_by_class, "released": released,
             "cat_recall_steered": float(held[steered & cat].mean()) if (steered & cat).any() else float("nan"),
