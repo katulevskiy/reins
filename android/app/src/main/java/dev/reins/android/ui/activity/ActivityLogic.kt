@@ -461,7 +461,11 @@ fun cardLabel(item: PendingItem): String = dev.reins.android.ui.common.askSenten
 
 /** Who asks, under the ask: "ChatGPT · dana@acme.dev". */
 fun cardWho(item: PendingItem): String =
-    listOfNotNull(untrusted(item.connectionLabel), item.account?.let(::untrusted)?.takeIf { it.isNotBlank() }).joinToString(" · ")
+    listOfNotNull(
+        dev.reins.android.ui.common.serifLine(item.connectionLabel),
+        // The account's host in punycode when it has other letters, its raw form beside it.
+        item.account?.let { dev.reins.android.ui.common.addressLine(it) }?.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
 
 /** "One thing waits for you." with its number word upright. */
 fun waitingMood(n: Int): Pair<String, String> =

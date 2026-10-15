@@ -177,6 +177,8 @@ fun ActivityDetailScreen(
                 footer = dock,
                 risk = entry.autopilot?.risk,
                 tense = dev.reins.android.ui.common.entryTense(entry.outcome),
+                label = entry.label,
+                cwd = entry.request?.cwd,
             ),
         )
     } else if (looked) {
