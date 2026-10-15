@@ -115,7 +115,7 @@ fun GrantRow(grant: GrantView, modifier: Modifier = Modifier, onClick: () -> Uni
 }
 
 /**
- * Trust › Ended: the grants that ran out, dimmed. Resume opens the same choice of length with the old scope; Delete
+ * Trust › Ended: the grants that ran out, dimmed. Resume opens the same sheet as Extend with the old scope; Delete
  * asks once. What the "Expired" sheet of the Grants tab did, as a page.
  */
 @Composable
@@ -130,6 +130,7 @@ fun EndedGrantsScreen(
     val grants by state.grants.collectAsStateWithLifecycle()
     val ended = remember(grants) { grants.filterNot { it.active }.sortedByDescending { it.createdAt } }
     var resuming by remember { mutableStateOf<GrantView?>(null) }
+    var resumingMore by remember { mutableStateOf<GrantView?>(null) }
     var deleting by remember { mutableStateOf<GrantView?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -155,14 +156,33 @@ fun EndedGrantsScreen(
                 EndedRow(grant, Modifier.testTag("ended:${grant.id}"), onOpen = { onOpen(grant.id) }, onResume = { resuming = grant }, onDelete = { deleting = grant })
             }
         }
+        // Resume opens the same sheet as Extend, with the old scope; More options holds the rest.
+        LengthSheet(
+            resuming,
+            resume = true,
+            onClose = { resuming = null },
+            onConfirm = { seconds ->
+                val grant = resuming ?: return@LengthSheet
+                resuming = null
+                error = null
+                scope.launch {
+                    error = resumeAsItWas(grant, seconds, onResume)
+                    if (error == null && state.grants.value.any { it.id == grant.id && it.active }) onBack()
+                }
+            },
+            onMore = {
+                resumingMore = resuming
+                resuming = null
+            },
+        )
     }
 
-    resuming?.let { grant ->
+    resumingMore?.let { grant ->
         ResumeDialog(
             grant = grant,
-            onDismiss = { resuming = null },
+            onDismiss = { resumingMore = null },
             onResume = { seconds, standing ->
-                resuming = null
+                resumingMore = null
                 error = null
                 scope.launch {
                     error = onResume(grant.id, seconds, standing)

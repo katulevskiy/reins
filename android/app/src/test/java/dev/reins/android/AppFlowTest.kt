@@ -1176,8 +1176,9 @@ class AppFlowTest {
         tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
-        awaitTag("resumeDialog")
-        tap("period:WEEK")
+        // The same sheet as Extend: the chooser, then Resume.
+        awaitTag("resumeSheet")
+        tap("extend:WEEK")
         tap("confirmResume")
         awaitCore { core.resumed.isNotEmpty() }
         assertEquals(listOf("old" to 604_800uL), core.resumed.toList())
@@ -1192,6 +1193,7 @@ class AppFlowTest {
         tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
+        tap("resumeOptions")
         awaitTag("resumeDialog")
         assertFalse("the extras stay tucked away", has("customAmount"))
         tap("resumeMore")
@@ -1211,6 +1213,7 @@ class AppFlowTest {
         tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
+        tap("resumeOptions")
         tap("resumeMore")
         awaitTag("resumeParties")
         rule.onNodeWithTag("resumeParties").performTextReplacement("@bank.com, alerts@other.com")
@@ -1236,6 +1239,7 @@ class AppFlowTest {
         tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
+        tap("resumeOptions")
         tap("resumeMore")
         rule.onNodeWithTag("resumeParties").performTextReplacement("")
         tap("confirmResume")
@@ -1251,6 +1255,7 @@ class AppFlowTest {
         tap("tabTrust")
         tap("expiredHeader")
         tap("resume:old")
+        tap("resumeOptions")
         tap("resumeMore")
         awaitTextContaining("Comes back as it was")
         assertFalse(has("resumeParties"))
@@ -1263,7 +1268,13 @@ class AppFlowTest {
         tap("tabTrust")
         tap("expiredHeader")
         tap("resume:wide")
-        awaitTag("resumeDialog")
+        awaitTag("resumeSheet")
+        tap("extend:custom")
+        awaitTag("extend:4H")
+        assertFalse(has("extend:MONTH"))
+        // The full form says the same.
+        rule.onNodeWithTag("extend:4H").performClick()
+        tap("resumeOptions")
         awaitTag("period:WEEK")
         assertFalse(has("period:MONTH"))
     }
@@ -1352,6 +1363,7 @@ class AppFlowTest {
         assertFalse("an ended grant is deleted for good, not revoked", has("revoke"))
         awaitTag("deleteEnded")
         tap("resume")
+        awaitTag("resumeSheet")
         tap("confirmResume")
         awaitCore { core.resumed.isNotEmpty() }
         assertEquals("gone", core.resumed.single().first)
@@ -1363,8 +1375,8 @@ class AppFlowTest {
         launch()
         tap("tabTrust")
         tap("grant:g1")
-        tap("revoke")
-        rule.onAllNodes(hasText("End now")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
+        // Ending a grant is held, not confirmed in a dialog.
+        hold("revoke")
         awaitCore { core.revokedGrants.isNotEmpty() }
         assertEquals(listOf("g1"), core.revokedGrants.toList())
     }

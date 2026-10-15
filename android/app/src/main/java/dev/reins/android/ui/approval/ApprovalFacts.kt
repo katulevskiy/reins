@@ -347,16 +347,19 @@ private fun SendFacts(view: ApprovalView) {
 @Composable
 private fun WriteFacts(view: ApprovalView) {
     val c = LocalColors.current
-    if (view.preview.isNotEmpty()) {
+    // A line that only repeats the ask on the field ("Delete the repository octo/app") is left out: the consequence
+    // under it comes first.
+    val lines = previewLines(view)
+    if (lines.isNotEmpty()) {
         FactGroup(
             tag = "writePreview",
             rows = listOf {
                 Column(Modifier.padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    view.preview.forEachIndexed { i, line ->
+                    lines.forEachIndexed { shown, (i, line) ->
                         RText(
                             untrusted(line),
-                            if (i == 0) RType.sans(16f, FontWeight.SemiBold, lineHeight = 22f) else RType.sans(15f, lineHeight = 21f),
-                            if (i == 0) c.text else c.secondary,
+                            if (shown == 0) RType.sans(16f, FontWeight.SemiBold, lineHeight = 22f) else RType.sans(15f, lineHeight = 21f),
+                            if (shown == 0) c.text else c.secondary,
                             Modifier.testTag("previewLine:$i"),
                         )
                     }
@@ -365,6 +368,13 @@ private fun WriteFacts(view: ApprovalView) {
         )
     }
     view.account?.takeIf { it.isNotBlank() }?.let { FactGroup(rows = listOf { FactRow("Account", untrusted(it), mono = true) }) }
+}
+
+/** The preview lines with their index, without one that only says the ask again. */
+internal fun previewLines(view: ApprovalView): List<Pair<Int, String>> {
+    fun norm(t: String) = untrusted(t).lowercase().replace(Regex("\\s+"), " ").trimEnd('.', ' ')
+    val ask = norm(askWords(view).first)
+    return view.preview.withIndex().filter { (_, line) -> norm(line) != ask }.map { it.index to it.value }
 }
 
 // ---- a permission, accounts ---------------------------------------------------------------------------------------

@@ -1,6 +1,29 @@
 package dev.reins.android.ui.grants
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
+import dev.reins.android.design.AskText
+import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.Choice
+import dev.reins.android.design.Chooser
+import dev.reins.android.design.Field
+import dev.reins.android.design.FieldHeader
+import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.HoldButton
+import dev.reins.android.design.LabelText
+import dev.reins.android.design.RColors
+import dev.reins.android.design.Ring
+import dev.reins.android.design.RoundIconButton
+import dev.reins.android.design.SignalButton
+import dev.reins.android.design.pressable
+import dev.reins.android.ui.approval.AskDock
+import dev.reins.android.ui.approval.FactGroup
+import dev.reins.android.ui.approval.FactRow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -110,14 +133,12 @@ internal fun grantOrigin(origin: String, label: String): String = when {
     else -> "Chosen while approving a request"
 }
 
-/** The extend sheet's choices: from now on, for this long. */
-private val ExtendQuick = listOf(DurationChoice(3_600L, "1 hour", "extend:HOUR"), DurationChoice(86_400L, "1 day", "extend:DAY"))
-private val ExtendMore = listOf(
-    DurationChoice(4 * 3_600L, "4 hours", "extend:4H"),
-    DurationChoice(7 * 86_400L, "7 days", "extend:WEEK"),
-    DurationChoice(30 * 86_400L, "30 days", "extend:MONTH"),
-)
-
+/**
+ * A grant (Reins Signal, iOS-Trust 02): a violet field, because it is power already handed over, with the time left
+ * as its number and a ring that drains live. Under it, what the grant may and never does, its uses, when it ends,
+ * where it came from, and what it was used for. A running grant extends (a sheet with the chooser) or ends now, held;
+ * an ended one resumes (the same sheet) or is deleted.
+ */
 @Composable
 fun GrantDetailScreen(
     grantId: String,
@@ -136,128 +157,114 @@ fun GrantDetailScreen(
     val grants by state.grants.collectAsStateWithLifecycle()
     val activity by state.activity.collectAsStateWithLifecycle()
     val grant = grants.firstOrNull { it.id == grantId }
-    var confirming by remember { mutableStateOf(false) }
     var resuming by remember { mutableStateOf(false) }
+    var resumeMore by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var extending by remember { mutableStateOf(false) }
-    var extendFor by rememberSaveable { mutableStateOf(3_600L) }
-    var usedOpen by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    Box(Modifier.fillMaxSize().background(c.background)) {
-        SettingsPage(title = null, onBack = onBack) {
-            if (grant == null) {
-                EmptyState(Glyph.Key, "This grant is gone", null, tag = "grantGone")
-                return@SettingsPage
-            }
-            Hero(grant)
-
-            RText("It may", RType.sans(14f, FontWeight.Medium), c.accent, Modifier.padding(start = 22.dp, top = 22.dp, bottom = 8.dp))
-            SettingsGroup(gap = 0.dp) {
-                Column(Modifier.padding(vertical = 4.dp).testTag("itMay")) {
-                    grant.lines.forEach { MayLine(untrusted(it), allowed = true) }
-                    if (grant.lines.isEmpty()) MayLine(untrusted(grant.summary), allowed = true)
-                    grant.maxUses?.toInt()?.let { MayLine(if (it == 1) "Once" else "Up to $it times", allowed = true) }
-                    neverLines(grant).forEach { MayLine(it, allowed = false) }
-                }
-            }
-
-            val used = remember(activity, grant.id) { activity.filter { it.grantId == grant.id } }
-            val now = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
-            SettingsGroup(gap = 12.dp) {
-                ValueRow(
-                    "Uses",
-                    Modifier.testTag("uses"),
-                    value = grant.maxUses?.let { "${grant.uses} of $it" } ?: if (grant.uses == 0u) "Not used yet" else grant.uses.toString(),
-                )
-                ValueRow(
-                    if (grant.active) "Ends" else inactiveWord(grant),
-                    value = grant.expiresAt?.let { dayTime(it, now) } ?: "Never on its own",
-                )
-                ValueRow("Came from", Modifier.testTag("origin"), value = grantOrigin(grant.origin, untrusted(grant.connectionLabel)))
-                ValueRow("Used for", Modifier.testTag("usedFor"), value = used.size.toString(), open = usedOpen) { usedOpen = !usedOpen }
-                AnimatedVisibility(usedOpen) {
-                    Column(Modifier.padding(bottom = 8.dp)) {
-                        if (used.isEmpty()) RText("Nothing yet", RType.sans(14f), c.tertiary, Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+    if (grant == null) {
+        Box(Modifier.fillMaxSize().background(c.paper)) {
+            SettingsPage(title = null, onBack = onBack) { EmptyState(Glyph.Key, "This grant is gone", null, tag = "grantGone") }
+        }
+        return
+    }
+    Box(Modifier.fillMaxSize().background(c.paper)) {
+        Column(Modifier.fillMaxSize()) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                GrantField(grant, onBack)
+                Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    FactGroup(
+                        tag = "itMay",
+                        rows = buildList<@Composable () -> Unit> {
+                            grant.lines.forEach { line -> add { MayLine(untrusted(line), allowed = true) } }
+                            if (grant.lines.isEmpty()) add { MayLine(untrusted(grant.summary), allowed = true) }
+                            neverLines(grant).forEach { line -> add { MayLine(line, allowed = false) } }
+                        },
+                    )
+                    val now = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
+                    FactGroup(
+                        rows = listOf(
+                            { UsesRow(grant) },
+                            { FactRow(if (grant.active) "Ends" else inactiveWord(grant), grant.expiresAt?.let { dayTime(it, now) } ?: "Never on its own") },
+                            { FactRow("Came from", grantOrigin(grant.origin, untrusted(grant.connectionLabel)), Modifier.testTag("origin"), maxLines = 2) },
+                        ),
+                    )
+                    val used = remember(activity, grant.id) { activity.filter { it.grantId == grant.id } }
+                    Column {
+                        LabelText("Used for · ${used.size}", c.inkMeta, Modifier.padding(horizontal = 22.dp).padding(bottom = 4.dp).testTag("usedFor"))
+                        if (used.isEmpty()) {
+                            RText("Nothing yet", RType.meta, c.inkMeta, Modifier.padding(horizontal = 22.dp, vertical = 8.dp))
+                        }
                         used.take(20).forEach { entry ->
-                            Box(Modifier.testTag("usedEntry:${entry.id}")) { HistoryRow(entry, now, first = false, last = false, inset = 0.dp) { onOpenEntry(entry.id) } }
+                            Box(Modifier.testTag("usedEntry:${entry.id}")) { HistoryRow(entry, now, first = false, last = false, inset = 6.dp) { onOpenEntry(entry.id) } }
                         }
                     }
+                    if (grant.action == "secrets" && onRevokeSecrets != null) {
+                        RevokeEverywhere(grant.secretsProject, grant.secretsEnv, onRevokeSecrets, Modifier.padding(top = 4.dp))
+                    }
+                    Spacer(Modifier.height(24.dp))
                 }
             }
-            if (grant.action == "secrets" && onRevokeSecrets != null) {
-                RevokeEverywhere(grant.secretsProject, grant.secretsEnv, onRevokeSecrets, Modifier.padding(top = 18.dp))
-            }
-            Spacer(Modifier.height(130.dp))
-        }
-
-        if (grant != null) {
-            PageDock(Modifier.align(Alignment.BottomCenter)) {
-                error?.let { Banner(it, Modifier.padding(bottom = 10.dp), BannerKind.Error) }
+            AskDock {
+                error?.let { RText(it, RType.sans(13.5f, FontWeight.Medium, lineHeight = 18f), c.danger, Modifier.fillMaxWidth().testTag("grantError"), maxLines = 3) }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    val neutral = if (c.dark) Color(0xFF232327) else c.controlFill
                     if (grant.active) {
-                        PillButton("Extend", Modifier.weight(1f).testTag("extend"), icon = Icons.Rounded.Schedule, background = neutral, foreground = c.text, height = 56.dp, textSize = 16f, busy = busy) {
-                            extending = true
-                        }
-                        PillButton("End now", Modifier.weight(1f).testTag("revoke"), icon = Icons.Rounded.Block, background = c.danger.copy(alpha = 0.14f), foreground = c.danger, height = 56.dp, textSize = 16f) {
-                            confirming = true
+                        SignalButton("Extend", Modifier.weight(1f).testTag("extend"), style = ButtonStyle.Soft, glyph = Glyph.Timer, enabled = !busy) { extending = true }
+                        // Ending is held, like what can't be undone: the grant's power goes at once.
+                        HoldButton("End now", c.danger, Modifier.weight(1f).testTag("revoke"), icon = null, enabled = !busy, busy = busy) {
+                            busy = true
+                            error = null
+                            scope.launch {
+                                error = onRevoke(grant.id)
+                                busy = false
+                                if (error == null) onBack()
+                            }
                         }
                     } else {
-                        PillButton("Resume", Modifier.weight(1f).testTag("resume"), icon = Icons.Rounded.Refresh, background = neutral, foreground = c.text, height = 56.dp, textSize = 16f, busy = busy) {
-                            resuming = true
-                        }
-                        PillButton("Delete", Modifier.weight(1f).testTag("deleteEnded"), icon = Icons.Rounded.Delete, background = c.danger.copy(alpha = 0.14f), foreground = c.danger, height = 56.dp, textSize = 16f) {
-                            deleting = true
-                        }
+                        SignalButton("Resume", Modifier.weight(1f).testTag("resume"), style = ButtonStyle.Soft, glyph = Glyph.Refresh, enabled = !busy) { resuming = true }
+                        SignalButton("Delete", Modifier.weight(1f).testTag("deleteEnded"), style = ButtonStyle.DangerWash, enabled = !busy) { deleting = true }
                     }
                 }
             }
         }
 
-        BottomSheet(extending && grant != null, "Extend for", onClose = { extending = false }, tag = "extendSheet") {
-            Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)) {
-                DurationControl(ExtendQuick, ExtendMore, extendFor, customTag = "extend:custom") { extendFor = it }
-                RText("From now. Uses so far stay.", RType.sans(13f), c.tertiary, Modifier.padding(start = 6.dp, top = 10.dp, bottom = 16.dp))
-                val (bg, fg) = primaryFill(c)
-                PillButton("Extend", Modifier.fillMaxWidth().testTag("confirmExtend"), icon = Icons.Rounded.Fingerprint, background = bg, foreground = fg, height = 56.dp, textSize = 16.5f) {
-                    val id = grant?.id ?: return@PillButton
-                    extending = false
-                    busy = true
-                    error = null
-                    scope.launch {
-                        error = onExtend(id, extendFor)
-                        busy = false
-                    }
-                }
-            }
-        }
-    }
-
-    if (confirming && grant != null) {
-        ConfirmDialog(
-            title = "End this grant now?",
-            text = untrusted(grant.summary) + "\n\nYou can resume it later from Expired.",
-            confirmLabel = "End now",
-            onConfirm = {
-                confirming = false
+        // Extend for (a running grant) and Resume for (an ended one): the same sheet, the chooser with its menu.
+        LengthSheet(
+            grant.takeIf { extending || resuming },
+            resume = resuming,
+            onClose = {
+                extending = false
+                resuming = false
+            },
+            onConfirm = { seconds ->
+                val wasResume = resuming
+                extending = false
+                resuming = false
                 busy = true
+                error = null
                 scope.launch {
-                    error = onRevoke(grant.id)
+                    error = if (wasResume) resumeAsItWas(grant, seconds, onResume) else onExtend(grant.id, seconds)
                     busy = false
-                    if (error == null) onBack()
                 }
             },
-            onDismiss = { confirming = false },
+            onMore = if (resuming) {
+                {
+                    resuming = false
+                    resumeMore = true
+                }
+            } else {
+                null
+            },
         )
     }
 
-    if (deleting && grant != null) {
+    if (deleting) {
         ConfirmDialog(
             title = "Delete this grant for good?",
-            text = untrusted(grant.summary) + "\n\nIt cannot be resumed afterwards.",
+            text = untrusted(grant.summary) + "\n\nIt can't be resumed.",
             confirmLabel = "Delete",
             onConfirm = {
                 deleting = false
@@ -272,12 +279,13 @@ fun GrantDetailScreen(
         )
     }
 
-    if (resuming && grant != null) {
+    // A custom time, a number of uses, or a different scope: the full resume form.
+    if (resumeMore) {
         ResumeDialog(
             grant = grant,
-            onDismiss = { resuming = false },
+            onDismiss = { resumeMore = false },
             onResume = { seconds, standing ->
-                resuming = false
+                resumeMore = false
                 busy = true
                 scope.launch {
                     error = onResume(grant.id, seconds, standing)
@@ -288,45 +296,69 @@ fun GrantDetailScreen(
     }
 }
 
-/** The big ring with the time left, what the grant allows in one sentence, and whose it is. */
+/** The violet field: back, "Grant · Gmail", the time left with its ring, what it allows, and whose it is. */
 @Composable
-private fun Hero(grant: GrantView) {
+private fun GrantField(grant: GrantView, onBack: () -> Unit) {
     val c = LocalColors.current
     val now = rememberNowState(1_000, untilMillis = grant.expiresAt?.let { it * 1000 })
-    val clock by remember(grant, now) { derivedStateOf { grantClock(grant, now.value / 1000) } }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(120.dp).testTag("pie"), contentAlignment = Alignment.Center) {
-            if (grant.active) {
-                val color = clockColor(clock, c)
-                ProgressRing(clock.fraction, color, ringTrack(c), size = 120.dp, stroke = 14.dp)
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    RText(ringLabel(clock.remaining), RType.sans(28f, FontWeight.SemiBold), c.text, maxLines = 1)
-                    RText("left", RType.sans(12f), c.tertiary, maxLines = 1)
-                }
-            } else {
-                ProgressRing(0f, c.tertiary, ringTrack(c), size = 120.dp, stroke = 14.dp)
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Rounded.History, null, Modifier.size(28.dp), tint = c.tertiary)
-                    RText(inactiveWord(grant), RType.sans(12.5f, FontWeight.Medium), c.tertiary, maxLines = 1)
+    val clock = remember(grant) { derivedStateOf { grantClock(grant, now.value / 1000) } }
+    FieldHeader(Field.Grant) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            RoundIconButton(Glyph.ChevronLeft, "Back", onField = true, size = 36.dp, onClick = onBack)
+            LabelText("Grant · ${serviceName(grant.service.ifBlank { "gmail" })}", c.onField2, Modifier.weight(1f))
+        }
+        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            val value = clock.value
+            Row(Modifier.weight(1f).testTag("timeLeft"), verticalAlignment = Alignment.Bottom) {
+                if (grant.active) {
+                    RText(value.remaining?.let(::compactDuration) ?: "∞", RType.serif(56f, 58f), c.onField, maxLines = 1, ltr = true)
+                    RText(if (value.remaining != null) " left" else " no end", RType.serif(26f, 34f, italic = true), c.onField, Modifier.padding(bottom = 6.dp), maxLines = 1)
+                } else {
+                    RText(inactiveWord(grant), RType.serif(48f, 52f), c.onField, maxLines = 1)
                 }
             }
+            if (grant.active) {
+                Box(Modifier.testTag("pie")) { Ring(value.fraction, c.onField, c.onField.copy(alpha = 0.3f), 30.dp) }
+            }
         }
-        RText(untrusted(grant.summary), RType.sans(22f, FontWeight.SemiBold, lineHeight = 28f), c.text, Modifier.padding(top = 14.dp).testTag("grantTitle"), align = TextAlign.Center)
-        Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            ConnectionIcon(grant.connectionId, grant.connectionLabel, size = 16.dp)
-            Spacer(Modifier.width(6.dp))
-            RText("${untrusted(grant.connectionLabel)} · ${serviceName(grant.service.ifBlank { "gmail" })}", RType.sans(13.5f), c.tertiary, maxLines = 1)
+        AskText(untrusted(grant.summary), c.onField, Modifier.testTag("grantTitle"), style = RType.serif(36f, 38f), minSize = 28.sp, maxLines = 4)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CompositionLocalProvider(LocalColors provides RColors.Light) { ConnectionIcon(grant.connectionId, grant.connectionLabel, size = 20.dp) }
+            RText(
+                "${untrusted(grant.connectionLabel)} · ${serviceName(grant.service.ifBlank { "gmail" })}",
+                RType.sans(14f, FontWeight.Medium),
+                c.onField2,
+                maxLines = 1,
+            )
         }
     }
 }
 
-/** A line of "It may": a green check for what it may do, a red ban for what it never does. */
+/** "Uses   ▬▬▬▭▭▭   3 of 10": a short bar per use when there is a cap. */
+@Composable
+private fun UsesRow(grant: GrantView) {
+    val c = LocalColors.current
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(vertical = 9.dp).semantics(mergeDescendants = true) {}.testTag("uses"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RText("Uses", RType.sans(15f), c.ink2, Modifier.weight(1f), maxLines = 1)
+        grant.maxUses?.toInt()?.let { UseDots(grant.uses.toInt(), it, Modifier.padding(end = 12.dp)) }
+        RText(
+            grant.maxUses?.let { "${grant.uses} of $it" } ?: if (grant.uses == 0u) "Not used yet" else grant.uses.toString(),
+            RType.sans(15f, FontWeight.Medium),
+            c.ink,
+            maxLines = 1,
+        )
+    }
+}
+
+/** A line of what it may do: a green check, or a red ban for what it never does. */
 @Composable
 private fun MayLine(text: String, allowed: Boolean) {
     val c = LocalColors.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(if (allowed) Icons.Rounded.Check else Icons.Rounded.Block, null, Modifier.size(18.dp), tint = if (allowed) c.success else c.danger)
-        Spacer(Modifier.width(12.dp))
-        RText(text, RType.sans(15f), if (allowed) c.text else c.tertiary, maxLines = 3)
+    Row(Modifier.fillMaxWidth().padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        GlyphIcon(if (allowed) Glyph.Check else Glyph.Block, if (allowed) c.success else c.danger, size = 18.dp)
+        RText(text, RType.sans(15f, lineHeight = 20f), if (allowed) c.ink else c.ink2, Modifier.weight(1f), maxLines = 3)
     }
 }
