@@ -107,7 +107,12 @@ final class JoinModel {
 /// A join's words: Reins' own sentence; the phone's name only quoted, on a row of its own.
 enum JoinWords {
     static let label = "Account · New phone"
-    static let ask = "Add a phone to your account"
+    /// "Add a phone to *your account*": a phone, with a plus, on the accounts field.
+    static let line = AskLine(
+        kind: label, lead: "Add a phone to ", target: "your account",
+        icon: RequestIcon.Spec(mark: .glyph(.phone), action: .plus, kind: .accounts)
+    )
+    static let ask = line.text
 }
 
 private struct JoinContent: View {
@@ -118,7 +123,7 @@ private struct JoinContent: View {
     var body: some View {
         DecisionLayout(closeInField: true) {
             VStack(alignment: .leading, spacing: 0) {
-                SheetField(kind: .accounts, label: JoinWords.label, ask: JoinWords.ask)
+                SheetField(kind: .accounts, ask: JoinWords.line)
                 Text("A phone signed in to your account and asks for its keys. Approve only if it is yours and shows this code.")
                     .textRole(.body)
                     .foregroundStyle(Palette.ink2)

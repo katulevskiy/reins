@@ -85,7 +85,7 @@ private struct ApprovalScreen: View {
                         .frame(width: sideBySide ? geo.size.width / 2 : nil, height: sideBySide ? nil : geo.size.height / 2)
                     VStack(spacing: 16) {
                         Spacer(minLength: 0)
-                        Text(ApprovalWords.sentence(view).map(\.text).joined())
+                        Text(AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label).text)
                             .font(RFont.sans(22, .semibold))
                             .foregroundStyle(Palette.text)
                             .lineLimit(3)
@@ -153,7 +153,7 @@ private struct ApprovalScreen: View {
                         .padding(.bottom, 20)
                 }
                 .background(Palette.background.ignoresSafeArea())
-                .fieldBand(view, title: Self.title(view, page))
+                .fieldBand(view, title: Self.title(view, page), ask: AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label).text)
             }
         }
     }
@@ -205,9 +205,8 @@ extension ApprovalPage {
 extension View {
     /// A drill-in's bar as the field's band: the field's colour, the page's title with the ask beside it in one line,
     /// and the timer. The system bar stays, so the back button and the edge swipe work as anywhere.
-    func fieldBand(_ view: ApprovalView, title: String) -> some View {
-        let ask = AskWords.ask(view).text
-        return navigationTitle(title)
+    func fieldBand(_ view: ApprovalView, title: String, ask: String) -> some View {
+        navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(ApprovalWords.tone(view).field.fill, for: .navigationBar)
             .toolbarBackgroundVisibility(.visible, for: .navigationBar)

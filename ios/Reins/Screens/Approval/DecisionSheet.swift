@@ -75,8 +75,7 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
 /// row of its own below.
 struct SheetField: View {
     var kind: FieldKind
-    var label: String
-    var ask: String
+    var ask: AskLine
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -87,16 +86,7 @@ struct SheetField: View {
                     RoundHeaderButton(glyph: .close, label: "Close", onField: true, size: 36) { model.closeSheet() }
                         .accessibilityIdentifier("closeSheet")
                 }
-                Text(label)
-                    .textRole(.label)
-                    .foregroundStyle(Palette.onField2)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("fieldLabel")
-                AskText([AskText.Run(text: ask)])
-                    .foregroundStyle(Palette.onField)
-                    .padding(.top, 10)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("what")
+                AskHead(ask: ask, field: kind)
             }
             .padding(.horizontal, 22)
             .padding(.top, 16)

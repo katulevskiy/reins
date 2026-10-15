@@ -76,33 +76,19 @@ final class ApprovalFieldTests: XCTestCase {
         GitCommitView(shortSha: "a1b2c3d", subject: "x", author: "a", date: 0, filesChanged: nil, files: [], additions: nil, deletions: nil, hiddenChars: true)
     }
 
-    // MARK: The ask
+    // MARK: The ask (each kind: AskFormatTests)
 
-    func testTheAskIsWhatItDoesWithItsTargetInItalic() {
-        let p = push([ref()])
-        XCTAssertEqual(AskWords.ask(p).text, "Push 8 commits to octo/app")
-        XCTAssertEqual(AskWords.ask(p).target, "octo/app")
-        XCTAssertEqual(AskWords.runs(p).filter(\.target).map(\.text), ["octo/\u{2060}app"], "a slash never ends a line")
-        XCTAssertEqual(AskWords.label(p), "GitHub · Push")
-        XCTAssertEqual(AskWords.ask(ask()).text, "Run it?", "a question stays the question")
-        XCTAssertNil(AskWords.ask(ask()).target)
-        XCTAssertEqual(AskWords.label(ask()), "Computer · Asks")
-        XCTAssertEqual(AskWords.label(mcp(destructive: false)), "Linear · MCP tool")
-        XCTAssertEqual(AskWords.label(purchase()), "Payments · Buy")
-    }
-
-    func testALongAskIsSetSmallerAndNeverCut() {
+    func testALongQuestionIsWholeOnTheLineBelow() {
         var v = ask()
-        v.ask?.question = String(repeating: "Should this run on the build server? ", count: 6) + "THE END"
-        XCTAssertEqual(AskWords.role(v), .sheetTitle)
-        XCTAssertTrue(AskWords.ask(v).text.hasSuffix("THE END"))
-        XCTAssertEqual(AskWords.role(ask()), .ask)
+        v.ask?.question = String(repeating: "Should this run on the build server? ", count: 60) + "THE END"
+        XCTAssertEqual(AskFormat.waiting(v).role, .ask, "the sentence is Reins' own and short")
+        XCTAssertTrue(AskFormat.waiting(v).mono?.contains(v.ask!.question) == true, "the question is below, never cut")
     }
 
     func testTheOtherSidesServerNameIsOneShortLine() {
         var v = mcp(destructive: false)
         v.mcp?.serverName = "Linear\n" + String(repeating: "x", count: 200)
-        let label = AskWords.label(v)
+        let label = AskFormat.label(v)
         XCTAssertFalse(label.contains("\n"))
         XCTAssertLessThan(label.count, 90)
     }

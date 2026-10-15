@@ -1,107 +1,13 @@
 import SwiftUI
 
 // The ask as a field (Reins Signal, iOS-Approve, iOS-Kinds): a solid colour running into the top of the screen with
-// who asks and how long it waits, the label line ("GITHUB · PUSH"), the ask in the serif with its target in italic,
-// and under it every warning the request carries, each on a line of its own, then Autopilot's opinion. It replaces the
-// old washed hero and the agent bar above it.
+// who asks and how long it waits, the request's icon and label line ("GITHUB · PUSH"), the ask in the serif with its
+// target in italic and its machine details in mono under it (AskFormat), and every warning the request carries, each
+// on a line of its own, then Autopilot's opinion. It replaces the old washed hero and the agent bar above it.
 
-/// The ask in words (pure, unit-tested): the label line and the sentence, built from the hero's own sentence.
-enum AskWords {
-    /// "Push 8 commits to octo/app" and its target "octo/app"; a question from the computer stays the question.
-    static func ask(_ view: ApprovalView) -> (text: String, target: String?) {
-        let spans = ApprovalWords.sentence(view)
-        var plain = spans.map(\.text).joined().replacingOccurrences(of: "\n", with: " ")
-        while plain.contains("  ") { plain = plain.replacingOccurrences(of: "  ", with: " ") }
-        plain = plain.trimmingCharacters(in: .whitespaces)
-        if view.ask == nil {
-            if plain.hasPrefix("Wants to ") {
-                plain = String(plain.dropFirst("Wants to ".count))
-            } else if plain.hasPrefix("Wants ") {
-                plain = "Hand over " + plain.dropFirst("Wants ".count)
-            }
-        }
-        if let first = plain.first { plain = first.uppercased() + plain.dropFirst() }
-        let bold = spans.filter(\.bold)
-        var target: String?
-        if view.ask == nil, bold.count >= 2 {
-            let last = bold[bold.count - 1].text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-            if !last.isEmpty, plain.contains(last) { target = last }
-        }
-        // A resource's own label ("Branch main of octo/app") reads on in the sentence: "… to GitHub branch main of …".
-        if let t = target, view.git == nil, view.resources.contains(where: { untrusted($0.label) == t }), let range = plain.range(of: t, options: .backwards) {
-            let lowered = ApprovalWords.lowerFirst(t)
-            plain.replaceSubrange(range, with: lowered)
-            target = lowered
-        }
-        return (plain, target)
-    }
-
-    /// The ask as the serif's runs: the target (its last occurrence) in italic. A slash never ends a line ("octo/ app").
-    static func runs(_ view: ApprovalView) -> [AskText.Run] {
-        let (text, target) = ask(view)
-        let runs: [AskText.Run]
-        if let target, let range = text.range(of: target, options: .backwards) {
-            runs = [
-                AskText.Run(text: String(text[..<range.lowerBound])),
-                AskText.Run(text: target, target: true),
-                AskText.Run(text: String(text[range.upperBound...])),
-            ].filter { !$0.text.isEmpty }
-        } else {
-            runs = [AskText.Run(text: text)]
-        }
-        return runs.map { AskText.Run(text: $0.text.replacingOccurrences(of: "/", with: "/\u{2060}"), target: $0.target) }
-    }
-
-    /// A long ask (a question from the computer, a long command) is set smaller, never cut.
-    static func role(_ view: ApprovalView) -> TextRole { ask(view).text.count > 80 ? .sheetTitle : .ask }
-
-    /// The label line over the ask: what it touches, then what it does ("GitHub · Push", "Payments · Buy").
-    static func label(_ view: ApprovalView) -> String {
-        let where_: String
-        if let mcp = view.mcp {
-            where_ = untrustedName(mcp.serverName)
-        } else if view.purchase != nil {
-            where_ = "Payments"
-        } else if view.ask != nil {
-            where_ = "Computer"
-        } else if view.secrets != nil || ApprovalWords.isSecrets(view) {
-            where_ = "Vault"
-        } else if view.ssh != nil {
-            where_ = "SSH"
-        } else {
-            where_ = serviceName(view.service.isEmpty ? "gmail" : view.service)
-        }
-        return "\(where_) · \(what(view))"
-    }
-
-    private static func what(_ view: ApprovalView) -> String {
-        if view.mcp != nil { return "MCP tool" }
-        if view.purchase != nil { return "Buy" }
-        if view.ask != nil { return "Asks" }
-        if view.secrets != nil || view.envRelease != nil { return "Secrets" }
-        if view.secretsStore != nil || view.tokenStore != nil { return "Save" }
-        if view.ssh != nil { return "Sign in" }
-        if view.kind == .grant { return "Permission" }
-        if view.kind == .accounts { return "Accounts" }
-        if ApprovalWords.deletes(view) { return "Delete" }
-        if view.git != nil { return "Push" }
-        switch view.kind {
-        case .send: return "Send"
-        case .search: return "Search"
-        case .read: return "Read"
-        case .fetch: return "Fetch"
-        default: break
-        }
-        switch ApprovalWords.badge(view) {
-        case .search: return "Search"
-        case .read: return "Read"
-        case .list: return "List"
-        case .send: return "Send"
-        case .trash: return "Delete"
-        case .terminal: return "Run"
-        default: return "Change"
-        }
-    }
+extension AskLine {
+    /// A long ask (a question from the computer in its own words) is set smaller, never cut.
+    var role: TextRole { text.count > 80 ? .sheetTitle : .ask }
 }
 
 /// One warning line on the field: its own words, how it reads, and (for some) a longer reason behind its (?).
@@ -201,20 +107,9 @@ struct ApprovalField: View {
         SignalField(kind: ApprovalWords.tone(view).field) {
             VStack(alignment: .leading, spacing: 0) {
                 whoAsks
-                Text(AskWords.label(view))
-                    .textRole(.label)
-                    .foregroundStyle(Palette.onField2)
-                    .lineLimit(1)
-                    .padding(.top, 30)
-                    .accessibilityIdentifier("fieldLabel")
-                AskText(AskWords.runs(view), role: AskWords.role(view), lineLimit: nil)
-                    .foregroundStyle(Palette.onField)
-                    .padding(.top, 10)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(AskWords.ask(view).text)
-                    .accessibilityAddTraits(.isHeader)
-                    // A question is answered, so it is the question itself.
-                    .accessibilityIdentifier(view.ask != nil ? "askQuestion" : "what")
+                let ask = AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label, computer: computer)
+                AskHead(ask: ask, field: ApprovalWords.tone(view).field, askId: view.ask != nil ? "askQuestion" : "what")
+                    .padding(.top, 26)
                 FieldVerdicts(vm: vm, view: view, autopilot: autopilot).padding(.top, 16)
             }
             .padding(.horizontal, 22)
@@ -225,8 +120,13 @@ struct ApprovalField: View {
         .accessibilityIdentifier("hero")
     }
 
+    /// The asking computer's name, for a command with no folder of its own.
+    private var computer: String? {
+        findConnection(model.connections, id: view.connectionId, label: view.connectionLabel).map { asciiHost(untrustedName($0.clientHost)) }
+    }
+
     private var whoAsks: some View {
-        let host = findConnection(model.connections, id: view.connectionId, label: view.connectionLabel).map { untrustedName($0.clientHost) }
+        let host = computer
         return HStack(spacing: 10) {
             RoundHeaderButton(glyph: .close, label: "Close", onField: true, size: 36) { model.closeSheet() }
                 .accessibilityIdentifier("closeSheet")
@@ -239,6 +139,47 @@ struct ApprovalField: View {
                 .accessibilityElement(children: .combine)
             FieldTimer(view: view)
         }
+    }
+}
+
+/// The request on a field (ASK-TEXT): its icon beside the label line, the sentence in the serif with the target in
+/// italic, never cut, and its machine details in mono under it, wrapped and never cut either.
+struct AskHead: View {
+    var ask: AskLine
+    var field: FieldKind
+    /// The sentence's identifier: "what", or "askQuestion" for a question to answer.
+    var askId = "what"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                RequestIcon(spec: ask.icon, size: 34, ring: field.fill)
+                    .accessibilityIdentifier("requestIcon")
+                Text(ask.kind)
+                    .textRole(.label)
+                    .foregroundStyle(Palette.onField2)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("fieldLabel")
+            }
+            AskText(ask.runs, role: ask.role, lineLimit: nil)
+                .foregroundStyle(Palette.onField)
+                .padding(.top, 12)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(ask.text)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier(askId)
+            if let mono = ask.mono {
+                Text(verbatim: mono)
+                    .font(TextRole.value.font())
+                    .foregroundStyle(Palette.onField2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .environment(\.layoutDirection, .leftToRight)
+                    .textSelection(.enabled)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("askMono")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

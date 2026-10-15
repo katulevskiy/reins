@@ -37,7 +37,17 @@ enum PairWords {
     /// A computer shows its key's digits; an AI app on the web does not.
     static func computer(_ view: PairingView) -> Bool { view.keyFingerprint != nil }
     static func label(_ view: PairingView) -> String { computer(view) ? "Computer · Pair" : "AI app · Pair" }
-    static func ask(_ view: PairingView) -> String { computer(view) ? "Connect a computer" : "Connect an AI app" }
+
+    /// "Connect a *computer*", "Connect an *AI app*": a laptop or a link, with a plus, on the pair field.
+    static func line(_ view: PairingView) -> AskLine {
+        let computer = computer(view)
+        return AskLine(
+            kind: label(view), lead: computer ? "Connect a " : "Connect an ", target: computer ? "computer" : "AI app",
+            icon: RequestIcon.Spec(mark: .glyph(computer ? .laptop : .link), action: .plus, kind: .pair)
+        )
+    }
+
+    static func ask(_ view: PairingView) -> String { line(view).text }
 
     /// “Gemini”: a name the other side sent, quoted, on one line, capped and cleaned; "No name" for none.
     static func quoted(_ name: String) -> String {
@@ -159,11 +169,11 @@ private struct PairingContent: View {
     var body: some View {
         DecisionLayout(closeInField: true) {
             VStack(alignment: .leading, spacing: 0) {
-                SheetField(kind: .pair, label: PairWords.label(view), ask: PairWords.ask(view))
+                SheetField(kind: .pair, ask: PairWords.line(view))
                 // What the other side calls itself: quoted, on rows of their own, never the ask.
                 FactGroup {
                     FactRow(key: "Calls itself", value: PairWords.quoted(view.clientName), valueId: "pairName")
-                    let host = untrustedName(view.clientHost, limit: 64)
+                    let host = asciiHost(untrustedName(view.clientHost, limit: 64))
                     if !host.isEmpty { FactRow(key: "From", value: host, mono: true, valueId: "pairHost") }
                     if let fingerprint = view.keyFingerprint { DesktopKeyRow(fingerprint: fingerprint) }
                 }
