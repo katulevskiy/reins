@@ -71,36 +71,16 @@ enum ActivityText {
         return auto == 0 ? "\(entries.count) asked" : "\(entries.count) asked · \(auto) by Autopilot"
     }
 
-    /// The label line of a waiting card: "Gmail · Send" (set in mono capitals).
-    static func label(_ item: PendingItem) -> String {
-        switch item.kind {
-        case .pairing: return "Computer · Pair"
-        case .join: return "Account · New phone"
-        case .blob: return "Files · Share"
-        case .request: break
-        }
-        let service = item.label.map(\.provider) ?? item.service
-        let action = item.label.map(\.action) ?? item.action
-        let name = service.isEmpty ? "Request" : serviceName(service)
-        let verb = action.isEmpty ? "" : " · " + action.replacingOccurrences(of: "_", with: " ")
-        return name + verb
-    }
+    /// The label line of a waiting card: "Gmail · Send" (set in mono capitals), from the core's provider and action.
+    static func label(_ item: PendingItem) -> String { AskLabels.pending(item, field: field(item, danger: false)).kind }
 
-    /// The ask on a waiting card, its target in italic: the core's label ("Send an email to" *Anna Petrova*), or the
-    /// sentence Activity says ("Search Gmail for" *“invoice”*).
-    static func ask(_ group: WaitGroup) -> [AskText.Run] {
-        if !group.isBurst, let label = group.first.label {
-            let lead = untrusted(label.lead)
-            let subject = untrusted(label.subject)
-            let tail = untrustedLine(label.tail)
-            var runs: [AskText.Run] = []
-            if !lead.isEmpty { runs.append(.init(text: subject.isEmpty ? lead : lead + " ")) }
-            if !subject.isEmpty { runs.append(.init(text: subject, target: true)) }
-            if !tail.isEmpty { runs.append(.init(text: tail)) }
-            return runs
+    /// The ask on a waiting card (ASK-TEXT): the shared formatter's sentence, one italic target; a burst of several
+    /// asks says how many.
+    static func ask(_ group: WaitGroup, line: AskLine? = nil) -> [AskText.Run] {
+        if !group.isBurst {
+            return (line ?? AskLabels.pending(group.first, field: field(group.first, danger: false))).runs
         }
-        let pieces = group.isBurst ? WantsText.of(burst: group.items) : WantsText.of(group.first)
-        return runs(pieces)
+        return runs(WantsText.of(burst: group.items))
     }
 
     /// "Wants to **read 2 emails**" as an ask: the AI's wish turned into what it would do, "Read 2 emails".
@@ -232,19 +212,34 @@ struct FieldWaitCard: View {
     private var pick: AutopilotPick? { ActivityText.pick(advice, suggestion) }
 
     var body: some View {
+        let line = AskLabels.pending(item, field: field)
         WaitCardShell(
-            kind: field, label: ActivityText.label(item), ask: AskText(ActivityText.ask(group), role: .askSmall),
+            kind: field, label: line.kind, ask: AskText(ActivityText.ask(group, line: line), role: .askSmall),
             askIdentifier: "pendingTitle:\(item.id)"
         ) {
-            ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: 24)
-                .environment(\.colorScheme, .light)
+            RequestIcon(spec: line.icon, size: 30, ring: field.fill)
+                .accessibilityIdentifier("cardIcon:\(item.id)")
         } timer: {
             TimerPill(createdAt: item.createdAt, waitUntil: item.kind == .blob ? nil : group.items.compactMap(\.waitUntil).min(), onField: true)
         } actions: {
             VStack(alignment: .leading, spacing: 12) {
-                if let detail = ActivityText.detail(item) {
-                    Text(detail).font(RFont.sans(13.5)).foregroundStyle(Palette.onField2).lineLimit(2).padding(.top, -4)
+                // Machine details under the ask (a command, a branch, an address), never in the serif.
+                if !group.isBurst, let mono = line.mono ?? ActivityText.detail(item) {
+                    Text(verbatim: mono)
+                        .font(RFont.mono(12.5))
+                        .foregroundStyle(Palette.onField2)
+                        .lineLimit(2)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .padding(.top, -4)
+                        .accessibilityIdentifier("cardDetails:\(item.id)")
                 }
+                // Who asks, now that the icon is the request's.
+                HStack(spacing: 6) {
+                    ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: 18)
+                        .environment(\.colorScheme, .light)
+                    Text(verbatim: untrustedName(item.connectionLabel)).font(RFont.sans(13)).foregroundStyle(Palette.onField2).lineLimit(1)
+                }
+                .accessibilityElement(children: .combine)
                 if group.isBurst { peek }
                 if let pick {
                     WaitCardButtons(pick: pick, onPick: { take(pick) }, onReview: review)

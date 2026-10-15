@@ -110,7 +110,7 @@ enum JoinWords {
     /// "Add a phone to *your account*": a phone, with a plus, on the accounts field.
     static let line = AskLine(
         kind: label, lead: "Add a phone to ", target: "your account",
-        icon: RequestIcon.Spec(mark: .glyph(.phone), action: .plus, kind: .accounts)
+        icon: AskIcon(mark: .glyph(.phone), action: .plus, kind: .accounts)
     )
     static let ask = line.text
 }

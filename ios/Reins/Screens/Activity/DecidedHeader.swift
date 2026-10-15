@@ -8,28 +8,32 @@ struct DecidedHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            let line = EntryLook.line(entry)
             HStack(spacing: 12) {
-                Group {
-                    if let field = EntryLook.field(entry) {
-                        KindTile(field, glyph: EntryLook.glyph(entry))
-                    } else {
-                        GlyphIcon(EntryLook.glyph(entry), size: 20)
-                            .foregroundStyle(Palette.ink2)
-                            .frame(width: 38, height: 38)
-                            .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                    }
-                }
-                .accessibilityHidden(true)
+                RequestIcon(spec: line.icon, size: 40)
+                    .accessibilityHidden(true)
+                    .accessibilityIdentifier("entryIcon")
                 Text(Self.labelLine(entry))
                     .textRole(.label)
                     .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            AskText(Self.runs(entry), role: .sheetTitle)
+            AskText(line.runs, role: .sheetTitle, lineLimit: nil)
                 .foregroundStyle(Palette.ink)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(line.text)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("detailTitle")
+            if let mono = line.mono {
+                Text(verbatim: mono)
+                    .font(TextRole.value.font())
+                    .foregroundStyle(Palette.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .environment(\.layoutDirection, .leftToRight)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("detailDetails")
+            }
             // An entry without a label says what it was about under its line.
             let detail = untrusted(entry.detail).trimmingCharacters(in: .whitespacesAndNewlines)
             if entry.label == nil, !detail.isEmpty {
@@ -52,29 +56,13 @@ struct DecidedHeader: View {
         .accessibilityIdentifier("entryHero")
     }
 
-    /// "GITHUB · PUSH · TODAY 14:32" (set in capitals).
+    /// "GITHUB · PUSH · TODAY 14:32" (set in capitals): the core's kind, and when.
     static func labelLine(_ entry: ActivityEntry) -> String {
-        let service = entry.label?.provider ?? entry.service
-        let action = entry.label?.action ?? (entry.op.isEmpty ? entry.action : entry.op)
-        let parts = [service.isEmpty ? "" : serviceName(service), action.replacingOccurrences(of: "_", with: " "),
-                     AskedText.dayTime(entry.at).replacingOccurrences(of: ",", with: "")]
-        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+        "\(EntryLook.line(entry).kind) · \(AskedText.dayTime(entry.at).replacingOccurrences(of: ",", with: ""))"
     }
 
-    /// The line as an ask: the label's lead, its subject in italic, its tail; else the operation's title.
-    static func runs(_ entry: ActivityEntry) -> [AskText.Run] {
-        let done = ActivityText.done(entry)
-        guard let label = entry.label else { return [AskText.Run(text: done ? ActivityText.past(EntryText.title(entry)) : EntryText.title(entry))] }
-        let lead = untrusted(label.lead)
-        let subject = untrusted(label.subject)
-        let tail = untrustedLine(label.tail)
-        let said = done ? ActivityText.past(lead) : lead
-        var runs: [AskText.Run] = []
-        if !said.isEmpty { runs.append(.init(text: subject.isEmpty ? said : said + " ")) }
-        if !subject.isEmpty { runs.append(.init(text: subject, target: true)) }
-        if !tail.isEmpty { runs.append(.init(text: tail)) }
-        return runs
-    }
+    /// The line as an ask (ASK-TEXT): told as it ended, its target in italic.
+    static func runs(_ entry: ActivityEntry) -> [AskText.Run] { EntryLook.line(entry).runs }
 
     /// Autopilot's verdicts in violet; yours in ink-2; denials, failures and Lockdown in their colour.
     static func verdictTint(_ entry: ActivityEntry) -> Color {

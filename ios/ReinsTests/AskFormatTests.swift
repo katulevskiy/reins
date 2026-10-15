@@ -10,7 +10,7 @@ final class AskFormatTests: XCTestCase {
     /// The sentence, its target, its mono line; and the rules every ask keeps.
     private func check(
         _ line: AskLine, _ text: String, target: String?, mono: String? = nil, kind: String? = nil,
-        icon: RequestIcon.Spec? = nil, file: StaticString = #filePath, lineNo: UInt = #line
+        icon: AskIcon? = nil, file: StaticString = #filePath, lineNo: UInt = #line
     ) {
         XCTAssertEqual(line.text, text, file: file, line: lineNo)
         XCTAssertEqual(line.target, target, file: file, line: lineNo)
@@ -45,7 +45,7 @@ final class AskFormatTests: XCTestCase {
     func testAPushNamesItsRepositoryAndPutsTheBranchInMono() {
         let line = AskFormat.waiting(push([ref("feature/passkeys", change: "create", commits: 8)]))
         check(line, "Push 8 commits to octo/app", target: "octo/app", mono: "feature/passkeys · new branch", kind: "GitHub · Push",
-              icon: RequestIcon.Spec(mark: .service("github"), action: .gitBranch, kind: .push))
+              icon: AskIcon(mark: .service("github"), action: .gitBranch, kind: .push))
         XCTAssertEqual(line.runs.filter(\.target).map(\.text), ["octo/\u{2060}app"], "a slash never ends a line")
         XCTAssertFalse(line.text.contains("feature/passkeys"), "a branch never goes into the serif")
         check(AskFormat.waiting(push([ref("main", force: true, commits: 2)])), "Force-push 2 commits to octo/app", target: "octo/app", mono: "main · force")
@@ -53,7 +53,7 @@ final class AskFormatTests: XCTestCase {
 
     func testADeletedBranchIsDeletedFromItsRepository() {
         check(AskFormat.waiting(push([ref("old-experiment", change: "delete", commits: 0)])), "Delete a branch from octo/app", target: "octo/app",
-              mono: "old-experiment · delete", icon: RequestIcon.Spec(mark: .service("github"), action: .trash, kind: .push))
+              mono: "old-experiment · delete", icon: AskIcon(mark: .service("github"), action: .trash, kind: .push))
     }
 
     func testTagsArePushedToTheRepository() {
@@ -71,18 +71,18 @@ final class AskFormatTests: XCTestCase {
                     matched: "rm -rf jarx", destructive: true)
         let line = AskFormat.waiting(v, core: core("terminal", "delete", "rm -rf jarx"), computer: "laptop")
         check(line, "Run a command on laptop", target: "laptop", mono: "rm -rf jarx", kind: "Computer · Run",
-              icon: RequestIcon.Spec(mark: .glyph(.terminal), action: .trash, kind: .delete))
+              icon: AskIcon(mark: .glyph(.terminal), action: .trash, kind: .delete))
         XCTAssertFalse(line.text.contains("rm -rf"), "a command never goes into the serif")
         // No guard match: the core's own reading of the command.
         let plain = ask(question: "q", detail: "Command:\nnpm test")
         check(AskFormat.waiting(plain, core: core("terminal", "run", "npm test", tail: " and 1 more")), "Run a command on your computer",
-              target: "your computer", mono: "npm test and 1 more", icon: RequestIcon.Spec(mark: .glyph(.terminal), action: .play, kind: .push))
+              target: "your computer", mono: "npm test and 1 more", icon: AskIcon(mark: .glyph(.terminal), action: .play, kind: .push))
     }
 
     func testAFileQuestionSaysWhatTheCoreReadAndShowsThePath() {
         let v = ask(question: "Claude Code wants to read .env", detail: "Files:\napp/.env")
         check(AskFormat.waiting(v, core: core("file", "read", "app/.env", tail: " and 1 more"), computer: "laptop"), "Read a file on laptop",
-              target: "laptop", mono: "app/.env and 1 more", kind: "Computer · Files", icon: RequestIcon.Spec(mark: .glyph(.file), action: .eye, kind: .push))
+              target: "laptop", mono: "app/.env and 1 more", kind: "Computer · Files", icon: AskIcon(mark: .glyph(.file), action: .eye, kind: .push))
         check(AskFormat.waiting(v, core: core("file", "write", "app/.env")), "Change a file on your computer", target: "your computer", mono: "app/.env")
     }
 
@@ -91,7 +91,7 @@ final class AskFormatTests: XCTestCase {
         let v = ask(question: "Claude Code wants to run: rm -rf ~", detail: "Command:\nrm -rf ~")
         check(AskFormat.waiting(v, computer: "laptop"), "Answer a question from laptop", target: "laptop",
               mono: "Claude Code wants to run: rm -rf ~\nCommand:\nrm -rf ~", kind: "Computer · Asks",
-              icon: RequestIcon.Spec(mark: .glyph(.help), action: .help, kind: .push))
+              icon: AskIcon(mark: .glyph(.help), action: .help, kind: .push))
         check(AskFormat.waiting(ask(question: "Deploy to staging now?", detail: nil), core: RequestLabel(
             provider: "desktop", action: "ask", lead: "Deploy to staging now?", subject: "", code: false, tail: ""
         )), "Answer a question from your computer", target: "your computer", mono: "Deploy to staging now?")
@@ -102,7 +102,7 @@ final class AskFormatTests: XCTestCase {
         v.mcp = McpCallView(serverName: "Linear", serverUrl: "https://mcp.linear.app", tool: "create_issue", title: "Create issue",
                             description: "", argumentsJson: "{}", readOnly: false, destructive: false)
         check(AskFormat.waiting(v), "Use a tool on Linear", target: "Linear", mono: "create_issue", kind: "Linear · MCP tool",
-              icon: RequestIcon.Spec(mark: .service("mcp"), action: .pencil, kind: .push))
+              icon: AskIcon(mark: .service("mcp"), action: .pencil, kind: .push))
     }
 
     func testAReleaseNamesTheEnvironmentAndShowsTheCommand() {
@@ -113,7 +113,7 @@ final class AskFormatTests: XCTestCase {
             allVariables: false, leaseSecs: 3_600, purpose: nil, commands: [], print: false, alwaysAsk: false, alwaysAskSet: false
         )
         check(AskFormat.waiting(v), "Release 2 variables of web · dev", target: "web · dev", mono: "npm run dev -- --port 3000", kind: "Vault · Secrets",
-              icon: RequestIcon.Spec(mark: .glyph(.lock), action: .key, kind: .push))
+              icon: AskIcon(mark: .glyph(.lock), action: .key, kind: .push))
     }
 
     func testSecretsSavedInTheVault() {
@@ -136,7 +136,7 @@ final class AskFormatTests: XCTestCase {
         v.email = EmailView(to: ["Anna Petrova <anna@example.com>", "bob@example.com"], cc: [], subject: "Hi", body: "")
         check(AskFormat.waiting(v), "Send an email to 2 people from your Gmail", target: "your Gmail",
               mono: "Anna Petrova <anna@example.com>, bob@example.com", kind: "Gmail · Send",
-              icon: RequestIcon.Spec(mark: .service("gmail"), action: .send, kind: .push))
+              icon: AskIcon(mark: .service("gmail"), action: .send, kind: .push))
     }
 
     func testASearchReadsFromItsSenderAndShowsTheQueryInMono() {
@@ -145,7 +145,7 @@ final class AskFormatTests: XCTestCase {
             MessageView(id: "2", from: "Bank <a@bank.com>", subject: "t", date: 0, snippet: "", coveredByGrant: false, sensitive: false),
         ])
         check(AskFormat.waiting(v), "Read 2 emails from your Gmail", target: "your Gmail", mono: "from:bank newer_than:30d", kind: "Gmail · Search",
-              icon: RequestIcon.Spec(mark: .service("gmail"), action: .search, kind: .read))
+              icon: AskIcon(mark: .service("gmail"), action: .search, kind: .read))
     }
 
     func testAPermissionAndTheAccounts() {
@@ -161,7 +161,7 @@ final class AskFormatTests: XCTestCase {
             addresses: [], addressId: nil, warnings: [], budgetLines: [], limitMethods: [], delivery: nil
         )
         check(AskFormat.waiting(v), "Pay $63.29 at acme.com", target: "acme.com", mono: "Acme Supply", kind: "Payments · Buy",
-              icon: RequestIcon.Spec(mark: .glyph(.card), action: .send, kind: .delete))
+              icon: AskIcon(mark: .glyph(.card), action: .send, kind: .delete))
     }
 
     func testAChangeElsewhereNamesWhatItTouches() {
@@ -171,18 +171,18 @@ final class AskFormatTests: XCTestCase {
         let delete = T.view("d", kind: .write, service: "github", op: "repo_delete", resources: [ResourceView(id: "o", label: "octo/old-api", wider: false)],
                             noStanding: true, opTitle: "Delete a GitHub repository", action: "write")
         check(AskFormat.waiting(delete), "Delete the repository octo/old-api", target: "octo/old-api", kind: "GitHub · Delete",
-              icon: RequestIcon.Spec(mark: .service("github"), action: .trash, kind: .delete))
+              icon: AskIcon(mark: .service("github"), action: .trash, kind: .delete))
     }
 
     func testPairingAndJoiningAskInReinsOwnWords() {
         let pairing = PairingView(id: "p", clientName: "Gemini", clientHost: "gemini.google.com", choices: Data([1, 2, 3]), createdAt: 0, keyFingerprint: nil)
         check(PairWords.line(pairing), "Connect an AI app", target: "AI app", kind: "AI app · Pair",
-              icon: RequestIcon.Spec(mark: .glyph(.link), action: .plus, kind: .pair))
+              icon: AskIcon(mark: .glyph(.link), action: .plus, kind: .pair))
         var computer = pairing
         computer.keyFingerprint = "4821 9930"
         check(PairWords.line(computer), "Connect a computer", target: "computer", kind: "Computer · Pair")
         check(JoinWords.line, "Add a phone to your account", target: "your account", kind: "Account · New phone",
-              icon: RequestIcon.Spec(mark: .glyph(.phone), action: .plus, kind: .accounts))
+              icon: AskIcon(mark: .glyph(.phone), action: .plus, kind: .accounts))
     }
 
     // MARK: Crafted inputs: the sentence never claims more, or other, than what was asked

@@ -115,20 +115,22 @@ enum NotificationText {
         }
     }
 
-    /// "Claude: Send email to 2"; a pairing names the client.
-    static func headline(_ item: PendingItem) -> String {
-        if item.kind == .pairing || item.kind == .join { return untrusted(item.title) }
-        return fullTitle(label: item.connectionLabel, action: item.action, count: Int(item.count), service: item.service, title: item.opTitle, op: item.op)
-    }
+    /// The request as everywhere else (ASK-TEXT): "Claude: Push 3 commits to octo/app". A pairing or a new phone in
+    /// Reins' own words: the other side's name is never the sentence.
+    static func headline(_ item: PendingItem) -> String { AskLabels.listTitle(item) }
 
-    /// What waits, then what approving does (the core's sentence), its detail (the account, the query) and Autopilot's
-    /// suggestion, one per line. The detail is not the notification's subtitle: iOS sets that in bold above the body,
-    /// which would put the query before what the AI wants to do.
+    /// What waits, its machine details (a branch, a command, an address, the other side's quoted name), what approving
+    /// does (the core's sentence), its detail (the account) and Autopilot's suggestion, one per line. The detail is not
+    /// the notification's subtitle: iOS sets that in bold above the body, which would put it before what is asked.
     static func body(_ item: PendingItem) -> String {
-        [headline(item), untrusted(item.headline), untrusted(item.subtitle), item.suggestion.map(untrusted) ?? ""]
+        let mono = line(item).mono ?? ""
+        let subtitle = untrusted(item.subtitle)
+        return [headline(item), mono, untrusted(item.headline), subtitle == mono ? "" : subtitle, item.suggestion.map(untrusted) ?? ""]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
     }
+
+    private static func line(_ item: PendingItem) -> AskLine { AskLabels.pending(item, field: FieldKind.of(ActionKind.of(item.action))) }
 
     static func decisionTitle(_ d: AutoDecisionView) -> String {
         let approved = d.verdict == .approve
