@@ -78,15 +78,16 @@ struct DevicesScreen: View {
             }
             Section {
                 let about = [
-                    me?.approval == true ? "Your approval device: requests come here" : nil,
-                    vm.phoneKey.map { "Key for reins vault add: \($0)" },
+                    me?.approval == true ? "Requests come here" : nil,
+                    vm.phoneKey.map { "Key \($0), for reins vault add" },
                 ].compactMap { $0 }.joined(separator: "\n")
                 InfoRow(
                     title: me.map { untrusted($0.name) } ?? "This phone",
                     subtitle: about.isEmpty ? nil : about,
-                    symbol: "iphone",
-                    tint: Palette.accent
-                ) { EmptyView() }
+                    symbol: "iphone"
+                ) {
+                    if me?.approval == true { ApprovesPill() }
+                }
                 .accessibilityIdentifier("thisDevice")
                 .cardRow()
             } header: {
@@ -104,12 +105,14 @@ struct DevicesScreen: View {
                     HStack(spacing: 10) {
                         InfoRow(
                             title: untrusted(device.name),
-                            subtitle: "\(device.platform) · last seen \(TimeText.relative(device.lastSeenAt))" + (device.approval ? "\nApproval device" : ""),
+                            subtitle: "\(device.platform) · last seen \(TimeText.relative(device.lastSeenAt))",
                             symbol: DevicesModel.symbol(device.kind)
-                        ) { EmptyView() }
+                        ) {
+                            if device.approval { ApprovesPill() }
+                        }
                         Button("Sign out", role: .destructive) { signingOut = device }
                             .buttonStyle(.borderless)
-                            .font(RFont.sans(15, .semibold))
+                            .font(TextRole.buttonSmall.font())
                             .disabled(vm.busy)
                             .accessibilityIdentifier("signOutDevice:\(device.id)")
                     }
@@ -172,5 +175,13 @@ struct DevicesScreen: View {
             Text("\(device.platform) · signed in \(TimeText.relative(device.createdAt)) · last seen \(TimeText.relative(device.lastSeenAt)). The app on it can no longer open your vault, sync or answer requests, and cannot sign in again as it is. Someone with its passcode could still read your recovery code on it (see I lost my phone in the help). Type your recovery code (or master password) to confirm.")
         }
         .presentationFeedback(signingOut != nil)
+    }
+}
+
+/// The phone the requests go to: the only green on the page.
+private struct ApprovesPill: View {
+    var body: some View {
+        StatusPill(text: "Approves", tint: Palette.success)
+            .accessibilityLabel("Approval phone")
     }
 }
