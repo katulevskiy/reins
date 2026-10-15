@@ -222,7 +222,7 @@ impl Root {
                 ),
             ),
             Look::Paused => (
-                pal.warning,
+                pal.danger,
                 vec![("git goes ", false), ("straight to the hosts", true), (" for now", false)],
                 Some(
                     btn_icon("hero-resume", Icon::Play, "Resume", Btn::Primary, pal)
@@ -269,7 +269,7 @@ impl Root {
         } else if d.look == Look::Paused
             && let Some(left) = d.pause.short(d.now)
         {
-            chips = chips.child(chip(Some(Icon::Pause), left, pal.warning));
+            chips = chips.child(chip(Some(Icon::Pause), left, pal.danger));
         }
         let action = action.unwrap_or_else(|| {
             let sending = matches!(d.test, Test::Waiting(_));
