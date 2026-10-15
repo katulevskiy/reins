@@ -11,11 +11,7 @@ enum SnapshotWriter {
         case .blob: .blob
         case .join: .join
         }
-        let title: String = switch p.kind {
-        case .pairing, .join: untrusted(p.title)
-        case .blob: "\(untrusted(p.connectionLabel)): Share a file"
-        case .request: fullTitle(label: p.connectionLabel, action: p.action, count: Int(p.count), service: p.service, title: p.opTitle, op: p.op)
-        }
+        let title = AskLabels.listTitle(p)
         return Snapshot.Item(
             id: p.id,
             kind: kind,

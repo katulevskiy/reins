@@ -37,11 +37,12 @@ final class ActivitySignalTests: XCTestCase {
 
     func testAWaitingCardSaysItsKindAndAsksWithItsTargetInItalic() {
         let send = item(label: DemoData.requestLabel("gmail", "send", "Send an email to", "Anna Petrova"))
-        XCTAssertEqual(ActivityText.label(send), "Gmail · send")
-        XCTAssertEqual(ActivityText.ask(WaitGroup(items: [send])), [
-            AskText.Run(text: "Send an email to "), AskText.Run(text: "Anna Petrova", target: true),
-        ])
-        XCTAssertEqual(ActivityText.label(item(kind: .pairing)), "Computer · Pair")
+        XCTAssertEqual(ActivityText.label(send), "Gmail · Send")
+        // A recipient's name is the AI's own words: it goes below the sentence (AskLabelsTests has every kind).
+        XCTAssertEqual(ActivityText.ask(WaitGroup(items: [send])), [AskText.Run(text: "Send an email")])
+        let push = item(label: DemoData.requestLabel("github", "push", "Push 3 commits to", "acme/web"))
+        XCTAssertEqual(ActivityText.ask(WaitGroup(items: [push])).filter(\.target).map(\.text), ["acme/\u{2060}web"])
+        XCTAssertEqual(ActivityText.label(item(kind: .pairing)), "Reins · Connect")
         XCTAssertEqual(ActivityText.label(item(kind: .join)), "Account · New phone")
         // Without a label: the AI's wish as what it would do.
         let runs = ActivityText.runs([WantsText.Piece(text: "Wants to "), WantsText.Piece(text: "search Gmail", strong: true),
@@ -80,7 +81,7 @@ final class ActivitySignalTests: XCTestCase {
         XCTAssertEqual(HistoryRow.title(pushed), "Pushed 3 commits to acme/web")
         let denied = DemoData.entry(2, at: 0, action: "write", outcome: "denied", detail: "", service: "github",
                                     requestLabel: DemoData.requestLabel("github", "delete", "Delete branch", "old/experiment"))
-        XCTAssertEqual(HistoryRow.title(denied), "Delete branch old/experiment", "what was denied keeps its ask")
+        XCTAssertEqual(HistoryRow.title(denied), "Asked to delete branch old/experiment", "what was denied says what was asked")
     }
 
     func testTheRiversTilesAreTheKindsGlyphs() {

@@ -176,6 +176,9 @@ struct EntryMark: View {
 
 /// What an entry is, as the river shows it: its kind's field (or none) and the glyph on its tile (pure, unit-tested).
 enum EntryLook {
+    /// The entry written (ASK-TEXT): its sentence, told as it ended, and its icon. `who` starts a past sentence.
+    static func line(_ entry: ActivityEntry, who: String? = nil) -> AskLine { AskLabels.entry(entry, field: field(entry), who: who) }
+
     static func field(_ entry: ActivityEntry) -> FieldKind? {
         let verb = (entry.label?.action ?? entry.op).lowercased()
         if verb.hasPrefix("delete") || entry.opTitle.hasPrefix("Delete") { return .delete }
@@ -213,24 +216,25 @@ struct HistoryRow: View {
 
     var body: some View {
         let field = EntryLook.field(entry)
+        let line = EntryLook.line(entry)
         HStack(alignment: .center, spacing: 14) {
-            Group {
-                if let field {
-                    KindTile(field, glyph: EntryLook.glyph(entry))
-                } else {
-                    GlyphIcon(EntryLook.glyph(entry), size: 20)
-                        .foregroundStyle(Palette.ink2)
-                        .frame(width: 38, height: 38)
-                        .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                }
-            }
-            .foldTile(entry.id)
-            .accessibilityHidden(true)
+            RequestIcon(spec: line.icon, size: 36, ring: selected ? Palette.accentSoft : Palette.paper)
+                .foldTile(entry.id)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(Self.title(entry))
-                    .font(TextRole.row.font())
+                AskRunsText(runs: line.runs, size: 18)
                     .foregroundStyle(Palette.ink)
                     .lineLimit(2)
+                    .accessibilityLabel(line.text)
+                    .accessibilityIdentifier("entryTitle:\(entry.id)")
+                if let mono = line.mono {
+                    Text(verbatim: mono)
+                        .font(RFont.mono(12))
+                        .foregroundStyle(Palette.inkMeta)
+                        .lineLimit(1)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .accessibilityIdentifier("entryDetails:\(entry.id)")
+                }
                 Text("\(untrusted(entry.connectionLabel)) · \(EntryText.time(entry.at, now: now))")
                     .textRole(.meta)
                     .foregroundStyle(Palette.inkMeta)
@@ -257,16 +261,8 @@ struct HistoryRow: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// What happened, in a line: the core's label, else the operation and what it was about.
-    static func title(_ entry: ActivityEntry) -> String {
-        if let label = entry.label {
-            let plain = RequestLabelLook.plain(label)
-            return ActivityText.done(entry) ? ActivityText.past(plain) : plain
-        }
-        let detail = untrusted(entry.detail).trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = ActivityText.done(entry) ? ActivityText.past(EntryText.title(entry)) : EntryText.title(entry)
-        return detail.isEmpty ? title : "\(title) · \(detail)"
-    }
+    /// What happened, in a line (ASK-TEXT): in the past when it was carried out, else what was asked.
+    static func title(_ entry: ActivityEntry) -> String { EntryLook.line(entry).text }
 }
 
 /// A file the server holds, as it saw the bytes: its name (from the AI), size, type and SHA-256, and a preview: the

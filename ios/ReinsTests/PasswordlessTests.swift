@@ -318,7 +318,7 @@ final class PasswordlessTests: XCTestCase {
         XCTAssertEqual(item.sheetTarget, .join(item.id))
         XCTAssertEqual(item.snapshotKind, .join)
         XCTAssertEqual(NotificationText.title(item), "Add a phone")
-        XCTAssertEqual(NotificationText.headline(item), "Add Pixel 9 to your account?")
+        XCTAssertEqual(NotificationText.headline(item), "Add a phone to your account", "the phone's own name is never the sentence")
         XCTAssertEqual(NotificationCategory(item.kind), .join)
         XCTAssertEqual(PushPayload.kind(of: .join), "join")
 
