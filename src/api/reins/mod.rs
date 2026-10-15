@@ -103,44 +103,170 @@ pub struct Hub {
 }
 
 /// Sealed lease revocations for desktop apps (Reins Secrets): the phone posts one per paired computer, the computer's
-/// daemon takes them. Memory only, bounded per connection, forgotten after a day; the server cannot open them.
-#[derive(Default)]
+/// daemon picks them up and acknowledges them once applied. Memory only, each kept a day; the server cannot open them.
+///
+/// Every change to a computer's mailbox happens under one lock, so a post, a pick-up and an acknowledgement never see
+/// half of another. Nothing is lost silently:
+///
+/// - a revocation of everything (`all`) supersedes whatever came before it and is never pushed out by others; the
+///   others are kept up to [`reins_proto::desktop::MAX_REVOCATIONS`], and when one has to go the mailbox says so
+///   ([`reins_proto::desktop::LostRevocations`]), which makes the daemon drop every lease made before then;
+/// - a server that restarts forgot what it held: every mailbox starts out saying so, as of the start;
+/// - an acknowledgement only marks what one reader (one daemon run) applied, by the ids the server gave: it never
+///   removes a revocation from another reader, and one posted meanwhile has an id no acknowledgement names.
 pub struct Revocations {
-    by_connection: std::sync::Mutex<std::collections::HashMap<String, Vec<(String, i64)>>>,
+    /// When this server started, under an id: what every mailbox reports as possibly lost until acknowledged.
+    boot: (String, i64),
+    by_connection: std::sync::Mutex<std::collections::HashMap<String, Mailbox>>,
+}
+
+impl Default for Revocations {
+    fn default() -> Self {
+        Self {
+            boot: (uuid::Uuid::new_v4().to_string(), now_unix()),
+            by_connection: std::sync::Mutex::default(),
+        }
+    }
+}
+
+struct Mailbox {
+    /// The newest revocation of everything.
+    all: Option<Mailed>,
+    /// Revocations of a project or an environment since then, oldest first.
+    some: Vec<Mailed>,
+    loss: Loss,
+}
+
+struct Mailed {
+    id: String,
+    sealed: String,
+    until: i64,
+    read_by: std::collections::BTreeSet<String>,
+}
+
+struct Loss {
+    id: String,
+    at: i64,
+    read_by: std::collections::BTreeSet<String>,
+    /// The restart, not revocations dropped.
+    boot: bool,
+}
+
+/// The most readers recorded per revocation (a computer runs one daemon; more only from copies of its state).
+const MAX_READERS: usize = 16;
+
+impl Mailbox {
+    fn new(boot: &(String, i64)) -> Self {
+        Self {
+            all: None,
+            some: Vec::new(),
+            loss: Loss {
+                id: boot.0.clone(),
+                at: boot.1,
+                read_by: std::collections::BTreeSet::new(),
+                boot: true,
+            },
+        }
+    }
+
+    fn expire(&mut self, now: i64) {
+        if self.all.as_ref().is_some_and(|m| m.until <= now) {
+            self.all = None;
+        }
+        self.some.retain(|m| m.until > now);
+    }
 }
 
 /// The longest sealed revocation kept.
 pub const MAX_REVOCATION_CHARS: usize = 2_000;
 
+fn mark(read_by: &mut std::collections::BTreeSet<String>, reader: &str) {
+    if read_by.len() < MAX_READERS {
+        read_by.insert(reader.to_owned());
+    }
+}
+
 impl Revocations {
-    pub fn post(&self, connection: &str, sealed: String, now: i64) {
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Mailbox>> {
+        self.by_connection.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn post(&self, connection: &str, sealed: String, all: bool, now: i64) {
         if sealed.is_empty() || sealed.len() > MAX_REVOCATION_CHARS {
             return;
         }
-        let mut all = self.by_connection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let list = all.entry(connection.to_owned()).or_default();
-        list.retain(|(_, until)| *until > now);
-        list.push((sealed, now + reins_proto::desktop::REVOCATION_TTL_SECS));
-        let excess = list.len().saturating_sub(reins_proto::desktop::MAX_REVOCATIONS);
-        list.drain(..excess);
+        let mut boxes = self.lock();
+        let mailbox = boxes.entry(connection.to_owned()).or_insert_with(|| Mailbox::new(&self.boot));
+        mailbox.expire(now);
+        let mailed = Mailed {
+            id: uuid::Uuid::new_v4().to_string(),
+            sealed,
+            until: now + reins_proto::desktop::REVOCATION_TTL_SECS,
+            read_by: std::collections::BTreeSet::new(),
+        };
+        if all {
+            mailbox.some.clear();
+            mailbox.all = Some(mailed);
+            return;
+        }
+        mailbox.some.push(mailed);
+        let excess = mailbox.some.len().saturating_sub(reins_proto::desktop::MAX_REVOCATIONS);
+        if excess > 0 {
+            mailbox.some.drain(..excess);
+            mailbox.loss = Loss {
+                id: uuid::Uuid::new_v4().to_string(),
+                at: now,
+                read_by: std::collections::BTreeSet::new(),
+                boot: false,
+            };
+        }
     }
 
-    /// What waits for `connection`, oldest first; taken, so it is handed over once.
-    pub fn take(&self, connection: &str, now: i64) -> Vec<String> {
-        let mut all = self.by_connection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        all.remove(connection)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|(_, until)| *until > now)
-            .map(|(s, _)| s)
-            .collect()
+    /// What waits for `reader` of `connection`: the revocation of everything first, then the others oldest first, and
+    /// a loss it has not acknowledged.
+    pub fn peek(&self, connection: &str, reader: &str, now: i64) -> reins_proto::desktop::RevocationMail {
+        let mut boxes = self.lock();
+        let mailbox = boxes.entry(connection.to_owned()).or_insert_with(|| Mailbox::new(&self.boot));
+        mailbox.expire(now);
+        reins_proto::desktop::RevocationMail {
+            items: mailbox
+                .all
+                .iter()
+                .chain(&mailbox.some)
+                .filter(|m| !m.read_by.contains(reader))
+                .map(|m| reins_proto::desktop::MailedRevocation {
+                    id: m.id.clone(),
+                    sealed: m.sealed.clone(),
+                })
+                .collect(),
+            lost: (!mailbox.loss.read_by.contains(reader)).then(|| reins_proto::desktop::LostRevocations {
+                id: mailbox.loss.id.clone(),
+                at: mailbox.loss.at,
+            }),
+        }
     }
 
+    /// Marks what `ack.reader` of `connection` applied: those exact ids, nothing else.
+    pub fn ack(&self, connection: &str, ack: &reins_proto::desktop::RevocationAck) {
+        let mut boxes = self.lock();
+        let Some(mailbox) = boxes.get_mut(connection) else {
+            return;
+        };
+        for m in mailbox.all.iter_mut().chain(mailbox.some.iter_mut()) {
+            if ack.ids.contains(&m.id) {
+                mark(&mut m.read_by, &ack.reader);
+            }
+        }
+        if ack.lost.as_deref() == Some(mailbox.loss.id.as_str()) {
+            mark(&mut mailbox.loss.read_by, &ack.reader);
+        }
+    }
+
+    /// Forgets what is a day old, and mailboxes with nothing left but the restart (which a new one reports too).
     pub fn purge(&self, now: i64) {
-        let mut all = self.by_connection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        all.retain(|_, list| {
-            list.retain(|(_, until)| *until > now);
-            !list.is_empty()
+        self.lock().retain(|_, mailbox| {
+            mailbox.expire(now);
+            mailbox.all.is_some() || !mailbox.some.is_empty() || !mailbox.loss.boot
         });
     }
 }

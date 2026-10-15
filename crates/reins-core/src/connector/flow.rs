@@ -273,8 +273,8 @@ impl Engine {
                     Err(e) => return self.fail_connector(session, &request, call, &e).await,
                 };
                 match self.store.secrets_reserve(&request.connection_id, Some(&account), &ask.facts(), now)? {
-                    Some((grant, command)) => {
-                        granted_command = Some(command);
+                    Some((grant, command, ends)) => {
+                        granted_command = Some((command, ends));
                         BTreeMap::from([(preview.resource.clone(), grant)])
                     }
                     None => BTreeMap::new(),
@@ -501,8 +501,8 @@ impl Engine {
                 })
                 .transpose()?;
             // A release is bound to what the user approved: the permission's command, else exactly the one asked.
-            let granted_command = match new_grant.as_ref().map(|g| &g.scope) {
-                Some(Scope::Secrets(s)) => Some(s.command.clone()),
+            let granted_command = match new_grant.as_ref().map(|g| (&g.scope, g.expires_at)) {
+                Some((Scope::Secrets(s), ends)) => Some((s.command.clone(), ends)),
                 _ => None,
             };
             // The action happens first; if it fails the request stays parked. A work session's action is creating
@@ -656,16 +656,18 @@ impl Engine {
         connector: &dyn super::Connector,
         account: &str,
         call: &ConnectorCall,
-        command: Option<desktop::CommandScope>,
+        command: Option<(desktop::CommandScope, Option<i64>)>,
     ) -> Result<serde_json::Value, CoreError> {
+        // Boxed: each is a large future (a store adds integrations), which would otherwise be inlined into every
+        // approval's future, autopilot's included.
         if is_env_release(call) {
-            return self.release_env(account, call, command).await;
+            return Box::pin(self.release_env(account, call, command)).await;
         }
         if is_token_store(call) {
-            return self.token_store_perform(call).await;
+            return Box::pin(self.token_store_perform(call)).await;
         }
         if is_secrets_store(call) {
-            return self.secrets_store_perform(account, call).await;
+            return Box::pin(self.secrets_store_perform(account, call)).await;
         }
         connector.perform(account, call).await
     }

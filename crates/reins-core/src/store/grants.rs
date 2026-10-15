@@ -425,7 +425,7 @@ impl Store {
         account: Option<&str>,
         facts: &reins_policy::SecretsFacts<'_>,
         now: i64,
-    ) -> Result<Option<(GrantId, reins_proto::desktop::CommandScope)>, CoreError> {
+    ) -> Result<Option<(GrantId, reins_proto::desktop::CommandScope, Option<i64>)>, CoreError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut grants = all_connection_grants(&tx, connection, now)?;
@@ -437,7 +437,7 @@ impl Store {
                 save_grant(&tx, grant)?;
                 touch_used(&tx, &grant.id, now)?;
                 if let reins_policy::Scope::Secrets(s) = &grant.scope {
-                    out = Some((id.clone(), s.command.clone()));
+                    out = Some((id.clone(), s.command.clone(), grant.expires_at));
                 }
             }
         }

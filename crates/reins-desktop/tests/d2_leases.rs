@@ -29,6 +29,10 @@ fn req(runner: &str, root: &str, fields: Option<&[&str]>, args: &[&str]) -> Leas
         purpose: None,
         confirm_always: false,
         print: false,
+        typed: None,
+        aliases: Vec::new(),
+        path_check: None,
+        exec_env: String::new(),
     }
 }
 
@@ -77,16 +81,47 @@ async fn a_lease_is_reused_only_for_the_same_runner_folder_variables_and_command
 async fn a_prefix_the_user_chose_on_the_phone_covers_more_commands_and_nothing_else() {
     let mock = Mock::start().await;
     let (svc, _app) = service(&mock);
-    mock.plan(&[Step::ApprovePrefix(1)]);
+    mock.plan(&[Step::ApprovePrefix(2)]);
     svc.lease(&req("person", A, None, &["run", "dev"]), None).await.unwrap();
-    let test = svc.lease(&req("person", A, None, &["run", "test", "--watch"]), None).await.unwrap();
-    assert!(test.cached, "npm run * covers npm run test --watch");
-    assert_eq!(test.values.len(), 2, "every variable");
-    let only = svc.lease(&req("person", A, Some(&["DB_URL"]), &["run", "lint"]), None).await.unwrap();
+    let more = svc.lease(&req("person", A, None, &["run", "dev", "--silent", "app"]), None).await.unwrap();
+    assert!(more.cached && more.prefix, "npm run dev * covers npm run dev --silent app");
+    assert_eq!(more.values.len(), 2, "every variable");
+    let only = svc.lease(&req("person", A, Some(&["DB_URL"]), &["run", "dev"]), None).await.unwrap();
     assert_eq!((only.cached, only.values.len()), (true, 1), "a subset of a whole environment");
+    for (args, why) in [
+        (vec!["exec", "x"], "npm exec is not npm run dev"),
+        (vec!["run", "dev", "--script-shell=/tmp/sh"], "an option that runs other code"),
+        (vec!["run", "dev", "/tmp/elsewhere.js"], "a path out of the project"),
+    ] {
+        let before = mock.calls_of("vault_env_release").len();
+        svc.lease(&req("person", A, None, &args), None).await.unwrap();
+        assert_eq!(mock.calls_of("vault_env_release").len(), before + 1, "{why}: asked again");
+    }
+    // What changes the program the command runs is not as it was: asked again.
     let before = mock.calls_of("vault_env_release").len();
-    svc.lease(&req("person", A, None, &["exec", "x"]), None).await.unwrap();
-    assert_eq!(mock.calls_of("vault_env_release").len(), before + 1, "npm exec is not npm run");
+    let mut preloaded = req("person", A, None, &["run", "dev"]);
+    preloaded.exec_env = reins_desktop::secrets_client::exec_env_digest(&[("LD_PRELOAD".into(), "/tmp/x.so".into())]);
+    svc.lease(&preloaded, None).await.unwrap();
+    assert_eq!(mock.calls_of("vault_env_release").len(), before + 1);
+}
+
+#[tokio::test]
+async fn an_environment_asked_every_time_is_released_for_each_run_and_never_kept() {
+    let mock = Mock::start().await;
+    let (svc, _app) = service(&mock);
+    let mut prod = req("person", A, None, &["run", "dev"]);
+    prod.env = "production".into();
+    for run in 1..=2 {
+        let a = svc.lease(&prod, None).await.unwrap();
+        assert!(!a.cached, "run {run}");
+        assert_eq!(mock.calls_of("vault_env_release").len(), run);
+    }
+    let mut always = req("person", A, None, &["run", "dev"]);
+    always.confirm_always = true;
+    svc.lease(&always, None).await.unwrap();
+    svc.lease(&always, None).await.unwrap();
+    assert_eq!(mock.calls_of("vault_env_release").len(), 4, "confirm = \"always\": every time");
+    assert!(svc.cache().is_empty(), "nothing kept");
 }
 
 #[tokio::test]

@@ -37,6 +37,8 @@ struct FeedbackSettings: Codable, Equatable {
     var sounds = true
     var interfaceSounds = true
     var requestSounds = true
+    /// A request arriving while Reins is in front chimes (see `ArrivalPolicy`).
+    var soundWhenOpen = true
     var autopilotSounds = true
     var alertSounds = true
     /// 0...1 slider; the audible gain follows `gain`.
@@ -82,5 +84,23 @@ struct FeedbackSettings: Codable, Equatable {
 
     func save(to defaults: UserDefaults = AppGroup.defaults) {
         if let data = try? JSONEncoder().encode(self) { defaults.set(data, forKey: Self.key) }
+    }
+}
+
+extension FeedbackSettings {
+    /// A value missing from what an older version stored reads as its default, so a new switch never resets the rest.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = FeedbackSettings()
+        master = try c.decodeIfPresent(Bool.self, forKey: .master) ?? d.master
+        sounds = try c.decodeIfPresent(Bool.self, forKey: .sounds) ?? d.sounds
+        interfaceSounds = try c.decodeIfPresent(Bool.self, forKey: .interfaceSounds) ?? d.interfaceSounds
+        requestSounds = try c.decodeIfPresent(Bool.self, forKey: .requestSounds) ?? d.requestSounds
+        soundWhenOpen = try c.decodeIfPresent(Bool.self, forKey: .soundWhenOpen) ?? d.soundWhenOpen
+        autopilotSounds = try c.decodeIfPresent(Bool.self, forKey: .autopilotSounds) ?? d.autopilotSounds
+        alertSounds = try c.decodeIfPresent(Bool.self, forKey: .alertSounds) ?? d.alertSounds
+        volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? d.volume
+        haptics = try c.decodeIfPresent(Bool.self, forKey: .haptics) ?? d.haptics
+        strength = try c.decodeIfPresent(HapticStrength.self, forKey: .strength) ?? d.strength
     }
 }

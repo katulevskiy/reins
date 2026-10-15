@@ -199,18 +199,25 @@ fn named(snap: &Snapshot, item: &str) -> Vec<usize> {
 fn resolve(snap: &Snapshot, reference: &str) -> Result<Wanted, CoreError> {
     let shown = text::truncate_chars(&text::one_line(reference), 100);
     let mut found: Vec<(usize, &str)> = Vec::new();
+    let mut environment = false;
     for (at, _) in reference.match_indices('/') {
         let (item, field) = (&reference[..at], &reference[at + 1..]);
         if item.is_empty() || field.is_empty() {
             continue;
         }
-        found.extend(named(snap, item).into_iter().map(|i| (i, field)).filter(|(i, field)| {
-            // An environment is reached only as `project/env/NAME`, by that one split and a variable's name.
-            env::env_identity(snap, &snap.entries[*i])
-                .is_none_or(|(p, e)| item == format!("{p}/{e}") && reins_proto::desktop::var_ok(field))
-        }));
+        for i in named(snap, item) {
+            // A project's environment is released only bound to a command (`vault_env_release`), never here.
+            if env::env_identity(snap, &snap.entries[i]).is_some() {
+                environment = true;
+                continue;
+            }
+            found.push((i, field));
+        }
     }
     match found.as_slice() {
+        [] if environment => Err(bad(format!(
+            "`{shown}` is a variable of a project's environment: it is used with reins run, bound to the command."
+        ))),
         [] if !reference.contains('/') => Err(bad(format!("`{shown}` must be item/field."))),
         [] => Err(bad(format!("No vault item matches `{shown}`. Name an item by its id or its exact name."))),
         [(entry, field)] => Ok(Wanted {
@@ -324,6 +331,7 @@ async fn perform_release(vault: &Vault, account: &str, call: &ConnectorCall) -> 
         runner: None,
         root: None,
         command: None,
+        one_shot: false,
     };
     let sealed = seal(client_key(call)?, &grant);
     // The grant holds the values in the clear: wipe them.

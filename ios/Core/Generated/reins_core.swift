@@ -2776,7 +2776,7 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Reins Secrets: "Revoke on all computers". The permissions for secrets of `project` (and `env`; neither: all of
      * them) end, and every paired computer is told to drop the values it holds. Returns how many computers were told.
      */
-    func revokeSecretsEverywhere(project: String?, env: String?) async throws  -> UInt32
+    func revokeSecretsEverywhere(project: String?, env: String?) async throws  -> SecretsRevoked
     
     /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
@@ -4334,7 +4334,7 @@ open func revokeGrant(grantId: String)async throws   {
      * Reins Secrets: "Revoke on all computers". The permissions for secrets of `project` (and `env`; neither: all of
      * them) end, and every paired computer is told to drop the values it holds. Returns how many computers were told.
      */
-open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -> UInt32  {
+open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -> SecretsRevoked  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -4342,10 +4342,10 @@ open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -
                         self.uniffiCloneHandle(),FfiConverterOptionString.lower(project),FfiConverterOptionString.lower(env)
                 )
             },
-            pollFunc: ffi_reins_core_rust_future_poll_u32,
-            completeFunc: ffi_reins_core_rust_future_complete_u32,
-            freeFunc: ffi_reins_core_rust_future_free_u32,
-            liftFunc: FfiConverterUInt32.lift,
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSecretsRevoked_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -6362,6 +6362,119 @@ public func FfiConverterTypeApprovalView_lower(_ value: ApprovalView) -> RustBuf
 
 
 /**
+ * The guard rule a desktop question matches.
+ */
+public struct AskRuleView: Equatable, Hashable {
+    /**
+     * What the rule is about: its group's label (".env files", "Rewriting git history"), or "Your rule".
+     */
+    public var label: String
+    /**
+     * The rule itself (`.env`, `git push --force*`).
+     */
+    public var pattern: String
+    /**
+     * What in the command matched it (`app/.env`, `git push --force origin main`).
+     */
+    public var matched: String
+    /**
+     * The built-in group (`env-files`, `git-history`); `None` for the user's own rules.
+     */
+    public var group: String?
+    /**
+     * What it covers cannot be undone: asked every time, held to approve, and never judged by Autopilot in Manual or
+     * Auto.
+     */
+    public var destructive: Bool
+    /**
+     * Only the computer says so: the phone did not find this rule in the command itself (the user's own rule, or a
+     * group this phone does not know). Shown as reported; it can make a question stricter, never looser.
+     */
+    public var reported: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * What the rule is about: its group's label (".env files", "Rewriting git history"), or "Your rule".
+         */label: String, 
+        /**
+         * The rule itself (`.env`, `git push --force*`).
+         */pattern: String, 
+        /**
+         * What in the command matched it (`app/.env`, `git push --force origin main`).
+         */matched: String, 
+        /**
+         * The built-in group (`env-files`, `git-history`); `None` for the user's own rules.
+         */group: String?, 
+        /**
+         * What it covers cannot be undone: asked every time, held to approve, and never judged by Autopilot in Manual or
+         * Auto.
+         */destructive: Bool, 
+        /**
+         * Only the computer says so: the phone did not find this rule in the command itself (the user's own rule, or a
+         * group this phone does not know). Shown as reported; it can make a question stricter, never looser.
+         */reported: Bool) {
+        self.label = label
+        self.pattern = pattern
+        self.matched = matched
+        self.group = group
+        self.destructive = destructive
+        self.reported = reported
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AskRuleView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAskRuleView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AskRuleView {
+        return
+            try AskRuleView(
+                label: FfiConverterString.read(from: &buf), 
+                pattern: FfiConverterString.read(from: &buf), 
+                matched: FfiConverterString.read(from: &buf), 
+                group: FfiConverterOptionString.read(from: &buf), 
+                destructive: FfiConverterBool.read(from: &buf), 
+                reported: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AskRuleView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.pattern, into: &buf)
+        FfiConverterString.write(value.matched, into: &buf)
+        FfiConverterOptionString.write(value.group, into: &buf)
+        FfiConverterBool.write(value.destructive, into: &buf)
+        FfiConverterBool.write(value.reported, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAskRuleView_lift(_ buf: RustBuffer) throws -> AskRuleView {
+    return try FfiConverterTypeAskRuleView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAskRuleView_lower(_ value: AskRuleView) -> RustBuffer {
+    return FfiConverterTypeAskRuleView.lower(value)
+}
+
+
+/**
  * A question from the desktop app; approving it answers yes.
  */
 public struct AskView: Equatable, Hashable {
@@ -6377,6 +6490,26 @@ public struct AskView: Equatable, Hashable {
      * What a standing answer may cover (`command:git push --force`); `None`: a question without a topic.
      */
     public var topic: String?
+    /**
+     * The guard rule the question matches, as the phone reads its command or files (else as the computer reports
+     * it); `None` when there is none.
+     */
+    public var rule: AskRuleView?
+    /**
+     * The phone could not read the question with certainty (an unbalanced quote, a detail cut short): Autopilot
+     * leaves it to the user in Manual and Auto.
+     */
+    public var uncertain: Bool
+    /**
+     * It cannot be undone: held to approve and shown in red. (A question asked every time for another reason, a
+     * private key or an unreadable command, is an ordinary yes or no that is never remembered.)
+     */
+    public var destructive: Bool
+    /**
+     * The guard group everything the command (or the file list) does falls in, which Autopilot learns on its own;
+     * `None`: the generic kind.
+     */
+    public var kind: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -6389,10 +6522,30 @@ public struct AskView: Equatable, Hashable {
          */detail: String?, 
         /**
          * What a standing answer may cover (`command:git push --force`); `None`: a question without a topic.
-         */topic: String?) {
+         */topic: String?, 
+        /**
+         * The guard rule the question matches, as the phone reads its command or files (else as the computer reports
+         * it); `None` when there is none.
+         */rule: AskRuleView? = nil, 
+        /**
+         * The phone could not read the question with certainty (an unbalanced quote, a detail cut short): Autopilot
+         * leaves it to the user in Manual and Auto.
+         */uncertain: Bool = false, 
+        /**
+         * It cannot be undone: held to approve and shown in red. (A question asked every time for another reason, a
+         * private key or an unreadable command, is an ordinary yes or no that is never remembered.)
+         */destructive: Bool = false, 
+        /**
+         * The guard group everything the command (or the file list) does falls in, which Autopilot learns on its own;
+         * `None`: the generic kind.
+         */kind: String? = nil) {
         self.question = question
         self.detail = detail
         self.topic = topic
+        self.rule = rule
+        self.uncertain = uncertain
+        self.destructive = destructive
+        self.kind = kind
     }
 
     
@@ -6413,7 +6566,11 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
             try AskView(
                 question: FfiConverterString.read(from: &buf), 
                 detail: FfiConverterOptionString.read(from: &buf), 
-                topic: FfiConverterOptionString.read(from: &buf)
+                topic: FfiConverterOptionString.read(from: &buf), 
+                rule: FfiConverterOptionTypeAskRuleView.read(from: &buf), 
+                uncertain: FfiConverterBool.read(from: &buf), 
+                destructive: FfiConverterBool.read(from: &buf), 
+                kind: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -6421,6 +6578,10 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
         FfiConverterString.write(value.question, into: &buf)
         FfiConverterOptionString.write(value.detail, into: &buf)
         FfiConverterOptionString.write(value.topic, into: &buf)
+        FfiConverterOptionTypeAskRuleView.write(value.rule, into: &buf)
+        FfiConverterBool.write(value.uncertain, into: &buf)
+        FfiConverterBool.write(value.destructive, into: &buf)
+        FfiConverterOptionString.write(value.kind, into: &buf)
     }
 }
 
@@ -8167,6 +8328,11 @@ public struct EnvReleaseView: Equatable, Hashable {
      */
     public var program: String
     /**
+     * Why the program deserves a second look, for a warning row ("In a temporary folder", "Inside the project
+     * folder", "Not the one on your PATH"); `command` then shows its whole path too.
+     */
+    public var programWarning: String?
+    /**
      * The variables' names (never a value), sorted.
      */
     public var variables: [String]
@@ -8210,6 +8376,10 @@ public struct EnvReleaseView: Equatable, Hashable {
          * The program's full path, as the computer resolved it.
          */program: String, 
         /**
+         * Why the program deserves a second look, for a warning row ("In a temporary folder", "Inside the project
+         * folder", "Not the one on your PATH"); `command` then shows its whole path too.
+         */programWarning: String? = nil, 
+        /**
          * The variables' names (never a value), sorted.
          */variables: [String], 
         /**
@@ -8233,6 +8403,7 @@ public struct EnvReleaseView: Equatable, Hashable {
         self.root = root
         self.command = command
         self.program = program
+        self.programWarning = programWarning
         self.variables = variables
         self.allVariables = allVariables
         self.leaseSecs = leaseSecs
@@ -8267,6 +8438,7 @@ public struct FfiConverterTypeEnvReleaseView: FfiConverterRustBuffer {
                 root: FfiConverterString.read(from: &buf), 
                 command: FfiConverterString.read(from: &buf), 
                 program: FfiConverterString.read(from: &buf), 
+                programWarning: FfiConverterOptionString.read(from: &buf), 
                 variables: FfiConverterSequenceString.read(from: &buf), 
                 allVariables: FfiConverterBool.read(from: &buf), 
                 leaseSecs: FfiConverterUInt64.read(from: &buf), 
@@ -8287,6 +8459,7 @@ public struct FfiConverterTypeEnvReleaseView: FfiConverterRustBuffer {
         FfiConverterString.write(value.root, into: &buf)
         FfiConverterString.write(value.command, into: &buf)
         FfiConverterString.write(value.program, into: &buf)
+        FfiConverterOptionString.write(value.programWarning, into: &buf)
         FfiConverterSequenceString.write(value.variables, into: &buf)
         FfiConverterBool.write(value.allVariables, into: &buf)
         FfiConverterUInt64.write(value.leaseSecs, into: &buf)
@@ -11777,6 +11950,75 @@ public func FfiConverterTypeSecretReleaseView_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeSecretReleaseView_lower(_ value: SecretReleaseView) -> RustBuffer {
     return FfiConverterTypeSecretReleaseView.lower(value)
+}
+
+
+/**
+ * What "Revoke on all computers" did: the permissions it ended on this phone, the computers told, and those not told
+ * yet (by name). A note that could not be delivered is kept and sent again on each sync until the server takes it;
+ * the permissions ended on this phone either way.
+ */
+public struct SecretsRevoked: Equatable, Hashable {
+    public var ended: UInt32
+    public var told: UInt32
+    /**
+     * "Not yet delivered to <name>" for each of these.
+     */
+    public var notDelivered: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(ended: UInt32, told: UInt32, 
+        /**
+         * "Not yet delivered to <name>" for each of these.
+         */notDelivered: [String]) {
+        self.ended = ended
+        self.told = told
+        self.notDelivered = notDelivered
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SecretsRevoked: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSecretsRevoked: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SecretsRevoked {
+        return
+            try SecretsRevoked(
+                ended: FfiConverterUInt32.read(from: &buf), 
+                told: FfiConverterUInt32.read(from: &buf), 
+                notDelivered: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SecretsRevoked, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.ended, into: &buf)
+        FfiConverterUInt32.write(value.told, into: &buf)
+        FfiConverterSequenceString.write(value.notDelivered, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsRevoked_lift(_ buf: RustBuffer) throws -> SecretsRevoked {
+    return try FfiConverterTypeSecretsRevoked.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSecretsRevoked_lower(_ value: SecretsRevoked) -> RustBuffer {
+    return FfiConverterTypeSecretsRevoked.lower(value)
 }
 
 
@@ -16059,6 +16301,30 @@ fileprivate struct FfiConverterOptionTypeApprovalView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAskRuleView: FfiConverterRustBuffer {
+    typealias SwiftType = AskRuleView?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAskRuleView.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAskRuleView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAskView: FfiConverterRustBuffer {
     typealias SwiftType = AskView?
 
@@ -18166,7 +18432,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_revoke_grant() != 13815) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_revoke_secrets_everywhere() != 59651) {
+    if (uniffi_reins_core_checksum_method_reinscore_revoke_secrets_everywhere() != 57345) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_server_info() != 48285) {

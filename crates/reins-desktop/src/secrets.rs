@@ -403,6 +403,7 @@ mod tests {
             runner: None,
             root: None,
             command: None,
+            one_shot: false,
         }
     }
 

@@ -30,6 +30,10 @@ struct SoundsScreen: View {
                 }
                 SwitchRow(title: "Requests", subtitle: nil, symbol: "bell",
                           isOn: s.requestSounds, enabled: s.soundsOn, id: "requestSounds") { on in store.update { $0.requestSounds = on } }
+                SwitchRow(title: "Sound when open", subtitle: nil, symbol: "iphone",
+                          isOn: s.soundWhenOpen, enabled: s.allows(.requests), id: "soundWhenOpen") { on in
+                    store.update { $0.soundWhenOpen = on }
+                }
                 SwitchRow(title: "Alerts", subtitle: nil,
                           symbol: "exclamationmark.triangle", isOn: s.alertSounds, enabled: s.soundsOn, id: "alertSounds") { on in
                     store.update { $0.alertSounds = on }
@@ -40,7 +44,8 @@ struct SoundsScreen: View {
             } header: {
                 HeaderText("Sounds")
             } footer: {
-                FooterText("While Reins is open. In the background the same chimes come with its notifications.")
+                FooterText("While Reins is open. In the background the same chimes come with its notifications. "
+                    + "Sound when open: a new request chimes while Reins is on screen too; the ring/silent switch mutes it.")
             }
 
             Section {

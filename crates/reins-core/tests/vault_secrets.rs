@@ -224,7 +224,7 @@ async fn an_environment_is_shown_by_names_and_released_bound_to_who_where_and_wh
     assert!(r.all_variables && !r.agent && !r.always_ask && !r.print);
     assert_eq!((r.runner_label.as_str(), r.root.as_str(), r.program.as_str()), ("You", ROOT, NPM));
     let offered: Vec<(&str, &str)> = r.commands.iter().map(|c| (c.id.as_str(), c.label.as_str())).collect();
-    assert_eq!(offered, [("exact", "npm run dev"), ("prefix:1", "npm run *")]);
+    assert_eq!(offered, [("exact", "npm run dev"), ("prefix:2", "npm run dev *")]);
     assert!(view.quick.is_none(), "never from a notification");
     assert!(view.headline.contains("all of acme"), "{}", view.headline);
     no_values("the approval", &format!("{view:?}"));
@@ -252,28 +252,28 @@ async fn a_remembered_release_binds_every_dimension() {
         ..DEV
     };
     desk.send(&[release(&desk, "r1", &first)]).await;
-    desk.core.approve("r1".to_owned(), choice(&[], remember("prefix:1", false))).await.unwrap();
+    desk.core.approve("r1".to_owned(), choice(&[], remember("prefix:2", false))).await.unwrap();
     let grant: SecretGrant = desk.open(&desk.data("r1").await["sealed"]);
     assert_eq!(
         grant.command,
         Some(CommandScope {
             program: NPM.to_owned(),
-            args: words(&["run"]),
+            args: words(&["run", "dev"]),
             prefix: true
         }),
         "the prefix the user picked"
     );
 
-    // The same runner, folder and variables, another `npm run …`: covered.
+    // The same runner, folder and variables, `npm run dev` with more that the grammar allows: covered.
     let test = Ask {
-        args: &["run", "test", "--watch"],
+        args: &["run", "dev", "--silent", "app"],
         ..first
     };
     desk.send(&[release(&desk, "r2", &test)]).await;
     assert!(desk.waiting().await.is_empty(), "covered by the permission");
     let covered: SecretGrant = desk.open(&desk.data("r2").await["sealed"]);
     assert_eq!(covered.secrets, [("A".to_owned(), "alpha-secret".to_owned())]);
-    assert_eq!(covered.command.unwrap().shown(), "npm run *");
+    assert_eq!(covered.command.unwrap().shown(), "npm run dev *");
 
     // Anything else is asked again.
     let both: &[&str] = &["A", "B"];
@@ -309,14 +309,14 @@ async fn a_remembered_release_binds_every_dimension() {
         (
             "r7",
             Ask {
-                args: &["runx"],
+                args: &["run", "devx"],
                 ..first
             },
         ),
         (
             "r8",
             Ask {
-                args: &["exec", "run"],
+                args: &["run", "dev", "--script-shell=/tmp/sh"],
                 ..first
             },
         ),
@@ -372,6 +372,112 @@ async fn production_is_asked_every_time_until_the_user_says_otherwise_on_the_pho
     strict["call"]["args"]["confirm"] = json!("always");
     desk.send(&[strict]).await;
     assert!(desk.core.approval_view("r3".to_owned()).await.unwrap().no_standing);
+}
+
+fn now() -> i64 {
+    i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()).unwrap()
+}
+
+/// `release` with some arguments changed.
+fn release_with(desk: &Desk, id: &str, ask: &Ask<'_>, changed: &Value) -> Value {
+    let mut r = release(desk, id, ask);
+    for (k, v) in changed.as_object().unwrap() {
+        r["call"]["args"][k] = v.clone();
+    }
+    r
+}
+
+#[tokio::test]
+async fn an_environment_asked_every_time_is_released_for_one_run_and_leases_are_the_phones_to_cap() {
+    let desk = desk().await;
+    desk.pair().await;
+    let prod = Ask {
+        env: "production",
+        ..DEV
+    };
+    for id in ["q1", "q2"] {
+        desk.send(&[release(&desk, id, &prod)]).await;
+        assert_eq!(desk.waiting().await, [id], "asked every time");
+        let r = desk.core.approval_view(id.to_owned()).await.unwrap().env_release.unwrap();
+        assert!(r.always_ask && r.lease_secs == 60, "{r:?}");
+        desk.core.approve(id.to_owned(), choice(&[], None)).await.unwrap();
+        let grant: SecretGrant = desk.open(&desk.data(id).await["sealed"]);
+        assert!(grant.one_shot, "never kept for another run");
+        assert!(grant.expires_at <= now() + 60);
+    }
+    // reins.toml asks for a day: the phone keeps it to its own maximum.
+    desk.send(&[release_with(&desk, "d1", &DEV, &json!({"lease_secs": 86_400}))]).await;
+    let r = desk.core.approval_view("d1".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(r.lease_secs, 8 * 3_600);
+    desk.core.approve("d1".to_owned(), choice(&[], remember("exact", false))).await.unwrap();
+    let grant: SecretGrant = desk.open(&desk.data("d1").await["sealed"]);
+    assert!(!grant.one_shot && grant.expires_at <= now() + 8 * 3_600);
+    // Covered by that permission (an hour long): never longer than what is left of it.
+    desk.send(&[release_with(&desk, "d2", &DEV, &json!({"lease_secs": 86_400}))]).await;
+    assert!(desk.waiting().await.is_empty());
+    let covered: SecretGrant = desk.open(&desk.data("d2").await["sealed"]);
+    assert!(covered.expires_at <= now() + 3_600, "the permission ends within the hour");
+}
+
+#[tokio::test]
+async fn a_program_out_of_place_is_shown_by_its_path_with_a_warning() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&[release_with(&desk, "t1", &DEV, &json!({"program": "/tmp/x/npm", "typed": "npm"}))]).await;
+    let view = desk.core.approval_view("t1".to_owned()).await.unwrap();
+    let r = view.env_release.clone().unwrap();
+    assert_eq!(r.command, "/tmp/x/npm run dev");
+    assert_eq!(r.program_warning.as_deref(), Some("In a temporary folder"));
+    assert!(view.headline.contains("/tmp/x/npm"), "{}", view.headline);
+    let inside = format!("{ROOT}/node_modules/.bin/npm");
+    desk.send(&[release_with(&desk, "t2", &DEV, &json!({"program": inside}))]).await;
+    let r = desk.core.approval_view("t2".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(r.program_warning.as_deref(), Some("Inside the project folder"));
+    desk.send(&[release_with(&desk, "t3", &DEV, &json!({"program": "/home/me/bin/npm", "path_check": "other"}))]).await;
+    let r = desk.core.approval_view("t3".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(
+        (r.command.as_str(), r.program_warning.as_deref()),
+        ("/home/me/bin/npm run dev", Some("Not the one on your PATH"))
+    );
+    desk.send(&[release(&desk, "t4", &DEV)]).await;
+    let r = desk.core.approval_view("t4".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!((r.command.as_str(), r.program_warning), ("npm run dev", None));
+}
+
+#[tokio::test]
+async fn launchers_by_either_name_and_long_code_are_never_remembered_wider() {
+    let desk = desk().await;
+    desk.pair().await;
+    let cli = "/usr/lib/node_modules/npm/bin/npm-cli.js";
+    let exec = Ask {
+        args: &["exec", "vite"],
+        ..DEV
+    };
+    desk.send(&[release_with(&desk, "l1", &exec, &json!({"program": cli, "typed": "npm"}))]).await;
+    let r = desk.core.approval_view("l1".to_owned()).await.unwrap().env_release.unwrap();
+    let offered: Vec<&str> = r.commands.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(offered, ["exact"], "npm exec * is never offered");
+    // Typed as a launcher, resolved to something with another name: still a launcher.
+    desk.send(&[release_with(&desk, "l2", &exec, &json!({"program": "/opt/tools/run", "typed": "npx"}))]).await;
+    let r = desk.core.approval_view("l2".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(r.commands.len(), 1);
+    // A link on the way that is a launcher: the same.
+    let linked = json!({"program": "/opt/tools/run", "typed": "deploy", "aliases": ["deploy", "env", "run"]});
+    desk.send(&[release_with(&desk, "l4", &exec, &linked)]).await;
+    let r = desk.core.approval_view("l4".to_owned()).await.unwrap().env_release.unwrap();
+    assert_eq!(r.commands.len(), 1);
+    // Code longer than the phone shows: approved once at a time.
+    let code = "print(1); ".repeat(40);
+    let long = Ask {
+        args: &["-c", &code],
+        ..DEV
+    };
+    desk.send(&[release_with(&desk, "l3", &long, &json!({"program": "/usr/bin/python3"}))]).await;
+    let view = desk.core.approval_view("l3".to_owned()).await.unwrap();
+    let r = view.env_release.clone().unwrap();
+    assert!(r.commands.is_empty() && view.no_standing && r.always_ask);
+    assert!(r.command.contains(code.trim_end()), "all of the code is shown");
+    assert!(desk.core.approve("l3".to_owned(), choice(&[], remember("exact", false))).await.is_err());
 }
 
 #[tokio::test]
@@ -613,14 +719,48 @@ async fn revoking_on_all_computers_ends_the_permissions_and_tells_every_computer
     desk.pair().await;
     desk.send(&[release(&desk, "r1", &DEV)]).await;
     desk.core.approve("r1".to_owned(), choice(&[], remember("exact", false))).await.unwrap();
-    let told = desk.core.revoke_secrets_everywhere(Some("acme".to_owned()), None).await.unwrap();
-    assert_eq!(told, 1);
+    let revoked = desk.core.revoke_secrets_everywhere(Some("acme".to_owned()), None).await.unwrap();
+    assert_eq!((revoked.ended, revoked.told, revoked.not_delivered.len()), (1, 1, 0));
     let posted = sent(&desk, "POST", "/reins/api/desktop/revocations").await;
     assert_eq!(posted[0]["items"][0]["connection_id"], DESK);
     let revocation: reins_proto::desktop::LeaseRevocation = desk.open(&posted[0]["items"][0]["sealed"]);
     assert_eq!(revocation.project.as_deref(), Some("acme"));
+    assert!(posted[0]["items"][0].get("all").is_none(), "one project: not a revocation of everything");
     desk.send(&[release(&desk, "r2", &DEV)]).await;
     assert_eq!(desk.waiting().await, ["r2"], "the permission ended");
+    // Everything: the server is told, so it keeps it above the others.
+    desk.core.revoke_secrets_everywhere(None, None).await.unwrap();
+    let posted = sent(&desk, "POST", "/reins/api/desktop/revocations").await;
+    assert_eq!(posted.last().unwrap()["items"][0]["all"], true);
+}
+
+#[tokio::test]
+async fn a_revocation_the_server_does_not_take_ends_the_permission_here_and_is_sent_again() {
+    let desk = desk().await;
+    desk.pair().await;
+    desk.send(&[release(&desk, "r1", &DEV)]).await;
+    desk.core.approve("r1".to_owned(), choice(&[], remember("exact", false))).await.unwrap();
+    Mock::given(method("POST"))
+        .and(path("/reins/api/desktop/revocations"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&desk.server)
+        .await;
+    let revoked = desk.core.revoke_secrets_everywhere(None, None).await.unwrap();
+    assert_eq!((revoked.ended, revoked.told), (1, 0), "{revoked:?}");
+    assert_eq!(revoked.not_delivered.len(), 1, "named, never reported as told");
+    let before = sent(&desk, "POST", "/reins/api/desktop/revocations").await.len();
+    // The permission ended on this phone all the same: nothing is released under it. The sync that brings the
+    // request delivers the note that waited.
+    desk.send(&[release(&desk, "r2", &DEV)]).await;
+    assert_eq!(desk.waiting().await, ["r2"]);
+    let posted = sent(&desk, "POST", "/reins/api/desktop/revocations").await;
+    assert_eq!(posted.len(), before + 1);
+    let note: reins_proto::desktop::LeaseRevocation = desk.open(&posted.last().unwrap()["items"][0]["sealed"]);
+    assert!(note.project.is_none());
+    desk.core.sync(0).await.unwrap();
+    assert_eq!(sent(&desk, "POST", "/reins/api/desktop/revocations").await.len(), before + 1, "sent once delivered");
 }
 
 // ---- a git host's token ---------------------------------------------------------------------------------------------
@@ -764,7 +904,7 @@ async fn only_marked_items_in_their_project_folder_are_environments() {
     desk.core.approve("s2".to_owned(), choice(&[], None)).await.unwrap();
     let made = sent(&desk, "POST", "/api/ciphers").await;
     assert!(fields_of(&made[0]).contains(&("reins.env".to_owned(), "staging".to_owned())));
-    // Legacy item/field references keep working, and reach an environment only by its own split.
+    // Legacy item/field references never reach an environment: it is released only bound to a command.
     let legacy = |id: &str, secret: &str| {
         call(
             id,
@@ -775,9 +915,11 @@ async fn only_marked_items_in_their_project_folder_are_environments() {
             "client_key": desk.public(), "nonce": format!("n-{id}")}),
         )
     };
-    desk.send(&[legacy("l1", "acme/dev/A"), legacy("l2", "dev/reins.kind")]).await;
-    desk.core.approve("l1".to_owned(), choice(&[], None)).await.unwrap();
-    let old: SecretGrant = desk.open(&desk.data("l1").await["sealed"]);
-    assert_eq!(old.secrets[0].1, "alpha-secret");
+    desk.send(&[legacy("l1", "acme/dev/A"), legacy("l2", "dev/reins.kind"), legacy("l3", "acme/mine/A")]).await;
+    assert!(desk.error("l1").await.contains("reins run"), "an environment: never by the old tool");
     assert!(!desk.error("l2").await.is_empty(), "never by another split or Reins's own field");
+    // An item of the user's own that only looks like one still works as before.
+    desk.core.approve("l3".to_owned(), choice(&[], None)).await.unwrap();
+    let old: SecretGrant = desk.open(&desk.data("l3").await["sealed"]);
+    assert_eq!(old.secrets[0].1, "a note of my own");
 }

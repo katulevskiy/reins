@@ -181,14 +181,14 @@ mod os {
             .ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
         let line = text.lines().next()?.trim();
-        let (ppid, comm) = line.split_once(char::is_whitespace)?;
+        let (parent_field, name_field) = line.split_once(char::is_whitespace)?;
         let args_out =
             std::process::Command::new("/bin/ps").args(["-o", "args=", "-p", &pid.to_string()]).output().ok()?;
         let args: Vec<String> =
             String::from_utf8_lossy(&args_out.stdout).split_whitespace().map(str::to_owned).collect();
         Some(ProcessInfo {
-            parent: ppid.trim().parse().ok(),
-            program: comm.trim().to_owned(),
+            parent: parent_field.trim().parse().ok(),
+            program: name_field.trim().to_owned(),
             args,
         })
     }

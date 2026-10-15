@@ -77,6 +77,9 @@ pub fn request_floor(view: &ApprovalView) -> Option<&'static str> {
     if view.no_standing {
         return Some("this is asked every time (secrets or a far-reaching change)");
     }
+    if view.ask.as_ref().is_some_and(|a| a.uncertain) {
+        return Some("the phone could not read this question with certainty");
+    }
     if view.mcp.as_ref().is_some_and(|m| m.destructive) {
         return Some("the MCP server marks this tool destructive");
     }

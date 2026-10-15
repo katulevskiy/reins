@@ -45,6 +45,8 @@ pub struct Lease {
     pub all: bool,
     pub values: Vec<(String, Zeroizing<String>)>,
     pub revision: String,
+    /// The caller's variables that change what runs, as they were ([`crate::secrets_client::exec_env_digest`]).
+    pub exec_env: String,
     pub created_at: i64,
     pub expires_at: i64,
 }
@@ -55,11 +57,13 @@ impl Lease {
     pub fn covers(&self, req: &LeaseRequest, now: i64) -> bool {
         now < self.expires_at
             && !req.print
+            && !req.confirm_always
             && self.runner == req.runner
             && self.root == req.root
             && self.project == req.project
             && self.env == req.env
-            && self.command.matches(&req.program, &req.args)
+            && self.exec_env == req.exec_env
+            && reins_proto::desktop::release_gate(&self.command, &req.program, &req.args)
             && match &req.fields {
                 None => self.all,
                 Some(asked) => asked.iter().all(|f| self.values.iter().any(|(n, _)| n == f)),
@@ -109,6 +113,9 @@ pub struct LeaseAnswer {
     pub values: Vec<(String, String)>,
     /// From a lease held: the phone was not asked.
     pub cached: bool,
+    /// Released under a remembered pattern (not exactly this command): what changes the program is not passed on.
+    #[serde(default)]
+    pub prefix: bool,
 }
 
 impl Drop for LeaseAnswer {
@@ -191,6 +198,14 @@ impl LeaseCache {
         before - all.len()
     }
 
+    /// Drops the leases made before `at`; how many.
+    pub fn revoke_made_before(&self, at: i64) -> usize {
+        let mut all = self.lock();
+        let before = all.len();
+        all.retain(|l| l.created_at >= at);
+        before - all.len()
+    }
+
     /// Applies a revocation from the phone once; how many leases it dropped.
     pub fn apply(&self, r: &LeaseRevocation, now: i64) -> usize {
         if r.dir != TO_DESKTOP || r.issued_at < now - REVOCATION_TTL_SECS {
@@ -221,6 +236,7 @@ fn answer(lease: &Lease, req: &LeaseRequest, cached: bool) -> LeaseAnswer {
         revision: lease.revision.clone(),
         values,
         cached,
+        prefix: lease.command.prefix,
     }
 }
 
@@ -269,7 +285,10 @@ impl SecretsService {
         if req.print {
             return Err(Refusal::Unavailable("A value to print is never held by the daemon.".to_owned()));
         }
-        if let Some(hit) = self.cache.find(req, crate::now_unix()) {
+        // Asked every time (`confirm = "always"`): no lease is looked for (the phone makes those one-shot too).
+        if !req.confirm_always
+            && let Some(hit) = self.cache.find(req, crate::now_unix())
+        {
             return Ok(hit);
         }
         let key = format!("{}\n{}\n{}\n{}\n{:?}", req.item(), req.runner, req.root, req.program, req.args);
@@ -277,7 +296,9 @@ impl SecretsService {
             Arc::clone(self.asking.lock().unwrap_or_else(PoisonError::into_inner).entry(key.clone()).or_default());
         let _turn = gate.lock().await;
         // Another run of the same command may have been approved meanwhile.
-        if let Some(hit) = self.cache.find(req, crate::now_unix()) {
+        if !req.confirm_always
+            && let Some(hit) = self.cache.find(req, crate::now_unix())
+        {
             return Ok(hit);
         }
         let phone = self.phone.phone()?;
@@ -293,9 +314,13 @@ impl SecretsService {
         let journal = self.phone.journal().clone();
         let released =
             awaiting(&journal, entry, tell, self.phone.timeout(), release_env(&phone, req, Some(&key))).await?;
+        let one_shot = released.one_shot;
         let lease = lease_from(req, released, crate::now_unix());
         let out = answer(&lease, req, false);
-        self.cache.insert(lease);
+        // One-shot (production, asked every time, a value to print): for the command started now, never kept.
+        if !one_shot {
+            self.cache.insert(lease);
+        }
         Ok(out)
     }
 
@@ -333,6 +358,7 @@ pub fn lease_from(req: &LeaseRequest, released: Released, now: i64) -> Lease {
         all: released.all,
         values: released.values,
         revision: released.revision,
+        exec_env: req.exec_env.clone(),
         created_at: now,
         expires_at: released.expires_at.min(now + i64::from(req.lease_secs.max(60))),
     }
@@ -358,6 +384,8 @@ pub async fn poll_revocations(
     paths: crate::config::Paths,
     identity: Arc<crate::identity::Identity>,
 ) {
+    // This daemon run, as the server tells readers apart: an acknowledgement never hides a revocation from another.
+    let reader = crate::server::random_token(12);
     loop {
         tokio::time::sleep(POLL_EVERY).await;
         if cache.is_empty() || crate::server::oauth::logged_in_server(&paths).is_none() {
@@ -366,20 +394,56 @@ pub async fn poll_revocations(
         let Ok(client) = crate::server::client::DesktopClient::new(&paths) else {
             continue;
         };
-        match client.revocations().await {
-            Ok(items) => {
-                for sealed in items {
-                    let Ok(plain) = identity.unseal(&sealed) else {
-                        continue;
-                    };
-                    if let Ok(r) = serde_json::from_slice::<LeaseRevocation>(&plain) {
-                        let dropped = cache.apply(&r, crate::now_unix());
-                        log::info!("your phone revoked secrets: dropped {dropped} lease(s)");
-                    }
+        match client.revocations(&reader).await {
+            Ok(mail) => {
+                let ack = apply_mail(&cache, &|sealed| identity.unseal(sealed).ok(), &mail, &reader, crate::now_unix());
+                if (!ack.ids.is_empty() || ack.lost.is_some())
+                    && let Err(e) = client.ack_revocations(&ack).await
+                {
+                    log::debug!("revocations not acknowledged yet (they come again): {e}");
                 }
             }
             Err(e) => log::debug!("revocations: {e}"),
         }
+    }
+}
+
+/// How far the server's clock and this computer's may differ, for a loss the server reports as of a time.
+const CLOCK_SKEW: i64 = 300;
+
+/// Applies what the server handed this reader, before anything is acknowledged; the acknowledgement to send. A
+/// revocation that does not open, or does not read as one, is treated as one of everything (logged); a loss the server
+/// reports drops every lease made before it.
+pub fn apply_mail(
+    cache: &LeaseCache,
+    unseal: &dyn Fn(&str) -> Option<Zeroizing<Vec<u8>>>,
+    mail: &reins_proto::desktop::RevocationMail,
+    reader: &str,
+    now: i64,
+) -> reins_proto::desktop::RevocationAck {
+    let mut dropped = 0;
+    for item in &mail.items {
+        let read = unseal(&item.sealed).and_then(|plain| serde_json::from_slice::<LeaseRevocation>(&plain).ok());
+        if let Some(r) = read {
+            dropped += cache.apply(&r, now);
+        } else {
+            log::warn!("a revocation from your phone could not be read: dropping every secret held");
+            dropped += cache.revoke(&RevokeRequest {
+                all: true,
+                ..RevokeRequest::default()
+            });
+        }
+    }
+    if let Some(lost) = &mail.lost {
+        dropped += cache.revoke_made_before(lost.at + CLOCK_SKEW);
+    }
+    if dropped > 0 {
+        log::info!("your phone revoked secrets: dropped {dropped} lease(s)");
+    }
+    reins_proto::desktop::RevocationAck {
+        reader: reader.to_owned(),
+        ids: mail.items.iter().map(|i| i.id.clone()).collect(),
+        lost: mail.lost.as_ref().map(|l| l.id.clone()),
     }
 }
 
@@ -400,6 +464,10 @@ mod tests {
             purpose: None,
             confirm_always: false,
             print: false,
+            typed: None,
+            aliases: Vec::new(),
+            path_check: None,
+            exec_env: String::new(),
         }
     }
 
@@ -414,6 +482,7 @@ mod tests {
             all,
             values: names.iter().map(|n| ((*n).to_owned(), Zeroizing::new(format!("v-{n}")))).collect(),
             revision: "r1".into(),
+            exec_env: String::new(),
             created_at: 0,
             expires_at: 1_000,
         }
@@ -437,18 +506,107 @@ mod tests {
         let mut printed = req("person", a, Some(&["A"]), &["run", "dev"]);
         printed.print = true;
         assert!(!exact.covers(&printed, 10), "a value to print is always asked");
+        let mut always = req("person", a, Some(&["A"]), &["run", "dev"]);
+        always.confirm_always = true;
+        assert!(!exact.covers(&always, 10), "asked every time");
+        let mut other_env = req("person", a, Some(&["A"]), &["run", "dev"]);
+        other_env.exec_env = exec_env_digest_of(&[("NODE_OPTIONS", "--require=/tmp/x.js")]);
+        assert!(!exact.covers(&other_env, 10), "what changes the program is not as it was");
         let wide = lease(
             CommandScope {
                 program: "/usr/bin/npm".into(),
-                args: words(&["run"]),
+                args: words(&["run", "dev"]),
                 prefix: true,
             },
             &["A", "B"],
             true,
         );
-        assert!(wide.covers(&req("person", a, None, &["run", "test", "--watch"]), 10));
-        assert!(wide.covers(&req("person", a, Some(&["B"]), &["run", "lint"]), 10));
-        assert!(!wide.covers(&req("person", a, None, &["runx"]), 10));
+        assert!(wide.covers(&req("person", a, None, &["run", "dev", "--silent", "app"]), 10));
+        assert!(wide.covers(&req("person", a, Some(&["B"]), &["run", "dev"]), 10));
+        assert!(!wide.covers(&req("person", a, None, &["run", "devx"]), 10));
+        assert!(!wide.covers(&req("person", a, None, &["run", "dev", "--script-shell=/tmp/sh"]), 10), "the grammar");
+        // A pattern the allow-list refuses covers nothing, whatever the lease says.
+        let refused = lease(
+            CommandScope {
+                program: "/usr/bin/npm".into(),
+                args: words(&["exec"]),
+                prefix: true,
+            },
+            &["A"],
+            true,
+        );
+        assert!(!refused.covers(&req("person", a, None, &["exec", "x"]), 10));
+    }
+
+    fn exec_env_digest_of(vars: &[(&str, &str)]) -> String {
+        let env: Vec<(String, String)> = vars.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+        crate::secrets_client::exec_env_digest(&env)
+    }
+
+    #[test]
+    fn what_the_server_hands_over_is_applied_before_it_is_acknowledged_and_doubt_drops_everything() {
+        use reins_proto::desktop::{LostRevocations, MailedRevocation, RevocationMail};
+        let cache = LeaseCache::default();
+        let fill = |cache: &LeaseCache| {
+            for (i, created) in [(1, 100), (2, 2_000)] {
+                let mut l = lease(CommandScope::exact("/usr/bin/npm", &words(&["run", "dev"])), &["A"], true);
+                l.id = format!("l{i}");
+                l.created_at = created;
+                l.expires_at = 100_000;
+                cache.insert(l);
+            }
+        };
+        fill(&cache);
+        let note = |project: Option<&str>| {
+            serde_json::to_vec(&LeaseRevocation {
+                v: 1,
+                dir: TO_DESKTOP.to_owned(),
+                id: format!("r-{project:?}"),
+                issued_at: 3_000,
+                project: project.map(str::to_owned),
+                env: None,
+            })
+            .unwrap()
+        };
+        let unseal = |sealed: &str| match sealed {
+            "other" => Some(Zeroizing::new(note(Some("other")))),
+            "garbage" => Some(Zeroizing::new(b"not json".to_vec())),
+            _ => None,
+        };
+        let mail = RevocationMail {
+            items: vec![MailedRevocation {
+                id: "m1".into(),
+                sealed: "other".into(),
+            }],
+            lost: None,
+        };
+        let ack = apply_mail(&cache, &unseal, &mail, "me", 3_000);
+        assert_eq!((ack.reader.as_str(), ack.ids.clone(), cache.list(3_000).len()), ("me", vec!["m1".to_owned()], 2));
+        // One that does not open, or does not read as a revocation: every lease goes.
+        for bad in ["unopenable", "garbage"] {
+            let mail = RevocationMail {
+                items: vec![MailedRevocation {
+                    id: "m2".into(),
+                    sealed: bad.into(),
+                }],
+                lost: None,
+            };
+            apply_mail(&cache, &unseal, &mail, "me", 3_000);
+            assert!(cache.is_empty(), "{bad}");
+            fill(&cache);
+        }
+        // A loss the server reports: what was made before it goes, what came after stays.
+        let mail = RevocationMail {
+            items: vec![],
+            lost: Some(LostRevocations {
+                id: "boot".into(),
+                at: 1_000,
+            }),
+        };
+        let ack = apply_mail(&cache, &unseal, &mail, "me", 3_000);
+        assert_eq!(ack.lost.as_deref(), Some("boot"));
+        let left: Vec<String> = cache.list(3_000).into_iter().map(|l| l.id).collect();
+        assert_eq!(left, ["l2"]);
     }
 
     #[test]
@@ -515,5 +673,59 @@ mod tests {
         assert!(check(&req("person", "", None, &["run"])).is_err());
         assert!(check(&req("person", "/a", Some(&[]), &["run"])).is_err());
         assert!(check(&req("person", "/a", Some(&["1X"]), &["run"])).is_err());
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    /// Every place on this computer that gets a project's values from the phone, or hands them out again from a lease:
+    /// each goes through `reins_proto::desktop::release_gate`. A new one fails this test until it is listed here,
+    /// after it does.
+    #[test]
+    fn every_release_on_this_computer_goes_through_the_one_gate() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut callers = Vec::new();
+        let mut stack = vec![src.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let code = text.split("#[cfg(test)]").next().unwrap_or("");
+                    let name = path.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+                    for needle in ["release_env(&", "check_env_grant(grant", "LeaseAnswer {\n"] {
+                        if code.contains(needle) {
+                            callers.push(format!("{name}: {}", needle.trim()));
+                        }
+                    }
+                }
+            }
+        }
+        callers.sort();
+        assert_eq!(
+            callers,
+            [
+                // A lease, made by `answer` only, which only `SecretsService` calls after `covers` or a release.
+                "leases.rs: LeaseAnswer {",
+                // `SecretsService::lease` and `print`, the only ways the daemon gets values.
+                "leases.rs: release_env(&",
+                // Windows, where `reins run` asks the phone itself.
+                "run.rs: release_env(&",
+                // The phone's answer, checked by the gate before any value is used.
+                "secrets_client.rs: check_env_grant(grant",
+            ]
+        );
+        let client = std::fs::read_to_string(src.join("secrets_client.rs")).unwrap();
+        let check = &client[client.find("pub fn check_env_grant(").unwrap()..];
+        assert!(
+            check[..check.find("Ok(Released {").unwrap()].contains("release_gate(&command, &req.program, &req.args)")
+        );
+        let leases = std::fs::read_to_string(src.join("leases.rs")).unwrap();
+        let covers = &leases[leases.find("pub fn covers(").unwrap()..];
+        assert!(
+            covers[..covers.find("fn info(").unwrap()].contains("release_gate(&self.command, &req.program, &req.args)")
+        );
     }
 }

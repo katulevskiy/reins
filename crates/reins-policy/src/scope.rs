@@ -275,7 +275,8 @@ impl SecretsScope {
             && self.env == facts.env
             && self.runner == facts.runner
             && self.root == facts.root
-            && self.command.matches(facts.program, facts.args)
+            && reins_proto::desktop::release_gate(&self.command, facts.program, facts.args)
+            && self.command.rememberable(&[])
             && (self.fields.is_empty()
                 || facts.fields.is_some_and(|asked| asked.iter().all(|f| self.fields.contains(f))))
     }
@@ -479,12 +480,18 @@ mod tests {
             &[],
             CommandScope {
                 program: npm.to_owned(),
-                args: words(&["run"]),
+                args: words(&["run", "dev"]),
                 prefix: true,
             },
         );
         all.validate().unwrap();
+        let more = words(&["run", "dev", "--silent"]);
         assert!(all.covers(&SecretsFacts {
+            args: &more,
+            fields: None,
+            ..facts
+        }));
+        assert!(!all.covers(&SecretsFacts {
             args: &test,
             fields: None,
             ..facts

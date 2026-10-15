@@ -42,6 +42,8 @@ data class FeedbackSettings(
     val sounds: Boolean = true,
     val interfaceSounds: Boolean = true,
     val requestSounds: Boolean = true,
+    /** A request arriving while Reins is open chimes (on the notification stream; see [ArrivalPolicy]). */
+    val soundWhenOpen: Boolean = true,
     val autopilotSounds: Boolean = true,
     val alertSounds: Boolean = true,
     /** 0..1 slider; the audible gain follows [gain]. 50% plays the (mastered, loud) files at half volume, 100% at full. */
@@ -96,6 +98,7 @@ object FeedbackSettingsCodec {
         P + "sounds" to s.sounds,
         P + "interface" to s.interfaceSounds,
         P + "requests" to s.requestSounds,
+        P + "whenOpen" to s.soundWhenOpen,
         P + "autopilot" to s.autopilotSounds,
         P + "alerts" to s.alertSounds,
         P + "volume" to s.volume,
@@ -113,6 +116,7 @@ object FeedbackSettingsCodec {
             sounds = bool("sounds", d.sounds),
             interfaceSounds = bool("interface", d.interfaceSounds),
             requestSounds = bool("requests", d.requestSounds),
+            soundWhenOpen = bool("whenOpen", d.soundWhenOpen),
             autopilotSounds = bool("autopilot", d.autopilotSounds),
             alertSounds = bool("alerts", d.alertSounds),
             volume = (get(P + "volume") as? Float ?: d.volume).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: d.volume,

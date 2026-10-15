@@ -18,8 +18,8 @@ use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
 use crate::types::{
     AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, DeviceView,
-    EmailContent, GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, ServerInfo,
-    ServiceView, SessionInfo, SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
+    EmailContent, GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, SecretsRevoked,
+    ServerInfo, ServiceView, SessionInfo, SsoOutcome, SsoStart, StandingGrant, StartingPolicy,
 };
 use crate::vault_editor::{VaultItemDetail, VaultItemInput, VaultItemSummary, VaultSshKey};
 use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
@@ -798,7 +798,7 @@ impl ReinsCore {
         &self,
         project: Option<String>,
         env: Option<String>,
-    ) -> Result<u32, CoreError> {
+    ) -> Result<SecretsRevoked, CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
         rt::run(async move {

@@ -97,6 +97,10 @@ fn req(args: &[&str]) -> LeaseRequest {
         purpose: None,
         confirm_always: false,
         print: false,
+        typed: None,
+        aliases: Vec::new(),
+        path_check: None,
+        exec_env: String::new(),
     }
 }
 
@@ -181,7 +185,7 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
     assert_eq!((receipt.envs[0].created, receipt.envs[0].added), (true, 2));
     assert!(!server.log().contains("5ecret"), "the server never sees a value");
 
-    // ---- reins run: the daemon asks once; the user remembers `npm run *` ----
+    // ---- reins run: the daemon asks once; the user remembers `npm run dev *` ----
     let phone_link = Arc::new(PhoneLink::new(
         Mode::Reins,
         paths.clone(),
@@ -206,7 +210,7 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
                 item.id,
                 ApprovalChoice {
                     selected_message_ids: vec![],
-                    standing: remember("prefix:1"),
+                    standing: remember("prefix:2"),
                 },
             )
             .await
@@ -215,11 +219,12 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
     let (first, ()) = tokio::join!(lease, user);
     let first = first.unwrap();
     assert_eq!(first.values[0], ("API_KEY".to_owned(), "sk-e2e-5ecret".to_owned()));
-    assert!(daemon.lease(&req(&["run", "test"]), None).await.unwrap().cached, "the lease covers npm run *");
+    let more = req(&["run", "dev", "--silent"]);
+    assert!(daemon.lease(&more, None).await.unwrap().cached, "the lease covers npm run dev *");
 
     // A daemon that starts over asks again, and the phone's permission answers without the user.
     let fresh = SecretsService::new(Arc::new(LeaseCache::default()), Arc::clone(&phone_link));
-    let lint = req(&["run", "lint"]);
+    let lint = req(&["run", "dev", "app"]);
     let lease = fresh.lease(&lint, None);
     let mut lease = std::pin::pin!(lease);
     // The phone app is open: it syncs, and its permission answers.
@@ -232,18 +237,26 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
     assert!(!again.cached && again.values.len() == 2);
 
     // ---- Revoke on all computers: the permission ends and the daemon's lease goes ----
-    assert_eq!(phone.core.revoke_secrets_everywhere(Some("acme".to_owned()), None).await.unwrap(), 1);
-    let notes = reins_desktop::server::client::DesktopClient::new(&paths).unwrap().revocations().await.unwrap();
+    let revoked = phone.core.revoke_secrets_everywhere(Some("acme".to_owned()), None).await.unwrap();
+    assert_eq!((revoked.told, revoked.not_delivered.len()), (1, 0));
+    let client = reins_desktop::server::client::DesktopClient::new(&paths).unwrap();
+    let mail = client.revocations("daemon-1").await.unwrap();
     // The store left one too (the environment changed), then the revocation.
-    assert_eq!(notes.len(), 2);
+    assert_eq!(mail.items.len(), 2);
     let me = Identity::load_or_create(&paths.identity_file()).unwrap();
-    let mut dropped = 0;
-    for sealed in &notes {
-        let note: reins_proto::desktop::LeaseRevocation = serde_json::from_slice(&me.unseal(sealed).unwrap()).unwrap();
-        dropped += cache.apply(&note, reins_desktop::now_unix());
-    }
-    assert_eq!(dropped, 1);
+    let ack = reins_desktop::leases::apply_mail(
+        &cache,
+        &|sealed| me.unseal(sealed).ok(),
+        &mail,
+        "daemon-1",
+        reins_desktop::now_unix(),
+    );
     assert!(cache.is_empty());
+    // Acknowledged: this reader is not handed them again; another reader still is.
+    client.ack_revocations(&ack).await.unwrap();
+    let again = client.revocations("daemon-1").await.unwrap();
+    assert!(again.items.is_empty() && again.lost.is_none());
+    assert_eq!(client.revocations("daemon-2").await.unwrap().items.len(), 2);
     let asked = fresh.cache();
     asked.revoke(&reins_desktop::leases::RevokeRequest {
         all: true,

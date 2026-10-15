@@ -4,6 +4,7 @@ import dev.reins.core.AccountKeys
 import dev.reins.core.BudgetView
 import dev.reins.core.PaymentsOverview
 import dev.reins.core.PurchaseChoice
+import dev.reins.core.SecretsRevoked
 import dev.reins.core.SpendLimitInput
 import dev.reins.core.SpendLimitView
 import dev.reins.core.SpendingView
@@ -649,6 +650,19 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun revokeGrant(grantId: String) {
         revokedGrants += grantId
         grants = grants.filterNot { it.id == grantId }
+    }
+
+    val secretsRevoked = mutableListOf<Pair<String?, String?>>()
+
+    override suspend fun revokeSecretsEverywhere(project: String?, env: String?): SecretsRevoked {
+        secretsRevoked += project to env
+        return SecretsRevoked(ended = 0u, told = 0u, notDelivered = emptyList())
+    }
+
+    val alwaysAsk = mutableMapOf<Pair<String, String>, Boolean?>()
+
+    override suspend fun setSecretsAlwaysAsk(project: String, env: String, always: Boolean?) {
+        alwaysAsk[project to env] = always
     }
 
     override suspend fun session() = session

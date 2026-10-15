@@ -18,6 +18,9 @@
 //!
 //! The `allow_*` lists are exceptions (`*.pub`, `.env.example`), checked first.
 
+use reins_policy::guard as builtin;
+use reins_policy::shell::{command_matches, text_words, words};
+pub use reins_policy::shell::{file_matches, glob, segments};
 use serde::{Deserialize, Serialize};
 
 /// Built-in command patterns (with `defaults = true`).
@@ -148,166 +151,92 @@ pub const GROUPS: &[Group] = &[
         id: "git-history",
         label: "Rewriting git history",
         detail: "Force pushes, deleted branches, reset --hard, clean -f, filter-repo",
-        commands: &[
-            "git push -f",
-            "git push --force*",
-            "git push +*",
-            "git push -d",
-            "git push --delete",
-            "git push --mirror",
-            "git push --prune",
-            "git push :*",
-            "git reset --hard",
-            "git clean -f",
-            "git clean --force",
-            "git branch -D",
-            "git checkout -f",
-            "git filter-branch",
-            "git filter-repo",
-        ],
-        files: &[],
+        commands: builtin::GIT_HISTORY.commands,
+        files: builtin::GIT_HISTORY.files,
     },
     Group {
         id: "deletes",
         label: "Recursive deletes",
         detail: "rm -r, Remove-Item -Recurse, rd /s",
-        commands: &[
-            "rm -r",
-            "rm -R",
-            "rm --recursive",
-            "Remove-Item -Recurse",
-            "ri -Recurse",
-            "del -Recurse",
-            "erase -Recurse",
-            "rd -Recurse",
-            "rmdir -Recurse",
-            "rd /s",
-            "rmdir /s",
-            "del /s",
-            "erase /s",
-        ],
-        files: &[],
+        commands: builtin::DELETES.commands,
+        files: builtin::DELETES.files,
     },
     Group {
         id: "infrastructure",
         label: "Infrastructure changes",
         detail: "terraform and tofu apply or destroy, kubectl apply or delete, helm uninstall",
-        commands: &[
-            "terraform apply",
-            "terraform destroy",
-            "tofu apply",
-            "tofu destroy",
-            "kubectl apply",
-            "kubectl delete",
-            "helm uninstall",
-            "helm delete",
-        ],
-        files: &[],
+        commands: builtin::INFRASTRUCTURE.commands,
+        files: builtin::INFRASTRUCTURE.files,
     },
     Group {
         id: "databases",
         label: "Dropping data",
         detail: "DROP TABLE, DROP DATABASE, DROP SCHEMA, TRUNCATE TABLE",
-        commands: &["text:drop table", "text:drop database", "text:drop schema", "text:truncate table"],
-        files: &[],
+        commands: builtin::DATABASES.commands,
+        files: builtin::DATABASES.files,
     },
     Group {
         id: "publishing",
         label: "Publishing",
         detail: "npm, cargo, PyPI and gem publishes, docker push, deleting GitHub repos and releases",
-        commands: &[
-            "npm publish",
-            "pnpm publish",
-            "yarn publish",
-            "yarn npm publish",
-            "cargo publish",
-            "poetry publish",
-            "uv publish",
-            "twine upload",
-            "gem push",
-            "docker push",
-            "gh repo delete",
-            "gh release delete",
-        ],
-        files: &[],
+        commands: builtin::PUBLISHING.commands,
+        files: builtin::PUBLISHING.files,
     },
     Group {
         id: "payments",
         label: "Trusting a payment key",
         detail: "reins payments-trust, which lets this computer open the card details of purchases",
-        commands: &["reins payments-trust"],
-        files: &[],
+        commands: builtin::PAYMENTS.commands,
+        files: builtin::PAYMENTS.files,
     },
     Group {
         id: "secrets",
         label: "Finding and reading secrets",
         detail: "reins secrets scan, import and get, which see where your secrets are or read one",
-        commands: &["reins secrets scan", "reins secrets import", "reins secrets get"],
-        files: &[],
+        commands: builtin::SECRETS.commands,
+        files: builtin::SECRETS.files,
     },
     Group {
         id: "disks",
         label: "Wiping disks",
         detail: "mkfs, dd of=, format, Format-Volume, Clear-Disk",
-        commands: &["mkfs*", "dd of=*", "format *:", "Format-Volume", "Clear-Disk"],
-        files: &[],
+        commands: builtin::DISKS.commands,
+        files: builtin::DISKS.files,
     },
     Group {
         id: "env-files",
         label: ".env files",
         detail: "Reading or changing .env and .env.* (not .env.example or .env.reins)",
-        commands: &[],
-        files: &[".env", ".env.*"],
+        commands: builtin::ENV_FILES.commands,
+        files: builtin::ENV_FILES.files,
     },
     Group {
         id: "keys",
         label: "Keys and certificates",
         detail: "*.pem, *.key, *.p12, keystores, SSH private keys, ~/.ssh",
-        commands: &[],
-        files: &[
-            "*.pem",
-            "*.key",
-            "*.p12",
-            "*.pfx",
-            "*.jks",
-            "*.keystore",
-            "id_rsa",
-            "id_dsa",
-            "id_ecdsa",
-            "id_ed25519",
-            ".ssh/*",
-        ],
+        commands: builtin::KEYS.commands,
+        files: builtin::KEYS.files,
     },
     Group {
         id: "cloud",
         label: "Cloud and cluster credentials",
         detail: "AWS, Google Cloud, Azure, kubeconfig, Docker logins, Terraform state",
-        commands: &[],
-        files: &[
-            "*.tfstate",
-            ".aws/credentials",
-            ".aws/config",
-            ".config/gcloud/*",
-            ".azure/*",
-            ".kube/config",
-            ".docker/config.json",
-            "AppData/Roaming/gcloud/*",
-            "credentials.json",
-        ],
+        commands: builtin::CLOUD.commands,
+        files: builtin::CLOUD.files,
     },
     Group {
         id: "tokens",
         label: "Saved tokens",
         detail: ".netrc, .git-credentials, .npmrc, .pypirc, .vault-token, Reins' import receipts",
-        commands: &[],
-        files: &[".netrc", "_netrc", ".git-credentials", ".npmrc", ".pypirc", ".vault-token", "reins/imports/*"],
+        commands: builtin::TOKENS.commands,
+        files: builtin::TOKENS.files,
     },
     Group {
         id: "reins",
         label: "Reins's own sign-in",
         detail: "This computer's session with Reins, the daemon's control token, the phone key it trusts",
-        commands: &[],
-        files: &["reins/session.json", "reins/control.token", "reins/phone-key.json"],
+        commands: builtin::REINS_STATE.commands,
+        files: builtin::REINS_STATE.files,
     },
 ];
 
@@ -315,6 +244,17 @@ pub const GROUPS: &[Group] = &[
 #[must_use]
 pub fn group_of(pattern: &str) -> Option<&'static Group> {
     GROUPS.iter().find(|g| g.commands.contains(&pattern) || g.files.contains(&pattern))
+}
+
+impl Group {
+    /// Whether what this group covers cannot be undone (history rewritten, files deleted, infrastructure changed,
+    /// data dropped, something published, a payment key trusted, a disk wiped): the phone asks for those every time,
+    /// with a hold, and Autopilot leaves them to the user in Manual and Auto. The phone reads that from its own copy
+    /// of these rules (`reins_policy::guard`), not from what this app says.
+    #[must_use]
+    pub fn destructive(&self) -> bool {
+        builtin::group(self.id).is_some_and(|g| g.destructive)
+    }
 }
 
 /// What a hook does when the question gets no answer (timeout, phone offline, not logged in).
@@ -366,6 +306,36 @@ pub struct Match {
     pub pattern: String,
     /// What a standing answer on the phone may cover: `command:<pattern>` or `file:<pattern>`.
     pub topic: String,
+    /// What in the command matched it, as the phone shows it: the file (`.env`), the command (`git push --force
+    /// origin main`) or the words (`drop table`).
+    pub matched: String,
+}
+
+impl Match {
+    fn new(kind: &str, pattern: &str, matched: &str) -> Self {
+        Self {
+            pattern: pattern.to_owned(),
+            topic: format!("{kind}:{pattern}"),
+            matched: shown(matched),
+        }
+    }
+
+    /// The built-in group of the rule that matched (`None` for the user's own rules).
+    #[must_use]
+    pub fn group(&self) -> Option<&'static Group> {
+        group_of(&self.pattern)
+    }
+}
+
+/// One line of at most 80 characters.
+fn shown(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() <= 80 {
+        return line;
+    }
+    let mut cut: String = line.chars().take(79).collect();
+    cut.push('…');
+    cut
 }
 
 impl GuardConfig {
@@ -414,19 +384,15 @@ impl GuardConfig {
     pub fn check_command(&self, command: &str) -> Option<Match> {
         let flat = text_words(command);
         let segments = segments(command);
-        let allowed = |seg: &[String]| self.allow_commands.iter().any(|p| command_matches(p, seg, None));
+        let allowed = |seg: &[String]| self.allow_commands.iter().any(|p| command_matches(p, seg));
         for pattern in self.list(&self.commands, DEFAULT_COMMANDS) {
-            let hit = if let Some(text) = pattern.strip_prefix("text:") {
+            if let Some(text) = pattern.strip_prefix("text:") {
                 let want = text_words(text);
-                !want.is_empty() && flat.windows(want.len()).any(|w| w == want.as_slice())
-            } else {
-                segments.iter().any(|seg| !allowed(seg) && command_matches(pattern, seg, None))
-            };
-            if hit {
-                return Some(Match {
-                    pattern: pattern.to_owned(),
-                    topic: format!("command:{pattern}"),
-                });
+                if !want.is_empty() && flat.windows(want.len()).any(|w| w == want.as_slice()) {
+                    return Some(Match::new("command", pattern, &want.join(" ")));
+                }
+            } else if let Some(seg) = segments.iter().find(|seg| !allowed(seg) && command_matches(pattern, seg)) {
+                return Some(Match::new("command", pattern, &seg.join(" ")));
             }
         }
         // Arguments that name a guarded file (`cat .env`, `cp ~/.ssh/id_ed25519 /tmp`).
@@ -446,363 +412,27 @@ impl GuardConfig {
         if path.is_empty() || self.list(&self.allow_files, DEFAULT_ALLOW_FILES).any(|p| file_matches(p, path)) {
             return None;
         }
-        self.list(&self.files, DEFAULT_FILES).find(|p| file_matches(p, path)).map(|p| Match {
-            pattern: p.to_owned(),
-            topic: format!("file:{p}"),
-        })
+        self.list(&self.files, DEFAULT_FILES).find(|p| file_matches(p, path)).map(|p| Match::new("file", p, path))
     }
-}
-
-/// The words of `text`, lowercased (runs of letters, digits and `_`).
-fn text_words(text: &str) -> Vec<String> {
-    text.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
-}
-
-/// `*` matches any run of characters (also none).
-#[must_use]
-pub fn glob(pattern: &str, text: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
-    let t: Vec<char> = text.chars().collect();
-    let (mut pi, mut ti) = (0, 0);
-    let mut star: Option<(usize, usize)> = None;
-    while ti < t.len() {
-        if pi < p.len() && p[pi] != '*' && p[pi] == t[ti] {
-            pi += 1;
-            ti += 1;
-        } else if pi < p.len() && p[pi] == '*' {
-            star = Some((pi, ti));
-            pi += 1;
-        } else if let Some((sp, st)) = star {
-            pi = sp + 1;
-            ti = st + 1;
-            star = Some((sp, st + 1));
-        } else {
-            return false;
-        }
-    }
-    p[pi..].iter().all(|&c| c == '*')
-}
-
-fn word_matches(pattern: &str, word: &str) -> bool {
-    let mut chars = pattern.chars();
-    if let (Some('-'), Some(letter), None) = (chars.next(), chars.next(), chars.next())
-        && letter.is_ascii_alphanumeric()
-        && word.len() > 1
-        && word.starts_with('-')
-        && !word.starts_with("--")
-        && word[1..].chars().all(|c| c.is_ascii_alphanumeric())
-    {
-        return word[1..].contains(letter);
-    }
-    if let Some(switch) = cmd_switch(pattern) {
-        return word.starts_with('/') && word.split('/').any(|s| s.eq_ignore_ascii_case(switch));
-    }
-    if let Some(name) = powershell_parameter(pattern) {
-        let Some(given) = word.strip_prefix('-').filter(|w| !w.starts_with('-')) else {
-            return false;
-        };
-        let given = given.split_once(':').map_or(given, |(p, _)| p);
-        return !given.is_empty()
-            && given.len() <= name.len()
-            && name[..given.len()].eq_ignore_ascii_case(given)
-            && given.chars().all(|c| c.is_ascii_alphanumeric());
-    }
-    glob(pattern, word)
-}
-
-/// `s` for the cmd switch `/s` in a pattern.
-fn cmd_switch(pattern: &str) -> Option<&str> {
-    pattern.strip_prefix('/').filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric()))
-}
-
-/// `Recurse` for the PowerShell parameter `-Recurse` in a pattern: a dash, a capital letter, then letters.
-fn powershell_parameter(pattern: &str) -> Option<&str> {
-    let name = pattern.strip_prefix('-')?;
-    let mut chars = name.chars();
-    (chars.next()?.is_ascii_uppercase() && name.len() > 1 && chars.all(|c| c.is_ascii_alphanumeric())).then_some(name)
-}
-
-/// Whether a command pattern (not `text:`) matches one simple command (`seg[0]` the program's name).
-fn command_matches(pattern: &str, seg: &[String], _: Option<()>) -> bool {
-    let p = words(pattern);
-    let Some((program, rest)) = p.split_first() else {
-        return false;
-    };
-    let Some((name, args)) = seg.split_first() else {
-        return false;
-    };
-    if !glob(&program.to_lowercase(), &name.to_lowercase()) {
-        return false;
-    }
-    let mut args = args.iter();
-    rest.iter().all(|want| args.any(|a| word_matches(want, a)))
-}
-
-/// Whether a file pattern matches `path` (see the module docs).
-#[must_use]
-pub fn file_matches(pattern: &str, path: &str) -> bool {
-    let pattern = pattern.trim().trim_start_matches("~/").trim_start_matches("**/");
-    let parts: Vec<&str> = path.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".").collect();
-    let want: Vec<&str> = pattern.split('/').filter(|p| !p.is_empty()).collect();
-    if want.is_empty() || parts.len() < want.len() {
-        return false;
-    }
-    let tail = &parts[parts.len() - want.len()..];
-    want.iter().zip(tail).all(|(w, p)| glob(w, p))
-}
-
-/// Shell words of a pattern or a simple command.
-fn words(text: &str) -> Vec<String> {
-    segments(text).into_iter().next().unwrap_or_default()
-}
-
-/// The simple commands in a shell command line, each as its words with the program's name first: quotes and escapes
-/// resolved, `;`, `&`, `|`, `&&`, `||`, newlines, parentheses, `$(…)` and backticks separate commands; variable
-/// assignments and wrappers (`sudo`, `env`, `nohup`, `time`, `command`, `exec`, `nice`, `doas`) before the program are
-/// skipped, and `sh -c "…"` / `bash -c` / `eval` are looked into. Then the commands the line holds when read the
-/// Windows way (backslashes are part of words, a backtick escapes; `cmd /c`, `powershell -Command` looked into), as far
-/// as they differ.
-#[must_use]
-pub fn segments(command: &str) -> Vec<Vec<String>> {
-    let mut out = Vec::new();
-    for raw in split_commands(command, false) {
-        resolve(&raw, &mut out, 0, false);
-    }
-    let mut windows = Vec::new();
-    for raw in split_commands(command, true) {
-        resolve(&raw, &mut windows, 0, true);
-    }
-    for seg in windows {
-        if !out.contains(&seg) {
-            out.push(seg);
-        }
-    }
-    out
-}
-
-/// The command PowerShell runs for `-EncodedCommand`: base64 of UTF-16LE text.
-fn decode_powershell(encoded: &str) -> Option<String> {
-    let bytes = data_encoding::BASE64.decode(encoded.trim().as_bytes()).ok()?;
-    let (pairs, rest) = bytes.as_chunks::<2>();
-    if !rest.is_empty() {
-        return None;
-    }
-    let units: Vec<u16> = pairs.iter().map(|b| u16::from_le_bytes(*b)).collect();
-    String::from_utf16(&units).ok()
-}
-
-/// What `cmd /c …`, `powershell -Command …`, `pwsh -EncodedCommand …` or `Invoke-Expression …` runs.
-fn windows_inner(seg: &[String]) -> Option<String> {
-    let program = seg.first()?.to_ascii_lowercase();
-    let rest = |i: usize| (i + 1 < seg.len()).then(|| seg[i + 1..].join(" "));
-    match program.as_str() {
-        "cmd" => {
-            let i = seg.iter().position(|w| w.eq_ignore_ascii_case("/c") || w.eq_ignore_ascii_case("/k"))?;
-            rest(i)
-        }
-        "powershell" | "pwsh" => seg.iter().enumerate().skip(1).find_map(|(i, w)| {
-            let opt = w.strip_prefix('-')?.to_ascii_lowercase();
-            if opt.is_empty() {
-                None
-            } else if "command".starts_with(&opt) {
-                rest(i)
-            } else if opt == "ec" || "encodedcommand".starts_with(&opt) {
-                decode_powershell(seg.get(i + 1)?)
-            } else {
-                None
-            }
-        }),
-        "iex" | "invoke-expression" => rest(0),
-        _ => None,
-    }
-}
-
-fn resolve(raw: &[String], out: &mut Vec<Vec<String>>, depth: usize, windows: bool) {
-    const WRAPPERS: &[&str] = &["sudo", "doas", "env", "nohup", "time", "command", "exec", "nice", "builtin"];
-    let mut i = 0;
-    loop {
-        while raw.get(i).is_some_and(|w| is_assignment(w)) {
-            i += 1;
-        }
-        let Some(first) = raw.get(i) else {
-            return;
-        };
-        if WRAPPERS.contains(&program_name(first).as_str()) {
-            i += 1;
-            while raw.get(i).is_some_and(|w| w.starts_with('-')) {
-                // `sudo -u root`, `nice -n 5`: an option's value may follow.
-                let takes_value = matches!(raw[i].as_str(), "-u" | "-g" | "-n" | "-C" | "-h" | "-p");
-                i += if takes_value {
-                    2
-                } else {
-                    1
-                };
-            }
-            continue;
-        }
-        break;
-    }
-    let mut seg: Vec<String> = raw[i..].to_vec();
-    seg[0] = program_name(&seg[0]);
-    if depth < 3 {
-        let inner = match seg[0].as_str() {
-            "sh" | "bash" | "zsh" | "dash" | "ksh" | "fish" => seg
-                .iter()
-                .position(|w| w == "-c" || (w.starts_with('-') && !w.starts_with("--") && w.ends_with('c')))
-                .and_then(|p| seg.get(p + 1).cloned()),
-            "eval" => Some(seg[1..].join(" ")),
-            _ if windows => windows_inner(&seg),
-            _ => None,
-        };
-        if let Some(inner) = inner {
-            for raw in split_commands(&inner, windows) {
-                resolve(&raw, out, depth + 1, windows);
-            }
-        }
-    }
-    out.push(seg);
-}
-
-/// The program's name: no directory, and without a Windows program ending (`git.exe`, `npm.cmd`).
-fn program_name(word: &str) -> String {
-    let name = word.rsplit(['/', '\\']).next().unwrap_or(word);
-    let lower = name.to_ascii_lowercase();
-    match [".exe", ".cmd", ".bat", ".com"].iter().find(|ext| lower.ends_with(*ext) && name.len() > ext.len()) {
-        Some(ext) => name[..name.len() - ext.len()].to_owned(),
-        None => name.to_owned(),
-    }
-}
-
-fn is_assignment(word: &str) -> bool {
-    word.split_once('=').is_some_and(|(name, _)| {
-        !name.is_empty()
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && !name.starts_with(|c: char| c.is_ascii_digit())
-    })
-}
-
-/// Splits a command line into simple commands (lists of words), resolving quotes and escapes. `windows`: as cmd and
-/// PowerShell read it, where a backslash is part of the word (`C:\Users`) and a backtick escapes the next character.
-fn split_commands(command: &str, windows: bool) -> Vec<Vec<String>> {
-    let mut commands: Vec<Vec<String>> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
-    let mut word = String::new();
-    let mut in_word = false;
-    let mut chars = command.chars().peekable();
-    let end_word = |word: &mut String, in_word: &mut bool, current: &mut Vec<String>| {
-        if *in_word {
-            current.push(std::mem::take(word));
-            *in_word = false;
-        }
-    };
-    let end_command = |current: &mut Vec<String>, commands: &mut Vec<Vec<String>>| {
-        if !current.is_empty() {
-            commands.push(std::mem::take(current));
-        }
-    };
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' => {
-                in_word = true;
-                for q in chars.by_ref() {
-                    if q == '\'' {
-                        break;
-                    }
-                    word.push(q);
-                }
-            }
-            '"' if windows => {
-                in_word = true;
-                while let Some(q) = chars.next() {
-                    match q {
-                        '"' => break,
-                        '`' => {
-                            if let Some(n) = chars.next() {
-                                word.push(n);
-                            }
-                        }
-                        _ => word.push(q),
-                    }
-                }
-            }
-            '`' if windows => {
-                in_word = true;
-                match chars.next() {
-                    Some('\n') | None => {}
-                    Some(n) => word.push(n),
-                }
-            }
-            '\\' if windows => {
-                in_word = true;
-                word.push('\\');
-            }
-            '"' => {
-                in_word = true;
-                while let Some(q) = chars.next() {
-                    match q {
-                        '"' => break,
-                        '\\' => {
-                            if let Some(&n) = chars.peek()
-                                && matches!(n, '"' | '\\' | '$' | '`' | '\n')
-                            {
-                                chars.next();
-                                if n != '\n' {
-                                    word.push(n);
-                                }
-                                continue;
-                            }
-                            word.push('\\');
-                        }
-                        _ => word.push(q),
-                    }
-                }
-            }
-            '\\' => {
-                in_word = true;
-                match chars.next() {
-                    Some('\n') | None => {}
-                    Some(n) => word.push(n),
-                }
-            }
-            '#' if !in_word => {
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        break;
-                    }
-                }
-                end_command(&mut current, &mut commands);
-            }
-            ';' | '&' | '|' | '\n' | '(' | ')' | '`' | '{' | '}' if !(matches!(c, '{' | '}') && in_word) => {
-                end_word(&mut word, &mut in_word, &mut current);
-                end_command(&mut current, &mut commands);
-            }
-            '$' if chars.peek() == Some(&'(') => {
-                chars.next();
-                end_word(&mut word, &mut in_word, &mut current);
-                end_command(&mut current, &mut commands);
-            }
-            '<' | '>' => {
-                // A redirection: its target becomes a word of its own (`> .env`).
-                end_word(&mut word, &mut in_word, &mut current);
-                while chars.peek().is_some_and(|n| matches!(n, '>' | '&' | '|')) {
-                    chars.next();
-                }
-            }
-            c if c.is_whitespace() => end_word(&mut word, &mut in_word, &mut current),
-            c => {
-                in_word = true;
-                word.push(c);
-            }
-        }
-    }
-    end_word(&mut word, &mut in_word, &mut current);
-    end_command(&mut current, &mut commands);
-    commands
 }
 
 #[cfg(test)]
 mod tests {
+    use reins_policy::shell::{decode_powershell, program_name, word_matches};
+
     use super::*;
+
+    /// The phone reads a hook's question with its own copy of the built-in rules: the same groups, the same labels,
+    /// the same allow list.
+    #[test]
+    fn the_phone_knows_the_built_in_groups() {
+        for g in GROUPS {
+            let phone = builtin::group(g.id).unwrap_or_else(|| panic!("{} is unknown to the phone", g.id));
+            assert_eq!((phone.label, phone.commands, phone.files), (g.label, g.commands, g.files), "{}", g.id);
+        }
+        assert_eq!(builtin::BUILTIN.len(), GROUPS.len());
+        assert_eq!(builtin::ALLOW_FILES, DEFAULT_ALLOW_FILES);
+    }
 
     #[test]
     fn the_groups_are_exactly_the_built_in_rules() {
@@ -860,6 +490,43 @@ mod tests {
         );
         assert_eq!(segments("cat < .env > out"), vec![vec!["cat", ".env", "out"]]);
         assert!(segments("   ").is_empty());
+    }
+
+    /// The command from the phone's screenshot: a Python script, fed as a heredoc, that edits a Rust test file. The
+    /// guard reads every word of it, so a test's string naming `.config/gcloud/…` asks: a heuristic first line, whose
+    /// needless questions Autopilot learns and Bypass answers.
+    #[test]
+    fn every_word_is_read_heredocs_and_code_too() {
+        let screenshot = include_str!("../tests/fixtures/heredoc-python-edit.sh");
+        assert_eq!(cmd(screenshot).as_deref(), Some(".config/gcloud/*"));
+    }
+
+    #[test]
+    fn a_match_says_what_matched() {
+        let m = |c: &str| guard().check_command(c).unwrap();
+        let force = m("cd app && git push --force origin main");
+        assert_eq!(force.matched, "git push --force origin main");
+        assert_eq!(force.group().map(|g| g.id), Some("git-history"));
+        assert!(force.group().unwrap().destructive());
+        let env = m("cat ~/app/.env");
+        assert_eq!((env.matched.as_str(), env.group().map(|g| g.id)), ("~/app/.env", Some("env-files")));
+        assert!(!env.group().unwrap().destructive());
+        assert_eq!(m("psql -c 'DROP   TABLE users'").matched, "drop table");
+        let long = m(&format!("rm -rf {}", "build/".repeat(30)));
+        assert!(long.matched.ends_with('…') && long.matched.chars().count() == 80, "{}", long.matched);
+        let own = GuardConfig {
+            commands: vec!["make deploy".to_owned()],
+            ..GuardConfig::default()
+        };
+        assert_eq!(own.check_command("make -j4 deploy").unwrap().group(), None, "the user's own rule");
+        for g in GROUPS {
+            assert_eq!(
+                g.destructive(),
+                g.files.is_empty() && g.id != "secrets",
+                "{}: commands cannot be undone (but finding secrets), files are secrets",
+                g.id
+            );
+        }
     }
 
     #[test]

@@ -726,6 +726,10 @@ impl Engine {
 
     /// Long-polls the server (foreground channel) and processes what arrives, then runs Autopilot's pass.
     pub async fn sync(&self, wait_secs: u32) -> Result<Vec<PendingItem>, CoreError> {
+        // Revocations of secrets not delivered yet go first (Box: kept out of this future's size).
+        if let Err(e) = Box::pin(self.flush_revocations(Vec::new())).await {
+            log::warn!("could not send the revocations waiting: {e}");
+        }
         let result = self.sync_inner(wait_secs).await;
         self.autopilot_pass().await;
         result?;

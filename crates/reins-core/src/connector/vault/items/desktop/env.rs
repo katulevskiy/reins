@@ -42,6 +42,11 @@ const NAMES: &str = "secrets_names";
 const DEFAULT_LEASE: i64 = 3_600;
 const MIN_LEASE: i64 = 60;
 const MAX_LEASE: i64 = 86_400;
+/// The longest the phone lets the desktop app keep a release, whatever it asks for (`lease` in reins.toml is a request
+/// the phone can only shorten).
+const PHONE_MAX_LEASE: i64 = 8 * 3_600;
+/// How long a one-shot release lives: the values reach the command started now, and nothing after.
+const ONE_SHOT_LEASE: i64 = 60;
 /// How many earlier values an environment keeps (the Bitwarden apps keep five passwords; an environment holds more).
 const MAX_HISTORY: usize = 100;
 /// Where the user's own choice of "always ask" per environment is kept (a `meta` key): `project/env` → bool.
@@ -194,12 +199,39 @@ pub(crate) struct ReleaseAsk {
     pub purpose: Option<String>,
     pub confirm_always: bool,
     pub print: bool,
+    /// The program as typed (`npm`, `./npm`).
+    pub typed: Option<String>,
+    /// Each link on the way from the name typed to the program.
+    pub aliases: Vec<String>,
+    /// [`reins_proto::desktop::PATH_SAME`] or [`reins_proto::desktop::PATH_OTHER`], when the computer said.
+    pub path_check: Option<String>,
 }
 
 impl ReleaseAsk {
     /// The exact command asked for.
     pub fn exact(&self) -> CommandScope {
         CommandScope::exact(&self.program, &self.args)
+    }
+
+    /// Every other name the program goes by: as typed, and each link on the way ([`CommandScope::offers_as`]).
+    pub fn names(&self) -> Vec<&str> {
+        self.typed.iter().chain(&self.aliases).map(String::as_str).collect()
+    }
+
+    /// The command as shown: with the program's whole path when it is not in a usual place.
+    pub fn shown(&self) -> String {
+        self.exact().shown_where()
+    }
+
+    /// Why the program deserves a second look, if it does ([`reins_proto::desktop::program_warning`]).
+    pub fn program_warning(&self) -> Option<&'static str> {
+        reins_proto::desktop::program_warning(&self.program, &self.root, self.path_check.as_deref())
+    }
+
+    /// Whether this release is for one run only: asked every time (`always`), a value to print, or a command that
+    /// cannot be remembered.
+    pub fn one_shot(&self, always: bool) -> bool {
+        always || self.print || self.confirm_always || self.command_options().is_empty()
     }
 
     /// What a standing permission compares (see `reins_policy::SecretsScope`).
@@ -218,7 +250,7 @@ impl ReleaseAsk {
     /// The commands a remembered approval may cover, by id: `exact`, then `prefix:<n>` for each allowed prefix.
     pub fn command_options(&self) -> Vec<(String, CommandScope)> {
         self.exact()
-            .offers()
+            .offers_as(&self.names())
             .into_iter()
             .map(|c| {
                 (
@@ -282,6 +314,9 @@ pub(crate) fn release_ask(call: &ConnectorCall) -> Result<ReleaseAsk, CoreError>
         purpose: call.str_arg("purpose").map(text::one_line).filter(|p| !p.is_empty()),
         confirm_always: call.str_arg("confirm") == Some("always"),
         print: call.bool_arg("print").unwrap_or(false),
+        typed: call.str_arg("typed").map(text::one_line).filter(|t| !t.is_empty()),
+        aliases: call.list_arg("aliases").iter().map(|a| text::one_line(a)).filter(|a| !a.is_empty()).collect(),
+        path_check: call.str_arg("path_check").map(str::to_owned),
     })
 }
 
@@ -347,9 +382,14 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
     let names: Vec<String> = chosen(entry, &ask)?.into_iter().map(|(n, _)| n).collect();
     let choice = always_ask_choice(&vault.store, &ask.project, &ask.env)?;
     let always = always_ask(choice, ask.confirm_always, &ask.env);
-    let command = ask.exact().shown();
+    let command = ask.shown();
+    let warning = ask.program_warning();
+    let one_shot = ask.one_shot(always);
     let who = runner_label(&ask.runner);
     let mut lines = vec![format!("{who}: {} for {command}", ask.env)];
+    if let Some(w) = warning {
+        lines.push(format!("{w}: {}", text::one_line(&ask.program)));
+    }
     lines.push(format!("{}/{}: {}", ask.project, ask.env, names.join(", ")));
     lines.push(format!("In {}", text::one_line(&ask.root)));
     if let Some(p) = &ask.purpose {
@@ -357,8 +397,10 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
     }
     lines.push(if ask.print {
         "Printed in the terminal".to_owned()
+    } else if one_shot {
+        "For this run only".to_owned()
     } else {
-        format!("Kept for {}", crate::views::duration_text(u64::try_from(ask.lease).unwrap_or(0)))
+        format!("Kept for {}", crate::views::duration_text(u64::try_from(lease_for(&ask, false, None, 0)).unwrap_or(0)))
     });
     let view = EnvReleaseView {
         project: ask.project.clone(),
@@ -369,21 +411,22 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
         root: text::one_line(&ask.root),
         command,
         program: text::one_line(&ask.program),
+        program_warning: warning.map(str::to_owned),
         variables: names,
         all_variables: ask.fields.is_none(),
-        lease_secs: u64::try_from(ask.lease).unwrap_or(0),
+        lease_secs: u64::try_from(lease_for(&ask, one_shot, None, 0)).unwrap_or(0),
         purpose: ask.purpose.clone(),
         commands: ask
             .command_options()
             .into_iter()
             .map(|(id, c)| CommandOption {
                 id,
-                label: c.shown(),
+                label: c.shown_where(),
                 prefix: c.prefix,
             })
             .collect(),
         print: ask.print,
-        always_ask: always || ask.print,
+        always_ask: one_shot,
         always_ask_set: choice.is_some(),
     };
     Ok(Preview {
@@ -391,29 +434,44 @@ pub(super) async fn preview_release(vault: &Vault, account: &str, call: &Connect
         resource_label: format!("{} \u{b7} {}", ask.project, ask.env),
         lines,
         parents: vec![(format!("{SECRETS}/{}", ask.project), ask.project.clone())],
-        once_only: always || ask.print,
+        once_only: one_shot,
         secrets: Some(SecretsPreview::Release(view)),
         ..Preview::default()
     })
 }
 
+/// How long the desktop app may keep a release, from `now`: what it asked for, never more than the phone's own
+/// maximum or what is left of the permission that covers it (`permission_ends`), and a minute for a one-shot release.
+fn lease_for(ask: &ReleaseAsk, one_shot: bool, permission_ends: Option<i64>, now: i64) -> i64 {
+    if one_shot {
+        return ONE_SHOT_LEASE;
+    }
+    let left = permission_ends.map_or(i64::MAX, |end| end.saturating_sub(now));
+    ask.lease.min(PHONE_MAX_LEASE).min(left).max(0)
+}
+
 /// Releases the environment, bound to `command`: the exact command, or the prefix the user chose on the phone (the
-/// flow decides; never anything the computer proposed).
+/// flow decides; never anything the computer proposed). `permission_ends`: when the standing permission that covers
+/// it ends, if one does.
 pub(crate) async fn perform_release(
     vault: &Vault,
     account: &str,
     call: &ConnectorCall,
     command: CommandScope,
+    permission_ends: Option<i64>,
 ) -> Result<Value, CoreError> {
     let ask = release_ask(call)?;
-    if !ask.exact().within(&command) {
+    if !reins_proto::desktop::release_gate(&command, &ask.program, &ask.args) {
         return Err(bad("The release does not match what was approved."));
     }
+    let always = always_ask(always_ask_choice(&vault.store, &ask.project, &ask.env)?, ask.confirm_always, &ask.env);
+    let one_shot = ask.one_shot(always);
     // A fresh read: the values are what the vault holds now.
     let snap = Snapshot::load(vault, account).await?;
     let entry = env_entry(&snap, &ask)?;
     let values = chosen(entry, &ask)?;
-    let expires_at = unix_now().saturating_add(ask.lease);
+    let now = unix_now();
+    let expires_at = now.saturating_add(lease_for(&ask, one_shot, permission_ends, now));
     let grant = SecretGrant {
         v: 1,
         nonce: nonce_arg(call)?,
@@ -425,6 +483,7 @@ pub(crate) async fn perform_release(
         runner: Some(ask.runner.clone()),
         root: Some(ask.root.clone()),
         command: Some(command),
+        one_shot,
     };
     let sealed = seal(client_key(call)?, &grant);
     for (_, value) in grant.secrets {
@@ -1157,5 +1216,40 @@ mod tests {
         assert_eq!(runner_label("person"), "You");
         assert_eq!(runner_label("agent:claude-code"), "Claude Code");
         assert_eq!(runner_label("agent:aider"), "Aider");
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    /// Every place on the phone that seals a project's values for the computer: each must go through
+    /// `reins_proto::desktop::release_gate`. A new one fails this test until it is added here, after it does.
+    #[test]
+    fn every_release_of_values_goes_through_the_one_gate() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut sealing = Vec::new();
+        let mut stack = vec![src.clone()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    if text.contains("SecretGrant {") {
+                        sealing.push(path.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
+        }
+        sealing.sort();
+        // `items/desktop.rs` seals single item/field references (`vault_secret_release`), which never reach a
+        // project's environment (its resolver refuses them); `env.rs` seals environments, after the gate.
+        assert_eq!(sealing, ["connector/vault/items/desktop.rs", "connector/vault/items/desktop/env.rs"]);
+        let env = std::fs::read_to_string(src.join("connector/vault/items/desktop/env.rs")).unwrap();
+        let release = &env[env.find("pub(crate) async fn perform_release(").unwrap()..];
+        let release = &release[..release.find("SecretGrant {").unwrap()];
+        assert!(release.contains("release_gate(&command, &ask.program, &ask.args)"), "the gate comes first");
+        let legacy = std::fs::read_to_string(src.join("connector/vault/items/desktop.rs")).unwrap();
+        assert!(legacy.contains("env::env_identity(snap, &snap.entries[i]).is_some()"), "environments refused");
     }
 }
