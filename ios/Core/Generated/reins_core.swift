@@ -2726,6 +2726,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func accountStatus(account: String) async  -> GmailStatus
     
     /**
+     * A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
+     * Sync never keeps the app closed or signed out; this is all it ever shows.
+     */
+    func accountSyncNotice() async  -> String?
+    
+    /**
      * The accounts the user connected, oldest first.
      */
     func accounts() async throws  -> [AccountView]
@@ -2865,6 +2871,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * The devices signed in to the account (Settings > Devices).
      */
     func devices() async throws  -> [DeviceView]
+    
+    /**
+     * The banner of [`Self::account_sync_notice`] was dismissed.
+     */
+    func dismissAccountSyncNotice() async throws 
     
     /**
      * Downloads the model and checks it against the hashes built into the core; nothing is kept if it does not match.
@@ -3398,6 +3409,27 @@ open func accountStatus(account: String)async  -> GmailStatus  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeGmailStatus_lift,
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
+     * Sync never keeps the app closed or signed out; this is all it ever shows.
+     */
+open func accountSyncNotice()async  -> String?  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_account_sync_notice(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
             errorHandler: nil
             
         )
@@ -3974,6 +4006,25 @@ open func devices()async throws  -> [DeviceView]  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeDeviceView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The banner of [`Self::account_sync_notice`] was dismissed.
+     */
+open func dismissAccountSyncNotice()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_dismiss_account_sync_notice(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -18970,6 +19021,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_account_status() != 62124) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_account_sync_notice() != 55961) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_accounts() != 48644) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19061,6 +19115,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_devices() != 30266) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_dismiss_account_sync_notice() != 25355) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
