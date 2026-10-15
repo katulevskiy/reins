@@ -7,6 +7,8 @@ import SwiftUI
 /// The details scroll; the decision stays pinned at the bottom on Liquid Glass. On a bent iPhone Duo with a sheet wide
 /// (or tall) enough, the details and the decision take one half each, so the crease runs between them.
 struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
+    /// The details start with a `SheetField`, which has its own close button.
+    var closeInField = false
     @ViewBuilder var details: Details
     /// What is being decided, in a line or two: shown above the buttons when they have a half to themselves.
     @ViewBuilder var recap: Recap
@@ -58,15 +60,55 @@ struct DecisionLayout<Details: View, Recap: View, Decision: View>: View {
         }
         .background(Palette.background.ignoresSafeArea())
         .overlay(alignment: .topTrailing) {
-            GlassIconButton(symbol: "xmark", size: 36, label: "Close") { model.closeSheet() }
-                .padding(.top, 14)
-                .padding(.trailing, 14)
-                .accessibilityIdentifier("closeSheet")
+            if !closeInField {
+                GlassIconButton(symbol: "xmark", size: 36, label: "Close") { model.closeSheet() }
+                    .padding(.top, 14)
+                    .padding(.trailing, 14)
+                    .accessibilityIdentifier("closeSheet")
+            }
         }
     }
 }
 
-/// Deny (quiet) and Approve (strong), on Liquid Glass at the bottom of a sheet.
+/// A sheet's ask as a field (Reins Signal, iOS-Connect): the close button, the label line and Reins' own sentence in
+/// the serif. Reins alone picks the field and the words: a name the other side sent never goes here, only quoted on a
+/// row of its own below.
+struct SheetField: View {
+    var kind: FieldKind
+    var label: String
+    var ask: String
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        SignalField(kind: kind) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Spacer()
+                    RoundHeaderButton(glyph: .close, label: "Close", onField: true, size: 36) { model.closeSheet() }
+                        .accessibilityIdentifier("closeSheet")
+                }
+                Text(label)
+                    .textRole(.label)
+                    .foregroundStyle(Palette.onField2)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("fieldLabel")
+                AskText([AskText.Run(text: ask)])
+                    .foregroundStyle(Palette.onField)
+                    .padding(.top, 10)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("what")
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 16)
+            .padding(.bottom, 26)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("hero")
+    }
+}
+
+/// Deny in outline and the action in ink with the phone's biometry, at the bottom of a sheet (the approval dock's
+/// buttons).
 struct DecisionBar: View {
     var denyTitle = "Deny"
     var approveTitle = "Approve"
@@ -78,35 +120,28 @@ struct DecisionBar: View {
     var onApprove: () -> Void
 
     var body: some View {
-        GlassEffectContainer(spacing: 12) {
-            RatioRow(spacing: 12, ratio: 1 / 1.3) {
-                    Button(action: onDeny) {
-                        Text(denyTitle)
-                            .font(RFont.sans(17, .semibold))
-                            .foregroundStyle(Palette.text)
-                            .frame(maxWidth: .infinity, minHeight: 40)
-                    }
-                    .buttonStyle(.glass)
-                    .accessibilityIdentifier("deny")
+        RatioRow(spacing: 10, ratio: 1 / 1.35) {
+            Button(action: onDeny) { Text(denyTitle) }
+                .buttonStyle(SignalButtonLook(kind: .outline))
+                .accessibilityIdentifier("deny")
 
-                    Button(action: onApprove) {
-                        ZStack {
-                            Text(approveTitle).opacity(busy ? 0 : 1)
-                            if busy { ProgressView().tint(accent ? .white : Palette.background) }
-                        }
-                        .font(RFont.sans(17, .semibold))
-                        .foregroundStyle(accent ? Color.white : Palette.background)
-                        .frame(maxWidth: .infinity, minHeight: 40)
+            Button(action: onApprove) {
+                HStack(spacing: 8) {
+                    if busy {
+                        ProgressView().tint(accent ? .white : Palette.onInverse)
+                    } else {
+                        Image(systemName: Biometry.symbol).font(.system(size: 18, weight: .semibold))
                     }
-                    .buttonStyle(.glassProminent)
-                    .tint(accent ? Palette.accent : Palette.text)
-                    .disabled(!approveEnabled)
-                    .opacity(approveEnabled ? 1 : 0.55)
-                    .accessibilityIdentifier("approve")
+                    Text(approveTitle).lineLimit(1)
+                }
             }
+            .buttonStyle(SignalButtonLook(kind: accent ? .violet : .inverse))
+            .disabled(!approveEnabled)
+            .accessibilityIdentifier("approve")
         }
         .disabled(busy)
-        .padding(.horizontal, 16)
+        .frame(height: 54)
+        .padding(.horizontal, 20)
         .padding(.top, 10)
         .padding(.bottom, 10)
     }

@@ -62,8 +62,8 @@ final class JoinModel {
         guard !busy else { return }
         busy = true
         error = nil
-        let name = untrusted(view?.deviceName ?? "")
-        switch await OwnerPrompt.confirm(app, reason: "Add \(name.isEmpty ? "this phone" : name) to your account") {
+        let name = untrustedName(view?.deviceName ?? "", limit: 40)
+        switch await OwnerPrompt.confirm(app, reason: JoinWords.ask) {
         case .confirmed:
             do {
                 try await app.core.answerJoin(id: joinId, approve: true)
@@ -104,47 +104,53 @@ final class JoinModel {
     }
 }
 
+/// A join's words: Reins' own sentence; the phone's name only quoted, on a row of its own.
+enum JoinWords {
+    static let label = "Account · New phone"
+    static let ask = "Add a phone to your account"
+}
+
 private struct JoinContent: View {
     var vm: JoinModel
     var view: JoinView
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        DecisionLayout {
+        DecisionLayout(closeInField: true) {
             VStack(alignment: .leading, spacing: 0) {
-                DecisionHeader(
-                    connectionId: "",
-                    label: view.deviceName,
-                    subtitle: "Another phone",
-                    kind: .join,
-                    title: "Add a phone",
-                    known: false
-                ) {
-                    Text("A phone signed in to your account and asks for its keys. Approve only if it is yours and shows this code:")
-                        .font(RFont.sans(15))
-                        .foregroundStyle(Palette.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 14)
+                SheetField(kind: .accounts, label: JoinWords.label, ask: JoinWords.ask)
+                Text("A phone signed in to your account and asks for its keys. Approve only if it is yours and shows this code.")
+                    .textRole(.body)
+                    .foregroundStyle(Palette.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 18)
+                    .padding(.bottom, 6)
+                FactGroup {
+                    FactRow(key: "Calls itself", value: PairWords.quoted(view.deviceName), valueId: "joinPhone")
+                    // Worked out here from the key the server relayed: a swapped key shows another code.
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Code").font(RFont.sans(15)).foregroundStyle(Palette.ink2)
+                        Text(view.code)
+                            .font(RFont.mono(40, .semibold))
+                            .foregroundStyle(Palette.ink)
+                            .environment(\.layoutDirection, .leftToRight)
+                            .accessibilityLabel("Code \(view.code)")
+                            .accessibilityIdentifier("joinCode")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
                 }
-                Text(view.code)
-                    .font(RFont.mono(40, .semibold))
-                    .foregroundStyle(Palette.text)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
-                    .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 18)
-                    .environment(\.layoutDirection, .leftToRight)
-                    .accessibilityLabel("Code \(view.code)")
-                    .accessibilityIdentifier("joinCode")
                 Banner("It can then open your vault, and it becomes the phone that approves once it is set up.")
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
                 if let error = vm.error {
                     Banner(error, kind: .error).padding(16).accessibilityIdentifier("joinError")
                 }
             }
         } recap: {
-            Text("Add \(untrusted(view.deviceName))?").font(RFont.sans(22, .semibold)).foregroundStyle(Palette.text)
+            Text(JoinWords.ask).font(RFont.serif(28)).foregroundStyle(Palette.ink)
         } decision: {
             DecisionBar(
                 approveTitle: "Approve",
