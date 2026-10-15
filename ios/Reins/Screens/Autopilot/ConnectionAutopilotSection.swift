@@ -23,7 +23,7 @@ struct ConnectionAutopilotSection: View {
             // Its explanation behind a (?) beside the heading, not under the options.
             HelpHeader(title: "Autopilot", help: ConnectionAutopilotContent.footer)
         }
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
     }
 }
 

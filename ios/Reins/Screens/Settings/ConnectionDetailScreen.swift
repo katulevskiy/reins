@@ -60,23 +60,26 @@ private struct ConnectionHeader: View {
 
     var body: some View {
         Section {
-            VStack(spacing: 2) {
-                ConnectionMark(connection: connection, size: 76)
-                Text(untrusted(connection.label))
-                    .font(RFont.sans(24, .semibold))
-                    .foregroundStyle(Palette.text)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 10)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("connectionName")
-                Text(SettingsText.connectionHeadline(connection))
-                    .font(RFont.mono(13))
-                    .foregroundStyle(Palette.tertiary)
-                    .lineLimit(1)
-                    .environment(\.layoutDirection, .leftToRight)
-                    .accessibilityIdentifier("connectionHeadline")
+            // Its mark, its name in the serif (one short clean line), where it is and when it was last used.
+            HStack(spacing: 14) {
+                ConnectionMark(connection: connection, size: 56)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(untrustedName(connection.label, limit: 40))
+                        .font(RFont.serif(40))
+                        .foregroundStyle(Palette.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("connectionName")
+                    Text(SettingsText.connectionHeadline(connection))
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.inkMeta)
+                        .lineLimit(1)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .accessibilityIdentifier("connectionHeadline")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
             .listRowBackground(Color.clear)
         }

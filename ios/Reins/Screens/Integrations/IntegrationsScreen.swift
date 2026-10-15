@@ -29,7 +29,7 @@ struct ServicesSection: View {
         } footer: {
             GroupFootnote("Each service can have as many accounts as you like. Your AIs can see which services and accounts exist and choose one; you approve what they do with it.")
         }
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
     }
 
     /// From Connections' root: the detail column on a regular width, pushed on a compact one.
@@ -105,7 +105,7 @@ struct McpServersSection: View {
         } footer: {
             GroupFootnote("Tools of the MCP servers you add here are offered to your AIs through Reins. You approve each call, the way you approve everything else.")
         }
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
 
         Section {
             ActionButton(title: "Add MCP server", symbol: "plus", kind: .secondary) { model.show(.mcpAdd) }

@@ -59,7 +59,7 @@ struct SoundsScreen: View {
             Section {
                 PreviewRows(engine: engine, enabled: s.soundsOn || s.hapticsOn)
             } header: {
-                HeaderText("Try them")
+                HeaderText("Feel them")
             } footer: {
                 FooterText("Each plays its sound and haptic, even when that kind of sound is off.")
             }
@@ -67,8 +67,8 @@ struct SoundsScreen: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .pageBackground()
-        .navigationTitle("Sounds & haptics")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Sounds and haptics")
+        .navigationBarTitleDisplayMode(.large)
     }
 }
 
@@ -112,7 +112,7 @@ private struct SwitchRow: View {
         }
         .tint(Palette.accent)
         .disabled(!enabled)
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
         .accessibilityIdentifier(id)
     }
 }
@@ -186,7 +186,7 @@ private struct VolumeRow: View {
         }
         .disabled(!enabled)
         .padding(.vertical, 4)
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
     }
 
     private func change(_ value: Float) {
@@ -220,7 +220,7 @@ private struct StrengthRow: View {
         }
         .disabled(!s.hapticsOn)
         .padding(.vertical, 4)
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
     }
 }
 
@@ -271,7 +271,7 @@ private struct PreviewRows: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .listRowBackground(Palette.elevated)
+            .listRowBackground(Color.clear)
             .accessibilityHint("Plays its sound and haptic")
             .accessibilityIdentifier("try:\(sample.title)")
         }

@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         #if DEBUG
         LaunchTiming.mark("launching")
         #endif
+        Self.styleNavigationBars()
         // Before launching ends, though the store may still be opening: a tapped notification and the background
         // refresh arrive right after, and wait for it.
         #if DEBUG
@@ -43,6 +44,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         let host = host
         Task { @MainActor in
             completionHandler(await PushReceiver.handle(userInfo, host: host))
+        }
+    }
+}
+
+extension AppDelegate {
+    /// A page's large title is set in the serif, as Signal's titles are; the small one in the bar in the sans.
+    static func styleNavigationBars() {
+        let bar = UINavigationBar.appearance()
+        if let serif = UIFont(name: RFont.serifName(false), size: 40) {
+            bar.largeTitleTextAttributes = [.font: UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: serif)]
+        }
+        if let sans = UIFont(name: RFont.sansFamily.name(.semibold), size: 16) {
+            bar.titleTextAttributes = [.font: UIFontMetrics(forTextStyle: .headline).scaledFont(for: sans)]
         }
     }
 }
