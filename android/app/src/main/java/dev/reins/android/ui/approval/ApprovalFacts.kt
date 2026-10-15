@@ -85,7 +85,7 @@ internal fun MainPage(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
                     view.secretsStore != null -> SecretsStoreFacts(view.secretsStore!!)
                     view.tokenStore != null -> TokenStoreFacts(view.tokenStore!!)
                     view.mcp != null -> McpFacts(view.mcp!!)
-                    view.ask != null -> AskFacts(view.ask!!)
+                    view.ask != null -> AskFacts(view.ask!!, LocalApprovalRecord.current?.label ?: viewModel.pendingLabel(), LocalApprovalRecord.current?.cwd)
                     view.secrets != null -> SecretsFacts(view.secrets!!)
                     view.ssh != null -> SshFacts(view.ssh!!)
                     else -> WriteFacts(view)
@@ -495,17 +495,41 @@ private fun McpFacts(call: dev.reins.core.McpCallView) {
 }
 
 @Composable
-private fun AskFacts(ask: dev.reins.core.AskView) {
+private fun AskFacts(ask: dev.reins.core.AskView, label: dev.reins.core.RequestLabel?, cwd: String?) {
     val detail = ask.detail?.let(::untrusted)?.takeIf { it.isNotBlank() }
     val topic = ask.topic?.let(::untrusted)?.takeIf { it.isNotBlank() }
+    // A command as the core read it (its label), never re-read here (ASK-TEXT.md): the whole of it as a mono fact row,
+    // wrapped, never cut; where it ran as the core kept it; the guard's rule.
+    val command = label?.takeIf { it.provider == "terminal" }?.subject?.let(::untrusted)?.trim()?.takeIf { it.isNotEmpty() }
+    if (command != null) {
+        FactGroup(
+            tag = "ask",
+            rows = buildList<@Composable () -> Unit> {
+                add { CommandRow(command) }
+                cwd?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("In", it, mono = true, valueTag = "askIn", maxLines = 3) } }
+                ask.rule?.pattern?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { add { FactRow("Rule", it, mono = true, valueTag = "askRule", maxLines = 3) } }
+            },
+        )
+        return
+    }
     if (detail == null && topic == null) return
     FactGroup(
         tag = "ask",
         rows = buildList<@Composable () -> Unit> {
-            if (detail != null) add { MonoBlock(detail, "askDetail", maxLines = 30) }
+            if (detail != null) add { MonoBlock(detail, "askDetail") }
             if (topic != null) add { FactRow("About", topic, mono = true, valueTag = "askTopic") }
         },
     )
+}
+
+/** "Command" over the whole command in mono, wrapped. */
+@Composable
+private fun CommandRow(command: String) {
+    val c = LocalColors.current
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        RText("Command", RType.sans(15f), c.ink2, maxLines = 1)
+        RText(command, RType.mono(13.5f), c.ink, Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp).testTag("askCommand"), ltr = true)
+    }
 }
 
 @Composable

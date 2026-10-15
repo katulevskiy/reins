@@ -267,58 +267,7 @@ fun waitCards(pending: List<PendingItem>): List<WaitCard> {
 
 // ---- history -------------------------------------------------------------------------------------------------------
 
-private val PAST = mapOf(
-    "search" to "Searched", "read" to "Read", "send" to "Sent", "push" to "Pushed", "create" to "Created",
-    "comment" to "Commented", "list" to "Listed", "add" to "Added", "delete" to "Deleted", "change" to "Changed",
-    "see" to "Saw", "get" to "Got", "update" to "Updated", "use" to "Used", "share" to "Shared", "open" to "Opened",
-    "edit" to "Edited", "close" to "Closed", "merge" to "Merged", "move" to "Moved", "archive" to "Archived",
-    "download" to "Downloaded", "upload" to "Uploaded", "fetch" to "Fetched", "buy" to "Bought", "connect" to "Connected",
-    "reply" to "Replied", "label" to "Labelled", "write" to "Wrote", "post" to "Posted", "sign" to "Signed",
-)
-
-/** "Push to a branch" → "Pushed to a branch" (a verb it does not know stays as it is). */
-fun pastTense(phrase: String): String {
-    val first = phrase.substringBefore(' ')
-    val past = PAST[first.lowercase()] ?: return phrase
-    return past + phrase.removePrefix(first)
-}
-
 private fun done(outcome: String) = outcome == "released" || outcome == "sent" || outcome == "granted"
-
-/** What an entry did, as one line: "Read 2 emails from Stripe", "Pushed to a branch"; what was refused stays as asked. */
-fun historySentence(entry: ActivityEntry): String = historyParts(entry).plain
-
-/** [historySentence] with its key nouns in bold, for the entry's page. */
-fun historyParts(entry: ActivityEntry): Sentence {
-    val count = entry.count.toInt()
-    val past = done(entry.outcome)
-    val info = entry.info
-    if (ActionKind.of(entry.action) == ActionKind.Grant) {
-        return sentence {
-            t(if (entry.outcome == "granted") "Got " else "Asked for ").b("access")
-            info.grantSummary?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { t(": ").b(it) }
-        }
-    }
-    if (mail(entry.service, entry.op)) {
-        when (ActionKind.of(entry.action)) {
-            ActionKind.Search -> return sentence {
-                t(if (past) "Searched " else "Search ").b("Gmail")
-                info.query?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { t(" for ").b("“$it”") }
-            }
-            ActionKind.Read -> return sentence {
-                t("Read ").b(emails(count))
-                commonSender(info.messages.map { untrusted(it.from) })?.let { t(" from ").b(it) }
-            }
-            ActionKind.Send -> return sentence {
-                t(if (past) "Sent " else "Send ").b("an email")
-                info.email?.to?.firstOrNull()?.let(::untrusted)?.let { t(" to ").b(it) }
-            }
-            else -> Unit
-        }
-    }
-    val title = operationTitle(entry.action, count, entry.service, untrusted(entry.opTitle), entry.op)
-    return sentence { b(if (past) pastTense(title) else title) }
-}
 
 /** How an entry ended, as the marker at the end of its row. */
 enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Bypass, Lockdown, Failed }
@@ -480,28 +429,20 @@ private fun kindNoun(item: PendingItem, n: Int): String {
     }
 }
 
-/** The ask on a waiting card and the part of it set in italic (the target): "Search mail for *invoice*". */
-data class CardAsk(val text: String, val target: String?)
+/** The ask on a waiting card and the part of it set in italic (the target), with the mono line under it. */
+data class CardAsk(val text: String, val target: String?, val details: String? = null)
 
-/** What a waiting request asks, as the card's ask: the request's own words, the target in italic. */
-fun cardAsk(item: PendingItem, view: ApprovalView?): CardAsk {
-    item.label?.let { label ->
-        val subject = untrusted(label.subject)
-        val text = buildString {
-            append(untrusted(label.lead))
-            if (subject.isNotEmpty()) {
-                if (isNotEmpty()) append(' ')
-                append(subject)
-            }
-            append(untrusted(label.tail).replace('\n', ' '))
-        }.trim()
-        return CardAsk(text.replaceFirstChar { it.uppercase() }, subject.takeIf { it.isNotEmpty() && !label.code })
-    }
-    return askOf(pendingSentence(item, view))
-}
+/** What a waiting request asks, as the card's ask: the one formatter's sentence ([askSentence]). */
+fun cardAsk(item: PendingItem, view: ApprovalView?): CardAsk =
+    dev.reins.android.ui.common.askSentence(item, view).let { CardAsk(it.text, it.target, it.details) }
 
 /** A group's ask: "Read 5 emails from Stripe". */
-fun groupAsk(items: List<PendingItem>, views: (String) -> ApprovalView?): CardAsk = askOf(groupSentence(items, views))
+fun groupAsk(items: List<PendingItem>, views: (String) -> ApprovalView?): CardAsk {
+    val s = groupSentence(items, views)
+    // Only the sender is a target ("… from *Stripe*"); a verb ("and *read 2 emails*") is never italic.
+    val from = s.parts.size >= 2 && s.parts[s.parts.size - 2].text == " from "
+    return askOf(s).copy(target = if (from) s.parts.last().text else null)
+}
 
 /** "Wants to **search Gmail** for **invoice**" → "Search Gmail for *invoice*" (the last of two or more bold parts). */
 private fun askOf(s: Sentence): CardAsk {
@@ -515,18 +456,16 @@ private fun askOf(s: Sentence): CardAsk {
     return CardAsk(text.replaceFirstChar { it.uppercase() }, bold.lastOrNull()?.text?.takeIf { bold.size >= 2 })
 }
 
-/** The card's label line ("Gmail · Search"): what it touches, then what it does. */
-fun cardLabel(item: PendingItem): String = when (item.kind) {
-    PendingKind.PAIRING -> "Reins · Connect"
-    PendingKind.JOIN -> "Reins · New phone"
-    PendingKind.BLOB -> "Reins · File"
-    else -> item.label?.let { "${dev.reins.android.ui.common.providerName(it.provider)} · ${it.action}" }
-        ?: "${serviceLabel(item.service)} · ${ActionKind.of(item.action).key}"
-}
+/** The card's label line ("GitHub · Push"): what it touches, then what it does. */
+fun cardLabel(item: PendingItem): String = dev.reins.android.ui.common.askSentence(item).kind
 
 /** Who asks, under the ask: "ChatGPT · dana@acme.dev". */
 fun cardWho(item: PendingItem): String =
-    listOfNotNull(untrusted(item.connectionLabel), item.account?.let(::untrusted)?.takeIf { it.isNotBlank() }).joinToString(" · ")
+    listOfNotNull(
+        dev.reins.android.ui.common.serifLine(item.connectionLabel),
+        // The account's host in punycode when it has other letters, its raw form beside it.
+        item.account?.let { dev.reins.android.ui.common.addressLine(it) }?.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
 
 /** "One thing waits for you." with its number word upright. */
 fun waitingMood(n: Int): Pair<String, String> =
@@ -546,35 +485,6 @@ private fun numberWordCap(n: Int): String =
 fun dayCount(entries: List<ActivityEntry>, autopilotOnly: Boolean): String {
     val auto = entries.count { it.decidedBy == "autopilot" || it.decidedBy == "overnight" }
     return if (autopilotOnly) "$auto by Autopilot" else if (auto > 0) "${entries.size} asked · $auto by Autopilot" else "${entries.size} asked"
-}
-
-/** The Signal field of a decided entry's tile: from what it did. */
-fun entryField(e: ActivityEntry): Field = e.label?.let { labelField(it.action) } ?: (ActionKind.of(e.action).field ?: Field.Push)
-
-/** The Signal field of an action of a [dev.reins.core.RequestLabel]. */
-fun labelField(action: String): Field = when (action) {
-    "read", "search", "ask" -> Field.Read
-    "delete" -> Field.Delete
-    "grant" -> Field.Grant
-    "secrets" -> Field.Accounts
-    else -> Field.Push
-}
-
-/** The glyph on a decided entry's tile. */
-fun entryGlyph(e: ActivityEntry): dev.reins.android.design.Glyph = e.label?.let { labelGlyph(it.action, it.provider) }
-    ?: if (e.op == "git_push" || e.op == "git_tag_push") dev.reins.android.design.Glyph.GitBranch else kindGlyph(e.action)
-
-/** The glyph of a [dev.reins.core.RequestLabel]'s action. */
-fun labelGlyph(action: String, provider: String): dev.reins.android.design.Glyph = when (action) {
-    "run" -> dev.reins.android.design.Glyph.Terminal
-    "read" -> if (provider == "gmail") dev.reins.android.design.Glyph.Mail else dev.reins.android.design.Glyph.Eye
-    "send" -> dev.reins.android.design.Glyph.Send
-    "delete" -> dev.reins.android.design.Glyph.Trash
-    "secrets", "grant" -> dev.reins.android.design.Glyph.Key
-    "push" -> dev.reins.android.design.Glyph.GitBranch
-    "search" -> dev.reins.android.design.Glyph.Search
-    "ask" -> dev.reins.android.design.Glyph.Help
-    else -> dev.reins.android.design.Glyph.Pencil
 }
 
 /** The glyph of an operation by its kind. */

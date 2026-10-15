@@ -136,13 +136,13 @@ pub enum Pairing {
     Unavailable,
 }
 
-/// The tray's first line while requests wait on the phone (newest first): "Waiting on your phone: <what>", and how
-/// many more.
+/// The tray's first line while requests wait on the phone (newest first): "Waiting on your phone: <the request>", as
+/// the window words it, and how many more.
 #[must_use]
 pub fn waiting_line(activity: &[Entry]) -> Option<String> {
     let mut waiting = activity.iter().filter(|e| e.outcome == Outcome::Waiting);
-    let first = waiting.next()?;
-    let what = first.what.trim();
+    let first = ui::ask_line(waiting.next()?);
+    let what = first.trim();
     let what = if what.chars().count() > TRAY_WHAT {
         format!("{}…", what.chars().take(TRAY_WHAT - 1).collect::<String>().trim_end())
     } else {
@@ -648,6 +648,15 @@ impl Model {
     #[must_use]
     pub fn demo(&self) -> bool {
         self.demo.is_some()
+    }
+
+    /// The push this computer kept for activity entry `id` (with `--demo`, the sample's), read from disk.
+    #[must_use]
+    pub fn kept_push(&self, id: &str) -> Option<reins_desktop::pushes::Push> {
+        match self.demo {
+            Some(demo) if id.starts_with("demo") => demo.push(id),
+            _ => reins_desktop::pushes::load(&self.backend.paths().state_dir, id),
+        }
     }
 
     /// The server shown and paired with.
@@ -1732,7 +1741,7 @@ mod tests {
     #[test]
     fn the_tray_says_what_waits_on_the_phone() {
         let waiting = |what: &str| {
-            let mut e = Entry::new(reins_desktop::journal::Kind::Command, what);
+            let mut e = Entry::new(reins_desktop::journal::Kind::Ask, what).source(Some("Claude Code"));
             e.outcome = Outcome::Waiting;
             e
         };
@@ -1741,11 +1750,11 @@ mod tests {
         assert_eq!(waiting_line(std::slice::from_ref(&done)), None);
         assert_eq!(
             waiting_line(&[done.clone(), waiting("Deploy now?")]).as_deref(),
-            Some("Waiting on your phone: Deploy now?")
+            Some("Waiting on your phone: Claude Code asks Deploy now?")
         );
         assert_eq!(
             waiting_line(&[waiting("a"), done, waiting("b"), waiting("c")]).as_deref(),
-            Some("Waiting on your phone: a (+2 more)")
+            Some("Waiting on your phone: Claude Code asks a (+2 more)")
         );
         let long = waiting_line(&[waiting(&"x".repeat(200))]).unwrap();
         assert!(long.ends_with('…') && long.chars().count() < 100, "{long}");

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import androidx.compose.ui.graphics.toArgb
 import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
@@ -65,6 +66,36 @@ abstract class WidgetShotsBase(private val theme: String) {
     fun widgetWaiting() {
         val model = waitingWidgetModel(listOf(TestData.pending("req1", "read", 3u, quick = true), TestData.pending("req2", "send", 1u)))
         shoot("sg-60-widget-waiting", DpSize(300.dp, 160.dp)) { WaitingWidgetContent(model, open) }
+    }
+
+    /** A command, written the one way (ASK-TEXT.md): the folder in the serif, the matched part in mono, the icon. */
+    @Test
+    fun widgetWaitingCommand() {
+        val run = TestData.pending("req1", "write", 1u, waitUntil = 1_700_000_160, label = "Claude Code", service = "desktop", op = "ask")
+            .copy(label = TestData.label("terminal", "delete", "Run", "rm -rf jarx && npm run build && npm test", code = true))
+        shoot("sg-63-widget-command", DpSize(300.dp, 180.dp)) { WaitingWidgetContent(waitingWidgetModel(listOf(run)), open) }
+    }
+
+    /** The notifications' large icons (drawn without Compose), each kind ringed in its field, as on a heads-up. */
+    @Test
+    fun notificationIcons() {
+        val dir = System.getProperty("reins.screenshots")
+        assumeTrue(dir != null)
+        val kinds = listOf("github" to "push", "terminal" to "delete", "terminal" to "run", "gmail" to "read", "file" to "read", "secrets" to "secrets", "ssh" to "secrets", "mcp:linear" to "write", "payments" to "pay", "desktop" to "ask")
+        val px = (64 * context.resources.displayMetrics.density).toInt()
+        val gap = px / 4
+        val bitmap = Bitmap.createBitmap(kinds.size * (px + gap) + gap, px + 2 * gap, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(if (theme == "dark") 0xFF121215.toInt() else 0xFFF6F6F8.toInt())
+        kinds.forEachIndexed { i, (provider, action) ->
+            val ring = dev.reins.android.ui.common.actionField(action).fill().toArgb()
+            val icon = dev.reins.android.ui.common.IntegrationBitmap.draw(context, provider, action, px, ring)
+            val x = (gap + i * (px + gap)).toFloat()
+            canvas.drawRoundRect(x - gap / 3f, gap * 2f / 3f, x + px + gap / 3f, gap + px + gap / 3f, gap / 2f, gap / 2f, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = ring })
+            canvas.drawBitmap(icon, x, gap.toFloat(), null)
+        }
+        File(dir!!).mkdirs()
+        File(dir, "sg-64-notification-icons-$theme.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     @Test

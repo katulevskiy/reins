@@ -133,12 +133,25 @@ internal fun Hero(
 ) {
     val nav = LocalApprovalNav.current
     val host = findConnection(dev.reins.android.ui.common.LocalConnections.current, view.connectionId, view.connectionLabel)?.clientHost?.let(::untrusted)
-    val (ask, target) = askWords(view)
+    val record = LocalApprovalRecord.current
+    // Waiting: present tense from the verb (the asker is in the top row). An entry: past tense, with its icon.
+    // A desktop question is told through the core's reading of it (the entry's label, else the waiting item's).
+    val label = record?.label ?: viewModel.pendingLabel()
+    val sentence = androidx.compose.runtime.remember(view, record, label) {
+        dev.reins.android.ui.common.askSentence(view, record?.tense ?: dev.reins.android.ui.common.Tense.Waiting, label = label, cwd = record?.cwd)
+    }
+    val field = askField(view)
     AskField(
-        askField(view),
-        askLabel(view),
-        ask,
-        target,
+        field,
+        sentence.kind,
+        sentence.text,
+        sentence.target,
+        details = sentence.details,
+        icon = if (record != null) {
+            { dev.reins.android.ui.common.IntegrationIcon(sentence.provider, sentence.action, Modifier.testTag("entryIcon"), size = 34.dp, ring = field.fill(), field = field) }
+        } else {
+            null
+        },
         onClose = onClose,
         askTag = if (view.ask != null) "askQuestion" else "what",
         closeGlyph = if (back) Glyph.ArrowBack else Glyph.Close,

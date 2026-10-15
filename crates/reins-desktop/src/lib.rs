@@ -28,6 +28,7 @@ pub mod phone;
 pub mod port;
 pub mod project;
 pub mod proxy;
+pub mod pushes;
 pub mod redact;
 pub mod run;
 #[cfg(unix)]

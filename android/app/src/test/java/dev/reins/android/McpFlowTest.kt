@@ -310,6 +310,6 @@ class McpFlowTest : FlowHarness() {
         core.pending = listOf(TestData.pending("req30", "write", 1u, service = "mcp:linear", account = null, op = "create_issue"))
         launch()
         awaitTag("pending:req30")
-        rule.onNodeWithTag("sentence:req30", useUnmergedTree = true).assertTextContains("Create issue in Linear", substring = true)
+        rule.onNodeWithTag("sentence:req30", useUnmergedTree = true).assertTextContains("Use a tool on Linear", substring = true)
     }
 }

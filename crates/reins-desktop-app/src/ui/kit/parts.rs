@@ -306,6 +306,42 @@ pub fn logo_tile(m: Mark, pal: Palette) -> Div {
     }
 }
 
+/// A request's icon (`ASK-TEXT.md`): the integration's mark (a logo on its white plate, or a glyph on `paper-sunken`
+/// for what happens on this computer), and the action on a round badge at its bottom-right corner, white on the kind's
+/// field colour, ringed in `surface` (what the icon sits on) so it stands apart from the mark.
+pub fn request_icon(mark: Mark, badge: Glyph, field: Field, side: f32, surface: Hsla, pal: Palette) -> Div {
+    let plate = div().flex().flex_none().items_center().justify_center().size(px(side)).rounded(px(side * 0.31));
+    let plate = match mark {
+        Mark::Brand(b) => plate
+            .bg(gpui::white())
+            .border_1()
+            .border_color(pal.rule())
+            .child(gpui::img(b.path()).size(gpui::relative(0.58)).flex_none()),
+        Mark::Glyph(g) => plate.bg(pal.paper_sunken()).child(glyph(g, side * 0.53, pal.ink())),
+    };
+    let dot = (side * 0.5).round();
+    let ring = if side >= 36.0 {
+        2.0
+    } else {
+        1.5
+    };
+    div().relative().flex_none().size(px(side)).child(plate).child(
+        div()
+            .absolute()
+            .right(px(-dot * 0.22))
+            .bottom(px(-dot * 0.22))
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(dot))
+            .rounded_full()
+            .bg(field.field())
+            .border(px(ring))
+            .border_color(surface)
+            .child(glyph(badge, dot * 0.56, gpui::white())),
+    )
+}
+
 /// A key cap in a list of shortcuts ("⌘R", "Esc"): mono 12 on `paper-sunken`, `ink-2`.
 pub fn key_cap(text: impl Into<SharedString>, pal: Palette) -> Div {
     div()

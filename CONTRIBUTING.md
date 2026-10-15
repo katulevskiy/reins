@@ -101,6 +101,12 @@ cd android
 ./gradlew testFullDebugUnitTest      # JVM and Robolectric tests, no device needed
 ```
 
+iOS: building, running and testing need a Mac with Xcode (see [ios/README.md](ios/README.md)). On Linux,
+`scripts/ios-typecheck.sh` type-checks every target's Swift against the iPhoneOS SDK in about ten seconds, with the
+compilation conditions Xcode uses; run it after changing Swift and before pushing. It needs Swift (swiftly) and xtool's
+Darwin SDK, made from an Xcode .xip, so CI cannot run it: see
+[ios/README.md, "Compile check on Linux"](ios/README.md#compile-check-on-linux).
+
 `tools/laya` (Python): see [tools/laya/README.md](tools/laya/README.md).
 
 [pre-commit](https://pre-commit.com) runs the formatting, spelling and lint checks before each commit:

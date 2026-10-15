@@ -1986,6 +1986,119 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("sg-08-activity-sync-notice")
     }
 
+    // ---- How a request is written and marked (design/signal/ASK-TEXT.md) ----------------------------------------------
+
+    private val askCommand = "rm -rf jarx && npm run build && npm test"
+
+    private fun askTextView() = TestData.askView(
+        detail = "Command:\n$askCommand\n\nIn: /home/dana/dev/reins\nRule: rm -rf*",
+        topic = "command:rm -rf",
+        rule = dev.reins.core.AskRuleView("Deletes files", "rm -rf*", "rm -rf jarx", null, true, false),
+    ).let { v -> v.copy(requestId = "req1", connectionId = "c1", connectionLabel = "Claude Code", ask = v.ask!!.copy(question = "Claude Code wants to run: $askCommand", destructive = true)) }
+
+    /** Waiting and decided requests of every kind, each with the core's label. */
+    private fun askTextData() {
+        agConnections()
+        core.model = installed
+        val run = TestData.pending("req1", "write", 1u, waitUntil = now + 60, label = "Claude Code", conn = "c1", service = "desktop", account = null, op = "ask")
+            .copy(createdAt = now - 20, label = TestData.label("terminal", "delete", "Run", askCommand, code = true))
+        val push = TestData.pending("req2", "write", 3u, waitUntil = now + 72, label = "Claude Code", conn = "c1", service = "github", account = "octo-cat", op = "git_push", quick = true)
+            .copy(createdAt = now - 40, label = TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins"))
+        val read = TestData.pending("req3", "read", 2u, waitUntil = now + 80, label = "Cursor", conn = "c3", quick = true)
+            .copy(createdAt = now - 48, label = TestData.label("gmail", "read", "Read 2 emails from", "Stripe"))
+        core.pending = listOf(run, push, read)
+        core.views["req1"] = askTextView()
+        core.views["req2"] = TestData.designPushView().copy(requestId = "req2")
+        core.views["req3"] = stripeView("req3", "Your invoice from Acme Inc.", "Payment received")
+        core.suggestions["req2"] = agSuggestion("req2", dev.reins.core.Verdict.APPROVE, 0.97f)
+        core.suggestions["req3"] = agSuggestion("req3", dev.reins.core.Verdict.ASK, 0.62f)
+        fun e(id: Long, label: dev.reins.core.RequestLabel, service: String, minutes: Long, outcome: String = "released", conn: String = "c1", who: String = "Claude Code") =
+            TestData.entry(id, "write", outcome, 1u, at = now - minutes * 60, label = label, service = service).copy(connectionId = conn, connectionLabel = who)
+        val ran = "cargo test -p reins-core && git push origin signal/desktop-release"
+        core.activity = listOf(
+            e(40, TestData.label("terminal", "run", "Run", ran, code = true), "desktop", 2).copy(op = "ask", request = TestData.asked(ran, agent = "Claude Code", cwd = "/home/dana/dev/reins")),
+            e(41, TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins"), "github", 9).copy(op = "git_push", decidedBy = "autopilot", autopilot = TestData.note()),
+            e(42, TestData.label("file", "read", "Read", "~/dev/api/.env", code = true, tail = " and 1 more"), "desktop", 14, conn = "c3", who = "Cursor"),
+            e(43, TestData.label("gmail", "send", "Send an email to", "Dana Katul <dana@katul.dev>", tail = " and 1 more"), "gmail", 30, outcome = "denied", conn = "c2", who = "ChatGPT"),
+            e(44, TestData.label("ssh", "secrets", "Sign in to", "build.example.com", code = true), "vault", 50),
+            e(45, TestData.label("secrets", "secrets", "Use 2 secrets for", "npm run deploy", code = true), "vault", 70),
+            e(46, TestData.label("mcp:linear", "write", "Use", "Create issue", tail = " on Linear"), "mcp:linear", 95, conn = "c2", who = "ChatGPT"),
+            e(47, TestData.label("github", "delete", "Delete branch old/experiment from", "octo/app"), "github", 130).copy(op = "git_push"),
+            e(48, TestData.label("gmail", "search", "Search Gmail for", "invoice"), "gmail", 180, conn = "c3", who = "Cursor"),
+        )
+        core.entryApprovals[40] = askTextView().copy(requestId = "e40", ask = askTextView().ask!!.copy(question = "Claude Code wants to run: $ran", detail = "Command:\n$ran\n\nIn: /home/dana/dev/reins\nRule: git push*", rule = null, destructive = false))
+    }
+
+    @Test
+    fun sgAskText() {
+        askTextData()
+        launch()
+        top()
+        await("pending:req1")
+        frames()
+        shoot("sg-20-asktext-stack")
+        rule.onNodeWithTag("entry:44").performScrollTo()
+        frames()
+        shoot("sg-21-asktext-river")
+    }
+
+    /** Crafted requests: look-alike names, a climbing path, a store that is not ASCII. None reaches the serif. */
+    @Test
+    fun sgAskTextSpoofs() {
+        agConnections()
+        core.model = installed
+        core.pending = emptyList()
+        fun e(id: Long, label: dev.reins.core.RequestLabel, service: String, minutes: Long) =
+            TestData.entry(id, "write", "released", 1u, at = now - minutes * 60, label = label, service = service).copy(connectionId = "c1", connectionLabel = "Claude Code")
+        core.activity = listOf(
+            // People's names in one script are shown as they are; a name that mixes scripts is not.
+            e(56, TestData.label("gmail", "read", "Read 2 emails from", "Дмитрий"), "gmail", 1),
+            e(57, TestData.label("telegram", "read", "Read messages in", "Αλέξανδρος"), "telegram", 1),
+            e(58, TestData.label("gmail", "read", "Read 1 email from", "Pаvel"), "gmail", 1),
+            e(50, TestData.label("github", "push", "Push 2 commits to", "katulevskiy/reаins"), "github", 2).copy(op = "git_push"),
+            e(51, TestData.label("file", "read", "Read", "/tmp/../home/dana/.ssh/id_ed25519", code = true), "desktop", 5),
+            e(52, TestData.label("file", "read", "Read", "/home/dana/pаypal-invoice.pdf", code = true), "desktop", 9),
+            e(53, TestData.label("ssh", "secrets", "Sign in to", "gоogle.com", code = true), "vault", 14),
+            e(54, TestData.label("gmail", "send", "Send an email to", "Your bank <help@bаnk.com>"), "gmail", 20),
+            e(55, TestData.label("desktop", "ask", "Approve the pаypal payout?"), "desktop", 30).copy(op = "ask"),
+        )
+        launch()
+        top()
+        await("entry:56")
+        frames()
+        shoot("sg-25-asktext-spoofs")
+    }
+
+    @Test
+    fun sgAskTextField() {
+        askTextData()
+        core.approval = askTextView().copy(waitUntil = now + 60)
+        launch(link("request", "req1"))
+        await("approve")
+        frames()
+        shoot("sg-22-asktext-field")
+    }
+
+    @Test
+    fun sgAskTextEntry() {
+        askTextData()
+        launch()
+        top()
+        await("entry:40")
+        rule.onNodeWithTag("entry:40").performScrollTo()
+        rule.onNodeWithTag("entry:40").performTouchInput { down(center); up() }
+        await("hero")
+        frames()
+        shoot("sg-23-asktext-entry")
+        pressBack()
+        await("entry:41")
+        rule.onNodeWithTag("entry:41").performScrollTo()
+        rule.onNodeWithTag("entry:41").performTouchInput { down(center); up() }
+        await("detailTitle")
+        frames()
+        shoot("sg-24-asktext-entry-kept")
+    }
+
     @Test
     fun sgActivityMenuAndFilters() {
         sgWaiting()

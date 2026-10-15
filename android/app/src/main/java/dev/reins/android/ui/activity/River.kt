@@ -55,7 +55,10 @@ import dev.reins.android.design.pressable
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
-import dev.reins.android.ui.common.LabelText as RequestLabelText
+import dev.reins.android.ui.common.AskSentenceText
+import dev.reins.android.ui.common.IntegrationIcon
+import dev.reins.android.ui.common.actionField
+import dev.reins.android.ui.common.askSentence
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ActivityEntry
 import dev.reins.core.ConnectionView
@@ -83,11 +86,10 @@ fun DayLabel(label: String, count: String?, modifier: Modifier = Modifier) {
 fun RiverRow(entry: ActivityEntry, nowSeconds: Long, landed: Boolean, showShare: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val c = LocalColors.current
     val reduce = LocalReduceMotion.current
-    val field = entryField(entry)
+    val sentence = remember(entry) { askSentence(entry) }
+    val field = actionField(sentence.action)
     val ink = field.kindInk(c)
     val wash by animateColorAsState(if (landed) ink.copy(alpha = 0.07f) else Color.Transparent, Motion.fade(), label = "landedWash")
-    val tileFill by animateColorAsState(if (landed) field.fill() else field.tile(c), Motion.fade(), label = "landedTile")
-    val glyphInk by animateColorAsState(if (landed) Color.White else ink, Motion.fade(), label = "landedGlyph")
     // Landing: the tile grows out of the fold (from 1.6 times its size, 360 ms).
     val pop = remember { Animatable(1f) }
     LaunchedEffect(landed) {
@@ -111,23 +113,23 @@ fun RiverRow(entry: ActivityEntry, nowSeconds: Long, landed: Boolean, showShare:
         ) {
             Box(
                 Modifier
-                    .size(38.dp)
                     .graphicsLayer {
                         scaleX = pop.value
                         scaleY = pop.value
                     }
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(tileFill)
                     .testTag("tile:${entry.id}"),
-                contentAlignment = Alignment.Center,
-            ) { GlyphIcon(entryGlyph(entry), glyphInk, size = 20.dp) }
+            ) { IntegrationIcon(sentence.provider, sentence.action, size = 38.dp, ring = c.paper, field = field) }
             Column(Modifier.weight(1f)) {
-                val label = entry.label
-                if (label != null) {
-                    RequestLabelText(label, Modifier.testTag("entryTitle:${entry.id}"), size = 15.5f, lineHeight = 20f, maxLines = 2, color = c.ink)
-                } else {
-                    RText(historySentence(entry), RType.row, c.ink, Modifier.testTag("entryTitle:${entry.id}"), maxLines = 2)
-                }
+                AskSentenceText(
+                    sentence,
+                    style = RType.serif(19f, 22f),
+                    color = c.ink,
+                    detailsColor = c.inkMeta,
+                    maxLines = 2,
+                    detailsMaxLines = 1,
+                    tag = "entryTitle:${entry.id}",
+                    detailsTag = "entryDetails:${entry.id}",
+                )
                 val meta = buildAnnotatedString {
                     append(untrusted(entry.connectionLabel))
                     append(" · ")

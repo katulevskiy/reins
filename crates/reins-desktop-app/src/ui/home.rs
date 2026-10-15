@@ -16,7 +16,7 @@ use reins_desktop::journal::{Entry, Outcome, Tally};
 use super::icons::{Glyph, Mark, glyph};
 use super::parts::{caption, dots, fact_rows, italic, link, mood, sentence};
 use super::sidebar::clock_left;
-use super::story::{Story, Words, facts, field_of, who_from};
+use super::story::{Ask, Words, who_from};
 use super::{Data, Root, kit};
 use crate::format;
 use crate::health::{self, Test};
@@ -251,7 +251,18 @@ impl Root {
         last: bool,
         selected: Option<bool>,
     ) -> Stateful<Div> {
-        let s = Story::of(e);
+        let s = Ask::of(e);
+        // The icon's badge is ringed in what the row sits on.
+        let surface = if selected == Some(true) {
+            pal.paper_raised()
+        } else {
+            pal.paper()
+        };
+        // Under the sentence, the machine's details in mono; else who and what kind.
+        let meta = match &s.details {
+            Some(details) => div().font_family(MONO).text_size(px(12.0)).child(details.clone()),
+            None => div().text_size(px(12.5)).child(format!("{} · {}", s.who, s.kind)),
+        };
         let when = match selected {
             Some(_) if e.at >= format::start_of_day(d.now) - 86_400 => format::clock(e.at),
             Some(_) => format::date(e.at),
@@ -270,7 +281,7 @@ impl Root {
             .py(px(6.0))
             .min_w(px(0.0))
             .cursor_pointer()
-            .child(kit::kind_tile(s.icon, s.tone, 32.0, pal))
+            .child(kit::request_icon(s.mark, s.badge, s.field, 32.0, surface, pal))
             .child(
                 div()
                     .flex()
@@ -289,17 +300,9 @@ impl Root {
                             .line_height(px(19.0))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(pal.ink())
-                            .child(s.title),
+                            .child(s.line()),
                     )
-                    .child(
-                        div()
-                            .min_w(px(0.0))
-                            .truncate()
-                            .text_size(px(12.5))
-                            .line_height(px(17.0))
-                            .text_color(pal.ink_meta())
-                            .child(s.who),
-                    ),
+                    .child(meta.min_w(px(0.0)).truncate().line_height(px(17.0)).text_color(pal.ink_meta())),
             )
             .child(div().flex_none().text_size(px(12.5)).text_color(pal.ink_meta()).child(when))
             .child(div().flex().flex_none().items_center().child(ending(e, pal)));
@@ -436,8 +439,8 @@ impl Root {
 
     /// Home while a request waits: its field, then what will happen and the latest requests.
     fn home_waiting(e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let s = Story::of(e);
-        let field = field_of(e);
+        let s = Ask::of(e);
+        let field = s.field;
         let on = pal.on_field();
         let (total, left) = d.wait_left(e);
         let more = d.waiting().count().saturating_sub(1);
@@ -470,11 +473,11 @@ impl Root {
                     )
                 }),
         );
-        let label = label_line(&s);
+        let label = s.label();
         // The ask follows the field by 60 ms.
         let ask_id = SharedString::from(format!("ask-{}", e.id));
         let ask =
-            div().font_family(SERIF).text_size(px(60.0)).line_height(px(58.0)).text_color(on).child(italic(&s.ask));
+            div().font_family(SERIF).text_size(px(60.0)).line_height(px(58.0)).text_color(on).child(italic(&s.order));
         let ask: AnyElement = if motion::reduce_motion() {
             ask.into_any_element()
         } else {
@@ -564,12 +567,23 @@ impl Root {
                     .child(who_line)
                     .child(kit::field_label(label, pal))
                     .child(ask)
+                    // The machine's details on their own mono line, never in the serif.
+                    .when_some(s.details.clone(), |c, details| {
+                        c.child(
+                            div()
+                                .font_family(MONO)
+                                .text_size(px(14.0))
+                                .line_height(px(20.0))
+                                .text_color(pal.on_field_2())
+                                .child(super::parts::wrapped(&details)),
+                        )
+                    })
                     .child(timer_row),
             )
             .child(qr);
         let surface = enter(surface, SharedString::from(format!("field-{}", e.id)), Entrance::Field);
 
-        let (rows, _) = facts(e);
+        let rows = s.facts;
         let what = div()
             .flex()
             .flex_col()
@@ -849,12 +863,6 @@ fn this_computer_cap() -> &'static str {
     } else {
         "This computer"
     }
-}
-
-/// The label line of a request, as the detail and the field show it: "GIT · FORCE PUSH".
-#[must_use]
-pub fn label_line(s: &Story) -> String {
-    format!("{} · {}", s.label.0, s.label.1)
 }
 
 /// One end of the calm plate's "this computer → your phone": a 52 px neutral tile.
