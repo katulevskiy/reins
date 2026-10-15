@@ -71,14 +71,14 @@ struct ResumeSheet: View {
                 .padding(.horizontal, 22)
                 .padding(.top, 10)
                 .padding(.bottom, 12)
-                .background(Palette.background.opacity(0.001))
+                .background(Palette.paper.opacity(0.001))
             }
             .toolbar(.hidden, for: .navigationBar)
-            .background(Palette.background.ignoresSafeArea())
+            .background(Palette.paper.ignoresSafeArea())
         }
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.visible)
-        .presentationBackground(Palette.background)
+        .presentationBackground(Palette.paper)
         .accessibilityIdentifier(extending ? "extendDialog" : "resumeDialog")
     }
 
@@ -239,7 +239,7 @@ struct ResumeSheet: View {
             } else {
                 Text("Comes back as it was.")
                     .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .padding(.top, 14)
             }
         }

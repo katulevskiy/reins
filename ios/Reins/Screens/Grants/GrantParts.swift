@@ -22,7 +22,7 @@ struct OptionChip: View {
             SelectChip(title: title, selected: selected, leading: {
                 Image(systemName: symbol)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(selected ? SelectChipLook.check : Palette.secondary)
+                    .foregroundStyle(selected ? SelectChipLook.check : Palette.ink2)
             }, action: action)
         } else {
             SelectChip(title: title, selected: selected, action: action)
@@ -93,11 +93,11 @@ struct TintedTag: View {
     var body: some View {
         Text(text)
             .font(mono ? RFont.mono(12, .medium) : RFont.sans(12.5, .medium))
-            .foregroundStyle(tint.map { $0.opacity(0.9) } ?? Palette.secondary)
+            .foregroundStyle(tint.map { $0.opacity(0.9) } ?? Palette.ink2)
             .lineLimit(1)
             .padding(.horizontal, 10)
             .frame(minHeight: 26)
-            .background(tint.map { $0.opacity(0.1) } ?? Palette.controlFill, in: Capsule())
+            .background(tint.map { $0.opacity(0.1) } ?? Palette.paperSunken, in: Capsule())
     }
 }
 
@@ -111,7 +111,7 @@ struct FormLabel: View {
         Text(text.uppercased())
             .font(RFont.sans(12.5, .medium))
             .tracking(0.6)
-            .foregroundStyle(Palette.secondary)
+            .foregroundStyle(Palette.ink2)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -178,16 +178,16 @@ struct GrantCard: View {
             VStack(alignment: .leading, spacing: row ? 2 : 4) {
                 Text(untrusted(grant.summary))
                     .font(row ? TextRole.row.font() : RFont.sans(15.5, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 0) {
                     Text(untrusted(grant.connectionLabel) + " · ")
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.inkMeta)
                     if clock.soon {
                         Text("ends soon").fontWeight(.semibold).foregroundStyle(Palette.danger)
                     } else {
-                        Text(GrantText.usesLine(grant)).foregroundStyle(Palette.tertiary)
+                        Text(GrantText.usesLine(grant)).foregroundStyle(Palette.inkMeta)
                     }
                 }
                 .font(RFont.sans(12.5))
@@ -224,12 +224,12 @@ private struct GrantCardSurface<S: InsettableShape>: ViewModifier {
                 .background {
                     if soon {
                         shape.fill(LinearGradient(colors: [Palette.danger.opacity(0.07), Palette.danger.opacity(0.02)], startPoint: .top, endPoint: .bottom))
-                            .background(Palette.elevated, in: shape)
+                            .background(Palette.paperRaised, in: shape)
                     } else {
-                        shape.fill(Palette.elevated)
+                        shape.fill(Palette.paperRaised)
                     }
                 }
-                .overlay(shape.strokeBorder(soon ? Palette.danger.opacity(0.35) : Palette.hairline, lineWidth: 1))
+                .overlay(shape.strokeBorder(soon ? Palette.danger.opacity(0.35) : Palette.rule, lineWidth: 1))
         }
     }
 }
@@ -244,7 +244,7 @@ struct UseDots: View {
             if maxUses <= 12 {
                 HStack(spacing: 3) {
                     ForEach(0..<maxUses, id: \.self) { i in
-                        Capsule().fill(i < uses ? Palette.accent : Palette.dynamic(0xDDDDE2, 0x2A2A2F)).frame(width: 14, height: 4)
+                        Capsule().fill(i < uses ? Palette.violet : Palette.dynamic(0xDDDDE2, 0x2A2A2F)).frame(width: 14, height: 4)
                     }
                 }
             } else {
@@ -252,7 +252,7 @@ struct UseDots: View {
                 Capsule()
                     .fill(Palette.dynamic(0xDDDDE2, 0x2A2A2F))
                     .frame(width: 120, height: 4)
-                    .overlay(alignment: .leading) { Capsule().fill(Palette.accent).frame(width: 120 * fraction, height: 4) }
+                    .overlay(alignment: .leading) { Capsule().fill(Palette.violet).frame(width: 120 * fraction, height: 4) }
             }
         }
         .accessibilityElement()
@@ -354,8 +354,8 @@ private struct SmallCapsuleLook: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         let (fg, bg): (Color, Color) = switch kind {
-        case .primary: (Palette.background, Palette.text)
-        case .secondary: (Palette.text, Palette.controlFill)
+        case .primary: (Palette.paper, Palette.ink)
+        case .secondary: (Palette.ink, Palette.paperSunken)
         case .danger: (Palette.danger, Palette.danger.opacity(0.12))
         }
         configuration.label
@@ -389,17 +389,17 @@ struct GrantUseRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.headline)
                     .font(RFont.sans(15.5, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 let detail = untrusted(entry.detail)
                 if !detail.isEmpty {
-                    Text(detail).font(RFont.sans(13.5)).foregroundStyle(Palette.secondary).lineLimit(2)
+                    Text(detail).font(RFont.sans(13.5)).foregroundStyle(Palette.ink2).lineLimit(2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 6) {
-                Text(GrantText.relative(entry.at)).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
+                Text(GrantText.relative(entry.at)).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta).lineLimit(1)
                 OutcomePill(text: Self.outcome(entry.outcome), tone: Self.tone(entry.outcome))
             }
         }

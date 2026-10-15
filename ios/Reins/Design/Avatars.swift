@@ -33,7 +33,7 @@ struct AvatarPlate<Content: View>: View {
         ZStack { content }
             .frame(width: size, height: size)
             .background(Self.fill, in: Circle())
-            .overlay(Circle().strokeBorder(Palette.hairline, lineWidth: 1))
+            .overlay(Circle().strokeBorder(Palette.rule, lineWidth: 1))
             .clipShape(Circle())
     }
 }
@@ -48,7 +48,7 @@ struct ProviderAvatar: View {
                 .renderingMode(provider.mono ? .template : .original)
                 .resizable()
                 .scaledToFit()
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .frame(width: size * 0.56, height: size * 0.56)
         }
         .accessibilityHidden(true)
@@ -93,7 +93,7 @@ struct ServiceAvatar: View {
             } else {
                 Image(systemName: "link")
                     .font(.system(size: size * 0.4, weight: .medium))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
             }
         }
         .accessibilityHidden(true)
@@ -105,17 +105,17 @@ func serviceColor(_ service: String) -> Color {
     switch service {
     case "gmail": Color(uiColor: UIColor(hex: 0xEA4335))
     case "telegram": Color(uiColor: UIColor(hex: 0x26A5E4))
-    case "github": Palette.text
+    case "github": Palette.ink
     case "gitlab": Color(uiColor: UIColor(hex: 0xFC6D26))
     case "codeberg": Color(uiColor: UIColor(hex: 0x2185D0))
     case "bitbucket": Color(uiColor: UIColor(hex: 0x0052CC))
-    case "mcp": Palette.accent
+    case "mcp": Palette.violet
     case "gcalendar", "gcontacts": Color(uiColor: UIColor(hex: 0x4285F4))
     case "device_calendar": Color(uiColor: UIColor(hex: 0x34A853))
     case "device_contacts": Color(uiColor: UIColor(hex: 0xF57C00))
     case "sms": Color(uiColor: UIColor(hex: 0x00A884))
     case "vault": Color(uiColor: UIColor(hex: 0x175DDC))
-    default: Palette.secondary
+    default: Palette.ink2
     }
 }
 
@@ -158,10 +158,10 @@ struct ProviderPicker: View {
                     VStack(spacing: 5) {
                         ConnectionAvatar(label: choice.avatarLabel, pick: choice.pick, size: size)
                             .padding(3)
-                            .overlay(Circle().strokeBorder(selected ? Palette.accent : .clear, lineWidth: 2.5))
+                            .overlay(Circle().strokeBorder(selected ? Palette.violet : .clear, lineWidth: 2.5))
                         Text(choice.name)
                             .font(RFont.sans(12, selected ? .semibold : .regular))
-                            .foregroundStyle(selected ? Palette.accent : Palette.secondary)
+                            .foregroundStyle(selected ? Palette.violet : Palette.ink2)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }

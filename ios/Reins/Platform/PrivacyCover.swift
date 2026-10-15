@@ -15,13 +15,13 @@ struct PrivacyCover: ViewModifier {
             .overlay {
                 if scenePhase != .active || captured {
                     ZStack {
-                        Palette.background
+                        Palette.paper
                         VStack(spacing: 14) {
                             BrandMark()
                             if captured {
                                 Text("Hidden while the screen is recorded or shared.")
                                     .font(RFont.sans(15))
-                                    .foregroundStyle(Palette.secondary)
+                                    .foregroundStyle(Palette.ink2)
                                     .multilineTextAlignment(.center)
                             }
                         }

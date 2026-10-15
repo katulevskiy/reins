@@ -28,9 +28,9 @@ enum SettingsText {
 
     static func modeTint(_ mode: AutopilotMode) -> Color {
         switch mode {
-        case .manual: Palette.search
-        case .auto: Palette.accent
-        case .overnight: Palette.overnight
+        case .manual: Palette.kindRead
+        case .auto: Palette.violet
+        case .overnight: Palette.violet
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
