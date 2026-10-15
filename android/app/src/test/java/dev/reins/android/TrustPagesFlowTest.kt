@@ -38,6 +38,8 @@ class TrustPagesFlowTest : FlowHarness() {
     @Test
     fun endingAGrantIsHeldNotTapped() {
         core.grants = listOf(TestData.grant("g1"))
+        // The fake core is shared between tests: what an earlier one ended is not this one's.
+        core.revokedGrants.clear()
         launch()
         tap("tabTrust")
         tap("grant:g1")
