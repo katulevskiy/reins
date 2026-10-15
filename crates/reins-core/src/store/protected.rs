@@ -172,7 +172,7 @@ fn write_through(store: &Store, p: &Persistence, seq: u64) -> Result<(), CoreErr
     *written = newest;
     Ok(())
 }
-fn memory() -> Result<Connection, CoreError> {
+pub(super) fn memory() -> Result<Connection, CoreError> {
     let conn = Connection::open_in_memory()?;
     prepare(&conn)?;
     Ok(conn)
@@ -212,7 +212,14 @@ impl Store {
             let mut loaded = Connection::open_in_memory()?;
             // The copy replaces the whole database, schema included: it has the tables of whoever sealed it.
             loaded.deserialize_read_exact("main", std::io::Cursor::new(plain.as_slice()), plain.len(), false)?;
+            // Sealed by an older version: what it exported then, to tell whether it was in sync before migrating.
+            let before_migrating = (self.owner.is_some() && super::schema_version(&loaded)? < super::SCHEMA_VERSION)
+                .then(|| snapshot::export_present(&loaded).ok())
+                .flatten();
             prepare(&loaded)?;
+            if let Some(pre) = before_migrating {
+                super::sync::rebaseline(&loaded, &pre)?;
+            }
             *conn = Some(loaded);
             *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = current;
             self.writes.fetch_add(1, Ordering::AcqRel);
@@ -294,11 +301,33 @@ impl Store {
     pub(crate) fn export_account(&self) -> Result<Zeroizing<Vec<u8>>, CoreError> {
         snapshot::export(&*self.lock()?, true)
     }
-    pub(crate) fn has_account_rows(plain: &[u8]) -> Result<bool, CoreError> {
-        snapshot::has_rows(plain)
-    }
+    #[cfg(test)]
     pub(crate) fn import_account(&self, plain: &[u8]) -> Result<(), CoreError> {
         snapshot::import(&mut *self.lock()?, plain, true)
+    }
+    /// A file of this account's besides its data (`<owner>.<name>.sealed`), sealed with the account's key: the
+    /// account sync's merge base and backup. `None` for a store that is not an account's.
+    fn side_file(&self, name: &str) -> Option<(PathBuf, String)> {
+        let p = self.persistence.as_ref().filter(|_| self.owner.is_some())?;
+        Some((p.path.with_extension(format!("{name}.sealed")), format!("{}:{name}", p.aad)))
+    }
+    pub(super) fn read_side(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, CoreError> {
+        self.check_owner()?;
+        let Some((path, aad)) = self.side_file(name) else {
+            return Ok(None);
+        };
+        match fs::read(&path) {
+            Ok(sealed) => self.unseal(&aad, &sealed).map(|plain| Some(Zeroizing::new(plain))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(CoreError::storage("cannot read account data")),
+        }
+    }
+    pub(super) fn write_side(&self, name: &str, plain: &[u8]) -> Result<(), CoreError> {
+        self.check_owner()?;
+        let Some((path, aad)) = self.side_file(name) else {
+            return Ok(());
+        };
+        write_atomically(&path, &self.seal(&aad, plain)?)
     }
     pub(crate) fn seal_account(&self, revision: u64, plain: &[u8]) -> Result<Vec<u8>, CoreError> {
         self.check_owner()?;

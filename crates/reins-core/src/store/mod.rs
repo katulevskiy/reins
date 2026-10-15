@@ -11,11 +11,14 @@ mod audit;
 mod desktop;
 mod grants;
 mod mcp;
+mod merge;
 mod pending;
 mod protected;
 mod snapshot;
 pub(crate) use protected::Owner;
 mod secrets;
+mod sync;
+pub(crate) use sync::Pulled;
 
 use std::fmt;
 use std::fs;
@@ -218,11 +221,20 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
     // Standing answers to the desktop app's questions were keyed by the topic the computer chose (`file:.env`,
     // `command:make deploy`), which covered every later question with that topic. They are now keyed by exactly the
     // file, command or question, on that computer; the old, broader ones are dropped rather than honoured.
-    "
+    DROP_TOPIC_DESKTOP_GRANTS,
+];
+const DROP_TOPIC_DESKTOP_GRANTS: &str = "
 DELETE FROM grants WHERE json_extract(grant_json, '$.scope.action') = 'service'
     AND json_extract(grant_json, '$.scope.service') = 'desktop';
-",
-];
+";
+/// The schema version [`migrate`] brings a database to.
+#[expect(clippy::cast_possible_wrap, reason = "ten-odd migrations")]
+const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64 + 1;
+/// The rewrites among [`MIGRATIONS`] that apply to data from another phone too, which may run an older version: an
+/// account state it uploaded is brought up to date with these before it is compared, merged or imported (see
+/// `sync.rs`), so that it can neither bring back what a migration dropped nor look like a change of this phone's.
+/// Each is idempotent. A migration that rewrites rows (rather than adding tables or columns) adds its rewrite here.
+const DATA_FIXUPS: &str = DROP_TOPIC_DESKTOP_GRANTS;
 
 /// Brings a connection to the current schema, whatever wrote it: a new database, a legacy file, or a sealed copy
 /// restored from disk (written by this version, an older one, or another process).
@@ -233,9 +245,13 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
+fn schema_version(conn: &Connection) -> Result<i64, CoreError> {
+    Ok(conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?)
+}
+
 fn migrate(conn: &Connection) -> Result<(), CoreError> {
     // A database that was never versioned (0) is the first release's schema (1).
-    let mut version = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?.max(1);
+    let mut version = schema_version(conn)?.max(1);
     for (index, sql) in MIGRATIONS.iter().enumerate() {
         if version == i64::try_from(index + 1).unwrap_or(i64::MAX) {
             version += 1;
