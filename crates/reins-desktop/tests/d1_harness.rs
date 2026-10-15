@@ -322,8 +322,7 @@ fn the_command_line_uses_home_and_this_program() {
     let run = |args: &[&str]| {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
-            .env("HOME", env.home.path())
-            .env("USERPROFILE", env.home.path())
+            .envs(reins_desktop::config::home_env(env.home.path()))
             .env("REINS_CONFIG_DIR", env.state.path().join("config"))
             .env("REINS_STATE_DIR", env.state.path().join("state"))
             .output()
@@ -354,7 +353,7 @@ fn uninstall_undoes_the_harnesses_and_git_and_says_each_step() {
     let run = |args: &[&str]| {
         std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
-            .env("HOME", env.home.path())
+            .envs(reins_desktop::config::home_env(env.home.path()))
             .env("REINS_CONFIG_DIR", env.state.path().join("config"))
             .env("REINS_STATE_DIR", env.state.path().join("state"))
             .output()

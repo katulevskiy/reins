@@ -363,8 +363,7 @@ fn ssh_setup_and_unsetup_edit_only_the_given_home() {
     let run = |args: &[&str]| {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
-            .env("HOME", &home)
-            .env("USERPROFILE", &home)
+            .envs(reins_desktop::config::home_env(&home))
             .env("REINS_CONFIG_DIR", dir.path().join("config"))
             .env("REINS_STATE_DIR", &state)
             .env_remove("XDG_RUNTIME_DIR")

@@ -169,7 +169,7 @@ impl Backend {
                     config_dir: home.join(".config").join("reins"),
                     state_dir: home.join(".local").join("state").join("reins"),
                 },
-                git: Git::default().env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config")),
+                git: Git::under(&home),
                 home,
                 in_app: tokio::sync::Mutex::new(None),
                 journal: Mutex::new(None),
@@ -194,7 +194,7 @@ impl Backend {
         Self {
             paths: Paths::under(root),
             home: root.to_path_buf(),
-            git: Git::default().env("HOME", root),
+            git: Git::under(root),
             in_app: tokio::sync::Mutex::new(None),
             journal: Mutex::new(None),
         }
@@ -763,6 +763,50 @@ mod tests {
             "/private/var/folders/x/AppTranslocation/1234/d/Reins.app/Contents/MacOS/reins"
         )));
         assert!(!is_transient(Path::new("/Applications/Reins.app/Contents/MacOS/reins")));
+    }
+
+    /// Pausing, routing git and the login item on a test backend leave the user's own files alone, even from a shell
+    /// that exports `XDG_CONFIG_HOME` (where `git config --global` goes when there is no `~/.gitconfig`). The flows run
+    /// in a copy of this test binary whose `HOME` and `XDG_CONFIG_HOME` name a stand-in for the user's, holding Reins'
+    /// rules in `git/config`; that stand-in must be byte for byte as it was.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_test_backend_leaves_the_real_git_config_alone() {
+        const CHILD: &str = "REINS_TEST_REAL_HOME_CHILD";
+        const REAL: &str = "[url \"http://127.0.0.1:7457/github.com/\"]\n\tinsteadOf = https://github.com/\n\tinsteadOf \
+                            = git@github.com:\n\tinsteadOf = ssh://git@github.com/\n";
+        if std::env::var_os(CHILD).is_some() {
+            let root = tempfile::tempdir().unwrap();
+            let backend = Backend::under(root.path());
+            let config = backend.config().unwrap();
+            assert!(backend.git.hosts_set_up(&Scope::Global, &config).unwrap().is_empty(), "the real rules are unseen");
+            backend.git.setup_hosts(&Scope::Global, &config).unwrap();
+            let written = std::fs::read_to_string(root.path().join(".gitconfig")).unwrap();
+            assert!(written.contains("insteadOf = https://github.com/"), "{written}");
+            backend.pause().unwrap();
+            assert!(!std::fs::read_to_string(root.path().join(".gitconfig")).unwrap().contains("insteadOf"));
+            crate::autostart::set(root.path(), true).unwrap();
+            assert!(crate::autostart::enabled(root.path()));
+            crate::autostart::set(root.path(), false).unwrap();
+            return;
+        }
+        let real = tempfile::tempdir().unwrap();
+        let xdg = real.path().join(".config");
+        std::fs::create_dir_all(xdg.join("git")).unwrap();
+        let sentinel = xdg.join("git").join("config");
+        std::fs::write(&sentinel, REAL).unwrap();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "backend::tests::a_test_backend_leaves_the_real_git_config_alone", "--nocapture"])
+            .env(CHILD, "1")
+            .env("HOME", real.path())
+            .env("XDG_CONFIG_HOME", &xdg)
+            .env_remove("GIT_CONFIG_GLOBAL")
+            .output()
+            .unwrap();
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success() && said.contains("1 passed"), "{said}");
+        assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), REAL, "the real git config changed");
+        assert!(!real.path().join(".gitconfig").exists() && !xdg.join("autostart").exists(), "{said}");
     }
 
     #[test]

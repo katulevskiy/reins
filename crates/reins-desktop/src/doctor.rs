@@ -501,7 +501,7 @@ mod tests {
             paths,
             config,
             exe: home.join("reins"),
-            git: Git::default().env("HOME", &home).env("XDG_CONFIG_HOME", home.join(".config")),
+            git: Git::under(&home),
             home,
         };
         let checks = doctor.run().await;
