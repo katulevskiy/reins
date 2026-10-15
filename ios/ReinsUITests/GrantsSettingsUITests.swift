@@ -29,15 +29,9 @@ final class GrantsSettingsUITests: XCTestCase {
         try? XCUIScreen.main.screenshot().pngRepresentation.write(to: file)
     }
 
-    private func section(_ title: String) {
-        let tab = app.tabBars.buttons[title]
-        if tab.waitForExistence(timeout: 3) {
-            tab.tap()
-        } else {
-            let cell = app.buttons[title].firstMatch
-            XCTAssertTrue(cell.waitForExistence(timeout: 5), "no section \(title)")
-            cell.tap()
-        }
+    /// Opens one of the four places ("trust", "connections", "settings").
+    private func section(_ name: String) {
+        XCTAssertTrue(app.openTab(name), "no section \(name)")
     }
 
     private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
@@ -86,7 +80,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testScreenshots() {
         launch()
-        section("Grants")
+        section("trust")
         wait("grant:g1")
         shot("grants")
         tap("expiredHeader")
@@ -107,11 +101,11 @@ final class GrantsSettingsUITests: XCTestCase {
         app.terminate()
 
         launch()
-        section("Grants")
+        section("trust")
         tap("newGrant")
         wait("createGrant")
         shot("new-grant")
-        section("Settings")
+        section("settings")
         wait("accountCard")
         shot("settings")
         app.swipeUp()
@@ -119,6 +113,8 @@ final class GrantsSettingsUITests: XCTestCase {
         shot("settings-bottom")
         app.swipeDown()
         app.swipeDown()
+        section("connections")
+        shot("connections")
         scrollTo("connection:c1")
         tap("connection:c1")
         wait("connectionMode")
@@ -138,7 +134,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testEndedGrantsFoldIntoOneRowThatOpensTheirList() {
         launch()
-        section("Grants")
+        section("trust")
         wait("grant:g1")
         XCTAssertFalse(element("ended:g3").exists)
         XCTAssertTrue(element("expiredHeader").exists)
@@ -159,7 +155,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testARunningGrantOpensToItsDetailsAndCanBeDeleted() {
         launch()
-        section("Grants")
+        section("trust")
         tap("grant:g1")
         wait("grantTitle")
         XCTAssertTrue(app.staticTexts["Used 12 times"].exists)
@@ -176,7 +172,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testAnEndedGrantResumesForAChosenPeriod() {
         launch()
-        section("Grants")
+        section("trust")
         tap("expiredHeader")
         tap("resume:g3")
         wait("confirmResume")
@@ -191,7 +187,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testAnInvalidResumeExplainsWhatIsWrong() {
         launch()
-        section("Grants")
+        section("trust")
         tap("expiredHeader")
         tap("resume:g3")
         tap("resumeMore")
@@ -203,7 +199,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testAnEndedGrantCanBeDeletedForGood() {
         launch()
-        section("Grants")
+        section("trust")
         tap("expiredHeader")
         tap("delete:g6")
         confirm("Delete")
@@ -213,7 +209,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testAGrantCanBeCreatedInAdvance() {
         launch()
-        section("Grants")
+        section("trust")
         tap("newGrant")
         tap("createGrant")
         XCTAssertTrue(app.staticTexts["Choose which AI this is for."].waitForExistence(timeout: 3))
@@ -233,18 +229,20 @@ final class GrantsSettingsUITests: XCTestCase {
 
     // MARK: Settings
 
-    func testSettingsHoldConnectionsIntegrationsAndTheApprovalDevice() {
+    func testConnectionsHoldTheAIsAndTheServicesAndSettingsTheApprovalDevice() {
         launch()
-        section("Settings")
+        section("settings")
         wait("approvalChip")
+        XCTAssertFalse(element("connection:c1").exists, "connections moved out of Settings")
+        section("connections")
         scrollTo("connection:c1")
-        scrollTo("openIntegrations")
-        XCTAssertEqual(element("openIntegrations").value as? String, "2 accounts")
+        scrollTo("service:gmail")
+        XCTAssertTrue(element("service:gmail").label.contains("2 accounts"), element("service:gmail").label)
     }
 
     func testAConnectionsModeAndIconCanBePickedAndItCanBeDisconnected() {
         launch()
-        section("Settings")
+        section("connections")
         scrollTo("connection:c1")
         tap("connection:c1")
         wait("connectionMode")
@@ -257,7 +255,7 @@ final class GrantsSettingsUITests: XCTestCase {
         scrollTo("connectionIcon", detail: true)
         tap("connectionIcon")
         tap("icon:grok")
-        // Disconnect is held for two seconds; no dialog.
+        // Disconnect is held; no dialog.
         scrollTo("disconnect", detail: true)
         wait("disconnect").press(forDuration: 2.6)
         if pad {
@@ -270,7 +268,7 @@ final class GrantsSettingsUITests: XCTestCase {
 
     func testSigningOutReturnsToSignIn() {
         launch()
-        section("Settings")
+        section("settings")
         scrollTo("signOut")
         tap("signOut")
         confirm("Sign out")

@@ -163,14 +163,11 @@ final class LiveOnboardingUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 2)
         shot("07-activity")
 
-        // The computer is one of the AI connections in Settings.
-        let settings = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        settings.tap()
-        scrollTo("connect")
+        // The computer is one of the connections that can ask.
+        XCTAssertTrue(app.openTab("connections", timeout: 5))
         let desktop = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'connection:'")).firstMatch
-        XCTAssertTrue(desktop.waitForExistence(timeout: 10), "no AI connection in Settings")
+        XCTAssertTrue(desktop.waitForExistence(timeout: 10), "no AI connection in Connections")
         XCTAssertTrue(desktop.label.contains("Reins desktop app"), "the connection is the computer: \(desktop.label)")
-        shot("08-settings-connections")
+        shot("08-connections")
     }
 }

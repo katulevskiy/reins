@@ -13,13 +13,8 @@ final class AutopilotUITests: XCTestCase {
     private func launch(_ extra: [String] = []) {
         app.launchArguments = ["-demo", "-noPopup"] + extra
         app.launch()
-        let tab = app.tabBars.buttons["Autopilot"].firstMatch
-        if tab.waitForExistence(timeout: 10) {
-            tab.tap()
-        } else {
-            // A regular width: the sidebar.
-            app.buttons["Autopilot"].firstMatch.tap()
-        }
+        // Autopilot is part of Trust (a tab on a phone, the sidebar on a regular width).
+        XCTAssertTrue(app.openTab("trust"), "no Trust tab")
         _ = waitFor("modeHero")
     }
 
