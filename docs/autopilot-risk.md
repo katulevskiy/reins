@@ -250,8 +250,8 @@ points).
 ## 9. Rollout
 
 1. This doc, the data and the golden set.
-2. Training, export (`laya-approvals-ml-v2`, one file with the extra output), model card. Not published: the
-   artifact stays local until distribution is decided.
+2. Training, export (`laya-approvals-ml-v2`, one file with the extra output), model card.
 3. Core: the mode, the context line, the policy, tests with a fake model (v1-shaped: Overnight = Auto; v2-shaped).
 4. Apps: the mode in the Autopilot page and the quick menu, the setting, the risk line.
-5. Pin v2 in `KNOWN_MODELS` once published. Until then Overnight runs as Auto everywhere, which is safe.
+5. v2 published and pinned first in `KNOWN_MODELS`: new downloads get it; a phone with v1 keeps v1 (Overnight as Auto)
+   until it downloads v2, which then replaces it.

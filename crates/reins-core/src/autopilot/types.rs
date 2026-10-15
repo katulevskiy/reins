@@ -235,6 +235,10 @@ pub struct ModelStatus {
     /// The model rates risk, which Overnight needs (without it Overnight decides like Auto).
     #[uniffi(default)]
     pub risk: bool,
+    /// The installed model is an older one this build still trusts; `download_model` installs the newer one (and
+    /// then removes the older).
+    #[uniffi(default)]
+    pub update: bool,
 }
 
 /// One decision personality (spec §5.1).

@@ -2036,6 +2036,39 @@ async fn a_damaged_installed_model_is_deleted_and_never_loaded() {
     assert!(!env.dir.path().join("models/fake-laya-1").exists());
 }
 
+/// A newer trusted model: an older one installed keeps working (and says an update is there) until the newer one is
+/// downloaded, which then replaces it.
+#[tokio::test]
+async fn an_older_installed_model_keeps_working_until_the_newer_is_downloaded() {
+    let env = env(true).await;
+    let cfg = CoreConfig {
+        gmail_base: env.gmail.uri(),
+        backoff_base: Duration::from_millis(1),
+        models_base: format!("{}/models", env.server.uri()),
+        models: vec![testing::known_model("fake-laya-2", &env.files), testing::known_model("fake-laya-1", &env.files)],
+        ..CoreConfig::default()
+    };
+    let notifier: Arc<dyn Notifier> = Arc::<Notes>::clone(&env.notes);
+    let core =
+        ReinsCore::with_config(env.dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
+            .unwrap();
+    let runtime: Arc<dyn ModelRuntime> = Arc::<FakeRuntime>::clone(&env.model);
+    core.set_model_runtime(runtime);
+    let status = core.model_status().await;
+    assert_eq!((status.state, status.id.as_str(), status.update), (ModelState::Installed, "fake-laya-1", true));
+    for (name, bytes) in &env.files {
+        Mock::given(method("GET"))
+            .and(path(format!("/models/fake-laya-2/{name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes.clone()))
+            .mount(&env.server)
+            .await;
+    }
+    let progress: Arc<dyn super::DownloadProgress> = Arc::new(testing::Progress::default());
+    let status = core.download_model(progress).await.unwrap();
+    assert_eq!((status.state, status.id.as_str(), status.update), (ModelState::Installed, "fake-laya-2", false));
+    assert!(!env.dir.path().join("models/fake-laya-1").exists(), "the older one made room");
+}
+
 // ---- a store sealed by an older version ---------------------------------------------------------------------------------
 
 /// The app starts again on `env`'s data directory (as after an update), reporting to the same notifier.

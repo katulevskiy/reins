@@ -256,12 +256,19 @@ python eval.py --pkg ~/.cache/reins-laya/pkg/laya-approvals-ml-v1 --data ~/.cach
 `--base ml` expects the Laya multilingual checkpoint under `~/.cache/reins-laya/laya/multilingual`. See
 `tools/laya/README.md`.
 
-## laya-approvals-ml-v2 (candidate, not published)
+## laya-approvals-ml-v2
 
 A second output, **risk**: how bad a request would be if it were a mistake, in its context. It has four classes:
 benign, risky, severe, catastrophic. The new Autopilot mode **Overnight** acts on it (`docs/autopilot-risk.md`); the
-other modes only show it. The approval output is kept close to v1's. Nothing below is published: the package was
-built and checked locally, and `KNOWN_MODELS` still pins v1 only.
+other modes only show it. The approval output is kept close to v1's. It is published like v1, at
+`<official site>/models/laya-approvals-ml-v2/`, and pinned first in `KNOWN_MODELS`: new downloads get it, and a phone
+with v1 keeps using v1 until it downloads v2 (`ModelStatus.update`), which then replaces it.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `model.onnx` | 336,786,417 | `f84efce3db931f136562dc57060f2bd7154a471ba1415974ff6e4ed1c318afad` |
+| `tokenizer.json` | 34,363,188 | `609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f` |
+| `laya_config.json` | 1,247 | `f13633d037e29b3e4a6cf31580211e23ab46605f264e16a46922539c43908fbd` |
 
 **What changed**
 - **Inputs:** a `context:` line after `details`, written by the phone core. It uses a fixed vocabulary, and values
