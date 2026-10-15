@@ -135,13 +135,30 @@ fun ActivityDetailScreen(
     LaunchedEffect(entryId, container) {
         val core = container?.core ?: return@LaunchedEffect
         recorded = try {
-            core.activityApproval(entryId)
+            val view = core.activityApproval(entryId)
+            // A push: the best copy of it on this phone (with its changes line by line where they were kept).
+            val push = if (view?.git == null) {
+                null
+            } else {
+                try {
+                    core.activityPush(entryId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            if (view != null && push != null) view.copy(git = push.git) else view
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             null
         }
         looked = true
+    }
+    // An entry's commit whose changes are not on this phone loads from the git host, for this entry only.
+    val commits = remember(entryId, container) {
+        container?.core?.let { core -> dev.reins.android.ui.approval.EntryCommits { sha -> core.activityCommitChange(entryId, sha) } }
     }
     val dock: (@Composable () -> Unit)? = if (entry != null && (correctable || thanked || error != null)) {
         { EntryDock(correctable, thanked, busy, error) { asking = true } }
@@ -180,6 +197,7 @@ fun ActivityDetailScreen(
                 tense = dev.reins.android.ui.common.entryTense(entry.outcome),
                 label = entry.label,
                 cwd = entry.request?.cwd,
+                commits = commits.takeIf { shown.git != null },
             ),
         )
     } else if (looked) {

@@ -106,6 +106,8 @@ fun askSentence(
         provider == "ssh" && subject.isNotEmpty() -> Phrase("Sign in to a server", details = hostLine(subject))
         provider.startsWith("mcp:") -> mcpPhrase(subject, tail.removePrefix("on ").trim(), host = null)
         provider == "desktop" && action == "ask" -> Phrase(lead, question = true, kind = ValueKind.Name)
+        // With the push's view (the approval's, or the copy synced with the entry) its count and branches come from it.
+        (action == "push" || (action == "delete" && GIT_DELETE.matches(lead))) && !git?.refs.isNullOrEmpty() -> pushPhrase(git!!, subject)
         action == "push" || (action == "delete" && GIT_DELETE.matches(lead)) -> gitPhrase(lead, subject, refLines(git))
         // One verb, so it reads in the past tense too ("Fetched", never "Cloned and fetch"): a clone is a fetch.
         lead == "Clone and fetch" && subject.isNotEmpty() -> subjectPhrase("Fetch", subject, label.code, tail, ValueKind.Identifier)
@@ -178,8 +180,8 @@ fun askSentence(entry: ActivityEntry, who: String? = null): AskSentence {
     val label = entry.label
     if (label != null) {
         val request = entry.request
-        // The branch line comes only from the push's structured view (the entry's page reads it); never from the text.
-        return askSentence(label, tense, who, cwd = request?.cwd, full = request?.full?.takeIf { label.provider == "terminal" })
+        // The branch line comes only from the push's structured view, kept and synced with the entry; never the text.
+        return askSentence(label, tense, who, cwd = request?.cwd, full = request?.full?.takeIf { label.provider == "terminal" }, git = request?.git)
     }
     return legacy(entry, tense)
 }
@@ -213,20 +215,8 @@ fun askSentence(
     }
     val (phrase, provider, action) = when {
         git != null -> {
-            val refs = git.refs
-            val deletes = refs.isNotEmpty() && refs.all { it.change == "delete" }
-            val lead = when {
-                deletes -> if (refs.size == 1) "Delete a ${if (refs[0].kind == "tag") "tag" else "branch"} from" else "Delete ${refs.size} refs from"
-                refs.isNotEmpty() && refs.all { it.kind == "tag" } -> if (refs.size == 1) "Push a tag to" else "Push ${refs.size} tags to"
-                else -> {
-                    val commits = refs.filter { it.change != "delete" }.sumOf { it.commitCount.toInt() }
-                    val verb = if (refs.any { it.force }) "Force-push" else "Push"
-                    if (commits == 0) "$verb to" else "$verb ${plural(commits, "commit")} to"
-                }
-            }
-            val names = refs.joinToString(", ") { serifLine(it.shortName) }.ifEmpty { null }
-            val details = if (deletes || refs.all { it.kind == "tag" }) names else pushLine(refLines(git))
-            Triple(repoPhrase(lead, untrusted(git.repo), details), view.service, if (deletes) "delete" else "push")
+            val deletes = git.refs.isNotEmpty() && git.refs.all { it.change == "delete" }
+            Triple(pushPhrase(git, untrusted(git.repo)), view.service, if (deletes) "delete" else "push")
         }
         view.secrets != null -> {
             val s = view.secrets!!
@@ -341,6 +331,27 @@ private fun mcpPhrase(tool: String, server: String, host: String?): Phrase {
 }
 
 private val GIT_DELETE = Regex("^Delete (branch|tag) .+ from$|^Delete \\d+ refs from$")
+
+/**
+ * A push from its structured view: "Push 3 commits to *octo/app*", "Delete a branch from", "Push 2 tags to"; the
+ * count and the branches come from its refs, the branch line ("feature/x · new branch") or the names in mono.
+ */
+private fun pushPhrase(git: GitPushView, repo: String): Phrase {
+    val refs = git.refs
+    val deletes = refs.isNotEmpty() && refs.all { it.change == "delete" }
+    val lead = when {
+        deletes -> if (refs.size == 1) "Delete a ${if (refs[0].kind == "tag") "tag" else "branch"} from" else "Delete ${refs.size} refs from"
+        refs.isNotEmpty() && refs.all { it.kind == "tag" } -> if (refs.size == 1) "Push a tag to" else "Push ${refs.size} tags to"
+        else -> {
+            val commits = refs.filter { it.change != "delete" }.sumOf { it.commitCount.toInt() }
+            val verb = if (refs.any { it.force }) "Force-push" else "Push"
+            if (commits == 0) "$verb to" else "$verb ${plural(commits, "commit")} to"
+        }
+    }
+    val names = refs.joinToString(", ") { serifLine(it.shortName) }.ifEmpty { null }
+    val details = if (deletes || refs.all { it.kind == "tag" }) names else pushLine(refLines(git))
+    return repoPhrase(lead, repo, details)
+}
 
 /** A push or a deletion from the core's label: the repository is the target, branches and tags go to the mono line. */
 private fun gitPhrase(lead: String, repo: String, refs: List<RefLine>): Phrase {

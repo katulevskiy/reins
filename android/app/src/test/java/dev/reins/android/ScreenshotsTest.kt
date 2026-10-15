@@ -76,6 +76,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.gmail = GmailStatus.Ready
         core.activity = emptyList()
         core.entryApprovals.clear()
+        core.entryPushes.clear()
+        core.commitChanges.clear()
+        core.commitChangeGate = null
         core.catalogue = FakeCore.defaultServices()
         core.mcp = emptyList()
         core.blobs.clear()
@@ -1204,6 +1207,46 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("commitFile:0:diff")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("push-entry-diff")
+    }
+
+    /** The same push decided on another device: its commits synced with the entry, a diff loaded from GitHub. */
+    @Test
+    fun pushOtherDevice() {
+        val view = reportedPushView()
+        val full = view.git!!.refs[0].commits[0]
+        val synced = view.git!!.copy(refs = view.git!!.refs.map { r -> r.copy(commits = r.commits.map { c -> c.copy(files = c.files.map { it.copy(diff = emptyList()) }) }, files = r.files.map { it.copy(diff = emptyList()) }) })
+        val entry = reportedPush()
+        core.activity = listOf(entry.copy(request = entry.request!!.copy(git = synced)))
+        core.entryApprovals[7L] = view.copy(git = synced)
+        core.entryPushes[7L] = dev.reins.core.ActivityPush(synced, false, true, false)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        core.commitChangeGate = gate
+        launch()
+        await("entry:7")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-row")
+        tap("entry:7")
+        await("entryApproval")
+        tap("gitCommits:0")
+        tap("gitCommit:0:0")
+        await("loadChangesAction")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-not-kept")
+        tap("loadChangesAction")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-loading", idle = false)
+        gate.complete(Unit)
+        await("retryChanges")
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-failed")
+        core.commitChangeGate = null
+        core.commitChanges[7L to full.shortSha] = full
+        tap("retryChanges")
+        await("commitFile:0")
+        tap("commitFile:0")
+        await("commitFile:0:diff")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-other-loaded")
     }
 
     /** A Gmail entry: the emails as the approval listed them, what was shared ticked. */
