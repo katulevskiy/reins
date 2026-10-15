@@ -104,10 +104,12 @@ struct ArcRing: View {
 }
 
 /// How long the AI still waits, as a pill with a ring that empties: red for the last `urgentSeconds`. Without a
-/// deadline (an upload) it says how long ago it came.
+/// deadline (an upload) it says how long ago it came. `onField`: the timer on a field or waiting card, a white ring and
+/// mono digits that become a white pill with red digits for the last 15 seconds.
 struct TimerPill: View {
     var createdAt: Int64
     var waitUntil: Int64?
+    var onField = false
 
     var body: some View {
         if waitUntil == nil {
@@ -134,7 +136,39 @@ struct TimerPill: View {
         return d < 45 ? "now" : compactDuration(d)
     }
 
+    @ViewBuilder
     private func label(_ u: Urgency?, text: String) -> some View {
+        if onField {
+            fieldLabel(u, text: text)
+        } else {
+            paperLabel(u, text: text)
+        }
+    }
+
+    private func fieldLabel(_ u: Urgency?, text: String) -> some View {
+        let hot = u?.urgent == true
+        return HStack(spacing: 6) {
+            if let u, !hot {
+                ArcRing(fraction: u.stale ? 0 : u.fraction, color: .white, track: .white.opacity(0.25), lineWidth: 2.2)
+                    .frame(width: 18, height: 18)
+            }
+            Text(text)
+                .font(RFont.mono(13, hot ? .medium : .regular))
+                .monospacedDigit()
+                .lineLimit(1)
+        }
+        .foregroundStyle(hot ? Palette.fieldDelete : Palette.onField)
+        .padding(.horizontal, hot ? 10 : 0)
+        .frame(minHeight: 26)
+        .background(hot ? Color.white : .clear, in: Capsule())
+        .animation(.easeInOut(duration: Motion.fade), value: hot)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(u.map { $0.stale ? "Stopped waiting" : "\($0.remainingText) left" } ?? TimeText.relative(createdAt))
+        .accessibilityIdentifier("waitTimer")
+    }
+
+    private func paperLabel(_ u: Urgency?, text: String) -> some View {
         let hot = u?.urgent == true
         let stale = u?.stale == true
         let color = hot ? Palette.danger : stale ? Palette.tertiary : Palette.secondary
@@ -144,7 +178,7 @@ struct TimerPill: View {
                     .frame(width: 16, height: 16)
             }
             Text(text)
-                .font(RFont.sans(14, .semibold))
+                .font(RFont.mono(13.5, .medium))
                 .monospacedDigit()
                 .lineLimit(1)
         }
@@ -177,25 +211,16 @@ enum BiometricSymbol {
 
 // MARK: Buttons
 
-/// The capsule buttons of cards and the page dock.
+/// The capsule buttons of cards and the page dock, drawn by Signal's button look: `neutral` is soft, `light` the inverse
+/// action, `danger` the red wash; `warning` and `success` are solid in their colour.
 struct DockButtonStyle: PrimitiveButtonStyle {
     enum Kind { case neutral, light, danger, warning, success }
     var kind: Kind = .neutral
     var height: CGFloat = 54
-    var fontSize: CGFloat = 17
+    var fontSize: CGFloat = 16.5
 
     func makeBody(configuration: Configuration) -> some View {
         DefaultTapStyle(look: DockButtonLook(kind: kind, height: height, fontSize: fontSize)).makeBody(configuration: configuration)
-    }
-
-    static func colors(_ kind: Kind) -> (fg: Color, bg: Color) {
-        switch kind {
-        case .neutral: (Palette.text, Palette.dynamic(0xE7E7EB, 0x232327))
-        case .light: (Palette.background, Palette.text)
-        case .danger: (Palette.danger, Palette.danger.opacity(0.15))
-        case .warning: (Palette.dynamic(0xFFFFFF, 0x231A00), Palette.warning)
-        case .success: (Palette.dynamic(0xFFFFFF, 0x04210F), Palette.success)
-        }
     }
 }
 
@@ -206,31 +231,29 @@ private struct DockButtonLook: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
 
     func makeBody(configuration: Configuration) -> some View {
-        let (fg, bg) = DockButtonStyle.colors(kind)
-        configuration.label
-            .font(RFont.sans(fontSize, .semibold))
-            .labelStyle(DockLabelStyle())
-            .foregroundStyle(fg)
-            .lineLimit(1)
-            .frame(maxWidth: .infinity, minHeight: height)
-            .background(bg, in: Capsule())
-            .contentShape(Capsule())
-            .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.5)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.spring(duration: 0.2), value: configuration.isPressed)
-    }
-}
-
-private struct DockLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 7) {
-            configuration.icon
-            configuration.title
+        switch kind {
+        case .neutral: signal(.soft, configuration)
+        case .light: signal(.inverse, configuration)
+        case .danger: signal(.danger, configuration)
+        case .warning, .success:
+            configuration.label
+                .font(RFont.sans(fontSize, .semibold))
+                .labelStyle(SignalLabelStyle())
+                .foregroundStyle(Palette.dynamic(0xFFFFFF, 0x121215))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: height)
+                .background(kind == .warning ? Palette.warning : Palette.success, in: Capsule())
+                .contentShape(Capsule())
+                .pressDims(pressed: configuration.isPressed, enabled: enabled)
         }
     }
+
+    private func signal(_ look: SignalButtonKind, _ configuration: Configuration) -> some View {
+        SignalButtonLook(kind: look, height: height, fontSize: fontSize).makeBody(configuration: configuration)
+    }
 }
 
-/// The white round + beside a page title (New grant, Integrations).
+/// The round + beside a page title (New grant, Integrations): a Signal header button.
 struct RoundPlusButton: View {
     var label: String
     var action: () -> Void
@@ -243,12 +266,13 @@ struct RoundPlusButton: View {
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Palette.background)
+                .foregroundStyle(Palette.ink)
                 .frame(width: HeaderControl.height, height: HeaderControl.height)
-                .background(Palette.text, in: Circle())
+                .background(Palette.paperRaised, in: Circle())
+                .overlay(Circle().strokeBorder(Palette.rule, lineWidth: 1))
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressDimsStyle())
         .accessibilityLabel(label)
     }
 }
@@ -290,8 +314,8 @@ enum PageDockColors {
 
 // MARK: Durations
 
-/// "Once | 1 hour | 1 day | Custom ▾": a few periods side by side, the longer ones behind Custom. `Value` is the
-/// screen's own choice type; the identifiers are `<idPrefix>:<id>` and `<idPrefix>:custom` for the menu.
+/// "Once | 1 hour | 1 day | Custom ▾": a few periods side by side, the longer ones behind Custom, as a `Chooser`.
+/// `Value` is the screen's own choice type; the identifiers are `<idPrefix>:<id>` and `<idPrefix>:custom` for the menu.
 struct DurationControl<Value: Hashable>: View {
     struct Option {
         var value: Value
@@ -313,48 +337,26 @@ struct DurationControl<Value: Hashable>: View {
 
     var body: some View {
         let chosenMore = more.first { $0.value == selection && !customChosen }
-        HStack(spacing: 0) {
-            ForEach(Array(inline.enumerated()), id: \.offset) { _, option in
-                let on = !customChosen && option.value == selection
-                Button {
-                    pick(option.value)
-                } label: {
-                    segment(on: on) { Text(option.label) }
-                }
-                .buttonStyle(.plain)
-                .disabled(!option.enabled)
-                .opacity(option.enabled ? 1 : 0.4)
-                .accessibilityAddTraits(on ? .isSelected : [])
-                .accessibilityIdentifier("\(idPrefix):\(option.id)")
-            }
-            Menu {
-                ForEach(Array(more.enumerated()), id: \.offset) { _, option in
-                    Button(option.label) { pick(option.value) }
-                        .disabled(!option.enabled)
-                        .accessibilityIdentifier("\(idPrefix):\(option.id)")
-                }
-                if let onOther {
-                    Button("Other time…") {
-                        onOther()
-                        feedback.play(.selection)
-                    }
-                    .accessibilityIdentifier("\(idPrefix):other")
-                }
-            } label: {
-                let on = customChosen || chosenMore != nil
-                segment(on: on) {
-                    HStack(spacing: 3) {
-                        Text(chosenMore?.label ?? "Custom")
-                        Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("\(idPrefix):custom")
+        let inlineSegments = inline.map { option in
+            Chooser.Segment(
+                id: "\(idPrefix):\(option.id)", title: option.label, selected: !customChosen && option.value == selection,
+                enabled: option.enabled, action: { pick(option.value) }
+            )
         }
-        .padding(3)
-        .background(Palette.dynamic(0xE7E7EB, 0x060606), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .animation(.smooth(duration: 0.2), value: selection)
+        var menu = more.map { option in
+            Chooser.MenuItem(id: "\(idPrefix):\(option.id)", title: option.label, enabled: option.enabled) { pick(option.value) }
+        }
+        if let onOther {
+            menu.append(Chooser.MenuItem(id: "\(idPrefix):other", title: "Other time…") {
+                onOther()
+                feedback.play(.selection)
+            })
+        }
+        let custom = Chooser.Segment(
+            id: "\(idPrefix):custom", title: chosenMore?.label ?? "Custom", selected: customChosen || chosenMore != nil, more: true,
+            menu: menu
+        )
+        return Chooser(inlineSegments + [custom])
     }
 
     private func pick(_ value: Value) {
@@ -362,22 +364,12 @@ struct DurationControl<Value: Hashable>: View {
         onSelect(value)
         feedback.play(.selection)
     }
-
-    private func segment<Label: View>(on: Bool, @ViewBuilder _ label: () -> Label) -> some View {
-        label()
-            .font(RFont.sans(13.5, .semibold))
-            .foregroundStyle(on ? Palette.text : Palette.secondary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .frame(maxWidth: .infinity, minHeight: 36)
-            .background(on ? Palette.dynamic(0xFFFFFF, 0x232327) : .clear, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .contentShape(Rectangle())
-    }
 }
 
 // MARK: Rows
 
-/// "When        Today, 14:14": a quiet label and its value, in a grouped card.
+/// "When        Today, 14:14": a fact, the key in ink-2 and the value in ink (Signal's fact row, in a grouped card until
+/// its screen moves to hairline lists).
 struct ValueRow: View {
     var label: String
     var value: String
@@ -397,19 +389,19 @@ struct ValueRow: View {
     private var content: some View {
         HStack(spacing: 8) {
             Text(label)
-                .font(RFont.sans(16, action == nil ? .regular : .medium))
-                .foregroundStyle(action == nil ? Palette.tertiary : Palette.text)
+                .font(action == nil ? RFont.sans(15) : TextRole.row.font())
+                .foregroundStyle(action == nil ? Palette.ink2 : Palette.ink)
                 .lineLimit(1)
             Spacer(minLength: 8)
             Text(value)
-                .font(mono ? RFont.mono(14) : RFont.sans(15))
-                .foregroundStyle(action == nil ? Palette.text : Palette.secondary)
+                .font(mono ? TextRole.value.font() : RFont.sans(15, action == nil ? .medium : .regular))
+                .foregroundStyle(action == nil ? Palette.ink : Palette.ink2)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if action != nil {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkFaint)
             }
         }
         .padding(.horizontal, 16)
@@ -449,15 +441,15 @@ struct HelpButton: View {
     }
 }
 
-/// A round radio mark: filled in the accent when chosen.
+/// A round radio mark: a violet ring when chosen.
 struct RadioMark: View {
     var on: Bool
 
     var body: some View {
-        ZStack {
-            Circle().strokeBorder(on ? Palette.accent : Palette.dynamic(0xB4B4BC, 0x4A4A52), lineWidth: 2)
-            if on { Circle().fill(Palette.accent).frame(width: 11, height: 11) }
-        }
+        // Signal's radio: a violet ring 7 pt thick around a white dot when on, a faint 1.5 pt ring when off.
+        Circle()
+            .strokeBorder(on ? Palette.violetFill : Palette.inkFaint, lineWidth: on ? 7 : 1.5)
+            .background(on ? Circle().fill(.white) : nil)
         .frame(width: 22, height: 22)
         .animation(.spring(duration: 0.22), value: on)
         .accessibilityHidden(true)
@@ -476,10 +468,9 @@ struct PageSectionHeader<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(title.uppercased())
-                .font(RFont.sans(12.5, .semibold))
-                .tracking(0.9)
-                .foregroundStyle(Palette.tertiary)
+            Text(title)
+                .textRole(.label)
+                .foregroundStyle(Palette.inkMeta)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
             trailing

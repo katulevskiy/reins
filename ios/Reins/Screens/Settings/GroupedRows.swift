@@ -21,18 +21,16 @@ extension View {
     }
 }
 
-/// A section header: small, uppercase, spaced.
+/// A section header: Signal's section label, mono capitals tracked 0.16 em in ink-meta.
 struct GroupHeader: View {
     var text: String
 
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text.uppercased())
-            .font(RFont.sans(12.5, .medium))
-            .tracking(0.6)
-            .foregroundStyle(Palette.secondary)
-            .textCase(nil)
+        Text(text)
+            .textRole(.label)
+            .foregroundStyle(Palette.inkMeta)
             .accessibilityAddTraits(.isHeader)
     }
 }

@@ -34,6 +34,7 @@ struct RootView: View {
         // `-gallery`: every avatar on one page (provider logos, service logos, blobatars).
         .overlay { if AvatarGallery.requested { AvatarGallery() } }
         #endif
+        .toggleStyle(SignalSwitchStyle())
         .tint(Palette.accent)
     }
 }
