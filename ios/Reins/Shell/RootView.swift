@@ -35,7 +35,6 @@ struct RootView: View {
         .overlay { if AvatarGallery.requested { AvatarGallery() } }
         #endif
         .tint(Palette.accent)
-        .fontDesign(.default)
     }
 }
 
