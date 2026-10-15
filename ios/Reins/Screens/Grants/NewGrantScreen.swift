@@ -44,7 +44,9 @@ final class NewGrantModel {
     }
 }
 
-/// Give an AI a permission before it asks. Rare, so it lives one tap away in Grants, not in the way.
+/// Give an AI a permission before it asks (iOS-Trust.png, 03). Rare, so it lives one tap away in Trust, not in the way.
+/// A form that reads like a sentence: for this AI, to read mail, from these senders, for a day. It is paper, not a
+/// field: nothing is asking.
 struct NewGrantScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
@@ -60,6 +62,11 @@ struct NewGrantScreen: View {
         let draft = form.draft
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                AskText([AskText.Run(text: "New "), AskText.Run(text: "grant", target: true)], role: .title)
+                    .foregroundStyle(Palette.ink)
+                    .padding(.horizontal, 6)
+                    .padding(.top, 8)
+                    .accessibilityAddTraits(.isHeader)
                 section("For") {
                     if model.connections.isEmpty {
                         hint("No AI is connected yet.")
@@ -93,25 +100,27 @@ struct NewGrantScreen: View {
                 }
 
                 section("To") {
-                    KindSegments(send: draft.send) { send in
-                        form.edit {
-                            $0.send = send
-                            if send { $0.anyMail = false }
+                    Chooser([
+                        Chooser.Segment(id: "kind:read", title: "Read mail", selected: !draft.send) { setSend(false) },
+                        Chooser.Segment(id: "kind:send", title: "Send mail", selected: draft.send) { setSend(true) },
+                    ])
+                }
+
+                section(draft.send ? "Send to" : "From", trailing: {
+                    // All mail is time-boxed to a week and never sends: it greys the address box.
+                    if !draft.send {
+                        Toggle(isOn: Binding(get: { form.draft.anyMail }, set: { on in setAllMail(on) })) {
+                            Text("All mail").font(RFont.sans(13.5)).foregroundStyle(Palette.ink2)
                         }
+                        .toggleStyle(SignalSwitchStyle())
+                        .fixedSize()
+                        .accessibilityIdentifier("scope:all")
                     }
-                }
-
-                if !draft.send {
-                    section("Which emails") {
-                        scopeChips(draft)
-                    }
-                }
-
-                section(draft.send ? "Send to" : "From") {
+                }) {
                     if draft.anyMail {
                         Text("All mail, up to 7 days. Never sending.")
-                            .font(RFont.sans(14))
-                            .foregroundStyle(Palette.secondary)
+                            .textRole(.body)
+                            .foregroundStyle(Palette.inkMeta)
                             .padding(.horizontal, 4)
                     } else {
                         TextField(
@@ -164,11 +173,12 @@ struct NewGrantScreen: View {
                     if form.busy { ProgressView() }
                 }
             }
-            .buttonStyle(DockButtonStyle(kind: .light))
+            .buttonStyle(SignalButtonLook(kind: .inverse))
+            .frame(height: 54)
             .disabled(form.busy)
             .accessibilityIdentifier("createGrant")
         }
-        .navigationTitle("New grant")
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
@@ -205,27 +215,37 @@ struct NewGrantScreen: View {
         }
     }
 
-    /// Specific senders | All mail. All mail is time-boxed to a week, so picking it drops Once and 30 days.
-    private func scopeChips(_ draft: NewGrantDraft) -> some View {
-        HStack(spacing: 8) {
-            OptionChip("Specific senders", selected: !draft.anyMail, symbol: "at") {
-                form.edit { $0.anyMail = false }
-            }
-            .accessibilityIdentifier("scope:specific")
-            OptionChip("All mail", selected: draft.anyMail, symbol: "tray") {
-                form.edit {
-                    $0.anyMail = true
-                    if !$0.lifetime.allowedForAllMail { $0.lifetime = .day }
-                }
-            }
-            .accessibilityIdentifier("scope:all")
+    private func setSend(_ send: Bool) {
+        guard send != form.draft.send else { return }
+        feedback.play(.selection)
+        form.edit {
+            $0.send = send
+            if send { $0.anyMail = false }
+        }
+    }
+
+    /// All mail is time-boxed to a week, so turning it on drops Once and 30 days.
+    private func setAllMail(_ on: Bool) {
+        form.edit {
+            $0.anyMail = on
+            if on && !$0.lifetime.allowedForAllMail { $0.lifetime = .day }
         }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        section(title, trailing: { EmptyView() }, content: content)
+    }
+
+    private func section<Trailing: View, Content: View>(
+        _ title: String, @ViewBuilder trailing: () -> Trailing, @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            FormLabel(title)
-                .padding(.horizontal, 6)
+            HStack {
+                Text(title).textRole(.label).foregroundStyle(Palette.inkMeta)
+                Spacer(minLength: 8)
+                trailing()
+            }
+            .padding(.horizontal, 6)
             content()
         }
         .padding(.top, 22)
@@ -246,39 +266,5 @@ private struct AgentChip: View {
         SelectChip(title: untrusted(connection.label), selected: selected, leading: {
             ConnectionAvatar(label: untrusted(connection.label), pick: connection.icon, size: 22)
         }, action: action)
-    }
-}
-
-/// "Read mail | Send mail", as a segmented control with icons.
-private struct KindSegments: View {
-    var send: Bool
-    var onChange: (Bool) -> Void
-    @Environment(\.feedback) private var feedback
-
-    var body: some View {
-        HStack(spacing: 0) {
-            segment("Read mail", symbol: "eye", on: !send, id: "kind:read") { onChange(false) }
-            segment("Send mail", symbol: "paperplane", on: send, id: "kind:send") { onChange(true) }
-        }
-        .padding(3)
-        .background(Palette.dynamic(0xE7E7EB, 0x060606), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    private func segment(_ title: String, symbol: String, on: Bool, id: String, action: @escaping () -> Void) -> some View {
-        Button {
-            guard !on else { return }
-            action()
-            feedback.play(.selection)
-        } label: {
-            Label(title, systemImage: symbol)
-                .font(RFont.sans(14, .semibold))
-                .foregroundStyle(on ? Palette.text : Palette.secondary)
-                .frame(maxWidth: .infinity, minHeight: 38)
-                .background(on ? Palette.dynamic(0xFFFFFF, 0x232327) : .clear, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? .isSelected : [])
-        .accessibilityIdentifier(id)
     }
 }
