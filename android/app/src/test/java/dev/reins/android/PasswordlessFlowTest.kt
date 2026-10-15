@@ -147,6 +147,49 @@ class PasswordlessFlowTest : FlowHarness() {
         assertFalse(container.state.deviceReplaced.value)
     }
 
+    // ---- Account sync never keeps the phone out ------------------------------------------------------------------------
+
+    /**
+     * The user's dead end: the account opened, then the core reported a sync conflict with the other phone (cores before
+     * the merge did). The phone goes on signed in and the conflict is the sync banner, never a red box on the welcome
+     * screen whose Continue only repeats it.
+     */
+    @Test
+    fun aSyncConflictAtSignInNeverLeavesThePhoneOnTheWelcomeScreen() {
+        val conflict = "This account has unsynced changes on this phone and newer changes on another phone. Its local data was preserved."
+        core.ssoKeys = AccountKeys.UNLOCKED
+        tapContinue()
+        core.ssoFinishErrorAfterSignIn = CoreException.ServiceNeedsAttention(conflict)
+        relaunch(callbackIntent())
+        recordRecovery()
+        awaitTag("setup")
+        assertFalse(has("welcome"))
+        assertFalse(has("signInError"))
+        assertEquals(conflict, container.state.syncNotice.value)
+        awaitCore { core.registrations.size == 1 }
+    }
+
+    /** What the core says about sync is a banner on Activity with an OK, and nothing more. */
+    @Test
+    fun aSyncNoticeIsABannerThatOkDismisses() {
+        val notice = "Synced with your other phone. A backup of this phone's changes is kept."
+        core.session = dev.reins.core.SessionInfo(server, "me@example.com")
+        core.syncNotice = notice
+        launch()
+        awaitTag("syncNotice")
+        awaitText(notice)
+        assertFalse(has("welcome"))
+        tap("dismissSyncNotice")
+        awaitGone("syncNotice")
+        awaitCore { core.syncNoticeDismissals.get() == 1 }
+        assertNull(container.state.syncNotice.value)
+        // Gone for good: the next start shows nothing.
+        relaunch(Intent(context, MainActivity::class.java))
+        awaitTag("activityList")
+        settle()
+        assertFalse(has("syncNotice"))
+    }
+
     // ---- "Continue" --------------------------------------------------------------------------------------------------
 
     @Test

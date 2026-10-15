@@ -270,6 +270,7 @@ final class SsoSignIn {
         } catch WebAuth.Failure.noWindow {
             error = "Open Reins and try again."
         } catch {
+            if await model.finishSignedInDespite(error) { return }
             feedback.play(.error)
             self.error = error.userMessage
         }

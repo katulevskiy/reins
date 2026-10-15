@@ -182,6 +182,44 @@ impl ReinsCore {
         .await
     }
 
+    /// A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
+    /// Sync never keeps the app closed or signed out; this is all it ever shows.
+    pub async fn account_sync_notice(&self) -> Option<String> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await.ok()?;
+            engine.account_sync_notice().ok().flatten()
+        })
+        .await
+    }
+
+    /// The banner of [`Self::account_sync_notice`] was dismissed.
+    pub async fn dismiss_account_sync_notice(&self) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.dismiss_account_sync_notice();
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Only when the user asks: brings back this phone's own changes that a sync without a merge base kept aside (the
+    /// notice says so), merged with the data as it is now by the sync's rules (never a grant only the backup has).
+    /// False when there is nothing to bring back. What comes back is uploaded like any change.
+    pub async fn restore_account_sync_backup(&self) -> Result<bool, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.restore_account_sync_backup();
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Whether this phone can open the signed-in account's vault.
     pub async fn account_keys(&self) -> Result<AccountKeys, CoreError> {
         let runtime = Arc::clone(&self.runtime);
