@@ -236,6 +236,72 @@ final class AutopilotUITests: XCTestCase {
         shot("profile-custom")
     }
 
+    /// A running bypass, Overnight or lockdown folds into a compact bar as Trust scrolls: the label line and the timer
+    /// stay, the button moves to the timer's right and stays a full target; back at the top it opens again.
+    func testTheRunningFieldFoldsIntoACompactBarOnScroll() {
+        for (mode, button, clock) in [("bypass", "stopBypass", "bypassClock"), ("overnight", "stopOvernight", "overnightClock"), ("lockdown", "endLockdown", nil)] {
+            launch(["-demoMode", mode])
+            waitFor("runningFieldOpen")
+            if let clock { waitFor(clock) }
+            shot("trust-\(mode)-open")
+
+            // A slow drag held before letting go stops without momentum, half way through the fold.
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.64)), withVelocity: .slow, thenHoldForDuration: 0.4)
+            waitFor("runningFieldFolding")
+            shot("trust-\(mode)-folding")
+
+            app.swipeUp()
+            app.swipeUp()
+            waitFor("runningFieldCompact")
+            if let clock { waitFor(clock) }
+            XCTAssertTrue(element("heroMode").exists, "the sentence keeps its label when compact")
+            let stop = waitFor(button)
+            XCTAssertTrue(stop.isHittable, "\(button) is reachable in the compact bar")
+            XCTAssertGreaterThanOrEqual(stop.frame.height, 44, "\(button) stays a full touch target")
+            XCTAssertLessThan(stop.frame.maxY, app.frame.minY + 200, "\(button) moved up into the bar")
+            shot("trust-\(mode)-compact")
+
+            for _ in 0..<4 { app.swipeDown() }
+            waitFor("runningFieldOpen")
+            app.terminate()
+        }
+    }
+
+    /// A bypass that approved 100 requests lists the latest three; "Show all 97" opens the rest in place and "Show less"
+    /// folds them back. Trust opens folded again.
+    func testABypassListFoldsToItsLatestThree() {
+        launch(["-demoMode", "bypass", "-demoRunningEntries", "100"])
+        let showAll = waitFor("runningShowAll")
+        XCTAssertEqual(showAll.label, "Show all 97")
+        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'runningEntry:'")).count, 3)
+        shot("trust-bypass-list-folded")
+        showAll.tap()
+        waitFor("runningShowLess")
+        XCTAssertGreaterThan(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'runningEntry:'")).count, 3)
+        shot("trust-bypass-list-open")
+        XCTAssertTrue(app.openTab("activity"))
+        XCTAssertTrue(app.openTab("trust"))
+        waitFor("runningShowAll")
+    }
+
+    /// Scrolled to the end, the last row of a root page sits fully above the floating tab bar: Trust's starting rule,
+    /// Connections' "Add MCP server".
+    func testNothingHidesUnderTheTabBar() {
+        launch()
+        for _ in 0..<8 { app.swipeUp() }
+        let bar = app.tab("trust")
+        XCTAssertTrue(bar.exists)
+        XCTAssertLessThanOrEqual(waitFor("startingRule").frame.maxY, bar.frame.minY, "Trust's last row clears the tab bar")
+        shot("trust-bottom")
+
+        XCTAssertTrue(app.openTab("connections"))
+        for _ in 0..<8 { app.swipeUp() }
+        XCTAssertLessThanOrEqual(waitFor("addMcp").frame.maxY, app.tab("connections").frame.minY, "Add MCP server clears the tab bar")
+        XCTAssertTrue(element("addMcp").isHittable)
+        shot("connections-bottom")
+    }
+
     func testTryItJudgesAnExample() {
         launch()
         scrollTo("openTryIt")

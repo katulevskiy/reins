@@ -14,8 +14,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -34,6 +37,7 @@ import dev.reins.android.ui.autopilot.AutopilotViewModel
 import dev.reins.android.ui.autopilot.AutopilotWeek
 import dev.reins.android.ui.autopilot.ModelRows
 import dev.reins.android.ui.autopilot.ProfilesSection
+import dev.reins.android.ui.autopilot.RunningFold
 import dev.reins.android.ui.autopilot.TimedKind
 import dev.reins.android.ui.autopilot.TrustRunningField
 import dev.reins.android.ui.autopilot.trustField
@@ -61,6 +65,8 @@ fun TrustScreen(
     onNewGrant: () -> Unit,
     onEnded: () -> Unit,
     onStartingPolicy: (StartingPolicy) -> Unit,
+    /** An entry of the running mode's list: its page. */
+    onOpenEntry: (Long) -> Unit = {},
     /** A sheet is up: the tab bar steps aside so the sheet's buttons are not under it. */
     onCovered: (Boolean) -> Unit = {},
 ) {
@@ -76,22 +82,35 @@ fun TrustScreen(
     DisposableEffect(Unit) { onDispose { onCovered(false) } }
     val decided = remember(entries) { decidedToday(entries, (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000) }
 
+    val scroll = rememberScrollState()
+    // A running mode's field stays pinned on top and folds as the page scrolls under it.
+    val fold = remember { RunningFold() }
+    val density = LocalDensity.current
+    // The running mode's list opens in place; folded each time Trust opens (leaving the tab disposes this page).
+    var listOpen by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(c.paper).testTag("trust")) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            val s = settings
-            val field = trustField(s)
-            if (s != null && field != null) {
-                TrustRunningField(
-                    s,
-                    onStop = { kind -> if (kind == TimedKind.Bypass) autopilot.stopBypass() else autopilot.stopOvernight() },
-                    onEndLockdown = { autopilot.endLockdown(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL, authenticator) },
-                )
-            }
+        val s = settings
+        val field = trustField(s)
+        Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("trustScroll")) {
+            // The room the open field takes; the page scrolls on under it as it folds.
+            if (s != null && field != null) Spacer(Modifier.height(with(density) { fold.open.toDp() }))
             RootHeader(
                 "Trust",
                 mood = mood(null, decidedLine(decided)),
                 underField = field != null,
             ) { RoundIconButton(Glyph.Plus, "New grant", Modifier.testTag("newGrant"), onClick = onNewGrant) }
+            val decidedWhileRunning = remember(entries, s) { runningEntries(entries, s) }
+            if (s != null && decidedWhileRunning != null) {
+                RunningList(
+                    s,
+                    decidedWhileRunning,
+                    nowSeconds = (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000,
+                    expanded = listOpen,
+                    onExpanded = { listOpen = it },
+                    onOpen = onOpenEntry,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+            }
             Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 16.dp).testTag("modeHero")) {
                 if (s == null) {
                     Spacer(Modifier.height(40.dp))
@@ -118,6 +137,15 @@ fun TrustScreen(
                 StartingRuleSection(startingPolicy, Modifier.padding(top = 26.dp).testTag("startingRule"), onStartingPolicy)
             }
             Spacer(Modifier.height(32.dp).testTag("pageEnd"))
+        }
+        if (s != null && field != null) {
+            TrustRunningField(
+                s,
+                fold,
+                scrolled = { scroll.value },
+                onStop = { kind -> if (kind == TimedKind.Bypass) autopilot.stopBypass() else autopilot.stopOvernight() },
+                onEndLockdown = { autopilot.endLockdown(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL, authenticator) },
+            )
         }
         AutopilotSheets(autopilot, sheets, authenticator, onProfile)
     }

@@ -18,6 +18,10 @@ struct TrustScreen: View {
     // The grants'.
     @State private var revoking: GrantView?
     @State private var grantError: String?
+    // How far the page has scrolled, for a running mode's field to fold by.
+    @State private var fold = TrustFold()
+    /// The running mode's list shows all its entries; folded to the latest three each time Trust opens.
+    @State private var runningListOpen = false
 
     private var running: [GrantView] { model.grants.filter(\.active).sorted { $0.createdAt > $1.createdAt } }
     private var endedCount: Int { model.grants.filter { !$0.active }.count }
@@ -54,10 +58,15 @@ struct TrustScreen: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .contentMargins(.bottom, 24, for: .scrollContent)
+        // Only the field reads it: scrolling redraws the field, not the page.
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
+            fold.scroll(to: y)
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
+            // Pinned: the field stays on top and folds into a compact bar as the page scrolls under it.
             if let running = runningMode, let s = ap.settings {
                 TrustRunningField(
-                    running: running, settings: s, top: 0,
+                    running: running, settings: s, fold: fold,
                     onStopBypass: { Task { await ap.stopBypass() } },
                     onStopOvernight: { Task { await ap.stopOvernight() } },
                     onEndLockdown: { Task { await ap.endLockdown() } }
@@ -66,6 +75,9 @@ struct TrustScreen: View {
             }
         }
         .animation(Motion.of(.smooth(duration: 0.32), reduce: reduceMotion), value: runningMode)
+        // Trust opens with the running mode's list folded (a tab keeps its page, so fold it when the tab is chosen).
+        .onChange(of: model.section) { _, section in if section == .trust { runningListOpen = false } }
+        .onChange(of: runningMode) { runningListOpen = false }
         .pageBackground()
         .navigationTitle("Trust")
         .rootNavigationBar()
@@ -334,14 +346,35 @@ struct TrustScreen: View {
             PageSectionHeader(running.listTitle) { EmptyView() }
                 .padding(.top, 14)
                 .plainRow(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 8))
-            ForEach(entries, id: \.id) { entry in
+            // The latest three; the rest open in place.
+            ForEach(entries.prefix(RunningListFold.shown(entries.count, expanded: runningListOpen)), id: \.id) { entry in
                 Button {
                     model.show(.activityDetail(entry.id), in: .activity)
                 } label: {
                     HistoryRow(entry: entry)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("runningEntry:\(entry.id)")
                 .plainRow(EdgeInsets())
+            }
+            if let showAll = RunningListFold.showAll(entries.count) {
+                Button {
+                    feedback.play(.tap)
+                    withAnimation(Motion.of(Motion.easeOut(Motion.sheetRise), reduce: reduceMotion)) { runningListOpen.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(runningListOpen ? "Show less" : showAll)
+                        GlyphIcon(runningListOpen ? .chevronUp : .chevronDown, size: 13).foregroundStyle(Palette.inkFaint)
+                    }
+                    .font(RFont.sans(14.5, .medium))
+                    .foregroundStyle(Palette.ink2)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(runningListOpen ? "Show less" : showAll)
+                .accessibilityIdentifier(runningListOpen ? "runningShowLess" : "runningShowAll")
+                .plainRow(EdgeInsets(top: 2, leading: 24, bottom: 6, trailing: 24))
             }
         }
     }
