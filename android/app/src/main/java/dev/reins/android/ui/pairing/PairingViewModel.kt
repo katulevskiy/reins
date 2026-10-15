@@ -7,6 +7,7 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
+import dev.reins.android.ui.common.untrustedName
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.PairingView
 import kotlin.coroutines.cancellation.CancellationException
@@ -43,7 +44,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
         viewModelScope.launch {
             try {
                 val view = container.core.pairingView(pairingId)
-                _ui.value = PairingUi(loading = false, view = view, label = view.clientName.take(MAX_LABEL))
+                _ui.value = PairingUi(loading = false, view = view, label = untrustedName(view.clientName, Int.MAX_VALUE).take(MAX_LABEL))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -70,7 +71,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
             try {
                 // A desktop app brings its key; an AI client (Claude.ai, ChatGPT) does not.
                 val title = if (current.view?.keyFingerprint != null) "Connect this computer" else "Connect this AI"
-                when (authenticator.authenticate(title, current.view?.clientName.orEmpty())) {
+                when (authenticator.authenticate(title, untrustedName(current.view?.clientName.orEmpty()))) {
                     AuthResult.Success -> {
                         container.feedback.play(Event.Connected)
                         container.core.answerPairing(pairingId, true, code.toUByte(), current.label.trim().ifEmpty { null })

@@ -7,7 +7,7 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
 import dev.reins.android.platform.Authenticator
-import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.common.quotedName
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.JoinView
 import kotlin.coroutines.cancellation.CancellationException
@@ -54,8 +54,8 @@ class JoinViewModel(private val container: AppContainer, private val joinId: Str
         _ui.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             try {
-                val device = untrusted(view.deviceName)
-                when (authenticator.authenticate("Add $device", "It can open your account's vault")) {
+                val device = quotedName(view.deviceName)
+                when (authenticator.authenticate("Add a phone to your account", device)) {
                     AuthResult.Success -> {
                         container.feedback.play(Event.Connected)
                         container.core.answerJoin(joinId, true)
