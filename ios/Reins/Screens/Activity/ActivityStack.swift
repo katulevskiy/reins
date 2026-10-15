@@ -203,8 +203,6 @@ struct FieldWaitCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var busy = false
     @State private var offset: CGFloat = 0
-    /// Whether the drag going on is a sideways one (decided at its start, so scrolling still scrolls).
-    @State private var sideways: Bool?
     @State private var width: CGFloat = 360
 
     private var item: PendingItem { group.first }
@@ -242,10 +240,10 @@ struct FieldWaitCard: View {
                 .accessibilityElement(children: .combine)
                 if group.isBurst { peek }
                 if let pick {
-                    WaitCardButtons(pick: pick, onPick: { take(pick) }, onReview: review)
+                    WaitCardButtons(pick: pick, onPick: { pressed { take(pick) } }, onReview: { pressed(review) })
                         .accessibilityIdentifier(pickIdentifier(pick))
                 } else {
-                    Button("Review", action: review)
+                    Button("Review") { pressed(review) }
                         .buttonStyle(SignalButtonStyle(.onField, size: .small))
                         .accessibilityIdentifier("review:\(item.id)")
                 }
@@ -257,8 +255,10 @@ struct FieldWaitCard: View {
         .rotationEffect(.degrees(reduceMotion ? 0 : Double(offset / max(width, 1)) * 6 * 1.6), anchor: .bottom)
         .opacity(reduceMotion ? 1 - min(abs(offset) / max(width, 1), 0.6) : 1)
         .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .onTapGesture(perform: review)
-        .simultaneousGesture(flick)
+        // A tap holds no scroll back (it is a tap only when the finger lifts without moving); the flick begins only
+        // for clearly sideways movement (SidewaysPan), so a scroll that starts on the card scrolls.
+        .onTapGesture { pressed(review) }
+        .gesture(flick)
         .disabled(busy)
         .contextMenu { menu }
         .accessibilityElement(children: .contain)
@@ -285,27 +285,30 @@ struct FieldWaitCard: View {
         }
     }
 
-    private var flick: some Gesture {
-        DragGesture(minimumDistance: 14)
-            .onChanged { drag in
-                if sideways == nil { sideways = abs(drag.translation.width) > abs(drag.translation.height) }
-                guard sideways == true, !busy else { return }
-                offset = drag.translation.width
+    private var flick: SidewaysPan {
+        SidewaysPan(isEnabled: !busy, onChanged: { drag in
+            guard !busy else { return }
+            offset = drag.translation.width
+        }, onEnded: { drag, cancelled in
+            guard !busy else { return }
+            // A flick the system took away springs back.
+            let fraction = cancelled ? 0 : drag.translation.width / max(width, 1)
+            if fraction > 0.35, let pick, pick.firm {
+                flyOff(right: true) { take(pick) }
+            } else if fraction < -0.35, item.kind == .request {
+                flyOff(right: false) { answer(approve: false) }
+            } else {
+                let open = abs(fraction) > 0.35
+                withAnimation(Motion.of(Motion.cardSpring(0.3), reduce: reduceMotion)) { offset = 0 }
+                if open { review() }
             }
-            .onEnded { drag in
-                defer { sideways = nil }
-                guard sideways == true, !busy else { return }
-                let fraction = drag.translation.width / max(width, 1)
-                if fraction > 0.35, let pick, pick.firm {
-                    flyOff(right: true) { take(pick) }
-                } else if fraction < -0.35, item.kind == .request {
-                    flyOff(right: false) { answer(approve: false) }
-                } else {
-                    let open = abs(fraction) > 0.35
-                    withAnimation(Motion.of(Motion.cardSpring(0.3), reduce: reduceMotion)) { offset = 0 }
-                    if open { review() }
-                }
-            }
+        })
+    }
+
+    /// A tap on the card or on one of its buttons, unless it is the finger lifting at the end of a flick.
+    private func pressed(_ action: () -> Void) {
+        guard !SidewaysPan.swiping else { return }
+        action()
     }
 
     /// The card leaves (220 ms; a fade under Reduce Motion), then the answer goes out. If it does not (Face ID

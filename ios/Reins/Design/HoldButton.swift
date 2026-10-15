@@ -3,7 +3,8 @@ import SwiftUI
 /// Hold to confirm, for what cannot be taken back (Bypass, Disconnect, Delete account, an irreversible approval; the
 /// Android app's `HoldButton`): the button has to be held for `duration` (1.2 s). While held, `danger-fill-2` sweeps
 /// across its `danger-wash`, a ring fills beside "Keep holding", and haptic ticks close from 260 ms to 70 ms apart; at the
-/// end a heavy thud and the success sound, then `onConfirm`. Letting go early drains the fill in 180 ms, quietly.
+/// end a heavy thud and the success sound, then `onConfirm`. Letting go early drains the fill in 180 ms, quietly. The
+/// hold starts once the finger has stayed a moment (DelayedPress), so a scroll that starts on the button scrolls.
 ///
 /// The fill is measured in elapsed time, not animated, so Reduce Motion never shortens or skips it. VoiceOver's
 /// activation confirms at once: its deliberate double tap is the hold.
@@ -49,6 +50,8 @@ struct HoldButton: View {
     @State private var released: (at: Date, from: Double)?
     @State private var done = false
     @State private var ticker: Task<Void, Never>?
+    /// Where the hold began, while the finger is down.
+    @State private var pressedAt: CGPoint?
 
     private var active: Bool { enabled && !busy && !done }
     private var holding: Bool { started != nil }
@@ -77,11 +80,26 @@ struct HoldButton: View {
         .clipShape(Capsule())
         .contentShape(Capsule())
         .opacity(enabled ? 1 : 0.4)
-        .onLongPressGesture(minimumDuration: duration, maximumDistance: 40) {
-            finish()
-        } onPressingChanged: { pressing in
-            if pressing { begin() } else { end() }
-        }
+        // Hold buttons sit in scrolling sheets and pages. The hold begins once the finger has stayed a moment, as a
+        // button's press does in a scroll view (DelayedPress): a finger that moves at once scrolls, with no fill or tick.
+        // A long press here would start the fill at the touch and could keep the page from scrolling.
+        .gesture(DelayedPress(space: .local, onPress: { point in
+            pressedAt = point
+            begin()
+        }, onSlide: { point in
+            // Wandering off lets go, as far as a long press allowed.
+            guard let from = pressedAt, hypot(point.x - from.x, point.y - from.y) > 40 else { return }
+            pressedAt = nil
+            end()
+        }, onRelease: { _, held in
+            pressedAt = nil
+            // A tap shows what a hold would do and drains at once.
+            if !held { begin() }
+            end()
+        }, onCancel: {
+            pressedAt = nil
+            end()
+        }))
         .allowsHitTesting(active)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
@@ -145,6 +163,11 @@ struct HoldButton: View {
                 try? await Task.sleep(for: .seconds(gap))
                 elapsed += gap
             }
+            // Held to the end with the finger still down: confirmed.
+            guard !Task.isCancelled, let started = self.started else { return }
+            let left = duration - Date.now.timeIntervalSince(started)
+            if left > 0 { try? await Task.sleep(for: .seconds(left)) }
+            if !Task.isCancelled { finish() }
         }
     }
 
