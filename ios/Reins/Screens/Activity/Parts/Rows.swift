@@ -264,7 +264,8 @@ struct HistoryRow: View {
             return ActivityText.done(entry) ? ActivityText.past(plain) : plain
         }
         let detail = untrusted(entry.detail).trimmingCharacters(in: .whitespacesAndNewlines)
-        return detail.isEmpty ? EntryText.title(entry) : "\(EntryText.title(entry)) · \(detail)"
+        let title = ActivityText.done(entry) ? ActivityText.past(EntryText.title(entry)) : EntryText.title(entry)
+        return detail.isEmpty ? title : "\(title) · \(detail)"
     }
 }
 

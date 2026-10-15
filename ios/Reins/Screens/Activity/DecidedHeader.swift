@@ -63,8 +63,8 @@ struct DecidedHeader: View {
 
     /// The line as an ask: the label's lead, its subject in italic, its tail; else the operation's title.
     static func runs(_ entry: ActivityEntry) -> [AskText.Run] {
-        guard let label = entry.label else { return [AskText.Run(text: EntryText.title(entry))] }
         let done = ActivityText.done(entry)
+        guard let label = entry.label else { return [AskText.Run(text: done ? ActivityText.past(EntryText.title(entry)) : EntryText.title(entry))] }
         let lead = untrusted(label.lead)
         let subject = untrusted(label.subject)
         let tail = untrustedLine(label.tail)
