@@ -55,7 +55,8 @@ enum SnapshotWriter {
         let session = await core.session()
         guard let session else { Snapshot().save(); return }
         let owner = Snapshot.owner(server: session.serverUrl, email: session.email)
-        var s = Snapshot.load()
+        let stored = Snapshot.load()
+        var s = stored
         if s.accountFingerprint != owner { s = Snapshot() }
         s.accountFingerprint = owner
         s.signedIn = true
@@ -77,11 +78,13 @@ enum SnapshotWriter {
             s.overnightUntil = a.overnightUntil
         }
         if let grants = try? await core.grants() { s.activeGrants = grants.filter(\.active).count }
-        s.updatedAt = Int64(Date().timeIntervalSince1970)
         guard await core.session() == session else { return }
+        // Only what the widgets show wakes them: nothing to save or reload when it is all as stored.
+        s.updatedAt = stored.updatedAt
+        guard s != stored else { return }
+        s.updatedAt = Int64(Date().timeIntervalSince1970)
         s.save()
-        WidgetCenter.shared.reloadAllTimelines()
-        ControlCenter.shared.reloadAllControls()
+        WidgetReloads.shared.request()
     }
 }
 

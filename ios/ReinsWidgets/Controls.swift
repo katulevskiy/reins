@@ -24,7 +24,7 @@ struct LockdownControl: ControlWidget {
         var previewValue: Bool { false }
 
         func currentValue() async throws -> Bool {
-            let s = Snapshot.load()
+            let s = SnapshotCache.current()
             return s.signedIn && Glance.mode(s, now: Glance.now()) == .lockdown
         }
     }
@@ -49,7 +49,7 @@ struct WaitingControl: ControlWidget {
         var previewValue: Int { 1 }
 
         func currentValue() async throws -> Int {
-            Glance.waiting(Snapshot.load(), now: Glance.now()).count
+            Glance.waiting(SnapshotCache.current(), now: Glance.now()).count
         }
     }
 }
