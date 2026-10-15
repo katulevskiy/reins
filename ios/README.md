@@ -128,7 +128,8 @@ unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1)
 | `-freezeTime <unix seconds>` | Stops the clocks, for screenshots |
 | `-hinge bent\|closed\|flat` | Forces a fold posture (the Simulator cannot fold from a script) |
 | `-askNotifications`, `-notifierSamples`, `-logNotifications` | Notification permission, sample notifications in the background, a log of scheduled ones |
-| `-widgetGallery <page>`, `-gallery`, `-show sounds` | Widget views, avatars, the Sounds screen |
+| `-widgetGallery <page>`, `-gallery`, `-show sounds\|<tab>` | Widget views, avatars, the Sounds screen or a tab (`grants`, `autopilot`, `settings`) |
+| `-signalGallery <page>[/<section>]` | The Signal components, type, colours, fields and glyphs (also Settings > Developer); pages `type`, `colour`, `buttons`, `controls`, `cards`, `field`, `glyphs` |
 
 ## Tests
 
