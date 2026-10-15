@@ -272,10 +272,18 @@ private fun done(outcome: String) = outcome == "released" || outcome == "sent" |
 /** How an entry ended, as the marker at the end of its row. */
 enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Bypass, Lockdown, Failed }
 
+/** Outcomes of an entry that was carried out (as [dev.reins.android.ui.common.entryTense] reads them). */
+private val DONE = setOf("released", "sent", "granted")
+
 fun outcomeOf(entry: ActivityEntry): Outcome = when {
     entry.decidedBy == "overnight" -> if (entry.outcome == "denied") Outcome.OvernightDenied else Outcome.Overnight
-    entry.decidedBy == "bypass" -> Outcome.Bypass
-    entry.decidedBy == "lockdown" -> Outcome.Lockdown
+    // How it ended comes first: a bypass never makes a refused or failed entry read as allowed, nor Lockdown the reverse.
+    entry.decidedBy == "bypass" -> when (entry.outcome) {
+        "denied" -> Outcome.Denied
+        "error" -> Outcome.Failed
+        else -> Outcome.Bypass
+    }
+    entry.decidedBy == "lockdown" -> if (entry.outcome in DONE) Outcome.Approved else Outcome.Lockdown
     entry.decidedBy.isNotEmpty() -> if (entry.outcome == "denied") Outcome.AutoDenied else Outcome.Auto
     entry.outcome == "error" -> Outcome.Failed
     entry.outcome == "denied" -> Outcome.Denied
@@ -331,14 +339,16 @@ fun rowTime(epochSeconds: Long, nowSeconds: Long, zone: TimeZone = TimeZone.getD
 fun outcomeLine(entry: ActivityEntry): String {
     val note = entry.autopilot
     val denied = entry.outcome == "denied"
+    // One that was allowed but not carried out never reads as allowed.
+    if (entry.outcome == "error") return "Failed"
     return when (entry.decidedBy) {
         "autopilot" -> {
             val p = note?.let { if (denied) it.pDeny else it.pApprove }?.takeIf { it > 0f }
             (if (denied) "Denied by Autopilot" else "Allowed by Autopilot") + (p?.let { " · ${Math.round(it * 100)}%" } ?: "")
         }
         "overnight" -> if (denied) "Denied by ${dev.reins.android.autopilot.AutopilotText.OVERNIGHT}" else "Allowed by ${dev.reins.android.autopilot.AutopilotText.OVERNIGHT}"
-        "bypass" -> "Allowed during a bypass"
-        "lockdown" -> "Denied by Lockdown"
+        "bypass" -> if (denied) "Denied" else "Allowed during a bypass"
+        "lockdown" -> if (entry.outcome in DONE) "Allowed" else "Denied by Lockdown"
         else -> when {
             entry.outcome == "error" -> "Failed"
             denied -> "Denied by you"

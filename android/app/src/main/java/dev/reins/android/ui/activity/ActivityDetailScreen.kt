@@ -163,6 +163,7 @@ fun ActivityDetailScreen(
                 outcome = outcomeLine(entry),
                 icon = icon,
                 tint = tint,
+                glyph = outcomeGlyph(entry),
                 below = {
                     AskedSections(entry)
                     shown.envRelease?.let { release ->
@@ -189,7 +190,6 @@ fun ActivityDetailScreen(
                     return@SettingsPage
                 }
                 Hero(entry)
-                KeptPushSection(entry)
                 AskedSections(entry)
                 Details(entry, grants.any { it.id == entry.grantId }, onOpenGrant, onOpenEmail)
                 Spacer(Modifier.height(if (dock != null) 120.dp else 32.dp))
@@ -261,6 +261,13 @@ private fun outcomeLook(entry: ActivityEntry): Pair<ImageVector, (dev.reins.andr
     Outcome.Denied -> Icons.Rounded.Cancel to { c -> c.danger }
     Outcome.Failed -> Icons.Rounded.Warning to { c -> c.warning }
     Outcome.Approved -> Icons.Rounded.CheckCircle to { c -> c.success }
+}
+
+/** The glyph beside how an entry ended on its field: from its own outcome, never a tick for one that was refused. */
+internal fun outcomeGlyph(entry: ActivityEntry): Glyph = when {
+    entry.outcome == "denied" -> if (entry.decidedBy == "lockdown") Glyph.Lock else Glyph.CircleClose
+    dev.reins.android.ui.common.entryTense(entry.outcome) == dev.reins.android.ui.common.Tense.Done -> Glyph.CircleCheck
+    else -> Glyph.CircleAlert
 }
 
 /** The entry's hero: what it touched with what it did, the request, large; and who decided. */
@@ -364,81 +371,6 @@ internal fun AskedSections(entry: ActivityEntry) {
     }
 }
 
-/**
- * A push whose approval is not on this phone (decided on another phone, or too large to keep): its branches and the
- * commits the entry kept in words (short id, subject). Files, lines and diffs were not kept with it, so none are shown.
- */
-@Composable
-private fun KeptPushSection(entry: ActivityEntry) {
-    val label = entry.label ?: return
-    if (label.action != "push" && label.action != "delete") return
-    val push = remember(entry) { dev.reins.android.ui.common.keptPush(entry.request?.full) } ?: return
-    val c = LocalColors.current
-    Column(Modifier.padding(top = 14.dp).testTag("keptPush")) {
-        dev.reins.android.ui.approval.FactGroup(
-            rows = buildList<@Composable () -> Unit> {
-                push.refs.forEachIndexed { i, ref ->
-                    add {
-                        dev.reins.android.ui.approval.FactRow(
-                            if (ref.kind == "tag") "Tag" else "Branch",
-                            untrusted(ref.name),
-                            mono = true,
-                            valueTag = "keptRef:$i",
-                            trailing = if (ref.change == "update" && ref.kind != "tag" && !ref.force) null else {
-                                {
-                                    dev.reins.android.ui.approval.RefChip(
-                                        if (ref.force && ref.change == "update") "Force" else dev.reins.android.ui.approval.gitChipLabel(ref.change, ref.kind),
-                                        if (ref.force) "delete" else ref.change,
-                                        ref.kind,
-                                        Modifier.testTag("keptChip:$i"),
-                                    )
-                                }
-                            },
-                        )
-                    }
-                }
-            },
-        )
-        push.refs.forEachIndexed { i, ref ->
-            if (ref.change == "delete" || ref.commitCount == 0) return@forEachIndexed
-            val title = if (ref.commitCount == 1) "1 commit" else "${ref.commitCount} commits"
-            Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                RText(title, RType.serif(22f, 26f, italic = true), c.ink, Modifier.testTag("keptCommitsTitle:$i"), maxLines = 1)
-                if (push.refs.size > 1) {
-                    Spacer(Modifier.width(10.dp))
-                    RText(untrusted(ref.name), RType.mono(12.5f), c.tertiary, Modifier.weight(1f, fill = false), maxLines = 1, ltr = true)
-                }
-            }
-            dev.reins.android.ui.approval.FactGroup(
-                rows = buildList<@Composable () -> Unit> {
-                    ref.commits.forEachIndexed { j, commit ->
-                        add {
-                            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag("keptCommit:$i:$j").semantics(mergeDescendants = true) {}) {
-                                RText(commit.sha, RType.mono(12.5f), c.tertiary, Modifier.width(66.dp).padding(top = 2.dp), maxLines = 1, ltr = true)
-                                RText(commit.subject.ifEmpty { "(no message)" }, RType.sans(15f, lineHeight = 19.5f), c.text, Modifier.weight(1f))
-                                if (commit.hidden) {
-                                    Spacer(Modifier.width(8.dp))
-                                    dev.reins.android.ui.approval.WarnTag("Hidden", c.danger, Modifier.testTag("keptHidden:$i:$j"), small = true)
-                                }
-                            }
-                        }
-                    }
-                    val unlisted = ref.commitCount - ref.commits.size
-                    if (unlisted > 0) {
-                        add { RText("$unlisted more not listed", RType.sans(13.5f), c.tertiary, Modifier.fillMaxWidth().padding(vertical = 13.dp).testTag("keptNotListed:$i")) }
-                    }
-                },
-            )
-        }
-        RText(
-            "Files and lines not kept on this phone",
-            RType.sans(12.5f, lineHeight = 17f),
-            c.tertiary,
-            Modifier.padding(start = 22.dp, end = 22.dp, top = 10.dp).testTag("keptNote"),
-        )
-    }
-}
-
 /** A row of "What it asked": the label in a fixed column, the value beside it, wrapping. */
 @Composable
 private fun AskedRow(label: String, value: String, modifier: Modifier = Modifier, mono: Boolean = false, leading: (@Composable () -> Unit)? = null) {
@@ -452,7 +384,8 @@ private fun AskedRow(label: String, value: String, modifier: Modifier = Modifier
             leading()
             Spacer(Modifier.width(7.dp))
         }
-        RText(value, if (mono) RType.mono(13.5f) else RType.sans(15f), c.text, Modifier.weight(1f), maxLines = 4, ltr = mono)
+        // Wrapped, never cut: the agent, the folder and the reason are what was asked.
+        RText(value, if (mono) RType.mono(13.5f) else RType.sans(15f), c.text, Modifier.weight(1f), ltr = mono)
     }
 }
 
@@ -506,7 +439,7 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
     SettingsGroup(gap = 14.dp) {
         // "What it asked" says when already.
         if (entry.request == null) ValueRow("When", value = whenLine(entry.at))
-        entry.account?.takeIf { it.isNotBlank() }?.let { ValueRow("Account", value = it, mono = true) }
+        entry.account?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { ValueRow("Account", Modifier.testTag("detailAccount"), value = it, mono = true, valueMaxLines = Int.MAX_VALUE) }
         info.query?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { ValueRow("Search", Modifier.testTag("detailQuery"), value = it, mono = true) }
         if (info.messages.isNotEmpty()) {
             val noun = if (entry.op.isNotEmpty()) "Items" else "Emails"

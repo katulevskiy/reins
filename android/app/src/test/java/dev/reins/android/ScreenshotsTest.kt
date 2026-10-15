@@ -1206,20 +1206,6 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("push-entry-diff")
     }
 
-    /** The same push on a phone that does not hold its approval: the commits it kept, the request in full. */
-    @Test
-    fun pushInspectKept() {
-        core.activity = listOf(reportedPush())
-        launch()
-        tap("entry:7")
-        await("keptPush")
-        repeat(20) { rule.mainClock.advanceTimeBy(50) }
-        shoot("push-entry-kept")
-        rule.onNodeWithTag("fullRequest").performScrollTo()
-        repeat(10) { rule.mainClock.advanceTimeBy(50) }
-        shoot("push-entry-kept-full")
-    }
-
     /** A Gmail entry: the emails as the approval listed them, what was shared ticked. */
     @Test
     fun polishGmailEntry() {

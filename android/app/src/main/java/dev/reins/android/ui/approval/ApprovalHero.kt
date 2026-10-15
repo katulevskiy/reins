@@ -186,7 +186,7 @@ private fun HeroVerdict(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalV
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (record != null) {
-            FieldVerdict(record.outcome, Modifier.testTag("entryOutcome"), glyph = Glyph.CircleCheck, textTag = "entryAutopilotTitle")
+            FieldVerdict(record.outcome, Modifier.testTag("entryOutcome"), glyph = record.glyph, maxLines = Int.MAX_VALUE, textTag = "entryAutopilotTitle")
         }
         // Every warning, each on its own line (see fieldWarnings).
         fieldWarnings(view, if (record == null) s else null, risk, nav.riskInFacts).forEach { w ->

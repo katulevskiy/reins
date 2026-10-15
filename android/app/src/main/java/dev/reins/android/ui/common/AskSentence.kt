@@ -93,8 +93,6 @@ fun askSentence(
     matched: String? = null,
     git: GitPushView? = null,
     uncertain: Boolean = false,
-    /** The push as the entry kept it in words, when its [git] view is not on this phone. */
-    kept: KeptPush? = null,
 ): AskSentence {
     val provider = label.provider
     val action = label.action
@@ -108,7 +106,7 @@ fun askSentence(
         provider == "ssh" && subject.isNotEmpty() -> Phrase("Sign in to a server", details = hostLine(subject))
         provider.startsWith("mcp:") -> mcpPhrase(subject, tail.removePrefix("on ").trim(), host = null)
         provider == "desktop" && action == "ask" -> Phrase(lead, question = true, kind = ValueKind.Name)
-        action == "push" || (action == "delete" && GIT_DELETE.matches(lead)) -> gitPhrase(lead, subject, if (git != null) refLines(git) else refLines(kept))
+        action == "push" || (action == "delete" && GIT_DELETE.matches(lead)) -> gitPhrase(lead, subject, refLines(git))
         // One verb, so it reads in the past tense too ("Fetched", never "Cloned and fetch"): a clone is a fetch.
         lead == "Clone and fetch" && subject.isNotEmpty() -> subjectPhrase("Fetch", subject, label.code, tail, ValueKind.Identifier)
         provider == "gmail" && action == "send" -> sendPhrase(listOf(subject), moreOf(tail))
@@ -180,8 +178,8 @@ fun askSentence(entry: ActivityEntry, who: String? = null): AskSentence {
     val label = entry.label
     if (label != null) {
         val request = entry.request
-        val kept = if (label.action == "push" || label.action == "delete") keptPush(request?.full) else null
-        return askSentence(label, tense, who, cwd = request?.cwd, full = request?.full?.takeIf { label.provider == "terminal" }, kept = kept)
+        // The branch line comes only from the push's structured view (the entry's page reads it); never from the text.
+        return askSentence(label, tense, who, cwd = request?.cwd, full = request?.full?.takeIf { label.provider == "terminal" })
     }
     return legacy(entry, tense)
 }
@@ -371,6 +369,11 @@ private fun repoPhrase(head: String, repo: String, details: String?): Phrase {
 
 /** Where a push goes, in mono: "feature/x · new branch", "main", "feature/x and 1 more". */
 fun pushDetails(git: GitPushView?): String? = pushLine(refLines(git))
+
+/** One ref of a push's structured view, for the mono line. */
+private data class RefLine(val name: String, val change: String, val kind: String)
+
+private fun refLines(git: GitPushView?): List<RefLine> = git?.refs.orEmpty().map { RefLine(it.shortName, it.change, it.kind) }
 
 private fun pushLine(all: List<RefLine>): String? {
     val refs = all.filter { it.change != "delete" }
