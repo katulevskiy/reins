@@ -89,7 +89,8 @@ enum AskLabels {
     /// A request from the core's label. `cwd`: where a command ran, as the core kept it; `matched`: the guard's own
     /// match; `who`: the asker, to start a past sentence where it is not shown beside it.
     static func line(
-        _ label: RequestLabel, field: FieldKind?, tense: AskTense = .waiting, who: String? = nil, cwd: String? = nil, matched: String? = nil
+        _ label: RequestLabel, field: FieldKind?, tense: AskTense = .waiting, who: String? = nil, cwd: String? = nil, matched: String? = nil,
+        git: GitPushView? = nil
     ) -> AskLine {
         let provider = label.provider
         let action = label.action
@@ -123,6 +124,12 @@ enum AskLabels {
         }
         if action == "push" || (action == "delete" && lead.hasPrefix("Delete ") && lead.hasSuffix(" from")) {
             let (head, names) = gitLead(lead)
+            // The push as kept with the entry: its count and its branches from the refs, never from words.
+            if let git, names == nil, action == "push" {
+                let commits = git.refs.reduce(0) { $0 + Int($1.commitCount) }
+                let pushHead = commits > 0 ? "Push \(commits) \(commits == 1 ? "commit" : "commits") to" : head
+                return make(pushHead + " ", subject, mono: refsLine(git), stand: "a repository")
+            }
             return make(head + " ", subject, mono: names, stand: "a repository")
         }
         if provider == "gmail" && action == "send" {
@@ -179,7 +186,7 @@ enum AskLabels {
         let tense = AskTense.of(outcome: e.outcome)
         if let label = e.label {
             let request = e.request
-            return line(label, field: field, tense: tense, who: who, cwd: request.flatMap { $0.cwd.isEmpty ? nil : $0.cwd })
+            return line(label, field: field, tense: tense, who: who, cwd: request.flatMap { $0.cwd.isEmpty ? nil : $0.cwd }, git: request?.git)
         }
         return legacy(service: e.service, action: e.action, count: Int(e.count), op: e.op, opTitle: e.opTitle, field: field, tense: tense, who: who)
     }
@@ -308,6 +315,19 @@ enum AskLabels {
             return ("Push a tag to", String(lead.dropFirst("Push tag ".count).dropLast(" to".count)))
         }
         return (lead, nil)
+    }
+
+    /// A push's branches in one mono line: "feature/laya · new branch", "main · force push", "v1.0 · new tag".
+    static func refsLine(_ git: GitPushView) -> String? {
+        let parts = git.refs.map { ref -> String in
+            let name = oneLine(ref.shortName)
+            switch ref.change {
+            case "create": return "\(name) · new \(ref.kind == "tag" ? "tag" : "branch")"
+            case "delete": return "\(name) · delete"
+            default: return ref.force || ref.forceUnknown ? "\(name) · force push" : name
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     /// "Search Gmail for" → "Search Gmail": the word that led to a target that went below.

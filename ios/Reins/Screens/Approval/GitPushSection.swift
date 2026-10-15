@@ -144,10 +144,13 @@ struct CommitPage: View {
     var view: ApprovalView
     var refIndex: Int
     var index: Int
+    /// In Activity, a push's changes not kept on this iPhone: loaded from GitHub here. Nil on the waiting sheet.
+    @Environment(PushDiffs.self) private var diffs: PushDiffs?
 
     var body: some View {
         if let refs = view.git?.refs, refs.indices.contains(refIndex), refs[refIndex].commits.indices.contains(index) {
-            let commit = refs[refIndex].commits[index]
+            let kept = refs[refIndex].commits[index]
+            let commit = diffs?.commit(kept) ?? kept
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
                     let subject = untrusted(commit.subject)
@@ -176,6 +179,9 @@ struct CommitPage: View {
                 }
                 .padding(.horizontal, 22)
                 .padding(.top, 6)
+                if let diffs, diffs.missing(kept) {
+                    DiffNotKept(diffs: diffs, shortSha: kept.shortSha)
+                }
                 if let changed = commit.filesChanged {
                     FactGroup {
                         ForEach(Array(commit.files.enumerated()), id: \.offset) { j, file in

@@ -12,6 +12,8 @@ struct ActivityDetailScreen: View {
     @State private var dockShown = false
     /// The approval as it was shown, read once; nil for older entries.
     @State private var recorded: ApprovalModel?
+    /// A push's changes as this iPhone has them, and those loaded from GitHub; nil for anything but a push.
+    @State private var diffs: PushDiffs?
     /// Until the core has answered nothing is drawn, so an entry with its approval never flashes the older page first.
     @State private var looked = false
 
@@ -19,7 +21,7 @@ struct ActivityDetailScreen: View {
         let entry = model.activity.first(where: { $0.id == entryId })
         Group {
             if let entry, let vm = recorded, let view = vm.view {
-                EntryApprovalPage(entry: entry, vm: vm, view: view) {
+                EntryApprovalPage(entry: entry, vm: vm, view: view, diffs: diffs) {
                     AskedSections(entry: entry)
                     extras(entry)
                     // A project's environment released to a computer: its values can be dropped everywhere.
@@ -81,6 +83,10 @@ struct ActivityDetailScreen: View {
             // What was shared is ticked: the emails' ids and the addresses the entry released.
             let released = Set(entry.info.messages.map(\.id).filter { !$0.isEmpty } + entry.info.accounts)
             recorded = ApprovalModel(recorded: shown, released: released)
+            // A push decided on another device may have come without its changes line by line.
+            if shown.git != nil, let push = try? await model.core.activityPush(entryId: entryId), !Task.isCancelled {
+                diffs = PushDiffs(entryId: entryId, notKept: push.diffsNotKept)
+            }
         }
         looked = true
     }
