@@ -108,26 +108,34 @@ struct ActivityDetailScreen: View {
 
             AskedSections(entry: entry)
 
-            GroupCard {
-                ValueRow(label: "When", value: TimeText.dateTime(entry.at))
-                if let account = entry.account, !account.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Hairline()
-                    ValueRow(label: "Account", value: account, mono: true)
+            // When is said once: under "What it asked", with how long the answer took, when the request was kept.
+            let when = entry.request == nil
+            let account = entry.account.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+            let service = !entry.service.isEmpty
+            if when || account != nil || service || entry.grantId != nil || entry.autopilot != nil {
+                GroupCard {
+                    if when {
+                        ValueRow(label: "When", value: TimeText.dateTime(entry.at))
+                    }
+                    if let account {
+                        if when { Hairline() }
+                        ValueRow(label: "Account", value: account, mono: true)
+                    }
+                    if service {
+                        if when || account != nil { Hairline() }
+                        ValueRow(label: "Service", value: serviceName(entry.service))
+                    }
+                    if let id = entry.grantId {
+                        if when || account != nil || service { Hairline() }
+                        coveredBy(id)
+                    }
+                    if let note = entry.autopilot {
+                        if when || account != nil || service || entry.grantId != nil { Hairline() }
+                        AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
+                    }
                 }
-                if !entry.service.isEmpty {
-                    Hairline()
-                    ValueRow(label: "Service", value: serviceName(entry.service))
-                }
-                if let id = entry.grantId {
-                    Hairline()
-                    coveredBy(id)
-                }
-                if let note = entry.autopilot {
-                    Hairline()
-                    AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
-                }
+                .padding(.top, 14)
             }
-            .padding(.top, 14)
 
             if let query = info.query {
                 GroupCard(header: "Search") { ListRow(title: untrusted(query)).accessibilityIdentifier("detailQuery") }
