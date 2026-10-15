@@ -62,9 +62,9 @@ class PolishFlowTest : FlowHarness() {
         rule.onNodeWithTag("entryTitle:7", useUnmergedTree = true).assertTextEquals("Run git push --force origin main")
         rule.onNodeWithTag("entryTitle:8", useUnmergedTree = true).assertTextEquals("Read ~/dev/api/.env")
         rule.onNodeWithTag("entryTitle:9", useUnmergedTree = true).assertTextEquals("Send an email to ada@acme.com")
-        assertTrue(hasDeep("providerTile:terminal:run"))
-        assertTrue(hasDeep("providerTile:file:read"))
-        assertTrue(hasDeep("providerTile:gmail:send"))
+        assertTrue("a kind tile each", hasDeep("tile:7"))
+        assertTrue(hasDeep("tile:8"))
+        assertTrue(hasDeep("tile:9"))
         assertFalse("never the tool's generic title", showsText("Ask you on your phone", substring = true))
     }
 
@@ -76,7 +76,7 @@ class PolishFlowTest : FlowHarness() {
         launch()
         awaitTag("pending:req7")
         rule.onNodeWithTag("sentence:req7", useUnmergedTree = true).assertTextEquals("Run git push --force origin main")
-        assertTrue(hasDeep("providerTile:terminal:run"))
+        assertTrue("what it touches and what it does", showsText("TERMINAL · RUN"))
     }
 
     @Test
@@ -150,7 +150,7 @@ class PolishFlowTest : FlowHarness() {
     fun theChosenChipIsTintedWithACheckAndTheOthersAreNot() {
         core.connections = listOf(TestData.connection("c1", "Claude"), TestData.connection("c2", "ChatGPT"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("newGrant")
         awaitTag("conn:c1")
         tap("conn:c2")

@@ -44,7 +44,7 @@ class DistributionTest : FlowHarness() {
     fun textMessagesAreListedAndConnectOnceAndroidAllowedThem() {
         core.serviceAdded.clear()
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:sms")
         awaitTag("allowDevice")
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.services.ServiceViewModel(container, "sms").addDevice() }

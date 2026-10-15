@@ -245,7 +245,7 @@ class SecretsFlowTest : FlowHarness() {
         core.grants = listOf(TestData.secretsGrant())
         core.secretsRevokeAnswer = SecretsRevoked(1u, 2u, listOf("work-laptop"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:s1")
         tap("revokeEverywhere")
         confirmRevoke()
@@ -259,7 +259,7 @@ class SecretsFlowTest : FlowHarness() {
     fun otherGrantsHaveNoRevokeOnAllComputers() {
         core.grants = listOf(TestData.grant("g1"))
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("grant:g1")
         awaitTag("revoke")
         assertFalse(has("revokeEverywhere"))

@@ -84,11 +84,9 @@ class QuickApprovalsFlowTest : FlowHarness() {
         dev.reins.android.platform.Foreground.autoPopup = false
         launch()
         awaitTag("burst")
-        // Codex's one routine request is no group: it keeps its own card.
-        assertTrue(has("pending:r5"))
-        rule.onNodeWithTag("burstTitle", useUnmergedTree = true).assertTextEquals("Wants to search Gmail 2 times and read 2 emails")
+        rule.onNodeWithTag("burstTitle", useUnmergedTree = true).assertTextEquals("Search Gmail 2 times and read 2 emails")
         awaitTag("approveAll")
-        rule.onNodeWithTag("approveAll").assertTextEquals("Allow 3")
+        rule.onNodeWithTag("approveAll").assertTextEquals("Allow 3 · 97%")
         tap("approveAll")
         awaitCore { core.quickApprovals.size == 3 }
         assertEquals(listOf("r1", "r2", "r3"), core.quickApprovals.toList().sorted())
@@ -111,7 +109,8 @@ class QuickApprovalsFlowTest : FlowHarness() {
         dev.reins.android.platform.Foreground.autoPopup = false
         launch()
         awaitTag("denyAll")
-        assertEquals(2, rule.onAllNodes(androidx.compose.ui.test.hasTestTag("burst")).fetchSemanticsNodes().size)
+        // A stack: only the card on top shows its words; the others peek below it.
+        assertEquals(1, rule.onAllNodes(androidx.compose.ui.test.hasTestTag("burst")).fetchSemanticsNodes().size)
         // Codex's group has no suggestion: Review only.
         assertEquals(1, rule.onAllNodes(androidx.compose.ui.test.hasTestTag("denyAll")).fetchSemanticsNodes().size)
         tap("denyAll")

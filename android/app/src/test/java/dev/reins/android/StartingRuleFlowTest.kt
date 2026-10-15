@@ -21,7 +21,7 @@ class StartingRuleFlowTest : FlowHarness() {
     fun theRuleIsChangedUnderGrants() {
         core.startingPolicy = StartingPolicy.HEADLINES_FIRST_HOUR
         launch()
-        tap("tabGrants")
+        tap("tabTrust")
         tap("rule:ASK_EVERY_TIME")
         awaitCore { core.startingPolicy == StartingPolicy.ASK_EVERY_TIME }
         tap("rule:HEADLINES_FIRST_HOUR")

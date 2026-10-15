@@ -35,7 +35,7 @@ class VaultFlowTest : FlowHarness() {
 
     private fun openVault() {
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:vault")
         tap("openVault")
         awaitTag("vaultItem:openai")
@@ -63,7 +63,7 @@ class VaultFlowTest : FlowHarness() {
     fun anEmptyVaultSaysWhatToAddAndHowTheComputerNamesIt() {
         core.vaultDetails = emptyList()
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:vault")
         tap("openVault")
         awaitTag("vaultEmpty")
