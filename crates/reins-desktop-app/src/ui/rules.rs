@@ -169,9 +169,9 @@ impl Root {
                 .min_h(px(62.0))
                 .min_w(px(0.0))
                 .rounded(px(14.0))
-                .bg(pal.elevated)
+                .bg(pal.paper_raised())
                 .border_1()
-                .border_color(pal.hairline)
+                .border_color(pal.rule())
                 .child(tile(group_icon(id), color, 30.0))
                 .child(
                     div()
@@ -188,7 +188,9 @@ impl Root {
                                 .child(g.label),
                         )
                         .when_some(examples(id), |t, ex| {
-                            t.child(div().text_size(px(11.5)).line_height(px(15.0)).text_color(pal.tertiary).child(ex))
+                            t.child(
+                                div().text_size(px(11.5)).line_height(px(15.0)).text_color(pal.ink_meta()).child(ex),
+                            )
                         }),
                 )
                 .child(toggle(on, pal));
@@ -214,7 +216,7 @@ impl Root {
                 .gap(px(8.0))
                 .child(
                     group_title("Built-in", pal)
-                        .child(div().text_size(px(13.0)).text_color(pal.tertiary).child(format!("{on_count} on")))
+                        .child(div().text_size(px(13.0)).text_color(pal.ink_meta()).child(format!("{on_count} on")))
                         .child(help("rules-builtin", about, d, pal, cx)),
                 )
                 .child(grid),
@@ -355,10 +357,10 @@ impl Root {
                         .pl(px(8.0))
                         .pr(px(4.0))
                         .rounded(px(8.0))
-                        .bg(pal.tile())
+                        .bg(pal.paper_sunken())
                         .font_family(MONO)
                         .text_size(px(12.0))
-                        .child(icon(kind, 12.0, pal.secondary))
+                        .child(icon(kind, 12.0, pal.ink_2()))
                         .child(div().min_w(px(0.0)).truncate().child(item.clone()))
                         .child(
                             div()
@@ -371,7 +373,7 @@ impl Root {
                                 .rounded(px(6.0))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(pal.danger.opacity(0.14)))
-                                .child(icon(Icon::X, 12.0, pal.tertiary))
+                                .child(icon(Icon::X, 12.0, pal.ink_meta()))
                                 .on_click(Self::on_model(cx, move |m, cx| m.remove_guard_item(list, &remove, cx))),
                         ),
                 );
@@ -393,9 +395,9 @@ impl Root {
                         ic,
                         12.0,
                         if on {
-                            pal.text
+                            pal.ink()
                         } else {
-                            pal.secondary
+                            pal.ink_2()
                         },
                     ))
                     .child(label)

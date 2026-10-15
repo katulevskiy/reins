@@ -1,11 +1,12 @@
 //! What the app remembers between runs (`app.json` in the state directory): who approved the pairing, whether the
 //! first-time setup ran (and the step it reached), a pause (with its end, or until the user resumes), a server other
-//! than the default one, and where the window was.
+//! than the default one, where the window was, and light or dark paper when one is picked.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::theme::Appearance;
 use crate::welcome::Stage;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +30,8 @@ pub struct Saved {
     pub setup_step: Stage,
     /// Where the window was and how big, to open it there again.
     pub window: Option<Place>,
+    /// Light or dark paper, or as the system says (Settings → Appearance).
+    pub appearance: Appearance,
 }
 
 /// A window's place on the screen, in logical pixels.
@@ -132,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn the_setup_step_and_the_window_are_kept() {
+    fn the_setup_step_the_window_and_the_appearance_are_kept() {
         let dir = tempfile::tempdir().unwrap();
         let saved = Saved {
             setup_step: Stage::TurnOn,
@@ -142,10 +145,14 @@ mod tests {
                 width: 1100.0,
                 height: 720.0,
             }),
+            appearance: Appearance::Dark,
             ..Saved::default()
         };
         saved.save(dir.path()).unwrap();
         assert_eq!(Saved::load(dir.path()), saved);
+        // A file from before Appearance follows the system.
+        std::fs::write(Saved::file(dir.path()), br#"{"setup_done":true}"#).unwrap();
+        assert_eq!(Saved::load(dir.path()).appearance, Appearance::System);
     }
 
     #[test]

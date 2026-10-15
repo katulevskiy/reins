@@ -104,12 +104,12 @@ pub fn card(pal: Palette) -> Div {
 }
 
 pub fn caption(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div().text_size(px(12.0)).line_height(px(17.0)).text_color(pal.secondary).child(text.into())
+    div().text_size(px(12.0)).line_height(px(17.0)).text_color(pal.ink_2()).child(text.into())
 }
 
 /// A small line under a caption: tertiary, 11.5 px.
 pub fn fine(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div().text_size(px(11.5)).line_height(px(16.0)).text_color(pal.tertiary).child(text.into())
+    div().text_size(px(11.5)).line_height(px(16.0)).text_color(pal.ink_meta()).child(text.into())
 }
 
 /// One line that ends in "…" when it does not fit.
@@ -155,8 +155,8 @@ pub fn help_with(
         .cursor_pointer()
         .when_else(
             open,
-            |m| m.bg(pal.accent_soft).child(icon(Icon::CircleHelp, 16.0, pal.accent)),
-            |m| m.hover(|s| s.bg(pal.control_fill)).child(icon(Icon::CircleHelp, 16.0, pal.ink_faint())),
+            |m| m.bg(pal.violet().opacity(0.12)).child(icon(Icon::CircleHelp, 16.0, pal.violet())),
+            |m| m.hover(|s| s.bg(pal.paper_sunken())).child(icon(Icon::CircleHelp, 16.0, pal.ink_faint())),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             // A (?) often sits in a row that is itself a toggle: the click is the (?)'s alone.
@@ -177,14 +177,14 @@ pub fn help_with(
         .px(px(12.0))
         .py(px(9.0))
         .rounded(px(14.0))
-        .bg(pal.popover())
+        .bg(pal.paper_raised())
         .border_1()
-        .border_color(pal.popover_border())
+        .border_color(pal.rule())
         .shadow_lg()
         .text_size(px(12.5))
         .line_height(px(17.0))
         .font_weight(FontWeight::NORMAL)
-        .text_color(pal.text)
+        .text_color(pal.ink())
         .whitespace_normal()
         .child(content());
     mark.on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -339,7 +339,7 @@ pub fn link(id: impl Into<ElementId>, label: impl Into<SharedString>, pal: Palet
         .id(id.into())
         .text_size(px(13.0))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(pal.accent)
+        .text_color(pal.violet())
         .whitespace_nowrap()
         .cursor_pointer()
         .hover(|s| s.opacity(0.75))
@@ -357,7 +357,7 @@ pub fn row(pal: Palette, first: bool) -> Div {
         .min_h(px(50.0))
         .min_w(px(0.0))
         .text_size(px(14.0))
-        .when(!first, |r| r.border_t_1().border_color(pal.hairline))
+        .when(!first, |r| r.border_t_1().border_color(pal.rule()))
 }
 
 /// A row's text: a title and, under it, a smaller line.
@@ -370,7 +370,7 @@ pub fn row_text(title: impl Into<SharedString>, under: Option<AnyElement>, pal: 
         .gap(px(2.0))
         .child(one_line(title).font_weight(FontWeight::MEDIUM))
         .when_some(under, |c, u| {
-            c.child(div().text_size(px(12.0)).line_height(px(16.0)).text_color(pal.tertiary).min_w(px(0.0)).child(u))
+            c.child(div().text_size(px(12.0)).line_height(px(16.0)).text_color(pal.ink_meta()).min_w(px(0.0)).child(u))
         })
 }
 
@@ -627,9 +627,9 @@ pub fn stage(from: Mark, to: Mark, badge: Option<(Icon, Hsla)>, color: Hsla, sid
         .flex_none()
         .items_center()
         .gap(px(12.0))
-        .child(stage_tile(from, side, None, pal.background, pal))
+        .child(stage_tile(from, side, None, pal.paper(), pal))
         .child(dots(color, pal))
-        .child(stage_tile(to, side, badge, pal.elevated, pal))
+        .child(stage_tile(to, side, badge, pal.paper_raised(), pal))
 }
 
 /// A sentence with its important words (the target) in italic and `ink`; the rest in the caller's colour. Set it in
@@ -663,13 +663,13 @@ pub fn well(pal: Palette) -> Div {
         .px(px(14.0))
         .py(px(12.0))
         .rounded(px(14.0))
-        .bg(pal.well())
+        .bg(pal.paper_sunken())
         .border_1()
-        .border_color(pal.hairline)
+        .border_color(pal.rule())
         .font_family(MONO)
         .text_size(px(12.5))
         .line_height(px(19.0))
-        .text_color(pal.text)
+        .text_color(pal.ink())
         .min_w(px(0.0))
         .overflow_hidden()
 }
@@ -678,7 +678,7 @@ pub fn well(pal: Palette) -> Div {
 pub fn info_row(label: &str, value: impl IntoElement, pal: Palette, first: bool) -> Div {
     row(pal, first)
         .child(div().flex_1().text_color(pal.ink_2()).child(label.to_owned()))
-        .child(div().min_w(px(0.0)).flex().justify_end().text_color(pal.text).child(value))
+        .child(div().min_w(px(0.0)).flex().justify_end().text_color(pal.ink()).child(value))
 }
 
 /// A note that something needs doing first.
@@ -692,7 +692,7 @@ pub fn warning(text: impl Into<SharedString>, pal: Palette) -> Div {
         .bg(pal.warning.opacity(0.08))
         .border_color(pal.warning.opacity(0.3))
         .child(icon(Icon::TriangleAlert, 16.0, pal.warning))
-        .child(caption(text, pal).text_color(pal.text).flex_1().min_w(px(0.0)))
+        .child(caption(text, pal).text_color(pal.ink()).flex_1().min_w(px(0.0)))
 }
 
 /// Lines of code to copy, in a well.
@@ -706,7 +706,7 @@ pub fn code_block(lines: &[String], pal: Palette) -> Div {
 
 /// What a card says while it has nothing to show.
 pub fn empty(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div().px(px(14.0)).py(px(16.0)).child(caption(text, pal).text_color(pal.tertiary))
+    div().px(px(14.0)).py(px(16.0)).child(caption(text, pal).text_color(pal.ink_meta()))
 }
 
 /// A small mono tag (`vault:OpenAI/api key`).
@@ -720,7 +720,7 @@ pub fn tag(text: impl Into<SharedString>, pal: Palette) -> Div {
         .font_family(MONO)
         .text_size(px(11.5))
         .line_height(px(17.0))
-        .text_color(pal.secondary)
+        .text_color(pal.ink_2())
         .whitespace_nowrap()
         .child(text.into())
 }
@@ -729,7 +729,7 @@ pub fn tag(text: impl Into<SharedString>, pal: Palette) -> Div {
 pub fn step_line(label: &str, step: &Step, pal: Palette, first: bool) -> Div {
     let (mark, detail): (AnyElement, String) = match step {
         Step::Running => (
-            waiting_dot(SharedString::from(format!("step-{label}")), pal.accent, 8.0).into_any_element(),
+            waiting_dot(SharedString::from(format!("step-{label}")), pal.violet(), 8.0).into_any_element(),
             String::new(),
         ),
         Step::Done(d) => (icon(Icon::CircleCheck, 18.0, pal.success).into_any_element(), d.clone()),
@@ -760,7 +760,7 @@ pub fn phone_qr(pal: Palette) -> Div {
                 .gap(px(8.0))
                 .flex_1()
                 .min_w(px(0.0))
-                .child(icon(Icon::Smartphone, 16.0, pal.secondary))
+                .child(icon(Icon::Smartphone, 16.0, pal.ink_2()))
                 .child(caption("Scan to open Activity on your phone", pal)),
         )
 }
@@ -771,7 +771,7 @@ pub fn level_color(level: Level, pal: Palette) -> Hsla {
         Level::Ok => pal.success,
         Level::Warn => pal.warning,
         Level::Fail => pal.danger,
-        Level::Skip => pal.tertiary,
+        Level::Skip => pal.ink_meta(),
     }
 }
 
@@ -800,7 +800,7 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
             }));
         }
         let mark: AnyElement = match stage.number() {
-            _ if behind || (here && stage == Stage::Done) => icon(Icon::Check, 12.0, pal.on_accent).into_any_element(),
+            _ if behind || (here && stage == Stage::Done) => icon(Icon::Check, 12.0, pal.on_field()).into_any_element(),
             Some(n) => n.to_string().into_any_element(),
             None => div().into_any_element(),
         };
@@ -832,9 +832,9 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
                     .text_size(px(12.5))
                     .whitespace_nowrap()
                     .text_color(if here {
-                        pal.text
+                        pal.ink()
                     } else {
-                        pal.tertiary
+                        pal.ink_meta()
                     })
                     .child(stage.label()),
             ),

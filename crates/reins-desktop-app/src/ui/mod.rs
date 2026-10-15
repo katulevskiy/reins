@@ -440,7 +440,7 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let pal = Palette::of(window);
+        let pal = Palette::of(window, self.model.read(cx).saved.appearance);
         let screen = self.model.read(cx).screen;
         let page = (screen, self.model.read(cx).section);
         if page != self.help_page {

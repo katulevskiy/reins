@@ -21,7 +21,7 @@ use super::{Data, Root};
 use crate::format;
 use crate::health::{self, Test};
 use crate::model::{Model, Section};
-use crate::theme::{Palette, SERIF, Tone};
+use crate::theme::{Field, Palette, SERIF, Tone};
 use crate::tray::Look;
 
 /// How many recent requests the overview shows.
@@ -149,7 +149,7 @@ impl Root {
         let end: AnyElement = match ending(e) {
             Ending::Icon(i, tone) => icon(i, 16.0, pal.tone(tone)).into_any_element(),
             Ending::Rules => chip_plain(None, "By your rules", pal).h(px(22.0)).px(px(8.0)).into_any_element(),
-            Ending::Waiting => chip(None, "Waiting", pal.accent).h(px(22.0)).px(px(9.0)).into_any_element(),
+            Ending::Waiting => chip(None, "Waiting", pal.violet()).h(px(22.0)).px(px(9.0)).into_any_element(),
         };
         div()
             .id(SharedString::from(format!("{scope}-{}", e.id)))
@@ -161,14 +161,14 @@ impl Root {
             .py(px(10.0))
             .min_w(px(0.0))
             .cursor_pointer()
-            .when(!first, |r| r.border_t_1().border_color(pal.hairline))
+            .when(!first, |r| r.border_t_1().border_color(pal.rule()))
             .when_else(
                 selected,
                 |r| {
-                    r.bg(pal.accent.opacity(0.10))
+                    r.bg(pal.violet().opacity(0.10))
                         .child(div().absolute().left_0().top_0().bottom_0().w(px(3.0)).bg(pal.violet_fill()))
                 },
-                |r| r.hover(|h| h.bg(pal.control_fill.opacity(0.6))),
+                |r| r.hover(|h| h.bg(pal.paper_sunken().opacity(0.6))),
             )
             .child(super::parts::tile(s.icon, color, 30.0))
             .child(
@@ -186,9 +186,9 @@ impl Root {
                             .font_weight(FontWeight::MEDIUM)
                             .child(s.title),
                     )
-                    .child(div().min_w(px(0.0)).truncate().text_size(px(12.0)).text_color(pal.tertiary).child(s.who)),
+                    .child(div().min_w(px(0.0)).truncate().text_size(px(12.0)).text_color(pal.ink_meta()).child(s.who)),
             )
-            .child(div().flex_none().text_size(px(12.0)).text_color(pal.tertiary).child(short_ago(d.now, e.at)))
+            .child(div().flex_none().text_size(px(12.0)).text_color(pal.ink_meta()).child(short_ago(d.now, e.at)))
             .child(div().flex().flex_none().items_center().child(end))
     }
 
@@ -313,7 +313,7 @@ impl Root {
             s.target = Mark::Brand(b);
         }
         let color = if s.tone == Tone::Neutral {
-            pal.accent
+            pal.violet()
         } else {
             pal.tone(s.tone)
         };
@@ -330,15 +330,15 @@ impl Root {
             .pl(px(8.0))
             .pr(px(11.0))
             .rounded_full()
-            .bg(pal.control_fill)
+            .bg(pal.paper_sunken())
             .text_size(px(13.0))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(if left < 20 {
                 pal.danger
             } else {
-                pal.secondary
+                pal.ink_2()
             })
-            .child(ring(fraction, pal.secondary, pal.tile_border(), 18.0, 2.4))
+            .child(ring(fraction, pal.ink_2(), pal.rule(), 18.0, 2.4))
             .child(clock_left(left));
         let mut chips = div()
             .flex()
@@ -423,7 +423,7 @@ impl Root {
             .child(stat_value().when(attention, |v| v.text_color(color)).child(value));
         let mut under =
             div().flex().items_center().gap(px(8.0)).min_h(px(26.0)).child(
-                div().flex_1().min_w(px(0.0)).truncate().text_size(px(12.0)).text_color(pal.tertiary).child(line),
+                div().flex_1().min_w(px(0.0)).truncate().text_size(px(12.0)).text_color(pal.ink_meta()).child(line),
             );
         if let Some(fix) = fix {
             under = under.child(small(btn("tile-fix", fix.label(), Btn::Accent, pal)).on_click(cx.listener(
@@ -442,11 +442,11 @@ impl Root {
 
     /// Work session: Start; the request on the phone; or the session running, its ring, reason, time left and End.
     fn work_tile(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let tile = stat(Icon::Timer, pal.accent, "Work session", pal).min_w(px(190.0));
+        let tile = stat(Icon::Timer, pal.violet(), "Work session", pal).min_w(px(190.0));
         let value = |text: String| stat_value().min_w(px(0.0)).truncate().child(text);
         let under = || div().flex().items_center().gap(px(8.0)).min_h(px(26.0));
         let line = |text: String| {
-            div().flex_1().min_w(px(0.0)).truncate().text_size(px(12.0)).text_color(pal.tertiary).child(text)
+            div().flex_1().min_w(px(0.0)).truncate().text_size(px(12.0)).text_color(pal.ink_meta()).child(text)
         };
         if let Some(session) = d.work_session() {
             let total = (session.expires_at - session.started_at).max(1);
@@ -473,14 +473,14 @@ impl Root {
                     .into_any_element()
             };
             return tile
-                .border_color(pal.accent.opacity(0.3))
+                .border_color(pal.violet().opacity(0.3))
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap(px(10.0))
                         .mt(px(6.0))
-                        .child(ring(fraction, pal.accent, pal.tile_border(), 26.0, 3.0))
+                        .child(ring(fraction, pal.violet(), pal.rule(), 26.0, 3.0))
                         .child(
                             div()
                                 .flex()
@@ -498,7 +498,7 @@ impl Root {
                                     div()
                                         .text_size(px(12.0))
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(pal.accent)
+                                        .text_color(pal.violet())
                                         .child(format!("{} left", crate::work::left(session, d.now))),
                                 ),
                         ),
@@ -509,14 +509,14 @@ impl Root {
         if let Some(asking) = &d.work.asking {
             let left = i64::try_from(asking.left(std::time::Instant::now())).unwrap_or(0);
             return tile
-                .border_color(pal.accent.opacity(0.3))
+                .border_color(pal.violet().opacity(0.3))
                 .child(value("On your phone".to_owned()))
                 .child(
                     under().child(line(asking.request.reason.clone())).child(
                         div()
                             .text_size(px(12.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(pal.accent)
+                            .text_color(pal.violet())
                             .child(clock_left(left)),
                     ),
                 )
@@ -564,7 +564,7 @@ impl Root {
                 .child(v.to_string())
         };
         let line = "approved · denied · no answer";
-        stat(Icon::Calendar, pal.blue(), "Today", pal)
+        stat(Icon::Calendar, Field::Read.kind(&pal), "Today", pal)
             .min_w(px(190.0))
             .child(
                 div()
@@ -578,7 +578,9 @@ impl Root {
                     .child(n(t.denied, pal.danger))
                     .child(n(t.timed_out, pal.warning)),
             )
-            .child(div().flex().items_center().min_h(px(26.0)).text_size(px(12.0)).text_color(pal.tertiary).child(line))
+            .child(
+                div().flex().items_center().min_h(px(26.0)).text_size(px(12.0)).text_color(pal.ink_meta()).child(line),
+            )
             .into_any_element()
     }
 
@@ -590,9 +592,9 @@ impl Root {
             .flex_row()
             .items_center()
             .gap(px(10.0))
-            .bg(pal.accent_soft)
-            .border_color(pal.accent.opacity(0.25))
-            .child(icon(Icon::Download, 16.0, pal.accent));
+            .bg(pal.violet().opacity(0.12))
+            .border_color(pal.violet().opacity(0.25))
+            .child(icon(Icon::Download, 16.0, pal.violet()));
         Some(
             if update.ready.is_some() {
                 let label = if d.updating {

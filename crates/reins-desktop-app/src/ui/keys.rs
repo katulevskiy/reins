@@ -17,7 +17,7 @@ use super::parts::{
 use super::{Data, Root};
 use crate::backend::Setting;
 use crate::format;
-use crate::theme::{MONO, Palette};
+use crate::theme::{Field, MONO, Palette};
 
 /// Until when the key of API `name` is held, if it is now.
 #[must_use]
@@ -133,7 +133,7 @@ impl Root {
                 };
                 list = list.child(
                     row(pal, i == 0)
-                        .child(tile(Icon::KeyRound, pal.orange(), 30.0))
+                        .child(tile(Icon::KeyRound, Field::Push.kind(&pal), 30.0))
                         .child(row_text(
                             a.name.clone(),
                             Some(mono_line(format!("{} · held {}", a.secret, format::span(a.lease_secs.into())))),
@@ -197,8 +197,8 @@ impl Root {
                     row(pal, i == 0)
                         .id(SharedString::from(format!("profile-{name}")))
                         .cursor_pointer()
-                        .hover(|s| s.bg(pal.control_fill.opacity(0.5)))
-                        .child(tile(Icon::Rocket, pal.accent, 30.0))
+                        .hover(|s| s.bg(pal.paper_sunken().opacity(0.5)))
+                        .child(tile(Icon::Rocket, pal.violet(), 30.0))
                         .child(
                             div()
                                 .flex()
@@ -207,7 +207,7 @@ impl Root {
                                 .min_w(px(0.0))
                                 .gap(px(2.0))
                                 .child(div().font_family(MONO).font_weight(FontWeight::MEDIUM).child(name.clone()))
-                                .child(div().text_size(px(12.0)).text_color(pal.tertiary).truncate().child(under)),
+                                .child(div().text_size(px(12.0)).text_color(pal.ink_meta()).truncate().child(under)),
                         )
                         .child(icon(
                             if open {
@@ -216,7 +216,7 @@ impl Root {
                                 Icon::ChevronRight
                             },
                             16.0,
-                            pal.tertiary,
+                            pal.ink_meta(),
                         ))
                         .on_click(Self::on_view(cx, move |this, _| {
                             this.profile_open = if this.profile_open.as_deref() == Some(key.as_str()) {
@@ -242,10 +242,10 @@ impl Root {
                                         .truncate()
                                         .font_family(MONO)
                                         .text_size(px(12.0))
-                                        .text_color(pal.secondary)
+                                        .text_color(pal.ink_2())
                                         .child(var.clone()),
                                 )
-                                .child(icon(Icon::ArrowLeft, 12.0, pal.tertiary))
+                                .child(icon(Icon::ArrowLeft, 12.0, pal.ink_meta()))
                                 .child(tag(reference.clone(), pal)),
                         );
                     }
@@ -274,7 +274,7 @@ impl Root {
             row(pal, true)
                 .id("ssh-toggle")
                 .cursor_pointer()
-                .child(tile(Icon::Terminal, pal.teal(), 30.0))
+                .child(tile(Icon::Terminal, Field::Pair.kind(&pal), 30.0))
                 .child(row_text("SSH keys from your phone", on.then(|| mono_line(socket)), pal))
                 .child(help(
                     "keys-ssh",
@@ -289,18 +289,16 @@ impl Root {
         );
         if on {
             if overview.ssh_keys.is_empty() {
-                ssh =
-                    ssh.child(row(pal, false).child(
-                        div().text_size(px(12.5)).text_color(pal.tertiary).child("Keys show after the first use"),
-                    ));
+                ssh = ssh.child(row(pal, false).child(
+                    div().text_size(px(12.5)).text_color(pal.ink_meta()).child("Keys show after the first use"),
+                ));
             } else {
                 for k in &overview.ssh_keys {
-                    ssh =
-                        ssh.child(
-                            row(pal, false)
-                                .child(tile(Icon::KeyRound, pal.gray(), 30.0).bg(pal.tile()))
-                                .child(row_text(k.name.clone(), Some(mono_line(k.fingerprint.clone())), pal)),
-                        );
+                    ssh = ssh.child(
+                        row(pal, false)
+                            .child(tile(Icon::KeyRound, pal.ink_meta(), 30.0).bg(pal.paper_sunken()))
+                            .child(row_text(k.name.clone(), Some(mono_line(k.fingerprint.clone())), pal)),
+                    );
                 }
             }
         }

@@ -137,7 +137,7 @@ impl Root {
                         )),
                         pal,
                     ))
-                    .child(div().border_t_1().border_color(pal.hairline).child(Self::test_panel(d, true, pal, cx))),
+                    .child(div().border_t_1().border_color(pal.rule()).child(Self::test_panel(d, true, pal, cx))),
             );
         } else if total == 0 {
             list = list.child(card(pal).mt(px(10.0)).child(empty("No matches", pal)));
@@ -207,7 +207,7 @@ impl Root {
         let detail_bg = if pal.dark {
             gpui::rgb(0x0009_090B).into()
         } else {
-            pal.background.blend(gpui::white().opacity(0.5))
+            pal.paper().blend(gpui::white().opacity(0.5))
         };
         let right = div()
             .id("activity-detail")
@@ -218,7 +218,7 @@ impl Root {
             .overflow_y_scroll()
             .bg(detail_bg)
             .border_l_1()
-            .border_color(pal.hairline)
+            .border_color(pal.rule())
             .child(div().px(px(26.0)).pt(px(top)).pb(px(30.0)).child(Self::entry_detail(e, d, pal, cx)));
         div().size_full().flex().child(left).child(right).into_any_element()
     }
@@ -228,7 +228,7 @@ impl Root {
         let (outcome, kind) = (self.outcome_filter, self.kind_filter);
         let filtered = outcome.is_some() || kind.is_some();
         let mut b = btn_icon("activity-filter", Icon::ListFilter, filter_label(outcome, kind), Btn::Plain, pal)
-            .when(filtered, |b| b.bg(pal.accent_soft).text_color(pal.accent))
+            .when(filtered, |b| b.bg(pal.violet().opacity(0.12)).text_color(pal.violet()))
             .on_click(Self::on_view(cx, |this, _| this.filter_open = !this.filter_open));
         if !self.filter_open {
             return b.into_any_element();
@@ -290,7 +290,7 @@ impl Root {
             s.target = Mark::Brand(b);
         }
         let color = if s.tone == Tone::Neutral {
-            pal.accent
+            pal.violet()
         } else {
             pal.tone(s.tone)
         };
@@ -346,11 +346,11 @@ impl Root {
                             .pl(px(8.0))
                             .pr(px(11.0))
                             .rounded_full()
-                            .bg(pal.control_fill)
+                            .bg(pal.paper_sunken())
                             .text_size(px(13.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(pal.secondary)
-                            .child(ring(fraction, pal.secondary, pal.tile_border(), 18.0, 2.4))
+                            .text_color(pal.ink_2())
+                            .child(ring(fraction, pal.ink_2(), pal.rule(), 18.0, 2.4))
                             .child(clock_left(left)),
                     )
                     .child(
@@ -401,7 +401,7 @@ impl Root {
             let color = if matches!(e.outcome, Outcome::Denied | Outcome::Failed | Outcome::Blocked) {
                 pal.danger
             } else {
-                pal.secondary
+                pal.ink_2()
             };
             page = page.child(caption(reason.clone(), pal).px(px(4.0)).text_color(color));
         }

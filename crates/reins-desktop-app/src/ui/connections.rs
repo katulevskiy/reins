@@ -119,10 +119,10 @@ impl Root {
                 let h: Harness = r.harness;
                 let used = d.activity().iter().find(|e| e.source.as_deref() == Some(h.label())).map(|e| e.at);
                 let (line, color) = match (r.found, r.added, r.complete) {
-                    (_, true, true) => ("Hook + MCP".to_owned(), pal.tertiary),
+                    (_, true, true) => ("Hook + MCP".to_owned(), pal.ink_meta()),
                     (_, true, false) => ("Partly connected: turn off and on".to_owned(), pal.warning),
                     (true, false, _) => ("Installed, not connected".to_owned(), pal.warning),
-                    (false, false, _) => ("Not installed".to_owned(), pal.tertiary),
+                    (false, false, _) => ("Not installed".to_owned(), pal.ink_meta()),
                 };
                 let line = match used.filter(|_| r.added) {
                     Some(at) => format!("{line} · used {}", format::ago(d.now, at)),
@@ -190,14 +190,14 @@ impl Root {
                     row(pal, i == 0)
                         .id(SharedString::from(format!("api-{}", c.target)))
                         .cursor_pointer()
-                        .hover(|s| s.bg(pal.control_fill.opacity(0.5)))
+                        .hover(|s| s.bg(pal.paper_sunken().opacity(0.5)))
                         .child(logo(mark, pal))
                         .child(row_text(
                             name,
                             Some(usage(c.count, c.last_at, d.now, "call", "calls").into_any_element()),
                             pal,
                         ))
-                        .child(icon(Icon::ChevronRight, 16.0, pal.tertiary))
+                        .child(icon(Icon::ChevronRight, 16.0, pal.ink_meta()))
                         .on_click(Self::go(cx, Section::Keys)),
                 );
             }
@@ -247,7 +247,7 @@ impl Root {
                                 .child(
                                     div()
                                         .text_size(px(12.0))
-                                        .text_color(pal.secondary)
+                                        .text_color(pal.ink_2())
                                         .child(format::count(t.calls, "call", "calls")),
                                 )
                                 .child(fine(format::ago(d.now, t.last_at), pal)),
@@ -320,7 +320,7 @@ impl Root {
                                 .min_w(px(0.0))
                                 .text_size(px(12.5))
                                 .child(one_line((*repo).to_owned()).flex_1().font_family(MONO))
-                                .child(div().flex_none().text_color(pal.tertiary).child(format!(
+                                .child(div().flex_none().text_color(pal.ink_meta()).child(format!(
                                     "{} · {}",
                                     c.count,
                                     super::overview::short_ago(d.now, c.last_at)

@@ -32,7 +32,7 @@ fn form_line(label: &'static str, body: impl IntoElement, pal: Palette, first: b
                 .flex_none()
                 .w(px(LABEL))
                 .pt(px(6.0))
-                .text_color(pal.secondary)
+                .text_color(pal.ink_2())
                 .font_weight(FontWeight::MEDIUM)
                 .child(label),
         )
@@ -56,15 +56,15 @@ fn read_chip(id: &'static str, label: &'static str, on: bool, pal: Palette) -> S
         .cursor_pointer()
         .when_else(
             on,
-            |c| c.bg(pal.accent_soft).border_color(pal.accent.opacity(0.4)).text_color(pal.accent),
+            |c| c.bg(pal.violet().opacity(0.12)).border_color(pal.violet().opacity(0.4)).text_color(pal.violet()),
             |c| {
-                c.bg(pal.elevated)
-                    .border_color(pal.hairline)
-                    .text_color(pal.secondary)
-                    .hover(|s| s.bg(pal.control_fill).text_color(pal.text))
+                c.bg(pal.paper_raised())
+                    .border_color(pal.rule())
+                    .text_color(pal.ink_2())
+                    .hover(|s| s.bg(pal.paper_sunken()).text_color(pal.ink()))
             },
         )
-        .when(on, |c| c.child(check(12.0, pal.accent)))
+        .when(on, |c| c.child(check(12.0, pal.violet())))
         .child(label)
 }
 
@@ -77,7 +77,7 @@ fn badge(inner: impl IntoElement, pal: Palette) -> Div {
         .justify_center()
         .size(px(30.0))
         .rounded_full()
-        .bg(pal.accent_soft)
+        .bg(pal.violet().opacity(0.12))
         .child(inner)
 }
 
@@ -226,7 +226,7 @@ impl Root {
             .child(
                 row(pal, false)
                     .py(px(12.0))
-                    .bg(pal.background.opacity(0.5))
+                    .bg(pal.paper().opacity(0.5))
                     .child(fine(STILL_ASKS, pal).flex_1().min_w(px(0.0)))
                     .child(
                         button("session-cancel", "Cancel", pal, false, true)
@@ -242,10 +242,10 @@ impl Root {
 
     fn work_waiting(asking: &Asking, pal: Palette) -> Div {
         let left = i64::try_from(asking.left(std::time::Instant::now())).unwrap_or(0);
-        card(pal).border_color(pal.accent.opacity(0.35)).child(
+        card(pal).border_color(pal.violet().opacity(0.35)).child(
             row(pal, true)
                 .py(px(14.0))
-                .child(badge(waiting_dot("session-waiting", pal.accent, 9.0), pal))
+                .child(badge(waiting_dot("session-waiting", pal.violet(), 9.0), pal))
                 .child(titled(
                     "Approve it on your phone…",
                     format!("{} · {}", asking.request.reason, work::summary(&asking.request)),
@@ -256,7 +256,7 @@ impl Root {
                         .flex_none()
                         .text_size(px(12.0))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(pal.accent)
+                        .text_color(pal.violet())
                         .child(format!("{} left", format::duration(left))),
                 ),
         )
@@ -311,10 +311,10 @@ impl Root {
                     .flex_none()
                     .text_size(px(15.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(pal.accent)
+                    .text_color(pal.violet())
                     .child(format!("{} left", work::left(session, d.now))),
             );
-        let mut body = card(pal).border_color(pal.accent.opacity(0.35)).child(head);
+        let mut body = card(pal).border_color(pal.violet().opacity(0.35)).child(head);
         let mut allows = div().flex().flex_col().gap(px(6.0)).child(fine("Allowed without asking", pal));
         for line in &session.allows {
             allows = allows.child(
@@ -337,7 +337,7 @@ impl Root {
                     .child(caption(format!("Could not end it: {e}"), pal).text_color(pal.danger)),
             );
         }
-        let footer = row(pal, false).py(px(12.0)).bg(pal.background.opacity(0.5));
+        let footer = row(pal, false).py(px(12.0)).bg(pal.paper().opacity(0.5));
         let footer = if d.work.ending {
             footer.child(caption("Ending…", pal).flex_1()).child(button("session-ending", "Ending…", pal, false, false))
         } else if d.work.confirm_end {

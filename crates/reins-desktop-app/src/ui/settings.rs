@@ -94,7 +94,7 @@ impl Root {
                     .cursor_pointer()
                     .child(solid_tile(Icon::Bell, Tone::Neutral, pal, 30.0))
                     .child(row_text("Notifications", None, pal))
-                    .child(div().text_size(px(13.0)).text_color(pal.secondary).child(notify_word))
+                    .child(div().text_size(px(13.0)).text_color(pal.ink_2()).child(notify_word))
                     .child(icon(
                         if self.notify_open {
                             Icon::X
@@ -102,7 +102,7 @@ impl Root {
                             Icon::ChevronRight
                         },
                         16.0,
-                        pal.tertiary,
+                        pal.ink_meta(),
                     ))
                     .on_click(Self::on_view(cx, |this, _| this.notify_open = !this.notify_open)),
             );
@@ -152,6 +152,20 @@ impl Root {
                 .child(row_text("Health checks", Some(health_line.into_any_element()), pal))
                 .child(Self::check_again("run-checks", "Run", d, pal, cx)),
         );
+        let picked = d.saved.appearance;
+        let mut appearance = super::parts::segmented(pal);
+        for a in crate::theme::Appearance::ALL {
+            appearance = appearance.child(
+                super::parts::segment(("appearance", a as usize), a.label(), a == picked, pal)
+                    .on_click(Self::on_model(cx, move |m, cx| m.set_appearance(a, cx))),
+            );
+        }
+        computer = computer.child(
+            row(pal, false)
+                .child(solid_tile(Icon::Settings, Tone::Neutral, pal, 30.0))
+                .child(row_text("Appearance", None, pal))
+                .child(appearance),
+        );
 
         // Keyboard.
         let mut keys = div().flex().flex_col().gap(px(8.0)).px(px(14.0)).py(px(12.0));
@@ -162,7 +176,7 @@ impl Root {
                     .items_center()
                     .gap(px(12.0))
                     .text_size(px(13.0))
-                    .child(div().flex_1().min_w(px(0.0)).truncate().text_color(pal.secondary).child(what))
+                    .child(div().flex_1().min_w(px(0.0)).truncate().text_color(pal.ink_2()).child(what))
                     .child(kbd(k, pal)),
             );
         }
@@ -195,16 +209,16 @@ impl Root {
                             .font_weight(FontWeight::MEDIUM)
                             .child(format!("Disconnect {}", this_computer())),
                     )
-                    .child(div().text_size(px(12.0)).text_color(pal.tertiary).child("Hold")),
+                    .child(div().text_size(px(12.0)).text_color(pal.ink_meta()).child("Hold")),
             }
             .into_any_element()
         } else {
             row(pal, true)
                 .id("pair-again")
                 .cursor_pointer()
-                .child(tile(Icon::Smartphone, pal.accent, 30.0))
+                .child(tile(Icon::Smartphone, pal.violet(), 30.0))
                 .child(row_text("Pair again", None, pal))
-                .child(icon(Icon::ChevronRight, 16.0, pal.tertiary))
+                .child(icon(Icon::ChevronRight, 16.0, pal.ink_meta()))
                 .on_click(Self::on_model(cx, Model::sign_out))
                 .into_any_element()
         };
@@ -212,10 +226,10 @@ impl Root {
             row(pal, false)
                 .id("quit")
                 .cursor_pointer()
-                .hover(|s| s.bg(pal.control_fill.opacity(0.5)))
-                .child(tile(Icon::LogOut, pal.secondary, 30.0))
+                .hover(|s| s.bg(pal.paper_sunken().opacity(0.5)))
+                .child(tile(Icon::LogOut, pal.ink_2(), 30.0))
                 .child(row_text("Quit Reins", None, pal))
-                .child(div().text_size(px(12.0)).text_color(pal.tertiary).child("service keeps running"))
+                .child(div().text_size(px(12.0)).text_color(pal.ink_meta()).child("service keeps running"))
                 .on_click(Self::on_model(cx, Model::quit)),
         );
 
@@ -242,7 +256,7 @@ impl Root {
             div()
                 .id(id)
                 .cursor_pointer()
-                .hover(|s| s.text_color(pal.secondary))
+                .hover(|s| s.text_color(pal.ink_2()))
                 .child(label)
                 .on_click(move |_, _, cx| cx.open_url(&url))
         };
@@ -253,7 +267,7 @@ impl Root {
                 .gap(px(5.0))
                 .pt(px(4.0))
                 .text_size(px(12.0))
-                .text_color(pal.tertiary)
+                .text_color(pal.ink_meta())
                 .child(format!("Reins {}", reins_desktop::update::VERSION))
                 .child("·")
                 .child(footer_link("downloads", "Downloads", crate::links::download()))
@@ -327,9 +341,7 @@ impl Root {
                     .min_w(px(200.0))
                     .gap(px(2.0))
                     .child(div().text_size(px(15.5)).font_weight(FontWeight::SEMIBOLD).truncate().child(account))
-                    .child(
-                        div().font_family(MONO).text_size(px(12.0)).text_color(pal.secondary).truncate().child(line),
-                    ),
+                    .child(div().font_family(MONO).text_size(px(12.0)).text_color(pal.ink_2()).truncate().child(line)),
             )
             .child(chips)
             .into_any_element()

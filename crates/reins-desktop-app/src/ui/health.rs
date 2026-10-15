@@ -57,8 +57,8 @@ impl Root {
                 .justify_center()
                 .size(px(30.0))
                 .rounded(px(9.0))
-                .bg(pal.accent_soft)
-                .child(waiting_dot("health-first", pal.accent, 8.0))
+                .bg(pal.violet().opacity(0.12))
+                .child(waiting_dot("health-first", pal.violet(), 8.0))
         } else {
             level_mark(level, 30.0, pal)
         };
@@ -88,7 +88,7 @@ impl Root {
                         .flex()
                         .items_start()
                         .gap(px(6.0))
-                        .child(div().pt(px(2.0)).child(icon(Icon::ArrowRight, 12.0, pal.tertiary)))
+                        .child(div().pt(px(2.0)).child(icon(Icon::ArrowRight, 12.0, pal.ink_meta())))
                         .child(fine(how.clone(), pal)),
                 );
             }
@@ -128,7 +128,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .child(super::parts::tile(Icon::Send, pal.accent, 30.0))
+                    .child(super::parts::tile(Icon::Send, pal.violet(), 30.0))
                     .child(div().font_weight(FontWeight::MEDIUM).child("See it work"))
                     .child(help(
                         "test",
@@ -156,8 +156,8 @@ impl Root {
                                 .justify_center()
                                 .size(px(30.0))
                                 .rounded(px(9.0))
-                                .bg(pal.accent_soft)
-                                .child(waiting_dot("test-waiting", pal.accent, 8.0)),
+                                .bg(pal.violet().opacity(0.12))
+                                .child(waiting_dot("test-waiting", pal.violet(), 8.0)),
                         )
                         .child(row_text("Check your phone", Some(format!("{left} s left").into_any_element()), pal))
                         .into_any_element(),
