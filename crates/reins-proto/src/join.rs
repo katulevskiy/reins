@@ -12,13 +12,15 @@
 //!    names this join and that the secret opens the account's keys.
 //!
 //! A server that swapped the key would show a different code on the approval device, and the user would deny. The
-//! sealed secret names the join it answers, so it cannot be replayed to another one.
+//! sealed secret names the join it answers, so it cannot be replayed to another one. The limit: [`join_code`] covers
+//! one key that its sender picks freely, so a server able to try about a million key pairs offline could find one
+//! with the same six digits. Enrollment below does not have that weakness.
 //!
-//! **Enrolling as a viewer** ([`crate::roster`]): the same request also carries the phone's device signing key
-//! (`sign_pub`; `public_key` is then its box key), both phones show [`enroll_code`] of the two keys instead, and the
-//! primary answers by appending a roster entry that lists the phone as a viewer (and seals the view key to it). The
-//! server lists a phone as a member only with the device key it asked with. A phone that held the account's key before
-//! (an update) may add `proof`, a MAC over [`enroll_proof_message`], so the primary accepts it without a tap.
+//! **Enrolling as a viewer** ([`crate::roster`]): the request also carries the phone's device signing key
+//! (`sign_pub`; `public_key` is then its box key) and a commitment to a nonce, and the codes come from the
+//! commit-then-reveal exchange of [`crate::enroll`] (`challenge` in [`JoinState`], `reveal` in [`JoinRequest`]),
+//! never from [`join_code`]. The primary answers by appending a roster entry that lists the phone as a viewer, and with
+//! a signed, sealed answer. The server lists a phone as a member only with the device key it asked with.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,8 +29,9 @@ use sha2::{Digest, Sha256};
 pub const MAX_DEVICE_NAME_CHARS: usize = 64;
 /// Largest sealed answer accepted (bytes of its base64 text).
 pub const MAX_SEALED_CHARS: usize = 1024;
-/// Largest enrollment proof (characters).
-pub const MAX_PROOF_CHARS: usize = 128;
+/// Largest sealed answer to an enrollment (bytes of its base64 text): the view key, the roster and the primary's
+/// signature ride along.
+pub const MAX_ENROLL_SEALED_CHARS: usize = 32 * 1024;
 
 /// Step 1, the new phone's request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,10 +43,9 @@ pub struct NewJoin {
     /// Enrolling as a viewer: the phone's device signing key (Ed25519, base64url); `public_key` is its box key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sign_pub: Option<String>,
-    /// Enrolling without a tap: a MAC over [`enroll_proof_message`] with a key derived from the account's key,
-    /// base64url.
+    /// Enrolling as a viewer: [`crate::enroll::commitment`] to the phone's nonce, hex.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proof: Option<String>,
+    pub commitment: Option<String>,
 }
 
 /// What the server answers to [`NewJoin`].
@@ -69,7 +71,10 @@ pub struct JoinRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sign_pub: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proof: Option<String>,
+    pub commitment: Option<String>,
+    /// The joiner's nonce (and proof), once it revealed it ([`crate::enroll`] step 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reveal: Option<crate::enroll::EnrollReveal>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +94,9 @@ pub struct JoinState {
     /// The sealed [`SealedSecret`] (base64), with `Approved`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sealed: Option<String>,
+    /// Enrolling: the primary's challenge, once posted ([`crate::enroll`] step 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub challenge: Option<crate::enroll::EnrollChallenge>,
 }
 
 /// Step 3, the approval device's answer.
@@ -128,49 +136,23 @@ pub fn join_code(public_key: &str) -> Option<String> {
     Some(format!("{:03} {:03}", n / 1000, n % 1000))
 }
 
-/// Six digits both phones show when a phone enrolls as a viewer: over its box key and its signing key, so a server can
-/// swap neither. `None` unless both are 32 bytes.
-#[must_use]
-pub fn enroll_code(box_pub: &str, sign_pub: &str) -> Option<String> {
-    let (box_raw, sign_raw) = (crate::desktop::decode_key(box_pub)?, crate::desktop::decode_key(sign_pub)?);
-    let mut h = Sha256::new();
-    h.update(b"reins-enroll-keys/1");
-    h.update(box_raw);
-    h.update(sign_raw);
-    let d = h.finalize();
-    let n = u32::from_be_bytes([0, d[0], d[1], d[2]]) % 1_000_000;
-    Some(format!("{:03} {:03}", n / 1000, n % 1000))
-}
-
-/// What an enrollment's `proof` MACs ([`crate::canon`], context `reins/enroll-proof/v1`): `account` (string),
-/// `device_id` (string), `box_pub` (32 bytes), `sign_pub` (32 bytes). `None` unless both keys are 32 bytes.
-#[must_use]
-pub fn enroll_proof_message(account: &str, device_id: &str, box_pub: &str, sign_pub: &str) -> Option<Vec<u8>> {
-    let (box_raw, sign_raw) = (crate::desktop::decode_key(box_pub)?, crate::desktop::decode_key(sign_pub)?);
-    let mut c = crate::canon::Canon::new(crate::canon::contexts::ENROLL_PROOF);
-    c.str(account).str(device_id).key(&box_raw).key(&sign_raw);
-    Some(c.finish())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::desktop::encode_key;
 
     #[test]
-    fn enrollment_codes_cover_both_keys() {
-        let (b, s) = (encode_key(&[3u8; 32]), encode_key(&[4u8; 32]));
-        let code = enroll_code(&b, &s).unwrap();
-        assert_eq!(code.len(), 7);
-        assert_ne!(enroll_code(&b, &encode_key(&[5u8; 32])), Some(code.clone()));
-        assert_ne!(enroll_code(&encode_key(&[5u8; 32]), &s), Some(code.clone()));
-        assert_ne!(join_code(&b), Some(code), "not the plain join code");
-        assert_eq!(enroll_code("short", &s), None);
-        let m = enroll_proof_message("acct", "dev", &b, &s).unwrap();
-        assert_ne!(enroll_proof_message("acct", "dev2", &b, &s).unwrap(), m);
+    fn a_join_from_before_roles_still_parses() {
+        let b = encode_key(&[3u8; 32]);
         let old: NewJoin =
             serde_json::from_value(serde_json::json!({"v": 1, "device_name": "x", "public_key": b})).unwrap();
-        assert_eq!((old.sign_pub, old.proof), (None, None), "a join from before roles still parses");
+        assert_eq!((old.sign_pub, old.commitment), (None, None));
+        let state = JoinState {
+            status: JoinStatus::Waiting,
+            sealed: None,
+            challenge: None,
+        };
+        assert_eq!(serde_json::to_value(&state).unwrap(), serde_json::json!({"status": "waiting"}));
     }
 
     #[test]
@@ -189,6 +171,7 @@ mod tests {
         let state = JoinState {
             status: JoinStatus::Waiting,
             sealed: None,
+            challenge: None,
         };
         assert_eq!(serde_json::to_string(&state).unwrap(), r#"{"status":"waiting"}"#);
         let secret = SealedSecret {

@@ -2,9 +2,15 @@
 //! heartbeat. The server stores ciphertext only and checks who may write what ([`authorize_op`]); phones verify the
 //! same rules, then apply each op per record.
 //!
-//! - **Ops** ([`Op`]): one change of one record, sealed with the view key (`body`, opaque here), signed by its author's
-//!   device key. Each author numbers its ops 1, 2, 3, ... (`counter`); the server refuses a counter that does not rise
-//!   and assigns each accepted op the account's next `seq`.
+//! - **Ops** ([`Op`]): one change of one record ([`OpBody`]), sealed with the view key (`body`, opaque to the server),
+//!   signed by its author's device key. Each author numbers its ops 1, 2, 3, ... (`counter`); the server refuses a
+//!   counter that does not rise and assigns each accepted op the account's next `seq`.
+//!
+//! Who may write what is checked twice. The server, which cannot open bodies, checks the signed envelope against the
+//! roster ([`authorize_op`]: the author's role comes from the roster, never from the op). Every phone checks it again,
+//! then opens the body (sealed with the envelope as associated data, [`body_associated_data`]) and refuses a change the
+//! op's signed class does not allow ([`check_change`]): a restrictive op carries only a typed [`Restriction`], which
+//! can only tighten.
 //! - **Checkpoints** ([`Checkpoint`]): the primary's sealed snapshot of everything up to `seq`, with
 //!   [`applied_hash`](applied_hash_step) of the ops it contains. The server keeps the latest two and drops the ops up
 //!   to the older one.
@@ -222,6 +228,163 @@ pub fn authorize_op<'a>(op: &Op, entries: &'a [RosterEntry]) -> Result<&'a Membe
     }
 }
 
+/// The tables an op may change (the per-table apply rules live with the phones' store).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Table {
+    Grants,
+    AutopilotSettings,
+    Audit,
+    AutopilotMemory,
+    Profiles,
+    Targets,
+    Accounts,
+    McpServers,
+    DesktopKeys,
+    ConnectionPrefs,
+    Secrets,
+    Meta,
+    /// A viewer's suggestions (a connection, a credential, a vault item), keyed `<author device id>/<id>`.
+    Proposals,
+}
+
+/// The only changes a restrictive op may make: each can only tighten, whatever state it meets, so applying one late,
+/// twice or out of order never loosens anything. No free-form put is restrictive.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "restriction", rename_all = "snake_case")]
+pub enum Restriction {
+    /// Revoke one grant (revoked wins over any concurrent edit).
+    RevokeGrant {
+        grant_id: String,
+    },
+    /// Autopilot to Lockdown (Lockdown wins over every other mode).
+    Lockdown,
+    /// End a running Bypass now (a stopped Bypass stays stopped).
+    StopBypass,
+}
+
+/// What one op does.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Change {
+    Put {
+        table: Table,
+        key: String,
+        value: serde_json::Value,
+    },
+    Remove {
+        table: Table,
+        key: String,
+    },
+    Restrict(Restriction),
+}
+
+/// The plaintext of an op's `body`, sealed with the view key with [`body_associated_data`] as the AEAD's associated
+/// data. The server never sees it; phones open it and refuse the op unless [`check_change`] allows its change for its
+/// signed class and author.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpBody {
+    pub v: u32,
+    pub change: Change,
+}
+
+/// Longest record key (characters).
+pub const MAX_RECORD_KEY_CHARS: usize = 256;
+
+/// The associated data an op body is sealed with: context `reins/op-body/v1`, `account` (string), `epoch` (u64),
+/// `author` (string), `counter` (u64), `class` (string), `notify` (bool). The op's signature covers the sealed body
+/// (by its SHA-256) and these fields; the seal ties the plaintext, and so its table, key and kind of change, to them:
+/// a body opened under any other envelope fails authentication.
+#[must_use]
+pub fn body_associated_data(op: &Op) -> Vec<u8> {
+    let mut c = Canon::new(contexts::OP_BODY);
+    c.u32(op.v).str(&op.account).u64(op.epoch).str(&op.author).u64(op.counter).str(op.class.as_str()).bool(op.notify);
+    c.finish()
+}
+
+/// Why an opened op is not applied.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum ChangeRefusal {
+    #[error("unsupported op body version")]
+    Version,
+    #[error("a restrictive op only carries a restriction, and a restriction only travels as a restrictive op")]
+    NotRestrictive,
+    #[error("a proposal only puts or withdraws its author's own proposal")]
+    NotOwnProposal,
+    #[error("the primary only resolves proposals (removes them); it never writes one")]
+    PrimaryProposal,
+    #[error("a record key must be 1 to 256 characters without control characters")]
+    BadKey,
+}
+
+fn check_key(key: &str) -> Result<(), ChangeRefusal> {
+    if key.is_empty() || key.chars().count() > MAX_RECORD_KEY_CHARS || key.chars().any(char::is_control) {
+        Err(ChangeRefusal::BadKey)
+    } else {
+        Ok(())
+    }
+}
+
+/// Whether an op of `op.class` by `op.author` (already authorized by [`authorize_op`] against the roster, and its
+/// body opened with [`body_associated_data`]) may make `body.change`:
+///
+/// - `restrictive` carries exactly a [`Restriction`], and a restriction travels only as `restrictive`: a viewer cannot
+///   label a put or a removal "restrictive" to have it applied;
+/// - `proposal` puts or removes a [`Table::Proposals`] record keyed `<author>/...`, nothing else;
+/// - `primary` may change every table, except that it never writes a proposal (it removes one to resolve it).
+pub fn check_change(op: &Op, body: &OpBody) -> Result<(), ChangeRefusal> {
+    if body.v != crate::PROTOCOL_VERSION {
+        return Err(ChangeRefusal::Version);
+    }
+    match (&body.change, op.class) {
+        (Change::Restrict(r), OpClass::Restrictive) => match r {
+            Restriction::RevokeGrant {
+                grant_id,
+            } => check_key(grant_id),
+            Restriction::Lockdown | Restriction::StopBypass => Ok(()),
+        },
+        (Change::Restrict(_), _) | (_, OpClass::Restrictive) => Err(ChangeRefusal::NotRestrictive),
+        (
+            Change::Put {
+                table,
+                key,
+                ..
+            }
+            | Change::Remove {
+                table,
+                key,
+            },
+            OpClass::Proposal,
+        ) => {
+            check_key(key)?;
+            let own = key.strip_prefix(op.author.as_str()).is_some_and(|rest| rest.len() > 1 && rest.starts_with('/'));
+            if *table == Table::Proposals && own {
+                Ok(())
+            } else {
+                Err(ChangeRefusal::NotOwnProposal)
+            }
+        }
+        (
+            Change::Put {
+                table: Table::Proposals,
+                ..
+            },
+            OpClass::Primary,
+        ) => Err(ChangeRefusal::PrimaryProposal),
+        (
+            Change::Put {
+                key,
+                ..
+            }
+            | Change::Remove {
+                key,
+                ..
+            },
+            OpClass::Primary,
+        ) => check_key(key),
+    }
+}
+
 /// `POST /reins/api/ops`: ops of the calling device, in counter order. All are stored or none (an op already stored,
 /// byte for byte, counts as stored: a retry after a lost answer).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -416,6 +579,131 @@ mod tests {
         let e5 =
             next(&e4, RosterReason::Enroll, member("v", 2), vec![member("w", 3), member("p", 1), member("y", 5)], 50);
         vec![e1, e2, e3, e4, e5]
+    }
+
+    fn body(change: Change) -> OpBody {
+        OpBody {
+            v: 1,
+            change,
+        }
+    }
+
+    fn put(table: Table, key: &str) -> Change {
+        Change::Put {
+            table,
+            key: key.to_owned(),
+            value: serde_json::json!({"mode": "bypass"}),
+        }
+    }
+
+    #[test]
+    fn a_permissive_change_labelled_restrictive_is_refused() {
+        use OpClass::{Primary, Proposal, Restrictive};
+        let viewer = |class| op("w", 5, class, 1);
+        // A viewer's put (Bypass on, a new grant) as "restrictive": the roster allows a viewer's restrictive op, the
+        // change does not.
+        assert_eq!(
+            check_change(&viewer(Restrictive), &body(put(Table::AutopilotSettings, "mode"))),
+            Err(ChangeRefusal::NotRestrictive)
+        );
+        let remove = Change::Remove {
+            table: Table::Grants,
+            key: "g1".to_owned(),
+        };
+        assert_eq!(check_change(&viewer(Restrictive), &body(remove)), Err(ChangeRefusal::NotRestrictive));
+        // The typed restrictions are fine, from anyone the roster lets pull the brake.
+        for r in [
+            Restriction::Lockdown,
+            Restriction::StopBypass,
+            Restriction::RevokeGrant {
+                grant_id: "g1".to_owned(),
+            },
+        ] {
+            assert_eq!(check_change(&viewer(Restrictive), &body(Change::Restrict(r.clone()))), Ok(()));
+            // ...and only as restrictive ops.
+            assert_eq!(
+                check_change(&viewer(Proposal), &body(Change::Restrict(r.clone()))),
+                Err(ChangeRefusal::NotRestrictive)
+            );
+            assert_eq!(
+                check_change(&op("v", 5, Primary, 1), &body(Change::Restrict(r))),
+                Err(ChangeRefusal::NotRestrictive)
+            );
+        }
+        // Proposals: only the author's own, only in the proposals table.
+        assert_eq!(check_change(&viewer(Proposal), &body(put(Table::Proposals, "w/p1"))), Ok(()));
+        assert_eq!(
+            check_change(&viewer(Proposal), &body(put(Table::Proposals, "v/p1"))),
+            Err(ChangeRefusal::NotOwnProposal)
+        );
+        assert_eq!(
+            check_change(&viewer(Proposal), &body(put(Table::Proposals, "w/"))),
+            Err(ChangeRefusal::NotOwnProposal)
+        );
+        assert_eq!(
+            check_change(&viewer(Proposal), &body(put(Table::Proposals, "wx/p1"))),
+            Err(ChangeRefusal::NotOwnProposal)
+        );
+        assert_eq!(
+            check_change(&viewer(Proposal), &body(put(Table::Grants, "w/p1"))),
+            Err(ChangeRefusal::NotOwnProposal)
+        );
+        // The primary changes records and resolves proposals, but never writes one.
+        assert_eq!(check_change(&op("v", 5, Primary, 1), &body(put(Table::Grants, "g1"))), Ok(()));
+        assert_eq!(
+            check_change(&op("v", 5, Primary, 1), &body(put(Table::Proposals, "v/p1"))),
+            Err(ChangeRefusal::PrimaryProposal)
+        );
+        let resolve = Change::Remove {
+            table: Table::Proposals,
+            key: "w/p1".to_owned(),
+        };
+        assert_eq!(check_change(&op("v", 5, Primary, 1), &body(resolve)), Ok(()));
+        assert_eq!(check_change(&op("v", 5, Primary, 1), &body(put(Table::Grants, ""))), Err(ChangeRefusal::BadKey));
+        let v2 = OpBody {
+            v: 2,
+            change: Change::Restrict(Restriction::Lockdown),
+        };
+        assert_eq!(check_change(&viewer(Restrictive), &v2), Err(ChangeRefusal::Version));
+    }
+
+    #[test]
+    fn a_changed_class_table_or_epoch_breaks_the_signature() {
+        use crate::roster::tests::fake_verify;
+        // The body as sealed (here its plaintext stands in for the ciphertext: the signature covers its hash).
+        let sealed = |b: &OpBody| encode_payload(&serde_json::to_vec(b).unwrap());
+        let mut signed = op("w", 5, OpClass::Restrictive, 1);
+        signed.body = sealed(&body(Change::Restrict(Restriction::Lockdown)));
+        signed.sig = encode_sig(&fake_sign(&[2; 32], &signed.signing_bytes().unwrap()));
+        let verifies = |o: &Op| fake_verify(&[2; 32], &o.signing_bytes().unwrap(), &parse_sig(&o.sig).unwrap());
+        assert!(verifies(&signed));
+        let mut relabelled = signed.clone();
+        relabelled.class = OpClass::Primary;
+        assert!(!verifies(&relabelled));
+        let mut other_table = signed.clone();
+        other_table.body = sealed(&body(put(Table::Grants, "g1")));
+        assert!(!verifies(&other_table));
+        let mut other_epoch = signed.clone();
+        other_epoch.epoch = 4;
+        assert!(!verifies(&other_epoch));
+        // The seal's associated data changes with every envelope field, so a body moved under another envelope does
+        // not open.
+        let aad = body_associated_data(&signed);
+        for o in [relabelled, other_epoch] {
+            assert_ne!(body_associated_data(&o), aad);
+        }
+        let mut renotified = signed;
+        renotified.notify = true;
+        assert_ne!(body_associated_data(&renotified), aad);
+        // Wire format of a body.
+        let v = serde_json::to_value(body(Change::Restrict(Restriction::RevokeGrant {
+            grant_id: "g1".to_owned(),
+        })))
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"v": 1, "change": {"kind": "restrict", "restriction": "revoke_grant", "grant_id": "g1"}})
+        );
     }
 
     #[test]

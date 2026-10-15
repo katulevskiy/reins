@@ -412,7 +412,8 @@ pub fn previous_primary(entries: &[RosterEntry]) -> Option<&Member> {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Roster {
     pub entries: Vec<RosterEntry>,
-    /// The owner seed and view key, encrypted under a key derived from the master key (opaque to the server).
+    /// The owner seed and view key, sealed with authenticated encryption under a key derived from the master key
+    /// (opaque to the server).
     #[serde(default)]
     pub recovery_wrap: Option<String>,
 }
@@ -425,7 +426,10 @@ pub struct RosterAppend {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_wrap: Option<String>,
     /// `handover` only, required: the owner seed and the account keys sealed to the new primary's box key, kept for it
-    /// until it fetches and drops them (`GET`/`DELETE /reins/api/handover-bundle`).
+    /// until it fetches and drops them (`GET`/`DELETE /reins/api/handover-bundle`). A sealed box does not say who
+    /// sealed it, so the old primary signs the plaintext first with its signing key, over this entry's hash
+    /// (sign-then-seal); the new primary refuses a bundle whose signature does not verify against the previous
+    /// entry's primary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle: Option<String>,
     /// `recovery` only, required: the master password hash of the recovery code or master password, checked and

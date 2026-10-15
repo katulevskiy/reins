@@ -8,6 +8,7 @@ pub mod canon;
 pub mod connector;
 pub mod desktop;
 pub mod device;
+pub mod enroll;
 pub mod gmail;
 pub mod ids;
 pub mod join;

@@ -43,8 +43,16 @@ pub mod contexts {
     pub const APPLIED: &str = "reins/applied/v1";
     /// An answer to a request, pairing or join, signed by the primary ([`crate::answer::SignedAnswer`]).
     pub const ANSWER: &str = "reins/answer/v1";
-    /// What a phone's MAC proves when it enrolls without a tap ([`crate::join::enroll_proof_message`]).
+    /// A joining phone's commitment to its nonce ([`crate::enroll::commitment`]).
+    pub const ENROLL_COMMIT: &str = "reins/enroll-commit/v1";
+    /// The six digits both phones compare when one enrolls ([`crate::enroll::Transcript::code`]).
+    pub const ENROLL_CODE: &str = "reins/enroll-code/v1";
+    /// What a phone's MAC proves when it enrolls without a tap ([`crate::enroll::Transcript::proof_message`]).
     pub const ENROLL_PROOF: &str = "reins/enroll-proof/v1";
+    /// The key that MAC is made with ([`crate::enroll::proof_key`]).
+    pub const ENROLL_PROOF_KEY: &str = "reins/enroll-proof-key/v1";
+    /// The plaintext of an op's body ([`crate::oplog::OpBody`]), the associated data its seal binds.
+    pub const OP_BODY: &str = "reins/op-body/v1";
 }
 
 /// Writes one canonical message. Start with [`Canon::new`] and its context, add the fields in their documented order,
@@ -214,7 +222,11 @@ mod tests {
             contexts::HEARTBEAT,
             contexts::APPLIED,
             contexts::ANSWER,
+            contexts::ENROLL_COMMIT,
+            contexts::ENROLL_CODE,
             contexts::ENROLL_PROOF,
+            contexts::ENROLL_PROOF_KEY,
+            contexts::OP_BODY,
         ];
         let set: std::collections::BTreeSet<_> = all.iter().collect();
         assert_eq!(set.len(), all.len());
