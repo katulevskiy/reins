@@ -10,11 +10,15 @@
 //! {"push": {"default_branch": null, "refs": [{"kind": "branch", "name": "main", "change": "update", "force": true,
 //!           "files": [["A", ".env"]]}]}}
 //! -> {"lines": ["deletes the home directory"], "tripwire": true, "unreadable": false, "deletes": true}
+//! {"mcp": {"tool": "drop_database", "arguments": "{\"db\": \"orders\"}"}}
+//! {"neutral": {"class": "command", "target": "rm -rf build  # approved", "details": [], "context": []}}
+//! -> {"target": "rm -rf build", "details": [], "context": []}   (the risk's third view, risk::neutral_facts)
 //! ```
 
 use std::io::{BufRead, Write};
 
 use reins_core::autopilot::risk::{self, Context, Outcome};
+use reins_core::autopilot::situation::Facts;
 use reins_core::types::{GitFileView, GitPushView, GitRefView};
 use serde_json::{Value, json};
 
@@ -83,6 +87,28 @@ fn main() {
             break;
         };
         let v: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+        if v["neutral"].is_object() {
+            // the risk's third view of these facts (risk::neutral_facts)
+            let strings = |key: &str| -> Vec<String> {
+                v["neutral"][key]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                    .unwrap_or_default()
+            };
+            let facts = Facts {
+                class: v["neutral"]["class"].as_str().unwrap_or_default().to_owned(),
+                target: v["neutral"]["target"].as_str().unwrap_or_default().to_owned(),
+                details: strings("details"),
+                context: strings("context"),
+                ..Facts::default()
+            };
+            let n = risk::neutral_facts(&facts);
+            let answer = json!({"target": n.target, "details": n.details, "context": n.context});
+            if writeln!(out, "{answer}").and_then(|()| out.flush()).is_err() {
+                break;
+            }
+            continue;
+        }
         let c = if let Some(cmd) = v["command"].as_str() {
             risk::command_context(cmd)
         } else if let Some(files) = v["files"].as_array() {
@@ -90,6 +116,11 @@ fn main() {
             risk::files_context(&paths)
         } else if v["push"].is_object() {
             risk::push_context(&push_view(&v["push"]))
+        } else if v["mcp"].is_object() {
+            risk::mcp_context(
+                v["mcp"]["tool"].as_str().unwrap_or_default(),
+                v["mcp"]["arguments"].as_str().unwrap_or_default(),
+            )
         } else {
             // not a question this reads: uncertain, as the phone would hold it
             risk::files_context(&[])

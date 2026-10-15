@@ -96,6 +96,23 @@ on the cumulative distribution:
 AI-written text can only raise the risk. A full pass that says "benign" cannot hide what the facts pass saw, and a
 reason or body that leaks a secret raises it to catastrophic.
 
+The agent also writes into the facts: its command (a comment, what `echo` prints, a commit message), the names it
+chooses (folders, files, branches), the values the context line quotes. So a third view, `S_neutral`, renders the
+facts with those set to fixed placeholders (`risk::neutral_facts`): the command as the guard's tokenizer reads it
+(comments gone) with printed text and messages as `…`, every quoted value of the context line as `"…"`, branch and
+tag names as `…`, a file's folders as `…`. It is read in the same run as the other two whenever it differs from
+`S_facts` (one batch of three instead of two), and joins the rule:
+
+    P(class ≥ k) = max over S_facts, S_full, S_neutral
+
+Steering in a name can then lower neither the class nor the hold: the view without it decides as much as the views
+with it. A model or runtime that returns no risk for the third view leaves no risk at all (Overnight holds).
+
+A database dropped or emptied (`DROP`, `TRUNCATE`, `FLUSHALL`, `dropDatabase`, or an MCP tool named so, or the SQL a
+query tool runs) on a host not known to be local is a tripwire: a production-looking host, or one whose name says
+nothing, and for an MCP tool, arguments that name no host at all. Local, development and staging hosts, and a
+command line without a host (the local socket), are left to the model.
+
 ## 5. Model architecture
 
 | option | phone cost | calibration | data | regressions |

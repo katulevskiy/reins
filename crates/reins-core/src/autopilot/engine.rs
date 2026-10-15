@@ -775,6 +775,10 @@ impl Engine {
         facts.connection_history = self.store.ap_history(&subject.connection_id).ok();
         facts.target_is_new = (!facts.target.is_empty()).then_some(novel);
         (s.s_facts, s.s_full) = situation::render(&facts, &subject.described.ai);
+        // The risk's third view: the facts with what the agent wrote into them as placeholders (risk::neutral_facts),
+        // read in the same run when it differs; its class can only raise the risk.
+        let neutral =
+            rates_risk.then(|| situation::render_facts(&risk::neutral_facts(&facts))).filter(|n| *n != s.s_facts);
 
         let young = gates::young(age, self.cfg.new_connection_secs)
             .then(|| "a connection paired less than 10 minutes ago".to_owned());
@@ -793,7 +797,7 @@ impl Engine {
 
         let judged = {
             let profile = self.ap_profile_loaded(ctx, &subject.connection_id)?;
-            Box::pin(self.ap_judge(&s, profile, now)).await
+            Box::pin(self.ap_judge(&s, neutral.as_deref(), profile, now)).await
         };
         let (judged, probs) = match judged {
             Ok(j) => j,
@@ -1016,22 +1020,33 @@ impl Engine {
     }
 
     /// Runs the model on the two texts and scores them against the profile.
+    /// `neutral`: the risk's third view (risk::neutral_facts), when it differs from the facts.
     async fn ap_judge(
         &self,
         s: &Suggestion,
+        neutral: Option<&str>,
         profile: &mut (StoredProfile, Vec<MemoryRow>),
         now: i64,
     ) -> Result<(Judged, Probs), String> {
-        let states = if s.s_full == s.s_facts {
-            vec![s.s_facts.clone()]
-        } else {
-            vec![s.s_facts.clone(), s.s_full.clone()]
-        };
+        let mut states = vec![s.s_facts.clone()];
+        if s.s_full != s.s_facts {
+            states.push(s.s_full.clone());
+        }
+        let full_at = states.len() - 1;
+        if let Some(n) = neutral {
+            states.push(n.to_owned());
+        }
+        let n_states = states.len();
         let (laya, passes) = self.ap_infer(states).await?;
+        if passes.len() != n_states {
+            return Err("the model returned another number of passes".to_owned());
+        }
         let model_id = laya.id.clone();
         let risk_config = laya.config.risk();
         let facts = passes.first().cloned().ok_or("the model returned nothing")?;
-        let full = passes.get(1).cloned().unwrap_or_else(|| facts.clone());
+        let full = passes.get(full_at).cloned().unwrap_or_else(|| facts.clone());
+        // The neutral view's risk joins the two-pass rule; a view without a risk leaves none (held in Overnight).
+        let neutral_risk = neutral.map(|_| passes.last().and_then(|p| p.risk));
         self.ap_train_if_due(profile, &model_id, now).await;
         let dim = facts.pooled.len();
         let rows: Vec<&MemoryRow> =
@@ -1070,7 +1085,12 @@ impl Engine {
                 e_facts: Embedding::from_vector(&facts.pooled),
                 e_full: Embedding::from_vector(&full.pooled),
                 neighbours,
-                risk: facts.risk.zip(full.risk).map(|(f, u)| decide::risk_combine(f, u)),
+                risk: facts.risk.zip(full.risk).map(|(f, u)| decide::risk_combine(f, u)).and_then(
+                    |r| match neutral_risk {
+                        None => Some(r),
+                        Some(n) => n.map(|n| decide::risk_combine(r, n)),
+                    },
+                ),
                 risk_declared: risk_config.is_some(),
                 risk_threshold: risk_config.and_then(model::RiskConfig::overnight_threshold),
             },
@@ -1529,7 +1549,7 @@ impl Engine {
                     let memory = self.store.ap_memory(&p.id)?;
                     (p, memory)
                 };
-                self.ap_judge(&s, &mut profile, now).await.map_err(CoreError::service)?.0
+                self.ap_judge(&s, None, &mut profile, now).await.map_err(CoreError::service)?.0
             }
             None => return Err(CoreError::invalid("Autopilot kept nothing to learn from for this request")),
         };
@@ -1938,7 +1958,7 @@ impl Engine {
         };
         let memory = self.store.ap_memory(&stored.id)?;
         let mut profile = (stored, memory);
-        let (judged, probs) = self.ap_judge(&s, &mut profile, s.at).await.map_err(CoreError::service)?;
+        let (judged, probs) = self.ap_judge(&s, None, &mut profile, s.at).await.map_err(CoreError::service)?;
         let verdict = decide::would(probs, s.novel, judged.escalate, thresholds);
         let done = Suggestion {
             verdict,
