@@ -283,8 +283,8 @@ private struct QuickMenuCard: View {
                         title: "\(AutopilotText.overnightName) on",
                         until: settings.overnightUntil.flatMap { AutopilotText.isUntilOff($0) ? nil : $0 },
                         hint: "Tap to stop",
-                        fill: Palette.overnight,
-                        text: Palette.dynamic(0xFFFFFF, 0x0E1033),
+                        fill: Palette.violetFill,
+                        text: Palette.onField,
                         action: onStopOvernight
                     )
                 } else {

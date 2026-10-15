@@ -153,9 +153,9 @@ struct ModeHero: View {
             Button(action: onStopOvernight) {
                 Text("Stop \(AutopilotText.overnightName)")
                     .font(RFont.sans(16, .semibold))
-                    .foregroundStyle(Palette.dynamic(0xFFFFFF, 0x0E1033))
+                    .foregroundStyle(Palette.onField)
                     .frame(maxWidth: .infinity, minHeight: 46)
-                    .background(Palette.overnight, in: Capsule())
+                    .background(Palette.violetFill, in: Capsule())
                     .contentShape(Capsule())
             }
             .buttonStyle(PressDim())
