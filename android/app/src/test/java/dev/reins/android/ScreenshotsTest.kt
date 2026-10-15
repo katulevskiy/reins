@@ -762,6 +762,100 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("50-ssh")
     }
 
+    // ---- Reins Secrets ------------------------------------------------------------------------------------------------
+
+    @Test
+    fun secretsUiEnvRelease() {
+        openView(TestData.envReleaseView(TestData.envRelease(purpose = "Run the dev server")))
+        await("envRelease")
+        shoot("android-secrets-env-release")
+        rule.onNodeWithTag("envAlwaysAsk").performScrollTo()
+        frames()
+        shoot("android-secrets-env-release-scrolled")
+    }
+
+    @Test
+    fun secretsUiEnvReleaseAgent() {
+        val release = TestData.envRelease(
+            runner = "agent:claude-code", runnerLabel = "Claude Code", programWarning = "In a temporary folder",
+            program = "/tmp/build-8841/node_modules/.bin/npm",
+            command = "/tmp/build-8841/node_modules/.bin/npm run dev -- --port 3000 --host 0.0.0.0 && node scripts/seed.js --reset --users 25",
+            variables = listOf("DATABASE_URL", "STRIPE_KEY", "SESSION_SECRET", "OPENAI_API_KEY", "SENTRY_DSN", "REDIS_URL", "S3_BUCKET", "S3_SECRET", "MAILGUN_KEY", "JWT_SECRET"),
+        )
+        openView(TestData.envReleaseView(release))
+        await("envWarning")
+        shoot("android-secrets-env-release-agent")
+        rule.onNodeWithTag("envRoot").performScrollTo()
+        frames()
+        shoot("android-secrets-env-release-agent-scrolled")
+    }
+
+    @Test
+    fun secretsUiEnvReleaseOneShot() {
+        val release = TestData.envRelease(
+            env = "production", variables = listOf("STRIPE_KEY"), print = true, alwaysAsk = true, command = "reins secrets get STRIPE_KEY", lease = 60u,
+        )
+        openView(TestData.envReleaseView(release))
+        await("noStanding")
+        shoot("android-secrets-env-release-print")
+    }
+
+    @Test
+    fun secretsUiRemember() {
+        openView(TestData.envReleaseView())
+        click("lifetime:HOUR")
+        click("lifetimeCustom")
+        await("rememberSheet")
+        click("moreToggle")
+        await("envCommands")
+        click("envCommand:prefix:2")
+        frames()
+        shoot("android-secrets-remember")
+        click("rememberConfirm")
+        frames()
+        shoot("android-secrets-remember-dock")
+    }
+
+    @Test
+    fun secretsUiStore() {
+        openView(TestData.secretsStoreView())
+        await("storeCheck")
+        shoot("android-secrets-store")
+        click("storeEnv:0")
+        frames()
+        rule.onNodeWithTag("storeTokens").performScrollTo()
+        frames()
+        shoot("android-secrets-store-open")
+    }
+
+    @Test
+    fun secretsUiToken() {
+        openView(TestData.tokenStoreView())
+        await("tokenCheck")
+        shoot("android-secrets-token")
+    }
+
+    @Test
+    fun secretsUiGrantDetail() {
+        core.grants = listOf(TestData.secretsGrant(), TestData.grant("g1"))
+        core.secretsRevokeAnswer = dev.reins.core.SecretsRevoked(1u, 1u, listOf("work-laptop"))
+        launch()
+        tap("tabGrants")
+        tap("grant:s1")
+        await("revokeEverywhere")
+        rule.onNodeWithTag("revokeEverywhere").performScrollTo()
+        frames()
+        shoot("android-secrets-grant")
+        click("revokeEverywhere")
+        frames()
+        shoot("android-secrets-grant-confirm", dialogs = true)
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Revoke")).let { it[it.fetchSemanticsNodes().lastIndex] }.performClick()
+        await("notDelivered:0")
+        rule.onNodeWithTag("revokeResult").performScrollTo()
+        frames()
+        shoot("android-secrets-grant-revoked")
+    }
+
     @Test
     fun gitlabSignIn() {
         launch()

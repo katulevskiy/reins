@@ -654,9 +654,12 @@ class FakeCore : ReinsCoreInterface {
 
     val secretsRevoked = mutableListOf<Pair<String?, String?>>()
 
+    /** What "Revoke on all computers" answers. */
+    @Volatile var secretsRevokeAnswer = SecretsRevoked(ended = 0u, told = 0u, notDelivered = emptyList())
+
     override suspend fun revokeSecretsEverywhere(project: String?, env: String?): SecretsRevoked {
         secretsRevoked += project to env
-        return SecretsRevoked(ended = 0u, told = 0u, notDelivered = emptyList())
+        return secretsRevokeAnswer
     }
 
     val alwaysAsk = mutableMapOf<Pair<String, String>, Boolean?>()

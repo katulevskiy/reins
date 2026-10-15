@@ -72,6 +72,9 @@ internal fun MainPage(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
                 when {
                     purchase != null -> PurchaseSection(purchase, ui.purchase, viewModel)
                     git != null -> GitFacts(view, git)
+                    view.envRelease != null -> EnvReleaseFacts(view.envRelease!!, ui, viewModel)
+                    view.secretsStore != null -> SecretsStoreFacts(view.secretsStore!!)
+                    view.tokenStore != null -> TokenStoreFacts(view.tokenStore!!)
                     view.mcp != null -> McpFacts(view.mcp!!)
                     view.ask != null -> AskFacts(view.ask!!)
                     view.secrets != null -> SecretsFacts(view.secrets!!)

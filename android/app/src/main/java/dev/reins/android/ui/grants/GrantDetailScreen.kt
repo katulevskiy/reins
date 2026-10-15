@@ -128,6 +128,8 @@ fun GrantDetailScreen(
     onDelete: suspend (grantId: String) -> String? = { null },
     /** Extend: a running grant goes on for this many seconds from now. */
     onExtend: suspend (grantId: String, seconds: Long) -> String? = { _, _ -> null },
+    /** A permission for secrets: "Revoke on all computers" for its project and environment. */
+    onRevokeSecrets: (suspend (project: String?, env: String?) -> RevokeEverywhereResult)? = null,
 ) {
     val c = LocalColors.current
     val grants by state.grants.collectAsStateWithLifecycle()
@@ -183,6 +185,9 @@ fun GrantDetailScreen(
                         }
                     }
                 }
+            }
+            if (grant.action == "secrets" && onRevokeSecrets != null) {
+                RevokeEverywhere(grant.secretsProject, grant.secretsEnv, onRevokeSecrets, Modifier.padding(top = 18.dp))
             }
             Spacer(Modifier.height(130.dp))
         }

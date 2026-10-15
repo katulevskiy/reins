@@ -434,6 +434,7 @@ private fun SignedInContent(
                     onResume = { id, seconds, standing -> resumeGrant(container, authenticator, id, seconds, standing) },
                     onDelete = { id -> deleteGrant(container, id) },
                     onExtend = { id, seconds -> dev.reins.android.ui.grants.extendGrant(container, authenticator, id, seconds) },
+                    onRevokeSecrets = { project, env -> dev.reins.android.ui.grants.revokeSecretsEverywhere(container, project, env) },
                     onRevoke = { id ->
                         try {
                             container.feedback.play(Event.Revoked)

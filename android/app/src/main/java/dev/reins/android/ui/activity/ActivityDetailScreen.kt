@@ -158,7 +158,17 @@ fun ActivityDetailScreen(
                 outcome = outcomeLine(entry),
                 icon = icon,
                 tint = tint,
-                below = { AskedSections(entry) },
+                below = {
+                    AskedSections(entry)
+                    shown.envRelease?.let { release ->
+                        dev.reins.android.ui.grants.RevokeEverywhere(
+                            release.project,
+                            release.env,
+                            { project, env -> dev.reins.android.ui.grants.revokeSecretsEverywhere(container, project, env) },
+                            Modifier.padding(top = 18.dp),
+                        )
+                    }
+                },
                 footer = dock,
             ),
         )

@@ -22,8 +22,11 @@ enum class Badge { Pen, Search, Read, List, Send, Trash, Shield, People, Key, Te
 fun destructive(view: ApprovalView): Boolean {
     // A desktop question says itself: one asked every time for a key or a command it cannot read is not red.
     view.ask?.let { return it.destructive }
-    return view.noStanding && view.kind == ApprovalKind.WRITE && view.purchase == null
+    return view.noStanding && view.kind == ApprovalKind.WRITE && view.purchase == null && !isSecretsMove(view)
 }
+
+/** Secrets moved between the computer and the phone: asked every time for its own reasons, not as a danger. */
+fun isSecretsMove(view: ApprovalView): Boolean = view.envRelease != null || view.secretsStore != null || view.tokenStore != null
 
 /** The request removes something (a repository, an issue, a branch). */
 fun deletes(view: ApprovalView): Boolean =
@@ -43,7 +46,7 @@ fun heroTone(view: ApprovalView): HeroTone = when {
 fun badge(view: ApprovalView): Badge = when {
     destructive(view) && deletes(view) -> Badge.Trash
     view.ask != null -> Badge.Question
-    view.secrets != null -> Badge.Key
+    view.secrets != null || isSecretsMove(view) -> Badge.Key
     view.ssh != null -> Badge.Terminal
     view.purchase != null -> Badge.Cart
     view.kind == ApprovalKind.GRANT -> Badge.Shield
@@ -103,6 +106,12 @@ fun heroSentence(view: ApprovalView): List<Span> {
             val s = view.secrets!!
             listOf(Span("Wants "), Span(plural(s.items.size, "secret"), true), Span("\nfor "), Span(untrusted(s.command), true))
         }
+        view.envRelease != null -> envHero(view.envRelease!!)
+        view.secretsStore != null -> listOf(Span("Wants to save "), Span(plural(view.secretsStore!!.total.toInt(), "secret"), true), Span("\nin your "), Span("vault", true))
+        view.tokenStore != null -> {
+            val t = view.tokenStore!!
+            listOf(Span("Wants to save a\n"), Span("${serviceName(t.service)} token", true))
+        }
         view.ssh != null -> {
             val s = view.ssh!!
             listOf(wants, Span("sign in", true), Span(" to\n"), Span(untrusted(sshTarget(s.host, s.hostKey)), true))
@@ -152,6 +161,16 @@ fun heroSentence(view: ApprovalView): List<Span> {
     }
 }
 
+/** "Wants **3 variables**\nof **shop · dev**"; a printed value: "Wants to **print API_KEY**\nfrom **shop · prod**". */
+private fun envHero(r: dev.reins.core.EnvReleaseView): List<Span> {
+    val where = Span("${untrusted(r.project)} · ${untrusted(r.env)}", true)
+    return when {
+        r.print -> listOf(Span("Wants to "), Span("print ${r.variables.singleOrNull()?.let(::untrusted) ?: plural(r.variables.size, "value")}", true), Span("\nfrom "), where)
+        r.allVariables -> listOf(Span("Wants "), Span("every variable", true), Span("\nof "), where)
+        else -> listOf(Span("Wants "), Span(plural(r.variables.size, "variable"), true), Span("\nof "), where)
+    }
+}
+
 private fun deleteWords(refs: List<GitRefView>): String = when {
     refs.size > 1 -> "delete ${refs.size} refs"
     refs[0].kind == "tag" -> "delete tag ${untrusted(refs[0].shortName)}"
@@ -169,6 +188,7 @@ fun approveLabel(view: ApprovalView, draft: ApprovalDraft): String = when {
     view.kind == ApprovalKind.GRANT || view.kind == ApprovalKind.ACCOUNTS -> "Allow"
     destructive(view) && deletes(view) -> "Delete"
     view.kind == ApprovalKind.SEND -> "Send"
+    view.secretsStore != null || view.tokenStore != null -> "Save"
     (view.kind == ApprovalKind.SEARCH || view.kind == ApprovalKind.READ || view.kind == ApprovalKind.FETCH) && view.messages.isNotEmpty() ->
         "Share ${sharedCount(view, draft)}"
     else -> "Approve"
@@ -178,10 +198,11 @@ fun denyLabel(view: ApprovalView): String = if (view.ask != null) "No" else "Den
 
 /** The remembered approval is "anything like this" (the user's explicit choice), wider than the screen shows. */
 fun likeThisOn(view: ApprovalView, draft: ApprovalDraft): Boolean =
-    draft.likeThis && view.quick?.allow != null && draft.lifetime != LifetimeKind.ONCE && draft.allMail == null && !view.noStanding
+    view.envRelease == null && draft.likeThis && view.quick?.allow != null && draft.lifetime != LifetimeKind.ONCE && draft.allMail == null && !view.noStanding
 
 /** Nothing here may be remembered: the dock says "Asked every time" instead of offering how long. */
-fun rememberLocked(view: ApprovalView): Boolean = view.noStanding || view.purchase != null
+fun rememberLocked(view: ApprovalView, draft: ApprovalDraft = ApprovalDraft()): Boolean =
+    view.noStanding || view.purchase != null || (view.envRelease != null && !envRememberable(view, draft))
 
 /** 3600 → "1 hour", 28800 → "8 hours", 86400 → "1 day", 604800 → "1 week", 2592000 → "30 days". */
 fun periodWords(secs: Long): String = when {
@@ -250,3 +271,16 @@ fun splitPath(path: String): Pair<String, String> {
 
 /** "Ada Lovelace <ada@example.com>" → "Ada Lovelace". */
 fun authorName(author: String): String = displayName(author)
+
+/**
+ * What the dock says a remembered release of an environment covers when it is wider than this run: the command pattern
+ * ("npm run *"), and "every variable" when chosen; null when it is just this command and these variables.
+ */
+fun envWiderLabel(view: ApprovalView, draft: ApprovalDraft): String? {
+    val release = view.envRelease ?: return null
+    if (draft.lifetime == LifetimeKind.ONCE || !envRememberable(view, draft)) return null
+    val command = envCommandOf(view, draft)?.takeIf { it.id != "exact" }
+    val every = draft.envAllVariables && !release.allVariables
+    if (command == null && !every) return null
+    return listOfNotNull(command?.let { untrusted(it.label) }, "every variable".takeIf { every }).joinToString(" · ")
+}

@@ -73,9 +73,10 @@ internal fun Dock(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewMod
         }
         when {
             view.kind == ApprovalKind.GRANT -> GrantPeriodRow(view, ui)
-            rememberLocked(view) -> LockedRow()
+            rememberLocked(view, ui.draft) -> LockedRow()
             else -> {
                 if (likeThisOn(view, ui.draft)) LikeThisNote()
+                envWiderLabel(view, ui.draft)?.let { EnvScopeNote(it) }
                 Segments(view, ui, viewModel)
             }
         }
@@ -102,6 +103,27 @@ private fun LikeThisNote() {
         Icon(Icons.Rounded.UnfoldMore, null, Modifier.size(15.dp), tint = c.warning)
         Spacer(Modifier.width(6.dp))
         RText("Anything like this", RType.sans(12.5f, FontWeight.SemiBold), c.warning, maxLines = 1)
+    }
+}
+
+/** A remembered release covers more than this exact command or these variables: the dock says what. */
+@Composable
+private fun EnvScopeNote(text: String) {
+    val c = LocalColors.current
+    val nav = LocalApprovalNav.current
+    Row(
+        Modifier
+            .padding(bottom = 8.dp)
+            .clip(CircleShape)
+            .background(c.warning.copy(alpha = 0.13f))
+            .pressable(shape = CircleShape, label = "What it covers") { nav.overlay = ApprovalOverlay.Remember }
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("envScopeNote"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.UnfoldMore, null, Modifier.size(15.dp), tint = c.warning)
+        Spacer(Modifier.width(6.dp))
+        RText(text, RType.mono(12.5f, FontWeight.SemiBold), c.warning, maxLines = 1, ltr = true)
     }
 }
 

@@ -322,4 +322,28 @@ class ApprovalLogicTest {
         assertNull(choice.standing)
         assertTrue(choice.selectedMessageIds.isEmpty())
     }
+
+    @Test
+    fun `an env release remembers the picked command pattern and every variable only when chosen`() {
+        val view = dev.reins.android.TestData.envReleaseView()
+        val exact = ok(dev.reins.android.ui.approval.buildDecision(view, ApprovalDraft(lifetime = LifetimeKind.WEEK)))
+        assertEquals(dev.reins.core.SecretsScopeChoice("exact", false), exact.standing!!.scope.secrets)
+        val wide = ok(dev.reins.android.ui.approval.buildDecision(view, ApprovalDraft(lifetime = LifetimeKind.USES, uses = 3, envCommand = "prefix:1", envAllVariables = true)))
+        assertEquals(dev.reins.core.SecretsScopeChoice("prefix:1", true), wide.standing!!.scope.secrets)
+        assertEquals(3u, wide.standing!!.maxUses)
+        // A pattern the core did not offer falls back to the exact command; "anything like this" does not apply.
+        val unknown = ok(dev.reins.android.ui.approval.buildDecision(view, ApprovalDraft(lifetime = LifetimeKind.DAY, envCommand = "prefix:9", likeThis = true)))
+        assertEquals(dev.reins.core.SecretsScopeChoice("exact", false), unknown.standing!!.scope.secrets)
+    }
+
+    @Test
+    fun `an env release asked every time or printed is never remembered`() {
+        val data = dev.reins.android.TestData
+        for (release in listOf(data.envRelease(alwaysAsk = true), data.envRelease(print = true), data.envRelease(commands = emptyList()))) {
+            val choice = ok(dev.reins.android.ui.approval.buildDecision(data.envReleaseView(release), ApprovalDraft(lifetime = LifetimeKind.DAY)))
+            assertNull(choice.standing)
+        }
+        val switched = ok(dev.reins.android.ui.approval.buildDecision(data.envReleaseView(), ApprovalDraft(lifetime = LifetimeKind.DAY, envAlwaysAsk = true)))
+        assertNull(switched.standing)
+    }
 }

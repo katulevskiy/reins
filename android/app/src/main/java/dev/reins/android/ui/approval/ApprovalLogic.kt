@@ -67,6 +67,12 @@ data class ApprovalDraft(
      * screen shows. Never on by default: a remembered approval covers what is on screen (see [buildChoice]).
      */
     val likeThis: Boolean = false,
+    /** A project's environment for a command: the id of the offered command pattern a remembered approval covers. */
+    val envCommand: String = "exact",
+    /** A project's environment for a command: a remembered approval covers every variable, not only those asked. */
+    val envAllVariables: Boolean = false,
+    /** "Ask every time" was switched on this screen for the environment: nothing is remembered. */
+    val envAlwaysAsk: Boolean? = null,
 )
 
 /**
@@ -90,6 +96,7 @@ const val LIKE_THIS_ALL_MAX_SECS = 604_800L
  * goes with a time limit of a week at most, else the request is refused rather than silently narrowed or widened.
  */
 fun buildDecision(view: ApprovalView, draft: ApprovalDraft): BuildResult {
+    if (view.envRelease != null) return buildEnvRelease(view, draft)
     val like = view.quick?.allow
     val applies = like != null && draft.likeThis && draft.lifetime != LifetimeKind.ONCE && draft.allMail == null &&
         !view.noStanding && view.kind != ApprovalKind.GRANT && view.kind != ApprovalKind.ACCOUNTS
@@ -176,6 +183,50 @@ private fun customProblem(draft: ApprovalDraft): String? {
     if (draft.lifetime != LifetimeKind.CUSTOM) return null
     val unit = draft.customUnit
     return if (draft.customAmount in 1..unit.max) null else "Choose 1 to ${unit.max} ${unit.many}."
+}
+
+/**
+ * A project's environment may be remembered: the core offers command patterns, the environment is not asked every time
+ * (by its settings, as a production one, by the user's choice on this screen) and nothing is printed.
+ */
+fun envRememberable(view: ApprovalView, draft: ApprovalDraft): Boolean {
+    val release = view.envRelease ?: return false
+    return !view.noStanding && release.commands.isNotEmpty() && !release.alwaysAsk && !release.print && draft.envAlwaysAsk != true
+}
+
+/** The offered command pattern [draft] picked, else the narrowest (the exact command); null when none is offered. */
+fun envCommandOf(view: ApprovalView, draft: ApprovalDraft): dev.reins.core.CommandOption? {
+    val commands = view.envRelease?.commands.orEmpty()
+    return commands.firstOrNull { it.id == draft.envCommand } ?: commands.firstOrNull { it.id == "exact" } ?: commands.firstOrNull()
+}
+
+/**
+ * Releasing a project's environment for one command, and, when remembered, a permission for the command pattern picked
+ * (the exact command unless the user chose a wider one) and the variables asked for (or every one, when chosen).
+ */
+private fun buildEnvRelease(view: ApprovalView, draft: ApprovalDraft): BuildResult {
+    if (draft.lifetime == LifetimeKind.ONCE || !envRememberable(view, draft)) return BuildResult.Ok(ApprovalChoice(emptyList(), null))
+    if (draft.lifetime == LifetimeKind.USES && draft.uses !in 1..MAX_USES) return BuildResult.Invalid("Uses must be between 1 and $MAX_USES.")
+    customProblem(draft)?.let { return BuildResult.Invalid(it) }
+    val command = envCommandOf(view, draft) ?: return BuildResult.Ok(ApprovalChoice(emptyList(), null))
+    val scope = GrantScopeChoice(
+        allMail = false,
+        selectedMessagesOnly = false,
+        senderAddresses = emptyList(),
+        senderDomains = emptyList(),
+        subjectPattern = null,
+        recipientAddresses = emptyList(),
+        recipientDomains = emptyList(),
+        resources = emptyList(),
+        classes = emptyList(),
+        secrets = dev.reins.core.SecretsScopeChoice(command.id, draft.envAllVariables && view.envRelease?.allVariables == false),
+    )
+    return BuildResult.Ok(
+        ApprovalChoice(
+            emptyList(),
+            StandingGrant(lifetimeSeconds(view, draft), if (draft.lifetime == LifetimeKind.USES) draft.uses.toUInt() else null, scope),
+        ),
+    )
 }
 
 /** Time boxes offered for "everything in this integration": never open-ended, and never for changing anything. */
