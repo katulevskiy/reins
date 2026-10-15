@@ -25,6 +25,9 @@ mod sidebar;
 mod story;
 mod work;
 
+/// A request in one sentence, for the notification that says to check the phone.
+pub(crate) use story::spoken;
+
 use std::sync::Arc;
 use std::time::Duration;
 

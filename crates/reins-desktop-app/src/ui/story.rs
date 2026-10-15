@@ -431,6 +431,12 @@ pub fn answer(e: &Entry, phone: &str) -> (Icon, Tone, String) {
     }
 }
 
+/// The request as one plain sentence, for a notification: "Claude Code wants to force-push to acme-web · main".
+#[must_use]
+pub fn spoken(e: &Entry) -> String {
+    Story::of(e).sentence.iter().map(|w| w.text.as_str()).collect()
+}
+
 /// The field a request waits on: its kind's ([`Field::of`]), or delete when a rule says it can't be undone, read when
 /// a tool only reads.
 #[must_use]
@@ -617,6 +623,8 @@ mod tests {
         );
         let s = Story::of(&e);
         assert_eq!(said(&s), "Claude Code wants to *force-push* to *acme-web · main*");
+        // The notification says it plainly.
+        assert_eq!(spoken(&e), "Claude Code wants to force-push to acme-web · main");
         assert_eq!((s.tone, s.risk), (Tone::Field(Field::Delete), Some("Rewrites history")));
         assert_eq!(s.agent, Mark::Brand(Brand::Claude));
         assert_eq!(s.title, "Force-push to acme-web · main");

@@ -47,6 +47,19 @@ const APPROVED_PAUSE: Duration = Duration::from_millis(1600);
 const TURNED_ON_PAUSE: Duration = Duration::from_millis(900);
 /// How often the health checks look whether they are due.
 const HEALTH_TICK: Duration = Duration::from_secs(5);
+/// The phone apps' chimes (`ios/Reins/Resources/Sounds`, the same in `android/.../res/raw`).
+const CHIME_REQUEST: &[u8] = include_bytes!("../../../ios/Reins/Resources/Sounds/fx_chime_request.wav");
+const CHIME_DONE: &[u8] = include_bytes!("../../../ios/Reins/Resources/Sounds/fx_chime_done.wav");
+
+/// A chime the app plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Chime {
+    /// A request waits on the phone (on macOS the system's Glass).
+    Request,
+    /// A work session was approved: a grant was created.
+    Done,
+}
+
 /// `--demo`: how long the phone takes to answer the test.
 const DEMO_ANSWER: Duration = Duration::from_secs(4);
 /// The longest "what" the tray's first line quotes.
@@ -591,7 +604,7 @@ impl Model {
             if !config.phone {
                 continue;
             }
-            let (title, body) = reins_desktop::notify::text(&e.what);
+            let (title, body) = reins_desktop::notify::text(&ui::spoken(e));
             cx.show_system_notification(gpui::SystemNotification {
                 tag: format!("reins-waiting-{}", e.id).into(),
                 title: title.into(),
@@ -600,7 +613,21 @@ impl Model {
             });
         }
         if config.phone && config.sound {
-            reins_desktop::notify::chime(&self.backend.paths().state_dir);
+            self.play(Chime::Request);
+        }
+    }
+
+    /// One of the phone apps' chimes, as the Sounds switch (`[notify] sound`) allows; never in the demo.
+    pub(crate) fn play(&self, chime: Chime) {
+        if self.demo.is_some() || !self.backend.notify_config().sound {
+            return;
+        }
+        let state_dir = &self.backend.paths().state_dir;
+        match chime {
+            // macOS has its own: the system's Glass.
+            Chime::Request if cfg!(target_os = "macos") => reins_desktop::notify::chime(state_dir),
+            Chime::Request => reins_desktop::notify::play_wav(state_dir, "chime-request.wav", CHIME_REQUEST),
+            Chime::Done => reins_desktop::notify::play_wav(state_dir, "chime-done.wav", CHIME_DONE),
         }
     }
 
