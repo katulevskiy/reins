@@ -19,11 +19,24 @@ val LocalLiveTimers = compositionLocalOf { true }
 
 @Composable
 fun ReinsTheme(content: @Composable () -> Unit) {
-    val colors = if (isSystemInDarkTheme()) RColors.Dark else RColors.Light
+    val context = LocalContext.current
+    val appearance by Appearance.state(context)
+    // Paper or Graphite override the system (Settings › Appearance).
+    val dark = appearance.theme.dark(isSystemInDarkTheme())
+    val colors = if (dark) RColors.Dark else RColors.Light
     val selection = remember(colors) { TextSelectionColors(colors.violet, colors.violet.copy(alpha = 0.3f)) }
     // The few Material 3 pieces we use (loaders, sliders, shapes) take their colours from the same palette.
     val scheme = remember(colors) { materialScheme(colors) }
-    val appearance by Appearance.state(LocalContext.current)
+    // The status and navigation bar icons follow the paper, not the system.
+    val window = (context as? android.app.Activity)?.window
+    if (window != null) {
+        androidx.compose.runtime.SideEffect {
+            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
     val highContrast = rememberHighContrast()
     val prefs = remember(appearance, highContrast) { SignalPrefs(grain = appearance.grain && !highContrast) }
     val reduceMotion = rememberReduceMotion()
