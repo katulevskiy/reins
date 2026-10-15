@@ -36,7 +36,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.reins.android.design.LocalColors
@@ -79,13 +78,15 @@ internal fun GitFacts(view: ApprovalView, git: GitPushView) {
                             untrusted(ref.shortName),
                             mono = true,
                             valueTag = "gitRef:$i",
+                            // A branch is what is approved: wrapped whole, never cut in the middle.
+                            maxLines = Int.MAX_VALUE,
                             trailing = if (ref.change == "update" && ref.kind != "tag") null else {
                                 { RefChip(gitChipLabel(ref), ref, Modifier.testTag("gitChip:$i")) }
                             },
                         )
                     }
                 }
-                view.account?.takeIf { it.isNotBlank() }?.let { add { FactRow("Account", untrusted(it), mono = true) } }
+                view.account?.takeIf { it.isNotBlank() }?.let { add { FactRow("Account", untrusted(it), mono = true, maxLines = Int.MAX_VALUE) } }
                 git.refs.forEachIndexed { i, ref ->
                     when {
                         ref.commits.isNotEmpty() || ref.commitCount > 0u -> add {
@@ -139,7 +140,7 @@ internal fun CommitsPage(view: ApprovalView, refIndex: Int) {
     val nav = LocalApprovalNav.current
     val ref = view.git?.refs?.getOrNull(refIndex) ?: return
     Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 2.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        RText(untrusted(ref.shortName), RType.mono(13f), c.secondary, Modifier.weight(1f, fill = false), maxLines = 1, ltr = true)
+        RText(untrusted(ref.shortName), RType.mono(13f), c.secondary, Modifier.weight(1f, fill = false).testTag("gitCommitsRef:$refIndex"), ltr = true)
         if (ref.filesChanged > 0u) {
             RText(
                 " · ${filesWord(ref.filesChanged.toInt())}",
@@ -185,11 +186,12 @@ private fun CommitRow(commit: GitCommitView, modifier: Modifier, onOpen: () -> U
             .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RText(commit.shortSha, RType.mono(12.5f), c.tertiary, Modifier.width(66.dp).align(Alignment.Top).padding(top = 2.dp), maxLines = 1, ltr = true)
+        RText(untrusted(commit.shortSha), RType.mono(12.5f), c.tertiary, Modifier.width(66.dp).align(Alignment.Top).padding(top = 2.dp), maxLines = 1, ltr = true)
         Column(Modifier.weight(1f)) {
-            RText(untrusted(commit.subject).ifEmpty { "(no message)" }, RType.sans(15f, lineHeight = 19.5f), c.text, maxLines = 2)
+            // Wrapped whole: a commit that does not open shows its subject nowhere else.
+            RText(untrusted(commit.subject).ifEmpty { "(no message)" }, RType.sans(15f, lineHeight = 19.5f), c.text, Modifier.testTag("commitRowSubject"))
             Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                RText(untrusted(authorName(commit.author)), RType.sans(12.5f), c.tertiary, Modifier.weight(1f, fill = false), maxLines = 1)
+                RText(untrusted(authorName(commit.author)), RType.sans(12.5f), c.tertiary, Modifier.weight(1f, fill = false))
                 Counts(commit.additions, commit.deletions, 12f)
                 if (commit.hiddenChars) WarnTag("Hidden", c.danger, Modifier.testTag("commitHidden"), small = true)
             }
@@ -291,10 +293,9 @@ private fun FileRow(file: GitFileView, tag: String, expandable: Boolean) {
                     withStyle(SpanStyle(color = c.tertiary)) { append(dir) }
                     append(name)
                 },
-                Modifier.weight(1f),
+                // Wrapped whole, never cut in the middle: the path is what the change touches.
+                Modifier.weight(1f).testTag("$tag:path"),
                 style = RType.mono(13f).copy(color = c.text),
-                maxLines = 1,
-                overflow = TextOverflow.MiddleEllipsis,
             )
             Spacer(Modifier.width(8.dp))
             if (file.hiddenChars) {

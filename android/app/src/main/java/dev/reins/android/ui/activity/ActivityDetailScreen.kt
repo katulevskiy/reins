@@ -163,6 +163,7 @@ fun ActivityDetailScreen(
                 outcome = outcomeLine(entry),
                 icon = icon,
                 tint = tint,
+                glyph = outcomeGlyph(entry),
                 below = {
                     AskedSections(entry)
                     shown.envRelease?.let { release ->
@@ -260,6 +261,13 @@ private fun outcomeLook(entry: ActivityEntry): Pair<ImageVector, (dev.reins.andr
     Outcome.Denied -> Icons.Rounded.Cancel to { c -> c.danger }
     Outcome.Failed -> Icons.Rounded.Warning to { c -> c.warning }
     Outcome.Approved -> Icons.Rounded.CheckCircle to { c -> c.success }
+}
+
+/** The glyph beside how an entry ended on its field: from its own outcome, never a tick for one that was refused. */
+internal fun outcomeGlyph(entry: ActivityEntry): Glyph = when {
+    entry.outcome == "denied" -> if (entry.decidedBy == "lockdown") Glyph.Lock else Glyph.CircleClose
+    dev.reins.android.ui.common.entryTense(entry.outcome) == dev.reins.android.ui.common.Tense.Done -> Glyph.CircleCheck
+    else -> Glyph.CircleAlert
 }
 
 /** The entry's hero: what it touched with what it did, the request, large; and who decided. */
@@ -376,7 +384,8 @@ private fun AskedRow(label: String, value: String, modifier: Modifier = Modifier
             leading()
             Spacer(Modifier.width(7.dp))
         }
-        RText(value, if (mono) RType.mono(13.5f) else RType.sans(15f), c.text, Modifier.weight(1f), maxLines = 4, ltr = mono)
+        // Wrapped, never cut: the agent, the folder and the reason are what was asked.
+        RText(value, if (mono) RType.mono(13.5f) else RType.sans(15f), c.text, Modifier.weight(1f), ltr = mono)
     }
 }
 
@@ -428,8 +437,9 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
     var whyOpen by rememberSaveable { mutableStateOf(false) }
     val denied = entry.outcome == "denied"
     SettingsGroup(gap = 14.dp) {
-        ValueRow("When", value = whenLine(entry.at))
-        entry.account?.takeIf { it.isNotBlank() }?.let { ValueRow("Account", value = it, mono = true) }
+        // "What it asked" says when already.
+        if (entry.request == null) ValueRow("When", value = whenLine(entry.at))
+        entry.account?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { ValueRow("Account", Modifier.testTag("detailAccount"), value = it, mono = true, valueMaxLines = Int.MAX_VALUE) }
         info.query?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { ValueRow("Search", Modifier.testTag("detailQuery"), value = it, mono = true) }
         if (info.messages.isNotEmpty()) {
             val noun = if (entry.op.isNotEmpty()) "Items" else "Emails"

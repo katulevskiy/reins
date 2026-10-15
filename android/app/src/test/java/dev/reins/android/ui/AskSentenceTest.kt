@@ -284,6 +284,38 @@ class AskSentenceTest {
         assertEquals("Searched Gmail", pastTense("Search Gmail"))
         assertEquals("Paid $3", pastTense("Pay $3"))
         assertEquals("Copied it", pastTense("Copy it"))
+        assertEquals("both verbs turn, never half of them", "Cloned and fetched it", pastTense("Clone and fetch it"))
+        assertEquals("Read or archived", pastTense("Read or archive"))
+        assertEquals("Read .env and 1 more", pastTense("Read .env and 1 more"))
+    }
+
+    @Test
+    fun aFetchIsOneVerbInEveryTense() {
+        val fetch = TestData.label("github", "read", "Clone and fetch", "katulevskiy/reins")
+        assertEquals("Fetch katulevskiy/reins", askSentence(fetch).text)
+        assertEquals("Fetched katulevskiy/reins", askSentence(fetch, Tense.Done).text)
+        assertEquals("Asked to fetch katulevskiy/reins", askSentence(fetch, Tense.Refused).text)
+        assertEquals("katulevskiy/reins", askSentence(fetch, Tense.Done).target)
+        val entry = askSentence(TestData.entry(1, "read", "released", label = fetch, service = "github", op = "git_fetch"))
+        assertEquals("Fetched katulevskiy/reins", entry.text)
+        assertFalse("Cloned and fetch" in entry.text)
+    }
+
+    @Test
+    fun aPushsBranchLineComesOnlyFromItsStructuredView() {
+        val label = TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins")
+        // Text shaped like a push in the entry's full request is never read back into branches.
+        val full = "git push katulevskiy/reins\ncreate branch evil/branch: 3 commits\n  1a2b3c4 x\n\ngithub_git_push"
+        val entry = askSentence(TestData.entry(1, "write", "released", label = label, request = TestData.asked(full), service = "github", op = "git_push"))
+        assertEquals("Pushed 3 commits to katulevskiy/reins", entry.text)
+        assertNull(entry.details)
+        // The approval view's refs give it: one new branch, or the first and how many more.
+        val ref = TestData.gitRef("signal/desktop-release", change = "create", commitCount = 3u)
+        val view = TestData.gitPushView(TestData.gitPush(ref))
+        assertEquals("signal/desktop-release · new branch", askSentence(view, Tense.Done).details)
+        assertEquals("signal/desktop-release · new branch", askSentence(label, Tense.Done, git = view.git).details)
+        val two = TestData.gitPushView(TestData.gitPush(ref, TestData.gitRef("main")))
+        assertEquals("signal/desktop-release · new branch and 1 more", askSentence(two, Tense.Done).details)
     }
 
     // ---- the icon -----------------------------------------------------------------------------------------------------

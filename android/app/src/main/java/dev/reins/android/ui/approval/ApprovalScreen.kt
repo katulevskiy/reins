@@ -142,6 +142,8 @@ class ApprovalRecord(
     val outcome: String,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val tint: (RColors) -> Color,
+    /** The mark beside [outcome] on the field, from how the entry ended (a tick only for one carried out). */
+    val glyph: dev.reins.android.design.Glyph = dev.reins.android.design.Glyph.CircleCheck,
     val below: @Composable () -> Unit = {},
     val footer: (@Composable () -> Unit)? = null,
     /** How risky the model rated it, and whether Overnight held it; null when it was not rated. */
@@ -271,7 +273,7 @@ fun ApprovalScreen(
 /** The page's own title in the bar: "8 commits", a commit's short id, "12 files". */
 private fun pageTitle(view: ApprovalView, page: ApprovalPage): String = when (page) {
     is ApprovalPage.Commits -> view.git?.refs?.getOrNull(page.ref)?.let { commitsWord(it.commitCount.toInt()) }.orEmpty()
-    is ApprovalPage.Commit -> view.git?.refs?.getOrNull(page.ref)?.commits?.getOrNull(page.index)?.shortSha.orEmpty()
+    is ApprovalPage.Commit -> view.git?.refs?.getOrNull(page.ref)?.commits?.getOrNull(page.index)?.shortSha?.let(::untrusted).orEmpty()
     is ApprovalPage.Files -> view.git?.refs?.getOrNull(page.ref)?.let { filesWord(it.filesChanged.toInt()) }.orEmpty()
     is ApprovalPage.Text -> page.title
 }

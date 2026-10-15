@@ -201,6 +201,8 @@ fun ValueRow(
     mono: Boolean = false,
     open: Boolean? = null,
     valueColor: Color? = null,
+    /** Lines of [value] before it is cut; a value that was approved passes [Int.MAX_VALUE] so it wraps whole. */
+    valueMaxLines: Int = 1,
     onClick: (() -> Unit)? = null,
 ) {
     val c = LocalColors.current
@@ -227,7 +229,7 @@ fun ValueRow(
                 if (mono) RType.mono(14f) else RType.sans(15f),
                 valueColor ?: if (onClick != null) c.secondary else c.text,
                 Modifier.widthIn(max = 230.dp),
-                maxLines = 1,
+                maxLines = valueMaxLines,
                 ltr = mono,
             )
         }

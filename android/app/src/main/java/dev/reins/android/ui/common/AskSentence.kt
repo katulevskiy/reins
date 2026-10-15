@@ -106,7 +106,9 @@ fun askSentence(
         provider == "ssh" && subject.isNotEmpty() -> Phrase("Sign in to a server", details = hostLine(subject))
         provider.startsWith("mcp:") -> mcpPhrase(subject, tail.removePrefix("on ").trim(), host = null)
         provider == "desktop" && action == "ask" -> Phrase(lead, question = true, kind = ValueKind.Name)
-        action == "push" || (action == "delete" && GIT_DELETE.matches(lead)) -> gitPhrase(lead, subject, git)
+        action == "push" || (action == "delete" && GIT_DELETE.matches(lead)) -> gitPhrase(lead, subject, refLines(git))
+        // One verb, so it reads in the past tense too ("Fetched", never "Cloned and fetch"): a clone is a fetch.
+        lead == "Clone and fetch" && subject.isNotEmpty() -> subjectPhrase("Fetch", subject, label.code, tail, ValueKind.Identifier)
         provider == "gmail" && action == "send" -> sendPhrase(listOf(subject), moreOf(tail))
         lead.startsWith("Share a file") -> if (subject.isEmpty()) Phrase("Share a file") else Phrase("Share ", subject, stand = "a file")
         lead.endsWith(":") -> if (subject.isEmpty()) Phrase(lead.removeSuffix(":")) else Phrase("$lead ", subject, question = true, stand = "", kind = ValueKind.Name)
@@ -176,6 +178,7 @@ fun askSentence(entry: ActivityEntry, who: String? = null): AskSentence {
     val label = entry.label
     if (label != null) {
         val request = entry.request
+        // The branch line comes only from the push's structured view (the entry's page reads it); never from the text.
         return askSentence(label, tense, who, cwd = request?.cwd, full = request?.full?.takeIf { label.provider == "terminal" })
     }
     return legacy(entry, tense)
@@ -222,7 +225,7 @@ fun askSentence(
                 }
             }
             val names = refs.joinToString(", ") { serifLine(it.shortName) }.ifEmpty { null }
-            val details = if (deletes || refs.all { it.kind == "tag" }) names else pushDetails(git)
+            val details = if (deletes || refs.all { it.kind == "tag" }) names else pushLine(refLines(git))
             Triple(repoPhrase(lead, untrusted(git.repo), details), view.service, if (deletes) "delete" else "push")
         }
         view.secrets != null -> {
@@ -340,15 +343,15 @@ private fun mcpPhrase(tool: String, server: String, host: String?): Phrase {
 private val GIT_DELETE = Regex("^Delete (branch|tag) .+ from$|^Delete \\d+ refs from$")
 
 /** A push or a deletion from the core's label: the repository is the target, branches and tags go to the mono line. */
-private fun gitPhrase(lead: String, repo: String, git: GitPushView?): Phrase {
-    val names = git?.refs?.joinToString(", ") { serifLine(it.shortName) }?.ifEmpty { null }
+private fun gitPhrase(lead: String, repo: String, refs: List<RefLine>): Phrase {
+    val names = refs.joinToString(", ") { serifLine(it.name) }.ifEmpty { null }
     val one = Regex("^Delete (branch|tag) (.+) from$").find(lead)
     val tag = Regex("^Push tag (.+) to$").find(lead)
     val (head, details) = when {
         one != null -> "Delete a ${one.groupValues[1]} from" to one.groupValues[2]
         tag != null -> "Push a tag to" to tag.groupValues[1]
         lead.startsWith("Delete ") || lead.endsWith(" tags to") -> lead to names
-        else -> lead to pushDetails(git)
+        else -> lead to pushLine(refs)
     }
     return repoPhrase(head, repo, details)
 }
@@ -365,11 +368,18 @@ private fun repoPhrase(head: String, repo: String, details: String?): Phrase {
 }
 
 /** Where a push goes, in mono: "feature/x · new branch", "main", "feature/x and 1 more". */
-fun pushDetails(git: GitPushView?): String? {
-    val refs = git?.refs?.filter { it.change != "delete" }.orEmpty()
+fun pushDetails(git: GitPushView?): String? = pushLine(refLines(git))
+
+/** One ref of a push's structured view, for the mono line. */
+private data class RefLine(val name: String, val change: String, val kind: String)
+
+private fun refLines(git: GitPushView?): List<RefLine> = git?.refs.orEmpty().map { RefLine(it.shortName, it.change, it.kind) }
+
+private fun pushLine(all: List<RefLine>): String? {
+    val refs = all.filter { it.change != "delete" }
     val first = refs.firstOrNull() ?: return null
     val name = buildString {
-        append(serifLine(first.shortName))
+        append(serifLine(first.name))
         if (first.change == "create") append(if (first.kind == "tag") " · new tag" else " · new branch")
     }
     return if (refs.size > 1) "$name and ${refs.size - 1} more" else name
@@ -486,11 +496,27 @@ private val PAST_VERBS = mapOf(
     "give" to "gave", "begin" to "began", "label" to "labelled", "cancel" to "cancelled", "stop" to "stopped", "ask" to "asked",
 )
 
-/** "Push 3 commits to" → "Pushed 3 commits to", "Force-push" → "Force-pushed", "Run" → "Ran". */
+/**
+ * "Push 3 commits to" → "Pushed 3 commits to", "Force-push" → "Force-pushed", "Run" → "Ran"; two verbs joined by "and"
+ * or "or" both turn ("Read and archive" → "Read and archived"), never only the first.
+ */
 fun pastTense(phrase: String): String {
     val first = phrase.substringBefore(' ')
-    val verb = first.substringAfterLast('-')
-    if (verb.isEmpty() || !verb.all { it.isLetter() }) return phrase
+    val past = pastWord(first) ?: return phrase
+    val rest = phrase.substring(first.length)
+    val joined = Regex("^ (and|or) (\\S+)").find(rest)
+    val second = joined?.groupValues?.get(2)?.let(::pastWord)
+    return if (joined != null && second != null) {
+        past + " ${joined.groupValues[1]} " + second + rest.substring(joined.range.last + 1)
+    } else {
+        past + rest
+    }
+}
+
+/** One word in the past tense ("push" → "pushed", "Force-push" → "Force-pushed"); null when it is not a word. */
+private fun pastWord(word: String): String? {
+    val verb = word.substringAfterLast('-')
+    if (verb.isEmpty() || !verb.all { it.isLetter() }) return null
     val lower = verb.lowercase()
     val past = PAST_VERBS[lower] ?: when {
         lower.endsWith("e") -> lower + "d"
@@ -498,7 +524,7 @@ fun pastTense(phrase: String): String {
         else -> lower + "ed"
     }
     val cased = if (verb[0].isUpperCase()) past.replaceFirstChar { it.uppercase() } else past
-    return first.dropLast(verb.length) + cased + phrase.substring(first.length)
+    return word.dropLast(verb.length) + cased
 }
 
 /** The verb in lower case, a name that starts the phrase ("GitHub …") kept. */
