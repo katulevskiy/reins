@@ -278,14 +278,15 @@ struct AccountStatusLine: View {
         case nil:
             HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
-                Text("Checking…").font(RFont.sans(13)).foregroundStyle(Palette.secondary)
+                Text("Checking…").textRole(.meta).foregroundStyle(Palette.inkMeta)
             }
         case .ready:
             StatusPill(text: "Connected", tint: Palette.success)
         case .needsConsent:
-            Text(needsAgain).font(RFont.sans(13, .medium)).foregroundStyle(Palette.warning)
+            // A problem in words, amber, never just a red dot.
+            Text(needsAgain).textRole(.meta).foregroundStyle(Palette.warning)
         case let .unavailable(message):
-            Text(untrusted(message)).font(RFont.sans(13)).foregroundStyle(Palette.danger).lineLimit(3)
+            Text(untrusted(message)).textRole(.meta).foregroundStyle(Palette.danger).lineLimit(3)
         }
     }
 }
@@ -314,20 +315,21 @@ struct AccountRowView<Avatar: View>: View {
                     .truncationMode(.middle)
                     .environment(\.layoutDirection, .leftToRight)
                 AccountStatusLine(status: status, needsAgain: needsAgain)
-                if status == .needsConsent && canAllowAgain {
-                    ActionButton(title: "Allow again", kind: .secondary, enabled: !busy, compact: true, action: onAllowAgain)
-                        .padding(.top, 4)
-                        .accessibilityIdentifier("reconnect:\(title)")
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // The one-tap fix beside the problem.
+            if status == .needsConsent && canAllowAgain {
+                Button("Allow again", action: onAllowAgain)
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
+                    .disabled(busy)
+                    .accessibilityIdentifier("reconnect:\(title)")
+            }
             Button {
                 onRemove()
                 feedback.defaultTap()
             } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Palette.danger)
+                GlyphIcon(.trash, size: 18)
+                    .foregroundStyle(Palette.inkMeta)
                     .frame(width: 40, height: 40)
                     .contentShape(Circle())
             }
@@ -355,7 +357,7 @@ struct NoAccountsRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             // The message (what the service is for) is behind the group's (?), with the rest of its explanation.
-            Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
+            Text(title).textRole(.row).foregroundStyle(Palette.ink)
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)

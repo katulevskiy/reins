@@ -263,13 +263,14 @@ enum ServiceCopy {
     }
 
     /// The status line of an account that needs the user again.
+    /// What is wrong, in words; the fix ("Allow again") is a button beside it, never the same words twice.
     static func needsAgain(_ service: ServiceView) -> String {
         switch service.kind {
-        case "device": "Allow again"
+        case "device": "Access turned off"
         case "telegram": "Signed out"
         case "token": "Token expired"
         case "vault": "Locked"
-        default: "Allow again"
+        default: "Token expired"
         }
     }
 

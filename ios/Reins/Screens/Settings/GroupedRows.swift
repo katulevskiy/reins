@@ -53,9 +53,9 @@ struct GroupFooter: View {
             } label: {
                 Text("?")
                     .font(RFont.sans(12.5, .semibold))
-                    .foregroundStyle(open ? Palette.accent : Palette.secondary)
+                    .foregroundStyle(open ? Palette.onInverse : Palette.ink2)
                     .frame(width: 22, height: 22)
-                    .background(open ? Palette.accentSoft : Palette.controlFill, in: Circle())
+                    .background(open ? Palette.inverse : Palette.paperSunken, in: Circle())
                     .frame(width: 44, height: 30, alignment: .trailing)
                     .contentShape(Rectangle())
             }
@@ -64,8 +64,8 @@ struct GroupFooter: View {
             .accessibilityIdentifier("help")
             if open {
                 Text(text)
-                    .font(RFont.sans(13))
-                    .foregroundStyle(Palette.secondary)
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.ink2)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .transition(.opacity)
