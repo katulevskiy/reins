@@ -54,12 +54,14 @@ fun ActivityAutopilotSection(entry: ActivityEntry, onCorrect: suspend (Long, Ver
     var thanked by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val mode = when (entry.decidedBy) {
+        "overnight" -> AutopilotMode.OVERNIGHT
         "bypass" -> AutopilotMode.BYPASS
         "lockdown" -> AutopilotMode.LOCKDOWN
         else -> note?.mode ?: AutopilotMode.AUTO
     }
     val title = when (entry.decidedBy) {
         "autopilot" -> if (entry.outcome == "denied") "Denied by Autopilot" else "Approved by Autopilot"
+        "overnight" -> if (entry.outcome == "denied") "Denied by ${AutopilotText.OVERNIGHT}" else "Approved by ${AutopilotText.OVERNIGHT}"
         "bypass" -> "Approved during a bypass"
         "lockdown" -> "Denied by Lockdown"
         else -> "Autopilot suggested: ${AutopilotText.verdictWord(note?.suggested ?: Verdict.ASK).lowercase()}"
@@ -85,6 +87,7 @@ fun ActivityAutopilotSection(entry: ActivityEntry, onCorrect: suspend (Long, Ver
                     )
                 }
             }
+            RiskChip(note?.risk)
             if (note != null && (note.pApprove > 0f || note.pDeny > 0f)) {
                 ProbabilityRow("Approve", note.pApprove, c.success)
                 ProbabilityRow("Deny", note.pDeny, c.danger)

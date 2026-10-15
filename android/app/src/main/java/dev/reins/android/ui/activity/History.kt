@@ -176,6 +176,10 @@ fun HistoryRow(entry: ActivityEntry, nowSeconds: Long, first: Boolean, last: Boo
                 Spacer(Modifier.width(5.dp))
                 RText("${untrusted(entry.connectionLabel)} · ${rowTime(entry.at, nowSeconds)}", RType.sans(12.5f), c.tertiary, maxLines = 1)
             }
+            // The risk only when it says something (above low, or held); the entry's page always shows it.
+            entry.autopilot?.risk?.takeIf { dev.reins.android.autopilot.AutopilotText.riskWorthListing(it) }?.let { risk ->
+                dev.reins.android.ui.autopilot.RiskChip(risk, Modifier.padding(top = 5.dp).testTag("rowRisk:${entry.id}"), small = true)
+            }
         }
         Spacer(Modifier.width(10.dp))
         OutcomeMark(outcomeOf(entry), Modifier.padding(top = if (label != null) 2.dp else 0.dp).testTag("outcome:${entry.id}"))
@@ -191,6 +195,8 @@ fun OutcomeMark(outcome: Outcome, modifier: Modifier = Modifier) {
         Outcome.Failed -> Icon(Icons.Rounded.Warning, "Failed", modifier.size(18.dp), tint = c.warning)
         Outcome.Auto -> Marker(Icons.Rounded.Bolt, "Auto", c.accent, modifier)
         Outcome.AutoDenied -> Marker(Icons.Rounded.Bolt, "Auto", c.danger, modifier)
+        Outcome.Overnight -> Marker(dev.reins.android.ui.autopilot.OvernightIcon, dev.reins.android.autopilot.AutopilotText.OVERNIGHT, c.night, modifier)
+        Outcome.OvernightDenied -> Marker(dev.reins.android.ui.autopilot.OvernightIcon, dev.reins.android.autopilot.AutopilotText.OVERNIGHT, c.danger, modifier)
         Outcome.Grant -> Marker(Icons.Rounded.Key, "Grant", c.accent, modifier)
         Outcome.Bypass -> Marker(Icons.Rounded.Bolt, "Bypass", c.danger, modifier)
         Outcome.Lockdown -> Marker(Icons.Rounded.Lock, "Lockdown", c.secondary, modifier)

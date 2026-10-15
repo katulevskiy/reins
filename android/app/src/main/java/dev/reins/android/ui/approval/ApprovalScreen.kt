@@ -141,6 +141,8 @@ class ApprovalRecord(
     val tint: (RColors) -> Color,
     val below: @Composable () -> Unit = {},
     val footer: (@Composable () -> Unit)? = null,
+    /** How risky the model rated it, and whether Overnight held it; null when it was not rated. */
+    val risk: dev.reins.core.RiskView? = null,
 )
 
 /** The entry the approval screen shows again, or null for a request that waits. */

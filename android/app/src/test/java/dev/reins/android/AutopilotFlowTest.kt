@@ -917,7 +917,72 @@ class AutopilotFlowTest : FlowHarness() {
         assertEquals("Deny needs no check", 1, prompts.get())
     }
 
+    @Test
+    fun theApprovalScreenShowsTheRiskAndThatOvernightHeldIt() {
+        installModel()
+        core.suggestions["req1"] = TestData.suggestion(
+            "req1",
+            mode = AutopilotMode.OVERNIGHT,
+            risk = TestData.risk(dev.reins.core.RiskLevel.CATASTROPHIC, "deletes the default branch main", held = true),
+        )
+        openRequest(TestData.searchView())
+        awaitTag("risk")
+        rule.onNodeWithTag("riskLine", useUnmergedTree = true).assertTextContains("Risk: catastrophic · deletes the default branch main")
+        rule.onNodeWithTag("riskHeld").assertTextContains("Held by Overnight")
+    }
+
+    @Test
+    fun withoutARiskTheApprovalScreenShowsNone() {
+        installModel()
+        core.suggestions["req1"] = TestData.suggestion("req1")
+        openRequest(TestData.searchView())
+        awaitTag("suggestion")
+        assertFalse(has("risk"))
+    }
+
     // ---- activity -----------------------------------------------------------------------------------------------------
+
+    @Test
+    fun activityShowsOvernightsDecisionsAndTheirRisk() {
+        core.activity = listOf(
+            TestData.entry(5, "write", "denied", 1u, decidedBy = "overnight", autopilot = TestData.note(AutopilotMode.OVERNIGHT, risk = TestData.risk(dev.reins.core.RiskLevel.CATASTROPHIC, "force push to main", held = true))),
+            TestData.entry(4, "write", "released", 1u, decidedBy = "overnight", autopilot = TestData.note(AutopilotMode.OVERNIGHT, risk = TestData.risk(dev.reins.core.RiskLevel.BENIGN, "a feature branch"))),
+            TestData.entry(2, "read", "released", 1u),
+        )
+        launch()
+        awaitTag("entry:5")
+        // In the list (inside each row's one tap target): only the risk that says something.
+        fun inRow(tag: String) = rule.onAllNodes(androidx.compose.ui.test.hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        assertTrue(inRow("rowRisk:5"))
+        assertTrue(
+            rule.onAllNodes(androidx.compose.ui.test.hasTestTag("riskLine") and androidx.compose.ui.test.hasText("Risk: catastrophic · force push to main"), useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty(),
+        )
+        assertFalse("a low risk is left to the entry's page", inRow("rowRisk:4"))
+        assertFalse(inRow("rowRisk:2"))
+        assertTrue("its marker", rule.onAllNodes(androidx.compose.ui.test.hasText("Overnight"), useUnmergedTree = true).fetchSemanticsNodes().size >= 2)
+        assertEquals(dev.reins.android.ui.activity.Outcome.Overnight, dev.reins.android.ui.activity.outcomeOf(core.activity[1]))
+        assertEquals(dev.reins.android.ui.activity.Outcome.OvernightDenied, dev.reins.android.ui.activity.outcomeOf(core.activity[0]))
+        assertEquals("Denied by Overnight", dev.reins.android.ui.activity.outcomeLine(core.activity[0]))
+        tap("entry:4")
+        awaitTag("entryAutopilot")
+        rule.onNodeWithTag("entryAutopilotTitle", useUnmergedTree = true).assertTextContains("Allowed by Overnight")
+        awaitTag("risk")
+        rule.onNodeWithTag("riskLine", useUnmergedTree = true).assertTextContains("Risk: low · a feature branch")
+        assertFalse(has("riskHeld"))
+    }
+
+    @Test
+    fun aRequestOvernightDeniedSaysSoAndThatItHeldIt() {
+        core.activity = listOf(
+            TestData.entry(5, "write", "denied", 1u, decidedBy = "overnight", autopilot = TestData.note(AutopilotMode.OVERNIGHT, risk = TestData.risk(dev.reins.core.RiskLevel.CATASTROPHIC, "force push to main", held = true))),
+        )
+        launch()
+        tap("entry:5")
+        awaitTag("entryAutopilot")
+        rule.onNodeWithTag("entryAutopilotTitle", useUnmergedTree = true).assertTextContains("Denied by Overnight")
+        rule.onNodeWithTag("riskHeld").assertTextContains("Held by Overnight")
+    }
 
     private fun automaticEntries() {
         core.activity = listOf(

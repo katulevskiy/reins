@@ -106,6 +106,7 @@ internal fun grantOrigin(origin: String, label: String): String = when {
     origin == "retry" -> "A one-time pass after you approved late"
     origin == "starter" -> "Your starting rule, when you connected $label"
     origin == "bypass" || origin.startsWith("bypass:") -> "Approved by Bypass; ends with it"
+    origin == "overnight" || origin.startsWith("overnight:") -> "Approved by ${dev.reins.android.autopilot.AutopilotText.OVERNIGHT}; ends with it"
     else -> "Chosen while approving a request"
 }
 
