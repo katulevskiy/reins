@@ -231,6 +231,29 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("android-approval-git")
     }
 
+    /** A force push with hidden characters to the default branch, judged risky and held by Overnight: every line. */
+    @Test
+    fun aprWarnings() {
+        val ref = TestData.gitRef("main", force = true, commitCount = 2u, commits = listOf(TestData.designCommit().copy(hiddenChars = true)), filesChanged = 1u)
+        val view = pushView().copy(git = pushView().git!!.copy(refs = listOf(ref), defaultBranch = "main"), noStanding = true)
+        designApproval(
+            view,
+            TestData.suggestion("req20", mode = dev.reins.core.AutopilotMode.OVERNIGHT, risk = TestData.risk(dev.reins.core.RiskLevel.CATASTROPHIC, "rewrites main", held = true)),
+        )
+        shoot("sg-apr-warnings")
+    }
+
+    /** The Reins desktop app pairing: Reins' own ask, the name quoted on its row, the key's digits apart. */
+    @Test
+    fun pairingComputer() {
+        history()
+        core.pending = listOf(TestData.pairingItem("p1"))
+        core.pairing = PairingView("p1", "Reins desktop app on laptop", "laptop", byteArrayOf(7, 42, 88), 1_700_000_200, "4821 9930")
+        launch(link("pairing", "p1"))
+        await("keyFingerprint")
+        shoot("sg-pair-computer")
+    }
+
     @Test
     fun aprGmail() {
         designApproval(TestData.designMailView(now + 12).copy(createdAt = now - 48), TestData.suggestion("req1", verdict = dev.reins.core.Verdict.ASK, pApprove = 0.62f, pDeny = 0.2f))
@@ -711,7 +734,6 @@ abstract class ScreenshotsBase(private val suffix: String) {
         mcpServers()
         openView(TestData.mcpCallView(destructive = true))
         await("mcpDestructive")
-        rule.onNodeWithTag("mcpDestructive").performScrollTo()
         shoot("44-mcp-call-destructive")
     }
 
@@ -1533,8 +1555,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun connectComputer() {
         launch()
-        tap("tabSettings")
-        tap("connectComputer")
+        tap("tabConnections")
+        tap("connect")
+        tap("sheetTypeCode")
         await("scanQr")
         shoot("14f-connect-computer")
     }

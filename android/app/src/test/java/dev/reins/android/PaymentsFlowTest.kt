@@ -36,11 +36,11 @@ class PaymentsFlowTest : FlowHarness() {
         tap("shipTo:work")
         tap("payWith:card:visa")
         authResult = AuthResult.Cancelled
-        tap("approve")
+        hold("approve")
         awaitCore { prompts.get() == 1 }
         assertTrue("nothing is approved without the screen lock", core.purchaseApprovals.isEmpty())
         authResult = AuthResult.Success
-        tap("approve")
+        hold("approve")
         awaitCore { core.purchaseApprovals.isNotEmpty() }
         assertEquals("req20" to PurchaseChoice("card:visa", "work", null), core.purchaseApprovals.single())
     }
@@ -57,7 +57,7 @@ class PaymentsFlowTest : FlowHarness() {
         awaitTag("limitEach")
         rule.onNodeWithTag("limitEach").performTextReplacement("40")
         rule.onNodeWithTag("limitDay").performTextReplacement("80")
-        tap("approve")
+        hold("approve")
         awaitCore { core.purchaseApprovals.isNotEmpty() }
         val limit = core.purchaseApprovals.single().second.limit
         assertEquals(

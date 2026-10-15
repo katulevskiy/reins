@@ -882,7 +882,7 @@ class AutopilotFlowTest : FlowHarness() {
         core.suggestions["req1"] = TestData.suggestion("req1", novel = true)
         openRequest(TestData.searchView())
         awaitTag("suggestion")
-        rule.onNodeWithTag("suggestion").assertTextContains("Approve").assertTextContains("97%")
+        rule.onNodeWithTag("suggestion").assertTextContains("Autopilot would allow", substring = true).assertTextContains("97%", substring = true)
         assertFalse(has("getAutopilot"))
         assertFalse(has("suggestionDetail"))
         tap("suggestion")
