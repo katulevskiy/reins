@@ -93,8 +93,8 @@ fun ConnectionDetailScreen(
                 }
                 RText(
                     untrusted(connection.label),
-                    RType.sans(24f, FontWeight.SemiBold),
-                    c.text,
+                    RType.serif(34f, 38f),
+                    c.ink,
                     Modifier.padding(top = 12.dp).semantics { heading() }.testTag("connectionName"),
                     maxLines = 2,
                     align = TextAlign.Center,
