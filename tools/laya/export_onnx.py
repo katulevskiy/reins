@@ -390,10 +390,16 @@ def main():
         Tr = lc.fit_temperature(np.concatenate([rf, ru]), y)
         p_cat = lc.risk_combine(lc.softmax(rf, Tr), lc.softmax(ru, Tr))[:, lc.CATASTROPHIC]
         target = float(risk_cfg.get("recall_target", 0.995))
-        theta = lc.risk_threshold(p_cat, np.array([r["risk_full"] for r in vr]) == lc.CATASTROPHIC, target)
+        # the core's rules count as held (as in finetune.py); the lower threshold of the two ships (more holds, never
+        # fewer)
+        theta_int8 = lc.risk_threshold(p_cat, np.array([r["risk_full"] for r in vr]) == lc.CATASTROPHIC, target,
+                                       lc.rules_of(vr))
+        theta_ckpt = risk_cfg.get("thresholds", {}).get("overnight")
+        theta = min(theta_int8, theta_ckpt) if theta_ckpt is not None else theta_int8
         calib["risk"] = {"checkpoint_temperature": risk_cfg.get("temperature"),
                          "checkpoint_overnight": risk_cfg.get("thresholds", {}).get("overnight"),
-                         "int8_temperature": Tr, "int8_overnight": theta, "recall_target": target}
+                         "int8_temperature": Tr, "int8_overnight": theta_int8, "overnight": theta,
+                         "recall_target": target, "rules_counted": True}
         risk_cfg["temperature"] = Tr
         risk_cfg["thresholds"] = {"overnight": theta}
         print("int8 risk calibration on risk val (%d records, %.0fs): T %.4f, Overnight P(catastrophic) >= %.4f" % (

@@ -241,6 +241,9 @@ def main():
     ap.add_argument("--eval-every", type=int, default=300, help="val evaluation + best-state tracking (0 = off)")
     ap.add_argument("--smooth", type=float, default=0.0, help="label smoothing of the target distribution")
     ap.add_argument("--safe-temperature", type=int, default=1, help="raise T until val has no unsafe approve (1/0)")
+    ap.add_argument("--safe-temperature-risk", type=int, default=1,
+                    help="the risk records' val counts for the safe temperature too (1/0); 0 sets it on v7's val alone, "
+                         "as laya-approvals-ml-v1 was, and reports the risk val's unsafe approvals")
     ap.add_argument("--risk-data", help="gen_risk.py splits: adds and trains the risk head (docs/autopilot-risk.md)")
     ap.add_argument("--risk-weight", type=float, default=1.0, help="weight of the risk cross-entropy")
     ap.add_argument("--risk-approval-weight", type=float, default=0.3,
@@ -461,7 +464,7 @@ def main():
     shutil.copytree(os.path.join(ckpt, "tokenizer"), os.path.join(args.out, "tokenizer"), dirs_exist_ok=True)
     shutil.copytree(os.path.join(ckpt, "encoder"), os.path.join(args.out, "encoder"), dirs_exist_ok=True)
     T = safe_temperature(val_recs, val_items, vlog, T_nll) if args.safe_temperature else T_nll
-    if args.safe_temperature and risk_evals:
+    if args.safe_temperature and args.safe_temperature_risk and risk_evals:
         # the risk records carry approval labels too: no unsafe automatic approve on their val either
         rv_recs, rv_items = risk_evals["val"]
         rvlog = predict(model, rv_items, pad_id, device)
