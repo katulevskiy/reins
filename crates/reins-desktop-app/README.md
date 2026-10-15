@@ -4,9 +4,10 @@ The app for people who never open a terminal: a welcome flow that pairs this com
 connects the AI tools it finds, starts the background service and sends git through it, and afterwards a status
 window (with health checks, a test to the phone and work sessions) and a shield in the menu bar (macOS) or tray
 (Windows, Linux) with a Pause submenu, Resume, End work session, Open Reins and Quit. It is built with
-[GPUI](https://gpui.rs) through Zeron's fork ([zui](https://github.com/katulevskiy/zui)), in the phone apps' look: Geist,
-cool neutrals, one violet accent, coloured icon squares, [Lucide](https://lucide.dev) icons and the real logos of the
-AI tools and git hosts ([Simple Icons](https://simpleicons.org)).
+[GPUI](https://gpui.rs) through Zeron's fork ([zui](https://github.com/katulevskiy/zui)), in Reins Signal, the look of
+all three apps (`design/signal`): paper, ink and hairlines for everything you read, a field of colour (with its grain)
+only where something needs a decision; Instrument Serif, Instrument Sans and Geist Mono; the Signal glyphs and the real
+logos of the AI tools and git hosts.
 
 It does its work through the `reins_desktop` library in its own process and through the running daemon's control
 API; it never runs `reins` for that. The `reins` program ships next to it (inside `Reins.app`, in the install
@@ -26,16 +27,19 @@ window's "Install command line tool" links it to `~/.local/bin`.
 | `format` | times as the window says them: "2 min ago", "3 h 12 min", "14:32" |
 | `demo` | `--demo` only: made-up activity, connections, keys and AI tools where this computer has none |
 | `ui/mod.rs` | the window: one column before setup, sidebar and sections afterwards |
-| `ui/parts.rs` | building blocks: cards, rows, icon squares and logos, buttons, toggles, chips, segmented controls, rings that count down, the stage (who → what), the (?) help |
-| `ui/icons.rs` | the SVG assets: Lucide icons (`assets/icons/lucide/`, ISC) and brand marks (`assets/icons/brands/`, Simple Icons, CC0), served to GPUI |
-| `ui/story.rs` | a request as the phone tells it: one sentence with its important words bold, its colour and risk, who and what (logos), a row's title |
-| `ui/hold.rs` | hold to confirm ("Until I resume", disconnecting): the fill, the ring, "Keep holding" |
+| `theme` | Reins Signal: the tokens (`theme/tokens.rs`, a copy of `design/signal/tokens/desktop/signal_tokens.rs`) behind the palette (the names from before Signal are aliases), `Field` (push, read, delete, grant, pair, accounts, warn), the fonts; `theme/text.rs` the type scale (`SignalText`); `theme/motion.rs` the durations, curves, and Reduce Motion / Reduce Transparency read from the OS |
+| `ui/kit` | Signal's components: buttons, the hold button, menus, the field surface and its baked grain (`kit/field.rs`), plates, hairline rows, switches, segmented controls, pills, the mode chip, kind tiles, the timer, keys, the empty state |
+| `ui/gallery.rs` | `--demo` only: every component, field, type style, colour and glyph, for comparing with the boards |
+| `ui/parts.rs` | building blocks the screens use today (restyled in Signal): plates, rows, kind tiles and logos, buttons, switches, chips, segmented controls, rings that count down, the stage (who → what), the (?) help |
+| `ui/icons.rs` | the assets: the Signal glyphs (`assets/icons/glyphs/`), the brands' logos in colour (`assets/icons/logos/`), the pond and kite drawings (`assets/illustrations/`), the grain (`assets/textures/`), served to GPUI |
+| `ui/story.rs` | a request as the phone tells it: one sentence with its target in italic, its kind and risk, who and what (logos), a row's title |
+| `ui/hold.rs` | hold to confirm ("Until I resume", disconnecting): 1200 ms by the time held, a 180 ms drain, the ring, "Keep holding" |
 | `ui/field.rs` | one-line text fields typed by hand (the server, the Rules lists, the work session's reason and branches) |
 | `ui/onboarding.rs`, `ui/setup.rs` | the welcome flow: pairing with the phone; the AI tools, turning on, done |
-| `ui/health.rs` | the health checks Overview's Health tile opens, "Send a test" |
-| `ui/work.rs` | the work session form Overview's Work session tile opens, and why one did not start |
+| `ui/health.rs` | the health checks Home's Health tile opens, "Send a test" |
+| `ui/work.rs` | the work session form Home's Work session tile opens, and why one did not start |
 | `ui/sidebar.rs` | the mark, the status card, the sections, pausing and the "Pause git" sheet |
-| `ui/overview.rs`, `ui/activity.rs`, `ui/connections.rs`, `ui/keys.rs`, `ui/rules.rs`, `ui/settings.rs` | the sections |
+| `ui/overview.rs` (Home), `ui/activity.rs`, `ui/connections.rs`, `ui/keys.rs`, `ui/rules.rs`, `ui/settings.rs` | the sections |
 | `tray` | `tray-icon` on macOS and Windows, `ksni` (StatusNotifierItem) on Linux |
 | `autostart` | open at login: a launch agent, the `Run` key (`Reins app`), an XDG autostart entry |
 | `upgrade` | "Restart to update": the new installer in place of the running copy |
@@ -71,15 +75,14 @@ do errors with their reason.
 ## The status window
 
 After pairing and setup the window (resizable, 1000 × 680 at first) has a sidebar and these sections. The sidebar
-has a status card tinted by the state (green "Reins is on" and the phone that approves; violet "Waiting on your
-phone" with how many and the time left; yellow "git paused" with the time left; red when it needs you: not paired, or
-the service down), the sections with their coloured icon squares (a count on Activity while something waits, the
-shortcuts on the right), and **Pause git** at the bottom (while paused, a yellow box with a countdown ring and
-**Resume**). Everything is read again every 3 seconds: the daemon's
+has a status plate with a tile tinted by the state (green "Reins is on" and the phone that approves; violet "Waiting on
+your phone" with how many and the time left; red "git paused" with the time left; amber when it needs you: not paired,
+or the service down), the sections (a count on Activity while something waits, the shortcuts on the right), and
+**Pause git** at the bottom (while paused, the desktop's bypass: a red field with a countdown ring and **Resume**). Everything is read again every 3 seconds: the daemon's
 status and overview (`control::Client::overview`), and this computer's activity log (`reins_desktop::journal`, the
 newest 500).
 
-- **Overview**: a hero first. While a request waits on the phone, it is that request as the phone shows it (the
+- **Home**: a hero first. While a request waits on the phone, it is that request as the phone shows it (the
   agent's logo · dots · the service's logo with the action on its corner, one sentence, its risk, "Answer on your
   phone", the time left with a ring, **Open on phone** with the QR code), tinted by what it is (red for history
   rewrites and deletes). Otherwise this computer → the phone in green, what is protected as chips, and **Send a test**
@@ -95,7 +98,7 @@ newest 500).
 - **Connections**, in two columns: the AI tools Reins is in (their logos, a toggle and a line each), the APIs called
   with keys from the phone and the MCP tool calls by AI tool; the git hosts sent through Reins (their logos, a toggle
   each, with the repositories reached) and the SSH sign-ins.
-- **Keys & secrets**: the `[[api]]` entries (vault reference, how long a key is held; a green chip with a ring "Held
+- **Keys**: the `[[api]]` entries (vault reference, how long a key is held; a green chip with a ring "Held
   until 22:34" while one is held, else "Asks next time"), the `reins run` profiles as rows that open to their variable
   names and vault references (values are never on this computer), the SSH agent (on or off, its socket, the keys the
   phone listed), and how to use them with the daemon's address (in the title's (?)).
@@ -112,7 +115,7 @@ newest 500).
   service keeps running), and the version with Downloads, Terms and Privacy.
 
 Empty sections say so in a few words (what they are for is in their (?)) and how to start: an empty Activity offers
-the test to the phone, Keys & secrets
+the test to the phone, Keys
 shows the `config.toml` entries to add (with "Open config.toml"), Connections points to where the APIs and the SSH
 agent are set up.
 
@@ -130,7 +133,7 @@ to look at, Needs fixing) and every check that is not OK with what was found. Wh
 does: **Start** or **Restart** the service, **Resume** git, **Connect** an AI tool, **Pair again**; the checks run again
 afterwards. Otherwise it says what to do.
 
-**Send a test** (Overview, the welcome flow's last step, an empty Activity) sends `reins test`'s harmless question
+**Send a test** (Home, the welcome flow's last step, an empty Activity) sends `reins test`'s harmless question
 (`ask::send_test`, logged in the activity log like any other) and waits up to 90 seconds with a countdown: "Approved.
 It works.", "Denied. It works.", "No answer in 90 s. See Health.", or why it could not ask.
 
@@ -140,7 +143,7 @@ Before focused work the user approves on the phone, once, a time-boxed bundle (`
 `reins allow` does): reading chosen integrations and git pushes to named branches. The phone turns it into ordinary
 grants that end together; force pushes, deleting, the vault and purchases still ask every time.
 
-Overview's **Work session** tile says so in a few words, with **Start**, which opens the form under the tiles:
+Home's **Work session** tile says so in a few words, with **Start**, which opens the form under the tiles:
 
 - **How long**: 30 min, 1 hour, 2 hours (the default), 4 hours, 8 hours.
 - **What it's for**: one line; empty is "Focused work".
@@ -229,12 +232,15 @@ computer. The health card shows sample checks with one AI tool to connect (its C
 is answered "Approve" after 4 seconds.
 
 `REINS_DEMO_SCREEN` opens a screen straight away: `pair`, `tools` (`tools-connected`: with one just connected, Undo
-showing), `turn-on` (`turning-on`: turning on as it opens), `done` or `status`; `REINS_DEMO_SECTION` (`overview`,
-`activity`, `connections`, `keys`, `rules`, `settings`) picks the status window's section. `REINS_DEMO_TEST=1` sends
+showing), `turn-on` (`turning-on`: turning on as it opens), `done` or `status`; `REINS_DEMO_SECTION` (`home`, or
+`overview` as before; `activity`, `connections`, `keys`, `rules`, `settings`) picks the status window's section, and
+`gallery` opens the component gallery (`REINS_DEMO_GALLERY=fields|actions|controls|type|colours|glyphs` shows one part
+of it). `REINS_APPEARANCE=light|dark` picks the theme, `REINS_REDUCE_MOTION=1` and `REINS_REDUCE_TRANSPARENCY=1`
+override the OS settings. `REINS_DEMO_TEST=1` sends
 the test as the app opens, `REINS_DEMO_EMPTY=1` leaves the samples out (the empty states), `REINS_DEMO_CALM=1` leaves
-out the request waiting on the phone (the calm Overview), `REINS_DEMO_PAUSED=1` (or `manual`) starts with git paused.
+out the request waiting on the phone (the calm Home), `REINS_DEMO_PAUSED=1` (or `manual`) starts with git paused.
 `REINS_DEMO_PAUSE=1` opens the "Pause git" sheet (`manual`: at Until I resume; `hold`: held from the start, so it
-pauses two seconds later), `REINS_DEMO_FILTER=1` Activity's filters, `REINS_DEMO_HEALTH=1` Overview's health checks.
+pauses two seconds later), `REINS_DEMO_FILTER=1` Activity's filters, `REINS_DEMO_HEALTH=1` Home's health checks.
 `REINS_DEMO_SESSION=1`
 starts with a work session running ("Fix the login bug", 1 h 12 min left), `form` with the form open and filled in,
 `waiting` with it sent; `REINS_DEMO_HELP=<id>` opens that (?) (`hero`, `keys`, `rules`, …); in the demo the pretend phone approves a session after 3 seconds (a minute with `waiting`) and
