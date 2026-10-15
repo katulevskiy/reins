@@ -2471,6 +2471,242 @@ public func FfiConverterTypeNotifier_lower(_ value: Notifier) -> UInt64 {
 
 
 
+/**
+ * The phone's owner check (biometrics, or the device's passcode), which the core asks for itself before what only
+ * the owner may do: starting Overnight or changing its length, and changing what it does with what is too risky.
+ * `reason` is the core's words, for the prompt. `Ok(true)` only when the owner passed it now; anything else (a
+ * cancel, no biometrics and no passcode, an error) refuses.
+ */
+public protocol OwnerCheck: AnyObject, Sendable {
+    
+    func confirm(reason: String) async throws  -> Bool
+    
+}
+/**
+ * The phone's owner check (biometrics, or the device's passcode), which the core asks for itself before what only
+ * the owner may do: starting Overnight or changing its length, and changing what it does with what is too risky.
+ * `reason` is the core's words, for the prompt. `Ok(true)` only when the owner passed it now; anything else (a
+ * cancel, no biometrics and no passcode, an error) refuses.
+ */
+open class OwnerCheckImpl: OwnerCheck, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_reins_core_fn_clone_ownercheck(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_reins_core_fn_free_ownercheck(handle, $0) }
+    }
+
+    
+
+    
+open func confirm(reason: String)async throws  -> Bool  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_ownercheck_confirm(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(reason)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_i8,
+            completeFunc: ffi_reins_core_rust_future_complete_i8,
+            freeFunc: ffi_reins_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeForeignError_lift
+        )
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceOwnerCheck {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceOwnerCheck = UniffiVTableCallbackInterfaceOwnerCheck(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeOwnerCheck.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface OwnerCheck: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeOwnerCheck.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface OwnerCheck: handle missing in uniffiClone")
+            }
+        },
+        confirm: { (
+            uniffiHandle: UInt64,
+            reason: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteI8,
+            uniffiCallbackData: UInt64,
+            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
+        ) in
+            let makeCall = {
+                () async throws -> Bool in
+                guard let uniffiObj = try? FfiConverterTypeOwnerCheck.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.confirm(
+                     reason: try FfiConverterString.lift(reason)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: Bool) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultI8(
+                        returnValue: FfiConverterBool.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureResultI8(
+                        returnValue: 0,
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeForeignError_lower,
+                droppedCallback: uniffiOutDroppedCallback
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceOwnerCheck> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceOwnerCheck>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitOwnerCheck() {
+    uniffi_reins_core_fn_init_callback_vtable_ownercheck(UniffiCallbackInterfaceOwnerCheck.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOwnerCheck: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<OwnerCheck>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = OwnerCheck
+
+    public static func lift(_ handle: UInt64) throws -> OwnerCheck {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return OwnerCheckImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: OwnerCheck) -> UInt64 {
+         if let rustImpl = value as? OwnerCheckImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OwnerCheck {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: OwnerCheck, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOwnerCheck_lift(_ handle: UInt64) throws -> OwnerCheck {
+    return try FfiConverterTypeOwnerCheck.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOwnerCheck_lower(_ value: OwnerCheck) -> UInt64 {
+    return FfiConverterTypeOwnerCheck.lower(value)
+}
+
+
+
+
+
+
 public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
@@ -2836,8 +3072,9 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     /**
      * What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
+     * A change either way asks `owner` first.
      */
-    func setOvernightWhenRisky(risky: OvernightRisky) async throws 
+    func setOvernightWhenRisky(risky: OvernightRisky, owner: OwnerCheck) async throws 
     
     func setPreset(profileId: String, preset: Preset) async throws 
     
@@ -2891,9 +3128,10 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
      * held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
      * its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
-     * rates risk it decides like Auto. The app asks the owner (biometrics) before calling this, as for a bypass.
+     * rates risk it decides like Auto. Every start, restart or change of its length asks `owner` first (the core asks
+     * it, with its own words); without the owner's confirmation nothing changes. Turning it off needs no check.
      */
-    func startOvernight(connectionId: String?, minutes: UInt32?) async throws 
+    func startOvernight(connectionId: String?, minutes: UInt32?, owner: OwnerCheck) async throws 
     
     /**
      * What a newly connected AI may do before it asked for anything; `None` until the user chose (acts as asking).
@@ -4559,13 +4797,14 @@ open func setModelRuntime(runtime: ModelRuntime)  {try! rustCall() {
     
     /**
      * What Overnight does with a request its risk model rates catastrophic: wait for the user (the default) or deny.
+     * A change either way asks `owner` first.
      */
-open func setOvernightWhenRisky(risky: OvernightRisky)async throws   {
+open func setOvernightWhenRisky(risky: OvernightRisky, owner: OwnerCheck)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_set_overnight_when_risky(
-                        self.uniffiCloneHandle(),FfiConverterTypeOvernightRisky_lower(risky)
+                        self.uniffiCloneHandle(),FfiConverterTypeOvernightRisky_lower(risky),FfiConverterTypeOwnerCheck_lower(owner)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -4740,14 +4979,15 @@ open func startBypass(connectionId: String?, minutes: UInt32?)async throws   {
      * of always asking; what the model rates catastrophic, a tripwire, or what the phone cannot read with certainty is
      * held: it waits for the user, or is denied (`set_overnight_when_risky`); what already waits is judged too. At
      * its end it returns to the mode it interrupted; stop it earlier with `set_autopilot_mode`. Without a model that
-     * rates risk it decides like Auto. The app asks the owner (biometrics) before calling this, as for a bypass.
+     * rates risk it decides like Auto. Every start, restart or change of its length asks `owner` first (the core asks
+     * it, with its own words); without the owner's confirmation nothing changes. Turning it off needs no check.
      */
-open func startOvernight(connectionId: String?, minutes: UInt32?)async throws   {
+open func startOvernight(connectionId: String?, minutes: UInt32?, owner: OwnerCheck)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_start_overnight(
-                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(connectionId),FfiConverterOptionUInt32.lower(minutes)
+                        self.uniffiCloneHandle(),FfiConverterOptionString.lower(connectionId),FfiConverterOptionUInt32.lower(minutes),FfiConverterTypeOwnerCheck_lower(owner)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -18927,7 +19167,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_set_model_runtime() != 3100) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_set_overnight_when_risky() != 57757) {
+    if (uniffi_reins_core_checksum_method_reinscore_set_overnight_when_risky() != 35605) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_preset() != 57690) {
@@ -18954,7 +19194,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_start_bypass() != 23286) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_start_overnight() != 26944) {
+    if (uniffi_reins_core_checksum_method_reinscore_start_overnight() != 51582) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_starting_policy() != 60526) {
@@ -19122,6 +19362,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_notifier_autopilot_changed() != 32979) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_ownercheck_confirm() != 63799) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_constructor_reinscore_new() != 41877) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19132,6 +19375,7 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitKeyWrapper()
     uniffiCallbackInitModelRuntime()
     uniffiCallbackInitNotifier()
+    uniffiCallbackInitOwnerCheck()
     return InitializationResult.ok
 }()
 
