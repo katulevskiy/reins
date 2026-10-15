@@ -413,19 +413,12 @@ private struct FooterSection: View {
 }
 
 #if DEBUG
-/// Debug builds only: what the header's Autopilot pill opens, to compare the designs on a phone, and the Signal gallery.
+/// Debug builds only: the Signal gallery.
 private struct DeveloperGroup: View {
-    @AppStorage(QuickStyle.key) private var style = QuickStyle.menu.rawValue
     @State private var gallery = false
 
     var body: some View {
         Section {
-            Picker("Autopilot pill", selection: $style) {
-                ForEach(QuickStyle.allCases) { Text($0.label).tag($0.rawValue) }
-            }
-            .pickerStyle(.segmented)
-            .cardRow()
-            .accessibilityIdentifier("quickStyle")
             Button("Signal gallery") { gallery = true }
                 .font(RFont.sans(16, .medium))
                 .foregroundStyle(Palette.ink)

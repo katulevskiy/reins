@@ -25,7 +25,7 @@ struct ScreenLockBanner: View {
         // below would never run and the banner could never appear.
         VStack(spacing: 0) {
             if !set && !model.demo && compact {
-                CompactBanner(text: "No passcode", symbol: "lock.open.fill", button: "How") {
+                CompactBanner(text: "No passcode", symbol: "lock.open.fill", button: "How", label: "Reins · Passcode") {
                     model.notice = "Approving needs a passcode: Settings, Face ID & Passcode."
                 }
                 .padding(padding)
