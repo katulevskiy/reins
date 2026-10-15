@@ -244,6 +244,16 @@ impl Journal {
         }
     }
 
+    /// Keeps an approved push's commits and diff text under its entry's `id` ([`crate::pushes`]); a failure is logged.
+    pub fn keep_push(&self, id: &str, push: &crate::pushes::Push) {
+        let Some(paths) = &self.paths else {
+            return;
+        };
+        if let Err(e) = crate::pushes::keep(&paths.state_dir, id, push) {
+            log::warn!("kept pushes: {e}");
+        }
+    }
+
     /// "Check your phone" on the desktop, as `[notify]` says.
     pub fn notify_waiting(&self, what: &str) {
         let Some(paths) = &self.paths else {
