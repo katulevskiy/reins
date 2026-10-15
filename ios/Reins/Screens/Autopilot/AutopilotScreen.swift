@@ -347,24 +347,15 @@ struct ModelSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("On-device model")
-                        .font(RFont.sans(18, .semibold))
-                        .foregroundStyle(Palette.text)
+                HStack(alignment: .center) {
+                    AskText([AskText.Run(text: "On-device "), AskText.Run(text: "model", target: true)], role: .sheetTitle)
+                        .foregroundStyle(Palette.ink)
                         .accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Button {
+                    RoundHeaderButton(glyph: .close, label: "Close", size: 34) {
                         feedback.play(.tap)
                         dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Palette.secondary)
-                            .frame(width: 30, height: 30)
-                            .background(Palette.controlFill, in: Circle())
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close")
                     .accessibilityIdentifier("closeModel")
                 }
                 ModelCard(ap: ap, wifiOnly: ap.settings?.wifiOnly ?? true, onDownload: download, onDelete: { deleteAsk = true })
