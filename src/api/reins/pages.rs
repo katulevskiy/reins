@@ -84,16 +84,27 @@ const MARK: &str = "<svg class=\"mark\" viewBox=\"0 0 108 108\" aria-hidden=\"tr
 <path d=\"M12,3l7.5,3v5.5c0,4.6 -3.1,8.4 -7.5,9.5 -4.4,-1.1 -7.5,-4.9 -7.5,-9.5V6z\" stroke=\"#C9C1FB\" \
 stroke-width=\"1.5\"/><path d=\"M8.7,12l2.4,2.4 4.2,-4.6\" stroke=\"#FFFFFF\" stroke-width=\"1.7\"/></g></svg>";
 
-/// How a page at each place leads back to the domain path's root, for its font URLs.
-mod up {
-    /// `/pair`.
-    pub const ROOT: &str = "";
-    /// `/reins/signed-out`.
-    pub const ONE: &str = "../";
-    /// `/reins/oauth/authorize`, `/identity/connect/authorize`.
-    pub const TWO: &str = "../../";
-    /// `/reins/oauth/authorize/wait`.
-    pub const THREE: &str = "../../../";
+/// Where the pages are served, under `{domain_path}`: each page's relative URLs are worked out from its own path
+/// ([`up_from`]), so they resolve under any `DOMAIN` path prefix.
+pub mod at {
+    /// The email form, and the errors of the authorize flow.
+    pub const AUTHORIZE: &str = "/reins/oauth/authorize";
+    /// The number to tap, and its errors.
+    pub const WAIT: &str = "/reins/oauth/authorize/wait";
+    /// The apps' browser sign-in (`identity::authorize`), on a server without one.
+    pub const IDENTITY_AUTHORIZE: &str = "/identity/connect/authorize";
+    /// A computer's pairing link.
+    pub const PAIR: &str = "/pair";
+    /// AuthKit's logout landing page.
+    pub const SIGNED_OUT: &str = "/reins/signed-out";
+}
+
+/// What leads from a page served at `path` (under the domain path) back to the domain path's root: one `../` for
+/// each folder the path is in (`/pair`: none, `/reins/oauth/authorize/wait`: three).
+#[must_use]
+pub fn up_from(path: &str) -> String {
+    let folders = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).count().saturating_sub(1);
+    "../".repeat(folders)
 }
 
 /// Escapes text for HTML element content and quoted attribute values.
@@ -112,15 +123,15 @@ pub fn escape_html(raw: &str) -> String {
     out
 }
 
-/// A page: `up` leads back to the domain path's root ([`up`]), for the fonts.
-fn layout(title: &str, head_extra: &str, body: &str, up: &str) -> String {
+/// A page served at `path` (one of [`at`]): its font URLs lead from there to the font route.
+fn layout(title: &str, head_extra: &str, body: &str, path: &str) -> String {
     format!(
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
 <meta name=\"robots\" content=\"noindex,nofollow\">{head_extra}<title>{title}</title>\
 <style>{faces}{STYLE}</style></head><body><main>{body}</main></body></html>",
         title = escape_html(title),
-        faces = font_faces(up),
+        faces = font_faces(&up_from(path)),
     )
 }
 
@@ -161,7 +172,7 @@ Nothing is shared until you approve it on your phone.</p>{key_html}{error_html}\
         host = escape_html(client_host),
         session = escape_html(session),
     );
-    layout("Connect to Reins", "", &body, up::TWO)
+    layout("Connect to Reins", "", &body, at::AUTHORIZE)
 }
 
 /// Step 2: show the code to pick on the phone; reloads itself until the phone has answered.
@@ -175,13 +186,13 @@ pub fn wait_page(client_name: &str, code: u8, key_fingerprint: Option<&str>) -> 
         name = escape_html(client_name),
         key_html = key_line(key_fingerprint),
     );
-    layout("Approve on your phone", "<meta http-equiv=\"refresh\" content=\"2\">", &body, up::THREE)
+    layout("Approve on your phone", "<meta http-equiv=\"refresh\" content=\"2\">", &body, at::WAIT)
 }
 
-/// A terminal error the user cannot recover from on this page.
-pub fn error_page(title: &str, message: &str) -> String {
+/// A terminal error the user cannot recover from, shown at `path` (one of [`at`]).
+pub fn error_page(path: &str, title: &str, message: &str) -> String {
     let body = format!("{MARK}<h1>{}</h1><p>{}</p>", escape_html(title), escape_html(message));
-    layout(title, "", &body, up::TWO)
+    layout(title, "", &body, path)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -262,7 +273,7 @@ pub fn pair_page(code: Option<&str>, platform: Platform) -> String {
 <strong>Settings</strong>, <strong>Connect a computer</strong>.</p>{install}"
         ),
     };
-    layout("Connect your computer to Reins", "", &body, up::ROOT)
+    layout("Connect your computer to Reins", "", &body, at::PAIR)
 }
 
 /// `/.well-known/apple-app-site-association`: pairing links under `{domain_path}/pair` open the iOS app of `team_id`
@@ -340,7 +351,7 @@ fn signed_out() -> rocket::response::content::RawHtml<String> {
 <a class=\"button\" href=\"com.reins2fa.app://signed-out\">Return to Reins</a>\
 <p class=\"muted\">You can also close this page and return to the app.</p>"
         ),
-        up::ONE,
+        at::SIGNED_OUT,
     ))
 }
 
@@ -398,7 +409,7 @@ mod tests {
         for page in [
             email_form_page(EVIL, EVIL, EVIL, Some(EVIL), Some(EVIL)),
             wait_page(EVIL, 47, Some(EVIL)),
-            error_page(EVIL, EVIL),
+            error_page(at::AUTHORIZE, EVIL, EVIL),
         ] {
             assert!(!page.contains("<script"), "{page}");
             assert!(!page.contains("alert(1)</script>"), "{page}");
@@ -411,7 +422,7 @@ mod tests {
         for page in [
             email_form_page("Claude", "claude.ai", "sess", None, Some("4821 9930")),
             wait_page("Claude", 12, Some("4821 9930")),
-            error_page("t", "m"),
+            error_page(at::AUTHORIZE, "t", "m"),
         ] {
             assert!(!page.to_lowercase().contains("<script"), "{page}");
             assert!(!page.contains("http://") && !page.contains("https://"), "{page}");
@@ -502,24 +513,51 @@ S.browser_fallback_url=https%3A%2F%2Fapp.reins2fa.com%2Fget;end\""
         assert_eq!(asset_links(&[]), serde_json::json!([]));
     }
 
-    /// The faces load from this server, by relative URLs that lead from each page to `{domain_path}/reins/fonts/`,
-    /// and every file a page names is one the font route serves.
+    /// The font URLs of a page, as written in its `@font-face` rules.
+    fn font_urls(page: &str) -> Vec<&str> {
+        page.split("url(\"").skip(1).filter_map(|rest| rest.split_once("\")").map(|(url, _)| url)).collect()
+    }
+
+    /// Every page, at the path it is served from (under the domain path): each of its font URLs, relative, resolves
+    /// to the font route there, under any `DOMAIN` path prefix, and names a file the route serves.
     #[test]
-    fn fonts_are_served_here_by_relative_urls() {
-        for (page, up) in [
-            (email_form_page("c", "h", "s", None, None), "../../"),
-            (wait_page("c", 1, None), "../../../"),
-            (error_page("t", "m"), "../../"),
-            (pair_page(None, Platform::Other), ""),
-            (signed_out().0, "../"),
-        ] {
-            assert!(page.contains(&format!("url(\"{up}reins/fonts/InstrumentSerif-Regular.woff2\")")), "{page}");
-            assert!(page.contains("Georgia"), "the serif falls back to Georgia");
-            for (file, _) in FONTS {
-                assert!(page.contains(&format!("reins/fonts/{file}")), "{file}");
+    fn every_font_url_resolves_to_the_font_route() {
+        let route = routes![font].remove(0);
+        let font_path = route.uri.path().strip_suffix("<name>").unwrap().to_owned();
+        assert_eq!(font_path, "/reins/fonts/");
+        let pages = [
+            (at::AUTHORIZE, email_form_page("c", "h", "s", None, None)),
+            (at::AUTHORIZE, error_page(at::AUTHORIZE, "t", "m")),
+            (at::WAIT, wait_page("c", 1, None)),
+            (at::WAIT, error_page(at::WAIT, "Link expired", "m")),
+            (at::IDENTITY_AUTHORIZE, error_page(at::IDENTITY_AUTHORIZE, "t", "m")),
+            (at::PAIR, pair_page(None, Platform::Other)),
+            (at::PAIR, pair_page(Some("BCDF-GHJK"), Platform::Android)),
+            (at::SIGNED_OUT, signed_out().0),
+        ];
+        for domain_path in ["", "/vw", "/a/b"] {
+            for (served, page) in &pages {
+                let base = url::Url::parse(&format!("https://reins.example{domain_path}{served}")).unwrap();
+                let urls = font_urls(page);
+                assert_eq!(urls.len(), FONTS.len(), "{served}");
+                for u in urls {
+                    assert!(!u.starts_with('/') && !u.contains("://"), "{served}: {u} is relative");
+                    let resolved = base.join(u).unwrap();
+                    let file = resolved
+                        .path()
+                        .strip_prefix(&format!("{domain_path}{font_path}"))
+                        .unwrap_or_else(|| panic!("{served} under {domain_path:?}: {u} goes to {resolved}"));
+                    assert!(font(file).is_some(), "{served}: {file} is served");
+                }
             }
-            assert!(!page.contains("url(\"/") && !page.contains("url(/"), "{page}");
         }
+        assert_eq!(up_from(at::PAIR), "");
+        assert_eq!(up_from(at::WAIT), "../../../");
+        assert!(pages.iter().all(|(_, p)| p.contains("Georgia")), "the serif falls back to Georgia");
+    }
+
+    #[test]
+    fn the_font_files_are_small_woff2() {
         for (file, bytes) in FONTS {
             assert_eq!(&bytes[..4], b"wOF2", "{file}");
             assert!(bytes.len() < 40_000, "{file} is a Latin subset");
@@ -564,6 +602,7 @@ S.browser_fallback_url=https%3A%2F%2Fapp.reins2fa.com%2Fget;end\""
             (
                 "identity/connect/authorize.html",
                 error_page(
+                    at::IDENTITY_AUTHORIZE,
                     "No browser sign-in on this server",
                     "This server signs in with an email and a master password. Close this page and, in the app, use Sign in or Create account.",
                 ),
