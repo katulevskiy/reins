@@ -29,11 +29,7 @@ impl Env {
         std::fs::create_dir_all(&home).unwrap();
         let mut c = Command::new(env!("CARGO_BIN_EXE_reins"));
         c.args(args)
-            .env("HOME", &home)
-            .env("USERPROFILE", &home)
-            .env("XDG_CONFIG_HOME", home.join(".config"))
-            .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .envs(reins_desktop::config::home_env(&home))
             .env("REINS_CONFIG_DIR", self.dir.path().join("config"))
             .env("REINS_STATE_DIR", self.dir.path().join("state"))
             .env("REINS_TEST_TOKEN", "t0ken");
@@ -72,9 +68,7 @@ fn git_setup_and_unsetup_edit_only_the_given_home() {
     // git itself now rewrites GitHub URLs to the proxy.
     let rewritten = Command::new("git")
         .args(["ls-remote", "--get-url", "git@github.com:me/app.git"])
-        .env("HOME", env.dir.path().join("home"))
-        .env("GIT_CONFIG_GLOBAL", env.dir.path().join("home/.gitconfig"))
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .envs(reins_desktop::config::home_env(&env.dir.path().join("home")))
         .current_dir(env.dir.path())
         .output()
         .unwrap();

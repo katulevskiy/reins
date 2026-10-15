@@ -88,10 +88,8 @@ fn file(home: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
         home.join("Library/LaunchAgents").join(format!("{LABEL}.plist"))
     } else {
-        let config = std::env::var_os("XDG_CONFIG_HOME")
-            .filter(|d| !d.is_empty())
-            .map_or_else(|| home.join(".config"), PathBuf::from);
-        config.join("autostart").join("reins.desktop")
+        // `$XDG_CONFIG_HOME` only for the user's own home: a stand-in one (`REINS_HOME`, a test's) keeps it inside.
+        reins_desktop::config::config_home(home).join("autostart").join("reins.desktop")
     }
 }
 
@@ -202,14 +200,12 @@ mod tests {
     fn set_writes_and_removes_the_file() {
         let home = tempfile::tempdir().unwrap();
         assert!(!enabled(home.path()));
-        // XDG_CONFIG_HOME, when set, would point elsewhere.
-        if std::env::var_os("XDG_CONFIG_HOME").is_none() {
-            set(home.path(), true).unwrap();
-            assert!(enabled(home.path()));
-            assert!(file(home.path()).starts_with(home.path()));
-            set(home.path(), false).unwrap();
-            assert!(!enabled(home.path()));
-            set(home.path(), false).unwrap();
-        }
+        // Under the temporary home even when the user's XDG_CONFIG_HOME is set.
+        assert!(file(home.path()).starts_with(home.path()));
+        set(home.path(), true).unwrap();
+        assert!(enabled(home.path()));
+        set(home.path(), false).unwrap();
+        assert!(!enabled(home.path()));
+        set(home.path(), false).unwrap();
     }
 }

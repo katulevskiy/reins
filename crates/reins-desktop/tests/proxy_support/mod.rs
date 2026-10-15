@@ -17,7 +17,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use reins_desktop::auth::{Authorizer, Credential, Refusal, Repo};
-use reins_desktop::config::{Config, Mode, Paths};
+use reins_desktop::config::{Config, Mode, Paths, home_env};
 use reins_desktop::daemon::{Daemon, Options, Running};
 use reins_proto::desktop::PushSummary;
 use tokio::io::AsyncWriteExt as _;
@@ -88,8 +88,7 @@ async fn cgi(
     cmd.arg("http-backend")
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", root)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .envs(home_env(root))
         .env("GIT_PROJECT_ROOT", root)
         .env("GIT_HTTP_EXPORT_ALL", "1")
         .env("REQUEST_METHOD", method)
@@ -286,17 +285,22 @@ impl Upstream {
             .arg("-C")
             .arg(self.bare(repo))
             .args(["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")])
-            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .envs(home_env(self.dir.path()))
             .output()
             .unwrap();
         out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
     }
 }
 
-/// Runs git (blocking) in `dir`, panicking on failure; returns stdout.
+/// Runs git (blocking) in `dir`, panicking on failure; returns stdout. No global or system git config is read (nor
+/// written: the user's own stays out of the tests).
 pub fn run_git(dir: &Path, env: &[(&str, &Path)], args: &[&str]) -> String {
     let mut cmd = std::process::Command::new("git");
-    cmd.current_dir(dir).args(args).env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_TERMINAL_PROMPT", "0");
+    cmd.current_dir(dir)
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -350,10 +354,7 @@ impl Home {
         let out = tokio::process::Command::new("git")
             .current_dir(&cwd)
             .args(args)
-            .env("HOME", self.dir.path())
-            .env("XDG_CONFIG_HOME", self.path(".config"))
-            .env("GIT_CONFIG_GLOBAL", self.path(".gitconfig"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .envs(home_env(self.dir.path()))
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_ASKPASS", "/bin/false")
             .env_remove("GIT_DIR")

@@ -191,6 +191,7 @@ fn the_command_line_bridges_stdin_and_stdout() {
     let app = logged_out();
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
         .args(["mcp", "--via", "Gemini CLI"])
+        .envs(reins_desktop::config::home_env(app.dir.path()))
         .env("REINS_CONFIG_DIR", &app.paths.config_dir)
         .env("REINS_STATE_DIR", &app.paths.state_dir)
         .stdin(std::process::Stdio::piped())

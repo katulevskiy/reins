@@ -17,8 +17,7 @@ fn command(app: &App, config: &str, args: &[&str]) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_reins"));
     c.arg("run")
         .args(args)
-        .env("HOME", &home)
-        .env("USERPROFILE", &home)
+        .envs(reins_desktop::config::home_env(&home))
         .env("REINS_CONFIG_DIR", &app.paths.config_dir)
         .env("REINS_STATE_DIR", &app.paths.state_dir)
         .env_remove("REINS_LOG")
