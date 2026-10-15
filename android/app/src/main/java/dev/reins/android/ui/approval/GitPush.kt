@@ -21,14 +21,16 @@ fun gitHistory(ref: GitRefView): GitHistory = when {
 }
 
 /** The chip next to a ref: "New branch", "Update", "Delete", "New tag", "Tag" (a tag that moves). */
-fun gitChipLabel(ref: GitRefView): String = when (ref.change) {
+fun gitChipLabel(ref: GitRefView): String = gitChipLabel(ref.change, ref.kind)
+
+fun gitChipLabel(change: String, kind: String): String = when (change) {
     "delete" -> "Delete"
-    "create" -> when (ref.kind) {
+    "create" -> when (kind) {
         "branch" -> "New branch"
         "tag" -> "New tag"
         else -> "New"
     }
-    else -> if (ref.kind == "tag") "Tag" else "Update"
+    else -> if (kind == "tag") "Tag" else "Update"
 }
 
 private fun files(n: UInt) = if (n == 1u) "1 file" else "$n files"

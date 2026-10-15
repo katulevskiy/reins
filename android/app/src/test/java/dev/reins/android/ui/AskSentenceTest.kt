@@ -284,6 +284,44 @@ class AskSentenceTest {
         assertEquals("Searched Gmail", pastTense("Search Gmail"))
         assertEquals("Paid $3", pastTense("Pay $3"))
         assertEquals("Copied it", pastTense("Copy it"))
+        assertEquals("both verbs turn, never half of them", "Cloned and fetched it", pastTense("Clone and fetch it"))
+        assertEquals("Read or archived", pastTense("Read or archive"))
+        assertEquals("Read .env and 1 more", pastTense("Read .env and 1 more"))
+    }
+
+    @Test
+    fun aFetchIsOneVerbInEveryTense() {
+        val fetch = TestData.label("github", "read", "Clone and fetch", "katulevskiy/reins")
+        assertEquals("Fetch katulevskiy/reins", askSentence(fetch).text)
+        assertEquals("Fetched katulevskiy/reins", askSentence(fetch, Tense.Done).text)
+        assertEquals("Asked to fetch katulevskiy/reins", askSentence(fetch, Tense.Refused).text)
+        assertEquals("katulevskiy/reins", askSentence(fetch, Tense.Done).target)
+        val entry = askSentence(TestData.entry(1, "read", "released", label = fetch, service = "github", op = "git_fetch"))
+        assertEquals("Fetched katulevskiy/reins", entry.text)
+        assertFalse("Cloned and fetch" in entry.text)
+    }
+
+    @Test
+    fun aPushEntryWithoutItsApprovalKeepsItsBranchLine() {
+        val label = TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins")
+        val full = """
+            git push katulevskiy/reins
+            create branch signal/desktop-release: 3 commits
+              1a2b3c4 Signal on the desktop
+              5d6e7f8 Release notes
+              9a0b1c2 Bump the version
+
+            github_git_push
+            repo: katulevskiy/reins
+        """.trimIndent()
+        val s = askSentence(TestData.entry(1, "write", "released", label = label, request = TestData.asked(full), service = "github", op = "git_push"))
+        assertEquals("Pushed 3 commits to katulevskiy/reins", s.text)
+        assertEquals("signal/desktop-release · new branch", s.details)
+        s.keepsTheRules("signal/desktop-release")
+        // An update to an existing branch shows the branch alone; without a push block there is no line at all.
+        val update = full.replace("create branch", "update branch")
+        assertEquals("signal/desktop-release", askSentence(TestData.entry(2, "write", "released", label = label, request = TestData.asked(update))).details)
+        assertNull(askSentence(TestData.entry(3, "write", "released", label = label, request = TestData.asked("github_git_push\nrepo: x/y"))).details)
     }
 
     // ---- the icon -----------------------------------------------------------------------------------------------------

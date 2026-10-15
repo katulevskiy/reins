@@ -1153,6 +1153,73 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("polish-entry-commit-diff")
     }
 
+    /** The push the user reported: 3 commits to a new branch, allowed during a bypass, as Activity shows it. */
+    private fun reportedPush(): dev.reins.core.ActivityEntry {
+        val full = """
+            git push katulevskiy/reins
+            create branch signal/desktop-release: 3 commits
+              9f3c2a1 Log in with a passkey when the browser offers one
+              4be81d0 Remove the old login form
+              c07a9e3 Keep the session for 30 days
+
+            github_git_push
+            repo: katulevskiy/reins
+        """.trimIndent()
+        core.connections = listOf(dev.reins.core.ConnectionView("c1", "Reins desktop app", "laptop", 1_700_000_000, 1_700_000_100, "claude", null))
+        return TestData.entry(
+            7, action = "write", outcome = "released", at = now - 120, service = "github", op = "git_push", opTitle = "Push with git",
+            label = TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins"),
+            request = TestData.asked(full, agent = "git", askedAt = now - 123), decidedBy = "bypass",
+        ).copy(account = "katulevskiy")
+    }
+
+    private fun reportedPushView(): dev.reins.core.ApprovalView {
+        val design = TestData.designPushView()
+        val commits = listOf(TestData.designCommit()) + design.git!!.refs[0].commits.subList(1, 3)
+        val ref = TestData.gitRef(
+            "signal/desktop-release", change = "create", commitCount = 3u, commits = commits, filesChanged = 5u,
+            files = TestData.designCommit().files, additions = 199u, deletions = 87u,
+        )
+        return design.copy(waitUntil = null, quick = null, account = "katulevskiy", connectionLabel = "Reins desktop app", git = design.git!!.copy(repo = "katulevskiy/reins", refs = listOf(ref)))
+    }
+
+    @Test
+    fun pushInspect() {
+        core.activity = listOf(reportedPush())
+        core.entryApprovals[7L] = reportedPushView()
+        launch()
+        tap("entry:7")
+        await("entryApproval")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-entry")
+        tap("gitCommits:0")
+        await("gitCommit:0:0")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-entry-commits")
+        tap("gitCommit:0:0")
+        await("commitSubject")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-entry-commit")
+        tap("commitFile:0")
+        await("commitFile:0:diff")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-entry-diff")
+    }
+
+    /** The same push on a phone that does not hold its approval: the commits it kept, the request in full. */
+    @Test
+    fun pushInspectKept() {
+        core.activity = listOf(reportedPush())
+        launch()
+        tap("entry:7")
+        await("keptPush")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-entry-kept")
+        rule.onNodeWithTag("fullRequest").performScrollTo()
+        repeat(10) { rule.mainClock.advanceTimeBy(50) }
+        shoot("push-entry-kept-full")
+    }
+
     /** A Gmail entry: the emails as the approval listed them, what was shared ticked. */
     @Test
     fun polishGmailEntry() {

@@ -80,7 +80,7 @@ internal fun GitFacts(view: ApprovalView, git: GitPushView) {
                             mono = true,
                             valueTag = "gitRef:$i",
                             trailing = if (ref.change == "update" && ref.kind != "tag") null else {
-                                { RefChip(gitChipLabel(ref), ref, Modifier.testTag("gitChip:$i")) }
+                                { RefChip(gitChipLabel(ref), ref.change, ref.kind, Modifier.testTag("gitChip:$i")) }
                             },
                         )
                     }
@@ -115,12 +115,12 @@ internal fun GitFacts(view: ApprovalView, git: GitPushView) {
 }
 
 @Composable
-private fun RefChip(text: String, ref: GitRefView, modifier: Modifier) {
+internal fun RefChip(text: String, change: String, kind: String, modifier: Modifier) {
     val c = LocalColors.current
     val tint = when {
-        ref.change == "delete" -> c.danger
-        ref.change == "create" -> c.success
-        ref.kind == "tag" -> c.accent
+        change == "delete" -> c.danger
+        change == "create" -> c.success
+        kind == "tag" -> c.accent
         else -> c.secondary
     }
     RText(
