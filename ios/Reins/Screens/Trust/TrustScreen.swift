@@ -167,7 +167,11 @@ struct TrustScreen: View {
 
     @ViewBuilder
     private func autopilot(_ s: AutopilotSettings) -> some View {
-        Text(TrustText.decided(model.activity, now: Timers.nowSeconds()))
+        let now = Timers.nowSeconds()
+        // While a bypass or an Overnight runs, what it did today (from the same entries as its list); else Autopilot's.
+        let mood = runningMode.flatMap { TrustText.running($0, listed: $0.entries(model.activity, settings: s), now: now) }
+            ?? TrustText.decided(model.activity, now: now)
+        Text(mood)
             .textRole(.mood)
             .foregroundStyle(Palette.ink2)
             .accessibilityIdentifier("trustMood")
@@ -400,6 +404,22 @@ enum TrustText {
         case 1: return "Autopilot decided 1 thing today."
         default: return "Autopilot decided \(n) things today."
         }
+    }
+
+    /// The mood line while a bypass or an Overnight runs: what it did today, counted from the list under its field
+    /// (`listed`, `TrustRunning.entries`): "Bypass approved 100 today.", "Overnight decided 12 today.". Nil for a
+    /// lockdown, which keeps Autopilot's line.
+    static func running(_ running: TrustRunning, listed: [ActivityEntry], now: Int64) -> String? {
+        let who: String, did: String
+        switch running {
+        case .bypass: (who, did) = ("Bypass", "approved")
+        case .overnight: (who, did) = (AutopilotText.overnightName, "decided")
+        case .lockdown: return nil
+        }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(now)))
+        let n = listed.filter { calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.at))) == today }.count
+        return n == 0 ? "\(who) \(did) nothing yet today." : "\(who) \(did) \(n) today."
     }
 
     /// The mood line under the title: what Autopilot did this week, when its model runs ("Autopilot scored 87 requests

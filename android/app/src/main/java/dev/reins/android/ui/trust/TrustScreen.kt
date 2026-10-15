@@ -94,12 +94,15 @@ fun TrustScreen(
         Column(Modifier.fillMaxSize().verticalScroll(scroll).testTag("trustScroll")) {
             // The room the open field takes; the page scrolls on under it as it folds.
             if (s != null && field != null) Spacer(Modifier.height(with(density) { fold.open.toDp() }))
+            val decidedWhileRunning = remember(entries, s) { runningEntries(entries, s) }
+            // While a bypass or an Overnight runs, what it did today (from the same entries as its list); else Autopilot's.
+            val moodLine = s?.let { runningMood(it, decidedWhileRunning, (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000) }
+                ?: decidedLine(decided)
             RootHeader(
                 "Trust",
-                mood = mood(null, decidedLine(decided)),
+                mood = mood(null, moodLine),
                 underField = field != null,
             ) { RoundIconButton(Glyph.Plus, "New grant", Modifier.testTag("newGrant"), onClick = onNewGrant) }
-            val decidedWhileRunning = remember(entries, s) { runningEntries(entries, s) }
             if (s != null && decidedWhileRunning != null) {
                 RunningList(
                     s,

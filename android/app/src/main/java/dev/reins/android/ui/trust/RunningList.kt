@@ -64,6 +64,23 @@ fun runningEntries(entries: List<ActivityEntry>, s: AutopilotSettings?): List<Ac
         .sortedWith(compareByDescending<ActivityEntry> { it.at }.thenByDescending { it.id })
 }
 
+/**
+ * Trust's mood line while a bypass or an Overnight runs: what it did today, counted from its list ([listed], from
+ * [runningEntries]): "Bypass approved 100 today.", "Overnight decided 12 today.". Null otherwise (a lockdown keeps
+ * Autopilot's line).
+ */
+fun runningMood(s: AutopilotSettings, listed: List<ActivityEntry>?, nowSeconds: Long): String? {
+    val (who, did) = when {
+        listed == null -> return null
+        s.mode == AutopilotMode.BYPASS -> "Bypass" to "approved"
+        s.mode == AutopilotMode.OVERNIGHT -> dev.reins.android.autopilot.AutopilotText.OVERNIGHT to "decided"
+        else -> return null
+    }
+    val today = dev.reins.android.ui.activity.dayOf(nowSeconds)
+    val n = listed.count { dev.reins.android.ui.activity.dayOf(it.at) == today }
+    return if (n == 0) "$who $did nothing yet today." else "$who $did $n today."
+}
+
 /** "During this bypass", "During this Overnight", "Denied while locked". */
 fun runningListTitle(s: AutopilotSettings): String = when (s.mode) {
     AutopilotMode.BYPASS -> "During this bypass"

@@ -27,6 +27,23 @@ final class TrustSignalTests: XCTestCase {
         XCTAssertEqual(TrustText.decided([], now: now), "Autopilot decided nothing yet today.")
     }
 
+    func testWhileABypassOrOvernightRunsTheMoodSaysWhatItDidToday() {
+        let midnight = Int64(Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000)).timeIntervalSince1970)
+        let now = midnight + 10 * 3_600
+        let bypassed = (1...100).map { k in
+            DemoData.entry(Int64(k), at: now - 600 + Int64(k), action: "read", outcome: "released", detail: "", decidedBy: "bypass")
+        }
+        let s = settings(.bypass, bypassUntil: now + 3_600, bypassSince: now - 700)
+        let listed = TrustRunning.bypass(until: now + 3_600).entries(bypassed, settings: s)
+        XCTAssertEqual(TrustText.running(.bypass(until: now + 3_600), listed: listed, now: now), "Bypass approved 100 today.", "counted from the list")
+        XCTAssertEqual(TrustText.decided(bypassed, now: now), "Autopilot decided nothing yet today.", "what it said before")
+        XCTAssertEqual(TrustText.running(.bypass(until: now + 3_600), listed: [], now: now), "Bypass approved nothing yet today.")
+        let yesterday = DemoData.entry(200, at: midnight - 60, action: "read", outcome: "released", detail: "", decidedBy: "bypass")
+        XCTAssertEqual(TrustText.running(.bypass(until: now + 3_600), listed: [yesterday] + listed.prefix(1), now: now), "Bypass approved 1 today.", "today only")
+        XCTAssertEqual(TrustText.running(.overnight(until: now + 3_600), listed: Array(listed.prefix(12)), now: now), "\(AutopilotText.overnightName) decided 12 today.")
+        XCTAssertNil(TrustText.running(.lockdown, listed: listed, now: now), "a lockdown keeps Autopilot's line")
+    }
+
     func testARunningModePaintsTrustInItsField() {
         XCTAssertNil(TrustRunning.of(settings(.manual)))
         XCTAssertNil(TrustRunning.of(settings(.auto)))

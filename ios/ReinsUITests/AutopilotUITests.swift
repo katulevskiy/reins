@@ -274,6 +274,8 @@ final class AutopilotUITests: XCTestCase {
         launch(["-demoMode", "bypass", "-demoRunningEntries", "100"])
         let showAll = waitFor("runningShowAll")
         XCTAssertEqual(showAll.label, "Show all 97")
+        // The mood line says what the bypass did (12 minutes of it; all of today unless the test runs just after midnight).
+        XCTAssertTrue(waitFor("trustMood").label.hasPrefix("Bypass approved"), "the mood line counts the bypass, not Autopilot")
         XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'runningEntry:'")).count, 3)
         shot("trust-bypass-list-folded")
         showAll.tap()

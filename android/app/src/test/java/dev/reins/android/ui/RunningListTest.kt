@@ -3,7 +3,10 @@ package dev.reins.android.ui
 import dev.reins.android.TestData
 import dev.reins.android.ui.trust.RunningListFold
 import dev.reins.android.ui.trust.runningEntries
+import dev.reins.android.ui.trust.decidedLine
+import dev.reins.android.ui.trust.decidedToday
 import dev.reins.android.ui.trust.runningListTitle
+import dev.reins.android.ui.trust.runningMood
 import dev.reins.core.AutopilotMode
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.ModelState
@@ -42,6 +45,31 @@ class RunningListTest {
         assertEquals(2, RunningListFold.shown(2, expanded = false))
         assertNull("nothing to open", RunningListFold.showAll(3))
         assertEquals("Show all 1", RunningListFold.showAll(4))
+    }
+
+    @Test
+    fun whileABypassOrOvernightRunsTheMoodSaysWhatItDidToday() {
+        // Mid-morning wherever the test runs, so twelve minutes earlier is still today.
+        val midnight = java.util.Calendar.getInstance().apply {
+            timeInMillis = 1_800_000_000_000
+            set(java.util.Calendar.HOUR_OF_DAY, 0)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis / 1000
+        val now = midnight + 10 * 3_600
+        val bypassed = (1L..100L).map { TestData.entry(it, at = now - 600 + it, decidedBy = "bypass") }
+        val bypass = settings(AutopilotMode.BYPASS, until = now + 3_600, since = now - 700)
+        val listed = runningEntries(bypassed, bypass)
+        assertEquals("counted from the list", "Bypass approved 100 today.", runningMood(bypass, listed, now))
+        assertEquals("what it said before", "Autopilot decided nothing yet today.", decidedLine(decidedToday(bypassed, now)))
+        assertEquals("Bypass approved nothing yet today.", runningMood(bypass, emptyList(), now))
+        val yesterday = TestData.entry(200, at = midnight - 60, decidedBy = "bypass")
+        assertEquals("today only", "Bypass approved 1 today.", runningMood(bypass, listOf(yesterday) + listed!!.take(1), now))
+        val overnight = settings(AutopilotMode.OVERNIGHT, until = now + 3_600, since = 0)
+        assertEquals("${dev.reins.android.autopilot.AutopilotText.OVERNIGHT} decided 12 today.", runningMood(overnight, listed.take(12), now))
+        assertNull("a lockdown keeps Autopilot's line", runningMood(settings(AutopilotMode.LOCKDOWN), listed, now))
+        assertNull("nothing runs", runningMood(settings(AutopilotMode.MANUAL), runningEntries(bypassed, settings(AutopilotMode.MANUAL)), now))
     }
 
     @Test
