@@ -27,6 +27,33 @@ fat LTO). `REINS_SKIP_CORE=1` reuses the last build while iterating on Swift. Th
 package). Folders are synchronized groups: new files need no project change. Change targets or settings in the script
 and re-run it; do not edit the project file by hand.
 
+### Compile check on Linux
+
+```bash
+scripts/ios-typecheck.sh                      # all targets, Debug: ~10 s warm
+scripts/ios-typecheck.sh Reins ReinsTests     # some (also: app widgets notifications tests uitests)
+scripts/ios-typecheck.sh --release            # Release's conditions (no DEBUG); --warnings shows warnings
+```
+
+It type-checks each target's Swift with `swiftc` against the iPhoneOS 27 SDK (`arm64-apple-ios26.0`), with the
+target's folders, compilation conditions (`REINS_APP`, `DEBUG`, `REINS_HINGE` per SDK, ...), Swift version and
+extension-only API rules, all read from `gen-project.py` and `Config/Reins.xcconfig`. The app emits its module so
+`ReinsTests` checks its `@testable import Reins`. SwiftUI's macros (`#Preview`) expand through the SDK bundle's macro
+server. It prints one line per target and exits non-zero with the compiler's errors.
+
+Needs Swift 6.4 ([swiftly](https://www.swift.org/install/linux/)) and the Darwin Swift SDK that
+[xtool](https://github.com/xtool-org/xtool) makes from an Xcode .xip (`xtool setup`; it lands in
+`~/.config/swiftpm/swift-sdks/darwin.artifactbundle`, or set `REINS_DARWIN_SDK`). The first run (about 1.5 min) also
+builds the Rust core for the host once, to generate `reins_coreFFI.h` with uniffi-bindgen as `build-core.sh` does, and
+fetches ONNX Runtime's headers at the version `Package.resolved` pins (checksum checked); both are cached in
+`~/.cache/reins-ios-typecheck`. Nothing is stubbed. Asset symbols (`ImageResource.foo`) are generated from the asset
+catalogs as Xcode does.
+
+It does not link, sign or run anything: no simulator, no unit or UI tests run, no asset catalog, storyboard or
+Info.plist processing, no entitlements. A missing symbol in the Rust static library, a resource name that does not
+exist, or a crash only show up in an Xcode build. CI cannot run it: the SDK comes from Xcode, which is licensed for
+Apple hardware, so there is no CI job.
+
 ### Configuration
 
 `ios/Config/Reins.xcconfig` holds the shared settings; machine-specific ones go in `ios/Config/Local.xcconfig`
