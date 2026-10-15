@@ -72,6 +72,11 @@ struct GrantDetailScreen: View {
                 }
                 .padding(.top, 12)
 
+                // A permission for secrets: its values may still be held on computers, so they can be told to drop them.
+                if grant.action == "secrets", let project = grant.secretsProject {
+                    RevokeEverywhereSection(project: project, env: grant.secretsEnv).padding(.top, 12)
+                }
+
                 GroupCard(header: used.isEmpty ? nil : "Used for · \(used.count)") {
                     if used.isEmpty {
                         ValueRow(label: "Used for", value: "Nothing yet")

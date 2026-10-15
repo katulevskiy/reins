@@ -103,6 +103,11 @@ struct ApprovalDraft: Equatable {
     /// `quick.allow` scope: the same AI, the same kind of request, the same target), which can be wider than what the
     /// screen shows. Never on by default: a remembered approval covers what is on screen (see `buildChoice`).
     var likeThis = false
+    /// Reins Secrets: the command a remembered release covers (an id of `EnvReleaseView.commands`); nil = the narrowest
+    /// offered, the exact command.
+    var secretsCommand: String?
+    /// Reins Secrets: a remembered release covers every variable of the environment, not only those asked for.
+    var secretsAllVariables = false
 
     /// What the sheet starts with: everything found ticked (approving is one tap, unticking is how you hold something
     /// back), except a code or a password, and never for a send, a change or a permission.
@@ -167,6 +172,7 @@ func recipientAddresses(_ view: ApprovalView) -> [String] {
 
 /// Turns the screen state into what the core expects, or says what is missing. Never guesses.
 func buildChoice(_ view: ApprovalView, _ draft: ApprovalDraft) -> BuildResult {
+    if let release = view.envRelease { return buildEnvReleaseAnswer(view, release, draft) }
     switch view.kind {
     case .grant: return buildPermissionAnswer(view, draft)
     case .accounts: return buildAccountsAnswer(view, draft)
@@ -224,8 +230,9 @@ let likeThisAllMaxSecs: UInt64 = 604_800
 /// for" sheet; then the core's `quick.allow` scope, for the time picked. A scope over all mail is never open-ended: it
 /// goes with a time limit of a week at most, else the request is refused rather than silently narrowed or widened.
 func buildDecision(_ view: ApprovalView, _ draft: ApprovalDraft) -> BuildResult {
+    // A release of an environment is remembered only for the command picked among those offered, never wider.
     guard let like = view.quick?.allow, draft.likeThis, draft.lifetime != .once, draft.allMail == nil, !view.noStanding,
-          view.kind != .grant, view.kind != .accounts else { return buildChoice(view, draft) }
+          view.kind != .grant, view.kind != .accounts, view.envRelease == nil else { return buildChoice(view, draft) }
     if draft.lifetime == .uses && !(1...ApprovalRules.maxUses).contains(draft.uses) {
         return .invalid("Uses must be between 1 and \(ApprovalRules.maxUses).")
     }
@@ -283,6 +290,47 @@ private func buildConnectorAnswer(_ view: ApprovalView, _ draft: ApprovalDraft) 
     scope.classes = classes
     return .ok(ApprovalChoice(
         selectedMessageIds: ids,
+        standing: StandingGrant(
+            durationSecs: lifetimeSeconds(view, draft),
+            maxUses: draft.lifetime == .uses ? UInt32(draft.uses) : nil,
+            scope: scope
+        )
+    ))
+}
+
+/// A release of an environment can be remembered: the core offers at least one command for it, and the environment is
+/// not asked every time (by the computer's reins.toml, its name, or the user's choice).
+func secretsRememberable(_ view: ApprovalView) -> Bool {
+    guard let release = view.envRelease else { return !view.noStanding }
+    return !view.noStanding && !release.alwaysAsk && !release.print && !release.commands.isEmpty
+}
+
+/// The command a remembered release covers as the draft stands: the one picked when it is offered, else the narrowest
+/// (the core lists the exact command first). Nil when nothing is offered.
+func secretsCommand(_ release: EnvReleaseView, _ draft: ApprovalDraft) -> CommandOption? {
+    if let id = draft.secretsCommand, let picked = release.commands.first(where: { $0.id == id }) { return picked }
+    return release.commands.first
+}
+
+/// A project's environment for one command on the computer: approved once, or remembered for the command picked among
+/// those offered (the exact one by default) and the variables asked for, or every variable when the user said so.
+private func buildEnvReleaseAnswer(_ view: ApprovalView, _ release: EnvReleaseView, _ draft: ApprovalDraft) -> BuildResult {
+    if !secretsRememberable(view) || draft.lifetime == .once {
+        return .ok(ApprovalChoice(selectedMessageIds: [], standing: nil))
+    }
+    if draft.lifetime == .uses && !(1...ApprovalRules.maxUses).contains(draft.uses) {
+        return .invalid("Uses must be between 1 and \(ApprovalRules.maxUses).")
+    }
+    if let problem = customProblem(draft) { return .invalid(problem) }
+    // A command that is not offered is never sent: the core would refuse it anyway.
+    if let id = draft.secretsCommand, !release.commands.contains(where: { $0.id == id }) {
+        return .invalid("Choose one of the commands offered.")
+    }
+    guard let command = secretsCommand(release, draft) else { return .ok(ApprovalChoice(selectedMessageIds: [], standing: nil)) }
+    var scope = emptyScope()
+    scope.secrets = SecretsScopeChoice(command: command.id, allVariables: release.allVariables || draft.secretsAllVariables)
+    return .ok(ApprovalChoice(
+        selectedMessageIds: [],
         standing: StandingGrant(
             durationSecs: lifetimeSeconds(view, draft),
             maxUses: draft.lifetime == .uses ? UInt32(draft.uses) : nil,

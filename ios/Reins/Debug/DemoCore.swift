@@ -564,6 +564,19 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                                           account: v.account, standing: standing, origin: "request", summary: g.summary.prefix(1).uppercased() + g.summary.dropFirst(),
                                           lines: g.lines)
                 grantId = made.id
+            } else if let standing = choice.standing, let r = v.envRelease {
+                // As the core: the command picked among those offered, and the variables asked for or every one.
+                let command = r.commands.first { $0.id == standing.scope.secrets?.command }?.label ?? r.command
+                let every = r.allVariables || standing.scope.secrets?.allVariables == true
+                let made = Self.makeGrant(&s, connectionId: v.connectionId, label: v.connectionLabel, action: "secrets", service: v.service,
+                                          account: v.account, standing: standing, origin: "approval",
+                                          summary: "Use \(r.project) · \(r.env) for \(command)",
+                                          lines: ["\(r.runnerLabel) runs \(command)", every ? "Every variable" : r.variables.joined(separator: ", "), "In \(r.root)"])
+                if let i = s.grants.firstIndex(where: { $0.id == made.id }) {
+                    s.grants[i].secretsProject = r.project
+                    s.grants[i].secretsEnv = r.env
+                }
+                grantId = made.id
             } else if let standing = choice.standing {
                 grantId = Self.makeGrant(&s, connectionId: v.connectionId, label: v.connectionLabel, action: Self.grantAction(v.kind, v.action),
                                          service: v.service, account: v.account, standing: standing, origin: "approval", view: v).id
@@ -735,8 +748,21 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// As the core: the permissions for secrets of `project` (and `env`) end here. The demo's second computer, "studio",
+    /// is offline, so the note to it is not delivered yet.
     func revokeSecretsEverywhere(project: String?, env: String?) async throws -> SecretsRevoked {
-        SecretsRevoked(ended: 0, told: 0, notDelivered: [])
+        try await latency()
+        return locked { s -> SecretsRevoked in
+            var ended: UInt32 = 0
+            for i in s.grants.indices where s.grants[i].action == "secrets" && s.grants[i].active
+                && (project == nil || s.grants[i].secretsProject == project) && (env == nil || s.grants[i].secretsEnv == env) {
+                s.grants[i].active = false
+                s.grants[i].state = "revoked"
+                s.grants[i].expiresAt = Self.now()
+                ended += 1
+            }
+            return SecretsRevoked(ended: ended, told: 1, notDelivered: ["studio"])
+        }
     }
 
     func setSecretsAlwaysAsk(project: String, env: String, always: Bool?) async throws {}

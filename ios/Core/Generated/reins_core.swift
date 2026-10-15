@@ -9357,6 +9357,12 @@ public struct GrantView: Equatable, Hashable {
      * a subject text, or recipients); `None` for grants tied to specific emails or to other kinds of limits.
      */
     public var editableScope: GrantScopeChoice?
+    /**
+     * A permission for a project's secrets (`action` "secrets"): its project and environment, for "Revoke on all
+     * computers".
+     */
+    public var secretsProject: String?
+    public var secretsEnv: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9382,7 +9388,11 @@ public struct GrantView: Equatable, Hashable {
         /**
          * The scope in the form the grant editor uses, when the grant is simple enough to be edited (senders, domains,
          * a subject text, or recipients); `None` for grants tied to specific emails or to other kinds of limits.
-         */editableScope: GrantScopeChoice?) {
+         */editableScope: GrantScopeChoice?, 
+        /**
+         * A permission for a project's secrets (`action` "secrets"): its project and environment, for "Revoke on all
+         * computers".
+         */secretsProject: String? = nil, secretsEnv: String? = nil) {
         self.id = id
         self.connectionId = connectionId
         self.connectionLabel = connectionLabel
@@ -9401,6 +9411,8 @@ public struct GrantView: Equatable, Hashable {
         self.state = state
         self.allMail = allMail
         self.editableScope = editableScope
+        self.secretsProject = secretsProject
+        self.secretsEnv = secretsEnv
     }
 
     
@@ -9436,7 +9448,9 @@ public struct FfiConverterTypeGrantView: FfiConverterRustBuffer {
                 active: FfiConverterBool.read(from: &buf), 
                 state: FfiConverterString.read(from: &buf), 
                 allMail: FfiConverterBool.read(from: &buf), 
-                editableScope: FfiConverterOptionTypeGrantScopeChoice.read(from: &buf)
+                editableScope: FfiConverterOptionTypeGrantScopeChoice.read(from: &buf), 
+                secretsProject: FfiConverterOptionString.read(from: &buf), 
+                secretsEnv: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -9459,6 +9473,8 @@ public struct FfiConverterTypeGrantView: FfiConverterRustBuffer {
         FfiConverterString.write(value.state, into: &buf)
         FfiConverterBool.write(value.allMail, into: &buf)
         FfiConverterOptionTypeGrantScopeChoice.write(value.editableScope, into: &buf)
+        FfiConverterOptionString.write(value.secretsProject, into: &buf)
+        FfiConverterOptionString.write(value.secretsEnv, into: &buf)
     }
 }
 

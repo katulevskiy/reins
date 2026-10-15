@@ -36,10 +36,16 @@ enum HeroBadge {
 
 enum ApprovalWords {
     /// A change that cannot be undone or reaches far: asked every time, shown in red.
+    /// Reins Secrets' requests are asked every time because of where the values go, not because they cannot be undone.
     static func destructive(_ view: ApprovalView) -> Bool {
         // A desktop question says itself: one asked every time for a key or a command it cannot read is not red.
         if let ask = view.ask { return ask.destructive }
-        return view.noStanding && view.kind == .write
+        return view.noStanding && view.kind == .write && !isSecrets(view)
+    }
+
+    /// A release of an environment, values from the computer for the vault, or a git host's token.
+    static func isSecrets(_ view: ApprovalView) -> Bool {
+        view.envRelease != nil || view.secretsStore != nil || view.tokenStore != nil
     }
 
     /// The request removes something (a repository, an issue, a branch).
@@ -65,7 +71,7 @@ enum ApprovalWords {
     static func badge(_ view: ApprovalView) -> HeroBadge {
         if destructive(view) && deletes(view) { return .trash }
         if view.ask != nil { return .question }
-        if view.secrets != nil { return .key }
+        if view.secrets != nil || isSecrets(view) { return .key }
         if view.ssh != nil { return .terminal }
         switch view.kind {
         case .grant: return .shield
@@ -130,6 +136,17 @@ enum ApprovalWords {
         }
         if let ask = view.ask { return [b(untrusted(ask.question))] }
         if let s = view.secrets { return [p("Wants "), b(plural(s.items.count, "secret")), p("\nfor "), b(untrusted(s.command))] }
+        if let r = view.envRelease {
+            let env = b("\(untrusted(r.project)) · \(untrusted(r.env))")
+            let what = r.allVariables ? "every variable" : r.variables.count == 1 ? untrusted(r.variables[0]) : plural(r.variables.count, "variable")
+            let head = r.agent ? [b(untrusted(r.runnerLabel)), p(" wants ")] : [p("Wants ")]
+            if r.print { return head + [p("to "), b("print \(what)"), p("\nof "), env] }
+            return head + [b(what), p("\nof "), env]
+        }
+        if let s = view.secretsStore { return [p("Wants to save "), b(plural(Int(s.total), "secret")), p("\nin "), b("your vault")] }
+        if let t = view.tokenStore {
+            return [p("Wants to add a "), b("\(serviceName(t.service)) token"), p("\nfor "), b(untrusted(t.host))]
+        }
         if let s = view.ssh { return [wants, b("sign in"), p(" to\n"), b(untrusted(sshTarget(host: s.host, hostKey: s.hostKey)))] }
         if let mcp = view.mcp {
             let title = untrusted(mcp.title)
@@ -193,10 +210,20 @@ enum ApprovalWords {
     /// The remembered approval is "anything like this" (the user's explicit choice), wider than the screen shows.
     static func likeThisOn(_ view: ApprovalView, _ draft: ApprovalDraft) -> Bool {
         draft.likeThis && view.quick?.allow != nil && draft.lifetime != .once && draft.allMail == nil && !view.noStanding
+            && view.envRelease == nil
     }
 
-    /// Nothing here may be remembered: the dock says "Asked every time" instead of offering how long.
-    static func rememberLocked(_ view: ApprovalView) -> Bool { view.noStanding }
+    /// Nothing here may be remembered: the dock says "Asked every time" instead of offering how long. A release of an
+    /// environment is remembered only for a command the core offers.
+    static func rememberLocked(_ view: ApprovalView) -> Bool { view.envRelease != nil ? !secretsRememberable(view) : view.noStanding }
+
+    /// A remembered release covers a wider command than the one asked (`npm run *`): the dock shows which; nil when it
+    /// covers the exact command, or nothing is remembered.
+    static func secretsWider(_ view: ApprovalView, _ draft: ApprovalDraft) -> String? {
+        guard let release = view.envRelease, secretsRememberable(view), draft.lifetime != .once,
+              let command = secretsCommand(release, draft), command.prefix else { return nil }
+        return untrusted(command.label)
+    }
 
     /// 3600 → "1 hour", 28800 → "8 hours", 86400 → "1 day", 604800 → "1 week", 2592000 → "30 days".
     static func period(_ secs: UInt64) -> String {
@@ -343,6 +370,19 @@ enum ApprovalWords {
         case .ask: "Unsure"
         }
     }
+
+    /// One environment of a store, its names compact: "+API_KEY, ~DB_URL, −OLD, A → B, 4 from dev".
+    static func storeChanges(_ env: EnvStoreView) -> String {
+        var parts = env.added.map { "+" + untrusted($0) } + env.replaced.map { "~" + untrusted($0) } + env.removed.map { "−" + untrusted($0) }
+        parts += env.renamed.map(untrusted)
+        if env.copied > 0 {
+            parts.append(env.copiedFrom.map { "\(env.copied) from \(untrusted($0))" } ?? "\(env.copied) copied")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    /// "Kept" for a release: how long the computer may hold the values ("30 minutes", "1 h 30 min").
+    static func kept(_ secs: UInt64) -> String { String(leaseLabel(secs).dropFirst("for ".count)) }
 
     static func commits(_ n: Int) -> String { plural(n, "commit") }
     static func files(_ n: Int) -> String { plural(n, "file") }

@@ -112,6 +112,30 @@ final class ApprovalLogicTests: XCTestCase {
         return v
     }
 
+    static let envCommands = [
+        CommandOption(id: "exact", label: "npm run dev -- --port 3000", prefix: false),
+        CommandOption(id: "prefix:2", label: "npm run dev *", prefix: true),
+        CommandOption(id: "prefix:1", label: "npm run *", prefix: true),
+    ]
+
+    /// Reins Secrets: Claude Code runs `npm run dev` with two variables of web · dev.
+    static func envReleaseView(
+        commands: [CommandOption] = envCommands, allVariables: Bool = false, alwaysAsk: Bool = false, print: Bool = false
+    ) -> ApprovalView {
+        var v = view(
+            "req43", kind: .write, service: "vault", account: "me@example.com", op: "env_release",
+            resources: [ResourceView(id: "secrets/web/dev", label: "web · dev", wider: false)], noStanding: alwaysAsk || print,
+            opTitle: "Use a project's secrets on the computer", action: "write", klass: "secrets"
+        )
+        v.envRelease = EnvReleaseView(
+            project: "web", env: "dev", runner: "agent:claude-code", runnerLabel: "Claude Code", agent: true, root: "/home/ada/web",
+            command: "npm run dev -- --port 3000", program: "/usr/bin/npm", programWarning: nil, variables: ["DATABASE_URL", "STRIPE_KEY"],
+            allVariables: allVariables, leaseSecs: 3_600, purpose: nil, commands: commands, print: print, alwaysAsk: alwaysAsk,
+            alwaysAskSet: false
+        )
+        return v
+    }
+
     private func ok(_ result: BuildResult, file: StaticString = #filePath, line: UInt = #line) -> ApprovalChoice {
         guard case let .ok(choice) = result else {
             XCTFail("expected a choice, got \(result)", file: file, line: line)
@@ -367,6 +391,81 @@ final class ApprovalLogicTests: XCTestCase {
         let choice = ok(buildChoice(Self.onceOnlyWriteView(), ApprovalDraft(lifetime: .week, resources: ["octo"], classes: ["settings"])))
         XCTAssertNil(choice.standing)
         XCTAssertTrue(choice.selectedMessageIds.isEmpty)
+    }
+
+    // MARK: Reins Secrets
+
+    func testOnceReleasesTheEnvironmentWithoutAPermission() {
+        let choice = ok(buildDecision(Self.envReleaseView(), ApprovalDraft()))
+        XCTAssertNil(choice.standing)
+        XCTAssertTrue(choice.selectedMessageIds.isEmpty)
+    }
+
+    func testARememberedReleaseCoversTheExactCommandAndTheVariablesAskedByDefault() {
+        let choice = ok(buildDecision(Self.envReleaseView(), ApprovalDraft(lifetime: .day)))
+        XCTAssertEqual(choice.standing?.durationSecs, 86_400)
+        XCTAssertNil(choice.standing?.maxUses)
+        XCTAssertEqual(choice.standing?.scope.secrets, SecretsScopeChoice(command: "exact", allVariables: false))
+        XCTAssertEqual(choice.standing?.scope.resources, [])
+        XCTAssertEqual(choice.standing?.scope.classes, [])
+        XCTAssertFalse(choice.standing?.scope.allMail ?? true)
+    }
+
+    func testTheCommandPickedAndEveryVariableTravelWithThePermission() {
+        let draft = ApprovalDraft(lifetime: .uses, uses: 3, secretsCommand: "prefix:2", secretsAllVariables: true)
+        let choice = ok(buildDecision(Self.envReleaseView(), draft))
+        XCTAssertEqual(choice.standing?.scope.secrets, SecretsScopeChoice(command: "prefix:2", allVariables: true))
+        XCTAssertEqual(choice.standing?.maxUses, 3)
+        XCTAssertNil(choice.standing?.durationSecs)
+        // An environment asked for whole is remembered whole.
+        let whole = ok(buildDecision(Self.envReleaseView(allVariables: true), ApprovalDraft(lifetime: .day)))
+        XCTAssertEqual(whole.standing?.scope.secrets?.allVariables, true)
+    }
+
+    func testACommandThatIsNotOfferedIsRefusedNeverGuessed() {
+        XCTAssertTrue(invalid(buildDecision(Self.envReleaseView(), ApprovalDraft(lifetime: .day, secretsCommand: "prefix:9"))))
+        XCTAssertTrue(invalid(buildDecision(Self.envReleaseView(), ApprovalDraft(lifetime: .uses, uses: 0))))
+        // Once, nothing is remembered, so nothing about commands is checked.
+        XCTAssertNil(ok(buildDecision(Self.envReleaseView(), ApprovalDraft(secretsCommand: "prefix:9"))).standing)
+    }
+
+    func testTheNarrowestCommandOfferedIsTheDefault() throws {
+        let release = try XCTUnwrap(Self.envReleaseView().envRelease)
+        XCTAssertEqual(secretsCommand(release, ApprovalDraft())?.id, "exact")
+        XCTAssertEqual(secretsCommand(release, ApprovalDraft(secretsCommand: "prefix:1"))?.id, "prefix:1")
+        XCTAssertNil(secretsCommand(try XCTUnwrap(Self.envReleaseView(commands: []).envRelease), ApprovalDraft()))
+    }
+
+    func testAReleaseWithNothingOfferedOrAskedEveryTimeIsNeverRemembered() {
+        let draft = ApprovalDraft(lifetime: .untilRevoked, secretsCommand: "exact")
+        XCTAssertNil(ok(buildDecision(Self.envReleaseView(commands: []), draft)).standing)
+        XCTAssertNil(ok(buildDecision(Self.envReleaseView(alwaysAsk: true), draft)).standing)
+        XCTAssertNil(ok(buildDecision(Self.envReleaseView(print: true), draft)).standing)
+        XCTAssertTrue(ApprovalWords.rememberLocked(Self.envReleaseView(commands: [])))
+        XCTAssertTrue(ApprovalWords.rememberLocked(Self.envReleaseView(alwaysAsk: true)))
+        XCTAssertTrue(ApprovalWords.rememberLocked(Self.envReleaseView(print: true)))
+        XCTAssertFalse(ApprovalWords.rememberLocked(Self.envReleaseView()))
+    }
+
+    func testAReleaseIsNeverRememberedAsAnythingLikeThis() {
+        var view = Self.envReleaseView()
+        let wide = GrantScopeChoice(
+            allMail: false, selectedMessagesOnly: false, senderAddresses: [], senderDomains: [], subjectPattern: nil,
+            recipientAddresses: [], recipientDomains: [], resources: ["secrets/web"], classes: []
+        )
+        view.quick = QuickApproval(fromNotification: false, allow: StandingGrant(durationSecs: 3_600, maxUses: nil, scope: wide), allowWhat: "web", repeats: 0)
+        let draft = ApprovalDraft(lifetime: .day, likeThis: true)
+        let choice = ok(buildDecision(view, draft))
+        XCTAssertEqual(choice.standing?.scope.secrets, SecretsScopeChoice(command: "exact", allVariables: false))
+        XCTAssertEqual(choice.standing?.scope.resources, [])
+        XCTAssertFalse(ApprovalWords.likeThisOn(view, draft))
+    }
+
+    func testTheDockShowsAWiderCommandOnlyWhenOneIsRemembered() {
+        let view = Self.envReleaseView()
+        XCTAssertNil(ApprovalWords.secretsWider(view, ApprovalDraft(lifetime: .day)))
+        XCTAssertNil(ApprovalWords.secretsWider(view, ApprovalDraft(secretsCommand: "prefix:2")))
+        XCTAssertEqual(ApprovalWords.secretsWider(view, ApprovalDraft(lifetime: .day, secretsCommand: "prefix:2")), "npm run dev *")
     }
 
     // MARK: What the sheet starts with

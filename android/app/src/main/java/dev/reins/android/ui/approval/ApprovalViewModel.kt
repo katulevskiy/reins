@@ -275,6 +275,27 @@ class ApprovalViewModel(
         }
     }
 
+    /**
+     * "Ask every time" for the environment a release is from, saved on the phone at once. Switched on, nothing of
+     * this request is remembered either.
+     */
+    fun setEnvAlwaysAsk(on: Boolean) {
+        if (_ui.value.readOnly) return
+        val release = _ui.value.view?.envRelease ?: return
+        val before = _ui.value.draft.envAlwaysAsk
+        edit { it.copy(envAlwaysAsk = on, lifetime = if (on) LifetimeKind.ONCE else it.lifetime) }
+        viewModelScope.launch {
+            try {
+                container.core.setSecretsAlwaysAsk(release.project, release.env, on)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                _ui.update { it.copy(draft = it.draft.copy(envAlwaysAsk = before), error = e.userMessage()) }
+            }
+        }
+    }
+
     fun toggleMore() {
         _ui.update { it.copy(moreOpen = !it.moreOpen) }
     }

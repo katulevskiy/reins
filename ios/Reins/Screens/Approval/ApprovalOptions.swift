@@ -274,10 +274,18 @@ private struct ScopeOptions: View {
     @Environment(\.feedback) private var feedback
 
     var body: some View {
+        if let release = view.envRelease {
+            SecretsScopeOptions(vm: vm, release: release)
+        } else {
+            options
+        }
+    }
+
+    private var options: some View {
         let write = view.kind == .write
         let send = view.kind == .send
         let gmail = [ApprovalKind.search, .read, .send].contains(view.kind)
-        VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 10) {
             if let quick = view.quick, quick.allow != nil {
                 FactGroup {
                     OptionRow(selected: !vm.draft.likeThis && vm.draft.allMail == nil, id: "scope:picked") {
@@ -451,6 +459,43 @@ private struct ScopeOptions: View {
         .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .padding(.horizontal, 16)
         .accessibilityIdentifier("subject")
+    }
+}
+
+/// What a remembered release of an environment covers: one of the commands the core offers (narrowest first, the exact
+/// command to start with), and the variables asked for or every variable of the environment.
+private struct SecretsScopeOptions: View {
+    @Bindable var vm: ApprovalModel
+    var release: EnvReleaseView
+
+    var body: some View {
+        let picked = secretsCommand(release, vm.draft)?.id
+        VStack(alignment: .leading, spacing: 10) {
+            FactHeader("Command")
+            FactGroup {
+                ForEach(release.commands, id: \.id) { option in
+                    OptionRow(selected: picked == option.id, id: "secretsCommand:\(option.id)", tint: option.prefix ? Palette.warning : Palette.accent) {
+                        vm.draft.secretsCommand = option.id
+                    } label: {
+                        Text(untrusted(option.label))
+                            .font(RFont.mono(14, .medium))
+                            .foregroundStyle(option.prefix ? Palette.warning : Palette.text)
+                            .lineLimit(3)
+                            .environment(\.layoutDirection, .leftToRight)
+                    }
+                }
+            }
+            .accessibilityContainer("secretsCommands")
+            if !release.allVariables {
+                FactGroup {
+                    CheckRow(checked: vm.draft.secretsAllVariables, onChange: { on in vm.draft.secretsAllVariables = on }) {
+                        Text("Every variable").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+                    }
+                    .padding(16)
+                    .accessibilityIdentifier("secretsAllVariables")
+                }
+            }
+        }
     }
 }
 

@@ -71,6 +71,7 @@ enum DemoData {
             else { v.preview.first.map { $0.hasSuffix(".") ? $0 : $0 + "." } ?? "" }
         }
         let floor = v.kind == .grant || v.kind == .accounts || v.secrets != nil || v.ssh != nil || v.noStanding
+            || v.envRelease != nil || v.secretsStore != nil || v.tokenStore != nil
             || v.mcp?.destructive == true || v.git?.refs.contains { $0.force || $0.forceUnknown || $0.change == "delete" } == true
         guard !floor else { return v }
         let allow: (GrantScopeChoice, String)? = switch v.kind {
@@ -452,6 +453,46 @@ enum DemoData {
             ssh: SshSignView(keyName: "Deploy key", keyFingerprint: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8", host: "build.example.com", hostKey: "SHA256:Ql3mV1hd2bS9WgS0aVq2Jv0Rr2q8Zb0yRrj2uMm3n0E")
         ), "\(desktop) wants to sign in to a server with ssh", "Deploy key on build.example.com")
 
+        // Reins Secrets: an agent runs the dev server with two variables of web · dev; values from the computer for the vault.
+        var envRelease = view(
+            "req43", conn: "c6", label: desktop, kind: .write, action: "write", service: "vault", account: "me@example.com",
+            createdAt: now - 22, waitUntil: now + 200,
+            op: "env_release", resources: [ResourceView(id: "secrets/web/dev", label: "web · dev", wider: false), ResourceView(id: "secrets/web", label: "web", wider: true)],
+            preview: ["Claude Code runs npm run dev -- --port 3000", "web/dev: DATABASE_URL, STRIPE_KEY", "In ~/code/web", "Kept for 1 hour"],
+            opTitle: "Use a project's secrets on the computer", klass: "secrets"
+        )
+        envRelease.envRelease = EnvReleaseView(
+            project: "web", env: "dev", runner: "agent:claude-code", runnerLabel: "Claude Code", agent: true, root: "~/code/web",
+            command: "npm run dev -- --port 3000", program: "/usr/local/bin/npm", programWarning: nil,
+            variables: ["DATABASE_URL", "STRIPE_KEY"], allVariables: false, leaseSecs: 3_600, purpose: "Start the dev server",
+            commands: [
+                CommandOption(id: "exact", label: "npm run dev -- --port 3000", prefix: false),
+                CommandOption(id: "prefix:2", label: "npm run dev *", prefix: true),
+                CommandOption(id: "prefix:1", label: "npm run *", prefix: true),
+            ],
+            print: false, alwaysAsk: false, alwaysAskSet: false
+        )
+        add(envRelease, "\(desktop) wants to use a project's secrets on the computer", "web · dev")
+
+        var store = view(
+            "req44", conn: "c6", label: desktop, kind: .write, action: "write", service: "vault", account: "me@example.com",
+            createdAt: now - 26, waitUntil: now + 200,
+            op: "secrets_store", resources: [ResourceView(id: "secrets", label: "Reins Secrets", wider: false)],
+            preview: ["Save 6 secrets from the computer"], noStanding: true, opTitle: "Save a project's secrets from the computer", klass: "secrets"
+        )
+        store.secretsStore = SecretsStoreView(
+            envs: [
+                EnvStoreView(project: "web", env: "staging", newEnv: true, added: ["DATABASE_URL", "STRIPE_KEY"], replaced: [], removed: [],
+                             renamed: [], copiedFrom: "dev", copied: 3),
+                EnvStoreView(project: "web", env: "dev", newEnv: false, added: ["SENTRY_DSN"], replaced: ["STRIPE_KEY"], removed: ["OLD_TOKEN"],
+                             renamed: ["API_URL → PUBLIC_API_URL"], copiedFrom: nil, copied: 0),
+            ],
+            check: "4821", total: 6,
+            ssh: [SshStoreView(name: "Deploy key", fingerprint: "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8")],
+            tokens: [TokenStoreView(service: "github", host: "github.com", scopes: ["repo", "workflow"], check: "7302")]
+        )
+        add(store, "\(desktop) wants to save a project's secrets from the computer", "web · staging, web · dev")
+
         // Pairings: an AI on the web (three codes to pick from), and the desktop app with its key's digits.
         let pair1 = PairingView(id: "pair1", clientName: "Gemini", clientHost: "gemini.google.com", choices: Data([7, 42, 88]), createdAt: now - 12, keyFingerprint: nil)
         let pair2 = PairingView(id: "pair2", clientName: "Reins desktop app on studio", clientHost: "studio", choices: Data([19, 63, 5]), createdAt: now - 600, keyFingerprint: "4821 9930")
@@ -643,6 +684,14 @@ enum DemoData {
               lines: ["Any branch of octo/app", "Issues, Code"], origin: "manual", editable: scope(resources: ["octo/app"], classes: ["issues", "code"])),
             g("g8", conn: "c1", label: "Claude", action: "read", summary: "Read all emails", expiresAt: nil, uses: 31, createdAt: now - 86_400 * 12,
               account: "work@corp.example", lines: ["All mail"], allMail: true, editable: scope(allMail: true)),
+            { () -> GrantView in
+                var secrets = g("g9", conn: "c6", label: desktop, action: "secrets", summary: "Use web · dev for npm run dev *", expiresAt: now + 86_400 * 6,
+                                uses: 4, createdAt: now - 86_400, service: "vault", account: "me@example.com",
+                                lines: ["Claude Code runs npm run dev *", "DATABASE_URL, STRIPE_KEY", "In ~/code/web"], editable: nil)
+                secrets.secretsProject = "web"
+                secrets.secretsEnv = "dev"
+                return secrets
+            }(),
             g("g3", expiresAt: now - 86_400 * 2, uses: 3, createdAt: now - 86_400 * 3, active: false, state: "expired"),
             g("g6", conn: "c4", label: "notes-bot", expiresAt: now + 86_400, maxUses: 3, uses: 3, createdAt: now - 86_400 * 3, active: false, state: "used_up"),
             g("g7", conn: "c2", label: "My ChatGPT", action: "read", summary: "Read Telegram messages in Family", expiresAt: now - 86_400 * 2, uses: 2,

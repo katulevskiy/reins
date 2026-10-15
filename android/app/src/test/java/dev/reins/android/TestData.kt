@@ -545,6 +545,76 @@ object TestData {
         secrets = SecretReleaseView("npm run deploy", "Deploy the site", listOf("Netlify · password", "GitHub · totp"), lease),
     )
 
+    // ---- Reins Secrets ------------------------------------------------------------------------------------------------
+
+    /** The command patterns a remembered release of `npm run dev -- --port 3000` may cover, narrowest first. */
+    val npmCommands = listOf(
+        dev.reins.core.CommandOption("exact", "npm run dev -- --port 3000", false),
+        dev.reins.core.CommandOption("prefix:2", "npm run dev *", true),
+        dev.reins.core.CommandOption("prefix:1", "npm run *", true),
+    )
+
+    /** A project's environment released for one command on the computer. */
+    fun envRelease(
+        runner: String = "person",
+        runnerLabel: String = "You",
+        command: String = "npm run dev -- --port 3000",
+        program: String = "/usr/local/bin/npm",
+        programWarning: String? = null,
+        env: String = "dev",
+        variables: List<String> = listOf("DATABASE_URL", "STRIPE_KEY", "SESSION_SECRET"),
+        allVariables: Boolean = false,
+        lease: ULong = 900u,
+        purpose: String? = null,
+        commands: List<dev.reins.core.CommandOption> = npmCommands,
+        print: Boolean = false,
+        alwaysAsk: Boolean = false,
+    ) = dev.reins.core.EnvReleaseView(
+        "shop", env, runner, runnerLabel, runner.startsWith("agent:"), "/home/me/code/shop", command, program, programWarning,
+        variables, allVariables, lease, purpose, commands, print, alwaysAsk, false,
+    )
+
+    fun envReleaseView(release: dev.reins.core.EnvReleaseView = envRelease()) = writeView().copy(
+        requestId = "req43", connectionLabel = "Reins desktop app on laptop", service = "vault",
+        account = "me@example.com", op = "env_release",
+        resources = listOf(ResourceView("secrets/shop/${release.env}", "shop · ${release.env}", false), ResourceView("secrets/shop", "shop", true)),
+        preview = listOf("${release.runnerLabel}: ${release.env} for ${release.command}"),
+        noStanding = release.alwaysAsk || release.print || release.commands.isEmpty(), opTitle = "Use a project's secrets", action = "write",
+        `class` = "secrets", classes = emptyList(), envRelease = release,
+    )
+
+    fun tokenStore(check: String = "7302") = dev.reins.core.TokenStoreView("github", "github.com", listOf("repo", "workflow", "read:org"), check)
+
+    /** Values from the computer to save in the vault: two environments, an SSH key and a token, one approval. */
+    fun secretsStoreView() = writeView().copy(
+        requestId = "req44", connectionLabel = "Reins desktop app on laptop", service = "vault",
+        account = "me@example.com", op = "secrets_store", resources = listOf(ResourceView("secrets", "Your vault", false)),
+        preview = listOf("Save 9 secrets"), noStanding = true, opTitle = "Save secrets", action = "write", `class` = "secrets",
+        classes = emptyList(),
+        secretsStore = dev.reins.core.SecretsStoreView(
+            listOf(
+                dev.reins.core.EnvStoreView("shop", "dev", false, listOf("SENTRY_DSN", "OPENAI_API_KEY"), listOf("STRIPE_KEY"), listOf("OLD_TOKEN"), listOf("DB_URL → DATABASE_URL"), null, 0u),
+                dev.reins.core.EnvStoreView("shop", "staging", true, listOf("FEATURE_FLAGS"), emptyList(), emptyList(), emptyList(), "dev", 4u),
+            ),
+            "4821", 9u,
+            listOf(dev.reins.core.SshStoreView("Deploy key", "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8")),
+            listOf(tokenStore(check = "")),
+        ),
+    )
+
+    fun tokenStoreView() = writeView().copy(
+        requestId = "req45", connectionLabel = "Reins desktop app on laptop", service = "vault",
+        account = "me@example.com", op = "token_store", resources = listOf(ResourceView("github", "GitHub", false)),
+        preview = listOf("A GitHub token for github.com"), noStanding = true, opTitle = "Save a token", action = "write",
+        `class` = "secrets", classes = emptyList(), tokenStore = tokenStore(),
+    )
+
+    /** A permission for the secrets of shop · dev. */
+    fun secretsGrant(id: String = "s1") = grant(id, action = "secrets", editable = null).copy(
+        summary = "Run npm run dev * with shop · dev", service = "vault", account = "me@example.com",
+        lines = listOf("Command: npm run dev *", "Variables: DATABASE_URL, STRIPE_KEY"), secretsProject = "shop", secretsEnv = "dev",
+    )
+
     fun sshView(host: String? = "build.example.com", hostKey: String? = "SHA256:Ql3mV1hd2bS9WgS0aVq2Jv0Rr2q8Zb0yRrj2uMm3n0E") = writeView().copy(
         requestId = "req42", connectionLabel = "Reins desktop app on laptop", service = "vault", account = "me@example.com",
         op = "ssh_sign", resources = listOf(ResourceView("SHA256:abc@build.example.com", "Deploy key on build.example.com", false)),

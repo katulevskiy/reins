@@ -231,7 +231,9 @@ private fun RememberSheet(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
                     feedback.play(Event.expand(more))
                 }
                 AnimatedVisibility(more, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                    Column(Modifier.padding(top = 4.dp)) { ScopeOptions(view, ui, viewModel) }
+                    Column(Modifier.padding(top = 4.dp)) {
+                        if (view.envRelease != null) EnvScopeOptions(view, ui, viewModel) else ScopeOptions(view, ui, viewModel)
+                    }
                 }
             }
         }
@@ -468,6 +470,34 @@ private fun ScopeOptions(view: ApprovalView, ui: ApprovalUi, viewModel: Approval
                     ResourceRows(wide, draft, viewModel, pick)
                 }
             }
+        }
+    }
+}
+
+/** A project's environment: which command pattern a remembered release covers (narrowest first), and every variable. */
+@Composable
+private fun EnvScopeOptions(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel) {
+    val c = LocalColors.current
+    val release = view.envRelease ?: return
+    val picked = envCommandOf(view, ui.draft)?.id
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        GroupHeader("Command")
+        FactGroup(
+            tag = "envCommands",
+            rows = release.commands.map { option ->
+                {
+                    OptionRow(picked == option.id, "envCommand:${option.id}", onSelect = { viewModel.edit { it.copy(envCommand = option.id) } }) {
+                        RText(untrusted(option.label), RType.mono(14f, FontWeight.Medium), c.text, Modifier.weight(1f), ltr = true)
+                    }
+                }
+            },
+        )
+        if (!release.allVariables) {
+            FactGroup(
+                rows = listOf {
+                    CheckOption(ui.draft.envAllVariables, "Every variable", "envAllVariables") { on -> viewModel.edit { it.copy(envAllVariables = on) } }
+                },
+            )
         }
     }
 }

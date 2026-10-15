@@ -31,6 +31,7 @@ struct ApprovalDock: View {
                     .accessibilityIdentifier("noStanding")
             } else {
                 if ApprovalWords.likeThisOn(view, vm.draft) { LikeThisNote() }
+                if let wider = ApprovalWords.secretsWider(view, vm.draft) { SecretsCommandNote(command: wider) }
                 DockSegments(vm: vm, view: view)
             }
             buttons
@@ -191,5 +192,30 @@ private struct LikeThisNote: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("likeThisNote")
+    }
+}
+
+/// A remembered release covers more than the exact command: the dock says which pattern ("npm run *").
+private struct SecretsCommandNote: View {
+    var command: String
+    @Environment(ApprovalNav.self) private var nav
+
+    var body: some View {
+        Button {
+            nav.overlay = .remember
+        } label: {
+            Label {
+                Text(command).font(RFont.mono(12.5, .medium)).lineLimit(1).truncationMode(.middle)
+            } icon: {
+                Image(systemName: "terminal").font(.system(size: 11.5, weight: .semibold))
+            }
+            .foregroundStyle(Palette.warning)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Palette.warning.opacity(0.13), in: Capsule())
+            .environment(\.layoutDirection, .leftToRight)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("secretsCommandNote")
     }
 }
