@@ -70,20 +70,48 @@ import kotlin.coroutines.cancellation.CancellationException
 class PendingDetails {
     val suggestions = mutableStateMapOf<String, SuggestionView?>()
     val views = mutableStateMapOf<String, ApprovalView>()
+
+    /** Autopilot's reason line per request ("Like 11 pushes to feature branches of acme/web you approved"). */
+    val reasons = mutableStateMapOf<String, String>()
+
+    /** The push each decided entry made (repo and branch kind), from its stored approval; null when it was none. */
+    internal val pushes = HashMap<Long, PushKey?>()
 }
 
 @Composable
-fun rememberPendingDetails(container: AppContainer, pending: List<PendingItem>): PendingDetails {
+fun rememberPendingDetails(container: AppContainer, pending: List<PendingItem>, history: List<dev.reins.core.ActivityEntry> = emptyList()): PendingDetails {
     val details = remember { PendingDetails() }
     val ids = pending.filter { it.kind == PendingKind.REQUEST }.map { it.id }
+    val latest = androidx.compose.runtime.rememberUpdatedState(history)
     LaunchedEffect(ids) {
         for (id in ids) {
             if (id !in details.suggestions) details.suggestions[id] = quietly { container.core.autopilotSuggestion(id) }
             if (id !in details.views) (container.approvalViews[id] ?: quietly { container.core.approvalView(id) })?.let { details.views[id] = it }
         }
+        if (ids.isEmpty()) return@LaunchedEffect
+        val history = latest.value
+        // The reason line: Autopilot's counts per kind, and for pushes the decided pushes of the same repo and
+        // branch kind, read from their stored approvals (each entry once).
+        val profiles = quietly { container.core.autopilotProfiles() }.orEmpty()
+        val needPushes = ids.any { pushKey(details.views[it]) != null }
+        if (needPushes) {
+            history.asSequence().filter(::approvedPush).take(REASON_HISTORY).forEach { e ->
+                if (e.id !in details.pushes) details.pushes[e.id] = pushKey(quietly { container.core.activityApproval(e.id) })
+            }
+        }
+        val approved = history.filter(::approvedPush).take(REASON_HISTORY).mapNotNull { details.pushes[it.id] }
+        for (id in ids) {
+            val s = details.suggestions[id] ?: continue
+            val cls = profiles.firstOrNull { it.id == s.profileId }?.classes?.firstOrNull { it.classKey == s.classKey }
+            val item = pending.firstOrNull { it.id == id } ?: continue
+            reasonLine(s, item, cls?.approved?.toInt(), cls?.denied?.toInt(), pushKey(details.views[id]), approved)?.let { details.reasons[id] = it } ?: details.reasons.remove(id)
+        }
     }
     return details
 }
+
+/** How far back the reason line looks for pushes you approved. */
+private const val REASON_HISTORY = 200
 
 private suspend fun <T> quietly(block: suspend () -> T): T? = try {
     block()
@@ -196,147 +224,3 @@ fun TimerPill(createdAt: Long, waitUntil: Long?, now: State<Long>, modifier: Mod
     }
 }
 
-/** A waiting request: what it wants in one sentence, its timer, and Autopilot's pick beside Review. */
-@Composable
-fun WaitingCard(
-    item: PendingItem,
-    suggestion: SuggestionView?,
-    view: ApprovalView?,
-    modifier: Modifier = Modifier,
-    onReview: () -> Unit,
-    onAllow: () -> Unit,
-    onDeny: () -> Unit,
-) {
-    val c = LocalColors.current
-    val tone = toneColor(pendingTone(item, suggestion), c)
-    // An upload waits until the server deletes it, not for an AI that is holding on: no countdown.
-    val waitUntil = if (item.kind == PendingKind.BLOB) null else item.waitUntil
-    val now = rememberNowState(untilMillis = waitUntil?.let { it * 1000 })
-    val sentence = remember(item, view) { pendingSentence(item, view) }
-    Column(
-        modifier
-            .fillMaxWidth()
-            .toneCard(tone, top = if (c.dark) 0.16f else 0.10f, bottom = if (c.dark) 0.04f else 0.03f)
-            .testTag("pending:${item.id}")
-            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(24.dp), onClick = onReview)
-            .padding(14.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val label = item.label
-            if (label != null) {
-                PendingTile(item, label, ring = mixOver(tone, c))
-                Spacer(Modifier.width(14.dp))
-                LabelText(label, Modifier.weight(1f).testTag("sentence:${item.id}"), size = 16f, lineHeight = 21f, maxLines = 3)
-            } else {
-                PendingMini(item, ring = mixOver(tone, c))
-                Spacer(Modifier.width(14.dp))
-                SentenceText(sentence, Modifier.weight(1f).testTag("sentence:${item.id}"))
-            }
-            Spacer(Modifier.width(8.dp))
-            TimerPill(item.createdAt, waitUntil, now)
-        }
-        Spacer(Modifier.height(14.dp))
-        ActionRow(waitAction(item, suggestion), count = 1, confidence = suggestion?.pApprove ?: 0f, tag = item.id, onReview = onReview, onAllow = onAllow, onDeny = onDeny)
-    }
-}
-
-/** Routine requests of one AI as one card: what they are together, a line each, and one answer for all of them. */
-@Composable
-fun GroupCard(
-    group: WaitCard.Group,
-    details: PendingDetails,
-    modifier: Modifier = Modifier,
-    onReview: () -> Unit,
-    onAllow: () -> Unit,
-    onDeny: () -> Unit,
-) {
-    val c = LocalColors.current
-    val first = group.items.first()
-    val action = groupAction(group.items) { details.suggestions[it] }
-    val tone = toneColor(toneOf(if (group.items.all { it.action == first.action }) first.action else "search"), c)
-    val waitUntil = group.items.mapNotNull { it.waitUntil }.minOrNull()
-    val createdAt = group.items.minOf { it.createdAt }
-    val now = rememberNowState(untilMillis = waitUntil?.let { it * 1000 })
-    val sentence = groupSentence(group.items) { details.views[it] }
-    Column(
-        modifier
-            .fillMaxWidth()
-            .toneCard(tone, top = if (c.dark) 0.16f else 0.10f, bottom = if (c.dark) 0.04f else 0.03f)
-            .testTag("burst")
-            .pressable(highlight = c.controlFill, shape = RoundedCornerShape(24.dp), onClick = onReview)
-            .padding(14.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val label = first.label
-            if (label != null) PendingTile(first, label, ring = mixOver(tone, c)) else PendingMini(first, ring = mixOver(tone, c))
-            Spacer(Modifier.width(14.dp))
-            SentenceText(sentence, Modifier.weight(1f).testTag("burstTitle"))
-            Spacer(Modifier.width(8.dp))
-            TimerPill(createdAt, waitUntil, now)
-        }
-        Column(Modifier.padding(start = 58.dp, top = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            group.items.take(MAX_LINES).forEach { item ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("burstItem:${item.id}")) {
-                    Icon(Icons.Rounded.MailOutline.takeIf { item.service.isBlank() || item.service == "gmail" } ?: dev.reins.android.design.ActionKind.of(item.action).icon, null, Modifier.size(14.dp), tint = c.tertiary)
-                    Spacer(Modifier.width(7.dp))
-                    RText(groupLine(item, details.views[item.id]), RType.sans(13f), c.secondary, maxLines = 1)
-                }
-            }
-            if (group.items.size > MAX_LINES) RText("+${group.items.size - MAX_LINES} more", RType.sans(13f), c.tertiary, maxLines = 1)
-        }
-        Spacer(Modifier.height(14.dp))
-        ActionRow(action, count = group.items.size, confidence = group.items.mapNotNull { details.suggestions[it.id]?.pApprove }.minOrNull() ?: 0f, tag = "burst", onReview = onReview, onAllow = onAllow, onDeny = onDeny)
-    }
-}
-
-private const val MAX_LINES = 4
-
-/** The colour of the card behind the face's ring: the tone over the page, roughly. */
-private fun mixOver(tone: Color, c: RColors): Color = androidx.compose.ui.graphics.lerp(c.background, tone, 0.14f)
-
-/** Autopilot's pick (or a plain label) on the left, Review on the right. */
-@Composable
-private fun ActionRow(
-    action: WaitAction,
-    count: Int,
-    confidence: Float,
-    tag: String,
-    onReview: () -> Unit,
-    onAllow: () -> Unit,
-    onDeny: () -> Unit,
-) {
-    val c = LocalColors.current
-    val (reviewBg, reviewFg) = primaryFill(c)
-    val many = if (count > 1) " $count" else ""
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        when (action) {
-            WaitAction.Allow -> PillButton(
-                "Allow$many", Modifier.weight(1f).testTag(if (tag == "burst") "approveAll" else "allow:$tag"), icon = Icons.Rounded.Fingerprint,
-                background = c.success, foreground = onSuccess(c), height = 42.dp, onClick = onAllow,
-            )
-            WaitAction.Deny -> PillButton(
-                "Deny$many", Modifier.weight(1f).testTag(if (tag == "burst") "denyAll" else "deny:$tag"), icon = Icons.Rounded.Block,
-                background = c.danger.copy(alpha = 0.15f), foreground = c.danger, height = 42.dp, onClick = onDeny,
-            )
-            WaitAction.Unsure -> Row(Modifier.weight(1f).semantics(mergeDescendants = true) {}.testTag("unsure:$tag"), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                ProgressRing(confidence, c.search, c.search.copy(alpha = 0.2f), size = 16.dp, stroke = 2.dp)
-                Spacer(Modifier.width(7.dp))
-                RText("Unsure", RType.sans(14f, FontWeight.SemiBold), c.secondary, maxLines = 1)
-            }
-            WaitAction.AlwaysAsks -> Row(Modifier.weight(1f).semantics(mergeDescendants = true) {}.testTag("alwaysAsks:$tag"), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Lock, null, Modifier.size(15.dp), tint = c.secondary)
-                Spacer(Modifier.width(6.dp))
-                RText("Always asks", RType.sans(14f, FontWeight.SemiBold), c.secondary, maxLines = 1)
-            }
-            WaitAction.Review -> Unit
-        }
-        val weight = when (action) {
-            WaitAction.Unsure, WaitAction.AlwaysAsks -> 2f
-            else -> 1f
-        }
-        PillButton(
-            "Review", Modifier.weight(weight).testTag(if (tag == "burst") "reviewBurst" else "review:$tag"),
-            background = reviewBg, foreground = reviewFg, height = 42.dp, onClick = onReview,
-        )
-    }
-}
