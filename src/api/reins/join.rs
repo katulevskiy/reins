@@ -145,6 +145,10 @@ impl JoinHub {
                     device_name: name,
                     public_key: new.public_key.clone(),
                     created_at: now,
+                    device_id: None,
+                    sign_pub: None,
+                    commitment: None,
+                    reveal: None,
                 },
                 delivered: false,
                 status: JoinStatus::Waiting,
@@ -184,12 +188,14 @@ impl JoinHub {
             return (entry.device == device).then_some(View::Requester(JoinState {
                 status: JoinStatus::Expired,
                 sealed: None,
+                challenge: None,
             }));
         }
         if entry.device == device {
             Some(View::Requester(JoinState {
                 status: entry.status,
                 sealed: entry.sealed.clone(),
+                challenge: None,
             }))
         } else {
             entry.delivered = true;
@@ -345,6 +351,8 @@ mod tests {
             v: 1,
             device_name: name.to_owned(),
             public_key: reins_proto::desktop::encode_key(&[9u8; 32]),
+            sign_pub: None,
+            commitment: None,
         }
     }
 
@@ -364,7 +372,8 @@ mod tests {
             hub.view("u1", "new-phone", &created.id, 101),
             Some(View::Requester(JoinState {
                 status: JoinStatus::Waiting,
-                sealed: None
+                sealed: None,
+                challenge: None,
             }))
         );
         let approve = JoinAnswer {
@@ -379,7 +388,8 @@ mod tests {
             hub.view("u1", "new-phone", &created.id, 103),
             Some(View::Requester(JoinState {
                 status: JoinStatus::Approved,
-                sealed: Some("SEALED".to_owned())
+                sealed: Some("SEALED".to_owned()),
+                challenge: None,
             }))
         );
         // Answered: the approval device no longer gets it.
@@ -440,7 +450,8 @@ mod tests {
             hub.view("u1", "d1", &again.id, late),
             Some(View::Requester(JoinState {
                 status: JoinStatus::Expired,
-                sealed: None
+                sealed: None,
+                challenge: None,
             }))
         );
         let deny = JoinAnswer {

@@ -340,6 +340,8 @@ impl Hub {
                 pairings: self.pairings.take_undelivered(user),
                 blobs: self.blobs.take_undelivered(user, now_unix()),
                 joins: self.joins.take_undelivered(user, now_unix()),
+                handovers: Vec::new(),
+                log_head: None,
             };
             if !pending.is_empty() || tokio::time::Instant::now() >= deadline {
                 return pending;

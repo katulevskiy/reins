@@ -102,6 +102,8 @@ impl Engine {
             v: PROTOCOL_VERSION,
             device_name: device_name.trim().to_owned(),
             public_key: public_key.clone(),
+            sign_pub: None,
+            commitment: None,
         };
         let created = api_call!(&session, |api| api.create_join(&new)).map_err(|e| match e {
             ApiFailure::Status {
@@ -144,6 +146,7 @@ impl Engine {
             }) => JoinState {
                 status: JoinStatus::Expired,
                 sealed: None,
+                challenge: None,
             },
             Err(e) => return Err(e.into_core()),
         };
