@@ -330,7 +330,7 @@ struct ThisWasWrongDock: View {
         VStack(spacing: 10) {
             if let error { Banner(error, kind: .error) }
             if thanked {
-                Banner("Learned. It asks about these again.")
+                Banner(Correction.thanks)
                     .accessibilityIdentifier("corrected")
             } else {
                 // A normal neutral button like Deny: only its undo mark is in Autopilot's violet, since it teaches Autopilot.
@@ -353,14 +353,14 @@ struct ThisWasWrongDock: View {
                 .accessibilityIdentifier("thisWasWrong")
             }
         }
-        .alert(should == .deny ? "Should this have been denied?" : "Should this have been approved?", isPresented: $asking) {
-            Button(should == .deny ? "Deny next time" : "Approve next time") {
+        .alert(Correction.question(entry), isPresented: $asking) {
+            Button(Correction.answer(entry)) {
                 feedback.quietClose()
                 Task { await correct(should) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Autopilot learns from it. What was done stays done.")
+            Text(Correction.message)
         }
         .presentationFeedback(asking)
     }
@@ -368,15 +368,39 @@ struct ThisWasWrongDock: View {
     private func correct(_ verdict: Verdict) async {
         busy = true
         error = nil
-        feedback.play(.undo)
+        if let failed = await Correction.apply(model, entry: entry, shouldHave: verdict) {
+            error = failed
+        } else {
+            thanked = true
+        }
+        busy = false
+    }
+}
+
+/// Telling Autopilot a decision was wrong: the dock on an entry's page and the swipe on its river row both do it so.
+@MainActor
+enum Correction {
+    static func question(_ entry: ActivityEntry) -> String {
+        correctionFor(entry) == .deny ? "Should this have been denied?" : "Should this have been approved?"
+    }
+
+    static func answer(_ entry: ActivityEntry) -> String {
+        correctionFor(entry) == .deny ? "Deny next time" : "Approve next time"
+    }
+
+    static let message = "Autopilot learns from it. What was done stays done."
+    static let thanks = "Learned. It asks about these again."
+
+    /// Teaches the profile; nil when it worked, else what to say.
+    static func apply(_ model: AppModel, entry: ActivityEntry, shouldHave verdict: Verdict) async -> String? {
+        model.feedback.play(.undo)
         do {
             try await model.core.correctDecision(activityId: entry.id, shouldHave: verdict)
             await model.refreshPending()
-            thanked = true
+            return nil
         } catch {
-            feedback.play(.error)
-            self.error = error.userMessage
+            model.feedback.play(.error)
+            return error.userMessage
         }
-        busy = false
     }
 }

@@ -32,6 +32,8 @@ struct ActivityScreen: View {
     @Environment(\.feedback) private var feedback
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @SceneStorage("activity.filter") private var filterRaw = ActivityFilter.all.rawValue
+    /// Any AI, or one connection's entries only ("" for any).
+    @SceneStorage("activity.ai") private var aiFilter = ""
     /// What Autopilot made of each waiting request (Manual and Auto), by request id.
     @State private var suggestions: [String: SuggestionView] = [:]
     /// The list was placed where the user stopped reading; until then nothing is marked seen.
@@ -49,9 +51,14 @@ struct ActivityScreen: View {
         })
     }
 
+    private var aiBinding: Binding<String> {
+        Binding(get: { aiFilter }, set: { id in
+            withAnimation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion)) { aiFilter = id }
+        })
+    }
+
     private var shown: [ActivityEntry] {
-        let f = filter
-        return f == .all ? model.activity : model.activity.filter(f.keeps)
+        ActivityText.filtered(model.activity, filter: filter, connection: aiFilter)
     }
 
     var body: some View {
@@ -65,7 +72,7 @@ struct ActivityScreen: View {
                         header.id("top")
                         mood
                         waiting
-                        if filter != .all { filters }
+                        if filter != .all || !aiFilter.isEmpty { filters }
                         if entries.isEmpty {
                             empty
                         } else {
@@ -141,7 +148,7 @@ struct ActivityScreen: View {
             if let autopilot = model.autopilot {
                 ActivityModeMenu(settings: autopilot)
             }
-            ActivityFilterMenu(filter: filterBinding)
+            ActivityFilterMenu(filter: filterBinding, ai: aiBinding, ais: ActivityText.ais(model.activity))
         }
         .fixedSize()
     }
@@ -208,6 +215,7 @@ struct ActivityScreen: View {
                     FilterChip(title: f.title, selected: filter == f) { filterBinding.wrappedValue = f }
                         .accessibilityIdentifier("filter:\(f.rawValue)")
                 }
+                AnyAIChip(ai: aiBinding, ais: ActivityText.ais(model.activity))
             }
             .padding(.horizontal, 24)
         }
@@ -216,7 +224,7 @@ struct ActivityScreen: View {
     }
 
     @ViewBuilder private var empty: some View {
-        if filter != .all {
+        if filter != .all || !aiFilter.isEmpty {
             EmptyState(symbol: "line.3.horizontal.decrease", title: "Nothing here")
                 .accessibilityIdentifier("noAutomatic")
         } else if model.connections.isEmpty {
@@ -286,6 +294,7 @@ struct ActivityScreen: View {
             }
         }
         .buttonStyle(RowButtonStyle())
+        .correctionSwipe(entry)
         .contextMenu {
             Button("Open", systemImage: "arrow.up.right") {
                 model.show(.activityDetail(entry.id), in: .activity)

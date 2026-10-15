@@ -123,4 +123,19 @@ final class ActivitySignalTests: XCTestCase {
         let other = FoldRequest(field: .push, connectionId: "c2", action: "read", after: 10, fromSheet: true)
         XCTAssertEqual(FoldState.target(other, in: entries)?.id, 12, "else the connection's newest")
     }
+
+    func testTheRiverNarrowsToOneAIWithoutAskingTheCore() {
+        let entries = [
+            DemoData.entry(3, at: 0, conn: "c2", label: "ChatGPT", action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
+            DemoData.entry(2, at: 0, conn: "c1", label: "Claude", action: "send", outcome: "denied", detail: ""),
+            DemoData.entry(1, at: 0, conn: "c1", label: "Claude", action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
+        ]
+        XCTAssertEqual(ActivityText.filtered(entries, filter: .all, connection: "").map(\.id), [3, 2, 1])
+        XCTAssertEqual(ActivityText.filtered(entries, filter: .all, connection: "c1").map(\.id), [2, 1])
+        XCTAssertEqual(ActivityText.filtered(entries, filter: .autopilot, connection: "c1").map(\.id), [1], "both narrow")
+        XCTAssertEqual(ActivityText.ais(entries).map(\.id), ["c2", "c1"], "newest first, once each")
+        XCTAssertEqual(ActivityText.ais(entries).map(\.name), ["ChatGPT", "Claude"])
+        XCTAssertEqual(AnyAIChip.connection("ai:c1"), "c1")
+        XCTAssertEqual(AnyAIChip.connection("ai:"), "")
+    }
 }
