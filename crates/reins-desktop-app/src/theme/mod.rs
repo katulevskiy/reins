@@ -508,6 +508,7 @@ impl Palette {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use gpui::{FontStyle, FontWeight, font};
 
     use super::*;
