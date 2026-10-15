@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,36 +61,11 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.ConnectionIcon
-import dev.reins.android.ui.common.LabelText
-import dev.reins.android.ui.common.ProviderTile
+import dev.reins.android.ui.common.AskSentenceText
+import dev.reins.android.ui.common.IntegrationIcon
+import dev.reins.android.ui.common.askSentence
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ActivityEntry
-
-/** The icon of what an operation does, on the history's tiles. */
-fun kindIcon(action: String): ImageVector = when (ActionKind.of(action)) {
-    ActionKind.Search -> Icons.Rounded.Search
-    ActionKind.List -> Icons.AutoMirrored.Rounded.List
-    ActionKind.Read -> Icons.Rounded.Visibility
-    ActionKind.Headlines -> Icons.Rounded.ViewHeadline
-    ActionKind.Write -> Icons.Rounded.Edit
-    ActionKind.Send -> Icons.AutoMirrored.Rounded.Send
-    ActionKind.Grant -> Icons.Rounded.Key
-    ActionKind.Accounts -> Icons.Rounded.People
-    ActionKind.Pair -> Icons.Rounded.Computer
-    ActionKind.Join -> Icons.Rounded.PhoneAndroid
-    ActionKind.Upload -> Icons.Rounded.UploadFile
-    ActionKind.Other -> Icons.Rounded.Key
-}
-
-/** What an operation does, as a round tile in its colour. */
-@Composable
-fun KindTile(action: String, modifier: Modifier = Modifier, size: Dp = 40.dp) {
-    val c = LocalColors.current
-    val tint = toneColor(toneOf(action), c)
-    Box(modifier.size(size).clip(CircleShape).background(tint.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
-        Icon(kindIcon(action), null, Modifier.size(size * 0.5f), tint = tint)
-    }
-}
 
 /** A day's header ("Today"), with the filter button at the end of the first one. */
 @Composable
@@ -160,19 +136,15 @@ fun HistoryRow(entry: ActivityEntry, nowSeconds: Long, first: Boolean, last: Boo
             .background(groupFill(c))
             .pressable(highlight = c.controlFill, shape = shape, onClick = onClick)
             .padding(start = 16.dp, end = 16.dp, top = if (first) 14.dp else 10.dp, bottom = if (last) 14.dp else 10.dp),
-        verticalAlignment = if (entry.label != null) Alignment.Top else Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
     ) {
-        val label = entry.label
-        // What it touched, with what it did on the tile's corner; older test data without a label keeps the kind tile.
-        if (label != null) ProviderTile(label, ring = groupFill(c)) else KindTile(entry.action)
+        // What it touched, with what it did on the icon's corner (ASK-TEXT.md), and the request in words.
+        val sentence = remember(entry) { askSentence(entry) }
+        IntegrationIcon(sentence.provider, sentence.action, size = 40.dp, ring = groupFill(c))
         Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f).padding(top = if (label != null) 1.dp else 0.dp)) {
-            if (label != null) {
-                LabelText(label, Modifier.testTag("entryTitle:${entry.id}"), size = 15f, lineHeight = 19.5f, maxLines = 2)
-            } else {
-                RText(historySentence(entry), RType.sans(15f, FontWeight.Medium), c.text, Modifier.testTag("entryTitle:${entry.id}"), maxLines = 1)
-            }
-            Row(Modifier.padding(top = if (label != null) 4.dp else 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(top = 1.dp)) {
+            AskSentenceText(sentence, style = RType.serif(18f, 21f), color = c.text, detailsColor = c.tertiary, maxLines = 2, detailsMaxLines = 1, tag = "entryTitle:${entry.id}")
+            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 15.dp)
                 Spacer(Modifier.width(5.dp))
                 RText("${untrusted(entry.connectionLabel)} · ${rowTime(entry.at, nowSeconds)}", RType.sans(12.5f), c.tertiary, maxLines = 1)
@@ -183,7 +155,7 @@ fun HistoryRow(entry: ActivityEntry, nowSeconds: Long, first: Boolean, last: Boo
             }
         }
         Spacer(Modifier.width(10.dp))
-        OutcomeMark(outcomeOf(entry), Modifier.padding(top = if (label != null) 2.dp else 0.dp).testTag("outcome:${entry.id}"))
+        OutcomeMark(outcomeOf(entry), Modifier.padding(top = 2.dp).testTag("outcome:${entry.id}"))
     }
 }
 
