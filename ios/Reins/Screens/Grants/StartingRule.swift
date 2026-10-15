@@ -53,9 +53,8 @@ struct StartingRuleChooser: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text(StartingRuleText.header.uppercased())
-                    .font(RFont.sans(12.5, .semibold))
-                    .tracking(0.9)
-                    .foregroundStyle(Palette.tertiary)
+                    .textRole(.label)
+                    .foregroundStyle(Palette.inkMeta)
                     .accessibilityAddTraits(.isHeader)
                 // The (?) right beside the words it explains.
                 HelpButton(text: StartingRuleText.help)
@@ -65,15 +64,14 @@ struct StartingRuleChooser: View {
             .padding(.leading, 6)
             .padding(.trailing, 2)
             .padding(.bottom, 6)
+            // On hairlines, not a card: the chosen one carries the check.
             VStack(spacing: 0) {
-                ForEach(Array(StartingRuleText.order.enumerated()), id: \.offset) { i, policy in
-                    if i > 0 { Hairline(inset: 50) }
+                Rectangle().fill(Palette.rule).frame(height: 1)
+                ForEach(StartingRuleText.order, id: \.self) { policy in
                     row(policy, on: chosen == policy)
+                    Rectangle().fill(Palette.rule).frame(height: 1)
                 }
             }
-            .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .padding(.horizontal, 16)
         .accessibilityElement(children: .contain)
@@ -87,29 +85,32 @@ struct StartingRuleChooser: View {
             feedback.play(.selection)
         } label: {
             HStack(alignment: .top, spacing: 12) {
-                RadioMark(on: on).padding(.top, 1)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text(StartingRuleText.title(policy))
-                            .font(RFont.sans(15.5, .semibold))
-                            .foregroundStyle(Palette.text)
+                            .textRole(.row)
+                            .foregroundStyle(Palette.ink)
                         if StartingRuleText.recommended(policy) {
                             Text("Recommended")
-                                .font(RFont.sans(11, .semibold))
+                                .font(TextRole.tag.font())
                                 .foregroundStyle(Palette.success)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Palette.success.opacity(0.13), in: Capsule())
                         }
                     }
                     Text(StartingRuleText.detail(policy))
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.tertiary)
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.ink2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                GlyphIcon(.check, size: 18)
+                    .foregroundStyle(Palette.ink)
+                    .opacity(on ? 1 : 0)
+                    .scaleEffect(on ? 1 : 0.6)
+                    .animation(.easeOut(duration: Motion.fade), value: on)
+                    .padding(.top, 1)
+                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 6)
             .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
