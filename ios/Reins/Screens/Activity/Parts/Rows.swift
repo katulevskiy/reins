@@ -259,7 +259,10 @@ struct HistoryRow: View {
 
     /// What happened, in a line: the core's label, else the operation and what it was about.
     static func title(_ entry: ActivityEntry) -> String {
-        if let label = entry.label { return RequestLabelLook.plain(label) }
+        if let label = entry.label {
+            let plain = RequestLabelLook.plain(label)
+            return ActivityText.done(entry) ? ActivityText.past(plain) : plain
+        }
         let detail = untrusted(entry.detail).trimmingCharacters(in: .whitespacesAndNewlines)
         return detail.isEmpty ? EntryText.title(entry) : "\(EntryText.title(entry)) · \(detail)"
     }

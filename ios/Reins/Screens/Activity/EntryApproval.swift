@@ -187,8 +187,8 @@ private struct AskedRow<Leading: View>: View {
     }
 }
 
-/// An entry that kept its approval: the approval screen's own hero, facts and pages (commits, a commit's lines, the
-/// emails), read-only, with how it ended on the hero and `below` under the facts. Its pages push onto the Activity
+/// An entry that kept its approval: its decided header, then the approval screen's own facts and pages (commits, a
+/// commit's lines, the emails), read-only, and `below` under the facts. Its pages push onto the Activity
 /// stack like any page.
 struct EntryApprovalPage<Below: View>: View {
     var entry: ActivityEntry
@@ -196,14 +196,13 @@ struct EntryApprovalPage<Below: View>: View {
     var view: ApprovalView
     @ViewBuilder var below: Below
     @State private var nav = ApprovalNav()
-    /// The hero asks it nothing for an entry (the outcome stands where Autopilot's score was); `MainPage` takes one.
-    @State private var autopilot = AutopilotModel()
 
     var body: some View {
         let record = ApprovalRecord.of(entry)
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                MainPage(vm: vm, view: view, autopilot: autopilot, gone: false)
+                DecidedHeader(entry: entry)
+                Facts(vm: vm, view: view).padding(.top, 4)
                 below
             }
             .padding(.bottom, 24)

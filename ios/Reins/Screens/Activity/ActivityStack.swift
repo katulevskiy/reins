@@ -26,6 +26,28 @@ enum ActivityText {
         }
     }
 
+    /// The irregular and common verbs a request starts with, in the past: what was done reads as done ("Pushed 3
+    /// commits"); what was denied keeps its ask ("Delete branch old/experiment").
+    private static let pastTense: [String: String] = [
+        "push": "Pushed", "read": "Read", "send": "Sent", "search": "Searched", "delete": "Deleted", "create": "Created",
+        "use": "Used", "open": "Opened", "list": "Listed", "share": "Shared", "write": "Wrote", "run": "Ran", "make": "Made",
+        "add": "Added", "update": "Updated", "comment": "Commented", "merge": "Merged", "close": "Closed", "connect": "Connected",
+        "see": "Saw", "get": "Got", "give": "Gave", "hand": "Handed", "move": "Moved", "change": "Changed", "edit": "Edited",
+        "remove": "Removed", "reply": "Replied", "forward": "Forwarded", "archive": "Archived", "label": "Labelled",
+        "fetch": "Fetched", "upload": "Uploaded", "download": "Downloaded", "sign": "Signed", "release": "Released",
+    ]
+
+    /// `lead` in the past when the entry was done: its first word, if it is a verb this knows.
+    static func past(_ lead: String) -> String {
+        let space = lead.firstIndex(of: " ") ?? lead.endIndex
+        let first = String(lead[..<space])
+        guard let done = pastTense[first.lowercased()] else { return lead }
+        return done + lead[space...]
+    }
+
+    /// An entry that went through (not denied, not failed) reads in the past.
+    static func done(_ entry: ActivityEntry) -> Bool { entry.outcome != "denied" && entry.outcome != "error" }
+
     /// The river's count for a day: "12 asked · 9 by Autopilot" ("" for none).
     static func dayCount(_ entries: [ActivityEntry]) -> String {
         guard !entries.isEmpty else { return "" }

@@ -241,8 +241,11 @@ struct RiskLine: View {
 struct AutopilotWhyRow: View {
     var note: AutopilotNote
     var title: String
+    /// The entry it is about, for the reason line worked out on the phone.
+    var entry: ActivityEntry? = nil
     @State private var open = false
     @Environment(\.feedback) private var feedback
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -269,6 +272,9 @@ struct AutopilotWhyRow: View {
                 detail.transition(.opacity)
             }
         }
+        .task(id: entry?.id) {
+            if let entry { await model.reasons.explain(entry, model: model) }
+        }
         .accessibilityContainer("entryAutopilot")
     }
 
@@ -279,9 +285,11 @@ struct AutopilotWhyRow: View {
                 LikelihoodRow(label: "Deny", p: note.pDeny, color: Palette.danger)
                 LikelihoodRow(label: "Confidence", p: note.confidence, color: Palette.accent)
             }
-            let reason = untrusted(note.reason)
+            // The decisions of yours it was like, counted here ("Like 11 pushes to feature branches of acme/web you
+            // approved."), else the core's own reason.
+            let reason = entry.flatMap { model.reasons.lines[$0.id] } ?? untrusted(note.reason)
             if !reason.isEmpty {
-                Text(reason).font(RFont.sans(14.5)).foregroundStyle(Palette.text)
+                Text(reason).textRole(.body).foregroundStyle(Palette.ink2).accessibilityIdentifier("autopilotReason")
             }
             if !note.neighbours.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -334,7 +342,7 @@ struct ThisWasWrongDock: View {
                         Label {
                             Text("This was wrong")
                         } icon: {
-                            Image(systemName: "arrow.uturn.backward").foregroundStyle(ModeLook.tint(.auto))
+                            GlyphIcon(.undo, size: 18).foregroundStyle(Palette.violet)
                         }
                         .opacity(busy ? 0 : 1)
                         if busy { ProgressView() }
