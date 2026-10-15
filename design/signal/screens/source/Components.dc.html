@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Components</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--dfill:#f6c9c9;--warn:#a16207;--scrim:rgba(22,21,27,.32);--wall:#e8e6e1;--wallink:#45434d;--kp:#c2410c;--kr:#2563eb;--kd:#b91c1c;--kg:#5b43e8;--ka:#0e7490;--kc:#be185d;--kw:#a16207}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--dfill:rgba(248,113,113,.28);--warn:#facc15;--scrim:rgba(0,0,0,.55);--wall:#0b0b0d;--wallink:#bdbcc6;--kp:#fb923c;--kr:#60a5fa;--kd:#f87171;--kg:#a196ff;--ka:#22d3ee;--kc:#f472b6;--kw:#facc15}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g16{width:16px;height:16px}.g14{width:14px;height:14px}.g18{width:18px;height:18px}
+.grain{position:absolute !important;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}.light{--il:block;--id:none}.dark{--il:none;--id:block}.il{display:var(--il,block)}.id{display:var(--id,none)}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.panel{background:var(--paper);border-radius:28px;padding:24px;display:flex;flex-direction:column;gap:18px}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink)}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.btn.soft{background:var(--sunken)}
+.btn.danger{background:var(--dwash);color:var(--bad)}
+.btn.sm{height:40px;font-size:14.5px;padding:0 16px}
+.btn.onf{background:#fff;color:#16151b}
+.btn.wash{background:rgba(255,255,255,.18);color:#fff}
+.btn.vio{background:var(--vf);color:#fff}
+.ib{appearance:none;width:40px;height:40px;border-radius:50%;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;color:var(--ink);border:0;padding:0;flex:none}
+.seg{display:flex;background:var(--sunken);border-radius:999px;padding:4px;gap:2px}
+.seg button{appearance:none;flex:1;height:38px;border-radius:999px;border:0;background:transparent;font-family:var(--sans);font-size:14px;font-weight:500;color:var(--ink2);display:flex;align-items:center;justify-content:center;gap:4px;padding:0 6px}
+.seg button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--rule)}
+.row{display:flex;align-items:center;gap:14px;min-height:56px;padding:9px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.row .v{color:var(--ink);font-size:15px;font-weight:500;text-align:right}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.tile{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none}
+.t-p{background:color-mix(in srgb,var(--kp) 13%,transparent);color:var(--kp)}
+.t-r{background:color-mix(in srgb,var(--kr) 13%,transparent);color:var(--kr)}
+.t-d{background:color-mix(in srgb,var(--kd) 13%,transparent);color:var(--kd)}
+.t-g{background:color-mix(in srgb,var(--kg) 13%,transparent);color:var(--kg)}
+.t-a{background:color-mix(in srgb,var(--ka) 13%,transparent);color:var(--ka)}
+.sw{appearance:none;width:51px;height:31px;border-radius:999px;background:var(--sunken);position:relative;flex:none;border:0;padding:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:var(--vf)}.sw.on::after{left:22px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:999px;font-size:14px;font-weight:500;background:var(--raised);box-shadow:0 0 0 1px var(--rule);color:var(--ink)}
+.chip.vio{background:var(--vf);color:#fff;box-shadow:none}
+.chip.red{background:var(--fd);color:#fff;box-shadow:none}
+.chip.amb{background:var(--fw);color:#fff;box-shadow:none}
+.menu{background:var(--raised);border-radius:20px;box-shadow:0 0 0 1px var(--rule),0 24px 48px -16px rgba(10,10,20,.35);padding:6px;width:290px}
+.mi{display:flex;align-items:center;gap:12px;min-height:52px;padding:6px 12px;border-radius:14px;box-sizing:border-box}
+.mi.on{background:var(--sunken)}
+.mi .tt{font-size:15px;font-weight:500;color:var(--ink)}
+.mi .ss{font-size:12.5px;color:var(--meta)}
+.wcard{position:relative;overflow:hidden;border-radius:26px;padding:16px 18px 16px;color:#fff;display:flex;flex-direction:column;gap:12px}
+.wcard>*{position:relative}
+.av{width:28px;height:28px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none}
+.av img{width:62%;height:62%}
+.ring circle{fill:none;stroke-width:3}
+@keyframes breathe{0%,100%{opacity:.35}50%{opacity:1}}
+@media (prefers-reduced-motion: reduce){.sig *{animation:none !important}}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{theme}} {{grain}}" style="width: 2400px; height: 1800px; box-sizing: border-box; background: var(--wall); color: var(--ink); padding: 72px 80px; display: flex; flex-direction: column; gap: 32px">
+  <div style="display: flex; align-items: flex-end; gap: 32px">
+    <h1 class="serif" style="margin: 0; font-size: 96px; line-height: 88px; letter-spacing: -0.02em">Components</h1>
+    <p style="margin: 0 0 8px; font-size: 18px; line-height: 26px; color: var(--wallink); max-width: 900px">One set for iPhone, Android and the computer. Pressed content dims to 55%, disabled to 40%. Focus is a 2 px violet ring at a 3 px offset on paper, a 2 px white ring on fields.</p>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px; flex: 1">
+
+    <div style="display: flex; flex-direction: column; gap: 22px">
+      <div class="panel">
+        <div class="lbl">Buttons</div>
+        <div style="display: flex; gap: 10px"><button class="btn out" style="flex: 1">Deny</button><button class="btn inv" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Approve</button></div>
+        <div style="display: flex; gap: 10px"><button class="btn out" style="flex: 1">Deny</button><button class="btn inv" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M12 11.5v2c0 2.6-.7 4.8-2 6.8M8.6 9.8A3.5 3.5 0 0 1 15.5 11v2.5c0 1.9-.3 3.6-.9 5.2M6 15.4c.4-1 .6-2.2.6-3.4a5.4 5.4 0 0 1 9.4-3.6M18 12v1.5c0 1.6-.2 3.1-.5 4.5M5.2 8.6A7.8 7.8 0 0 1 12 4.5c2.6 0 4.9 1.2 6.4 3.2"></path></svg>Send</button></div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap"><button class="btn soft sm">This was wrong</button><button class="btn danger sm">End now</button><button class="btn vio sm">Allow</button><button class="btn inv sm" style="opacity: .55">Pressed</button><button class="btn inv sm" style="opacity: .4">Disabled</button></div>
+        <div style="position: relative; overflow: hidden; border-radius: 20px; background: var(--fp); padding: 14px; display: flex; gap: 8px">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <button class="btn onf sm" style="position: relative; flex: 1">Review</button><button class="btn wash sm" style="position: relative; flex: 1">Deny</button><button class="ib" aria-label="Close" style="position: relative; background: rgba(255,255,255,.18); box-shadow: none; color: #fff"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center"><button class="btn inv sm" style="outline: 2px solid var(--violet); outline-offset: 3px">Focused</button><button class="ib" aria-label="Add"><svg class="g" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button><button class="ib" aria-label="Filter"><svg class="g" viewBox="0 0 24 24"><path d="M4 6.5h16M7 12h10M10 17.5h4"></path></svg></button><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button></div>
+      </div>
+      <div class="panel">
+        <div class="lbl">Hold · irreversible</div>
+        <div style="position: relative; height: 54px; border-radius: 99px; background: var(--dwash); color: var(--bad); display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; font-size: 16.5px"><svg class="g" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg>Hold to delete</div>
+        <div style="position: relative; height: 54px; border-radius: 99px; background: var(--dwash); color: var(--bad); overflow: hidden; font-weight: 600; font-size: 16.5px"><div style="position: absolute; left: 0; top: 0; bottom: 0; width: 58%; background: var(--dfill)"></div><div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px"><svg width="20" height="20" viewBox="0 0 36 36" class="ring" aria-hidden="true"><circle cx="18" cy="18" r="14" style="stroke: var(--dfill)"></circle><circle cx="18" cy="18" r="14" style="stroke: var(--bad)" stroke-dasharray="88" stroke-dashoffset="37" transform="rotate(-90 18 18)"></circle></svg>Keep holding</div></div>
+        <div style="height: 54px; border-radius: 99px; background: var(--bad); color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; font-size: 16.5px"><svg class="g" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>Deleted</div>
+        <div class="meta">1200 ms. Then Face ID or fingerprint. Letting go cancels and drains.</div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 22px">
+      <div class="panel">
+        <div class="lbl">Allow for · the chooser</div>
+        <div class="seg"><button class="on">Once</button><button>1 hour</button><button>1 day</button><button>Custom<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></button></div>
+        <div class="seg"><button>Once</button><button>8 hours</button><button>1 day</button><button class="on">1 week<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></button></div>
+        <div style="height: 46px; border-radius: 99px; background: var(--sunken); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--ink2)"><svg class="g g16" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Asked every time</div>
+        <div style="height: 46px; border-radius: 99px; background: var(--sunken); display: flex; align-items: center; justify-content: space-between; padding: 0 18px; font-size: 14px; font-weight: 500"><span style="color: var(--ink2)">Allow for</span><span style="display: flex; align-items: center; gap: 4px">1 hour · at most 5 uses<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span></div>
+      </div>
+      <div class="panel" style="position: relative">
+        <div class="lbl">Menus · grow from their trigger</div>
+        <div style="display: flex; justify-content: flex-end"><span class="chip vio"><svg class="g g16" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Auto<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span></div>
+        <div class="menu" style="align-self: flex-end">
+          <div class="mi"><span class="tile" style="width: 32px; height: 32px; border-radius: 10px; background: var(--sunken); color: var(--ink)"><svg class="g g18" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg></span><div style="flex: 1"><div class="tt">Manual</div><div class="ss">You decide, with a hint</div></div></div>
+          <div class="mi on"><span class="tile" style="width: 32px; height: 32px; border-radius: 10px; background: var(--vf); color: #fff"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg></span><div style="flex: 1"><div class="tt">Auto</div><div class="ss">Decides the easy ones</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--violet)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+          <div class="mi"><span class="tile" style="width: 32px; height: 32px; border-radius: 10px; background: color-mix(in srgb, var(--kw) 14%, transparent); color: var(--kw)"><svg class="g g18" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg></span><div style="flex: 1"><div class="tt">Lockdown</div><div class="ss">Deny everything now</div></div></div>
+          <div style="height: 1px; background: var(--rule); margin: 4px 10px"></div>
+          <div class="mi"><span class="tile" style="width: 32px; height: 32px; border-radius: 10px; background: var(--dwash); color: var(--bad)"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg></span><div style="flex: 1"><div class="tt" style="color: var(--bad)">Bypass…</div><div class="ss">Approve everything for a while</div></div><svg class="g g16" viewBox="0 0 24 24" style="color: var(--faint)"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+        </div>
+        <div class="meta">Menus replace system pickers everywhere: same paper, same rows on all three platforms. Haptic: select on each row crossed.</div>
+      </div>
+      <div class="panel">
+        <div class="lbl">Controls</div>
+        <div style="display: flex; align-items: center; gap: 16px"><button class="sw on" aria-label="On"></button><button class="sw" aria-label="Off"></button>
+          <span style="width: 24px; height: 24px; border-radius: 8px; background: var(--vf); display: grid; place-items: center; color: #fff"><svg class="g g16" viewBox="0 0 24 24" style="stroke-width: 2.2"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>
+          <span style="width: 24px; height: 24px; border-radius: 8px; box-shadow: inset 0 0 0 1.5px var(--faint)"></span>
+          <span style="width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 7px var(--vf)"></span>
+          <span style="width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--faint)"></span>
+          <span style="display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 6px; border-radius: 99px; background: var(--sunken)"><span class="ib" style="width: 30px; height: 30px; box-shadow: none"><svg class="g g16" viewBox="0 0 24 24"><path d="M5 12h14"></path></svg></span><span class="mono" style="font-size: 15px">5</span><span class="ib" style="width: 30px; height: 30px; box-shadow: none"><svg class="g g16" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></span></span>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap"><span class="chip">All</span><span class="chip" style="background: var(--inv); color: var(--oninv); box-shadow: none">Autopilot</span><span class="chip">Denied</span><span class="chip">Grants</span></div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 22px">
+      <div class="panel">
+        <div class="lbl">Waiting cards · Autopilot's pick first</div>
+        <div class="wcard" style="background: var(--fp)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="display: flex; align-items: center; gap: 10px"><span class="av" style="width: 24px; height: 24px"><img src="../../assets/logos/claude.svg" alt=""></span><span class="lbl" style="color: rgba(255,255,255,.82); flex: 1">Gmail · Send</span><span class="mono" style="font-size: 13px; display: flex; align-items: center; gap: 6px"><svg width="18" height="18" viewBox="0 0 36 36" class="ring" aria-hidden="true"><circle cx="18" cy="18" r="14" style="stroke: rgba(255,255,255,.25)"></circle><circle cx="18" cy="18" r="14" style="stroke: #fff" stroke-dasharray="88" stroke-dashoffset="22" transform="rotate(-90 18 18)"></circle></svg>1:12</span></div>
+          <div class="serif" style="font-size: 25px; line-height: 26px">Send an email to <em>Anna Petrova</em></div>
+          <div style="display: flex; gap: 8px"><button class="btn onf sm" style="flex: 1"><svg class="g g18" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Allow · 97%</button><button class="btn wash sm" style="flex: 1">Review</button></div>
+        </div>
+        <div class="wcard" style="background: var(--fr)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="display: flex; align-items: center; gap: 10px"><span class="av" style="width: 24px; height: 24px"><img src="../../assets/logos/openai.svg" alt=""></span><span class="lbl" style="color: rgba(255,255,255,.82); flex: 1">Gmail · Search</span><span style="height: 26px; padding: 0 10px; border-radius: 99px; background: #fff; color: #b91c1c; display: flex; align-items: center; font-family: var(--mono); font-size: 13px; font-weight: 500">0:12</span></div>
+          <div class="serif" style="font-size: 25px; line-height: 26px">Search mail for <em>“invoice”</em></div>
+          <div style="display: flex; gap: 8px"><button class="btn wash sm" style="flex: 1"><svg width="16" height="16" viewBox="0 0 36 36" class="ring" aria-hidden="true"><circle cx="18" cy="18" r="14" style="stroke: rgba(255,255,255,.35)"></circle><circle cx="18" cy="18" r="14" style="stroke: #fff" stroke-dasharray="88" stroke-dashoffset="44" transform="rotate(-90 18 18)"></circle></svg>Unsure</button><button class="btn onf sm" style="flex: 2">Review</button></div>
+        </div>
+        <div class="wcard" style="background: var(--fd)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="display: flex; align-items: center; gap: 10px"><span class="av" style="width: 24px; height: 24px"><img src="../../assets/logos/claude.svg" alt=""></span><span class="lbl" style="color: rgba(255,255,255,.82); flex: 1">GitHub · Delete</span><span class="mono" style="font-size: 13px">4:51</span></div>
+          <div class="serif" style="font-size: 25px; line-height: 26px">Delete the repo <em>octo/old-api</em></div>
+          <div style="display: flex; gap: 8px"><span class="btn wash sm" style="flex: 1"><svg class="g g16" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Always asks</span><button class="btn onf sm" style="flex: 2">Review</button></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="lbl">Mode chip · in every header</div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
+          <span class="chip"><svg class="g g16" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg>Manual</span>
+          <span class="chip vio"><svg class="g g16" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Auto</span>
+          <span class="chip amb"><svg class="g g16" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Lockdown</span>
+          <span class="chip red"><span style="width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: breathe 1.8s ease-in-out infinite"></span><span class="mono" style="font-size: 13.5px">14:05</span>Bypass</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 22px">
+      <div class="panel">
+        <div class="lbl">Rows · hairlines, never cards</div>
+        <div>
+          <div class="row"><span class="k">Branch</span><span class="mono" style="font-size: 13.5px">feature/passkeys</span><span style="font-size: 11.5px; font-weight: 600; color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); padding: 4px 8px; border-radius: 99px">New</span></div>
+          <div class="row"><span class="k">8 commits</span><span class="mono" style="font-size: 13px"><span style="color: var(--ok)">+412</span> <span style="color: var(--bad)">−96</span></span><svg class="g g14" viewBox="0 0 24 24" style="color: var(--faint)"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2.2"></circle><circle cx="7" cy="18.5" r="2.2"></circle><circle cx="17" cy="7.5" r="2.2"></circle><path d="M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8"></path></svg></span><div style="flex: 1"><div class="rt">Pushed 8 commits to octo/app</div><div class="meta">Claude Code · 4 min</div></div><span style="font-size: 12px; font-weight: 600; color: var(--violet)">Auto</span></div>
+          <div class="row"><span class="tile t-r"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="M4.5 7.5 12 13l7.5-5.5"></path></svg></span><div style="flex: 1"><div class="rt">Read 2 emails from Stripe</div><div class="meta">ChatGPT · 18 min</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+          <div class="row"><span class="tile t-d"><svg class="g" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg></span><div style="flex: 1"><div class="rt">Delete branch old/experiment</div><div class="meta">Cursor · 1 h</div></div><span style="font-size: 12px; font-weight: 600; color: var(--bad)">Denied</span></div>
+          <div class="row" style="border-bottom: 0"><div style="flex: 1"><div class="rt">Download on Wi-Fi only</div><div class="meta">The model is 370 MB</div></div><button class="sw on" aria-label="On"></button></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="lbl">Tab bars</div>
+        <div style="display: flex; justify-content: center"><div style="display: flex; gap: 2px; padding: 6px; border-radius: 99px; background: var(--inv); box-shadow: 0 14px 30px -12px rgba(0,0,0,.45)">
+          <span style="display: flex; align-items: center; gap: 7px; height: 44px; padding: 0 16px; border-radius: 99px; background: var(--paper); color: var(--ink); font-size: 14.5px; font-weight: 600"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg>Activity</span>
+          <span style="width: 50px; height: 44px; display: grid; place-items: center; color: var(--oninv); opacity: .62"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></span>
+          <span style="width: 50px; height: 44px; display: grid; place-items: center; color: var(--oninv); opacity: .62"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>
+          <span style="width: 50px; height: 44px; display: grid; place-items: center; color: var(--oninv); opacity: .62"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></span>
+        </div></div>
+        <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--raised); border-radius: 18px; box-shadow: 0 0 0 1px var(--rule); padding: 10px 0">
+          <span style="display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; font-weight: 600"><span style="width: 60px; height: 32px; border-radius: 16px; background: var(--inv); color: var(--oninv); display: grid; place-items: center"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg></span>Activity</span>
+          <span style="display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: var(--ink2)"><span style="width: 60px; height: 32px; display: grid; place-items: center"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></span>Trust</span>
+          <span style="display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: var(--ink2)"><span style="width: 60px; height: 32px; display: grid; place-items: center"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>Connections</span>
+          <span style="display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: var(--ink2)"><span style="width: 60px; height: 32px; display: grid; place-items: center"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></span>Settings</span>
+        </div>
+        <div class="meta">iPhone: a floating inverse capsule, labels only on the selected tab. Android: a docked bar with an inverse pill.</div>
+      </div>
+      <div class="panel">
+        <div class="lbl">Calm · ink drawings for empty states</div>
+        <img class="il" src="../../assets/illustrations/pond-light.svg" alt="" style="width: 100%; height: auto"><img class="id" src="../../assets/illustrations/pond-dark.svg" alt="" style="width: 100%; height: auto">
+        <div class="serif" style="font-size: 24px; line-height: 30px; font-style: italic; color: var(--ink2); text-align: center">All quiet on the water.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":2400,"height":1800}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: this.props.theme ?? 'light',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

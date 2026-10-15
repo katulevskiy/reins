@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Android · Core screens</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--warn:#a16207;--wall:#e8e6e1;--wallink:#45434d;--kp:#c2410c;--kr:#2563eb;--kd:#b91c1c;--ka:#0e7490}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--warn:#facc15;--wall:#0b0b0d;--wallink:#bdbcc6;--kp:#fb923c;--kr:#60a5fa;--kd:#f87171;--ka:#22d3ee}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}
+.grain{position:absolute !important;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:40px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 8px #111114,0 0 0 9.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans)}
+.punch{position:absolute;z-index:60;top:14px;left:50%;margin-left:-7px;width:14px;height:14px;border-radius:50%;background:#000}
+.hind{position:absolute;z-index:60;bottom:7px;left:50%;margin-left:-54px;width:108px;height:4px;border-radius:2px;background:var(--ink);opacity:.6}
+.title{font-family:var(--serif);font-size:44px;line-height:44px;letter-spacing:-.01em;font-weight:400;margin:0}
+.ask{font-family:var(--serif);font-size:44px;line-height:45px;letter-spacing:-.012em;font-weight:400;margin:0;text-wrap:balance}
+.ask-s{font-family:var(--serif);font-size:25px;line-height:26px;letter-spacing:-.01em;font-weight:400;margin:0}
+.mood{font-family:var(--serif);font-style:italic;font-size:22px;line-height:28px;color:var(--ink2);margin:0}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.btn.soft{background:var(--sunken)}
+.btn.danger{background:var(--dwash);color:var(--bad)}
+.btn.sm{height:40px;font-size:14.5px;padding:0 16px}
+.btn.onf{background:#fff;color:#16151b}
+.btn.wash{background:rgba(255,255,255,.18);color:#fff}
+.ib{appearance:none;width:40px;height:40px;border-radius:50%;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;color:var(--ink);border:0;padding:0;flex:none}
+.ib.f{background:rgba(255,255,255,.18);box-shadow:none;color:#fff;width:36px;height:36px}
+.seg{display:flex;background:var(--sunken);border-radius:999px;padding:4px;gap:2px}
+.seg button{appearance:none;flex:1;height:38px;border-radius:999px;border:0;background:transparent;font-family:var(--sans);font-size:14px;font-weight:500;color:var(--ink2);display:flex;align-items:center;justify-content:center;gap:4px;padding:0 4px}
+.seg button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--rule)}
+.row{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.row .v{color:var(--meta);font-size:14.5px}
+.chev{color:var(--faint)}
+.tile{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none}
+.t-p{background:color-mix(in srgb,var(--kp) 13%,transparent);color:var(--kp)}
+.t-r{background:color-mix(in srgb,var(--kr) 13%,transparent);color:var(--kr)}
+.t-d{background:color-mix(in srgb,var(--kd) 13%,transparent);color:var(--kd)}
+.t-a{background:color-mix(in srgb,var(--ka) 13%,transparent);color:var(--ka)}
+.t-n{background:var(--sunken);color:var(--ink)}
+.av{width:28px;height:28px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+.av img{width:62%;height:62%}
+.svc{width:38px;height:38px;border-radius:11px;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px var(--rule)}
+.svc img{width:58%;height:58%}
+.ring circle{fill:none}
+.chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:999px;font-size:14px;font-weight:500;background:var(--raised);box-shadow:0 0 0 1px var(--rule);color:var(--ink);white-space:nowrap;box-sizing:border-box}
+.chip.vio{background:var(--vf);color:#fff;box-shadow:none}
+.field{position:relative;color:#fff;border-radius:0 0 30px 30px;padding:40px 22px 22px;overflow:hidden;box-sizing:border-box}
+.field>*{position:relative}
+.field .grain{position:absolute}
+.field .lbl{color:rgba(255,255,255,.82)}
+.of2{color:rgba(255,255,255,.82)}
+.card{position:absolute;left:16px;right:16px;border-radius:26px;overflow:hidden;color:#fff;box-sizing:border-box}
+.card>*{position:relative}
+.nav{position:absolute;left:0;right:0;bottom:0;height:86px;padding-bottom:18px;box-sizing:border-box;background:var(--raised);border-top:1px solid var(--rule);display:grid;grid-template-columns:repeat(4,minmax(0,1fr));z-index:30}
+.nav a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:12px;font-weight:500;color:var(--ink2);text-decoration:none}
+.nav a .p{width:60px;height:32px;border-radius:16px;display:grid;place-items:center;position:relative}
+.nav a.on{color:var(--ink);font-weight:600}
+.nav a.on .p{background:var(--inv);color:var(--oninv)}
+.nav .bd{position:absolute;top:-3px;right:6px;min-width:17px;height:17px;border-radius:9px;background:var(--fp);color:#fff;font-size:10.5px;font-weight:600;display:grid;place-items:center;padding:0 4px;box-sizing:border-box}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 26px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box;border-top:1px solid var(--rule)}
+.pill{font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:99px;white-space:nowrap}
+.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 13%,transparent)}
+.vi{color:var(--violet);background:color-mix(in srgb,var(--violet) 12%,transparent)}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{wall}} {{grain}}" style="width: 2400px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Android</h1><span class="lbl" style="color: var(--wallink)">The same four places · docked bar, fingerprint, predictive back</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">01 · Activity</div>
+      <div class="ph {{b}}">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 46px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Activity</h2><span class="chip vio"><svg class="g g16" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Auto<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span></div>
+        <p class="mood" style="position: absolute; left: 24px; right: 24px; top: 100px"><span style="font-style: normal">One</span> thing waits for you.</p>
+        <div style="position: absolute; left: 0; right: 0; top: 146px; height: 220px">
+          <div class="card" style="top: 0; height: 196px; background: var(--fr); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+            <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+            <div style="display: flex; align-items: center; gap: 9px"><span class="av" style="width: 24px; height: 24px"><img src="../../assets/logos/openai.svg" alt=""></span><span class="lbl" style="color: rgba(255,255,255,.82); flex: 1">Gmail · Search</span><span class="mono" style="font-size: 13px">1:48</span></div>
+            <div class="ask-s">Search mail for <em>“invoice”</em></div>
+            <div style="font-size: 13.5px; color: rgba(255,255,255,.82)">ChatGPT · dana@acme.dev</div>
+            <div style="display: flex; gap: 8px; margin-top: auto"><a class="btn onf sm" href="#" style="flex: 1.3"><svg class="g g18" viewBox="0 0 24 24"><path d="M12 11.5v2c0 2.6-.7 4.8-2 6.8M8.6 9.8A3.5 3.5 0 0 1 15.5 11v2.5c0 1.9-.3 3.6-.9 5.2M6 15.4c.4-1 .6-2.2.6-3.4a5.4 5.4 0 0 1 9.4-3.6M18 12v1.5c0 1.6-.2 3.1-.5 4.5M5.2 8.6A7.8 7.8 0 0 1 12 4.5c2.6 0 4.9 1.2 6.4 3.2"></path></svg>Allow · 94%</a><a class="btn wash sm" href="#" style="flex: 1">Review</a></div>
+          </div>
+        </div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 372px">
+          <span class="lbl">Today</span>
+          <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2.2"></circle><circle cx="7" cy="18.5" r="2.2"></circle><circle cx="17" cy="7.5" r="2.2"></circle><path d="M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8"></path></svg></span><div style="flex: 1"><div class="rt">Pushed 3 commits to acme/web</div><div class="meta">Claude Code · 4 min</div></div><span style="font-size: 12px; font-weight: 600; color: var(--violet)">Auto</span></div>
+          <div class="row"><span class="tile t-r"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="M4.5 7.5 12 13l7.5-5.5"></path></svg></span><div style="flex: 1"><div class="rt">Read 2 emails from Stripe</div><div class="meta">ChatGPT · 18 min</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+          <div class="row"><span class="tile t-d"><svg class="g" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg></span><div style="flex: 1"><div class="rt">Delete branch old/experiment</div><div class="meta">Cursor · 1 h</div></div><span style="font-size: 12px; font-weight: 600; color: var(--bad)">Denied</span></div>
+          <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z"></path></svg></span><div style="flex: 1"><div class="rt">Sent an email to Jonas</div><div class="meta">Claude · 2 h</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+        </div>
+        <nav class="nav"><a class="on" href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg><span class="bd">1</span></span>Activity</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></span>Trust</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>Connections</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></span>Settings</a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Docked, not floating.</b> Android gets a bar it expects, with labels always shown and an inverse pill on the current tab. The stack, river and swipe gestures are identical to iPhone. Haptics use the platform primitives: click, tick, low tick, thud, quick rise.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">02 · The ask · predictive back</div>
+      <div class="ph {{a}}" style="background: var(--sunken)">
+        <div class="punch"></div>
+        <div style="position: absolute; inset: 0; transform: scale(.92) translateX(14px); transform-origin: right center; border-radius: 34px; overflow: hidden; background: var(--paper); box-shadow: 0 20px 40px -20px rgba(0,0,0,.4)">
+          <div class="field" style="background: var(--fp)">
+            <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+            <div style="display: flex; align-items: center; gap: 10px"><button class="ib f" aria-label="Back"><svg class="g g18" viewBox="0 0 24 24"><path d="M19 12H5m6-6.5L4.5 12l6.5 6.5"></path></svg></button><span class="av"><img src="../../assets/logos/claude.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">Claude Code <span class="of2">· ThinkPad</span></span><span class="mono" style="font-size: 13.5px">0:40</span></div>
+            <div class="lbl" style="margin-top: 30px">GitHub · Push</div>
+            <h2 class="ask" style="margin-top: 10px">Push 8 commits to <em>octo/app</em></h2>
+            <div style="margin-top: 14px; display: flex; align-items: center; gap: 8px; font-size: 14.5px" class="of2"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Autopilot would allow · 97%</div>
+          </div>
+          <div style="padding: 6px 22px 0">
+            <div class="row"><span class="k">Branch</span><span class="mono" style="font-size: 13.5px">feature/passkeys</span></div>
+            <div class="row"><span class="k" style="color: var(--ink); font-weight: 500">8 commits</span><span class="mono" style="font-size: 13px"><span style="color: var(--ok)">+412</span> <span style="color: var(--bad)">−96</span></span><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          </div>
+          <div class="bar">
+            <div class="seg"><button class="on">Once</button><button>1 hour</button><button>1 day</button><button>Custom<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></button></div>
+            <div style="display: flex; gap: 10px"><a class="btn out" href="#" style="flex: 1">Deny</a><a class="btn inv" href="#" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M12 11.5v2c0 2.6-.7 4.8-2 6.8M8.6 9.8A3.5 3.5 0 0 1 15.5 11v2.5c0 1.9-.3 3.6-.9 5.2M6 15.4c.4-1 .6-2.2.6-3.4a5.4 5.4 0 0 1 9.4-3.6M18 12v1.5c0 1.6-.2 3.1-.5 4.5M5.2 8.6A7.8 7.8 0 0 1 12 4.5c2.6 0 4.9 1.2 6.4 3.2"></path></svg>Approve</a></div>
+          </div>
+        </div>
+        <div style="position: absolute; left: 0; top: 380px; width: 28px; height: 84px; border-radius: 0 42px 42px 0; background: var(--inv); display: grid; place-items: center; color: var(--oninv); z-index: 10"><svg class="g g16" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Back means “not now”.</b> The system back gesture shrinks the field toward the edge as a preview; letting go dismisses without answering, and the card goes back on the stack. Approve uses the fingerprint glyph and BiometricPrompt titled “Approve request”.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">03 · Trust</div>
+      <div class="ph {{b}}">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 46px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Trust</h2><button class="ib" aria-label="New grant"><svg class="g" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 108px; display: flex; flex-direction: column; gap: 10px">
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+            <a href="#" style="text-decoration: none; color: inherit; background: var(--raised); border-radius: 22px; padding: 14px; box-shadow: 0 0 0 2px var(--ink)"><svg class="g" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg><div class="serif" style="font-size: 26px; margin-top: 8px">Manual</div><div class="meta">You decide, with a hint</div></a>
+            <a href="#" style="text-decoration: none; color: inherit; background: var(--raised); border-radius: 22px; padding: 14px; box-shadow: 0 0 0 1px var(--rule)"><svg class="g" viewBox="0 0 24 24" style="color: var(--violet)"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg><div class="serif" style="font-size: 26px; margin-top: 8px">Auto</div><div class="meta">Decides the easy ones</div></a>
+          </div>
+          <div style="display: flex; gap: 8px"><a class="btn soft sm" href="#" style="flex: 1"><svg class="g g18" viewBox="0 0 24 24" style="color: var(--warn)"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Lock down</a><a class="btn danger sm" href="#" style="flex: 1"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Bypass…</a></div>
+          <div style="display: flex; justify-content: space-between; margin-top: 14px"><span class="lbl">Active grants · 2</span><a href="#" style="font-size: 13px; color: var(--ink2); text-decoration: none">Ended</a></div>
+          <div>
+            <div class="row"><span class="svc"><img src="../../assets/logos/gmail.svg" alt=""></span><div style="flex: 1"><div class="rt">Read mail from @bank.com</div><div class="meta">Claude · 3 of 10 uses</div></div><svg width="44" height="44" viewBox="0 0 44 44" class="ring" aria-hidden="true"><circle cx="22" cy="22" r="18" style="stroke: var(--rule2)" stroke-width="3"></circle><circle cx="22" cy="22" r="18" style="stroke: var(--violet)" stroke-width="3" stroke-dasharray="113" stroke-dashoffset="40" stroke-linecap="round" transform="rotate(-90 22 22)"></circle><text x="22" y="26" text-anchor="middle" style="font-family: var(--mono); font-size: 11px; fill: var(--ink)">5h</text></svg></div>
+            <div class="row"><span class="svc"><img src="../../assets/logos/gcalendar.svg" alt=""></span><div style="flex: 1"><div class="rt">See your calendar</div><div class="meta">ChatGPT · used 12 times</div></div><svg width="44" height="44" viewBox="0 0 44 44" class="ring" aria-hidden="true"><circle cx="22" cy="22" r="18" style="stroke: var(--violet)" stroke-width="3"></circle><path d="M16 22c2-2.6 3.4-3.6 5-3.6a3.6 3.6 0 0 1 0 7.2c-1.6 0-3-1-5-3.6zm0 0c-2 2.6-3.4 3.6-5 3.6" style="stroke: none"></path><text x="22" y="26" text-anchor="middle" style="font-family: var(--mono); font-size: 13px; fill: var(--ink)">∞</text></svg></div>
+          </div>
+          <div class="lbl" style="margin-top: 14px">Profiles</div>
+          <div class="row"><span class="tile t-n"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="7.5" width="17" height="12" rx="2"></rect><path d="M9 7.5V5.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 5.5v2M3.5 12.5h17"></path></svg></span><div style="flex: 1"><div class="rt">Work</div><div class="meta">Claude Code, Cursor · 140 decisions</div></div><span class="pill vi">Default</span></div>
+        </div>
+        <nav class="nav"><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg></span>Activity</a><a class="on" href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></span>Trust</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>Connections</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></span>Settings</a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Same Trust, same words.</b> Every string matches iPhone so help and support speak once. The quick mode switcher that used to float bottom-right becomes the same chip-and-menu as iPhone.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">04 · Connections</div>
+      <div class="ph {{a}}">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 46px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Connections</h2><button class="ib" aria-label="Connect"><svg class="g" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px">
+          <span class="lbl">Who can ask</span>
+          <div class="row"><span class="av" style="width: 36px; height: 36px; box-shadow: 0 0 0 1px var(--rule)"><img src="../../assets/logos/claude.svg" alt=""></span><div style="flex: 1"><div class="rt">Claude</div><div class="meta">claude.ai · 5 min ago</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="tile t-a"><svg class="g" viewBox="0 0 24 24"><rect x="5" y="5.5" width="14" height="10" rx="1.5"></rect><path d="M3 18.5h18"></path></svg></span><div style="flex: 1"><div class="rt">ThinkPad</div><div class="meta">Claude Code, Codex · now</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="lbl" style="margin-top: 20px">What they can reach</div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/gmail.svg" alt=""></span><div style="flex: 1"><div class="rt">Gmail</div><div class="meta">2 accounts</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/sms.svg" alt=""></span><div style="flex: 1"><div class="rt">Text messages</div><div class="meta">This phone</div></div><span class="pill ok">Allowed</span></div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/device_calendar.svg" alt=""></span><div style="flex: 1"><div class="rt">Phone calendar</div><div class="meta">This phone</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/payments.svg" alt=""></span><div style="flex: 1"><div class="rt">Payments</div><div class="meta">Privacy.com · 2 spend limits</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/vault.svg" alt=""></span><div style="flex: 1"><div class="rt">Password vault</div><div class="meta">24 items</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+        </div>
+        <nav class="nav"><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg></span>Activity</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></span>Trust</a><a class="on" href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>Connections</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></span>Settings</a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Android can do more</b>, and shows it: Text messages and Payments appear here because Android allows them. The two visual families of the old app (Settings style and Group style) collapse into these hairline rows.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">05 · Settings · update ready</div>
+      <div class="ph {{b}}">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 46px"><h2 class="title">Settings</h2></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 108px">
+          <div style="display: flex; align-items: center; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--rule)"><span style="width: 54px; height: 54px; border-radius: 50%; background: var(--sunken); display: grid; place-items: center; font-family: var(--serif); font-size: 28px">D</span><div style="flex: 1"><div style="font-size: 17px; font-weight: 600">dana@acme.dev</div><div class="mono meta" style="font-size: 12.5px">app.reins2fa.com</div></div><span class="pill ok">Approval phone</span></div>
+          <div class="row"><span class="tile t-n" style="width: 32px; height: 32px; border-radius: 10px"><svg class="g g18" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5"></rect><path d="M11 18h2"></path></svg></span><span class="k" style="color: var(--ink); font-weight: 500">Devices</span><span class="v">3</span></div>
+          <div class="row"><span class="tile t-n" style="width: 32px; height: 32px; border-radius: 10px"><svg class="g g18" viewBox="0 0 24 24"><path d="M4 9.5v5M8 6.5v11M12 4v16M16 7.5v9M20 10.5v3"></path></svg></span><span class="k" style="color: var(--ink); font-weight: 500">Sounds and vibration</span><span class="v">On</span></div>
+          <div class="row"><span class="tile t-n" style="width: 32px; height: 32px; border-radius: 10px"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15zM10 20.5h4"></path></svg></span><span class="k" style="color: var(--ink); font-weight: 500">Notification channels</span><span class="v">8</span></div>
+          <div class="row"><span class="tile t-n" style="width: 32px; height: 32px; border-radius: 10px"><svg class="g g18" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 4a8 8 0 0 0 0 16z" style="fill: currentColor"></path></svg></span><span class="k" style="color: var(--ink); font-weight: 500">Appearance</span><span class="v">System</span></div>
+          <div class="row"><span class="tile t-n" style="width: 32px; height: 32px; border-radius: 10px"><svg class="g g18" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span><span class="k" style="color: var(--ink); font-weight: 500">Recovery code</span></div>
+        </div>
+        <div style="position: absolute; left: 14px; right: 14px; bottom: 100px; z-index: 31; background: var(--raised); border-radius: 24px; padding: 14px; display: flex; align-items: center; gap: 12px; box-shadow: 0 0 0 1px var(--rule), 0 24px 40px -18px rgba(0,0,0,.5)"><span class="tile t-n"><svg class="g" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"></path></svg></span><div style="flex: 1"><div class="rt">Update ready</div><div class="meta">Reins 1.5 is ready to install</div></div><a class="btn soft sm" href="#" style="height: 34px; font-size: 13.5px; padding: 0 12px">Later</a><a class="btn inv sm" href="#" style="height: 34px; font-size: 13.5px; padding: 0 12px">Install</a></div>
+        <nav class="nav"><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg></span>Activity</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></span>Trust</a><a href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>Connections</a><a class="on" href="#"><span class="p"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></span>Settings</a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Android-only rows</b> live in the same list: notification channels open the system page for Reins, and the self-update card floats just above the bar. Install hands off to the system installer; the first time, a dialog asks to allow this source.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark","both"],"default":"both","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":2400,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'both';
+    return {
+      wall: t === 'dark' ? 'dark' : 'light',
+      a: t === 'dark' ? 'dark' : 'light',
+      b: t === 'light' ? 'light' : 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,347 @@
+[
+ {
+  "name": "autopilot",
+  "uses": 28,
+  "file": "autopilot.svg"
+ },
+ {
+  "name": "chevron-down",
+  "uses": 29,
+  "file": "chevron-down.svg"
+ },
+ {
+  "name": "fingerprint",
+  "uses": 5,
+  "file": "fingerprint.svg"
+ },
+ {
+  "name": "git-branch",
+  "uses": 15,
+  "file": "git-branch.svg"
+ },
+ {
+  "name": "mail",
+  "uses": 7,
+  "file": "mail.svg"
+ },
+ {
+  "name": "check",
+  "uses": 46,
+  "file": "check.svg"
+ },
+ {
+  "name": "trash",
+  "uses": 15,
+  "file": "trash.svg"
+ },
+ {
+  "name": "send",
+  "uses": 8,
+  "file": "send.svg"
+ },
+ {
+  "name": "activity",
+  "uses": 28,
+  "file": "activity.svg"
+ },
+ {
+  "name": "shield",
+  "uses": 26,
+  "file": "shield.svg"
+ },
+ {
+  "name": "link",
+  "uses": 29,
+  "file": "link.svg"
+ },
+ {
+  "name": "settings",
+  "uses": 25,
+  "file": "settings.svg"
+ },
+ {
+  "name": "arrow-back",
+  "uses": 5,
+  "file": "arrow-back.svg"
+ },
+ {
+  "name": "chevron-right",
+  "uses": 44,
+  "file": "chevron-right.svg"
+ },
+ {
+  "name": "chevron-left",
+  "uses": 22,
+  "file": "chevron-left.svg"
+ },
+ {
+  "name": "plus",
+  "uses": 11,
+  "file": "plus.svg"
+ },
+ {
+  "name": "person",
+  "uses": 11,
+  "file": "person.svg"
+ },
+ {
+  "name": "lock",
+  "uses": 26,
+  "file": "lock.svg"
+ },
+ {
+  "name": "briefcase",
+  "uses": 2,
+  "file": "briefcase.svg"
+ },
+ {
+  "name": "laptop",
+  "uses": 8,
+  "file": "laptop.svg"
+ },
+ {
+  "name": "phone",
+  "uses": 11,
+  "file": "phone.svg"
+ },
+ {
+  "name": "haptics",
+  "uses": 2,
+  "file": "haptics.svg"
+ },
+ {
+  "name": "bell",
+  "uses": 4,
+  "file": "bell.svg"
+ },
+ {
+  "name": "appearance",
+  "uses": 3,
+  "file": "appearance.svg"
+ },
+ {
+  "name": "key",
+  "uses": 27,
+  "file": "key.svg"
+ },
+ {
+  "name": "download",
+  "uses": 2,
+  "file": "download.svg"
+ },
+ {
+  "name": "search",
+  "uses": 6,
+  "file": "search.svg"
+ },
+ {
+  "name": "warning",
+  "uses": 4,
+  "file": "warning.svg"
+ },
+ {
+  "name": "face-id",
+  "uses": 25,
+  "file": "face-id.svg"
+ },
+ {
+  "name": "close",
+  "uses": 29,
+  "file": "close.svg"
+ },
+ {
+  "name": "filter",
+  "uses": 6,
+  "file": "filter.svg"
+ },
+ {
+  "name": "minus",
+  "uses": 2,
+  "file": "minus.svg"
+ },
+ {
+  "name": "shield-check",
+  "uses": 12,
+  "file": "shield-check.svg"
+ },
+ {
+  "name": "home",
+  "uses": 7,
+  "file": "home.svg"
+ },
+ {
+  "name": "pause",
+  "uses": 8,
+  "file": "pause.svg"
+ },
+ {
+  "name": "chevron-up",
+  "uses": 8,
+  "file": "chevron-up.svg"
+ },
+ {
+  "name": "terminal",
+  "uses": 13,
+  "file": "terminal.svg"
+ },
+ {
+  "name": "server",
+  "uses": 3,
+  "file": "server.svg"
+ },
+ {
+  "name": "shield-waiting",
+  "uses": 1,
+  "file": "shield-waiting.svg"
+ },
+ {
+  "name": "shield-paused",
+  "uses": 1,
+  "file": "shield-paused.svg"
+ },
+ {
+  "name": "shield-alert",
+  "uses": 1,
+  "file": "shield-alert.svg"
+ },
+ {
+  "name": "infinity",
+  "uses": 2,
+  "file": "infinity.svg"
+ },
+ {
+  "name": "play",
+  "uses": 1,
+  "file": "play.svg"
+ },
+ {
+  "name": "file",
+  "uses": 8,
+  "file": "file.svg"
+ },
+ {
+  "name": "cloud",
+  "uses": 2,
+  "file": "cloud.svg"
+ },
+ {
+  "name": "database",
+  "uses": 1,
+  "file": "database.svg"
+ },
+ {
+  "name": "package",
+  "uses": 1,
+  "file": "package.svg"
+ },
+ {
+  "name": "card",
+  "uses": 3,
+  "file": "card.svg"
+ },
+ {
+  "name": "token",
+  "uses": 1,
+  "file": "token.svg"
+ },
+ {
+  "name": "power",
+  "uses": 1,
+  "file": "power.svg"
+ },
+ {
+  "name": "heart",
+  "uses": 1,
+  "file": "heart.svg"
+ },
+ {
+  "name": "unlink",
+  "uses": 1,
+  "file": "unlink.svg"
+ },
+ {
+  "name": "quit",
+  "uses": 1,
+  "file": "quit.svg"
+ },
+ {
+  "name": "undo",
+  "uses": 2,
+  "file": "undo.svg"
+ },
+ {
+  "name": "share",
+  "uses": 2,
+  "file": "share.svg"
+ },
+ {
+  "name": "eye",
+  "uses": 3,
+  "file": "eye.svg"
+ },
+ {
+  "name": "copy",
+  "uses": 3,
+  "file": "copy.svg"
+ },
+ {
+  "name": "pencil",
+  "uses": 2,
+  "file": "pencil.svg"
+ },
+ {
+  "name": "chip",
+  "uses": 1,
+  "file": "chip.svg"
+ },
+ {
+  "name": "qr-code",
+  "uses": 1,
+  "file": "qr-code.svg"
+ },
+ {
+  "name": "clipboard",
+  "uses": 1,
+  "file": "clipboard.svg"
+ },
+ {
+  "name": "refresh",
+  "uses": 5,
+  "file": "refresh.svg"
+ },
+ {
+  "name": "autopilot-off",
+  "uses": 1,
+  "file": "autopilot-off.svg"
+ },
+ {
+  "name": "lifebuoy",
+  "uses": 1,
+  "file": "lifebuoy.svg"
+ },
+ {
+  "name": "shield-check-filled",
+  "uses": 1,
+  "file": "shield-check-filled.svg"
+ },
+ {
+  "name": "block",
+  "uses": 1,
+  "file": "block.svg"
+ },
+ {
+  "name": "timer",
+  "uses": 1,
+  "file": "timer.svg"
+ },
+ {
+  "name": "star",
+  "uses": 1,
+  "file": "star.svg"
+ },
+ {
+  "name": "id-card",
+  "uses": 1,
+  "file": "id-card.svg"
+ }
+]

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>iPhone · Connections</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--dfill:#f6c9c9;--warn:#a16207;--wall:#e8e6e1;--wallink:#45434d;--ka:#0e7490}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--dfill:rgba(248,113,113,.28);--warn:#facc15;--wall:#0b0b0d;--wallink:#bdbcc6;--ka:#22d3ee}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:55px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 9px #111114,0 0 0 10.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans)}
+.isl{position:absolute;z-index:60;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000}
+.hind{position:absolute;z-index:60;bottom:8px;left:50%;margin-left:-67px;width:134px;height:5px;border-radius:3px;background:var(--ink)}
+.title{font-family:var(--serif);font-size:44px;line-height:44px;letter-spacing:-.01em;font-weight:400;margin:0}
+.mood{font-family:var(--serif);font-style:italic;font-size:22px;line-height:28px;color:var(--ink2);margin:0}
+.body{font-size:15px;line-height:22px;color:var(--ink2);margin:0}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.btn.soft{background:var(--sunken)}
+.btn.danger{background:var(--dwash);color:var(--bad)}
+.btn.sm{height:40px;font-size:14.5px;padding:0 16px}
+.ib{appearance:none;width:40px;height:40px;border-radius:50%;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;color:var(--ink);border:0;padding:0;flex:none}
+.seg{display:flex;background:var(--sunken);border-radius:999px;padding:4px;gap:2px}
+.seg button{appearance:none;flex:1;height:38px;border-radius:999px;border:0;background:transparent;font-family:var(--sans);font-size:14px;font-weight:500;color:var(--ink2);display:flex;align-items:center;justify-content:center;gap:4px;padding:0 4px}
+.seg button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--rule)}
+.row{display:flex;align-items:center;gap:12px;min-height:54px;padding:7px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.row .v{color:var(--ink);font-size:15px;font-weight:500;text-align:right}
+.chev{color:var(--faint)}
+.tile{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;flex:none}
+.t-a{background:color-mix(in srgb,var(--ka) 13%,transparent);color:var(--ka)}
+.av{width:36px;height:36px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px var(--rule)}
+.av img{width:58%;height:58%}
+.svc{width:36px;height:36px;border-radius:11px;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px var(--rule)}
+.svc img{width:58%;height:58%}
+.pill{font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:99px;white-space:nowrap}
+.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 13%,transparent)}
+.wn{color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent)}
+.bd{color:var(--bad);background:var(--dwash)}
+.vi{color:var(--violet);background:color-mix(in srgb,var(--violet) 12%,transparent)}
+.chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:999px;font-size:14px;font-weight:500;background:var(--sunken);color:var(--ink);white-space:nowrap;box-sizing:border-box}
+.tabbar{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;display:flex;gap:2px;padding:6px;border-radius:999px;background:var(--inv);box-shadow:0 14px 30px -12px rgba(0,0,0,.45);z-index:30}
+.tabbar a{display:flex;align-items:center;gap:7px;height:46px;min-width:50px;justify-content:center;padding:0 14px;border-radius:999px;color:var(--oninv);opacity:.62;font-size:14.5px;font-weight:600;text-decoration:none;position:relative;box-sizing:border-box}
+.tabbar a.on{background:var(--paper);color:var(--ink);opacity:1}
+.fade{position:absolute;left:0;right:0;bottom:0;height:120px;background:linear-gradient(to bottom, transparent, var(--paper) 55%);z-index:20;pointer-events:none}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 34px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box;border-top:1px solid var(--rule)}
+.sw{appearance:none;width:51px;height:31px;border-radius:999px;background:var(--sunken);position:relative;flex:none;border:0;padding:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:var(--vf)}.sw.on::after{left:22px}
+.otp{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.otp span{height:64px;border-radius:16px;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;font-family:var(--mono);font-size:26px}
+.otp span.f{box-shadow:0 0 0 2px var(--violet)}
+</style>
+</helmet>
+<div class="sig {{sans}} {{wall}}" style="width: 2860px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Connections</h1><span class="lbl" style="color: var(--wallink)">iPhone · who can ask, and what they can reach</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">01 · Connections</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 62px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Connections</h2><button class="ib" aria-label="Connect something"><svg class="g" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button></div>
+        <p class="mood" style="position: absolute; left: 24px; right: 24px; top: 116px">Three AIs and a computer can ask.</p>
+        <div style="position: absolute; left: 24px; right: 24px; top: 166px">
+          <span class="lbl">Who can ask</span>
+          <div class="row"><span class="av"><img src="../../assets/logos/claude.svg" alt=""></span><div style="flex: 1"><div class="rt">Claude</div><div class="meta">claude.ai · 5 min ago</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="av"><img src="../../assets/logos/openai.svg" alt=""></span><div style="flex: 1"><div class="rt">ChatGPT</div><div class="meta">chatgpt.com · 2 h ago</div></div><span class="pill vi">Auto</span><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="tile t-a"><svg class="g" viewBox="0 0 24 24"><rect x="5" y="5.5" width="14" height="10" rx="1.5"></rect><path d="M3 18.5h18"></path></svg></span><div style="flex: 1"><div class="rt">MacBook Pro</div><div class="meta">Claude Code, Cursor · now</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="lbl" style="margin-top: 22px">What they can reach</div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/gmail.svg" alt=""></span><div style="flex: 1"><div class="rt">Gmail</div><div class="meta">2 accounts</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/github.svg" alt=""></span><div style="flex: 1"><div class="rt">GitHub</div><div class="meta">octo-dana</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/vault.svg" alt=""></span><div style="flex: 1"><div class="rt">Password vault</div><div class="meta">24 items</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/mcp.svg" alt=""></span><div style="flex: 1"><div class="rt">Linear</div><div class="meta">MCP · 12 tools</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div class="row"><span class="svc"><img src="../../assets/logos/mcp.svg" alt=""></span><div style="flex: 1"><div class="rt">Sentry</div><div class="meta">MCP</div></div><span class="pill wn">Sign in</span><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+        </div>
+        <div class="fade"></div>
+        <nav class="tabbar"><a href="#" aria-label="Activity"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg></a><a href="#" aria-label="Trust"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></a><a class="on" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Connections</a><a href="#" aria-label="Settings"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Both ends of the wire.</b> AIs and computers on top, services and MCP servers below, one list. Integrations no longer hide behind a plus on Activity. Not-yet-connected services sit at the bottom as quiet rows: “Calendar · Connect”.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">02 · One AI</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px">
+          <div style="display: flex; align-items: center; gap: 16px"><span class="av" style="width: 72px; height: 72px"><img src="../../assets/logos/claude.svg" alt=""></span><div><h2 class="title">Claude</h2><div class="meta">claude.ai · used 5 min ago</div></div></div>
+          <div class="lbl" style="margin-top: 24px; margin-bottom: 8px">Autopilot for Claude</div>
+          <div class="seg"><button class="on">Like all</button><button>Manual</button><button>Auto</button></div>
+          <div style="display: flex; gap: 8px; margin-top: 10px"><a class="btn soft sm" href="#" style="flex: 1"><svg class="g g18" viewBox="0 0 24 24" style="color: var(--warn)"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Lock down</a><a class="btn danger sm" href="#" style="flex: 1"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Bypass…</a></div>
+          <div style="margin-top: 14px">
+            <div class="row"><span class="k">Learns into</span><span class="chip">Personal<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span></div>
+            <div class="row"><span class="k">Active grants</span><span class="v">1</span><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+            <div class="row"><span class="k">Icon</span><span class="v">Auto</span><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+            <div class="row"><span class="k">Connected</span><span class="v">Sep 28</span></div>
+          </div>
+        </div>
+        <div class="bar"><div style="height: 54px; border-radius: 99px; background: var(--dwash); color: var(--bad); display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; font-size: 16.5px"><svg class="g" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg>Hold to disconnect</div></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Per-AI trust.</b> Its own mode wins over the global one, except a global Lockdown. Learns into is a designed menu, not a system picker. Disconnecting is held, because grants and history go with it.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">03 · GitHub · paste a token</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px; display: flex; flex-direction: column; gap: 14px">
+          <div style="display: flex; align-items: center; gap: 14px"><span class="svc" style="width: 52px; height: 52px; border-radius: 15px"><img src="../../assets/logos/github.svg" alt=""></span><h2 class="title">GitHub</h2></div>
+          <div class="lbl" style="margin-top: 6px">Accounts</div>
+          <div><div class="row" style="border-top: 1px solid var(--rule)"><span class="av" style="background: var(--sunken); box-shadow: none; font-family: var(--serif); font-size: 18px">O</span><div style="flex: 1"><div class="rt">octo-dana</div><div class="meta">Chosen repositories · 6</div></div><span class="pill ok">Connected</span></div></div>
+          <div class="lbl" style="margin-top: 10px">Add an account</div>
+          <div style="display: flex; gap: 8px"><a class="btn inv sm" href="#" style="flex: 1.3">Chosen repositories</a><a class="btn soft sm" href="#" style="flex: 1">Everything</a></div>
+          <div style="padding: 16px; border-radius: 20px; background: color-mix(in srgb, var(--violet) 9%, transparent); display: flex; flex-direction: column; gap: 10px">
+            <div class="rt">Copied the token on GitHub?</div>
+            <div class="body" style="font-size: 14px; line-height: 20px">Paste it here and it connects. It's kept encrypted on this phone.</div>
+            <a class="btn inv sm" href="#" style="align-self: flex-start"><svg class="g g18" viewBox="0 0 24 24"><rect x="6" y="4.5" width="12" height="16" rx="2"></rect><path d="M9.5 4.5V3.5h5v1"></path></svg>Paste</a>
+          </div>
+          <a href="#" style="font-size: 14.5px; font-weight: 500; color: var(--ink2); text-decoration: none">I already have a token</a>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Fewer steps to a token.</b> Either button opens GitHub with the token pre-filled; come back and Paste. A wrong clipboard says so in one line: “That is not a GitHub token. Copy it again on GitHub.”</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">04 · Gmail accounts</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px; display: flex; flex-direction: column; gap: 14px">
+          <div style="display: flex; align-items: center; gap: 14px"><span class="svc" style="width: 52px; height: 52px; border-radius: 15px"><img src="../../assets/logos/gmail.svg" alt=""></span><h2 class="title">Gmail</h2></div>
+          <p class="body">Your AIs see this list and pick the account a request is about. Grants belong to one account.</p>
+          <div>
+            <div class="row" style="border-top: 1px solid var(--rule)"><span class="av" style="background: var(--sunken); box-shadow: none; font-family: var(--serif); font-size: 18px">D</span><div style="flex: 1; min-width: 0"><div class="rt">dana@acme.dev</div><div class="meta">Added Sep 2</div></div><span class="pill ok">Connected</span></div>
+            <div class="row"><span class="av" style="background: var(--sunken); box-shadow: none; font-family: var(--serif); font-size: 18px">D</span><div style="flex: 1; min-width: 0"><div class="rt">dana.kim@gmail.com</div><div class="meta" style="color: var(--warn)">Token expired</div></div><a class="btn soft sm" href="#" style="height: 34px; font-size: 13.5px">Allow again</a></div>
+          </div>
+          <a class="btn inv" href="#" style="width: 100%; margin-top: 8px"><svg class="g" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg>Add account</a>
+          <p class="meta" style="margin: 0; font-size: 13px; line-height: 19px">Reins asks Google for access on this phone only. Nothing about your mail is stored on the server. If Google says it hasn't verified the app: Advanced, then Go to Reins.</p>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Problems in words.</b> An expired token is amber text with a one-tap fix, never just a red dot. Swipe a row to Remove; it warns once that its grants go too.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">05 · An MCP server</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px; display: flex; justify-content: space-between"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button><button class="ib" aria-label="Refresh"><svg class="g g18" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px">
+          <div style="display: flex; align-items: center; gap: 14px"><span class="svc" style="width: 52px; height: 52px; border-radius: 15px"><img src="../../assets/logos/mcp.svg" alt=""></span><div><h2 class="title">Linear</h2><div class="mono meta">mcp.linear.app</div></div><span class="pill ok" style="margin-left: auto">Connected</span></div>
+          <div style="display: flex; justify-content: space-between; margin-top: 22px"><span class="lbl">Tools · 12</span><span class="meta">You approve each call</span></div>
+          <div class="row" style="align-items: flex-start"><div style="flex: 1"><div class="rt">Search issues</div><div class="mono meta" style="font-size: 12px">search_issues</div><div style="display: flex; gap: 6px; margin-top: 6px"><span class="pill ok">Read only</span><span class="pill vi">Large results</span></div></div><button class="sw on" aria-label="Large results through the server" style="margin-top: 4px"></button></div>
+          <div class="row" style="align-items: flex-start"><div style="flex: 1"><div class="rt">Create issue</div><div class="mono meta" style="font-size: 12px">create_issue</div><div style="display: flex; gap: 6px; margin-top: 6px"><span class="pill wn">Changes things</span></div></div></div>
+          <div class="row" style="align-items: flex-start"><div style="flex: 1"><div class="rt">Delete project</div><div class="mono meta" style="font-size: 12px">delete_project</div><div style="display: flex; gap: 6px; margin-top: 6px"><span class="pill bd">Asks every time</span></div></div></div>
+          <div class="row" style="align-items: flex-start; border-bottom: 0"><div style="flex: 1"><div class="rt">List teams</div><div class="mono meta" style="font-size: 12px">list_teams</div><div style="display: flex; gap: 6px; margin-top: 6px"><span class="pill ok">Read only</span></div></div></div>
+        </div>
+        <div class="fade"></div>
+        <div style="position: absolute; left: 20px; right: 20px; bottom: 34px; z-index: 21"><a class="btn danger" href="#" style="width: 100%">Remove server</a></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Badges are words.</b> Read only, Changes things, Asks every time, Large results. The switch sends large results through your Reins server instead of the phone. Remove asks once: “Its tools, sign-in and permissions go.”</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">06 · Telegram · a code</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px; display: flex; flex-direction: column; gap: 16px">
+          <div style="display: flex; align-items: center; gap: 14px"><span class="svc" style="width: 52px; height: 52px; border-radius: 15px"><img src="../../assets/logos/telegram.svg" alt=""></span><h2 class="title">Telegram</h2></div>
+          <div class="lbl" style="margin-top: 6px">Step 2 of 3</div>
+          <p class="body" style="color: var(--ink)">Telegram sent a code to <span class="mono" style="font-size: 14px">+1 555 010 0100</span>. It arrives in the Telegram app on your other devices, or as a text.</p>
+          <div class="otp"><span>4</span><span>8</span><span class="f">2</span><span></span><span></span></div>
+          <a class="btn inv" href="#" style="width: 100%; opacity: .4">Sign in</a>
+          <a href="#" style="align-self: center; font-size: 14.5px; font-weight: 500; color: var(--ink2); text-decoration: none">Use another number</a>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>One field per digit, one rhythm.</b> Each digit ticks as it lands; the last one signs in by itself with the connected chime. Two-step accounts get a third step asking for the Telegram password, with its hint.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark","both"],"default":"both","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"$preview":{"width":2860,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'both';
+    return {
+      wall: t === 'dark' ? 'dark' : 'light',
+      a: t === 'dark' ? 'dark' : 'light',
+      b: t === 'light' ? 'light' : 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst'
+    };
+  }
+}
+</script>
+</body>
+</html>

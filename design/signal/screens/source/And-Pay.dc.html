@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Android · Payments</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--dfill:#f6c9c9;--warn:#a16207;--wall:#e8e6e1;--wallink:#45434d}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--dfill:rgba(248,113,113,.28);--warn:#facc15;--wall:#0b0b0d;--wallink:#bdbcc6}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}
+.grain{position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:40px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 8px #111114,0 0 0 9.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans)}
+.punch{position:absolute;z-index:60;top:14px;left:50%;margin-left:-7px;width:14px;height:14px;border-radius:50%;background:#000}
+.hind{position:absolute;z-index:60;bottom:7px;left:50%;margin-left:-54px;width:108px;height:4px;border-radius:2px;background:var(--ink);opacity:.6}
+.title{font-family:var(--serif);font-size:44px;line-height:44px;letter-spacing:-.01em;font-weight:400;margin:0}
+.ask{font-family:var(--serif);font-size:42px;line-height:43px;letter-spacing:-.012em;font-weight:400;margin:0;text-wrap:balance}
+.body{font-size:15px;line-height:22px;color:var(--ink2);margin:0}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.btn.soft{background:var(--sunken)}
+.btn.danger{background:var(--dwash);color:var(--bad)}
+.btn.onf{background:#fff;color:#16151b}
+.btn.wash{background:rgba(255,255,255,.18);color:#fff}
+.btn.sm{height:40px;font-size:14.5px;padding:0 16px}
+.ib{appearance:none;width:40px;height:40px;border-radius:50%;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;color:var(--ink);border:0;padding:0;flex:none}
+.ib.f{background:rgba(255,255,255,.18);box-shadow:none;color:#fff;width:36px;height:36px}
+.row{display:flex;align-items:center;gap:12px;min-height:52px;padding:7px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.row .v{color:var(--ink);font-size:15px;font-weight:500;text-align:right}
+.chev{color:var(--faint)}
+.field{position:relative;color:#fff;border-radius:0 0 30px 30px;padding:40px 22px 22px;overflow:hidden;box-sizing:border-box}
+.field>*{position:relative}
+.field .grain{position:absolute}
+.field .lbl{color:rgba(255,255,255,.82)}
+.of2{color:rgba(255,255,255,.82)}
+.av{width:28px;height:28px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+.av img{width:62%;height:62%}
+.radio{width:22px;height:22px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1.5px var(--faint)}
+.radio.on{box-shadow:inset 0 0 0 7px var(--vf)}
+.locked{height:46px;border-radius:99px;background:var(--sunken);display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:500;color:var(--ink2)}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 26px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box;border-top:1px solid var(--rule)}
+.pill{font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:99px;white-space:nowrap}
+.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 13%,transparent)}
+.wn{color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent)}
+.vi{color:var(--violet);background:color-mix(in srgb,var(--violet) 12%,transparent)}
+.chip{display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:999px;font-size:13.5px;font-weight:500;background:var(--sunken);color:var(--ink2)}
+.chip.on{background:var(--inv);color:var(--oninv)}
+.sw{appearance:none;width:51px;height:31px;border-radius:999px;background:var(--sunken);position:relative;flex:none;border:0;padding:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:var(--vf)}.sw.on::after{left:22px}
+.rec{background:var(--raised);border-radius:20px;box-shadow:0 0 0 1px var(--rule);padding:14px 16px}
+.rec .ln{display:flex;justify-content:space-between;gap:10px;font-size:14px;padding:4px 0}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{wall}} {{grain}}" style="width: 1940px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Payments</h1><span class="lbl" style="color: var(--wallink)">Android today, iPhone next · paying is always held</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">01 · Pay · red · hold</div>
+      <div class="ph {{a}}">
+        <div class="punch"></div>
+        <div class="field" style="background: var(--fd)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="display: flex; align-items: center; gap: 10px"><button class="ib f" aria-label="Back"><svg class="g g18" viewBox="0 0 24 24"><path d="M19 12H5m6-6.5L4.5 12l6.5 6.5"></path></svg></button><span class="av"><img src="../../assets/logos/claude.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">Claude <span class="of2">· claude.ai</span></span><span class="mono" style="font-size: 13.5px">3:10</span></div>
+          <div class="lbl" style="margin-top: 26px">Payments · Buy</div>
+          <h2 class="ask" style="margin-top: 10px">Pay <em>$24.97</em> at amazon.com</h2>
+          <div style="margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 14px" class="of2"><svg class="g g18" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Always asks · money can't come back</div>
+        </div>
+        <div style="padding: 14px 20px 0; display: flex; flex-direction: column; gap: 10px">
+          <div class="rec">
+            <div class="ln"><span>2 × USB-C cable, 2 m</span><span class="mono">$17.98</span></div>
+            <div class="ln"><span>1 × Cable ties, 50</span><span class="mono">$4.99</span></div>
+            <div class="ln" style="color: var(--meta); font-size: 13px"><span>Shipping · Tax</span><span class="mono">$0.00 · $2.00</span></div>
+            <div class="ln" style="border-top: 1px solid var(--rule); margin-top: 6px; padding-top: 10px"><span style="font-weight: 600">Total</span><span class="serif" style="font-size: 26px; line-height: 24px">$24.97</span></div>
+          </div>
+          <div class="row" style="min-height: 46px"><span class="k">Ship to</span><span class="v" style="display: flex; align-items: center; gap: 4px">Home · Berlin<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span></div>
+          <div class="row" style="min-height: 46px; border-bottom: 0"><span class="k">Pay with</span><span class="v" style="display: flex; align-items: center; gap: 4px">Virtual card · capped<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span></div>
+        </div>
+        <div class="bar">
+          <div class="locked"><svg class="g g16" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Asked every time</div>
+          <div style="display: flex; gap: 10px"><a class="btn out" href="#" style="flex: 1">Deny</a><span style="flex: 1.5; position: relative; height: 54px; border-radius: 99px; background: var(--dwash); color: var(--bad); overflow: hidden; font-weight: 600; font-size: 16px"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--dfill)"></span><span style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px"><svg class="g g18" viewBox="0 0 24 24"><path d="M12 11.5v2c0 2.6-.7 4.8-2 6.8M8.6 9.8A3.5 3.5 0 0 1 15.5 11v2.5c0 1.9-.3 3.6-.9 5.2M6 15.4c.4-1 .6-2.2.6-3.4a5.4 5.4 0 0 1 9.4-3.6M18 12v1.5c0 1.6-.2 3.1-.5 4.5M5.2 8.6A7.8 7.8 0 0 1 12 4.5c2.6 0 4.9 1.2 6.4 3.2"></path></svg>Hold to pay</span></span></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>A receipt you hold to sign.</b> Paying is red and held, like a delete. The total is in serif because it is the point. Ship to and Pay with are menus; picking a vault card warns once that its full number is handed over.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">02 · Payments</div>
+      <div class="ph {{b}}">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 42px"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M19 12H5m6-6.5L4.5 12l6.5 6.5"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 96px">
+          <h2 class="title">Payments</h2>
+          <a href="#" class="row" style="text-decoration: none; color: inherit; margin-top: 10px; border-top: 1px solid var(--rule)"><div style="flex: 1"><div class="rt">Spending</div><div class="meta">$312.40 this month · 6 purchases</div></div><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></a>
+          <div class="lbl" style="margin-top: 18px">Pay with</div>
+          <div class="row"><span class="radio on"></span><div style="flex: 1"><div class="rt">Virtual card</div><div class="meta">Privacy.com · one per cart, capped</div></div><span class="pill vi">First</span></div>
+          <div class="row"><span class="radio"></span><div style="flex: 1"><div class="rt">Visa •• 4242</div><div class="meta">From your vault · 04/29</div></div></div>
+          <div class="lbl" style="margin-top: 18px">Spend limits</div>
+          <div class="row"><div style="flex: 1"><div class="rt">Claude at amazon.com</div><div class="meta">Up to $30 a purchase · $12 of $100 this week</div></div><button class="ib" aria-label="Remove" style="width: 32px; height: 32px; box-shadow: none; background: transparent; color: var(--meta)"><svg class="g g18" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg></button></div>
+          <div class="row"><span class="k" style="color: var(--ink); font-weight: 500">Add a spend limit</span><svg class="g g18" viewBox="0 0 24 24" style="color: var(--violet)"><path d="M12 5v14M5 12h14"></path></svg></div>
+          <div class="lbl" style="margin-top: 18px">Payment key</div>
+          <div class="mono" style="font-size: 13px; letter-spacing: .06em; padding: 10px 0; color: var(--ink2)">7F2A 91C0 44DE 8B13 · 0A6E …</div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Rules for money in one list.</b> How to pay, how much an AI may spend alone, and the key that signs each mandate. Budget and Ship to sit below. Every amount is mono, so digits line up.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">03 · Spending</div>
+      <div class="ph {{a}}">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 42px"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M19 12H5m6-6.5L4.5 12l6.5 6.5"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 96px">
+          <div class="lbl">October</div>
+          <div class="serif" style="font-size: 72px; line-height: 70px; letter-spacing: -0.02em; margin-top: 8px">$312<span style="font-size: 36px; color: var(--ink2)">.40</span></div>
+          <div class="meta" style="margin-top: 4px">6 purchases · 4 within spend limits</div>
+          <div class="lbl" style="margin-top: 24px">Purchases</div>
+          <div class="row"><div style="flex: 1"><div class="rt">amazon.com</div><div class="meta">Claude · today 14:02</div></div><span class="mono" style="font-size: 14px">$24.97</span><span class="pill ok">Ordered</span></div>
+          <div class="row"><div style="flex: 1"><div class="rt">ikea.com</div><div class="meta">Claude · Oct 11</div></div><span class="mono" style="font-size: 14px">$189.00</span><span class="pill wn">Check this</span></div>
+          <div class="row"><div style="flex: 1"><div class="rt">notion.so</div><div class="meta">ChatGPT · Oct 9 · spend limit</div></div><span class="mono" style="font-size: 14px">$10.00</span><span class="pill ok">Approved</span></div>
+          <div class="row"><div style="flex: 1"><div class="rt">bahn.de</div><div class="meta">Claude · Oct 3</div></div><span class="mono" style="font-size: 14px">$88.43</span><span class="pill ok">Ordered</span></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>The month at a glance</b> in one serif number. Status is always a word in a pill. “Check this” jumps to the top until you have looked at it.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">04 · Check this · amber</div>
+      <div class="ph {{b}}">
+        <div class="punch"></div>
+        <div class="field" style="background: var(--fw)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="display: flex; align-items: center; gap: 10px"><button class="ib f" aria-label="Back"><svg class="g g18" viewBox="0 0 24 24"><path d="M19 12H5m6-6.5L4.5 12l6.5 6.5"></path></svg></button></div>
+          <div class="lbl" style="margin-top: 26px">Payments · Mismatch</div>
+          <h2 class="ask" style="margin-top: 10px">A card was charged by <em>another store</em></h2>
+          <div class="of2" style="margin-top: 12px; font-size: 14.5px; line-height: 20px">The card made for ikea.com was charged by ikea-outlet.biz. It's closed, and Claude's spend limits wait for you.</div>
+        </div>
+        <div style="padding: 8px 24px 0">
+          <div class="row"><span class="k">Approved</span><span class="v">$189.00 · by you</span></div>
+          <div class="row"><span class="k">Charged by</span><span class="mono" style="font-size: 13.5px">ikea-outlet.biz</span></div>
+          <div class="row"><span class="k">Card</span><span class="mono" style="font-size: 13.5px">•• 8812 · closed</span></div>
+          <div class="row"><span class="k">The AI says</span><span class="v" style="font-style: italic; font-weight: 400; font-size: 14px">“Shelves for the office.”</span></div>
+        </div>
+        <div class="bar"><div style="display: flex; gap: 10px"><a class="btn soft" href="#" style="flex: 1">Receipt</a><a class="btn inv" href="#" style="flex: 1.35">I've seen it</a></div></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>When Reins needs you, it's amber.</b> Not a delete, not a request; something went wrong and you should look. The card already closed itself; your only job is to acknowledge.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark","both"],"default":"both","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":1940,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'both';
+    return {
+      wall: t === 'dark' ? 'dark' : 'light',
+      a: t === 'dark' ? 'dark' : 'light',
+      b: t === 'light' ? 'light' : 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

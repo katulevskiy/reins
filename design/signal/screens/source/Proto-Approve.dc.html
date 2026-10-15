@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Prototype · Ask to answer</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--sans:"Instrument Sans",system-ui,sans-serif;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--dfill:#f6c9c9;--kp:#c2410c;--kr:#2563eb;--kd:#b91c1c}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--dfill:rgba(248,113,113,.28);--kp:#fb923c;--kr:#60a5fa;--kd:#f87171}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}
+.grain{position:absolute !important;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}.light{--il:block;--id:none}.dark{--il:none;--id:block}.il{display:var(--il,block)}.id{display:var(--id,none)}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.ph{position:relative;width:390px;height:844px;border-radius:55px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 9px #111114,0 0 0 10.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans);user-select:none}
+.isl{position:absolute;z-index:60;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000}
+.hind{position:absolute;z-index:60;bottom:8px;left:50%;margin-left:-67px;width:134px;height:5px;border-radius:3px;background:var(--ink)}
+.title{font-family:var(--serif);font-size:44px;line-height:44px;letter-spacing:-.01em;font-weight:400;margin:0}
+.ask{font-family:var(--serif);font-size:45px;line-height:46px;letter-spacing:-.012em;font-weight:400;margin:0}
+.mood{font-family:var(--serif);font-style:italic;font-size:22px;line-height:28px;color:var(--ink2);margin:0}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none;transition:opacity .15s,transform .15s}
+.btn:active{opacity:.55;transform:scale(.98)}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.btn.soft{background:var(--sunken)}
+.btn.sm{height:40px;font-size:14.5px;padding:0 16px}
+.btn.onf{background:#fff;color:#16151b}
+.btn.wash{background:rgba(255,255,255,.18);color:#fff}
+.ib{appearance:none;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.18);display:grid;place-items:center;color:#fff;border:0;padding:0;flex:none;cursor:pointer}
+.seg{display:flex;background:var(--sunken);border-radius:999px;padding:4px;gap:2px}
+.seg button{appearance:none;flex:1;height:38px;border-radius:999px;border:0;background:transparent;font-family:var(--sans);font-size:14px;font-weight:500;color:var(--ink2);cursor:pointer;transition:background .2s,color .2s}
+.seg button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--rule)}
+.row{display:flex;align-items:center;gap:12px;min-height:58px;padding:9px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.tile{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none}
+.t-p{background:color-mix(in srgb,var(--kp) 13%,transparent);color:var(--kp)}
+.t-r{background:color-mix(in srgb,var(--kr) 13%,transparent);color:var(--kr)}
+.t-d{background:color-mix(in srgb,var(--kd) 13%,transparent);color:var(--kd)}
+.av{width:26px;height:26px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none}
+.av img{width:62%;height:62%}
+.card{position:absolute;left:16px;right:16px;border-radius:26px;overflow:hidden;color:#fff;box-sizing:border-box}
+.card>*{position:relative}
+.field{position:absolute;left:0;right:0;top:0;color:#fff;border-radius:0 0 30px 30px;padding:56px 22px 24px;overflow:hidden;box-sizing:border-box;animation:fieldIn .32s cubic-bezier(.2,.8,.2,1) both;z-index:5}
+.field>*{position:relative}
+.field .lbl{color:rgba(255,255,255,.82)}
+.askin{animation:askIn .3s ease-out .06s both}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 34px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box;border-top:1px solid var(--rule)}
+.tabbar{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;display:flex;gap:2px;padding:6px;border-radius:999px;background:var(--inv);box-shadow:0 14px 30px -12px rgba(0,0,0,.45);z-index:30}
+.tabbar span{display:flex;align-items:center;gap:7px;height:46px;min-width:50px;justify-content:center;padding:0 14px;border-radius:999px;color:var(--oninv);opacity:.62;font-size:14.5px;font-weight:600}
+.tabbar span.on{background:var(--paper);color:var(--ink);opacity:1}
+.landed{animation:land .5s cubic-bezier(.2,.8,.2,1) both}
+.landed .tile{animation:tileGlow 2.4s ease-out both}
+.toast{position:absolute;left:14px;right:14px;top:56px;background:var(--inv);color:var(--oninv);border-radius:20px;padding:14px 16px;display:flex;gap:10px;align-items:center;z-index:70;font-size:14.5px;font-weight:500;box-shadow:0 18px 40px -16px rgba(0,0,0,.5);animation:toastIn .28s cubic-bezier(.2,.8,.2,1) both}
+.face{position:absolute;inset:0;z-index:80;display:grid;place-items:center;background:rgba(0,0,0,.18)}
+.face div{width:150px;height:150px;border-radius:34px;background:rgba(30,30,36,.9);color:#fff;display:grid;place-items:center;animation:pop .9s ease-in-out both}
+.panel{display:flex;flex-direction:column;gap:22px;max-width:520px}
+.step{display:flex;gap:14px;align-items:flex-start;font-size:15.5px;line-height:23px;color:var(--wallink)}
+.step b{font-family:var(--serif);font-weight:400;font-size:30px;line-height:24px;color:var(--violet)}
+@keyframes fieldIn{from{transform:translateY(-100%)}to{transform:none}}
+@keyframes askIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes land{from{opacity:0;transform:translateY(-24px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes tileGlow{0%{box-shadow:0 0 0 6px color-mix(in srgb,currentColor 35%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
+@keyframes toastIn{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:none}}
+@keyframes pop{0%{transform:scale(.8);opacity:0}25%{transform:scale(1);opacity:1}75%{opacity:1}100%{opacity:0;transform:scale(.96)}}
+@keyframes rise{from{transform:translateY(14px) scale(.95)}to{transform:none}}
+.risen{animation:rise .26s cubic-bezier(.3,1.3,.5,1) both}
+@media (prefers-reduced-motion: reduce){.sig *{animation-duration:1ms !important}}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig" style="width: 1400px; height: 1000px; box-sizing: border-box; background: #e8e6e1; --wallink: #45434d; padding: 70px 100px; display: flex; gap: 110px; align-items: center">
+  <div class="ph {{theme}}">
+    <div class="isl"></div>
+
+    <sc-if value="{{isHome}}" hint-placeholder-val="{{ true }}">
+      <div style="position: absolute; left: 24px; right: 24px; top: 62px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Activity</h2><span style="display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 13px; border-radius: 999px; font-size: 14px; font-weight: 500; background: var(--vf); color: #fff"><svg class="g g16" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Auto</span></div>
+      <p class="mood" style="position: absolute; left: 24px; right: 24px; top: 116px">{{mood}}</p>
+
+      <sc-if value="{{hasStack}}" hint-placeholder-val="{{ true }}">
+        <div style="position: absolute; left: 0; right: 0; top: 164px; height: 224px">
+          <sc-if value="{{showPeek}}" hint-placeholder-val="{{ true }}">
+            <div class="card" style="top: 16px; left: 28px; right: 28px; height: 190px; background: {{peekBg}}"></div>
+          </sc-if>
+          <sc-if value="{{topPush}}" hint-placeholder-val="{{ true }}">
+            <div class="card risen" style="top: 0; height: 200px; background: var(--fp); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 18px 30px -18px rgba(0,0,0,.45)">
+              <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+              <div style="display: flex; align-items: center; gap: 9px"><span class="av" style="width: 24px; height: 24px"><img src="../../assets/logos/claude.svg" alt=""></span><span class="lbl" style="color: rgba(255,255,255,.82); flex: 1">GitHub · Push</span><span class="mono" style="font-size: 13px">0:40</span></div>
+              <div class="serif" style="font-size: 25px; line-height: 26px">Push 8 commits to <em>octo/app</em></div>
+              <div style="font-size: 13.5px; color: rgba(255,255,255,.82)">Claude Code · feature/passkeys</div>
+              <div style="display: flex; gap: 8px; margin-top: auto"><button class="btn onf sm" style="flex: 1.3" onClick="{{approvePush}}"><svg class="g g18" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Allow · 97%</button><button class="btn wash sm" style="flex: 1" onClick="{{openPush}}">Review</button></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{topDelete}}" hint-placeholder-val="{{ false }}">
+            <div class="card risen" style="top: 0; height: 200px; background: var(--fd); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 18px 30px -18px rgba(0,0,0,.45)">
+              <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+              <div style="display: flex; align-items: center; gap: 9px"><span class="av" style="width: 24px; height: 24px"><img src="../../assets/logos/cursor.svg" alt=""></span><span class="lbl" style="color: rgba(255,255,255,.82); flex: 1">GitHub · Delete</span><span class="mono" style="font-size: 13px">4:51</span></div>
+              <div class="serif" style="font-size: 25px; line-height: 26px">Delete the repo <em>octo/old-api</em></div>
+              <div style="font-size: 13.5px; color: rgba(255,255,255,.82)">Cursor · always asks</div>
+              <div style="display: flex; gap: 8px; margin-top: auto"><span class="btn wash sm" style="flex: 1"><svg class="g g16" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Always asks</span><button class="btn onf sm" style="flex: 1.6" onClick="{{openDelete}}">Review</button></div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isEmpty}}" hint-placeholder-val="{{ false }}">
+        <div style="position: absolute; left: 24px; right: 24px; top: 168px; display: flex; flex-direction: column; align-items: center; animation: askIn .4s ease-out both">
+          <img class="il" src="../../assets/illustrations/pond-light.svg" alt="" style="width: 280px; height: 149px"><img class="id" src="../../assets/illustrations/pond-dark.svg" alt="" style="width: 280px; height: 149px">
+        </div>
+      </sc-if>
+
+      <div style="position: absolute; left: 24px; right: 24px; top: {{riverTop}}">
+        <span class="lbl">Today</span>
+        <sc-if value="{{hasLanded}}" hint-placeholder-val="{{ false }}">
+          <div class="row landed" style="margin: 0 -24px; padding: 9px 24px; background: color-mix(in srgb, {{landedColor}} 8%, transparent)"><span class="tile {{landedTile}}"><svg class="g" viewBox="0 0 24 24"><path d="{{landedGlyph}}"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">{{landedTitle}}</div><div class="meta">{{landedMeta}}</div></div><span style="font-size: 12px; font-weight: 600; color: {{landedOutColor}}">{{landedOut}}</span></div>
+        </sc-if>
+        <sc-for list="{{history}}" as="h" hint-placeholder-count="3">
+          <div class="row"><span class="tile {{h.tile}}"><svg class="g" viewBox="0 0 24 24"><path d="{{h.glyph}}"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">{{h.title}}</div><div class="meta">{{h.meta}}</div></div><span style="font-size: 12px; font-weight: 600; color: {{h.outColor}}">{{h.out}}</span></div>
+        </sc-for>
+      </div>
+      <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 120px; background: linear-gradient(to bottom, transparent, var(--paper) 55%); z-index: 20"></div>
+      <div class="tabbar"><span class="on"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg>Activity</span><span><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></span><span><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span><span><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></span></div>
+    </sc-if>
+
+    <sc-if value="{{isPush}}" hint-placeholder-val="{{ false }}">
+      <div class="field" style="background: var(--fp)">
+        <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+        <div style="display: flex; align-items: center; gap: 10px"><button class="ib" aria-label="Close" onClick="{{close}}"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button><span class="av"><img src="../../assets/logos/claude.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">Claude Code <span style="color: rgba(255,255,255,.82)">· MacBook</span></span><span class="mono" style="font-size: 13.5px">0:40</span></div>
+        <div class="askin">
+          <div class="lbl" style="margin-top: 34px">GitHub · Push</div>
+          <h2 class="ask" style="margin-top: 12px">Push 8 commits to <em>octo/app</em></h2>
+          <div style="margin-top: 18px; display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,.82); font-size: 14.5px"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Autopilot would allow · 97%</div>
+        </div>
+      </div>
+      <div style="position: absolute; left: 24px; right: 24px; top: 316px">
+        <div class="row"><span class="k">Branch</span><span class="mono" style="font-size: 13.5px">feature/passkeys</span></div>
+        <div class="row"><span class="k">Account</span><span class="mono" style="font-size: 13.5px">octo-dana</span></div>
+        <div class="row"><span class="k" style="color: var(--ink); font-weight: 500">8 commits</span><span class="mono" style="font-size: 13px"><span style="color: var(--ok)">+412</span> <span style="color: var(--bad)">−96</span></span></div>
+      </div>
+      <div class="bar">
+        <div class="lbl">Allow for</div>
+        <div class="seg"><sc-for list="{{segs}}" as="sg" hint-placeholder-count="3"><button class="{{sg.cls}}" onClick="{{sg.pick}}">{{sg.label}}</button></sc-for></div>
+        <div style="display: flex; gap: 10px"><button class="btn out" style="flex: 1" onClick="{{denyPush}}">Deny</button><button class="btn inv" style="flex: 1.35" onClick="{{approvePush}}"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Approve</button></div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isDelete}}" hint-placeholder-val="{{ false }}">
+      <div class="field" style="background: var(--fd)">
+        <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+        <div style="display: flex; align-items: center; gap: 10px"><button class="ib" aria-label="Close" onClick="{{close}}"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button><span class="av"><img src="../../assets/logos/cursor.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">Cursor <span style="color: rgba(255,255,255,.82)">· MacBook</span></span><span class="mono" style="font-size: 13.5px">4:51</span></div>
+        <div class="askin">
+          <div class="lbl" style="margin-top: 34px">GitHub · Delete</div>
+          <h2 class="ask" style="margin-top: 12px">Delete the repo <em>octo/old-api</em></h2>
+          <div style="margin-top: 18px; display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,.82); font-size: 14.5px"><svg class="g g18" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Always asks · can't be undone</div>
+        </div>
+      </div>
+      <div style="position: absolute; left: 24px; right: 24px; top: 316px">
+        <div class="row"><span class="k">Last push</span><span style="font-size: 15px; font-weight: 500">2 years ago</span></div>
+        <div class="row"><span class="k">Holds</span><span style="font-size: 15px; font-weight: 500">1,284 commits</span></div>
+      </div>
+      <div class="bar">
+        <div style="height: 46px; border-radius: 99px; background: var(--sunken); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--ink2)"><svg class="g g16" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Asked every time</div>
+        <div style="display: flex; gap: 10px"><button class="btn out" style="flex: 1" onClick="{{denyDelete}}">Deny</button>
+          <button style="flex: 1.35; position: relative; height: 54px; border-radius: 99px; background: var(--dwash); color: var(--bad); overflow: hidden; font-family: var(--sans); font-weight: 600; font-size: 16px; border: 0; padding: 0; cursor: pointer; touch-action: none" onMouseDown="{{holdStart}}" onMouseUp="{{holdEnd}}" onMouseLeave="{{holdEnd}}" onTouchStart="{{holdStart}}" onTouchEnd="{{holdEnd}}"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: {{holdPct}}; background: var(--dfill)"></span><span style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px"><svg class="g g18" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg>{{holdLabel}}</span></button>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}">
+      <div class="toast"><svg class="g g18" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>{{toast}}</div>
+    </sc-if>
+    <sc-if value="{{face}}" hint-placeholder-val="{{ false }}">
+      <div class="face"><div><svg class="g" viewBox="0 0 24 24" style="width: 64px; height: 64px; stroke-width: 1.2"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg></div></div>
+    </sc-if>
+    <div class="hind"></div>
+  </div>
+
+  <div class="panel">
+    <div class="lbl" style="color: #45434d">Prototype · press Play</div>
+    <h1 class="serif" style="margin: 0; font-size: 84px; line-height: 80px; letter-spacing: -0.02em; color: #16151b">Ask, <em>answered</em></h1>
+    <div class="step"><b>1</b><span>Tap <strong>Review</strong> on the orange card, or <strong>Allow · 97%</strong> to take Autopilot's pick straight from the stack.</span></div>
+    <div class="step"><b>2</b><span>Pick how long to allow, then <strong>Approve</strong>. The field folds away and lands as the first row of the river, glowing in its kind colour.</span></div>
+    <div class="step"><b>3</b><span>The red card can't be undone. Press and keep holding <strong>Hold to delete</strong>; let go early and it drains.</span></div>
+    <div style="display: flex; gap: 10px; margin-top: 8px">
+      <button class="btn sm" style="background: #fff; color: #16151b; box-shadow: 0 0 0 1px #d3d3dc" onClick="{{setLight}}">Paper</button>
+      <button class="btn sm" style="background: #16151b; color: #fff" onClick="{{setDark}}">Graphite</button>
+      <button class="btn sm" style="background: transparent; color: #45434d; box-shadow: inset 0 0 0 1.5px #b9b7b0" onClick="{{reset}}">Start over</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1400,"height":1000}}'>
+class Component extends DCLogic {
+  defaults() {
+    return {
+      screen: 'home', queue: ['push', 'delete'], seg: 0, hold: 0, face: false, theme: 'light', toast: '', landed: null,
+      history: [
+        { title: 'Read 2 emails from Stripe', meta: 'ChatGPT · 18 min', tile: 't-r', glyph: 'M4.5 7.5 12 13l7.5-5.5M5.5 5.5h13a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z', out: 'Auto', outColor: 'var(--violet)' },
+        { title: 'Sent an email to Jonas', meta: 'Claude · 2 h', tile: 't-p', glyph: 'M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z', out: 'Allowed', outColor: 'var(--ok)' },
+        { title: 'Delete branch old/experiment', meta: 'Cursor · 3 h', tile: 't-d', glyph: 'M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5', out: 'Denied', outColor: 'var(--bad)' }
+      ]
+    };
+  }
+  cur() { return Object.assign({}, this.defaults(), this.state || {}); }
+  componentWillUnmount() { clearInterval(this._hi); clearTimeout(this._tt); clearTimeout(this._ft); }
+  land(entry, removeKind, msg) {
+    const st = this.cur();
+    this.setState({
+      face: false, hold: 0, screen: 'home',
+      queue: st.queue.filter((q) => q !== removeKind),
+      landed: entry,
+      history: (st.landed ? [st.landed] : []).concat(st.history).slice(0, 4)
+    });
+    this.setState({ toast: msg });
+    clearTimeout(this._tt);
+    this._tt = setTimeout(() => this.setState({ toast: '' }), 2600);
+  }
+  renderVals() {
+    const s = this.cur();
+    const segLabels = ['Once', '1 hour', '1 day'];
+    const pushGlyph = 'M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8M9.2 5.5a2.2 2.2 0 1 1-4.4 0 2.2 2.2 0 0 1 4.4 0zM9.2 18.5a2.2 2.2 0 1 1-4.4 0 2.2 2.2 0 0 1 4.4 0zM19.2 7.5a2.2 2.2 0 1 1-4.4 0 2.2 2.2 0 0 1 4.4 0z';
+    const delGlyph = 'M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5';
+    const fieldColor = { push: 'var(--fp)', delete: 'var(--fd)' };
+    const approvePush = () => {
+      if (this.cur().face) return;
+      this.setState({ face: true });
+      clearTimeout(this._ft);
+      this._ft = setTimeout(() => {
+        const st = this.cur();
+        this.land({ title: 'Pushed 8 commits to octo/app', meta: 'Claude Code · now · allowed ' + segLabels[st.seg].toLowerCase(), tile: 't-p', glyph: pushGlyph, out: 'Allowed', outColor: 'var(--ok)', color: 'var(--kp)' }, 'push', 'Approved. Claude Code can push.');
+      }, 900);
+    };
+    const denyPush = () => this.land({ title: 'Push 8 commits to octo/app', meta: 'Claude Code · now · by you', tile: 't-p', glyph: pushGlyph, out: 'Denied', outColor: 'var(--bad)', color: 'var(--kp)' }, 'push', 'Denied. Claude Code was told no.');
+    const denyDelete = () => this.land({ title: 'Delete the repo octo/old-api', meta: 'Cursor · now · by you', tile: 't-d', glyph: delGlyph, out: 'Denied', outColor: 'var(--bad)', color: 'var(--kd)' }, 'delete', 'Denied. The repo stays.');
+    const holdStart = (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      if (this._hi || this.cur().face) return;
+      const t0 = Date.now();
+      this._hi = setInterval(() => {
+        const p = Math.min(1, (Date.now() - t0) / 1200);
+        if (p >= 1) {
+          clearInterval(this._hi); this._hi = null;
+          this.setState({ hold: 1, face: true });
+          clearTimeout(this._ft);
+          this._ft = setTimeout(() => this.land({ title: 'Deleted the repo octo/old-api', meta: 'Cursor · now · held by you', tile: 't-d', glyph: delGlyph, out: 'Deleted', outColor: 'var(--bad)', color: 'var(--kd)' }, 'delete', 'Deleted octo/old-api.'), 900);
+        } else {
+          this.setState({ hold: p });
+        }
+      }, 30);
+    };
+    const holdEnd = () => {
+      if (this._hi) { clearInterval(this._hi); this._hi = null; this.setState({ hold: 0 }); }
+    };
+    const n = s.queue.length;
+    const words = ['Nothing waits. All quiet.', 'One thing waits for you.', 'Two things wait for you.'];
+    const L = s.landed;
+    return {
+      theme: s.theme,
+      isHome: s.screen === 'home',
+      isPush: s.screen === 'push',
+      isDelete: s.screen === 'delete',
+      mood: words[Math.min(n, 2)],
+      hasStack: n > 0,
+      isEmpty: n === 0,
+      topPush: s.queue[0] === 'push',
+      topDelete: s.queue[0] === 'delete',
+      showPeek: n > 1,
+      peekBg: n > 1 ? fieldColor[s.queue[1]] : 'transparent',
+      riverTop: n > 0 ? '412px' : '330px',
+      hasLanded: !!L,
+      landedTitle: L ? L.title : '',
+      landedMeta: L ? L.meta : '',
+      landedTile: L ? L.tile : '',
+      landedGlyph: L ? L.glyph : '',
+      landedOut: L ? L.out : '',
+      landedOutColor: L ? L.outColor : '',
+      landedColor: L ? L.color : 'transparent',
+      history: s.history,
+      segs: segLabels.map((label, i) => ({ label, cls: i === s.seg ? 'on' : '', pick: () => this.setState({ seg: i }) })),
+      holdPct: Math.round(s.hold * 100) + '%',
+      holdLabel: s.hold > 0 ? (s.hold >= 1 ? 'Deleting' : 'Keep holding') : 'Hold to delete',
+      face: s.face,
+      hasToast: !!s.toast,
+      toast: s.toast,
+      openPush: () => this.setState({ screen: 'push', seg: 0 }),
+      openDelete: () => this.setState({ screen: 'delete', hold: 0 }),
+      close: () => { holdEnd(); this.setState({ screen: 'home' }); },
+      approvePush, denyPush, denyDelete, holdStart, holdEnd,
+      setLight: () => this.setState({ theme: 'light' }),
+      setDark: () => this.setState({ theme: 'dark' }),
+      reset: () => { clearInterval(this._hi); this._hi = null; clearTimeout(this._ft); clearTimeout(this._tt); this.setState(Object.assign(this.defaults(), { theme: this.cur().theme })); }
+    };
+  }
+}
+</script>
+</body>
+</html>

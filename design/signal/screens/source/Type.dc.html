@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Type</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--violet:#5b43e8;--wall:#e8e6e1;--wallink:#45434d}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--violet:#a196ff;--wall:#0b0b0d;--wallink:#bdbcc6}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.spec{display:grid;grid-template-columns:150px 1fr 230px;align-items:baseline;gap:24px;padding:16px 0;border-bottom:1px solid var(--rule)}
+.spec .n{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--meta)}
+.spec .m{font-family:var(--mono);font-size:12px;color:var(--meta);text-align:right}
+</style>
+</helmet>
+<div class="sig {{sans}} {{theme}}" style="width: 1920px; height: 1200px; box-sizing: border-box; background: var(--wall); color: var(--ink); padding: 72px 80px; display: grid; grid-template-columns: 1.15fr 1fr; gap: 40px">
+  <div style="display: flex; flex-direction: column; gap: 28px">
+    <div style="display: flex; align-items: flex-end; gap: 32px">
+      <h1 class="serif" style="margin: 0; font-size: 96px; line-height: 88px; letter-spacing: -0.02em">Type</h1>
+      <p style="margin: 0 0 8px; font-size: 18px; line-height: 26px; color: var(--wallink)">Three voices. The serif is what you decide on. The sans is what you read. Mono, in capitals, is what the machine says.</p>
+    </div>
+    <div style="background: var(--paper); border-radius: 28px; padding: 18px 30px 8px">
+      <div class="spec"><span class="n">ask-xl</span><span class="serif" style="font-size: 64px; line-height: 62px; letter-spacing: -0.015em">Delete <em>octo/old-api</em></span><span class="m">Serif 64/62 · desktop, iPad</span></div>
+      <div class="spec"><span class="n">ask</span><span class="serif" style="font-size: 45px; line-height: 46px; letter-spacing: -0.012em">Push 8 commits to <em>octo/app</em></span><span class="m">Serif 45/46 · −1.2%</span></div>
+      <div class="spec"><span class="n">title</span><span class="serif" style="font-size: 44px; line-height: 44px; letter-spacing: -0.01em">Activity</span><span class="m">Serif 44/44 · screen titles</span></div>
+      <div class="spec"><span class="n">stat</span><span class="serif" style="font-size: 40px; line-height: 40px; letter-spacing: -0.01em">142 <span style="font-size: 22px; color: var(--ink2)">requests</span></span><span class="m">Serif 40 · 54 on a grant field</span></div>
+      <div class="spec"><span class="n">sheet-title</span><span class="serif" style="font-size: 32px; line-height: 34px; letter-spacing: -0.01em">Remember <em>for</em></span><span class="m">Serif 32/34 · one italic word</span></div>
+      <div class="spec"><span class="n">ask-small</span><span class="serif" style="font-size: 25px; line-height: 26px; letter-spacing: -0.01em">Read 2 emails from <em>Stripe</em></span><span class="m">Serif 25/26 · waiting cards</span></div>
+      <div class="spec" style="border-bottom: 0"><span class="n">mood · new</span><span class="serif" style="font-size: 24px; line-height: 30px; font-style: italic; color: var(--ink2)">All quiet. Three AIs are connected.</span><span class="m">Serif italic 24/30 · ink-2</span></div>
+    </div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 24px; padding-top: 118px">
+    <div style="background: var(--paper); border-radius: 28px; padding: 18px 30px 8px">
+      <div class="spec" style="grid-template-columns: 110px 1fr 170px"><span class="n">button</span><span style="font-size: 16.5px; font-weight: 600">Approve</span><span class="m">Sans 16.5 · 600</span></div>
+      <div class="spec" style="grid-template-columns: 110px 1fr 170px"><span class="n">row</span><span style="font-size: 15.5px; font-weight: 500">Push to feature/* in octo/app</span><span class="m">Sans 15.5 · 500</span></div>
+      <div class="spec" style="grid-template-columns: 110px 1fr 170px"><span class="n">body</span><span style="font-size: 15px; line-height: 22px; color: var(--ink2)">Approved without asking. Sent means sent.</span><span class="m">Sans 15/22 · 400</span></div>
+      <div class="spec" style="grid-template-columns: 110px 1fr 170px"><span class="n">meta</span><span style="font-size: 13px; line-height: 18px; color: var(--meta)">Claude Code · 3 of 10 uses</span><span class="m">Sans 13/18</span></div>
+      <div class="spec" style="grid-template-columns: 110px 1fr 170px"><span class="n">tag</span><span><span style="display: inline-flex; height: 24px; align-items: center; padding: 0 10px; border-radius: 999px; background: var(--vf); color: #fff; font-size: 11.5px; font-weight: 600">Auto</span></span><span class="m">Sans 11.5 · 600</span></div>
+      <div class="spec" style="grid-template-columns: 110px 1fr 170px"><span class="n">label</span><span class="lbl" style="color: var(--meta)">GitHub · Push</span><span class="m">Mono 11.5 · +0.16em</span></div>
+      <div class="spec" style="grid-template-columns: 110px 1fr 170px; border-bottom: 0"><span class="n">value</span><span class="mono" style="font-size: 13.5px">feature/passkeys · 9f86d08</span><span class="m">Mono 13.5</span></div>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+      <div style="background: var(--paper); border-radius: 24px; padding: 22px 24px">
+        <div class="lbl" style="color: var(--meta)">Proposed sans</div>
+        <div style="font-family: 'Instrument Sans', system-ui; font-size: 44px; line-height: 48px; margin-top: 12px; letter-spacing: -0.01em">Instrument Sans</div>
+        <div style="font-family: 'Instrument Sans', system-ui; font-size: 15px; line-height: 22px; color: var(--ink2); margin-top: 8px">From the same foundry as Instrument Serif. Warmer joins, rounder counters, still crisp at 13 px. The app and reins.dev finally speak in one family.</div>
+      </div>
+      <div style="background: var(--paper); border-radius: 24px; padding: 22px 24px">
+        <div class="lbl" style="color: var(--meta)">Current sans · tweakable</div>
+        <div style="font-family: 'Geist', system-ui; font-size: 44px; line-height: 48px; margin-top: 12px; letter-spacing: -0.01em">Geist</div>
+        <div style="font-family: 'Geist', system-ui; font-size: 15px; line-height: 22px; color: var(--ink2); margin-top: 8px">Already bundled on every platform. Every board has a Sans tweak, so the whole canvas can be compared in either face before you commit.</div>
+      </div>
+    </div>
+    <div style="background: var(--paper); border-radius: 24px; padding: 22px 24px; display: flex; flex-direction: column; gap: 10px">
+      <div class="lbl" style="color: var(--meta)">The grammar of an ask</div>
+      <div class="serif" style="font-size: 34px; line-height: 38px">Verb, then count, then <em>the target in italic</em></div>
+      <div style="font-size: 14px; line-height: 21px; color: var(--ink2)">Sentence case, no full stop, one sentence. Serif is never bold; nothing in the app uses weight 700. Dynamic Type and Android font scale reflow asks to three lines before they shrink, never below 32 px.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"$preview":{"width":1920,"height":1200}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: this.props.theme ?? 'light',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst'
+    };
+  }
+}
+</script>
+</body>
+</html>

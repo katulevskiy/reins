@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desktop · Home</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--side:#eeeef2;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--warn:#a16207;--kp:#c2410c;--kr:#2563eb;--kd:#b91c1c;--ka:#0e7490;--kg:#5b43e8}
+.dark{--paper:#121215;--side:#0c0c0f;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--warn:#facc15;--kp:#fb923c;--kr:#60a5fa;--kd:#f87171;--ka:#22d3ee;--kg:#a196ff}
+.g{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g20{width:20px;height:20px}
+.grain{position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.app{display:flex;flex-wrap:wrap;min-height:100vh;background:var(--paper);color:var(--ink);font-family:var(--sans)}
+.side{flex:1 1 236px;max-width:100%;box-sizing:border-box;padding:16px 14px 18px;background:var(--side);border-right:1px solid var(--rule);display:flex;flex-direction:column;gap:16px}
+.main{flex:999 1 560px;min-width:0;padding:34px 44px 40px;box-sizing:border-box;display:flex;flex-direction:column;gap:26px}
+.lights{display:flex;gap:8px;padding:2px 4px}
+.lights i{width:12px;height:12px;border-radius:50%;background:var(--rule2)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border-radius:12px;font-size:14px;color:var(--ink2);text-decoration:none}
+.nav a.on{background:var(--raised);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--rule)}
+.nav kbd{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.nav .bd{margin-left:auto;min-width:20px;height:18px;border-radius:9px;background:var(--fp);color:#fff;font-size:11px;font-weight:600;display:grid;place-items:center}
+.btn{appearance:none;border:0;margin:0;height:38px;padding:0 16px;border-radius:999px;font-family:var(--sans);font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none;white-space:nowrap}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.soft{background:var(--sunken)}
+.btn.out{box-shadow:inset 0 0 0 1.5px var(--rule2);background:transparent}
+.btn.danger{background:var(--dwash);color:var(--bad)}
+.btn.onf{background:#fff;color:#16151b}
+.btn.wash{background:rgba(255,255,255,.18);color:#fff}
+.btn.xs{height:30px;font-size:13px;padding:0 12px}
+.row{display:flex;align-items:center;gap:12px;min-height:50px;padding:6px 0;border-bottom:1px solid var(--rule);box-sizing:border-box;font-size:14px}
+.row:last-child{border-bottom:0}
+.rt{font-size:14.5px;font-weight:500;color:var(--ink)}
+.meta{font-size:12.5px;line-height:17px;color:var(--meta)}
+.tile{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;flex:none}
+.t-p{background:color-mix(in srgb,var(--kp) 13%,transparent);color:var(--kp)}
+.t-r{background:color-mix(in srgb,var(--kr) 13%,transparent);color:var(--kr)}
+.t-d{background:color-mix(in srgb,var(--kd) 13%,transparent);color:var(--kd)}
+.t-a{background:color-mix(in srgb,var(--ka) 13%,transparent);color:var(--ka)}
+.t-g{background:color-mix(in srgb,var(--kg) 13%,transparent);color:var(--kg)}
+.t-n{background:var(--sunken);color:var(--ink)}
+.plate{background:var(--raised);border-radius:20px;box-shadow:0 0 0 1px var(--rule);padding:18px 20px;box-sizing:border-box}
+.chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:999px;font-size:12.5px;font-weight:500;background:var(--sunken);color:var(--ink2);white-space:nowrap}
+.av{width:22px;height:22px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px var(--rule)}
+.av img{width:62%;height:62%}
+.ring circle{fill:none}
+@keyframes breathe{0%,100%{opacity:.35}50%{opacity:1}}
+@media (prefers-reduced-motion: reduce){.sig *{animation:none !important}}
+</style>
+</helmet>
+<div class="sig {{sans}} {{theme}} {{grain}}">
+<div class="app">
+  <aside class="side">
+    <div class="lights" aria-hidden="true"><i style="background: #ff5f57"></i><i style="background: #febc2e"></i><i style="background: #28c840"></i></div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 4px 6px 0"><img src="../../assets/logos/reins.svg" alt="" style="width: 26px; height: 26px; border-radius: 7px"><span class="serif" style="font-size: 24px">Reins</span></div>
+    <a href="#" style="display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: 16px; background: var(--raised); box-shadow: 0 0 0 1px var(--rule); text-decoration: none; color: inherit"><span class="tile" style="background: color-mix(in srgb, var(--ok) 13%, transparent); color: var(--ok)"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path><path d="M9 12l2.2 2.2L15.5 10"></path></svg></span><div><div style="font-size: 13.5px; font-weight: 600">Reins is on</div><div class="meta" style="font-size: 12px">Dana's iPhone approves</div></div></a>
+    <nav class="nav">
+      <a class="on" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V20H4z"></path><path d="M9.5 20v-5.5h5V20"></path></svg>Home<kbd>⌘1</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg>Activity<kbd>⌘2</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Connections<kbd>⌘3</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg>Keys<kbd>⌘4</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg>Rules<kbd>⌘5</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg>Settings<kbd>⌘6</kbd></a>
+    </nav>
+    <div style="margin-top: auto; display: flex; flex-direction: column; gap: 10px">
+      <a class="btn soft" href="#" style="width: 100%"><svg class="g g16" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"></path></svg>Pause git</a>
+      <span class="meta" style="padding: 0 6px; font-size: 11.5px">Reins 1.4.0</span>
+    </div>
+  </aside>
+  <main class="main">
+    <div style="display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap">
+      <div style="flex: 1; min-width: 260px"><h1 class="serif" style="margin: 0; font-size: 44px; line-height: 44px; letter-spacing: -0.01em">Good evening, <em>Dana</em></h1><p class="serif" style="margin: 8px 0 0; font-size: 21px; font-style: italic; color: var(--ink2)">All quiet. Nothing waits on your phone.</p></div>
+      <a class="btn out" href="#"><svg class="g g16" viewBox="0 0 24 24"><path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z"></path></svg>Send a test</a>
+    </div>
+
+    <div class="plate" style="padding: 26px 28px; display: flex; gap: 28px; align-items: center; flex-wrap: wrap">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <span class="tile t-n" style="width: 52px; height: 52px; border-radius: 16px"><svg class="g" viewBox="0 0 24 24" style="width: 26px; height: 26px"><rect x="5" y="5.5" width="14" height="10" rx="1.5"></rect><path d="M3 18.5h18"></path></svg></span>
+        <span style="display: flex; gap: 5px"><i style="width: 5px; height: 5px; border-radius: 50%; background: var(--faint)"></i><i style="width: 5px; height: 5px; border-radius: 50%; background: var(--faint)"></i><i style="width: 5px; height: 5px; border-radius: 50%; background: var(--ok)"></i></span>
+        <span class="tile t-n" style="width: 52px; height: 52px; border-radius: 16px"><svg class="g" viewBox="0 0 24 24" style="width: 26px; height: 26px"><rect x="7" y="3" width="10" height="18" rx="2.5"></rect><path d="M11 18h2"></path></svg></span>
+      </div>
+      <div style="flex: 1; min-width: 280px">
+        <div class="serif" style="font-size: 30px; line-height: 33px">Your phone approves what <em>AI agents</em> do on <em>this Mac</em></div>
+        <div style="display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap"><span class="chip"><svg class="g g14" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>4 AI tools</span><span class="chip">git through Reins</span><span class="chip">SSH keys from your phone</span></div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px">
+      <div class="plate"><div class="lbl">Health</div><div class="serif" style="font-size: 30px; margin-top: 10px">All good</div><div class="meta" style="margin-top: 4px">9 checks passed · 2 min ago</div></div>
+      <div class="plate"><div class="lbl">Work session</div><div class="serif" style="font-size: 30px; margin-top: 10px">Not running</div><div style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px"><span class="meta">Approve once, work freely</span><a class="btn soft xs" href="#">Start</a></div></div>
+      <div class="plate"><div class="lbl">Today</div><div style="display: flex; gap: 18px; margin-top: 10px; align-items: baseline"><span class="serif" style="font-size: 30px; color: var(--ok)">18</span><span class="serif" style="font-size: 30px; color: var(--bad)">2</span><span class="serif" style="font-size: 30px; color: var(--meta)">0</span></div><div class="meta" style="margin-top: 4px">approved · denied · no answer</div></div>
+    </div>
+
+    <div>
+      <div style="display: flex; justify-content: space-between; align-items: center"><span class="lbl">Latest</span><a href="#" style="font-size: 13px; font-weight: 500; color: var(--violet); text-decoration: none">See all</a></div>
+      <div style="margin-top: 6px">
+        <div class="row"><span class="tile t-a"><svg class="g" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2.2"></circle><circle cx="7" cy="18.5" r="2.2"></circle><circle cx="17" cy="7.5" r="2.2"></circle><path d="M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8"></path></svg></span><div style="flex: 1"><div class="rt">git pushed to acme/web · feature/login</div><div class="meta">git · github.com</div></div><span class="meta">4 min</span><svg class="g g16" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+        <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"></path></svg></span><div style="flex: 1"><div class="rt">Claude Code ran <span class="mono" style="font-size: 13px">make deploy-staging</span></div><div class="meta">Command</div></div><span class="meta">22 min</span><svg class="g g16" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+        <div class="row"><span class="tile t-d"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"></path></svg></span><div style="flex: 1"><div class="rt">Codex wanted to <span class="mono" style="font-size: 13px">git push --force</span></div><div class="meta">Command · rewriting git history</div></div><span class="meta">1 h</span><span style="font-size: 12px; font-weight: 600; color: var(--bad)">Denied</span></div>
+        <div class="row"><span class="tile t-g"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span><div style="flex: 1"><div class="rt">reins run used 2 secrets for deploy.sh</div><div class="meta">Secrets</div></div><span class="meta">2 h</span><svg class="g g16" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+      </div>
+    </div>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: this.props.theme ?? 'light',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

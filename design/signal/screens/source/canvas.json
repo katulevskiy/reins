@@ -1,0 +1,338 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "And-Core.dc.html": {
+      "h": 1320,
+      "page": "android",
+      "title": "Android · Core screens",
+      "w": 2400,
+      "x": 0,
+      "y": 0
+    },
+    "And-Outside.dc.html": {
+      "h": 1320,
+      "page": "android",
+      "title": "Android · Outside the app",
+      "w": 2400,
+      "x": 2060,
+      "y": 1440
+    },
+    "And-Pay.dc.html": {
+      "h": 1320,
+      "page": "android",
+      "title": "Android · Payments",
+      "w": 1940,
+      "x": 0,
+      "y": 1440
+    },
+    "Color.dc.html": {
+      "h": 1200,
+      "page": "system",
+      "title": "Colour",
+      "w": 1920,
+      "x": 2040,
+      "y": 0
+    },
+    "Components.dc.html": {
+      "h": 1800,
+      "page": "system",
+      "title": "Components",
+      "w": 2400,
+      "x": 0,
+      "y": 2640
+    },
+    "Desk-Activity.dc.html": {
+      "expand": "fill",
+      "h": 860,
+      "page": "desktop",
+      "title": "Desktop · Activity",
+      "w": 1280,
+      "x": 0,
+      "y": 980
+    },
+    "Desk-Connections.dc.html": {
+      "expand": "fill",
+      "h": 900,
+      "page": "desktop",
+      "title": "Desktop · Connections",
+      "w": 1280,
+      "x": 1400,
+      "y": 980
+    },
+    "Desk-Extras.dc.html": {
+      "expand": "fill",
+      "h": 1700,
+      "page": "desktop",
+      "title": "Desktop · Menus, sessions, web",
+      "w": 1280,
+      "x": 0,
+      "y": 4680
+    },
+    "Desk-Home.dc.html": {
+      "expand": "fill",
+      "h": 860,
+      "page": "desktop",
+      "title": "Desktop · Home",
+      "w": 1280,
+      "x": 0,
+      "y": 0
+    },
+    "Desk-Keys.dc.html": {
+      "expand": "fill",
+      "h": 860,
+      "page": "desktop",
+      "title": "Desktop · Keys",
+      "w": 1280,
+      "x": 0,
+      "y": 2000
+    },
+    "Desk-Rules.dc.html": {
+      "expand": "fill",
+      "h": 940,
+      "page": "desktop",
+      "title": "Desktop · Rules",
+      "w": 1280,
+      "x": 1400,
+      "y": 2000
+    },
+    "Desk-Settings.dc.html": {
+      "expand": "fill",
+      "h": 860,
+      "page": "desktop",
+      "title": "Desktop · Settings",
+      "w": 1280,
+      "x": 0,
+      "y": 3060
+    },
+    "Desk-Setup.dc.html": {
+      "expand": "fill",
+      "h": 1500,
+      "page": "desktop",
+      "title": "Desktop · First run",
+      "w": 1280,
+      "x": 1400,
+      "y": 3060
+    },
+    "Desk-Waiting.dc.html": {
+      "expand": "fill",
+      "h": 860,
+      "page": "desktop",
+      "title": "Desktop · Home, waiting",
+      "w": 1280,
+      "x": 1400,
+      "y": 0
+    },
+    "Main.dc.html": {
+      "h": 1200,
+      "page": "system",
+      "title": "Cover: Signal en plein air",
+      "w": 1920,
+      "x": 0,
+      "y": 0
+    },
+    "Map.dc.html": {
+      "h": 1400,
+      "page": "system",
+      "title": "Map of every screen",
+      "w": 2400,
+      "x": 2520,
+      "y": 2640
+    },
+    "Motion.dc.html": {
+      "h": 1200,
+      "page": "system",
+      "title": "Motion, haptics, sound",
+      "w": 2400,
+      "x": 2040,
+      "y": 1320
+    },
+    "Proto-Approve.dc.html": {
+      "h": 1000,
+      "is_interactive": true,
+      "page": "play",
+      "title": "Prototype · Ask to answer",
+      "w": 1400,
+      "x": 0,
+      "y": 0
+    },
+    "Type.dc.html": {
+      "h": 1200,
+      "page": "system",
+      "title": "Type",
+      "w": 1920,
+      "x": 0,
+      "y": 1320
+    },
+    "iOS-Activity.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Activity",
+      "w": 2400,
+      "x": 0,
+      "y": 1440
+    },
+    "iOS-Approve.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Approve a push",
+      "w": 2400,
+      "x": 2980,
+      "y": 1440
+    },
+    "iOS-Arrival.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Arrive",
+      "w": 2400,
+      "x": 0,
+      "y": 0
+    },
+    "iOS-Autopilot.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Autopilot",
+      "w": 2860,
+      "x": 2980,
+      "y": 4320
+    },
+    "iOS-Connect.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Pair and join",
+      "w": 2400,
+      "x": 2980,
+      "y": 2880
+    },
+    "iOS-Connections.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Connections",
+      "w": 2860,
+      "x": 0,
+      "y": 5760
+    },
+    "iOS-Kinds.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Every kind of ask",
+      "w": 2860,
+      "x": 0,
+      "y": 2880
+    },
+    "iOS-Outside.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Outside the app",
+      "w": 2400,
+      "x": 2980,
+      "y": 7200
+    },
+    "iOS-Settings.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Settings",
+      "w": 2860,
+      "x": 0,
+      "y": 7200
+    },
+    "iOS-Tour.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Tour",
+      "w": 2400,
+      "x": 2980,
+      "y": 0
+    },
+    "iOS-Trust.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Trust and grants",
+      "w": 2400,
+      "x": 0,
+      "y": 4320
+    },
+    "iOS-Vault.dc.html": {
+      "h": 1320,
+      "page": "iphone",
+      "title": "iPhone · Vault",
+      "w": 1940,
+      "x": 2980,
+      "y": 5760
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-14T09:00:00Z",
+    "v": 1
+  },
+  "designSystems": [
+    {
+      "artifact": "https://claude.ai/code/artifact/336b8153-91c6-46a7-8774-93804a84ac03",
+      "copiedAt": "2026-10-14T09:00:00Z",
+      "namespace": "reins-signal",
+      "title": "Reins Signal",
+      "version": "1791953950-6eea"
+    }
+  ],
+  "launch": {
+    "page": "system",
+    "view": "canvas"
+  },
+  "notes": {},
+  "order": [
+    "Main.dc.html",
+    "Color.dc.html",
+    "Type.dc.html",
+    "Motion.dc.html",
+    "Components.dc.html",
+    "Map.dc.html",
+    "iOS-Arrival.dc.html",
+    "iOS-Tour.dc.html",
+    "iOS-Activity.dc.html",
+    "iOS-Approve.dc.html",
+    "iOS-Kinds.dc.html",
+    "iOS-Connect.dc.html",
+    "iOS-Trust.dc.html",
+    "iOS-Autopilot.dc.html",
+    "iOS-Connections.dc.html",
+    "iOS-Vault.dc.html",
+    "iOS-Settings.dc.html",
+    "iOS-Outside.dc.html",
+    "And-Core.dc.html",
+    "And-Pay.dc.html",
+    "And-Outside.dc.html",
+    "Desk-Home.dc.html",
+    "Desk-Waiting.dc.html",
+    "Desk-Activity.dc.html",
+    "Desk-Connections.dc.html",
+    "Desk-Keys.dc.html",
+    "Desk-Rules.dc.html",
+    "Desk-Settings.dc.html",
+    "Desk-Setup.dc.html",
+    "Desk-Extras.dc.html",
+    "Proto-Approve.dc.html"
+  ],
+  "pages": [
+    {
+      "id": "system",
+      "name": "System"
+    },
+    {
+      "id": "iphone",
+      "name": "iPhone"
+    },
+    {
+      "id": "android",
+      "name": "Android"
+    },
+    {
+      "id": "desktop",
+      "name": "Desktop"
+    },
+    {
+      "id": "play",
+      "name": "Prototype"
+    }
+  ],
+  "title": "Reins: Signal en plein air"
+}
