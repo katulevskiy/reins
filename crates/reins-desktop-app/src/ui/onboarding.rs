@@ -192,7 +192,7 @@ impl Root {
                                 .h(px(24.0))
                                 .px(px(10.0))
                                 .rounded_full()
-                                .bg(pal.accent)
+                                .bg(pal.violet_fill())
                                 .text_color(pal.on_accent)
                                 .text_size(px(13.0))
                                 .font_weight(FontWeight::SEMIBOLD)

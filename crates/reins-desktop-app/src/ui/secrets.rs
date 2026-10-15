@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, div, linear_color_stop, linear_gradient, px, relative,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px, relative,
 };
 use reins_desktop::secrets_scan::{Confidence, Detector, Finding, Group, Risk, Source, Stage, StageState};
 
@@ -24,7 +24,7 @@ use super::story::Words;
 use super::{Data, Root};
 use crate::model::Model;
 use crate::secrets::{self, Finished, Flow, Moving, PhoneKey, Review, Scanning};
-use crate::theme::{MONO, Palette};
+use crate::theme::{MONO, Palette, SERIF};
 
 fn words(parts: &[(&str, bool)]) -> Vec<Words> {
     parts
@@ -79,7 +79,7 @@ fn risk_chip(risk: Risk, pal: Palette) -> Div {
 fn tick(on: bool, pal: Palette) -> Div {
     div().flex().flex_none().items_center().justify_center().size(px(18.0)).rounded(px(5.0)).when_else(
         on,
-        |b| b.bg(pal.accent).child(icon(Icon::Check, 12.0, pal.on_accent)),
+        |b| b.bg(pal.violet_fill()).child(icon(Icon::Check, 12.0, pal.on_accent)),
         |b| b.border(px(1.5)).border_color(pal.tile_border().blend(pal.tertiary.opacity(0.4))),
     )
 }
@@ -88,7 +88,7 @@ fn tick(on: bool, pal: Palette) -> Div {
 fn radio(on: bool, pal: Palette) -> Div {
     div().flex_none().mt(px(1.0)).size(px(18.0)).rounded_full().when_else(
         on,
-        |r| r.border(px(5.0)).border_color(pal.accent),
+        |r| r.border(px(5.0)).border_color(pal.violet_fill()),
         |r| r.border(px(1.5)).border_color(pal.tertiary),
     )
 }
@@ -119,7 +119,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 fn detector_mark(d: Option<Detector>, pal: Palette) -> Option<AnyElement> {
     let i = match d? {
         Detector::GithubPat | Detector::GithubFineGrained | Detector::GithubApp | Detector::GithubOauth => {
-            return Some(super::icons::brand(Brand::GitHub, 13.0, pal).into_any_element());
+            return Some(super::icons::avatar(Brand::GitHub, 18.0, pal).into_any_element());
         }
         Detector::Postgres | Detector::MySql | Detector::MongoDb | Detector::Redis => Icon::Database,
         Detector::AwsAccessKeyId | Detector::AwsSecretKey | Detector::GoogleApiKey => Icon::Cloud,
@@ -193,14 +193,10 @@ impl Root {
             .gap(px(8.0))
             .px(px(20.0))
             .py(px(18.0))
-            .rounded(px(18.0))
-            .bg(linear_gradient(
-                135.0,
-                linear_color_stop(pal.accent.opacity(0.18), 0.0),
-                linear_color_stop(pal.accent.opacity(0.04), 1.0),
-            ))
+            .rounded(px(20.0))
+            .bg(pal.paper_raised())
             .border_1()
-            .border_color(pal.accent.opacity(0.3))
+            .border_color(pal.rule())
             .child(top)
             .child(chips)
             .into_any_element()
@@ -264,7 +260,7 @@ impl Root {
             .rounded(px(3.0))
             .bg(pal.tile_border())
             .overflow_hidden()
-            .child(div().h_full().w(relative(p.fraction.clamp(0.0, 1.0))).bg(pal.accent));
+            .child(div().h_full().w(relative(p.fraction.clamp(0.0, 1.0))).bg(pal.violet_fill()));
         let mut stages = card(pal);
         for (i, stage) in Stage::ALL.iter().enumerate() {
             let state = p.stages.get(stage).copied().unwrap_or_default();
@@ -385,9 +381,10 @@ impl Root {
                     div()
                         .flex_1()
                         .min_w(px(0.0))
-                        .text_size(px(22.0))
-                        .line_height(px(28.0))
-                        .font_weight(FontWeight::BOLD)
+                        .text_size(px(32.0))
+                        .line_height(px(36.0))
+                        .font_family(SERIF)
+                        .font_weight(FontWeight::NORMAL)
                         .child(format!(
                             "{} in {}",
                             plural(secrets, "secret", "secrets"),
@@ -521,9 +518,9 @@ impl Root {
                     .mt(px(8.0))
                     .child(
                         div()
-                            .text_size(px(34.0))
-                            .line_height(px(38.0))
-                            .font_weight(FontWeight::BOLD)
+                            .text_size(px(40.0))
+                            .line_height(px(40.0))
+                            .font_family(SERIF).font_weight(FontWeight::NORMAL)
                             .child(n.to_string()),
                     )
                     .child(
@@ -884,7 +881,14 @@ impl Root {
                     .flex_col()
                     .flex_1()
                     .gap(px(2.0))
-                    .child(div().text_size(px(22.0)).line_height(px(28.0)).font_weight(FontWeight::BOLD).child(title))
+                    .child(
+                        div()
+                            .text_size(px(30.0))
+                            .line_height(px(34.0))
+                            .font_family(SERIF)
+                            .font_weight(FontWeight::NORMAL)
+                            .child(title),
+                    )
                     .child(caption(under, pal).text_color(pal.tertiary)),
             )
             .child(
@@ -941,6 +945,7 @@ impl Root {
                             Held::PurgeOriginals,
                             Icon::Trash,
                             "Shred",
+                            "Shredded",
                             pal,
                             cx,
                         ))),
