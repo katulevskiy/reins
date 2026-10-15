@@ -24,7 +24,7 @@ use crate::types::{
 /// The only connector so far.
 pub const SERVICE_GMAIL: &str = "gmail";
 
-const MAX_LABEL_CHARS: usize = 64;
+pub(crate) const MAX_LABEL_CHARS: usize = 64;
 const MAX_QUERY_CHARS: usize = 200;
 
 /// A request parked for the user. Holds message *summaries* only, never bodies.
@@ -182,7 +182,7 @@ impl ParkedRequest {
 
     /// The label shown for the AI, safe to display.
     pub fn label(&self) -> String {
-        text::truncate_chars(&text::one_line(&self.request.connection_label), MAX_LABEL_CHARS)
+        crate::avatar::shown_label(&self.request.connection_label)
     }
 }
 
@@ -364,6 +364,11 @@ pub fn clean_pairing(mut p: PairingRequest) -> PairingRequest {
     p.client_host = text::truncate_chars(&text::one_line(&p.client_host), 253);
     // A key that cannot be used is no key: no fingerprint is shown and nothing is pinned.
     p.client_key = p.client_key.as_deref().and_then(desktop::decode_key).map(|k| desktop::encode_key(&k));
+    // A computer pairing goes by its own name ("M2A (macOS)", "Reins desktop app on Mac.localdomain" → "M2A",
+    // "Mac"): the name the phone offers to keep for it.
+    if p.client_key.is_some() {
+        p.client_name = crate::avatar::shown_label(&p.client_name);
+    }
     p
 }
 
@@ -1085,7 +1090,7 @@ pub fn grant_view(g: &StoredGrant) -> GrantView {
     GrantView {
         id: g.grant.id.0.clone(),
         connection_id: g.grant.connection_id.0.clone(),
-        connection_label: text::truncate_chars(&text::one_line(&g.connection_label), MAX_LABEL_CHARS),
+        connection_label: crate::avatar::shown_label(&g.connection_label),
         action: match &g.grant.scope {
             Scope::Read(_) => "read".to_owned(),
             Scope::Send(_) => "send".to_owned(),
@@ -1209,7 +1214,7 @@ pub fn activity_entry(r: &AuditRecord) -> ActivityEntry {
         id: r.seq,
         at: r.at,
         connection_id: r.connection_id.clone(),
-        connection_label: text::truncate_chars(&text::one_line(&r.connection_label), MAX_LABEL_CHARS),
+        connection_label: crate::avatar::shown_label(&r.connection_label),
         action: r.action.clone(),
         outcome: r.outcome.clone(),
         detail: text::one_line(&r.detail),
@@ -1263,7 +1268,7 @@ pub fn synced_push_approval_view(r: &AuditRecord, git: GitPushView) -> ApprovalV
     ApprovalView {
         request_id: r.info.autopilot.as_ref().map(|a| a.request_id.clone()).unwrap_or_default(),
         connection_id: r.connection_id.clone(),
-        connection_label: text::truncate_chars(&text::one_line(&r.connection_label), MAX_LABEL_CHARS),
+        connection_label: crate::avatar::shown_label(&r.connection_label),
         kind: ApprovalKind::Write,
         query: None,
         messages: Vec::new(),

@@ -11,6 +11,7 @@
 mod autostart;
 mod backend;
 mod demo;
+mod demo_scan;
 mod format;
 mod health;
 mod model;

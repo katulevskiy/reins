@@ -341,23 +341,101 @@ impl Clash {
         self.chosen == self.name
     }
 
-    /// What the review says about it.
+    /// What the review says about it (a clash with a project the vault has; the projects of an unchecked vault are
+    /// said once, by [`Unchecked::line`]).
     #[must_use]
     pub fn line(&self) -> String {
-        match (self.known, self.merged()) {
-            (true, true) => format!("{} already exists from another folder: merging into it, as chosen", self.name),
-            (true, false) => {
-                format!("{} already exists from another folder: this one becomes {}", self.name, self.chosen)
-            }
-            (false, true) => {
-                format!("{}: the vault's projects could not be checked; merging into it, as chosen", self.name)
-            }
-            (false, false) => format!(
-                "{}: the vault's projects could not be checked, so this one becomes {} to stay apart",
-                self.name, self.chosen
-            ),
+        if self.merged() {
+            format!("{} already exists from another folder: merging into it, as chosen", self.name)
+        } else {
+            format!("{} already exists from another folder: this one becomes {}", self.name, self.chosen)
         }
     }
+}
+
+/// The vault's projects could not be listed: one condition of the whole import, said once. Every project of the
+/// import is then kept apart from any of the same name in the vault by a short suffix (`api-c063`), unless merging
+/// was chosen.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Unchecked {
+    /// Why the vault could not be asked (as [`Existing::Unknown`] says).
+    pub why: String,
+    /// Each project of the import, the name it would have had and the one it gets (`known` false).
+    pub projects: Vec<Clash>,
+}
+
+impl Unchecked {
+    /// How many projects get another name than their own.
+    #[must_use]
+    pub fn renamed(&self) -> usize {
+        self.projects.iter().filter(|c| !c.merged()).count()
+    }
+
+    /// The one line the review, the terminal and the receipt say about it.
+    #[must_use]
+    pub fn line(&self) -> String {
+        let renamed: Vec<String> =
+            self.projects.iter().filter(|c| !c.merged()).map(|c| format!("{} → {}", c.name, c.chosen)).collect();
+        let shown = renamed.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+        let more = renamed.len().saturating_sub(3);
+        let more = if more > 0 {
+            format!(", +{more}")
+        } else {
+            String::new()
+        };
+        if renamed.is_empty() {
+            return format!("The vault's projects could not be checked ({}): merging into them, as chosen", self.why);
+        }
+        format!(
+            "The vault's projects could not be checked ({}): {} kept apart with a short suffix ({shown}{more})",
+            self.why,
+            match renamed.len() {
+                1 => "1 project is".to_owned(),
+                n => format!("{n} projects are"),
+            }
+        )
+    }
+}
+
+/// The variables of one environment that the same two files both set (or one file twice): one situation, said once.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictGroup {
+    /// `<project>/<env>`.
+    pub item: String,
+    /// The file whose values go, and the one whose values do not (for one file: the same).
+    pub kept: String,
+    pub dropped: String,
+    pub same_file: bool,
+    /// The variables, in the plan's order.
+    pub names: Vec<String>,
+}
+
+impl ConflictGroup {
+    #[must_use]
+    pub fn line(&self) -> String {
+        let names = self.names.join(", ");
+        if self.same_file {
+            format!("{names} set twice in {}: the last one goes to {}, and both leave the file", self.kept, self.item)
+        } else {
+            format!(
+                "{names} in both {} and {}: {}'s go{} to {} (the more specific file wins)",
+                self.dropped,
+                self.kept,
+                self.kept,
+                if self.names.len() == 1 {
+                    "es"
+                } else {
+                    ""
+                },
+                self.item
+            )
+        }
+    }
+}
+
+/// The file of a conflict's side (`api/.env line 3` → `api/.env`).
+fn file_of(side: &str) -> &str {
+    side.rsplit_once(" line ").map_or(side, |(f, _)| f)
 }
 
 /// A variable two selected files give the same environment: the more specific file's goes ([`dotenv_rank`]).
@@ -398,9 +476,12 @@ pub struct Plan {
     pub envs: Vec<EnvTarget>,
     pub ssh: Vec<SshTarget>,
     pub tokens: Vec<TokenTarget>,
-    /// Projects whose name the vault already has from elsewhere.
+    /// Projects whose name the vault already has from elsewhere: each is a choice (a new name, or merge into it).
     #[serde(default)]
     pub clashes: Vec<Clash>,
+    /// The vault's projects could not be listed: why, and the name each project gets meanwhile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unchecked: Option<Unchecked>,
     /// Variables two files give the same environment.
     #[serde(default)]
     pub conflicts: Vec<Conflict>,
@@ -449,6 +530,48 @@ impl Plan {
         out.extend(self.tokens.iter().map(|t| format!("git through Reins: {}", t.host)));
         out
     }
+
+    /// The conflicts, one per situation: the variables of one environment that the same two files set (or one file
+    /// twice), in the plan's order.
+    #[must_use]
+    pub fn conflict_groups(&self) -> Vec<ConflictGroup> {
+        let mut out: Vec<ConflictGroup> = Vec::new();
+        for c in &self.conflicts {
+            let (kept, dropped) = if c.same_file {
+                (file_of(&c.kept).to_owned(), file_of(&c.dropped).to_owned())
+            } else {
+                (c.kept.clone(), c.dropped.clone())
+            };
+            match out
+                .iter_mut()
+                .find(|g| g.item == c.item && g.kept == kept && g.dropped == dropped && g.same_file == c.same_file)
+            {
+                Some(g) => {
+                    if !g.names.contains(&c.name) {
+                        g.names.push(c.name.clone());
+                    }
+                }
+                None => out.push(ConflictGroup {
+                    item: c.item.clone(),
+                    kept,
+                    dropped,
+                    same_file: c.same_file,
+                    names: vec![c.name.clone()],
+                }),
+            }
+        }
+        out
+    }
+
+    /// What the review, the terminal and the receipt say about names: each clash, the unchecked vault once, and each
+    /// situation of conflicts once.
+    #[must_use]
+    pub fn notes(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.clashes.iter().map(Clash::line).collect();
+        out.extend(self.unchecked.iter().map(Unchecked::line));
+        out.extend(self.conflict_groups().iter().map(ConflictGroup::line));
+        out
+    }
 }
 
 /// A name for `root`'s project that `taken` does not have: its parent folder's name in front (`personal-api`), else
@@ -467,7 +590,8 @@ type Projects = BTreeMap<PathBuf, (String, Option<String>)>;
 
 /// The project of each repository in the selection (by its folder), and the clashes with the vault: names from the
 /// git origin (else the folder), apart from each other, and never merged into a vault project from elsewhere unless
-/// the person chose to.
+/// the person chose to. With the vault's projects unknown, every project is a clash of `known` false (said once, as
+/// [`Plan::unchecked`]).
 fn project_names(findings: &[&Finding], names: &Names<'_>) -> (Projects, Vec<Clash>) {
     let mut roots: Vec<(PathBuf, String, Option<String>)> = findings
         .iter()
@@ -534,7 +658,16 @@ pub fn plan(report: &ScanReport, selected: &BTreeSet<String>, names: &Names<'_>)
     let chosen: Vec<&Finding> =
         report.findings.iter().filter(|f| f.items.iter().any(|i| selected.contains(&i.id))).collect();
     let (projects, clashes) = project_names(&chosen, names);
+    let (clashes, unknown): (Vec<Clash>, Vec<Clash>) = clashes.into_iter().partition(|c| c.known);
     plan.clashes = clashes;
+    if let Existing::Unknown(why) = names.existing
+        && !unknown.is_empty()
+    {
+        plan.unchecked = Some(Unchecked {
+            why: why.clone(),
+            projects: unknown,
+        });
+    }
     let machine = names.machine.to_owned();
     // The less specific file first: the more specific one's value then wins ([`dotenv_rank`]).
     let mut ordered = chosen.clone();
@@ -923,8 +1056,7 @@ pub async fn import(
         keep_local,
         ..Receipt::default()
     };
-    receipt.notes.extend(plan.clashes.iter().map(Clash::line));
-    receipt.notes.extend(plan.conflicts.iter().map(Conflict::line));
+    receipt.notes.extend(plan.notes());
     // Which items arrived.
     let mut arrived: BTreeSet<String> = BTreeSet::new();
     for (target, result) in plan.envs.iter().zip(&stored.envs) {

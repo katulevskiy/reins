@@ -217,8 +217,7 @@ pub const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 /// with nothing happening either way. Logged like any other question.
 #[must_use]
 pub fn test_question() -> Question {
-    let host = hostname::get().ok().map(|h| h.to_string_lossy().into_owned()).filter(|h| !h.is_empty());
-    let from = host.unwrap_or_else(|| "this computer".to_owned());
+    let from = crate::computer::name();
     Question {
         question: cut(&format!("Test from {from}: tap Approve (or Deny) to see Reins work"), MAX_QUESTION),
         detail: Some(

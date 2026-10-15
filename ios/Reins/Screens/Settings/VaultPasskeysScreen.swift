@@ -102,7 +102,7 @@ struct VaultPasskeysScreen: View {
                         Task { await vm.add(model) }
                     } label: {
                         HStack(spacing: 10) {
-                            if vm.busy { ProgressView().tint(Palette.background) } else { Image(systemName: "plus") }
+                            if vm.busy { ProgressView().tint(Palette.paper) } else { Image(systemName: "plus") }
                             Text("Add a passkey")
                         }
                     }
@@ -152,7 +152,7 @@ private struct PasskeyRow: View {
         let tag = VaultPasskeysModel.tag(passkey.credentialId)
         HStack(spacing: 14) {
             // Its own element, apart from Remove (an `InfoRow` would combine the two).
-            InfoRow(untrusted(passkey.name), subtitle: SettingsText.passkeyAdded(passkey.createdAt), symbol: "key.fill", tint: Palette.accent)
+            InfoRow(untrusted(passkey.name), subtitle: SettingsText.passkeyAdded(passkey.createdAt), symbol: "key.fill", tint: Palette.violet)
                 .accessibilityIdentifier("passkey:\(tag)")
             Button {
                 onRemove()

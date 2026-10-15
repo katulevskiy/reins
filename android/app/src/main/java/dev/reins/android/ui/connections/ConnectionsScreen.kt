@@ -39,6 +39,8 @@ import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.design.BrandTile
 import dev.reins.android.design.ButtonSize
 import dev.reins.android.design.ButtonStyle
+import dev.reins.android.design.ConnectionAvatar
+import dev.reins.android.design.shownIcon
 import dev.reins.android.design.Field
 import dev.reins.android.design.Glyph
 import dev.reins.android.design.GlyphIcon
@@ -56,7 +58,6 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.LocalFeedback
 import dev.reins.android.feedback.play
 import dev.reins.android.state.AppState
-import dev.reins.android.ui.common.ConnectionIcon
 import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.main.RootHeader
 import dev.reins.android.ui.main.mood
@@ -176,16 +177,14 @@ internal fun askersLine(connections: List<ConnectionView>): String {
     return parts.joinToString(" and ").replaceFirstChar { it.uppercase() } + " can ask."
 }
 
-/** An AI app (its icon) or a computer (the pair tile): name, where and when it was last used, its own mode. */
+/** An AI app or a computer (its icon: a logo or its blobatar): name, where and when it was last used, its own mode. */
 @Composable
 private fun AskerRow(connection: ConnectionView, autopilot: AutopilotSettings?, onClick: () -> Unit) {
     val c = LocalColors.current
     val own = autopilot?.connections?.firstOrNull { it.connectionId == connection.id }
     ConnectionRowFrame(Modifier.testTag("connection:${connection.id}"), onClick) {
-        if (connection.keyFingerprint != null && connection.icon == null) {
-            KindTile(Field.Pair, Glyph.Laptop, size = 36.dp)
-        } else {
-            androidx.compose.runtime.CompositionLocalProvider(LocalColors provides dev.reins.android.design.RColors.Light) { ConnectionIcon(connection.id, connection.label, Modifier.border(1.dp, c.rule, CircleShape), size = 36.dp) }
+        androidx.compose.runtime.CompositionLocalProvider(LocalColors provides dev.reins.android.design.RColors.Light) {
+            ConnectionAvatar(connection, Modifier.border(1.dp, c.rule, CircleShape).testTag("avatar:${connection.id}:${shownIcon(connection)}"), size = 36.dp)
         }
         Column(Modifier.weight(1f)) {
             RText(untrusted(connection.label), RType.row, c.ink, maxLines = 1)

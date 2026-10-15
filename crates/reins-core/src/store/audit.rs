@@ -240,7 +240,7 @@ impl Store {
                     None
                 })
         };
-        Ok(blob.and_then(|b| self.unseal(SNAPSHOT_AAD, &b).ok()).and_then(|plain| serde_json::from_slice(&plain).ok()))
+        Ok(blob.and_then(|b| self.open_snapshot(&b)))
     }
 
     /// Newest first, at most `limit` rows.
@@ -256,79 +256,91 @@ impl Store {
         )
     }
 
-    fn audit_rows(&self, clause: &str, param: impl rusqlite::Params) -> Result<Vec<AuditRecord>, CoreError> {
-        struct Row {
-            seq: i64,
-            at: i64,
-            connection_id: String,
-            connection_label: String,
-            action: String,
-            outcome: String,
-            grant_id: Option<String>,
-            detail: Option<Vec<u8>>,
-            service: String,
-            account: Option<String>,
-            count: u32,
-            info: Option<Vec<u8>>,
-            op: String,
-        }
-        let conn = self.lock()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT seq, at, connection_id, connection_label, action, outcome, grant_id, detail, service, account, \
-             item_count, info, op FROM audit {clause}"
-        ))?;
-        let rows = stmt
-            .query_map(param, |r| {
-                Ok(Row {
-                    seq: r.get(0)?,
-                    at: r.get(1)?,
-                    connection_id: r.get(2)?,
-                    connection_label: r.get(3)?,
-                    action: r.get(4)?,
-                    outcome: r.get(5)?,
-                    grant_id: r.get(6)?,
-                    detail: r.get(7)?,
-                    service: r.get(8)?,
-                    account: r.get(9)?,
-                    count: r.get(10)?,
-                    info: r.get(11)?,
-                    op: r.get(12)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        drop(stmt);
-        drop(conn);
-        Ok(rows
-            .into_iter()
-            .map(|row| {
-                let detail = row
-                    .detail
-                    .and_then(|blob| self.unseal(DETAIL_AAD, &blob).ok())
-                    .and_then(|plain| String::from_utf8(plain).ok())
-                    .unwrap_or_else(|| DETAIL_UNAVAILABLE.to_owned());
-                let info = row
-                    .info
-                    .and_then(|blob| self.unseal(INFO_AAD, &blob).ok())
-                    .and_then(|plain| serde_json::from_slice(&plain).ok())
-                    .unwrap_or_default();
-                AuditRecord {
-                    seq: row.seq,
-                    at: row.at,
-                    connection_id: row.connection_id,
-                    connection_label: row.connection_label,
-                    action: row.action,
-                    outcome: row.outcome,
-                    detail,
-                    grant_id: row.grant_id,
-                    service: row.service,
-                    account: row.account,
-                    count: row.count,
-                    info,
-                    op: row.op,
-                }
-            })
-            .collect())
+    pub(super) fn audit_rows(&self, clause: &str, param: impl rusqlite::Params) -> Result<Vec<AuditRecord>, CoreError> {
+        let rows = sealed_rows(&*self.lock()?, clause, param)?;
+        Ok(rows.into_iter().map(|row| self.open_audit(row)).collect())
     }
+
+    /// An entry as read from its row: its sealed parts opened (what cannot be is shown as unavailable).
+    pub(super) fn open_audit(&self, row: SealedAudit) -> AuditRecord {
+        let detail = row
+            .detail
+            .and_then(|blob| self.unseal(DETAIL_AAD, &blob).ok())
+            .and_then(|plain| String::from_utf8(plain).ok())
+            .unwrap_or_else(|| DETAIL_UNAVAILABLE.to_owned());
+        let info = row
+            .info
+            .and_then(|blob| self.unseal(INFO_AAD, &blob).ok())
+            .and_then(|plain| serde_json::from_slice(&plain).ok())
+            .unwrap_or_default();
+        AuditRecord {
+            seq: row.seq,
+            at: row.at,
+            connection_id: row.connection_id,
+            connection_label: row.connection_label,
+            action: row.action,
+            outcome: row.outcome,
+            detail,
+            grant_id: row.grant_id,
+            service: row.service,
+            account: row.account,
+            count: row.count,
+            info,
+            op: row.op,
+        }
+    }
+
+    /// An entry's sealed approval, opened; `None` when it cannot be.
+    pub(super) fn open_snapshot(&self, blob: &[u8]) -> Option<crate::views::ParkedRequest> {
+        self.unseal(SNAPSHOT_AAD, blob).ok().and_then(|plain| serde_json::from_slice(&plain).ok())
+    }
+}
+
+/// An entry's row as stored, its details still sealed.
+pub(super) struct SealedAudit {
+    pub seq: i64,
+    at: i64,
+    connection_id: String,
+    connection_label: String,
+    action: String,
+    outcome: String,
+    grant_id: Option<String>,
+    detail: Option<Vec<u8>>,
+    service: String,
+    account: Option<String>,
+    count: u32,
+    info: Option<Vec<u8>>,
+    op: String,
+}
+
+/// The rows `clause` selects from `audit`, sealed: read under the lock, opened after letting it go.
+pub(super) fn sealed_rows(
+    conn: &rusqlite::Connection,
+    clause: &str,
+    param: impl rusqlite::Params,
+) -> rusqlite::Result<Vec<SealedAudit>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT seq, at, connection_id, connection_label, action, outcome, grant_id, detail, service, account, \
+         item_count, info, op FROM audit {clause}"
+    ))?;
+    stmt.query_map(param, |r| {
+        Ok(SealedAudit {
+            seq: r.get(0)?,
+            at: r.get(1)?,
+            connection_id: r.get(2)?,
+            connection_label: r.get(3)?,
+            action: r.get(4)?,
+            outcome: r.get(5)?,
+            grant_id: r.get(6)?,
+            detail: r.get(7)?,
+            service: r.get(8)?,
+            account: r.get(9)?,
+            count: r.get(10)?,
+            info: r.get(11)?,
+            op: r.get(12)?,
+        })
+    })?
+    .collect()
 }
 
 #[cfg(test)]

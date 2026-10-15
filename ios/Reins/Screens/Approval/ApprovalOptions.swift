@@ -32,7 +32,7 @@ struct RememberSheet: View {
                                     Image(systemName: "infinity").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.danger)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("Until I revoke").font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.danger)
-                                        Text("Never expires").font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                                        Text("Never expires").font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
                                     }
                                 }
                             }
@@ -66,7 +66,7 @@ struct RememberSheet: View {
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).rotationEffect(.degrees(more ? 90 : 0))
                             }
-                            .foregroundStyle(Palette.accent)
+                            .foregroundStyle(Palette.violet)
                             .padding(.horizontal, 22)
                             .padding(.vertical, 12)
                             .contentShape(Rectangle())
@@ -101,7 +101,7 @@ struct RememberSheet: View {
             VStack(spacing: 8) {
                 HoldButton(title: "Remember until I revoke", symbol: nil) { apply() }
                     .accessibilityIdentifier("rememberConfirm")
-                Text(HoldButton.hint).font(RFont.sans(12)).foregroundStyle(Palette.tertiary)
+                Text(HoldButton.hint).font(RFont.sans(12)).foregroundStyle(Palette.inkMeta)
             }
         } else {
             let label: String = if vm.draft.allMail != nil {
@@ -115,9 +115,9 @@ struct RememberSheet: View {
             Button { apply() } label: {
                 Text(label)
                     .font(RFont.sans(17, .semibold))
-                    .foregroundStyle(enabled ? Palette.background : Palette.tertiary)
+                    .foregroundStyle(enabled ? Palette.paper : Palette.inkMeta)
                     .frame(maxWidth: .infinity, minHeight: 54)
-                    .background(enabled ? Palette.text : Palette.controlFill, in: Capsule())
+                    .background(enabled ? Palette.ink : Palette.paperSunken, in: Capsule())
             }
             .buttonStyle(.plain)
             .disabled(!enabled)
@@ -138,7 +138,7 @@ struct RememberSheet: View {
 private struct OptionRow<Label: View>: View {
     var selected: Bool
     var id: String
-    var tint: Color = Palette.accent
+    var tint: Color = Palette.violet
     var onSelect: () -> Void
     @ViewBuilder var label: Label
     @Environment(\.feedback) private var feedback
@@ -177,7 +177,7 @@ private struct LifetimeOption: View {
     var body: some View {
         OptionRow(selected: selected, id: "lifetime:\(kind.rawValue)", onSelect: onSelect) {
             HStack(spacing: 6) {
-                Text(title).font(RFont.sans(15.5)).foregroundStyle(Palette.text).frame(maxWidth: .infinity, alignment: .leading)
+                Text(title).font(RFont.sans(15.5)).foregroundStyle(Palette.ink).frame(maxWidth: .infinity, alignment: .leading)
                 switch kind {
                 case .custom:
                     CountStepper(value: $vm.draft.customAmount, in: 1...vm.draft.customUnit.max, id: "custom") { onSelect() }
@@ -192,13 +192,13 @@ private struct LifetimeOption: View {
                     } label: {
                         HStack(spacing: 3) {
                             Text(vm.draft.customUnit.rawValue).font(RFont.sans(14.5, .semibold))
-                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.secondary)
+                            Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.ink2)
                         }
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .padding(.leading, 11)
                         .padding(.trailing, 8)
                         .padding(.vertical, 7)
-                        .background(Palette.background, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .background(Palette.paper, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                     }
                     .accessibilityIdentifier("custom:unit")
                 case .uses:
@@ -240,12 +240,12 @@ private struct CountStepper: View {
         HStack(spacing: 0) {
             step("minus", "Fewer", value > range.lowerBound) { value -= 1 }
                 .accessibilityIdentifier("\(id):minus")
-            Text("\(value)").font(RFont.mono(15, .medium)).foregroundStyle(Palette.text).frame(minWidth: 34).monospacedDigit()
+            Text("\(value)").font(RFont.mono(15, .medium)).foregroundStyle(Palette.ink).frame(minWidth: 34).monospacedDigit()
                 .accessibilityIdentifier("\(id):value")
             step("plus", "More", value < range.upperBound) { value += 1 }
                 .accessibilityIdentifier("\(id):plus")
         }
-        .background(Palette.background, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .background(Palette.paper, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 
@@ -257,7 +257,7 @@ private struct CountStepper: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(enabled ? Palette.secondary : Palette.tertiary.opacity(0.5))
+                .foregroundStyle(enabled ? Palette.ink2 : Palette.inkMeta.opacity(0.5))
                 .frame(width: 32, height: 34)
                 .contentShape(Rectangle())
         }
@@ -292,7 +292,7 @@ private struct ScopeOptions: View {
                         vm.draft.likeThis = false
                         vm.draft.allMail = nil
                     } label: {
-                        Text("Only what's shown").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+                        Text("Only what's shown").font(RFont.sans(15.5)).foregroundStyle(Palette.ink)
                     }
                     // Wider than the screen: it says exactly what, and the dock says it is on.
                     OptionRow(selected: vm.draft.likeThis && vm.draft.allMail == nil, id: "scope:like", tint: Palette.danger) {
@@ -302,7 +302,7 @@ private struct ScopeOptions: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Anything like this").font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.warning)
                             Text("\(untrusted(quick.allowWhat)), by \(untrusted(view.connectionLabel))")
-                                .font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                                .font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
                                 .accessibilityIdentifier("allowWhat")
                         }
                     }
@@ -370,7 +370,7 @@ private struct ScopeOptions: View {
                         vm.draft.likeThis = false
                         vm.draft.resources = toggleResource(vm.draft.resources, r.id, on: on)
                     }) {
-                        Text(untrusted(r.label)).font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+                        Text(untrusted(r.label)).font(RFont.sans(15.5)).foregroundStyle(Palette.ink)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -395,11 +395,11 @@ private struct ScopeOptions: View {
                         }
                     )) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(untrusted(address)).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
-                            Text(wide ? "Anyone at @\(domainOf(address))" : "This address only").font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                            Text(untrusted(address)).font(RFont.mono(14)).foregroundStyle(Palette.ink).environment(\.layoutDirection, .leftToRight)
+                            Text(wide ? "Anyone at @\(domainOf(address))" : "This address only").font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
                         }
                     }
-                    .tint(Palette.accent)
+                    .tint(Palette.violet)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                     .accessibilityIdentifier("domain:\(address)")
@@ -411,13 +411,13 @@ private struct ScopeOptions: View {
                 CheckRow(checked: picked && !vm.draft.similar, onChange: { _ in
                     vm.draft.likeThis = false
                     vm.draft.similar = false
-                }) { Text("Only the emails I ticked").font(RFont.sans(15.5)).foregroundStyle(Palette.text) }
+                }) { Text("Only the emails I ticked").font(RFont.sans(15.5)).foregroundStyle(Palette.ink) }
                     .padding(16)
                     .accessibilityIdentifier("onlySelected")
                 CheckRow(checked: picked && vm.draft.similar, onChange: { _ in
                     vm.draft.likeThis = false
                     vm.draft.similar = true
-                }) { Text("Also similar mail").font(RFont.sans(15.5)).foregroundStyle(Palette.text) }
+                }) { Text("Also similar mail").font(RFont.sans(15.5)).foregroundStyle(Palette.ink) }
                     .padding(16)
                     .accessibilityIdentifier("similar")
                 if picked && vm.draft.similar {
@@ -426,7 +426,7 @@ private struct ScopeOptions: View {
                         CheckRow(checked: vm.draft.senderAddresses.contains(address), onChange: { on in
                             if on { vm.draft.senderAddresses.insert(address) } else { vm.draft.senderAddresses.remove(address) }
                         }) {
-                            Text(untrusted(address)).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
+                            Text(untrusted(address)).font(RFont.mono(14)).foregroundStyle(Palette.ink).environment(\.layoutDirection, .leftToRight)
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
@@ -437,7 +437,7 @@ private struct ScopeOptions: View {
                         CheckRow(checked: vm.draft.senderDomains.contains(domain), onChange: { on in
                             if on { vm.draft.senderDomains.insert(domain) } else { vm.draft.senderDomains.remove(domain) }
                         }) {
-                            Text("Anyone at @\(domain)").font(RFont.sans(15)).foregroundStyle(Palette.text)
+                            Text("Anyone at @\(domain)").font(RFont.sans(15)).foregroundStyle(Palette.ink)
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
@@ -456,7 +456,7 @@ private struct ScopeOptions: View {
         .font(RFont.sans(16))
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .padding(.horizontal, 16)
         .accessibilityIdentifier("subject")
     }
@@ -474,12 +474,12 @@ private struct SecretsScopeOptions: View {
             FactHeader("Command")
             FactGroup {
                 ForEach(release.commands, id: \.id) { option in
-                    OptionRow(selected: picked == option.id, id: "secretsCommand:\(option.id)", tint: option.prefix ? Palette.warning : Palette.accent) {
+                    OptionRow(selected: picked == option.id, id: "secretsCommand:\(option.id)", tint: option.prefix ? Palette.warning : Palette.violet) {
                         vm.draft.secretsCommand = option.id
                     } label: {
                         Text(untrusted(option.label))
                             .font(RFont.mono(14, .medium))
-                            .foregroundStyle(option.prefix ? Palette.warning : Palette.text)
+                            .foregroundStyle(option.prefix ? Palette.warning : Palette.ink)
                             .environment(\.layoutDirection, .leftToRight)
                     }
                 }
@@ -488,7 +488,7 @@ private struct SecretsScopeOptions: View {
             if !release.allVariables {
                 FactGroup {
                     CheckRow(checked: vm.draft.secretsAllVariables, onChange: { on in vm.draft.secretsAllVariables = on }) {
-                        Text("Every variable").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+                        Text("Every variable").font(RFont.sans(15.5)).foregroundStyle(Palette.ink)
                     }
                     .padding(16)
                     .accessibilityIdentifier("secretsAllVariables")
@@ -511,10 +511,10 @@ struct GrantSheet: View {
             let current = min(vm.draft.grantSeconds ?? asked, asked)
             let index = max(steps.lastIndex { $0 <= current } ?? 0, 0)
             VStack(alignment: .leading, spacing: 8) {
-                Text("Allow for").font(RFont.sans(18, .semibold)).foregroundStyle(Palette.text)
+                Text("Allow for").font(RFont.sans(18, .semibold)).foregroundStyle(Palette.ink)
                 Text(ApprovalWords.period(UInt64(steps[index])))
                     .font(RFont.sans(26, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .contentTransition(.numericText())
                     .accessibilityIdentifier("grantDuration")
                 if steps.count > 1 {
@@ -531,16 +531,16 @@ struct GrantSheet: View {
                         in: 0...Double(steps.count - 1),
                         step: 1
                     )
-                    .tint(Palette.accent)
+                    .tint(Palette.violet)
                     .accessibilityLabel("Allow for")
                     .accessibilityValue(ApprovalWords.period(UInt64(steps[index])))
                     .accessibilityIdentifier("grantSlider")
-                    Text("Asked for \(ApprovalWords.period(UInt64(asked))). Only shorter.").font(RFont.sans(13)).foregroundStyle(Palette.tertiary)
+                    Text("Asked for \(ApprovalWords.period(UInt64(asked))). Only shorter.").font(RFont.sans(13)).foregroundStyle(Palette.inkMeta)
                 }
                 Button { dismiss() } label: {
-                    Text("Done").font(RFont.sans(17, .semibold)).foregroundStyle(Palette.background)
+                    Text("Done").font(RFont.sans(17, .semibold)).foregroundStyle(Palette.paper)
                         .frame(maxWidth: .infinity, minHeight: 54)
-                        .background(Palette.text, in: Capsule())
+                        .background(Palette.ink, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 12)

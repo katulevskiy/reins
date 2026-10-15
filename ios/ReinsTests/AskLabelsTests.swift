@@ -75,7 +75,7 @@ final class AskLabelsTests: XCTestCase {
               "Read Telegram messages in Family", target: "Family", kind: "Telegram · Read")
         check(AskLabels.line(label("telegram", "read", "Read Telegram messages in", "F\u{0430}mily"), field: .read),
               "Read Telegram messages in F\u{0430}mily", target: "F\u{0430}mily", mono: "F\\u{430}mily · mixed scripts")
-        check(AskLabels.line(label("github", "read", "Clone and fetch", "octo/\u{0430}pp"), field: .read), "Clone and fetch", mono: "Name: octo/\\u{430}pp")
+        check(AskLabels.line(label("github", "read", "Clone and fetch", "octo/\u{0430}pp"), field: .read), "Fetch", mono: "Name: octo/\\u{430}pp")
         check(AskLabels.line(label("github", "push", "Push 1 commit to", "octo/\u{0430}pp"), field: .push), "Push 1 commit to a repository",
               mono: "Repository: octo/\\u{430}pp")
     }

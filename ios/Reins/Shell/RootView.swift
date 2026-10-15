@@ -37,7 +37,7 @@ struct RootView: View {
         .overlay { if SignalGallery.requested { SignalGallery(page: SignalGallery.requestedPage) } }
         #endif
         .toggleStyle(SignalSwitchStyle())
-        .tint(Palette.accent)
+        .tint(Palette.violet)
     }
 }
 
@@ -53,7 +53,7 @@ struct LoadingView: View {
             } else {
                 ProgressView()
                     .controlSize(.large)
-                    .tint(Palette.accent)
+                    .tint(Palette.violet)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -69,18 +69,18 @@ private struct LaunchPreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Activity").textRole(.title).foregroundStyle(Palette.text).padding(.top, 12)
+            Text("Activity").textRole(.title).foregroundStyle(Palette.ink).padding(.top, 12)
             let waiting = snapshot.waiting()
             if !waiting.isEmpty {
                 SectionHeader("Waiting for you").padding(.top, 8)
                 ForEach(waiting.prefix(6)) { item in
                     Text(item.title)
                         .font(RFont.sans(16, .semibold))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
-                        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
             }
             Spacer()

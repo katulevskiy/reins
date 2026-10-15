@@ -525,7 +525,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             let id = "code-\(code)"
             if let parked = s.pairings[id] { return parked }
             let p = PairingView(
-                id: id, clientName: "Reins desktop app on studio", clientHost: "studio", choices: Data([47, 12, 83]),
+                id: id, clientName: "studio", clientHost: "studio", choices: Data([47, 12, 83]),
                 createdAt: Self.now(), keyFingerprint: "3170 6422"
             )
             s.pairings[id] = p
@@ -666,7 +666,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             guard approve else { return }
             s.nextConnection += 1
             let name = label.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } ?? p.clientName
-            s.connections.append(ConnectionView(id: "c\(s.nextConnection)", label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil, keyFingerprint: p.keyFingerprint))
+            let id = "c\(s.nextConnection)"
+            // The demo's computers are Macs (a real one says its platform in the name it registers with).
+            let platform: String? = p.keyFingerprint != nil ? "macos" : nil
+            s.connections.append(ConnectionView(
+                id: id, label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil, keyFingerprint: p.keyFingerprint,
+                autoIcon: Self.autoIcon(label: name, computer: p.keyFingerprint != nil, platform: platform), platform: platform,
+                blobatar: Self.firstBlobatar(id, others: s.connections.compactMap(\.blobatar))
+            ))
         }
     }
 
@@ -711,6 +718,49 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func activityCommitChange(entryId: Int64, shortSha: String) async throws -> GitCommitView {
         throw CoreError.Service(reason: "the demo has no GitHub connection")
+    }
+
+    /// The core's search, in memory: every word a case-insensitive substring of the entry's text, the filters as the
+    /// core reads them, newest first, a page at a time.
+    func searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt32) async throws -> ActivityPage {
+        locked { s in
+            let terms = DemoSearch.terms(query.text)
+            let all = s.activity.filter { DemoSearch.keeps($0, query, terms) }.sorted { ($0.at, $0.id) > ($1.at, $1.id) }
+            let rest = after.map { a in all.filter { ($0.at, $0.id) < (a.at, a.id) } } ?? all
+            let page = Array(rest.prefix(Int(min(max(limit, 1), 200))))
+            let next = rest.count > page.count ? page.last.map { ActivityCursor(at: $0.at, id: $0.id) } : nil
+            return ActivityPage(
+                hits: page.map { ActivityHit(entry: $0, snippet: DemoSearch.snippet($0, terms)) }, next: next, total: UInt32(all.count),
+                terms: terms
+            )
+        }
+    }
+
+    func activityStamps(query: ActivityQuery) async throws -> [ActivityStamp] {
+        locked { s in
+            let terms = DemoSearch.terms(query.text)
+            return s.activity.filter { DemoSearch.keeps($0, query, terms) }
+                .sorted { ($0.at, $0.id) > ($1.at, $1.id) }
+                .map(ActivityDays.stamp)
+        }
+    }
+
+    func activityFacets() async throws -> ActivityFacets {
+        locked { s in
+            func mostUsed(_ values: [String]) -> [String] {
+                let counts = Dictionary(values.map { ($0, 1) }, uniquingKeysWith: +)
+                return counts.keys.sorted { (counts[$0]!, $1) > (counts[$1]!, $0) }
+            }
+            var seen: Set<String> = []
+            let connections = s.activity.sorted { $0.at > $1.at }.compactMap { e -> ActivityConnection? in
+                guard !e.connectionId.isEmpty, seen.insert(e.connectionId).inserted else { return nil }
+                return ActivityConnection(id: e.connectionId, label: untrustedName(e.connectionLabel))
+            }
+            return ActivityFacets(
+                services: mostUsed(s.activity.map(\.service).filter { !$0.isEmpty }), actions: mostUsed(s.activity.map(\.action)),
+                connections: connections
+            )
+        }
     }
 
     func fetchEmail(account: String?, messageId: String) async throws -> EmailContent {
@@ -1004,6 +1054,58 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         locked { s in
             if let i = s.connections.firstIndex(where: { $0.id == connectionId }) { s.connections[i].icon = icon }
         }
+    }
+
+    /// As the core: a new shape and colour, the seed kept; refused for a shape or colour that does not exist.
+    func setConnectionBlobatar(connectionId: String, shape: UInt8, colour: UInt8) async throws -> Blobatar {
+        guard Int(shape) < BlobatarPalette.shapes.count, Int(colour) < BlobatarPalette.colours.count else {
+            throw CoreError.Invalid(reason: "There is no such shape or colour.")
+        }
+        return try locked { s in
+            guard let i = s.connections.firstIndex(where: { $0.id == connectionId }) else { throw CoreError.NotFound }
+            let b = Blobatar(seed: s.connections[i].blobatar?.seed ?? connectionId, shape: shape, colour: colour)
+            s.connections[i].blobatar = b
+            return b
+        }
+    }
+
+    /// As the core: a fresh seed, another shape and another colour, one no other connection has while one is free.
+    func shuffleConnectionBlobatar(connectionId: String) async throws -> Blobatar {
+        try locked { s in
+            guard let i = s.connections.firstIndex(where: { $0.id == connectionId }) else { throw CoreError.NotFound }
+            let current = s.connections[i].blobatar ?? Self.firstBlobatar(connectionId, others: [])
+            let taken = Set(s.connections.filter { $0.id != connectionId }.compactMap { $0.blobatar?.colour })
+            let colours = (0..<UInt8(BlobatarPalette.colours.count)).filter { $0 != current.colour }
+            let free = colours.filter { !taken.contains($0) }
+            let shapes = (0..<UInt8(BlobatarPalette.shapes.count)).filter { $0 != current.shape }
+            let b = Blobatar(
+                seed: String(format: "%08x", UInt32.random(in: .min ... .max)),
+                shape: shapes.randomElement() ?? current.shape,
+                colour: (free.isEmpty ? colours : free).randomElement() ?? current.colour
+            )
+            s.connections[i].blobatar = b
+            return b
+        }
+    }
+
+    /// What Auto shows, as the core works it out: a computer its platform's logo, an AI its provider's when its name
+    /// says which, else the blobatar.
+    static func autoIcon(label: String, computer: Bool, platform: String?) -> String {
+        if computer { return platform ?? Providers.blob }
+        return Providers.infer(label)?.key ?? Providers.blob
+    }
+
+    /// A new connection's blobatar, standing apart from `others`: the least used colour and shape.
+    static func firstBlobatar(_ id: String, others: [Blobatar]) -> Blobatar {
+        func least(_ count: Int, _ used: [UInt8]) -> UInt8 {
+            let uses = { (i: Int) in used.filter { Int($0) == i }.count }
+            return UInt8((0..<count).min { uses($0) < uses($1) } ?? 0)
+        }
+        return Blobatar(
+            seed: id,
+            shape: least(BlobatarPalette.shapes.count, others.map(\.shape)),
+            colour: least(BlobatarPalette.colours.count, others.map(\.colour))
+        )
     }
 
     // ---- accounts and integrations --------------------------------------------------------------------------------

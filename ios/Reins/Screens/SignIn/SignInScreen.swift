@@ -290,14 +290,14 @@ struct BrandMark: View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "checkmark.shield.fill")
                 .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(Palette.accent)
+                .foregroundStyle(Palette.violet)
                 .frame(width: 56, height: 56)
-                .background(Palette.accentSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Palette.violetWash, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .accessibilityHidden(true)
                 .padding(.bottom, 6)
             Text("Reins")
                 .font(RFont.sans(34, .semibold))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .accessibilityAddTraits(.isHeader)
         }
     }

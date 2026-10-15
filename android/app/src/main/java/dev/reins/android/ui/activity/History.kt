@@ -123,6 +123,16 @@ fun rowShape(first: Boolean, last: Boolean): Shape = RoundedCornerShape(
 /** The plate of a day's group: raised paper in both themes (Signal `paper-raised`). */
 fun groupFill(c: RColors): Color = c.paperRaised
 
+/**
+ * Who asked: "Claude Code · M2A" (the agent, then the computer or app it asked through) when the entry names an agent
+ * other than the connection, else the connection's name.
+ */
+internal fun askerLine(entry: ActivityEntry): String {
+    val label = untrusted(entry.connectionLabel)
+    val agent = entry.request?.agent?.let(::untrusted)?.takeIf { it.isNotBlank() && !it.equals(label, ignoreCase = true) }
+    return if (agent != null) "$agent · $label" else label
+}
+
 /** One entry of the history: what it did, who and when, and how it ended. */
 @Composable
 fun HistoryRow(entry: ActivityEntry, nowSeconds: Long, first: Boolean, last: Boolean, modifier: Modifier = Modifier, inset: Dp = 16.dp, onClick: () -> Unit) {
@@ -147,7 +157,7 @@ fun HistoryRow(entry: ActivityEntry, nowSeconds: Long, first: Boolean, last: Boo
             Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 15.dp)
                 Spacer(Modifier.width(5.dp))
-                RText("${untrusted(entry.connectionLabel)} · ${rowTime(entry.at, nowSeconds)}", RType.sans(12.5f), c.tertiary, maxLines = 1)
+                RText("${askerLine(entry)} · ${rowTime(entry.at, nowSeconds)}", RType.sans(12.5f), c.tertiary, Modifier.testTag("entryWho:${entry.id}"), maxLines = 1)
             }
             // The risk only when it says something (above low, or held); the entry's page always shows it.
             entry.autopilot?.risk?.takeIf { dev.reins.android.autopilot.AutopilotText.riskWorthListing(it) }?.let { risk ->

@@ -139,7 +139,7 @@ private struct AccountCard: View {
                                 .lineLimit(1)
                             Image(systemName: "doc.on.doc")
                                 .font(.system(size: 12))
-                                .foregroundStyle(Palette.tertiary)
+                                .foregroundStyle(Palette.inkMeta)
                         }
                         .environment(\.layoutDirection, .leftToRight)
                         .contentShape(Rectangle())
@@ -169,7 +169,7 @@ private struct AccountCard: View {
             if !model.approvalDevice {
                 Button(action: register) {
                     HStack(spacing: 8) {
-                        if busy { ProgressView().tint(Palette.background) } else { Image(systemName: "iphone") }
+                        if busy { ProgressView().tint(Palette.paper) } else { Image(systemName: "iphone") }
                         Text("Use this phone for approvals")
                     }
                 }
@@ -198,7 +198,7 @@ private struct AccountCard: View {
                 .accessibilityHidden(true)
             Text(SettingsText.notificationsAttention(access.state))
                 .font(RFont.sans(14.5, .medium))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button {
                 feedback.play(.tap)
@@ -261,7 +261,7 @@ private struct StatusChip: View {
         switch tone {
         case .ok: Palette.success
         case .warn: Palette.warning
-        case .plain: Palette.secondary
+        case .plain: Palette.ink2
         }
     }
 
@@ -278,7 +278,7 @@ private struct StatusChip: View {
         .padding(.leading, 8)
         .padding(.trailing, 10)
         .padding(.vertical, 5)
-        .background(tone == .plain ? Palette.controlFill : tint.opacity(0.12), in: Capsule())
+        .background(tone == .plain ? Palette.paperSunken : tint.opacity(0.12), in: Capsule())
         .accessibilityElement(children: .combine)
     }
 }
@@ -299,7 +299,7 @@ private struct PagesGroup: View {
             if case .signedIn = model.session { DevicesRow() }
             SettingsLinkRow(
                 title: "Sounds and haptics", value: SettingsText.soundsValue(sounds), symbol: "speaker.wave.2",
-                tint: Palette.accounts, id: "openSounds"
+                tint: Palette.kindAccounts, id: "openSounds"
             ) { model.show(.sounds) }
             SettingsLinkRow(
                 title: "Appearance", value: Appearance.Theme(rawValue: theme)?.title ?? "System", symbol: "circle.lefthalf.filled",
@@ -339,7 +339,7 @@ private struct DevicesRow: View {
 
     var body: some View {
         SettingsLinkRow(
-            title: "Devices", value: count.map { String($0) }, symbol: "laptopcomputer.and.iphone", tint: Palette.search,
+            title: "Devices", value: count.map { String($0) }, symbol: "laptopcomputer.and.iphone", tint: Palette.kindRead,
             id: "devicesRow", spokenValue: count.map { $0 == 1 ? "1 device" : "\($0) devices" }
         ) { model.show(.devices) }
         .task { count = try? await model.core.devices().count }
@@ -353,7 +353,7 @@ private struct VaultPasskeysRow: View {
 
     var body: some View {
         SettingsLinkRow(
-            title: "Vault passkeys", value: SettingsText.passkeysValue(count), symbol: "person.badge.key.fill", tint: Palette.accent,
+            title: "Vault passkeys", value: SettingsText.passkeysValue(count), symbol: "person.badge.key.fill", tint: Palette.violet,
             id: "vaultPasskeysRow", spokenValue: SettingsText.passkeysSummary(count)
         ) { model.show(.vaultPasskeys) }
         .task { count = try? await model.core.vaultPasskeys().count }
@@ -368,9 +368,9 @@ private struct AboutGroup: View {
 
     var body: some View {
         Section {
-            SettingsLinkRow(title: "Take the tour", symbol: "safari", tint: Palette.tertiary, id: "takeTour") { model.startTour() }
+            SettingsLinkRow(title: "Take the tour", symbol: "safari", tint: Palette.inkMeta, id: "takeTour") { model.startTour() }
             SettingsRowLabel(title: "Version", chevron: false) {
-                SettingsTile(symbol: "info", tint: Palette.tertiary)
+                SettingsTile(symbol: "info", tint: Palette.inkMeta)
             } trailing: {
                 RowValue(SettingsText.version(), mono: true).environment(\.layoutDirection, .leftToRight)
             }
@@ -435,8 +435,8 @@ private struct FooterSection: View {
         Section {
             Text(SettingsText.footer())
                 .font(RFont.sans(12.5))
-                .foregroundStyle(Palette.tertiary)
-                .tint(Palette.secondary)
+                .foregroundStyle(Palette.inkMeta)
+                .tint(Palette.ink2)
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
                 .listRowBackground(Color.clear)

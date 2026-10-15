@@ -14,7 +14,9 @@ import kotlin.math.min
  * renders the library's own 1000-seed golden fixture and requires byte-identical SVG markup.
  * Trig and pow go through [StrictMath] (fdlibm), the same algorithms V8 uses, for the same reason.
  *
- * Expressions, motion and trait overrides of the library are not ported: the app draws the resting figure.
+ * Expressions, motion and the library's trait overrides are not ported: the app draws the resting figure. It adds
+ * two overrides of its own, for a connection's kept blobatar: the shape (an index of [SHAPES]) and the head colour
+ * (one of [COLOURS]); without them the figure is the library's.
  */
 object Blobatar {
     /** One drawn primitive; the fill rides on every mark. */
@@ -31,10 +33,46 @@ object Blobatar {
 
     enum class Backdrop { NONE, SQUARE, CIRCLE, SQUIRCLE }
 
-    fun figure(name: String, backdrop: Backdrop = Backdrop.NONE): Figure {
+    /** A head colour a connection's blobatar can keep, in OKLCH. */
+    data class Colour(val name: String, val l: Double, val c: Double, val h: Double)
+
+    /**
+     * The colours a connection's blobatar keeps an index of, in the order of
+     * `design/signal/tokens/blobatar-palette.json` (the core and the iOS app use the same list).
+     */
+    val COLOURS = listOf(
+        Colour("Red", 0.63, 0.21, 27.0),
+        Colour("Orange", 0.73, 0.17, 58.0),
+        Colour("Yellow", 0.85, 0.165, 95.0),
+        Colour("Lime", 0.80, 0.19, 130.0),
+        Colour("Green", 0.64, 0.16, 150.0),
+        Colour("Teal", 0.71, 0.12, 186.0),
+        Colour("Sky", 0.74, 0.13, 236.0),
+        Colour("Blue", 0.57, 0.19, 262.0),
+        Colour("Purple", 0.52, 0.22, 295.0),
+        Colour("Violet", 0.70, 0.17, 318.0),
+        Colour("Pink", 0.69, 0.20, 355.0),
+        Colour("Slate", 0.56, 0.035, 255.0),
+    )
+
+    /** The head colour [colour] comes out as (`#rrggbb`), after the palette's contrast rules. */
+    fun headHex(colour: Colour): String = palette(Oklch(colour.l, colour.c, colour.h), true).head
+
+    /** The shapes a connection's blobatar keeps an index of: the band table's order. */
+    val SHAPES: List<String> get() = BANDS.map { it.first.name }
+
+    /**
+     * The figure for [name]. [shape] (an index of [SHAPES]) replaces the shape the seed picks and [colour] the head
+     * colour; every other trait still comes from the seed.
+     */
+    fun figure(name: String, backdrop: Backdrop = Backdrop.NONE, shape: Int? = null, colour: Colour? = null): Figure {
         val t = Traits(name)
-        val palette = palette(t.num("hue", 0.0, 360.0), true, t.unit("tone"))
-        val layout = layout(t)
+        val palette = if (colour != null) {
+            palette(Oklch(colour.l, colour.c, colour.h), true)
+        } else {
+            palette(t.num("hue", 0.0, 360.0), true, t.unit("tone"))
+        }
+        val layout = layout(t, shape)
         val plate = when (backdrop) {
             Backdrop.NONE -> null
             Backdrop.SQUARE -> Mark.Path("M0 0H100V100H0Z", palette.bg)
@@ -45,8 +83,8 @@ object Blobatar {
     }
 
     /** The library's `blobatar(name, { background })` markup, used to check this port against the golden fixture. */
-    fun svg(name: String, backdrop: Backdrop = Backdrop.NONE): String {
-        val figure = figure(name, backdrop)
+    fun svg(name: String, backdrop: Backdrop = Backdrop.NONE, shape: Int? = null, colour: Colour? = null): String {
+        val figure = figure(name, backdrop, shape, colour)
         val head = figure.marks.first { it is Mark.Path || it is Mark.Circle }.fill
         val eye = figure.marks.last().fill
         val body = StringBuilder()
@@ -201,7 +239,13 @@ object Blobatar {
 
     private fun palette(hue: Double, enforce: Boolean, tone: Double): Palette {
         val t = (TONES.firstOrNull { tone < it.first } ?: TONES.first()).second
-        val head0 = ensureContrast(Oklch(t.l, t.c, hue), DARK_SURFACE, SURFACE_FLOOR)
+        return palette(Oklch(t.l, t.c, hue), enforce)
+    }
+
+    /** The palette from a head colour: the tone table's, or a kept one. */
+    private fun palette(start: Oklch, enforce: Boolean): Palette {
+        val hue = start.h
+        val head0 = ensureContrast(start, DARK_SURFACE, SURFACE_FLOOR)
         val bg = Oklch(0.965, 0.01, hue)
         var head = head0
         var eye = if (head0.l >= 0.5) Oklch(0.17, 0.02, hue) else Oklch(0.97, 0.012, hue)
@@ -501,9 +545,13 @@ object Blobatar {
         )
     }
 
-    private fun layout(t: Traits): Layout {
-        val v = t.unit("shape")
-        val shape = (BANDS.firstOrNull { v < it.second } ?: BANDS.last()).first
+    private fun layout(t: Traits, shapeIndex: Int? = null): Layout {
+        val shape = if (shapeIndex != null) {
+            BANDS[shapeIndex.coerceIn(0, BANDS.lastIndex)].first
+        } else {
+            val v = t.unit("shape")
+            (BANDS.firstOrNull { v < it.second } ?: BANDS.last()).first
+        }
         val r = t.num("body.r", 31.0, 38.0) * shape.core
         val body = Body(
             cx = 50 + t.jitter("body.x", 1.5),

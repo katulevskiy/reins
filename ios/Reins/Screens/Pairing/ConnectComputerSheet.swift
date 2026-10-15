@@ -30,7 +30,7 @@ struct ConnectComputerSheet: View {
         } else {
             ScrollView { content.padding(20).padding(.top, 8) }
                 .scrollDismissesKeyboard(.interactively)
-                .background(Palette.background.ignoresSafeArea())
+                .background(Palette.paper.ignoresSafeArea())
                 .overlay(alignment: .topTrailing) {
                     GlassIconButton(symbol: "xmark", size: 36, label: "Close") { model.closeSheet() }
                         .padding(.top, 14)
@@ -49,20 +49,20 @@ struct ConnectComputerSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Image(systemName: "desktopcomputer")
                 .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(Palette.pair)
+                .foregroundStyle(Palette.kindPair)
                 .frame(width: 52, height: 52)
-                .background(Palette.pair.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .background(Palette.kindPair.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .accessibilityHidden(true)
             Text("Connect a computer")
                 .font(RFont.sans(26, .semibold))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .accessibilityAddTraits(.isHeader)
             // A key, not a String, so the command shows in code type.
             Text(LocalizedStringKey(typing
                 ? "Run `reins login` on your computer, or open the Reins desktop app, and type the code it shows."
                 : "Run `reins login` on your computer, or open the Reins desktop app, and point the camera at the QR code it shows."))
                 .font(RFont.sans(15.5))
-                .foregroundStyle(Palette.secondary)
+                .foregroundStyle(Palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
             if typing { typed } else { camera }
             if let error {
@@ -76,7 +76,7 @@ struct ConnectComputerSheet: View {
                     focused = typing
                 }
                 .font(RFont.sans(15, .medium))
-                .foregroundStyle(Palette.accent)
+                .foregroundStyle(Palette.violet)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
                 .disabled(busy)
@@ -121,7 +121,7 @@ struct ConnectComputerSheet: View {
         let valid = PairingCode.parse(code) != nil
         Button(action: submitTyped) {
             HStack(spacing: 10) {
-                if busy { ProgressView().tint(Palette.background) }
+                if busy { ProgressView().tint(Palette.paper) }
                 Text("Continue")
             }
         }

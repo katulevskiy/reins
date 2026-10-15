@@ -405,7 +405,39 @@ fn a_vault_project_from_elsewhere_is_never_merged_unasked() {
     let unknown = plan_with(&report, &selected, &Existing::Unknown("offline".to_owned()), &[]);
     let name = project_of(&unknown, &root);
     assert!(name.starts_with("acme-api-") && name.len() == "acme-api-".len() + 4, "{name}");
-    assert!(unknown.clashes.iter().all(|c| !c.known && !c.merged()));
+    // One condition of the whole import, not a clash of each project: said once, with why.
+    assert!(unknown.clashes.is_empty(), "{:?}", unknown.clashes);
+    let unchecked = unknown.unchecked.as_ref().unwrap();
+    assert_eq!(unchecked.why, "offline");
+    assert!(unchecked.projects.iter().all(|c| !c.known && !c.merged()));
+    assert!(unchecked.projects.iter().any(|c| c.name == "acme-api" && c.chosen == name));
+    // Merging on purpose still works without the list.
+    let merged = plan_with(&report, &selected, &Existing::Unknown("offline".to_owned()), &["acme-api"]);
+    assert_eq!(project_of(&merged, &root), "acme-api");
+    // With the vault known, nothing is unchecked.
+    assert!(plan.unchecked.is_none() && plan_of(&report, &selected).unchecked.is_none());
+}
+
+#[test]
+fn an_unchecked_vault_is_one_note_however_many_projects() {
+    let fx = fixture();
+    for i in 0..8 {
+        repo(&fx, &format!("dev/many-{i}"), Some(&format!("https://github.com/dana/many-{i}")));
+        std::fs::write(fx.home().join(format!("dev/many-{i}/.env")), format!("API_SECRET={}\n", fake("", 30 + i)))
+            .unwrap();
+    }
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let plan = plan_with(&report, &selected, &Existing::Unknown("your phone's key is not checked yet".to_owned()), &[]);
+    let unchecked = plan.unchecked.as_ref().unwrap();
+    assert!(unchecked.projects.len() >= 8, "{:?}", unchecked.projects);
+    assert_eq!(unchecked.renamed(), unchecked.projects.len());
+    let notes = plan.notes();
+    let about: Vec<&String> = notes.iter().filter(|n| n.contains("could not be checked")).collect();
+    assert_eq!(about.len(), 1, "{notes:?}");
+    assert!(about[0].contains("your phone's key is not checked yet"), "{}", about[0]);
+    assert!(about[0].contains(&format!("{} projects are kept apart", unchecked.projects.len())), "{}", about[0]);
+    assert!(about[0].contains(", +"), "a few names, then how many more: {}", about[0]);
 }
 
 #[tokio::test]
@@ -455,6 +487,45 @@ fn two_files_for_one_environment_show_their_conflicts() {
         ("OPENAI_API_KEY", "acme-web/.env.local", "acme-web/.env")
     );
     assert!(c.line().contains("the more specific file wins"), "{}", c.line());
+}
+
+#[test]
+fn conflicts_of_the_same_two_files_are_one_situation() {
+    let fx = fixture();
+    let home = fx.home();
+    let dir = home.join("dev/acme-web");
+    std::fs::write(
+        dir.join(".env.local"),
+        format!(
+            "OPENAI_API_KEY={}\nSTRIPE_SECRET_KEY={}\nLOCAL_ONLY_TOKEN={}\n",
+            fake("sk-proj-", 55),
+            fake(&["sk", "_live_"].concat(), 40),
+            fake("", 30)
+        ),
+    )
+    .unwrap();
+    // The same name twice in one file is its own situation.
+    let twice = home.join("dev/twice");
+    std::fs::create_dir_all(twice.join(".git")).unwrap();
+    std::fs::write(twice.join(".env"), format!("API_SECRET={}\nAPI_SECRET={}\n", fake("", 31), fake("", 32))).unwrap();
+    let report = report(&fx);
+    let selected = select(&report, &[], true).unwrap();
+    let plan = plan_of(&report, &selected);
+    let groups = plan.conflict_groups();
+    let web = groups.iter().find(|g| g.item == "acme-web/development").unwrap();
+    assert_eq!(
+        (web.kept.as_str(), web.dropped.as_str(), web.same_file),
+        ("acme-web/.env.local", "acme-web/.env", false)
+    );
+    let two = plan.conflicts.iter().filter(|c| c.item == "acme-web/development").count();
+    assert_eq!(web.names.len(), two);
+    assert!(web.names.contains(&"OPENAI_API_KEY".to_owned()) && web.names.len() >= 2, "{:?}", web.names);
+    let same = groups.iter().find(|g| g.item == "twice/development").unwrap();
+    assert!(same.same_file && same.kept == "twice/.env" && same.names == ["API_SECRET"], "{same:?}");
+    assert!(same.line().contains("set twice in twice/.env"), "{}", same.line());
+    // One note per situation.
+    let notes = plan.notes();
+    assert_eq!(notes.iter().filter(|n| n.contains("the more specific file wins")).count(), 1, "{notes:?}");
 }
 
 #[tokio::test]
@@ -1111,7 +1182,11 @@ async fn a_name_set_twice_moves_the_last_and_leaves_both() {
     assert_eq!(ids.len(), 2, "each has its own id: {ids:?}");
     assert_eq!(rest.as_deref(), Some(format!("KEEP_SECRET={u}\n").as_str()));
     assert!(ids.iter().all(|id| receipt.moved.iter().any(|m| &m.item == id && m.in_trash)));
-    assert!(receipt.notes.iter().any(|n| n.contains("API_SECRET is set twice")), "{:?}", receipt.notes);
+    assert!(
+        receipt.notes.iter().any(|n| n.contains("API_SECRET set twice") && n.contains("both leave the file")),
+        "{:?}",
+        receipt.notes
+    );
 }
 
 #[tokio::test]

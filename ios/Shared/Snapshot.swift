@@ -25,12 +25,19 @@ struct Snapshot: Codable, Equatable {
         var expiresAt: Int64
         /// Autopilot's suggestion line, when it made one.
         var suggestion: String?
-        /// The provider logo picked for the connection (`ConnectionView.icon`: "claude", "blob", ...), nil when none
-        /// was picked (the name then suggests one).
+        /// The icon the connection shows (the one picked, else what Auto shows: "claude", "macos", "blob", ...), nil
+        /// when not known (the name then suggests one).
         var connectionIcon: String? = nil
+        /// The blobatar the connection keeps, drawn when it shows its blobatar. Optional so older snapshots still read.
+        var connectionBlobatar: BlobatarLook? = nil
         /// A routine request that can be approved without opening it (`PendingItem.quick`): the Live Activity offers
         /// Approve. Optional so snapshots written before it still read.
         var quick: Bool? = nil
+        /// Its field (`FieldKind` raw value), picked by the app from the core's kind and action, never from text. Nil
+        /// in snapshots written before Signal: `Glance.field` falls back on the item's kind.
+        var field: String? = nil
+        /// The label line from the core's provider and action ("GitHub · Push"); nil before Signal.
+        var label: String? = nil
     }
 
     struct Entry: Codable, Equatable, Identifiable {

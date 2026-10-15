@@ -84,7 +84,7 @@ struct FactRow<Trailing: View>: View {
             Text(key).font(RFont.sans(15.5)).foregroundStyle(Palette.ink2).lineLimit(1)
             Text(value)
                 .font(mono ? RFont.mono(14, .medium) : RFont.sans(15.5, .medium))
-                .foregroundStyle(tint ?? Palette.text)
+                .foregroundStyle(tint ?? Palette.ink)
                 .lineLimit(lines)
                 .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.trailing)
@@ -121,9 +121,9 @@ struct DrillRow<Detail: View>: View {
             feedback.play(.open)
         } label: {
             HStack(spacing: 12) {
-                Text(title).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.text).lineLimit(1)
+                Text(title).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
                 detail.frame(maxWidth: .infinity, alignment: .trailing)
-                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.tertiary)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.inkMeta)
             }
             .padding(.leading, 18)
             .padding(.trailing, 14)
@@ -159,7 +159,7 @@ struct FactHeader<Trailing: View>: View {
 
     var body: some View {
         HStack {
-            Text(text).font(RFont.sans(13, .medium)).foregroundStyle(Palette.tertiary)
+            Text(text).font(RFont.sans(13, .medium)).foregroundStyle(Palette.inkMeta)
             Spacer(minLength: 8)
             trailing
         }
@@ -180,8 +180,8 @@ struct TickBox: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 7, style: .continuous)
-            .fill(checked ? Palette.accent : Color.clear)
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(checked ? Palette.accent : Palette.dynamic(0x97979F, 0x3A3A40), lineWidth: 2))
+            .fill(checked ? Palette.violet : Color.clear)
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(checked ? Palette.violet : Palette.dynamic(0x97979F, 0x3A3A40), lineWidth: 2))
             .overlay { if checked { Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(.white) } }
             .frame(width: 22, height: 22)
             .opacity(enabled ? 1 : 0.55)
@@ -215,7 +215,7 @@ private struct MessagesFacts: View {
                         feedback.play(.tap)
                     }
                     .font(RFont.sans(14.5, .semibold))
-                    .foregroundStyle(Palette.accent)
+                    .foregroundStyle(Palette.violet)
                     .accessibilityIdentifier(allTicked ? "clearAll" : "selectAll")
                 }
             }
@@ -235,7 +235,7 @@ private struct MessagesFacts: View {
         if let query = view.query.map(untrusted), !query.isEmpty {
             FactGroup {
                 DrillRow(title: "Search", id: "queryRow", page: .text(title: "Search", body: query, mono: true, id: "queryText")) {
-                    Text(query).font(RFont.mono(13)).foregroundStyle(Palette.tertiary).lineLimit(1)
+                    Text(query).font(RFont.mono(13)).foregroundStyle(Palette.inkMeta).lineLimit(1)
                 }
             }
         }
@@ -270,13 +270,13 @@ private struct MailRow: View {
             HStack(spacing: 14) {
                 TickBox(checked: checked, enabled: enabled)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(RFont.sans(15, .semibold)).foregroundStyle(Palette.text).strikethrough(!checked, color: Palette.tertiary).lineLimit(1)
-                    if !meta.isEmpty { Text(meta).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary).lineLimit(1) }
+                    Text(title).font(RFont.sans(15, .semibold)).foregroundStyle(Palette.ink).strikethrough(!checked, color: Palette.inkMeta).lineLimit(1)
+                    if !meta.isEmpty { Text(meta).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta).lineLimit(1) }
                 }
                 .opacity(checked ? 1 : 0.45)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if m.coveredByGrant {
-                    Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(Palette.tertiary).accessibilityLabel("Already allowed")
+                    Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(Palette.inkMeta).accessibilityLabel("Already allowed")
                 }
                 if m.sensitive {
                     WarnTag(text: service == "vault" ? "Password" : "Code", tint: Palette.warning, small: true).accessibilityIdentifier("sensitive:\(m.id)")
@@ -307,7 +307,7 @@ private struct SendFacts: View {
                 FactRow(key: "Subject", value: untrusted(email.subject))
                 Text(untrusted(email.body))
                     .font(RFont.sans(15))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .lineSpacing(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 18)
@@ -343,15 +343,15 @@ struct EmailPreview: View {
                 ForEach(Array(email.cc.enumerated()), id: \.offset) { _, a in address(a) }
             }
             Caption("Subject").padding(.top, 6)
-            Text(untrusted(email.subject)).font(RFont.sans(16, .semibold)).foregroundStyle(Palette.text)
+            Text(untrusted(email.subject)).font(RFont.sans(16, .semibold)).foregroundStyle(Palette.ink)
             Caption("Message").padding(.top, 6)
-            Text(untrusted(email.body)).font(RFont.sans(15)).foregroundStyle(Palette.text).lineSpacing(3)
+            Text(untrusted(email.body)).font(RFont.sans(15)).foregroundStyle(Palette.ink).lineSpacing(3)
         }
         .textSelection(.enabled)
     }
 
     private func address(_ text: String) -> some View {
-        Text(untrusted(text)).font(RFont.mono(14)).foregroundStyle(Palette.text).environment(\.layoutDirection, .leftToRight)
+        Text(untrusted(text)).font(RFont.mono(14)).foregroundStyle(Palette.ink).environment(\.layoutDirection, .leftToRight)
     }
 }
 
@@ -368,7 +368,7 @@ private struct WriteFacts: View {
                     ForEach(Array(view.preview.enumerated()), id: \.offset) { i, line in
                         Text(untrusted(line))
                             .font(i == 0 ? RFont.sans(16, .semibold) : RFont.sans(15))
-                            .foregroundStyle(i == 0 ? Palette.text : Palette.secondary)
+                            .foregroundStyle(i == 0 ? Palette.ink : Palette.ink2)
                             .lineSpacing(2)
                             .accessibilityIdentifier("previewLine:\(i)")
                     }
@@ -399,7 +399,7 @@ private struct GrantFacts: View {
             FactHeader(text: "Permission") {
                 HelpDot(id: "grant", text: "Nothing is shared now. Requests that match are answered without asking until it ends. Revoke it any time in Grants.")
             }
-            FactGroup(border: Palette.accent.opacity(0.35)) {
+            FactGroup(border: Palette.violet.opacity(0.35)) {
                 ForEach(Array(grant.lines.enumerated()), id: \.offset) { _, line in FactRow(key: "Only", value: untrusted(line)) }
                 FactRow(key: "For", value: ApprovalWords.period(grant.durationSecs) + (grant.maxUses.map { " · at most \($0) uses" } ?? ""))
                 FactRow(key: "Reach", value: reach, tint: tone)
@@ -438,13 +438,13 @@ private struct AccountsFacts: View {
                             BlobAvatar(seed: address, size: 32)
                             Text(untrusted(address))
                                 .font(RFont.sans(15.5, .medium))
-                                .foregroundStyle(Palette.text)
-                                .strikethrough(!ticked, color: Palette.secondary)
+                                .foregroundStyle(Palette.ink)
+                                .strikethrough(!ticked, color: Palette.ink2)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .opacity(ticked ? 1 : 0.42)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        if locked { Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(Palette.tertiary).accessibilityLabel("Already shared") }
+                        if locked { Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(Palette.inkMeta).accessibilityLabel("Already shared") }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -471,32 +471,32 @@ private struct McpFacts: View {
             HStack(spacing: 12) {
                 ServiceAvatar(service: "mcp", size: 34)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(untrusted(call.serverName)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
-                    Text(mcpHostLabel(call.serverUrl)).font(RFont.mono(12.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
+                    Text(untrusted(call.serverName)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
+                    Text(mcpHostLabel(call.serverUrl)).font(RFont.mono(12.5)).foregroundStyle(Palette.inkMeta).lineLimit(1)
                         .environment(\.layoutDirection, .leftToRight)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                TintTag(text: call.readOnly ? "Read only" : "Changes things", tint: call.readOnly ? Palette.success : Palette.send)
+                TintTag(text: call.readOnly ? "Read only" : "Changes things", tint: call.readOnly ? Palette.success : Palette.kindPush)
                     .accessibilityIdentifier("mcpEffect")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             VStack(alignment: .leading, spacing: 3) {
                 let title = untrusted(call.title)
-                Text(title.isEmpty ? untrusted(call.tool) : title).font(RFont.sans(16, .semibold)).foregroundStyle(Palette.text)
+                Text(title.isEmpty ? untrusted(call.tool) : title).font(RFont.sans(16, .semibold)).foregroundStyle(Palette.ink)
                     .accessibilityIdentifier("mcpTool")
-                if call.title != call.tool { Text(untrusted(call.tool)).font(RFont.mono(12.5)).foregroundStyle(Palette.tertiary) }
+                if call.title != call.tool { Text(untrusted(call.tool)).font(RFont.mono(12.5)).foregroundStyle(Palette.inkMeta) }
                 if !call.description.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Text(untrusted(call.description)).font(RFont.sans(13.5)).foregroundStyle(Palette.secondary).lineLimit(3)
+                    Text(untrusted(call.description)).font(RFont.sans(13.5)).foregroundStyle(Palette.ink2).lineLimit(3)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 18)
             .padding(.vertical, 13)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Arguments").font(RFont.sans(13, .medium)).foregroundStyle(Palette.tertiary)
+                Text("Arguments").font(RFont.sans(13, .medium)).foregroundStyle(Palette.inkMeta)
                 let args = untrusted(call.argumentsJson)
-                Text(args.isEmpty ? "{}" : args).font(RFont.mono(13)).foregroundStyle(Palette.text)
+                Text(args.isEmpty ? "{}" : args).font(RFont.mono(13)).foregroundStyle(Palette.ink)
                     .environment(\.layoutDirection, .leftToRight)
                     .textSelection(.enabled)
                     .accessibilityIdentifier("mcpArguments")
@@ -536,8 +536,8 @@ private struct SecretsFacts: View {
             }
             ForEach(Array(secrets.items.enumerated()), id: \.offset) { i, item in
                 HStack(spacing: 12) {
-                    Image(systemName: "key.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.accent)
-                    Text(untrusted(item)).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.text)
+                    Image(systemName: "key.fill").font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.violet)
+                    Text(untrusted(item)).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 18)
@@ -588,7 +588,7 @@ struct MonoBlock: View {
     var body: some View {
         Text(text)
             .font(RFont.mono(13))
-            .foregroundStyle(Palette.text)
+            .foregroundStyle(Palette.ink)
             .lineLimit(lines)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 18)
@@ -609,7 +609,7 @@ struct TextPage: View {
         FactGroup {
             Text(text)
                 .font(mono ? RFont.mono(14) : RFont.sans(15))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(18)
                 .environment(\.layoutDirection, .leftToRight)

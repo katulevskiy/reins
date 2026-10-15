@@ -227,6 +227,28 @@ struct ApproveQuickIntent: LiveActivityIntent {
     }
 }
 
+/// Opens Reins on Autopilot, where its mode is changed: the "Autopilot mode" control. Only opens: it has no parameters
+/// and changes nothing; the mode is changed in the app, behind Face ID.
+struct ShowAutopilotIntent: AppIntent {
+    static var title: LocalizedStringResource = "Show Autopilot"
+    static var description = IntentDescription("Opens Reins on Autopilot, where its mode is changed.")
+    static var supportedModes: IntentModes = .foreground(.immediate)
+
+    /// Where it opens Reins.
+    static let link: DeepLink = .autopilot
+
+    init() {}
+
+    func perform() async throws -> some IntentResult {
+        #if REINS_APP
+        await IntentBridge.open(Self.link)
+        return .result()
+        #else
+        return .result(opensIntent: OpenURLIntent(Self.link.url))
+        #endif
+    }
+}
+
 /// Opens Reins on a waiting request (the newest when none is given), or on the home screen when nothing waits:
 /// "Show what is waiting in Reins", the "Waiting request" control.
 struct ShowWaitingIntent: AppIntent {

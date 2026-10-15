@@ -252,7 +252,7 @@ struct NewGrantScreen: View {
     }
 
     private func hint(_ text: String) -> some View {
-        Text(text).font(RFont.sans(15)).foregroundStyle(Palette.secondary)
+        Text(text).font(RFont.sans(15)).foregroundStyle(Palette.ink2)
     }
 }
 
@@ -264,7 +264,7 @@ private struct AgentChip: View {
 
     var body: some View {
         SelectChip(title: untrusted(connection.label), selected: selected, leading: {
-            ConnectionAvatar(label: untrusted(connection.label), pick: connection.icon, size: 22)
+            ConnectionAvatar(connection: connection, size: 22)
         }, action: action)
     }
 }

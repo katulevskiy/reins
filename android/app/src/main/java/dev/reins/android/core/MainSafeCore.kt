@@ -18,13 +18,19 @@ import dev.reins.core.Preset
 import dev.reins.core.ProfileView
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
+import dev.reins.core.ActivityCursor
 import dev.reins.core.ActivityEntry
+import dev.reins.core.ActivityFacets
+import dev.reins.core.ActivityPage
+import dev.reins.core.ActivityQuery
+import dev.reins.core.ActivityStamp
 import dev.reins.core.ActivityPush
 import dev.reins.core.ApprovalChoice
 import dev.reins.core.ApprovalKind
 import dev.reins.core.StandingGrant
 import dev.reins.core.ApprovalView
 import dev.reins.core.BlobView
+import dev.reins.core.Blobatar
 import dev.reins.core.ConnectionView
 import dev.reins.core.DeviceView
 import dev.reins.core.EmailContent
@@ -81,6 +87,13 @@ class MainSafeCore(
     override suspend fun activityApproval(entryId: Long): ApprovalView? = io { activityApproval(entryId) }
 
     override suspend fun activityPush(entryId: Long): ActivityPush? = io { activityPush(entryId) }
+
+    override suspend fun searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt): ActivityPage =
+        io { searchActivity(query, after, limit) }
+
+    override suspend fun activityStamps(query: ActivityQuery): List<ActivityStamp> = io { activityStamps(query) }
+
+    override suspend fun activityFacets(): ActivityFacets = io { activityFacets() }
 
     override suspend fun activityCommitChange(entryId: Long, shortSha: String): GitCommitView =
         io { activityCommitChange(entryId, shortSha) }
@@ -153,6 +166,11 @@ class MainSafeCore(
         io { serviceAccountStatus(service, account) }
 
     override suspend fun setConnectionIcon(connectionId: String, icon: String?) = io { setConnectionIcon(connectionId, icon) }
+
+    override suspend fun setConnectionBlobatar(connectionId: String, shape: UByte, colour: UByte): Blobatar =
+        io { setConnectionBlobatar(connectionId, shape, colour) }
+
+    override suspend fun shuffleConnectionBlobatar(connectionId: String): Blobatar = io { shuffleConnectionBlobatar(connectionId) }
 
     override suspend fun deny(requestId: String) = io { deny(requestId) }
 

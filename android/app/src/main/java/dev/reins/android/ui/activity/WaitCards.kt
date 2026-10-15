@@ -111,7 +111,7 @@ fun rememberPendingDetails(container: AppContainer, pending: List<PendingItem>, 
 /** How far back the reason line looks for pushes you approved. */
 private const val REASON_HISTORY = 200
 
-private suspend fun <T> quietly(block: suspend () -> T): T? = try {
+internal suspend fun <T> quietly(block: suspend () -> T): T? = try {
     block()
 } catch (e: CancellationException) {
     throw e

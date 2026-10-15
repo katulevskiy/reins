@@ -63,7 +63,7 @@ flowchart TB
 |---|---|---|
 | `POST /mcp` | AI clients, `reins mcp` | OAuth bearer token (1 h JWT) |
 | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/mcp]` | AI clients | none |
-| `/reins/oauth/register`, `/authorize`, `/token` | AI clients, `reins login` | PKCE S256; public clients (dynamic registration or client ID metadata document) |
+| `/reins/oauth/register`, `/authorize`, `/token` | AI clients, `reins login` | PKCE S256; public clients (dynamic registration or client ID metadata document), or `private_key_jwt` clients (RFC 7523; metadata document with `jwks_uri` or `jwks`, as ChatGPT uses) |
 | `POST /reins/oauth/device_authorization` | `reins login` (QR code) | public clients; RFC 8628, polled at `/token` |
 | `GET /pair?code=` | a phone that scanned a computer's QR code without the app | none; opens the app or offers it |
 | `/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json` | iOS, Android | none; pairing links open the app (`REINS_APPLE_TEAM_ID`, `REINS_ANDROID_CERT_SHA256`) |
@@ -167,7 +167,11 @@ prefilter, so query syntax cannot widen what a grant allows.
 3. The user taps the matching code among three, names the connection, and confirms with biometrics. For the desktop
    app, the phone pins the key to the new connection.
 4. The page redirects with an authorization code. The client exchanges it for an access token (1 h) and a rotating
-   refresh token (30 days).
+   refresh token (30 days). A client whose metadata document declares `private_key_jwt` (ChatGPT) signs a client
+   assertion for the exchange and for every refresh: RS256, PS256, ES256 or EdDSA, verified against its JWKS (cached
+   5 minutes, fetched again once for an unknown `kid`), `iss` = `sub` = `client_id`, `aud` the token endpoint or the
+   issuer, at most 5 minutes of lifetime, and a `jti` that is accepted once. The method is bound to the code and stored
+   with each refresh token, so it cannot be dropped later. Dynamic registration stays public-only.
 
 `reins login` pairs without a browser by default (OAuth device authorization, RFC 8628):
 

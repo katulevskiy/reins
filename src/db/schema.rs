@@ -388,6 +388,7 @@ table! {
         token_hash -> Text,
         connection_uuid -> Text,
         expires_at -> BigInt,
+        client_auth -> Text,
     }
 }
 

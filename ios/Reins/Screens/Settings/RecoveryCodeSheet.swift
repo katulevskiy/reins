@@ -13,7 +13,7 @@ struct RecoveryCodeRow: View {
     var body: some View {
         Button(action: open) {
             SettingsRowLabel(title: "Recovery code", chevron: !busy) {
-                SettingsTile(symbol: "key.fill", tint: Palette.send)
+                SettingsTile(symbol: "key.fill", tint: Palette.kindPush)
             } trailing: {
                 if busy { ProgressView() }
             }

@@ -9,8 +9,13 @@ import Foundation
 /// JavaScript strings, and the trig goes through one seam (`JSMath`), all for the same reason: the same name must draw
 /// the same figure on every platform.
 ///
-/// Expressions, motion and trait overrides of the library are not ported: the app draws the resting figure.
-enum Blobatar {
+/// Expressions, motion and trait overrides of the library are not ported: the app draws the resting figure. Two
+/// overrides of its own let a connection keep the figure the user chose: the shape (an index into the band table) and
+/// the head colour (OKLCH); without them the output is the library's, byte for byte.
+///
+/// Named `BlobatarArt`, not `Blobatar`: the core's `Blobatar` record (a connection's kept seed, shape and colour) has
+/// that name in the app's module.
+enum BlobatarArt {
     /// One drawn primitive; the fill rides on every mark.
     enum Mark: Equatable {
         case path(d: String, fill: String)
@@ -31,10 +36,22 @@ enum Blobatar {
 
     enum Backdrop { case none, square, circle, squircle }
 
-    static func figure(_ name: String, backdrop: Backdrop = .none) -> Figure {
+    /// A head colour in OKLCH (lightness 0 to 1, chroma, hue in degrees), as `BlobatarPalette` keeps them.
+    struct Colour: Equatable, Hashable, Sendable {
+        let l: Double
+        let c: Double
+        let h: Double
+    }
+
+    /// The library's shape names, in its band order: a kept shape `i` is `shapeNames[i]`.
+    static var shapeNames: [String] { bands.map(\.0.name) }
+
+    /// The figure for `name`; `shape` (an index into the band table) and `colour` replace the ones the name picks.
+    static func figure(_ name: String, backdrop: Backdrop = .none, shape: Int? = nil, colour: Colour? = nil) -> Figure {
         let t = Traits(name)
-        let colors = palette(hue: t.num("hue", 0, 360), enforce: true, tone: t.unit("tone"))
-        let shape = layout(t)
+        let colors = colour.map { palette(base: Oklch(l: $0.l, c: $0.c, h: $0.h), enforce: true) }
+            ?? palette(hue: t.num("hue", 0, 360), enforce: true, tone: t.unit("tone"))
+        let shape = layout(t, shape: shape)
         let plate: Mark? = switch backdrop {
         case .none: nil
         case .square: .path(d: "M0 0H100V100H0Z", fill: colors.bg)
@@ -45,8 +62,8 @@ enum Blobatar {
     }
 
     /// The library's `blobatar(name, { background })` markup, used to check this port against the golden fixture.
-    static func svg(_ name: String, backdrop: Backdrop = .none) -> String {
-        let figure = figure(name, backdrop: backdrop)
+    static func svg(_ name: String, backdrop: Backdrop = .none, shape: Int? = nil, colour: Colour? = nil) -> String {
+        let figure = figure(name, backdrop: backdrop, shape: shape, colour: colour)
         guard let head = figure.marks.first?.fill, let eye = figure.marks.last?.fill else { return "" }
         var body = ""
         if case let .path(d, fill)? = figure.backdrop { body += "<path d=\"\(d)\" fill=\"\(fill)\"/>" }
@@ -114,12 +131,12 @@ enum Blobatar {
         init(_ seed: String) {
             let s = normalizeSeed(seed)
             // JavaScript's `length`: UTF-16 code units.
-            state = Blobatar.feed(1_779_033_703 ^ UInt32(truncatingIfNeeded: s.utf16.count), s.utf8)
+            state = BlobatarArt.feed(1_779_033_703 ^ UInt32(truncatingIfNeeded: s.utf16.count), s.utf8)
         }
 
         /// Uniform double in [0, 1).
         func unit(_ key: String) -> Double {
-            Double(Blobatar.finalize(Blobatar.feed(Blobatar.feed(state, [Blobatar.sep]), key.utf8))) / 4_294_967_296.0
+            Double(BlobatarArt.finalize(BlobatarArt.feed(BlobatarArt.feed(state, [BlobatarArt.sep]), key.utf8))) / 4_294_967_296.0
         }
 
         func num(_ key: String, _ min: Double, _ max: Double) -> Double { min + unit(key) * (max - min) }
@@ -232,7 +249,13 @@ enum Blobatar {
 
     private static func palette(hue: Double, enforce: Bool, tone: Double) -> Palette {
         let t = (tones.first { tone < $0.0 } ?? tones[0]).1
-        let head0 = ensureContrast(Oklch(l: t.l, c: t.c, h: hue), darkSurface, surfaceFloor)
+        return palette(base: Oklch(l: t.l, c: t.c, h: hue), enforce: enforce)
+    }
+
+    /// `palette` from a head colour: the tone table's at the seed's hue, or one the user chose.
+    private static func palette(base: Oklch, enforce: Bool) -> Palette {
+        let hue = base.h
+        let head0 = ensureContrast(base, darkSurface, surfaceFloor)
         let bg = Oklch(l: 0.965, c: 0.01, h: hue)
         var head = head0
         var eye = head0.l >= 0.5 ? Oklch(l: 0.17, c: 0.02, h: hue) : Oklch(l: 0.97, c: 0.012, h: hue)
@@ -559,9 +582,19 @@ enum Blobatar {
         ]
     }
 
-    private static func layout(_ t: Traits) -> Layout {
-        let v = t.unit("shape")
-        let shape = (bands.first { v < $0.1 } ?? bands[bands.count - 1]).0
+    /// The head colour `colour` is drawn in after the contrast rules ("#rrggbb"): what a colour swatch shows.
+    static func headHex(_ colour: Colour) -> String {
+        palette(base: Oklch(l: colour.l, c: colour.c, h: colour.h), enforce: true).head
+    }
+
+    private static func layout(_ t: Traits, shape kept: Int? = nil) -> Layout {
+        let shape: Shape
+        if let kept {
+            shape = bands[Swift.min(Swift.max(kept, 0), bands.count - 1)].0
+        } else {
+            let v = t.unit("shape")
+            shape = (bands.first { v < $0.1 } ?? bands[bands.count - 1]).0
+        }
         let r = t.num("body.r", 31.0, 38.0) * shape.core
         let body = Body(
             cx: 50 + t.jitter("body.x", 1.5),

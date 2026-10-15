@@ -5,6 +5,7 @@
 mod account_delete;
 mod account_state;
 mod blobs;
+mod client_auth;
 mod desktop;
 mod harness;
 mod limits;
