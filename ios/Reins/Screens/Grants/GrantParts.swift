@@ -119,19 +119,23 @@ struct FormLabel: View {
 /// A text field in the grant forms and sign-in: a soft rounded well, mono for addresses.
 struct FieldWell: ViewModifier {
     var mono = false
+    /// What was typed is wrong: the ring turns red (the meta line below says why).
+    var error = false
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         content
             .font(mono ? RFont.mono(15) : RFont.sans(16))
-            .foregroundStyle(Palette.text)
+            .foregroundStyle(Palette.ink)
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.vertical, 13)
+            .background(Palette.paperRaised, in: shape)
+            .overlay(shape.strokeBorder(error ? Palette.danger : Palette.rule, lineWidth: error ? 1.5 : 1))
     }
 }
 
 extension View {
-    func fieldWell(mono: Bool = false) -> some View { modifier(FieldWell(mono: mono)) }
+    func fieldWell(mono: Bool = false, error: Bool = false) -> some View { modifier(FieldWell(mono: mono, error: error)) }
 }
 
 /// A message under a form: what is wrong, or what went well.
