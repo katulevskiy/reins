@@ -123,7 +123,10 @@ final class ApprovalWordsTests: XCTestCase {
         XCTAssertEqual(ApprovalWords.dangerTag(push([ref(force: true)], noStanding: true))?.id, "forceWarning:0")
         XCTAssertEqual(ApprovalWords.dangerTag(push([ref(force: true, forceUnknown: true)], noStanding: true))?.id, "forceUnknown:0")
         XCTAssertEqual(ApprovalWords.dangerTag(deleteRepo)?.id, "onceWarning")
-        XCTAssertNil(ApprovalWords.dangerTag(push([ref()])))
+        XCTAssertNil(ApprovalWords.dangerTag(push([ref("feature/passkeys")])))
+        // A push to the default branch says so, without making it a hold.
+        XCTAssertEqual(ApprovalWords.dangerTag(push([ref()]))?.id, "defaultBranch")
+        XCTAssertEqual(ApprovalWords.dangerTag(push([ref()]))?.destructive, false)
         let hidden = GitCommitView(shortSha: "a1b2c3d", subject: "x", author: "a", date: 0, filesChanged: nil, files: [], additions: nil, deletions: nil, hiddenChars: true)
         XCTAssertEqual(ApprovalWords.dangerTag(push([ref(commits: [hidden])]))?.id, "hiddenChars")
     }

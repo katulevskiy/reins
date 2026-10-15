@@ -230,6 +230,14 @@ let likeThisAllMaxSecs: UInt64 = 604_800
 /// for" sheet; then the core's `quick.allow` scope, for the time picked. A scope over all mail is never open-ended: it
 /// goes with a time limit of a week at most, else the request is refused rather than silently narrowed or widened.
 func buildDecision(_ view: ApprovalView, _ draft: ApprovalDraft) -> BuildResult {
+    // Held (it can't be undone, or it carries a red warning): answered once, never remembered, whatever was picked.
+    if ApprovalWords.held(view) {
+        var once = draft
+        once.lifetime = .once
+        once.allMail = nil
+        once.likeThis = false
+        return buildChoice(view, once)
+    }
     // A release of an environment is remembered only for the command picked among those offered, never wider.
     guard let like = view.quick?.allow, draft.likeThis, draft.lifetime != .once, draft.allMail == nil, !view.noStanding,
           view.kind != .grant, view.kind != .accounts, view.envRelease == nil else { return buildChoice(view, draft) }

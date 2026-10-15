@@ -21,7 +21,7 @@ struct ApprovalDock: View {
             }
             if view.kind == .grant {
                 GrantPeriodRow(vm: vm, view: view)
-            } else if ApprovalWords.rememberLocked(view) {
+            } else if ApprovalWords.rememberLocked(view) || ApprovalWords.held(view) {
                 Chooser.asked()
                     .accessibilityIdentifier("noStanding")
             } else {
@@ -57,7 +57,7 @@ struct ApprovalDock: View {
             .buttonStyle(SignalButtonLook(kind: .outline))
             .accessibilityIdentifier("deny")
 
-            if ApprovalWords.destructive(view) {
+            if ApprovalWords.held(view) {
                 HoldButton(title: "Hold to \(ApprovalWords.approveLabel(view, vm.draft).lowercased())", symbol: Biometry.symbol, busy: vm.busy) {
                     Task { await vm.approve(model) }
                 }
