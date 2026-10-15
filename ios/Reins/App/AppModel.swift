@@ -167,6 +167,8 @@ final class AppModel {
     var paths: [AppSection: [Route]] = [:]
     /// An answer folding into Activity's river.
     let fold = FoldState()
+    /// Autopilot's reason lines, worked out once per entry.
+    let reasons = ReasonMemory()
     var sheet: SheetTarget?
     /// The next "connect a computer" sheet opens on the code field rather than the camera (Settings' "Type code").
     var connectStartsTyped = false
