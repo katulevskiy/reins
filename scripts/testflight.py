@@ -14,7 +14,9 @@
         ITSAppUsesNonExemptEncryption in --info-plist), its "What to Test" (from the release notes), adds it to each
         --group (a group id, or a name that must match exactly one group), and submits it for beta app review when
         one of them is external. A refused review submission (a build already in review, missing test information,
-        ...) is a warning, not a failure.
+        ...) is a warning, not a failure. Apple takes only a few submissions a day, so none is made while a build of
+        the app went to review in the last 24 hours (a notice: the next day's first release goes), and Apple's own
+        "submission limit reached" is a notice too.
 
     scripts/testflight.py profile --plist decoded.plist --bundle-id com.reins2fa.app --team 5DRCQV8HY2
         Checks a provisioning profile (as `security cms -D` decodes it) is an App Store profile of that team for that
@@ -60,6 +62,10 @@ BUNDLE_ID = "com.reins2fa.app"
 LOCALE = "en-US"
 WHAT_TO_TEST_LIMIT = 4000
 TOKEN_LIFETIME = 15 * 60  # Apple accepts at most 20 minutes
+# Beta app review takes only a few submissions a day: at most one every this many hours.
+REVIEW_SPACING_HOURS = 24
+# A build submitted for review was uploaded within this many days (a build can be submitted days after its upload).
+REVIEW_LOOKBACK_DAYS = 14
 TRANSIENT = frozenset({0, 408, 429, 500, 502, 503, 504})
 # The beta review states in which a build needs no (new) submission.
 REVIEWED = frozenset({"WAITING_FOR_BETA_REVIEW", "IN_BETA_REVIEW", "BETA_APPROVED", "IN_BETA_TESTING"})
@@ -85,7 +91,7 @@ def log(message):
 
 
 def annotate(kind, message, environ=os.environ):
-    """A ::warning:: or ::error:: on the run's summary under GitHub Actions; a plain line elsewhere."""
+    """A ::notice::, ::warning:: or ::error:: on the run's summary under GitHub Actions; a plain line elsewhere."""
     if environ.get("GITHUB_ACTIONS") == "true":
         print(f"::{kind}::{message}", file=sys.stderr)
     else:
@@ -183,6 +189,16 @@ def what_to_test(markdown, version, release_url=None, limit=WHAT_TO_TEST_LIMIT):
     if len(body) > room:
         body = body[:max(room - 1, 0)].rstrip() + "…"
     return f"{head}\n\n{body}{tail}" if body else f"{head}{tail}"
+
+
+def parse_time(text):
+    """Seconds since 1970 for an App Store Connect time ("2026-10-15T00:15:57-07:00"); None when there is none."""
+    if not text:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def build_number_value(text):
@@ -372,6 +388,9 @@ class Asc:
     def warn(self, message):
         annotate("warning", message, self.environ)
 
+    def notice(self, message):
+        annotate("notice", message, self.environ)
+
     def call(self, method, path, body=None):
         if self.token is None or self.clock() - self.minted > TOKEN_LIFETIME - 300:
             self.minted = self.clock()
@@ -503,6 +522,24 @@ class Asc:
             return
         log(f"added to group {label}")
 
+    def recent_review(self, app_id, hours=REVIEW_SPACING_HOURS):
+        """When a build of the app last went to beta app review, in seconds since 1970, if within `hours`."""
+        since = self.clock() - REVIEW_LOOKBACK_DAYS * 86400
+        recent = [b["id"] for b in self.builds(app_id)
+                  if (uploaded := parse_time(b["attributes"].get("uploadedDate"))) is None or uploaded >= since]
+        newest = None
+        for start in range(0, len(recent), 50):
+            submissions = self.pages("betaAppReviewSubmissions?" + urllib.parse.urlencode(
+                {"filter[build]": ",".join(recent[start:start + 50]), "limit": 200,
+                 "fields[betaAppReviewSubmissions]": "submittedDate"}))
+            for submission in submissions:
+                submitted = parse_time(submission["attributes"].get("submittedDate"))
+                if submitted is not None and (newest is None or submitted > newest):
+                    newest = submitted
+        if newest is not None and self.clock() - newest < hours * 3600:
+            return newest
+        return None
+
     def submit_for_review(self, build_id):
         detail = self.call("GET", f"builds/{build_id}/buildBetaDetail").get("data") or {}
         state = (detail.get("attributes") or {}).get("externalBuildState")
@@ -514,6 +551,11 @@ class Asc:
         except AscError as error:
             if not error.refused:
                 raise
+            if "SUBMISSION_LIMIT_REACHED" in error.code:
+                self.notice("Beta app review takes no more submissions today (Apple's limit). External testers get "
+                            "the next release that goes to review; submit this build in App Store Connect to send "
+                            "it sooner.")
+                return "LIMIT"
             self.warn(f"Beta app review did not take the build ({error}). Testers in the external group "
                       "get it once a build of this version is approved; submit it in App Store Connect "
                       "if this is not expected.")
@@ -530,7 +572,14 @@ class Asc:
         for group in resolved:
             self.add_to_group(group, build["id"])
         if any(not g["attributes"].get("isInternalGroup") for g in resolved):
-            self.submit_for_review(build["id"])
+            last = self.recent_review(app)
+            if last is None:
+                self.submit_for_review(build["id"])
+            else:
+                hours = max(1, round((self.clock() - last) / 3600))
+                self.notice(f"Not submitted for beta app review: a build went to review {hours} h ago, and Apple "
+                            f"takes only a few a day. The first release after {REVIEW_SPACING_HOURS} h goes; "
+                            "internal testers have this one now.")
         return errors
 
 
