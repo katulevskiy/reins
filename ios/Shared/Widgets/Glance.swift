@@ -156,8 +156,35 @@ enum Glance {
             createdAt: Date(timeIntervalSince1970: TimeInterval(min(item.createdAt, item.expiresAt))),
             suggestion: item.suggestion,
             connectionIcon: item.connectionIcon,
-            quick: item.quick
+            quick: item.quick,
+            field: field(item).rawValue,
+            label: label(item)
         )
+    }
+
+    /// An item's field: the one the app picked from the core's kind; for a snapshot from before Signal, its kind's.
+    static func field(_ item: Snapshot.Item) -> FieldKind {
+        field(item.field, kind: item.kind)
+    }
+
+    static func field(_ raw: String?, kind: Snapshot.Item.Kind) -> FieldKind {
+        if let raw, let field = FieldKind(rawValue: raw) { return field }
+        switch kind {
+        case .pairing: return .pair
+        case .join: return .accounts
+        case .blob, .request: return .push
+        }
+    }
+
+    /// The label line over the ask ("GitHub · Push"), or the kind's word when the snapshot has none.
+    static func label(_ item: Snapshot.Item) -> String {
+        if let label = item.label, !label.isEmpty { return label }
+        switch item.kind {
+        case .pairing: return "New connection"
+        case .join: return "Account · New phone"
+        case .blob: return "File"
+        case .request: return item.service.isEmpty ? "Request" : serviceName(item.service)
+        }
     }
 
     /// The length (seconds) a bypass with `left` seconds to go was most likely given (`AutopilotText.bypassLength`),
@@ -227,10 +254,11 @@ enum Glance {
         s.signedIn = true
         s.approvalDevice = true
         s.pending = [
-            Snapshot.Item(id: "s1", kind: .request, title: "Claude: Search email", subtitle: "me@gmail.com", connection: "Claude",
-                          service: "gmail", createdAt: now - 20, expiresAt: now + 100, suggestion: nil),
+            Snapshot.Item(id: "s1", kind: .request, title: "Claude Code: Push 8 commits to octo/app", subtitle: "feature/passkeys", connection: "Claude Code",
+                          service: "github", createdAt: now - 20, expiresAt: now + 100, suggestion: nil, field: "push", label: "GitHub · Push"),
             Snapshot.Item(id: "s2", kind: .request, title: "My ChatGPT: Send email to Ann", subtitle: "work@corp.example",
-                          connection: "My ChatGPT", service: "gmail", createdAt: now - 60, expiresAt: now + 240, suggestion: nil),
+                          connection: "My ChatGPT", service: "gmail", createdAt: now - 60, expiresAt: now + 240, suggestion: nil,
+                          field: "push", label: "Gmail · Send"),
             Snapshot.Item(id: "s3", kind: .pairing, title: "Connect Gemini to Reins?", subtitle: "gemini.google.com",
                           connection: "Gemini", service: "", createdAt: now - 90, expiresAt: now + 510, suggestion: nil),
         ]

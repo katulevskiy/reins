@@ -64,7 +64,7 @@ struct WidgetGallery: View {
     @ViewBuilder private var waiting: some View {
         caption("Waiting · small, medium, large")
         HStack(spacing: 20) {
-            plate(.systemSmall) { WaitingSmallView(snapshot: snapshot, now: now) }
+            plate(.systemSmall, field: smallField(snapshot)) { WaitingSmallView(snapshot: snapshot, now: now) }
             plate(.systemSmall) { AutopilotWidgetView(snapshot: snapshot, now: now, medium: false) }
         }
         plate(.systemMedium) { WaitingListView(snapshot: snapshot, now: now, rows: 3) }
@@ -113,11 +113,16 @@ struct WidgetGallery: View {
         accessory(width: 300, height: 26) { WaitingInlineView(snapshot: snapshot, now: now) }
         caption("Live Activities on the Lock Screen")
         if let state = approvalState {
-            liveCard { ApprovalLiveViews(state: state, stale: false).lockScreen }
+            let v = ApprovalLiveViews(state: state, stale: false)
+            liveCard(v.background) { v.lockScreen }
+            let stale = ApprovalLiveViews(state: state, stale: true)
+            liveCard(stale.background) { stale.lockScreen }
         }
-        liveCard { BypassLiveViews(state: bypassState, stale: false).lockScreen }
-        liveCard { BypassLiveViews(state: untilOffState, stale: false).lockScreen }
-        liveCard { ModelDownloadLiveViews(state: .init(downloaded: 141_000_000, total: 370_000_000, finished: false, failed: false)).lockScreen }
+        let b = BypassLiveViews(state: bypassState, stale: false)
+        liveCard(b.background) { b.lockScreen }
+        let off = BypassLiveViews(state: untilOffState, stale: false)
+        liveCard(off.background) { off.lockScreen }
+        liveCard(GlanceStyle.liveBackground) { ModelDownloadLiveViews(state: .init(downloaded: 141_000_000, total: 370_000_000, finished: false, failed: false)).lockScreen }
     }
 
     @ViewBuilder private var island: some View {
@@ -177,8 +182,13 @@ struct WidgetGallery: View {
         Text(text).font(RFont.fixedSans(12, .semibold)).foregroundStyle(Palette.ink2).padding(.top, 6)
     }
 
-    /// A Home Screen widget at the 6.9" iPhone's size, on its plate.
-    private func plate<V: View>(_ family: WidgetFamily, accented: Bool = false, @ViewBuilder content: () -> V) -> some View {
+    /// The small Waiting widget's field while something waits, as the widget picks it.
+    private func smallField(_ s: Snapshot) -> FieldKind? {
+        Glance.waiting(s, now: now).first.map(Glance.field)
+    }
+
+    /// A Home Screen widget at the 6.9" iPhone's size, on its plate (a field's colour and grain when `field` is set).
+    private func plate<V: View>(_ family: WidgetFamily, accented: Bool = false, field: FieldKind? = nil, @ViewBuilder content: () -> V) -> some View {
         let size: CGSize = switch family {
         case .systemSmall: CGSize(width: 170, height: 170)
         case .systemMedium: CGSize(width: 364, height: 170)
@@ -189,10 +199,14 @@ struct WidgetGallery: View {
             .frame(width: size.width, height: size.height)
             .environment(\.widgetRenderingMode, accented ? .accented : .fullColor)
             .environment(\.colorScheme, accented ? .dark : colorSchemeFromTraits)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(accented ? AnyShapeStyle(LinearGradient(colors: [Color(red: 0.12, green: 0.2, blue: 0.4), Color(red: 0.2, green: 0.12, blue: 0.35)], startPoint: .top, endPoint: .bottom)) : AnyShapeStyle(GlanceStyle.background))
-            )
+            .background {
+                let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+                if let field, !accented {
+                    GlanceField(kind: field).clipShape(shape)
+                } else {
+                    shape.fill(accented ? AnyShapeStyle(LinearGradient(colors: [Color(red: 0.12, green: 0.2, blue: 0.4), Color(red: 0.2, green: 0.12, blue: 0.35)], startPoint: .top, endPoint: .bottom)) : AnyShapeStyle(GlanceStyle.background))
+                }
+            }
             .saturation(accented ? 0 : 1)
             .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
     }
@@ -210,10 +224,10 @@ struct WidgetGallery: View {
             .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(red: 0.18, green: 0.2, blue: 0.3)))
     }
 
-    private func liveCard<V: View>(@ViewBuilder content: () -> V) -> some View {
+    private func liveCard<V: View>(_ background: Color, @ViewBuilder content: () -> V) -> some View {
         content()
             .frame(width: 400)
-            .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(GlanceStyle.liveBackground))
+            .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(background))
             .shadow(color: .black.opacity(0.08), radius: 10, y: 2)
     }
 
@@ -243,6 +257,7 @@ struct WidgetGallery: View {
             HStack(alignment: .top, spacing: 8) {
                 leading
                 center
+                Spacer(minLength: 0)
                 trailing
             }
             bottom

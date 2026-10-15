@@ -9,10 +9,11 @@ import WidgetKit
 struct ApprovalLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: ApprovalActivityAttributes.self) { context in
-            ApprovalLiveViews(state: context.state, stale: context.isStale).lockScreen
-                .activityBackgroundTint(GlanceStyle.liveBackground)
-                .activitySystemActionForegroundColor(Palette.violet)
-                .widgetURL(DeepLink.item(kind: context.state.kind, id: context.state.itemId).url)
+            let v = ApprovalLiveViews(state: context.state, stale: context.isStale)
+            v.lockScreen
+                .activityBackgroundTint(v.background)
+                .activitySystemActionForegroundColor(context.isStale ? Palette.ink : Palette.onField)
+                .widgetURL(v.link)
         } dynamicIsland: { context in
             let v = ApprovalLiveViews(state: context.state, stale: context.isStale)
             return DynamicIsland {
@@ -28,18 +29,19 @@ struct ApprovalLiveActivity: Widget {
                 v.minimal
             }
             .widgetURL(v.link)
-            .keylineTint(Palette.violet)
+            .keylineTint(v.field.fill)
         }
     }
 }
 
-/// A bypass that runs: red, the countdown to its end, Stop. An Overnight the same, in its night indigo.
+/// A bypass that runs: a red field, the time left, Stop. An Overnight the same, in its violet.
 struct BypassLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: BypassActivityAttributes.self) { context in
-            BypassLiveViews(state: context.state, stale: context.isStale).lockScreen
-                .activityBackgroundTint(GlanceStyle.liveBackground)
-                .activitySystemActionForegroundColor(BypassLiveViews(state: context.state, stale: context.isStale).tint)
+            let v = BypassLiveViews(state: context.state, stale: context.isStale)
+            v.lockScreen
+                .activityBackgroundTint(v.background)
+                .activitySystemActionForegroundColor(v.ended ? Palette.ink : Palette.onField)
                 .widgetURL(DeepLink.autopilot.url)
         } dynamicIsland: { context in
             let v = BypassLiveViews(state: context.state, stale: context.isStale)

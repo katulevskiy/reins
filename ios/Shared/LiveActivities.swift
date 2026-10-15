@@ -23,6 +23,9 @@ struct ApprovalActivityAttributes: ActivityAttributes {
         var connectionIcon: String? = nil
         /// The newest item is a routine request: Approve shows beside Deny (see `Snapshot.Item.quick`).
         var quick: Bool? = nil
+        /// Its field and label line (see `Snapshot.Item.field`, `.label`).
+        var field: String? = nil
+        var label: String? = nil
     }
 }
 

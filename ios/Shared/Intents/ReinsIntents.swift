@@ -227,6 +227,24 @@ struct ApproveQuickIntent: LiveActivityIntent {
     }
 }
 
+/// Opens Reins on Autopilot, where its mode is changed: the "Autopilot mode" control.
+struct ShowAutopilotIntent: AppIntent {
+    static var title: LocalizedStringResource = "Show Autopilot"
+    static var description = IntentDescription("Opens Reins on Autopilot, where its mode is changed.")
+    static var supportedModes: IntentModes = .foreground(.immediate)
+
+    init() {}
+
+    func perform() async throws -> some IntentResult {
+        #if REINS_APP
+        await IntentBridge.open(.autopilot)
+        return .result()
+        #else
+        return .result(opensIntent: OpenURLIntent(DeepLink.autopilot.url))
+        #endif
+    }
+}
+
 /// Opens Reins on a waiting request (the newest when none is given), or on the home screen when nothing waits:
 /// "Show what is waiting in Reins", the "Waiting request" control.
 struct ShowWaitingIntent: AppIntent {
