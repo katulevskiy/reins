@@ -23,18 +23,6 @@ final class ActivitySignalTests: XCTestCase {
         XCTAssertEqual(ActivityText.mood(waiting: 0, connections: 0), "All quiet. Nothing is connected yet.")
     }
 
-    func testTheDayCountsWhatWasAskedAndWhatAutopilotDecided() {
-        let now: Int64 = 1_800_000_000
-        let entries = [
-            DemoData.entry(1, at: now, action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
-            DemoData.entry(2, at: now, action: "read", outcome: "released", detail: ""),
-            DemoData.entry(3, at: now, action: "send", outcome: "denied", detail: ""),
-        ]
-        XCTAssertEqual(ActivityText.dayCount(entries), "3 asked · 1 by Autopilot")
-        XCTAssertEqual(ActivityText.dayCount(Array(entries.dropFirst())), "2 asked")
-        XCTAssertEqual(ActivityText.dayCount([]), "")
-    }
-
     func testAWaitingCardSaysItsKindAndAsksWithItsTargetInItalic() {
         let send = item(label: DemoData.requestLabel("gmail", "send", "Send an email to", "Anna Petrova"))
         XCTAssertEqual(ActivityText.label(send), "Gmail · Send")
@@ -125,18 +113,10 @@ final class ActivitySignalTests: XCTestCase {
         XCTAssertEqual(FoldState.target(other, in: entries)?.id, 12, "else the connection's newest")
     }
 
-    func testTheRiverNarrowsToOneAIWithoutAskingTheCore() {
-        let entries = [
-            DemoData.entry(3, at: 0, conn: "c2", label: "ChatGPT", action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
-            DemoData.entry(2, at: 0, conn: "c1", label: "Claude", action: "send", outcome: "denied", detail: ""),
-            DemoData.entry(1, at: 0, conn: "c1", label: "Claude", action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
-        ]
-        XCTAssertEqual(ActivityText.filtered(entries, filter: .all, connection: "").map(\.id), [3, 2, 1])
-        XCTAssertEqual(ActivityText.filtered(entries, filter: .all, connection: "c1").map(\.id), [2, 1])
-        XCTAssertEqual(ActivityText.filtered(entries, filter: .autopilot, connection: "c1").map(\.id), [1], "both narrow")
-        XCTAssertEqual(ActivityText.ais(entries).map(\.id), ["c2", "c1"], "newest first, once each")
-        XCTAssertEqual(ActivityText.ais(entries).map(\.name), ["ChatGPT", "Claude"])
-        XCTAssertEqual(AnyAIChip.connection("ai:c1"), "c1")
-        XCTAssertEqual(AnyAIChip.connection("ai:"), "")
+    func testTheAIMenuRowsNameAConnectionOrAny() {
+        XCTAssertEqual(ActivityFilterBar.connection("ai:c1"), "c1")
+        XCTAssertEqual(ActivityFilterBar.connection("ai:"), "")
+        XCTAssertEqual(ActivityFilterBar.name(ActivityConnection(id: "c1", label: "Clau\u{202E}de\n")), "Claude")
+        XCTAssertEqual(ActivityFilterBar.name(ActivityConnection(id: "c1", label: "")), "Unnamed AI")
     }
 }

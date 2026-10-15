@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
@@ -1487,9 +1488,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.model = installed
         launch()
         top()
-        // The filters open from the history's header; Autopilot lists whatever was decided without you.
-        click("filters")
-        click("filter:autopilot")
+        tap("filters")
+        tap("filter:who")
+        tap("who:autopilot")
         await("entry:7")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("76-activity-automatic")
@@ -1912,7 +1913,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         top()
         await("entry:9")
         click("filters")
-        click("filter:autopilot")
+        click("filter:who")
+        tap("who:autopilot")
+        rule.waitForIdle()
         await("entry:4")
         repeat(10) { rule.mainClock.advanceTimeBy(50) }
         shoot("android-activity-filters")
@@ -2208,7 +2211,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         pressBack()
         frames()
         click("filters")
-        click("filter:autopilot")
+        click("filter:who")
+        tap("who:autopilot")
+        rule.waitForIdle()
         await("entry:4")
         frames()
         shoot("sg-05-activity-filtered")
@@ -2333,6 +2338,91 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("updatePrompt")
         frames()
         shoot("sg-33-settings-update")
+    }
+
+    // ---- Activity by day, and its search (rendered as sg-40.. / sg-42..) ------------------------------------------
+
+    /** Runs [block] with the phone in UTC, so the frozen clock (22:15) puts the days where the shots expect them. */
+    private fun inUtc(block: () -> Unit) {
+        val zone = java.util.TimeZone.getDefault()
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"))
+        try {
+            block()
+        } finally {
+            java.util.TimeZone.setDefault(zone)
+        }
+    }
+
+    private val today get() = dev.reins.android.ui.activity.localDay(now, java.time.ZoneOffset.UTC)
+
+    /** Five days of Activity: today's, yesterday's with a denial, and older days with a failure. */
+    private fun dayHistory() {
+        agConnections()
+        core.model = installed
+        core.pending = emptyList()
+        fun e(id: Long, label: dev.reins.core.RequestLabel, service: String, at: Long, outcome: String = "released", conn: String = "c1", who: String = "Claude Code") =
+            TestData.entry(id, label.action, outcome, 1u, at = at, label = label, service = service).copy(connectionId = conn, connectionLabel = who)
+        fun mail(subject: String, body: String) = TestData.info(null, emptyList(), dev.reins.core.EmailView(listOf("Dana Katul <dana@katul.dev>"), emptyList(), subject, body), null, null)
+        val day = 86_400L
+        core.activity = listOf(
+            e(70, TestData.label("github", "push", "Push 3 commits to", "acme/web"), "github", now - 4 * 60).copy(op = "git_push", decidedBy = "autopilot", autopilot = TestData.note()),
+            e(69, TestData.label("gmail", "read", "Read 2 emails from", "Stripe"), "gmail", now - 18 * 60, conn = "c2", who = "ChatGPT"),
+            e(68, TestData.label("gmail", "search", "Search Gmail for", "invoice"), "gmail", now - 32 * 60).copy(grantId = "g1"),
+            e(67, TestData.label("gmail", "send", "Send an email to", "Dana Katul <dana@katul.dev>"), "gmail", now - 2 * 3_600, conn = "c2", who = "ChatGPT")
+                .copy(info = mail("Q3 numbers", "Hi Dana, the quarterly invoice for Acme is attached. Let me know if the totals look right.")),
+            e(66, TestData.label("github", "delete", "Delete branch old/experiment from", "octo/app"), "github", now - 5 * 3_600, outcome = "denied", conn = "c3", who = "Cursor").copy(op = "git_push"),
+            e(60, TestData.label("gmail", "read", "Read 4 emails from", "GitHub"), "gmail", now - day - 3_600, conn = "c2", who = "ChatGPT"),
+            e(59, TestData.label("gmail", "send", "Send an email to", "billing@acme-pay.co"), "gmail", now - day - 2 * 3_600, outcome = "denied", conn = "c2", who = "ChatGPT")
+                .copy(info = mail("Invoice 2207", "Please pay invoice 2207 today to avoid a late fee.")),
+            e(58, TestData.label("file", "read", "Read", "~/dev/api/.env", code = true), "desktop", now - day - 4 * 3_600, conn = "c3", who = "Cursor"),
+            e(57, TestData.label("github", "push", "Push 12 commits to", "acme/web"), "github", now - day - 6 * 3_600).copy(op = "git_push", decidedBy = "autopilot", autopilot = TestData.note()),
+            e(50, TestData.label("gmail", "search", "Search Gmail for", "invoice march"), "gmail", now - 2 * day - 3_600),
+            e(49, TestData.label("github", "push", "Push 2 commits to", "octo/app"), "github", now - 2 * day - 5 * 3_600, outcome = "error").copy(op = "git_push"),
+            e(48, TestData.label("gmail", "read", "Read 1 email from", "Linear"), "gmail", now - 2 * day - 8 * 3_600, conn = "c2", who = "ChatGPT"),
+            e(40, TestData.label("gmail", "send", "Send an email to", "Jonas"), "gmail", now - 5 * day, conn = "c2", who = "ChatGPT")
+                .copy(info = mail("Re: invoice", "Thanks Jonas, I forwarded the invoice to accounting.")),
+            e(39, TestData.label("file", "read", "Read", "~/dev/invoices/2026-q3.pdf", code = true), "desktop", now - 5 * day - 3_600, conn = "c3", who = "Cursor"),
+        )
+    }
+
+    @Test
+    fun sgActivityDays() = inUtc {
+        dayHistory()
+        launch()
+        top()
+        await("day:$today")
+        await("entry:70")
+        frames()
+        shoot("sg-40-activity-days")
+        // Yesterday opened beside the closed days.
+        click("day:$today")
+        click("day:${today - 1}")
+        await("entry:59")
+        frames()
+        shoot("sg-41-activity-day-open")
+    }
+
+    @Test
+    fun sgActivitySearch() = inUtc {
+        dayHistory()
+        launch()
+        top()
+        await("activitySearch")
+        // The list at rest first: what it shows counts as seen.
+        frames()
+        rule.onNodeWithTag("activitySearch").performTextInput("invoice")
+        await("searchResults")
+        tap("filters")
+        tap("filter:kind")
+        tap("service:gmail")
+        await("filtersClear")
+        tap("filter:when")
+        tap("when:week")
+        await("entry:40")
+        rule.onNodeWithTag("activityList").performScrollToIndex(0)
+        rule.onNodeWithTag("filterRow").performTouchInput { swipeRight() }
+        frames()
+        shoot("sg-42-activity-search")
     }
 
     /** Computers with their platform's logo, AIs with their provider's, a bot with its blobatar; then the Icon sheet. */

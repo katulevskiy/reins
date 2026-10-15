@@ -68,6 +68,10 @@ pub use types::{
     ServiceView, SessionInfo, StandingGrant, StartingPolicy,
 };
 pub use types::{
+    ActivityConnection, ActivityCursor, ActivityDecider, ActivityFacets, ActivityField, ActivityHighlight, ActivityHit,
+    ActivityOutcome, ActivityPage, ActivityQuery, ActivitySnippet, ActivityStamp,
+};
+pub use types::{
     AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,
     SecretsScopeChoice, SecretsStoreView, SshSignView, SshStoreView, TokenStoreView,
 };

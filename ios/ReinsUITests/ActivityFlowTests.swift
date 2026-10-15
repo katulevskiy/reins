@@ -195,6 +195,30 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(element(app, "pairingSheet").waitForNonExistence(timeout: 5))
     }
 
+    /// The river by day: today open, earlier days folded until their header is tapped; words typed search the history
+    /// and the matches replace the stack; a filter alone searches too.
+    func testTheRiverFoldsByDayAndSearches() {
+        let app = launch(extra: ["-demoQuiet"])
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        let today = element(app, String(format: "day:%04d-%02d-%02d", c.year!, c.month!, c.day!))
+        expectToAppear(today)
+        XCTAssertEqual(today.value as? String, "Expanded")
+        let search = element(app, "activitySearch")
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Dinner")
+        expectToAppear(element(app, "searchResults"))
+        XCTAssertFalse(element(app, "pond").exists, "searching hides the stack")
+        shot(app, "activity-search")
+        element(app, "clearSearch").tap()
+        expectToAppear(element(app, "pond"))
+        element(app, "filterToggle").tap()
+        element(app, "filter:outcome").tap()
+        element(app, "filter:denied").tap()
+        expectToAppear(element(app, "searchResults"))
+        shot(app, "activity-filtered")
+    }
+
     func testAnEntryOpensAndAnEmailInItOpensInFull() {
         let app = launch("reins://activity?id=10")
         let message = element(app, "detailMessage:0")

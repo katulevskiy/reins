@@ -24,7 +24,7 @@ use crate::types::{
 /// The only connector so far.
 pub const SERVICE_GMAIL: &str = "gmail";
 
-const MAX_LABEL_CHARS: usize = 64;
+pub(crate) const MAX_LABEL_CHARS: usize = 64;
 const MAX_QUERY_CHARS: usize = 200;
 
 /// A request parked for the user. Holds message *summaries* only, never bodies.

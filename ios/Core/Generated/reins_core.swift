@@ -2752,10 +2752,21 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func activityCommitChange(entryId: Int64, shortSha: String) async throws  -> GitCommitView
     
     /**
+     * The integrations, kinds and connections the Activity holds: the search filters' choices.
+     */
+    func activityFacets() async throws  -> ActivityFacets
+    
+    /**
      * An Activity entry's push, the best copy this device has: commits, files with lines added and removed, and the
      * changes line by line where kept (`ActivityPush.diffs`, `diffs_not_kept`). `None` when the entry is no push.
      */
     func activityPush(entryId: Int64) async throws  -> ActivityPush?
+    
+    /**
+     * When each entry matching `query` was logged, how it ended and who decided, newest first: to group the Activity
+     * by day (in the phone's time zone) and count each day without loading the entries.
+     */
+    func activityStamps(query: ActivityQuery) async throws  -> [ActivityStamp]
     
     /**
      * Connects a Google account that was just authorized on this phone (`hint` is its address).
@@ -3045,6 +3056,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * them) end, and every paired computer is told to drop the values it holds. Returns how many computers were told.
      */
     func revokeSecretsEverywhere(project: String?, env: String?) async throws  -> SecretsRevoked
+    
+    /**
+     * Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
+     * newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
+     * matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.
+     */
+    func searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt32) async throws  -> ActivityPage
     
     /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
@@ -3544,6 +3562,25 @@ open func activityCommitChange(entryId: Int64, shortSha: String)async throws  ->
 }
     
     /**
+     * The integrations, kinds and connections the Activity holds: the search filters' choices.
+     */
+open func activityFacets()async throws  -> ActivityFacets  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_activity_facets(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeActivityFacets_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * An Activity entry's push, the best copy this device has: commits, files with lines added and removed, and the
      * changes line by line where kept (`ActivityPush.diffs`, `diffs_not_kept`). `None` when the entry is no push.
      */
@@ -3559,6 +3596,26 @@ open func activityPush(entryId: Int64)async throws  -> ActivityPush?  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeActivityPush.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * When each entry matching `query` was logged, how it ended and who decided, newest first: to group the Activity
+     * by day (in the phone's time zone) and count each day without loading the entries.
+     */
+open func activityStamps(query: ActivityQuery)async throws  -> [ActivityStamp]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_activity_stamps(
+                        self.uniffiCloneHandle(),FfiConverterTypeActivityQuery_lower(query)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeActivityStamp.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4746,6 +4803,27 @@ open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSecretsRevoked_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
+     * newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
+     * matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.
+     */
+open func searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt32)async throws  -> ActivityPage  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_search_activity(
+                        self.uniffiCloneHandle(),FfiConverterTypeActivityQuery_lower(query),FfiConverterOptionTypeActivityCursor.lower(after),FfiConverterUInt32.lower(limit)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeActivityPage_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -5944,6 +6022,123 @@ public func FfiConverterTypeAccountView_lower(_ value: AccountView) -> RustBuffe
 }
 
 
+public struct ActivityConnection: Equatable, Hashable {
+    public var id: String
+    /**
+     * Cleaned, one line.
+     */
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * Cleaned, one line.
+         */label: String) {
+        self.id = id
+        self.label = label
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityConnection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityConnection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityConnection {
+        return
+            try ActivityConnection(
+                id: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityConnection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityConnection_lift(_ buf: RustBuffer) throws -> ActivityConnection {
+    return try FfiConverterTypeActivityConnection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityConnection_lower(_ value: ActivityConnection) -> RustBuffer {
+    return FfiConverterTypeActivityConnection.lower(value)
+}
+
+
+/**
+ * Where a page of results ends: pass it back for the next page.
+ */
+public struct ActivityCursor: Equatable, Hashable {
+    public var at: Int64
+    public var id: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(at: Int64, id: Int64) {
+        self.at = at
+        self.id = id
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityCursor: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityCursor: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityCursor {
+        return
+            try ActivityCursor(
+                at: FfiConverterInt64.read(from: &buf), 
+                id: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityCursor, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterInt64.write(value.id, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityCursor_lift(_ buf: RustBuffer) throws -> ActivityCursor {
+    return try FfiConverterTypeActivityCursor.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityCursor_lower(_ value: ActivityCursor) -> RustBuffer {
+    return FfiConverterTypeActivityCursor.lower(value)
+}
+
+
 public struct ActivityEntry: Equatable, Hashable {
     /**
      * Stable, increasing row number.
@@ -6117,6 +6312,203 @@ public func FfiConverterTypeActivityEntry_lower(_ value: ActivityEntry) -> RustB
 
 
 /**
+ * What the Activity holds, for the filters' choices.
+ */
+public struct ActivityFacets: Equatable, Hashable {
+    /**
+     * Integrations with entries, most used first.
+     */
+    public var services: [String]
+    /**
+     * Kinds with entries, most used first.
+     */
+    public var actions: [String]
+    /**
+     * Connections with entries, most recent first.
+     */
+    public var connections: [ActivityConnection]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Integrations with entries, most used first.
+         */services: [String], 
+        /**
+         * Kinds with entries, most used first.
+         */actions: [String], 
+        /**
+         * Connections with entries, most recent first.
+         */connections: [ActivityConnection]) {
+        self.services = services
+        self.actions = actions
+        self.connections = connections
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityFacets: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityFacets: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityFacets {
+        return
+            try ActivityFacets(
+                services: FfiConverterSequenceString.read(from: &buf), 
+                actions: FfiConverterSequenceString.read(from: &buf), 
+                connections: FfiConverterSequenceTypeActivityConnection.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityFacets, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.services, into: &buf)
+        FfiConverterSequenceString.write(value.actions, into: &buf)
+        FfiConverterSequenceTypeActivityConnection.write(value.connections, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityFacets_lift(_ buf: RustBuffer) throws -> ActivityFacets {
+    return try FfiConverterTypeActivityFacets.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityFacets_lower(_ value: ActivityFacets) -> RustBuffer {
+    return FfiConverterTypeActivityFacets.lower(value)
+}
+
+
+/**
+ * A piece of a snippet: shown as is, set apart when `hit` (it matches the search). The text is cleaned: one line, no
+ * control or bidi characters, invisible characters shown as U+FFFD; the pieces in order are the snippet.
+ */
+public struct ActivityHighlight: Equatable, Hashable {
+    public var text: String
+    public var hit: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(text: String, hit: Bool) {
+        self.text = text
+        self.hit = hit
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityHighlight: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityHighlight: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityHighlight {
+        return
+            try ActivityHighlight(
+                text: FfiConverterString.read(from: &buf), 
+                hit: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityHighlight, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterBool.write(value.hit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHighlight_lift(_ buf: RustBuffer) throws -> ActivityHighlight {
+    return try FfiConverterTypeActivityHighlight.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHighlight_lower(_ value: ActivityHighlight) -> RustBuffer {
+    return FfiConverterTypeActivityHighlight.lower(value)
+}
+
+
+public struct ActivityHit: Equatable, Hashable {
+    public var entry: ActivityEntry
+    /**
+     * `None` when the title, agent and connection already show every word searched (or nothing was).
+     */
+    public var snippet: ActivitySnippet?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entry: ActivityEntry, 
+        /**
+         * `None` when the title, agent and connection already show every word searched (or nothing was).
+         */snippet: ActivitySnippet?) {
+        self.entry = entry
+        self.snippet = snippet
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityHit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityHit: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityHit {
+        return
+            try ActivityHit(
+                entry: FfiConverterTypeActivityEntry.read(from: &buf), 
+                snippet: FfiConverterOptionTypeActivitySnippet.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityHit, into buf: inout [UInt8]) {
+        FfiConverterTypeActivityEntry.write(value.entry, into: &buf)
+        FfiConverterOptionTypeActivitySnippet.write(value.snippet, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHit_lift(_ buf: RustBuffer) throws -> ActivityHit {
+    return try FfiConverterTypeActivityHit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHit_lower(_ value: ActivityHit) -> RustBuffer {
+    return FfiConverterTypeActivityHit.lower(value)
+}
+
+
+/**
  * Everything the activity screen can show for one entry.
  */
 public struct ActivityInfo: Equatable, Hashable {
@@ -6277,6 +6669,91 @@ public func FfiConverterTypeActivityMessage_lower(_ value: ActivityMessage) -> R
 
 
 /**
+ * One page of an Activity search, newest first.
+ */
+public struct ActivityPage: Equatable, Hashable {
+    public var hits: [ActivityHit]
+    /**
+     * The next page starts after this; `None` on the last page.
+     */
+    public var next: ActivityCursor?
+    /**
+     * Entries matching, on every page.
+     */
+    public var total: UInt32
+    /**
+     * The words searched as matched (lower case): set apart each word of a title that starts with one, as the
+     * snippets do.
+     */
+    public var terms: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hits: [ActivityHit], 
+        /**
+         * The next page starts after this; `None` on the last page.
+         */next: ActivityCursor?, 
+        /**
+         * Entries matching, on every page.
+         */total: UInt32, 
+        /**
+         * The words searched as matched (lower case): set apart each word of a title that starts with one, as the
+         * snippets do.
+         */terms: [String]) {
+        self.hits = hits
+        self.next = next
+        self.total = total
+        self.terms = terms
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityPage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityPage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityPage {
+        return
+            try ActivityPage(
+                hits: FfiConverterSequenceTypeActivityHit.read(from: &buf), 
+                next: FfiConverterOptionTypeActivityCursor.read(from: &buf), 
+                total: FfiConverterUInt32.read(from: &buf), 
+                terms: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityPage, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeActivityHit.write(value.hits, into: &buf)
+        FfiConverterOptionTypeActivityCursor.write(value.next, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterSequenceString.write(value.terms, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityPage_lift(_ buf: RustBuffer) throws -> ActivityPage {
+    return try FfiConverterTypeActivityPage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityPage_lower(_ value: ActivityPage) -> RustBuffer {
+    return FfiConverterTypeActivityPage.lower(value)
+}
+
+
+/**
  * The push of an Activity entry, the best copy this device has (`activity_push`): this device's own copy of the
  * approval when it showed it, else the copy synced with the entry.
  */
@@ -6369,6 +6846,128 @@ public func FfiConverterTypeActivityPush_lift(_ buf: RustBuffer) throws -> Activ
 #endif
 public func FfiConverterTypeActivityPush_lower(_ value: ActivityPush) -> RustBuffer {
     return FfiConverterTypeActivityPush.lower(value)
+}
+
+
+/**
+ * A search of the Activity, run on this device only (never sent anywhere). Every filter left empty keeps everything;
+ * the filters combine (an entry must pass each one), the values within one filter are alternatives.
+ */
+public struct ActivityQuery: Equatable, Hashable {
+    /**
+     * Words to find, each as the start of a word (`inv` finds "invoice"; `alice@example.com` finds that address). In
+     * the title, the agent and connection, addresses, email subjects and bodies kept, a push's repository, branches,
+     * commits (subjects and ids), files and changes kept, commands, URLs, paths, and MCP tools and their arguments.
+     */
+    public var text: String
+    public var outcomes: [ActivityOutcome]
+    public var deciders: [ActivityDecider]
+    /**
+     * Integrations (`ActivityEntry.service`: "gmail", "github", "desktop", ...).
+     */
+    public var services: [String]
+    /**
+     * Kinds (`ActivityEntry.action`: "search", "read", "send", "grant", "pair", "request", ...).
+     */
+    public var actions: [String]
+    /**
+     * Connections (`ActivityEntry.connection_id`).
+     */
+    public var connections: [String]
+    /**
+     * Logged at or after (Unix seconds).
+     */
+    public var since: Int64?
+    /**
+     * Logged before (Unix seconds).
+     */
+    public var until: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Words to find, each as the start of a word (`inv` finds "invoice"; `alice@example.com` finds that address). In
+         * the title, the agent and connection, addresses, email subjects and bodies kept, a push's repository, branches,
+         * commits (subjects and ids), files and changes kept, commands, URLs, paths, and MCP tools and their arguments.
+         */text: String = "", outcomes: [ActivityOutcome] = [], deciders: [ActivityDecider] = [], 
+        /**
+         * Integrations (`ActivityEntry.service`: "gmail", "github", "desktop", ...).
+         */services: [String] = [], 
+        /**
+         * Kinds (`ActivityEntry.action`: "search", "read", "send", "grant", "pair", "request", ...).
+         */actions: [String] = [], 
+        /**
+         * Connections (`ActivityEntry.connection_id`).
+         */connections: [String] = [], 
+        /**
+         * Logged at or after (Unix seconds).
+         */since: Int64? = nil, 
+        /**
+         * Logged before (Unix seconds).
+         */until: Int64? = nil) {
+        self.text = text
+        self.outcomes = outcomes
+        self.deciders = deciders
+        self.services = services
+        self.actions = actions
+        self.connections = connections
+        self.since = since
+        self.until = until
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityQuery: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityQuery: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityQuery {
+        return
+            try ActivityQuery(
+                text: FfiConverterString.read(from: &buf), 
+                outcomes: FfiConverterSequenceTypeActivityOutcome.read(from: &buf), 
+                deciders: FfiConverterSequenceTypeActivityDecider.read(from: &buf), 
+                services: FfiConverterSequenceString.read(from: &buf), 
+                actions: FfiConverterSequenceString.read(from: &buf), 
+                connections: FfiConverterSequenceString.read(from: &buf), 
+                since: FfiConverterOptionInt64.read(from: &buf), 
+                until: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityQuery, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterSequenceTypeActivityOutcome.write(value.outcomes, into: &buf)
+        FfiConverterSequenceTypeActivityDecider.write(value.deciders, into: &buf)
+        FfiConverterSequenceString.write(value.services, into: &buf)
+        FfiConverterSequenceString.write(value.actions, into: &buf)
+        FfiConverterSequenceString.write(value.connections, into: &buf)
+        FfiConverterOptionInt64.write(value.since, into: &buf)
+        FfiConverterOptionInt64.write(value.until, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityQuery_lift(_ buf: RustBuffer) throws -> ActivityQuery {
+    return try FfiConverterTypeActivityQuery.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityQuery_lower(_ value: ActivityQuery) -> RustBuffer {
+    return FfiConverterTypeActivityQuery.lower(value)
 }
 
 
@@ -6494,6 +7093,128 @@ public func FfiConverterTypeActivityRequest_lift(_ buf: RustBuffer) throws -> Ac
 #endif
 public func FfiConverterTypeActivityRequest_lower(_ value: ActivityRequest) -> RustBuffer {
     return FfiConverterTypeActivityRequest.lower(value)
+}
+
+
+/**
+ * Where an entry matched outside its title, with the matching words set apart.
+ */
+public struct ActivitySnippet: Equatable, Hashable {
+    public var field: ActivityField
+    public var spans: [ActivityHighlight]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(field: ActivityField, spans: [ActivityHighlight]) {
+        self.field = field
+        self.spans = spans
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivitySnippet: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivitySnippet: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivitySnippet {
+        return
+            try ActivitySnippet(
+                field: FfiConverterTypeActivityField.read(from: &buf), 
+                spans: FfiConverterSequenceTypeActivityHighlight.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivitySnippet, into buf: inout [UInt8]) {
+        FfiConverterTypeActivityField.write(value.field, into: &buf)
+        FfiConverterSequenceTypeActivityHighlight.write(value.spans, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivitySnippet_lift(_ buf: RustBuffer) throws -> ActivitySnippet {
+    return try FfiConverterTypeActivitySnippet.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivitySnippet_lower(_ value: ActivitySnippet) -> RustBuffer {
+    return FfiConverterTypeActivitySnippet.lower(value)
+}
+
+
+/**
+ * An entry matching a search, as little as a day's header needs: when, and how it ended.
+ */
+public struct ActivityStamp: Equatable, Hashable {
+    public var id: Int64
+    public var at: Int64
+    public var outcome: ActivityOutcome
+    public var decider: ActivityDecider
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, at: Int64, outcome: ActivityOutcome, decider: ActivityDecider) {
+        self.id = id
+        self.at = at
+        self.outcome = outcome
+        self.decider = decider
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityStamp: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityStamp: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityStamp {
+        return
+            try ActivityStamp(
+                id: FfiConverterInt64.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf), 
+                outcome: FfiConverterTypeActivityOutcome.read(from: &buf), 
+                decider: FfiConverterTypeActivityDecider.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityStamp, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterTypeActivityOutcome.write(value.outcome, into: &buf)
+        FfiConverterTypeActivityDecider.write(value.decider, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityStamp_lift(_ buf: RustBuffer) throws -> ActivityStamp {
+    return try FfiConverterTypeActivityStamp.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityStamp_lower(_ value: ActivityStamp) -> RustBuffer {
+    return FfiConverterTypeActivityStamp.lower(value)
 }
 
 
@@ -15273,6 +15994,347 @@ public func FfiConverterTypeAccountKeys_lower(_ value: AccountKeys) -> RustBuffe
 
 
 
+/**
+ * Who decided an Activity entry.
+ */
+
+public enum ActivityDecider: Equatable, Hashable {
+    
+    /**
+     * The user, or a grant the user gave.
+     */
+    case you
+    /**
+     * Autopilot, in any of its modes (Overnight too).
+     */
+    case autopilot
+    case bypass
+    case lockdown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ActivityDecider: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityDecider: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityDecider
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityDecider {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .you
+        
+        case 2: return .autopilot
+        
+        case 3: return .bypass
+        
+        case 4: return .lockdown
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ActivityDecider, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .you:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .autopilot:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .bypass:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .lockdown:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityDecider_lift(_ buf: RustBuffer) throws -> ActivityDecider {
+    return try FfiConverterTypeActivityDecider.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityDecider_lower(_ value: ActivityDecider) -> RustBuffer {
+    return FfiConverterTypeActivityDecider.lower(value)
+}
+
+
+
+/**
+ * What part of an entry a snippet comes from.
+ */
+
+public enum ActivityField: Equatable, Hashable {
+    
+    case title
+    /**
+     * The agent, the connection or the account.
+     */
+    case agent
+    /**
+     * An email address (from, to, cc).
+     */
+    case address
+    /**
+     * An email's or message's subject.
+     */
+    case subject
+    /**
+     * An email's body, a message's text, a search query, a note.
+     */
+    case body
+    case repo
+    case branch
+    /**
+     * A commit: its id and subject.
+     */
+    case commit
+    /**
+     * A file or folder path.
+     */
+    case file
+    /**
+     * A change line by line.
+     */
+    case diff
+    case command
+    case url
+    /**
+     * Anything else the request held: a tool's name or arguments, why it was asked.
+     */
+    case request
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ActivityField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityField: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityField
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityField {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .title
+        
+        case 2: return .agent
+        
+        case 3: return .address
+        
+        case 4: return .subject
+        
+        case 5: return .body
+        
+        case 6: return .repo
+        
+        case 7: return .branch
+        
+        case 8: return .commit
+        
+        case 9: return .file
+        
+        case 10: return .diff
+        
+        case 11: return .command
+        
+        case 12: return .url
+        
+        case 13: return .request
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ActivityField, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .title:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .agent:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .address:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .subject:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .body:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .repo:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .branch:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .commit:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .file:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .diff:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .command:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .url:
+            writeInt(&buf, Int32(12))
+        
+        
+        case .request:
+            writeInt(&buf, Int32(13))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityField_lift(_ buf: RustBuffer) throws -> ActivityField {
+    return try FfiConverterTypeActivityField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityField_lower(_ value: ActivityField) -> RustBuffer {
+    return FfiConverterTypeActivityField.lower(value)
+}
+
+
+
+/**
+ * How an Activity entry ended, as search filters and day counts group it.
+ */
+
+public enum ActivityOutcome: Equatable, Hashable {
+    
+    /**
+     * Carried out: released, sent or granted.
+     */
+    case approved
+    case denied
+    /**
+     * Allowed but it failed.
+     */
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ActivityOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .approved
+        
+        case 2: return .denied
+        
+        case 3: return .failed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ActivityOutcome, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .approved:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .denied:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityOutcome_lift(_ buf: RustBuffer) throws -> ActivityOutcome {
+    return try FfiConverterTypeActivityOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityOutcome_lower(_ value: ActivityOutcome) -> RustBuffer {
+    return FfiConverterTypeActivityOutcome.lower(value)
+}
+
+
+
 
 public enum ApprovalKind: Equatable, Hashable {
     
@@ -17362,6 +18424,30 @@ fileprivate struct FfiConverterOptionTypeDeviceBridge: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeActivityCursor: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityCursor?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivityCursor.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivityCursor.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeActivityPush: FfiConverterRustBuffer {
     typealias SwiftType = ActivityPush?
 
@@ -17402,6 +18488,30 @@ fileprivate struct FfiConverterOptionTypeActivityRequest: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeActivityRequest.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeActivitySnippet: FfiConverterRustBuffer {
+    typealias SwiftType = ActivitySnippet?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivitySnippet.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivitySnippet.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -18207,6 +19317,31 @@ fileprivate struct FfiConverterSequenceTypeAccountView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeActivityConnection: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityConnection]
+
+    public static func write(_ value: [ActivityConnection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityConnection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityConnection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityConnection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityConnection.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeActivityEntry: FfiConverterRustBuffer {
     typealias SwiftType = [ActivityEntry]
 
@@ -18232,6 +19367,56 @@ fileprivate struct FfiConverterSequenceTypeActivityEntry: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeActivityHighlight: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityHighlight]
+
+    public static func write(_ value: [ActivityHighlight], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityHighlight.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityHighlight] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityHighlight]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityHighlight.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeActivityHit: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityHit]
+
+    public static func write(_ value: [ActivityHit], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityHit.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityHit] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityHit]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityHit.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeActivityMessage: FfiConverterRustBuffer {
     typealias SwiftType = [ActivityMessage]
 
@@ -18249,6 +19434,31 @@ fileprivate struct FfiConverterSequenceTypeActivityMessage: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeActivityMessage.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeActivityStamp: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityStamp]
+
+    public static func write(_ value: [ActivityStamp], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityStamp.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityStamp] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityStamp]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityStamp.read(from: &buf))
         }
         return seq
     }
@@ -19228,6 +20438,56 @@ fileprivate struct FfiConverterSequenceTypeVaultUse: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeActivityDecider: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityDecider]
+
+    public static func write(_ value: [ActivityDecider], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityDecider.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityDecider] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityDecider]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityDecider.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeActivityOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityOutcome]
+
+    public static func write(_ value: [ActivityOutcome], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityOutcome.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityOutcome] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityOutcome]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityOutcome.read(from: &buf))
+        }
+        return seq
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
@@ -19436,7 +20696,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_activity_commit_change() != 48115) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_activity_facets() != 56450) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_activity_push() != 60254) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_activity_stamps() != 13560) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_add_account() != 25987) {
@@ -19629,6 +20895,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_revoke_secrets_everywhere() != 57345) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_search_activity() != 51150) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_server_info() != 48285) {

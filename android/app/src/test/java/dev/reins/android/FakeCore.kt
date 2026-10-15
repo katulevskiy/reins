@@ -119,6 +119,76 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun activityPush(entryId: Long): ActivityPush? = entryPushes[entryId]
 
+    // ---- Activity's search: a plain case-insensitive match over the entries in memory ---------------------------------
+
+    /** Every query `searchActivity` and `activityStamps` were asked, in order. */
+    val activityQueries = CopyOnWriteArrayList<dev.reins.core.ActivityQuery>()
+
+    private fun matching(q: dev.reins.core.ActivityQuery): List<ActivityEntry> {
+        activityQueries += q
+        val words = searchTerms(q.text)
+        return activity.filter { e ->
+            (q.outcomes.isEmpty() || dev.reins.android.ui.activity.outcomeKind(e.outcome) in q.outcomes) &&
+                (q.deciders.isEmpty() || dev.reins.android.ui.activity.deciderKind(e.decidedBy) in q.deciders) &&
+                (q.services.isEmpty() || e.service in q.services) &&
+                (q.actions.isEmpty() || e.action in q.actions) &&
+                (q.connections.isEmpty() || e.connectionId in q.connections) &&
+                (q.since == null || e.at >= q.since!!) &&
+                (q.until == null || e.at < q.until!!) &&
+                words.all { w -> searchable(e).any { it.contains(w, ignoreCase = true) } }
+        }.sortedWith(compareByDescending<ActivityEntry> { it.at }.thenByDescending { it.id })
+    }
+
+    private fun searchTerms(text: String): List<String> =
+        text.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }.distinct()
+
+    private fun searchable(e: ActivityEntry): List<String> = listOfNotNull(
+        dev.reins.android.ui.common.askSentence(e).text, e.connectionLabel, e.detail, e.opTitle, e.info.query,
+        e.info.email?.subject, e.info.email?.body, e.label?.subject, e.request?.full,
+    ) + e.info.messages.map { it.subject } + e.info.email?.to.orEmpty()
+
+    override suspend fun searchActivity(query: dev.reins.core.ActivityQuery, after: dev.reins.core.ActivityCursor?, limit: UInt): dev.reins.core.ActivityPage {
+        val all = matching(query)
+        val from = if (after == null) all else all.filter { it.at < after.at || (it.at == after.at && it.id < after.id) }
+        val page = from.take(limit.toInt().coerceIn(1, 200))
+        val next = if (from.size > page.size) page.lastOrNull()?.let { dev.reins.core.ActivityCursor(it.at, it.id) } else null
+        val terms = searchTerms(query.text)
+        val hits = page.map { e -> dev.reins.core.ActivityHit(e, snippetOf(e, terms)) }
+        return dev.reins.core.ActivityPage(hits, next, all.size.toUInt(), terms)
+    }
+
+    /** A snippet when a word is found in the email's body and not in the row's title: the words around it. */
+    private fun snippetOf(e: ActivityEntry, terms: List<String>): dev.reins.core.ActivitySnippet? {
+        val body = e.info.email?.body ?: return null
+        val title = dev.reins.android.ui.activity.matchRanges(dev.reins.android.ui.common.askSentence(e).text, terms)
+        if (terms.isEmpty() || title.size >= terms.size) return null
+        val ranges = dev.reins.android.ui.activity.matchRanges(body, terms)
+        if (ranges.isEmpty()) return null
+        val spans = mutableListOf<dev.reins.core.ActivityHighlight>()
+        var at = maxOf(0, ranges.first().first - 30)
+        for (r in ranges) {
+            if (r.first > at) spans += dev.reins.core.ActivityHighlight(body.substring(at, r.first), false)
+            spans += dev.reins.core.ActivityHighlight(body.substring(r.first, r.last + 1), true)
+            at = r.last + 1
+        }
+        if (at < body.length) spans += dev.reins.core.ActivityHighlight(body.substring(at, minOf(body.length, at + 80)), false)
+        return dev.reins.core.ActivitySnippet(dev.reins.core.ActivityField.BODY, spans)
+    }
+
+    override suspend fun activityStamps(query: dev.reins.core.ActivityQuery): List<dev.reins.core.ActivityStamp> =
+        matching(query).map {
+            dev.reins.core.ActivityStamp(it.id, it.at, dev.reins.android.ui.activity.outcomeKind(it.outcome), dev.reins.android.ui.activity.deciderKind(it.decidedBy))
+        }
+
+    override suspend fun activityFacets(): dev.reins.core.ActivityFacets {
+        val newest = activity.sortedByDescending { it.at }
+        return dev.reins.core.ActivityFacets(
+            newest.groupingBy { it.service }.eachCount().entries.sortedByDescending { it.value }.map { it.key },
+            newest.groupingBy { it.action }.eachCount().entries.sortedByDescending { it.value }.map { it.key },
+            newest.distinctBy { it.connectionId }.map { dev.reins.core.ActivityConnection(it.connectionId, it.connectionLabel) },
+        )
+    }
+
     /** Commits `activityCommitChange` loads, by entry and short id; anything else fails as with no connection. */
     val commitChanges = java.util.concurrent.ConcurrentHashMap<Pair<Long, String>, GitCommitView>()
 

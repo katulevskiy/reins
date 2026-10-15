@@ -4,7 +4,9 @@ import dev.reins.android.platform.PhoneBridge
 import dev.reins.core.AccountView
 import dev.reins.core.AutopilotSettings
 import dev.reins.core.ServiceView
+import dev.reins.core.ActivityDecider
 import dev.reins.core.ActivityEntry
+import dev.reins.core.ActivityOutcome
 import dev.reins.core.ConnectionView
 import dev.reins.core.GrantView
 import dev.reins.core.McpServerView
@@ -228,6 +230,8 @@ class AppState {
             _setupPending.value = false
             _pending.value = emptyList()
             _activity.value = emptyList()
+            _activitySearch.value = ActivitySearch()
+            _activityDays.value = emptyMap()
             _grants.value = emptyList()
             _accounts.value = emptyList()
             _services.value = emptyList()
@@ -298,6 +302,25 @@ class AppState {
         _connections.value = items
     }
 
+    /** Activity's search words and filters, kept while the app runs (never written to disk). */
+    private val _activitySearch = MutableStateFlow(ActivitySearch())
+    val activitySearch: StateFlow<ActivitySearch> = _activitySearch.asStateFlow()
+
+    fun setActivitySearch(search: ActivitySearch) {
+        _activitySearch.value = search
+    }
+
+    /**
+     * The days of Activity opened or closed by hand (local epoch day to open), kept while the app runs. A day not in
+     * it shows as it starts: Today open, every other day closed.
+     */
+    private val _activityDays = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
+    val activityDays: StateFlow<Map<Long, Boolean>> = _activityDays.asStateFlow()
+
+    fun setActivityDayOpen(day: Long, open: Boolean) {
+        _activityDays.update { it + (day to open) }
+    }
+
     fun setSeenActivityId(id: Long) {
         if (id > _seenActivityId.value) _seenActivityId.value = id
     }
@@ -319,6 +342,31 @@ class AppState {
     private companion object {
         const val ANSWERED_KEPT = 64
     }
+}
+
+/** How far back Activity's "When" filter reaches. */
+enum class ActivityWindow { Any, Today, Week, Month }
+
+/**
+ * What Activity searches for: [text] (words, searched on the phone only) and the filters. Filters combine; the values
+ * within one are alternatives. Empty sets and [ActivityWindow.Any] filter nothing.
+ */
+data class ActivitySearch(
+    val text: String = "",
+    val outcomes: Set<ActivityOutcome> = emptySet(),
+    val deciders: Set<ActivityDecider> = emptySet(),
+    val services: Set<String> = emptySet(),
+    val actions: Set<String> = emptySet(),
+    val connections: Set<String> = emptySet(),
+    val window: ActivityWindow = ActivityWindow.Any,
+) {
+    /** Some filter is set (the words aside). */
+    val filtered: Boolean
+        get() = outcomes.isNotEmpty() || deciders.isNotEmpty() || services.isNotEmpty() || actions.isNotEmpty() ||
+            connections.isNotEmpty() || window != ActivityWindow.Any
+
+    /** Words or a filter: Activity shows results instead of its days. */
+    val searching: Boolean get() = text.isNotBlank() || filtered
 }
 
 /** A sign-in to an MCP server finished: [text] says how, [failed] when it did not work. */
