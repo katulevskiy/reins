@@ -585,8 +585,18 @@ make_config! {
         reins_register_ratelimit_seconds: u64, false, def,   60;
         /// Client registration burst |> Dynamic client registrations from one IP address allowed at once, while keeping the average above.
         reins_register_ratelimit_max_burst: u32, false, def, 10;
-        /// Long-polls per device |> Concurrent GET /reins/api/pending long-polls of one approval device. 0 disables the limit.
+        /// Long-polls per device |> Concurrent GET /reins/api/pending and GET /reins/api/sync long-polls of one device. 0 disables the limit.
         reins_device_max_polls:      u32,    false,  def,    4;
+        /// Op uploads per member per minute |> POST /reins/api/ops requests one phone of an account with phone roles may make per minute (each carries up to 100 ops). 0 disables the limit.
+        reins_member_op_requests_per_minute: u32, false, def, 120;
+        /// Proposals per viewer per hour |> Proposal ops (a viewer suggesting a connection or credential) one phone may write per hour. 0 disables the limit.
+        reins_member_proposals_per_hour: u32, false, def,  20;
+        /// Roster changes per account per hour |> POST /reins/api/roster appends (enroll, remove, handover, recovery) per account per hour. 0 disables the limit.
+        reins_roster_changes_per_hour: u32,  false,  def,   30;
+        /// Ops kept per account |> Ops one account's log may hold between checkpoints; then uploads are refused (409 log_full) until the primary writes a checkpoint.
+        reins_account_log_max_ops:   u32,    false,  def,    10_000;
+        /// Op bytes kept per account |> Bytes of ops one account's log may hold between checkpoints.
+        reins_account_log_max_bytes: u64,    false,  def,    64 * 1024 * 1024;
         /// Wrong takeover proofs per account |> Wrong proofs (master password hashes) one account's other devices may send with PUT /reins/api/device to become its approval device, within the window below; then every attempt is refused until the oldest ages out. 0 disables the limit.
         reins_device_proof_max_failures: u32, false, def,    5;
         /// Wrong takeover proofs window (seconds) |> The window the limit above counts wrong proofs in.

@@ -72,6 +72,10 @@ flowchart TB
 | `POST /reins/api/joins`, `GET /reins/api/joins/<id>` | a phone of the account that cannot open its keys | Vaultwarden login token (any device of the account but the approval device) |
 | `POST /reins/api/account/delete` | the phone apps' Settings → Delete account | Vaultwarden login token issued in the last 5 minutes, the typed account email, and the approval device (or, from another device, the master password hash); see [security model](security-model.md#accounts-without-a-master-password) |
 | `GET /reins/api/joins/<id>`, `POST /reins/api/joins/<id>/response` | the approval device | as the rest of `/reins/api/*` |
+| `POST /reins/api/joins/<id>/challenge`, `POST /reins/api/joins/<id>/reveal` | the approval device, then the phone enrolling as a viewer | as above, for each side; once each, in that order ([phone roles](#phone-roles-and-live-sync)) |
+| `GET /reins/api/roster` | any phone of the account | Vaultwarden login token; an empty list until the account has a roster (404: a server without phone roles) |
+| `POST /reins/api/roster`, `PUT /reins/api/roster/recovery-wrap`, `GET`/`DELETE /reins/api/handover-bundle`, `PUT /reins/api/checkpoint`, `POST /reins/api/heartbeat` | the primary (a recovery: the phone it makes primary) | approval device, plus the owner key's or primary's signature; a recovery brings the master password hash |
+| `GET /reins/api/sync`, `POST /reins/api/ops`, `POST /reins/api/ack`, `GET /reins/api/checkpoint`, `PUT /reins/api/member`, `POST /reins/api/handovers`, `GET /reins/api/connections` | roster members (the primary and viewers) | Vaultwarden login token and the device key the member enrolled with; ops are checked against the roster and their author's signature |
 | `PUT`/`POST`/`GET /reins/blob/<secret>` | whoever holds the link (AI, curl) | the unguessable link itself, single-purpose, expiring |
 | `/identity/connect/authorize`, `/identity/connect/oidc-signin`, `/identity/connect/token` (`authorization_code`) | the phone apps' "Continue", through the browser | SSO (WorkOS AuthKit on the hosted server), PKCE S256 end to end |
 | `POST /reins/workos/webhook` | WorkOS | `WorkOS-Signature` (HMAC-SHA256); only wakes the WorkOS sync |
@@ -79,7 +83,11 @@ flowchart TB
 Persistent tables: `reins_devices` (the approval device and its push token), `reins_clients` (registered OAuth
 clients), `reins_connections` (authorized AIs and desktop apps), `reins_refresh_tokens` (SHA-256 hashed),
 `reins_sso_sessions` (the WorkOS session each device signed in with), `reins_settings` (the WorkOS events
-cursor). Everything else is in memory with a time limit, so there is one server process per deployment.
+cursor), and for phone roles `reins_rosters` (the owner-signed roster chain, the recovery wrap and a handover's sealed
+bundle), `reins_members` (each listed phone's role, signing key, enrolled device key, push token, op counter,
+acknowledged `seq` and, for the primary, its latest heartbeat), `reins_ops` (signed, sealed ops) and
+`reins_checkpoints` (the primary's latest two sealed snapshots). Everything else is in memory with a time limit, so
+there is one server process per deployment.
 
 ## Flows
 
@@ -225,6 +233,33 @@ server's id, name and tool list to the server, which lists them to AIs as `<serv
 the phone like any other. Tools the server marks read-only are reads, and all others are writes. Destructive tools
 are asked every time. When a tool's results are very large, later calls to it go through the server
 (`/reins/api/mcp/call`), so large items can be replaced with download links.
+
+### Phone roles and live sync
+
+Server side of the phone roles design (`reins-designs/phone-roles/phone-roles-and-live-sync.md`; wire types in
+`reins_proto::roster`, `oplog`, `answer`, `enroll`; server in `src/api/reins/roles.rs` and `live.rs`). One phone is
+the **primary**: it is the approval device and decides. The account's other enrolled phones are **viewers**: they see
+everything live and decide nothing. An account without a roster works exactly as before; the apps detect the feature
+with `GET /reins/api/roster` (404: an older server).
+
+1. **Create.** The approval device appends roster epoch 1, signed by a new owner key, with the recovery wrap.
+2. **Enroll.** A phone posts a join with its signing and box keys and a commitment to a nonce. The primary posts a
+   challenge (its nonce and keys), the phone reveals its nonce, both show six digits over the whole exchange, and the
+   primary appends an `enroll` entry. The server lists the phone only with the device key that asked.
+3. **Live.** Members post signed ops (`POST /reins/api/ops`); the server checks each against the roster (author's
+   role, class, epoch, signature, rising counter, size) and numbers them. Viewers long-poll `GET /reins/api/sync`
+   (ops, the epoch, the primary's heartbeat, and the requests, pairings and joins waiting for the primary, which a
+   viewer's look never marks delivered); the primary sees new ops through `GET /pending` (`log_head`, `log=`). Pushes
+   are `sync` (silent, or an alert when an op asks) and `handover`. The primary writes checkpoints; the server keeps
+   two and drops the ops up to the older. Members acknowledge what they applied (tombstone GC).
+4. **Handover.** A viewer asks (`POST /reins/api/handovers`); the primary appends a `handover` entry with the sealed
+   bundle. The approval role moves at once, unanswered requests, pairings and joins go to the new primary, and the
+   old one gets `replaced`.
+5. **Recovery.** A viewer or a fresh phone appends a `recovery` entry signed with the old owner key (from the recovery
+   wrap) introducing a new one, with the master password hash; the role moves the same way.
+
+Once the account has a roster, A4 answers are `SignedAnswer`s verified against the primary's key, `PUT
+/account-state` answers 410 (reads still work for older apps), and `PUT /device` registers only the roster's primary.
 
 ### Autopilot
 

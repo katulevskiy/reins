@@ -14,6 +14,7 @@ mod organization;
 mod reins_client;
 mod reins_connection;
 mod reins_device;
+mod reins_roster;
 mod reins_vault_passkey;
 pub mod reins_workos;
 mod send;
@@ -42,6 +43,10 @@ pub use self::organization::{
 pub use self::reins_client::ReinsClient;
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;
+pub use self::reins_roster::{
+    Listed, LogLimits, ROLE_PRIMARY, ROLE_VIEWER, ReinsCheckpointRow, ReinsMember, ReinsOps, ReinsRoster,
+    ReinsRosterRow, WriteError,
+};
 pub use self::reins_vault_passkey::ReinsVaultPasskey;
 pub use self::reins_workos::{ReinsDeviceSignout, ReinsSetting, ReinsSsoSession};
 pub use self::send::{Send, SendFileId, SendId, SendType};

@@ -9,7 +9,9 @@
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
 //!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
 //!   phone, wrong proofs sent to take its approval role;
-//! - an approval device: concurrent `GET /pending` long-polls;
+//! - a device: concurrent `GET /pending` and `GET /sync` long-polls;
+//! - a phone of an account with phone roles (key: account and device): op uploads per minute, proposals per hour;
+//! - an account with phone roles: roster changes per hour, ops and bytes its log holds (`REINS_ACCOUNT_LOG_*`);
 //! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer).
 
 use std::{
@@ -258,6 +260,36 @@ pub static OUTBOUND_REQUESTS: LazyLock<RateLimit<String>> =
 pub static OUTBOUND_RUNNING: LazyLock<Concurrency<String>> =
     LazyLock::new(|| Concurrency::new(CONFIG.reins_outbound_max_concurrent()));
 
+/// `POST /reins/api/ops` requests of one phone (key: user id and device id).
+pub static MEMBER_OP_REQUESTS: LazyLock<RateLimit<(String, String)>> =
+    LazyLock::new(|| RateLimit::per_minute(CONFIG.reins_member_op_requests_per_minute()));
+
+/// Proposal ops of one phone (key: user id and device id): the hourly number, all of which may come at once.
+pub static MEMBER_PROPOSALS: LazyLock<RateLimit<(String, String)>> = LazyLock::new(|| {
+    let per_hour = CONFIG.reins_member_proposals_per_hour();
+    RateLimit::with_period(
+        if per_hour == 0 {
+            0
+        } else {
+            3600 / u64::from(per_hour).max(1)
+        },
+        per_hour,
+    )
+});
+
+/// Roster appends of one account (key: user id).
+pub static ROSTER_CHANGES: LazyLock<RateLimit<String>> = LazyLock::new(|| {
+    let per_hour = CONFIG.reins_roster_changes_per_hour();
+    RateLimit::with_period(
+        if per_hour == 0 {
+            0
+        } else {
+            3600 / u64::from(per_hour).max(1)
+        },
+        per_hour,
+    )
+});
+
 /// Housekeeping: drops rate-limit state of keys that are back at a full budget.
 pub fn retain_recent() {
     CONNECTION_REQUESTS.retain_recent();
@@ -267,6 +299,9 @@ pub fn retain_recent() {
     REGISTRATIONS.retain_recent();
     OUTBOUND_REQUESTS.retain_recent();
     DEVICE_PROOFS.retain_recent();
+    MEMBER_OP_REQUESTS.retain_recent();
+    MEMBER_PROPOSALS.retain_recent();
+    ROSTER_CHANGES.retain_recent();
 }
 
 /// Cross-field checks of the limit settings; only called when Reins is enabled.

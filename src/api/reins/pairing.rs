@@ -343,6 +343,39 @@ impl PairingHub {
     pub fn forget_user(&self, user: &str) {
         self.lock().retain(|e| e.user.as_deref() != Some(user));
     }
+
+    /// Open pairings of `user`, oldest first, without marking them delivered (what a viewer shows).
+    pub fn peek_waiting(&self, user: &str) -> Vec<PairingRequest> {
+        let mut out: Vec<PairingRequest> = self
+            .lock()
+            .values()
+            .filter(|e| e.user.as_deref() == Some(user) && matches!(e.stage, Stage::Open))
+            .map(|e| e.request.clone())
+            .collect();
+        out.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        out
+    }
+
+    /// Ids of `user`'s answered pairings still held.
+    pub fn answered_ids(&self, user: &str) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .lock()
+            .values()
+            .filter(|e| e.user.as_deref() == Some(user) && !matches!(e.stage, Stage::Open))
+            .map(|e| e.request.id.0.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Hands `user`'s open pairings to the next `GET /pending` again (a new primary took the role).
+    pub fn requeue(&self, user: &str) {
+        for e in self.lock().values_mut().filter(|e| e.user.as_deref() == Some(user) && matches!(e.stage, Stage::Open))
+        {
+            e.delivered = false;
+        }
+        self.signal.notify();
+    }
 }
 
 #[cfg(test)]

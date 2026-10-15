@@ -10,6 +10,13 @@
 //! An approval also lets the asking device take the approval role (`PUT /reins/api/device`) without another proof:
 //! once, within [`TAKEOVER_TTL`], and only with the device key it asked with ([`JoinHub::take_takeover`]).
 //!
+//! **Enrolling as a viewer** (phone roles, [`reins_proto::enroll`]): the request also carries the phone's signing key
+//! and a commitment; then `POST /reins/api/joins/<id>/challenge` (the approval device, once) and
+//! `POST /reins/api/joins/<id>/reveal` (the asking device, once, after the challenge; the server checks the nonce
+//! opens the commitment). A roster entry may list a new viewer only when such a join of that device, with those keys,
+//! went through both steps ([`JoinHub::enrollment_binding`]): the member is bound to the device key the join was asked
+//! with.
+//!
 //! Everything is in memory for [`ITEM_TTL`] like pairings.
 
 use std::{
@@ -20,8 +27,10 @@ use std::{
 use reins_proto::{
     PROTOCOL_VERSION,
     device::codes,
+    enroll::{EnrollChallenge, EnrollReveal, check_commitment, parse_nonce},
     join::{
-        JoinAnswer, JoinCreated, JoinRequest, JoinState, JoinStatus, MAX_DEVICE_NAME_CHARS, MAX_SEALED_CHARS, NewJoin,
+        JoinAnswer, JoinCreated, JoinRequest, JoinState, JoinStatus, MAX_DEVICE_NAME_CHARS, MAX_ENROLL_SEALED_CHARS,
+        MAX_SEALED_CHARS, NewJoin,
     },
     pairing::{PushKind, PushMessage},
 };
@@ -46,11 +55,9 @@ use crate::{
 
 /// Open requests one account may have at once.
 pub const MAX_PER_USER: usize = 3;
-/// Open requests the server holds in all.
-pub const MAX_JOINS: usize = 1_000;
 /// How long after the approval the asking device may take the approval role on its strength (seconds).
 pub const TAKEOVER_TTL: i64 = 5 * 60;
-const MAX_BODY_BYTES: u64 = 8 * 1024;
+const MAX_BODY_BYTES: u64 = 48 * 1024;
 
 struct Entry {
     user: String,
@@ -67,11 +74,14 @@ struct Entry {
     approved_at: Option<i64>,
     /// The approval was spent on a takeover.
     takeover_used: bool,
+    /// Enrolling: the approval device's challenge, once posted.
+    challenge: Option<EnrollChallenge>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum JoinError {
-    /// The account has [`MAX_PER_USER`] open requests, or the server [`MAX_JOINS`].
+    /// The account has [`MAX_PER_USER`] open requests. There is no limit for the whole server: one would let a few
+    /// accounts keep every other account's phones from joining or enrolling.
     Full,
     Invalid(String),
 }
@@ -80,6 +90,15 @@ pub enum JoinError {
 pub enum AnswerError {
     NotFound,
     AlreadyAnswered,
+    Invalid(String),
+}
+
+/// Why an enrollment step was refused.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StepError {
+    NotFound,
+    /// Not an enrollment, already past this step, or not yet at it.
+    OutOfOrder(&'static str),
     Invalid(String),
 }
 
@@ -122,13 +141,25 @@ impl JoinHub {
         if reins_proto::desktop::decode_key(&new.public_key).is_none() {
             return Err(JoinError::Invalid("public_key must be 32 bytes, base64url".to_owned()));
         }
+        match (&new.sign_pub, &new.commitment) {
+            (None, None) => {}
+            (Some(sign_pub), Some(commitment)) => {
+                if reins_proto::desktop::decode_key(sign_pub).is_none() {
+                    return Err(JoinError::Invalid("sign_pub must be 32 bytes, base64url".to_owned()));
+                }
+                if reins_proto::canon::parse_hex32(commitment).is_none() {
+                    return Err(JoinError::Invalid("commitment must be 64 lowercase hex digits".to_owned()));
+                }
+            }
+            _ => return Err(JoinError::Invalid("an enrollment carries both sign_pub and commitment".to_owned())),
+        }
         let mut name = sanitize_display(&new.device_name, MAX_DEVICE_NAME_CHARS);
         if name.is_empty() {
             "A phone".clone_into(&mut name);
         }
         let mut entries = self.lock();
         entries.retain(|_, e| e.expires_at > now && !(e.user == user && e.device == device));
-        if entries.len() >= MAX_JOINS || entries.values().filter(|e| e.user == user).count() >= MAX_PER_USER {
+        if entries.values().filter(|e| e.user == user).count() >= MAX_PER_USER {
             return Err(JoinError::Full);
         }
         let id = get_uuid();
@@ -145,9 +176,9 @@ impl JoinHub {
                     device_name: name,
                     public_key: new.public_key.clone(),
                     created_at: now,
-                    device_id: None,
-                    sign_pub: None,
-                    commitment: None,
+                    device_id: Some(device.to_owned()),
+                    sign_pub: new.sign_pub.clone(),
+                    commitment: new.commitment.clone(),
                     reveal: None,
                 },
                 delivered: false,
@@ -156,6 +187,7 @@ impl JoinHub {
                 expires_at,
                 approved_at: None,
                 takeover_used: false,
+                challenge: None,
             },
         );
         drop(entries);
@@ -195,7 +227,7 @@ impl JoinHub {
             Some(View::Requester(JoinState {
                 status: entry.status,
                 sealed: entry.sealed.clone(),
-                challenge: None,
+                challenge: entry.challenge.clone(),
             }))
         } else {
             entry.delivered = true;
@@ -216,7 +248,12 @@ impl JoinHub {
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| AnswerError::Invalid("an approval carries the sealed secret".to_owned()))?;
-            if sealed.len() > MAX_SEALED_CHARS {
+            let max = if entry.request.commitment.is_some() {
+                MAX_ENROLL_SEALED_CHARS
+            } else {
+                MAX_SEALED_CHARS
+            };
+            if sealed.len() > max {
                 return Err(AnswerError::Invalid("sealed is too long".to_owned()));
             }
             entry.status = JoinStatus::Approved;
@@ -260,6 +297,102 @@ impl JoinHub {
     /// Drops `user`'s requests with any sealed secret they carry (a deleted account).
     pub fn forget_user(&self, user: &str) {
         self.lock().retain(|_, e| e.user != user);
+    }
+
+    /// Enrollment step 2: the approval device's challenge, once, to a waiting enrollment that has none.
+    pub fn challenge(&self, user: &str, id: &str, challenge: EnrollChallenge, now: i64) -> Result<(), StepError> {
+        challenge.validate().map_err(|e| StepError::Invalid(e.to_string()))?;
+        let mut entries = self.lock();
+        let entry = entries.get_mut(id).filter(|e| e.user == user && e.expires_at > now).ok_or(StepError::NotFound)?;
+        if entry.request.commitment.is_none() || entry.status != JoinStatus::Waiting || entry.challenge.is_some() {
+            return Err(StepError::OutOfOrder("only a waiting enrollment without a challenge takes one"));
+        }
+        entry.challenge = Some(challenge);
+        Ok(())
+    }
+
+    /// Enrollment step 3: the asking device's nonce, once, after the challenge; it must open the commitment.
+    pub fn reveal(&self, user: &str, device: &str, id: &str, reveal: EnrollReveal, now: i64) -> Result<(), StepError> {
+        reveal.validate().map_err(|e| StepError::Invalid(e.to_string()))?;
+        let mut entries = self.lock();
+        let entry = entries
+            .get_mut(id)
+            .filter(|e| e.user == user && e.device == device && e.expires_at > now)
+            .ok_or(StepError::NotFound)?;
+        if entry.challenge.is_none() || entry.request.reveal.is_some() || entry.status != JoinStatus::Waiting {
+            return Err(StepError::OutOfOrder("the nonce is revealed once, after the challenge"));
+        }
+        let (Some(commitment), Some(sign_pub), Some(nonce)) =
+            (&entry.request.commitment, &entry.request.sign_pub, parse_nonce(&reveal.nonce))
+        else {
+            return Err(StepError::Invalid("not an enrollment".to_owned()));
+        };
+        if !check_commitment(commitment, user, device, &entry.request.public_key, sign_pub, &nonce) {
+            return Err(StepError::Invalid("the nonce does not open the commitment".to_owned()));
+        }
+        entry.request.reveal = Some(reveal);
+        // The approval device sees the request again, now with the nonce.
+        entry.delivered = false;
+        drop(entries);
+        self.signal.notify();
+        Ok(())
+    }
+
+    /// The device key a roster may bind `device` to as a new viewer with these keys: that of an enrollment join of
+    /// `device` that went through the challenge and the reveal and was not denied.
+    pub fn enrollment_binding(
+        &self,
+        user: &str,
+        device: &str,
+        box_pub: &str,
+        sign_pub: &str,
+        now: i64,
+    ) -> Option<String> {
+        self.lock()
+            .values()
+            .find(|e| {
+                e.user == user
+                    && e.device == device
+                    && e.expires_at > now
+                    && matches!(e.status, JoinStatus::Waiting | JoinStatus::Approved)
+                    && e.request.public_key == box_pub
+                    && e.request.sign_pub.as_deref() == Some(sign_pub)
+                    && e.challenge.is_some()
+                    && e.request.reveal.is_some()
+            })
+            .and_then(|e| e.key_hash.clone())
+    }
+
+    /// Waiting requests of `user`, without marking them seen (what a viewer shows).
+    pub fn peek_waiting(&self, user: &str, now: i64) -> Vec<JoinRequest> {
+        let mut out: Vec<JoinRequest> = self
+            .lock()
+            .values()
+            .filter(|e| e.user == user && e.status == JoinStatus::Waiting && e.expires_at > now)
+            .map(|e| e.request.clone())
+            .collect();
+        out.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        out
+    }
+
+    /// Ids of `user`'s answered requests still held.
+    pub fn answered_ids(&self, user: &str) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .lock()
+            .iter()
+            .filter(|(_, e)| e.user == user && e.status != JoinStatus::Waiting)
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Hands `user`'s waiting requests to the next `GET /pending` again (a new primary).
+    pub fn requeue(&self, user: &str) {
+        for e in self.lock().values_mut().filter(|e| e.user == user && e.status == JoinStatus::Waiting) {
+            e.delivered = false;
+        }
+        self.signal.notify();
     }
 }
 
@@ -316,6 +449,41 @@ async fn get_join(id: &str, headers: Headers, key: DeviceKey, conn: DbConn) -> P
     }
 }
 
+/// Enrollment step 2 (the approval device).
+#[post("/reins/api/joins/<id>/challenge", data = "<data>")]
+async fn post_join_challenge(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let challenge: EnrollChallenge = parse_versioned(&read_body_limited(data, MAX_BODY_BYTES).await?)?;
+    HUB.joins.challenge(&user_key(&headers), id, challenge, now_unix()).map_err(step_error)?;
+    HUB.live.bump(&user_key(&headers));
+    Ok(Status::NoContent)
+}
+
+/// Enrollment step 3 (the asking device).
+#[post("/reins/api/joins/<id>/reveal", data = "<data>")]
+async fn post_join_reveal(id: &str, data: Data<'_>, headers: Headers) -> PhoneResult<Status> {
+    let reveal: EnrollReveal = parse_versioned(&read_body_limited(data, MAX_BODY_BYTES).await?)?;
+    HUB.joins
+        .reveal(&user_key(&headers), &headers.device.uuid.to_string(), id, reveal, now_unix())
+        .map_err(step_error)?;
+    HUB.live.bump(&user_key(&headers));
+    Ok(Status::NoContent)
+}
+
+fn step_error(e: StepError) -> rocket::response::status::Custom<Json<reins_proto::device::ApiError>> {
+    match e {
+        StepError::NotFound => not_found(),
+        StepError::OutOfOrder(m) => api_err(Status::Conflict, codes::ALREADY_ANSWERED, m),
+        StepError::Invalid(m) => bad_request(m),
+    }
+}
+
 #[post("/reins/api/joins/<id>/response", data = "<data>")]
 async fn post_join_response(
     id: &str,
@@ -331,11 +499,12 @@ async fn post_join_response(
         AnswerError::AlreadyAnswered => super::device_api::already_answered(),
         AnswerError::Invalid(m) => bad_request(m),
     })?;
+    HUB.live.bump(&user_key(&headers));
     Ok(Status::NoContent)
 }
 
 pub fn routes() -> Vec<Route> {
-    routes![post_join, get_join, post_join_response]
+    routes![post_join, get_join, post_join_challenge, post_join_reveal, post_join_response]
 }
 
 #[cfg(test)]
@@ -468,5 +637,71 @@ mod tests {
         assert!(matches!(hub.answer("u1", &again.id, &no_secret, 105), Err(AnswerError::Invalid(_))));
         hub.purge(late + 10_000);
         assert!(hub.view("u1", "d1", &again.id, late).is_none());
+    }
+
+    #[test]
+    fn an_enrollment_goes_commitment_challenge_reveal_and_only_then_binds_its_key() {
+        use reins_proto::{
+            desktop::encode_key,
+            enroll::{commitment, encode_nonce},
+        };
+        let hub = hub();
+        let (box_pub, sign_pub) = (encode_key(&[9u8; 32]), encode_key(&[8u8; 32]));
+        let nonce = [5u8; 32];
+        let new = NewJoin {
+            sign_pub: Some(sign_pub.clone()),
+            commitment: commitment("u1", "viewer", &box_pub, &sign_pub, &nonce),
+            ..new_join("Pixel")
+        };
+        let half = NewJoin {
+            commitment: None,
+            ..new.clone()
+        };
+        assert!(matches!(hub.create("u1", "viewer", Some("kv"), &half, 100), Err(JoinError::Invalid(_))));
+        let created = hub.create("u1", "viewer", Some("kv"), &new, 100).unwrap();
+        let request = hub.take_undelivered("u1", 100).pop().unwrap();
+        assert_eq!(
+            (request.device_id.as_deref(), request.sign_pub.as_deref()),
+            (Some("viewer"), Some(sign_pub.as_str()))
+        );
+        let reveal = |n: [u8; 32]| EnrollReveal {
+            v: 1,
+            nonce: encode_nonce(&n),
+            proof: None,
+        };
+        let challenge = EnrollChallenge {
+            v: 1,
+            nonce: encode_nonce(&[1; 32]),
+            primary_sign_pub: encode_key(&[2; 32]),
+            owner_pub: encode_key(&[3; 32]),
+            epoch: 1,
+        };
+        assert!(matches!(hub.reveal("u1", "viewer", &created.id, reveal(nonce), 101), Err(StepError::OutOfOrder(_))));
+        assert_eq!(hub.enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 101), None);
+        hub.challenge("u1", &created.id, challenge.clone(), 101).unwrap();
+        assert!(matches!(hub.challenge("u1", &created.id, challenge, 101), Err(StepError::OutOfOrder(_))));
+        assert!(matches!(hub.reveal("u1", "other", &created.id, reveal(nonce), 102), Err(StepError::NotFound)));
+        assert!(matches!(hub.reveal("u1", "viewer", &created.id, reveal([6; 32]), 102), Err(StepError::Invalid(_))));
+        hub.reveal("u1", "viewer", &created.id, reveal(nonce), 102).unwrap();
+        assert!(matches!(hub.reveal("u1", "viewer", &created.id, reveal(nonce), 102), Err(StepError::OutOfOrder(_))));
+        // Bound to the key that asked, for exactly these keys and this device.
+        assert_eq!(hub.enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 103).as_deref(), Some("kv"));
+        assert_eq!(hub.enrollment_binding("u1", "viewer", &box_pub, &encode_key(&[7; 32]), 103), None);
+        assert_eq!(hub.enrollment_binding("u1", "other", &box_pub, &sign_pub, 103), None);
+        assert_eq!(hub.enrollment_binding("u2", "viewer", &box_pub, &sign_pub, 103), None);
+        // The approval device sees it again, with the nonce; viewers see it without taking it.
+        assert!(hub.take_undelivered("u1", 103)[0].reveal.is_some());
+        assert_eq!(hub.peek_waiting("u1", 103).len(), 1);
+        assert!(hub.take_undelivered("u1", 103).is_empty());
+        hub.requeue("u1");
+        assert_eq!(hub.take_undelivered("u1", 103).len(), 1, "a new primary gets it again");
+        let deny = JoinAnswer {
+            v: 1,
+            approve: false,
+            sealed: None,
+        };
+        hub.answer("u1", &created.id, &deny, 104).unwrap();
+        assert_eq!(hub.enrollment_binding("u1", "viewer", &box_pub, &sign_pub, 104), None, "not once denied");
+        assert_eq!(hub.answered_ids("u1"), [created.id]);
     }
 }
