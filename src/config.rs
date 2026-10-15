@@ -587,6 +587,10 @@ make_config! {
         reins_register_ratelimit_max_burst: u32, false, def, 10;
         /// Long-polls per device |> Concurrent GET /reins/api/pending and GET /reins/api/sync long-polls of one device. 0 disables the limit.
         reins_device_max_polls:      u32,    false,  def,    4;
+        /// Join requests per IP (seconds) |> Average seconds between "add another phone" requests (POST /reins/api/joins, also how a phone enrolls as a viewer) from one IP address. 0 disables the limit.
+        reins_join_ratelimit_seconds: u64,   false,  def,    60;
+        /// Join requests burst |> Join requests from one IP address allowed at once, while keeping the average above. 0 disables the limit.
+        reins_join_ratelimit_max_burst: u32, false,  def,    10;
         /// Op uploads per member per minute |> POST /reins/api/ops requests one phone of an account with phone roles may make per minute (each carries up to 100 ops). 0 disables the limit.
         reins_member_op_requests_per_minute: u32, false, def, 120;
         /// Proposals per viewer per hour |> Proposal ops (a viewer suggesting a connection or credential) one phone may write per hour. 0 disables the limit.

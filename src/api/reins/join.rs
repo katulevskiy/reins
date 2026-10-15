@@ -2,7 +2,9 @@
 //! device for the account secret; the server holds the request and relays the sealed answer, which it cannot open.
 //!
 //! - `POST /reins/api/joins` (any signed-in device of the account but the approval device): parks the request and
-//!   wakes the approval device (push `join`). One open request per device (a new one replaces it), a few per account.
+//!   wakes the approval device (push `join`). One open request per device (a new one replaces it), at most
+//!   [`MAX_PER_USER`] per account, and a few per IP address over time ([`super::limits::JOIN_CREATIONS`]). Expired
+//!   requests are dropped on every new request and by the scheduled purge.
 //! - `GET /reins/api/joins/<id>`: the asking device gets its [`JoinState`]; the approval device the
 //!   [`JoinRequest`].
 //! - `POST /reins/api/joins/<id>/response` (the approval device): approves with the sealed secret, or denies.
@@ -48,7 +50,7 @@ use super::{
     relay::ItemSignal,
 };
 use crate::{
-    auth::Headers,
+    auth::{ClientIp, Headers},
     db::{DbConn, DbPool, models::ReinsDevice},
     util::get_uuid,
 };
@@ -402,9 +404,13 @@ async fn post_join(
     data: Data<'_>,
     headers: Headers,
     key: DeviceKey,
+    ip: ClientIp,
     conn: DbConn,
     pool: &State<DbPool>,
 ) -> PhoneResult<Json<JoinCreated>> {
+    if let Err(wait) = super::limits::JOIN_CREATIONS.check(&ip.ip) {
+        return Err(super::device_api::rate_limited("too many requests to add a phone from this address", wait));
+    }
     let approval = ReinsDevice::find_by_user(&headers.user.uuid, &conn).await;
     let Some(approval) = approval else {
         return Err(api_err(

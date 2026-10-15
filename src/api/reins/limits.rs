@@ -12,7 +12,8 @@
 //! - a device: concurrent `GET /pending` and `GET /sync` long-polls;
 //! - a phone of an account with phone roles (key: account and device): op uploads per minute, proposals per hour;
 //! - an account with phone roles: roster changes per hour, ops and bytes its log holds (`REINS_ACCOUNT_LOG_*`);
-//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer).
+//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer), "add
+//!   another phone" join requests (with at most [`super::join::MAX_PER_USER`] open per account).
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -260,6 +261,11 @@ pub static OUTBOUND_REQUESTS: LazyLock<RateLimit<String>> =
 pub static OUTBOUND_RUNNING: LazyLock<Concurrency<String>> =
     LazyLock::new(|| Concurrency::new(CONFIG.reins_outbound_max_concurrent()));
 
+/// "Add another phone" join requests (`POST /reins/api/joins`, also enrollments) per IP address.
+pub static JOIN_CREATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
+    RateLimit::with_period(CONFIG.reins_join_ratelimit_seconds(), CONFIG.reins_join_ratelimit_max_burst())
+});
+
 /// `POST /reins/api/ops` requests of one phone (key: user id and device id).
 pub static MEMBER_OP_REQUESTS: LazyLock<RateLimit<(String, String)>> =
     LazyLock::new(|| RateLimit::per_minute(CONFIG.reins_member_op_requests_per_minute()));
@@ -302,6 +308,7 @@ pub fn retain_recent() {
     MEMBER_OP_REQUESTS.retain_recent();
     MEMBER_PROPOSALS.retain_recent();
     ROSTER_CHANGES.retain_recent();
+    JOIN_CREATIONS.retain_recent();
 }
 
 /// Cross-field checks of the limit settings; only called when Reins is enabled.

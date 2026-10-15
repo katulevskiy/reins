@@ -171,8 +171,9 @@ roster:
   typed restrictions (revoke a grant, Lockdown, stop Bypass), which can only tighten.
 - Viewers read the waiting list, connections and the log; they approve, deny, pair and remove nothing. A stolen viewer
   can propose (inert until the primary keeps it) and pull the brake (Lockdown); the primary removes it.
-- Limits are per phone (op uploads, proposals) or per account (roster changes, ops and bytes the log holds), never one
-  for the whole server.
+- Limits are per phone (op uploads, proposals), per account (roster changes, ops and bytes the log holds, at most 3
+  open join requests) or per IP address (join requests, `REINS_JOIN_RATELIMIT_*`), never one for the whole server.
+  Join requests expire after 10 minutes and are dropped on the next request and by the scheduled purge.
 
 **Signing a device out** (Settings → Devices, `DELETE /reins/api/devices/{id}`). Only the approval device may do it,
 not to itself, and with the master password hash of the recovery code or master password typed then (counted with
