@@ -127,7 +127,7 @@ class UpdatesFlowTest : FlowHarness() {
         updates.publish(5, versionName = "0.2.0")
         launch()
         awaitTag("updatePrompt")
-        awaitText("Reins 0.2.0 is ready to install.")
+        awaitText("Reins 0.2.0 is ready to install")
         tap("updatePromptLater")
         awaitGone("updatePrompt")
         awaitCore { updatePrefs.getLong("snoozed_version", 0) == 5L }

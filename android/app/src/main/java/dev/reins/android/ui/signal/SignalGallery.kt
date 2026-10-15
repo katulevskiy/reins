@@ -182,16 +182,7 @@ private fun TypePage() {
     Section("Ask at the smallest it shrinks to (32)") {
         AskText("Delete the repository octo/old-api and every one of its forks, issues and releases", c.ink, target = "octo/old-api")
     }
-    Section("Appearance") {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SignalChip("Instrument Sans", !appearance.geist) { Appearance.set(context, appearance.copy(geist = false)) }
-            SignalChip("Geist", appearance.geist) { Appearance.set(context, appearance.copy(geist = true)) }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RText("Grain on fields", RType.row, c.ink, Modifier.weight(1f))
-            Toggle(appearance.grain) { Appearance.set(context, AppearanceChoice(appearance.geist, it)) }
-        }
-    }
+    // The sans and the grain are chosen in Settings › Appearance.
 }
 
 @Composable

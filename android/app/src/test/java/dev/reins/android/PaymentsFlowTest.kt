@@ -82,7 +82,7 @@ class PaymentsFlowTest : FlowHarness() {
     fun payments_is_turned_on_and_privacy_dot_com_connected_from_integrations() {
         core.payments = TestData.paymentsOverview(enabled = false).copy(provider = null, limits = emptyList())
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:payments")
         awaitTag("paymentsEnable")
         core.payments = TestData.paymentsOverview().copy(provider = null, limits = emptyList())
@@ -103,7 +103,7 @@ class PaymentsFlowTest : FlowHarness() {
     fun spending_shows_a_foreign_charge_and_closes_an_open_card() {
         core.payments = TestData.paymentsOverview()
         launch()
-        tap("integrations")
+        tap("tabConnections")
         tap("service:payments")
         tap("openSpending")
         awaitTag("mismatch:p1")

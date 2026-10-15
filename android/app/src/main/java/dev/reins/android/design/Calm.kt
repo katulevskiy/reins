@@ -35,19 +35,22 @@ fun Calm(
     modifier: Modifier = Modifier,
     illustration: Illustration = Illustration.Pond,
     tag: String? = null,
+    moodStyle: androidx.compose.ui.text.TextStyle = RType.mood,
+    drawingWidth: androidx.compose.ui.unit.Dp = 420.dp,
+    gap: androidx.compose.ui.unit.Dp = 18.dp,
 ) {
     val c = LocalColors.current
     Column(
         modifier.fillMaxWidth().then(if (tag != null) Modifier.testTag(tag) else Modifier),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(gap),
     ) {
         Image(
             painterResource(illustration.res),
             contentDescription = null,
-            modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth().aspectRatio(illustration.aspect),
+            modifier = Modifier.widthIn(max = drawingWidth).fillMaxWidth().aspectRatio(illustration.aspect),
             contentScale = ContentScale.Fit,
         )
-        RText(mood, RType.mood, c.ink2, align = TextAlign.Center)
+        RText(mood, moodStyle, c.ink2, align = TextAlign.Center)
     }
 }

@@ -98,7 +98,7 @@ class OnboardingFlowTest : FlowHarness() {
     /** Settings > Connect > Computer > "Scan QR code": the connect page opens and starts the scanner. */
     private fun scanFromSettings() {
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connect")
         tap("sheetScanQr")
         awaitTag("scanQr")
@@ -403,7 +403,7 @@ class OnboardingFlowTest : FlowHarness() {
     @Test
     fun typeCodeInTheConnectSheetOpensTheCodeField() {
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connect")
         tap("sheetTypeCode")
         awaitTag("pairCode")

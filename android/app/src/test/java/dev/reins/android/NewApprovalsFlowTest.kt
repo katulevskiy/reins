@@ -162,7 +162,7 @@ class NewApprovalsFlowTest : FlowHarness() {
         launch()
         awaitTag("pending:blob_0123456789abcdef")
         rule.onNodeWithTag("sentence:blob_0123456789abcdef", useUnmergedTree = true)
-            .assertTextContains("Wants to share a file: 18.0 KB · The quarterly numbers for the summary", substring = true)
+            .assertTextContains("Share a file: 18.0 KB · The quarterly numbers for the summary", substring = true)
         if (!has("uploadSheet")) tap("pending:blob_0123456789abcdef")
         awaitTag("uploadSheet")
         rule.onNodeWithTag("uploadReason").assertTextContains("The quarterly numbers for the summary", substring = true)

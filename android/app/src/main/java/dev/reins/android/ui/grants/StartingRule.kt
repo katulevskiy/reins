@@ -26,6 +26,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.reins.android.design.LocalColors
+import dev.reins.android.design.hairlineBelow
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
 import dev.reins.android.feedback.Event
@@ -111,6 +112,54 @@ private fun RuleRow(policy: StartingPolicy, on: Boolean, onClick: () -> Unit) {
                 }
             }
             RText(StartingRuleText.detail(policy), RType.sans(13f, lineHeight = 18f), c.tertiary, Modifier.padding(top = 3.dp))
+        }
+    }
+}
+
+/**
+ * The starting rule on Trust (Signal): its label with the (?) beside it, and the two rules as hairline rows with a
+ * radio. The same choice as [StartingRuleChooser], drawn like the rest of Trust.
+ */
+@Composable
+fun StartingRuleSection(selected: StartingPolicy?, modifier: Modifier = Modifier, onChoose: (StartingPolicy) -> Unit) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    var help by rememberSaveable { mutableStateOf(false) }
+    Column(modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            dev.reins.android.design.LabelText(StartingRuleText.HEADER, c.inkMeta)
+            dev.reins.android.ui.settings.HelpIcon(help, StartingRuleText.HEADER) { help = it }
+        }
+        dev.reins.android.design.HelpText(StartingRuleText.HELP, help, Modifier.padding(bottom = 6.dp))
+        StartingRuleText.ORDER.forEach { policy ->
+            val on = selected == policy
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .hairlineBelow(c.rule)
+                    .testTag("rule:${policy.name}")
+                    .selectable(on, role = Role.RadioButton) {
+                        if (!on) {
+                            onChoose(policy)
+                            feedback.play(Event.Selection)
+                        }
+                    }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                dev.reins.android.design.SignalRadio(on)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RText(StartingRuleText.title(policy), RType.row, c.ink, Modifier.weight(1f, fill = false), maxLines = 1)
+                        if (StartingRuleText.recommended(policy)) {
+                            Spacer(Modifier.width(8.dp))
+                            dev.reins.android.design.Pill("Recommended", c.success)
+                        }
+                    }
+                    RText(StartingRuleText.detail(policy), RType.meta, c.inkMeta, Modifier.padding(top = 2.dp))
+                }
+            }
         }
     }
 }

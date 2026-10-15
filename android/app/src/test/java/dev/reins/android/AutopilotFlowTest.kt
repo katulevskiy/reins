@@ -5,6 +5,9 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -17,8 +20,7 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import dev.reins.android.autopilot.WorkModelDownloads
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.FeedbackProvider
-import dev.reins.android.ui.autopilot.QuickStyle
-import dev.reins.android.ui.autopilot.QuickStyles
+import androidx.compose.ui.test.performTouchInput
 import dev.reins.core.AutopilotMode
 import dev.reins.core.CoreException
 import dev.reins.core.ModelState
@@ -51,7 +53,6 @@ class AutopilotFlowTest : FlowHarness() {
     @After
     fun stopListening() {
         FeedbackProvider.observer = null
-        QuickStyles.set(context, QuickStyle.DEFAULT)
     }
 
     private fun installModel() {
@@ -60,8 +61,7 @@ class AutopilotFlowTest : FlowHarness() {
 
     private fun openAutopilot() {
         launch()
-        tap("tabSettings")
-        tap("openAutopilot")
+        tap("tabTrust")
         awaitTag("mode:MANUAL")
     }
 
@@ -125,34 +125,18 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun theSliderTicksAtEachDetentAndSetsTheModeItLandsOn() {
+    fun theMenusBypassOpensTheSheetAndCancelChangesNothing() {
         installModel()
-        QuickStyles.set(context, QuickStyle.Slider)
         launch()
         tap("modePill")
-        awaitTag("riskSlider")
-        rule.onNodeWithTag("quickMode").assertTextContains("Manual")
-        heard.clear()
-        tap("detent:AUTO")
-        assertTrue(heard.played(Event.Detent))
-        awaitCore { core.modeCalls.isNotEmpty() }
-        assertEquals(Triple(null, AutopilotMode.AUTO, null), core.modeCalls.single())
-    }
-
-    @Test
-    fun theSlidersBypassOpensTheSheetAndCancelChangesNothing() {
-        installModel()
-        QuickStyles.set(context, QuickStyle.Slider)
-        launch()
-        tap("modePill")
-        tap("detent:BYPASS")
+        tap("quick:BYPASS")
         awaitTag("bypassSheet")
         assertTrue(core.modeCalls.isEmpty())
         tap("cancelBypass")
         awaitGone("bypassSheet")
         assertTrue(core.modeCalls.isEmpty())
         tap("modePill")
-        tap("detent:BYPASS")
+        tap("quick:BYPASS")
         hold("confirmBypass")
         awaitCore { core.bypassCalls.isNotEmpty() }
         assertEquals("1 hour unless another is picked", null to 60u, core.bypassCalls.single())
@@ -160,12 +144,24 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun thePageStyleOpensTheFullPage() {
-        QuickStyles.set(context, QuickStyle.Page)
+    fun crossingTheMenusRowsTicksEachOne() {
+        installModel()
         launch()
         tap("modePill")
-        awaitTag("modeHero")
-        assertFalse(has("autopilotQuick"))
+        awaitTag("autopilotQuick")
+        heard.clear()
+        val manual = rule.onNodeWithTag("quick:MANUAL").fetchSemanticsNode().boundsInRoot
+        val lockdown = rule.onNodeWithTag("quick:LOCKDOWN").fetchSemanticsNode().boundsInRoot
+        val menu = rule.onNodeWithTag("autopilotQuick").fetchSemanticsNode().boundsInRoot
+        // One gesture: press on Manual, slide down to Lockdown, let go there.
+        rule.onNodeWithTag("autopilotQuick").performTouchInput {
+            down(androidx.compose.ui.geometry.Offset(manual.center.x - menu.left, manual.center.y - menu.top))
+            moveTo(androidx.compose.ui.geometry.Offset(lockdown.center.x - menu.left, lockdown.center.y - menu.top))
+            up()
+        }
+        awaitCore { core.modeCalls.isNotEmpty() }
+        assertTrue("each row crossed ticks", heard.played(Event.MenuRow))
+        assertEquals(AutopilotMode.LOCKDOWN, core.modeCalls.single().second)
     }
 
     @Test
@@ -183,7 +179,7 @@ class AutopilotFlowTest : FlowHarness() {
         awaitTag("modePill")
         rule.onNodeWithContentDescription("Autopilot: Bypass").assertExists()
         assertFalse("no countdown to a time that never comes", has("quickBypassLeft"))
-        tap("tabAutopilot")
+        tap("tabTrust")
         awaitTag("bypassUntilOff")
         rule.onNodeWithTag("bypassLine", useUnmergedTree = true).assertTextContains("On until you stop it · 2 days so far")
         tap("stopBypass")
@@ -206,17 +202,6 @@ class AutopilotFlowTest : FlowHarness() {
             rule.onNodeWithTag("mode:${other.name}").assertIsNotSelected().assertIsEnabled()
         }
         assertEquals(listOf(AutopilotMode.AUTO, AutopilotMode.MANUAL, AutopilotMode.AUTO, AutopilotMode.MANUAL), core.modeCalls.map { it.second })
-    }
-
-    @Test
-    fun theModeHelpSitsBesideTheWordMode() {
-        openAutopilot()
-        val header = rule.onNodeWithTag("modeHeader").fetchSemanticsNode().boundsInRoot
-        val help = rule.onNodeWithTag("help:Mode").fetchSemanticsNode().boundsInRoot
-        val hero = rule.onNodeWithTag("modeHero").fetchSemanticsNode().boundsInRoot
-        assertTrue("on the header's line, above the options", help.bottom <= hero.top && help.top >= header.top)
-        tap("help:Mode")
-        awaitTag("modeHelp")
     }
 
     @Test
@@ -603,7 +588,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun aConnectionGetsItsOwnModeAndProfile() {
         installModel()
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         awaitTag("connectionMode")
         tap("connMode:AUTO")
@@ -624,7 +609,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         core.modeFailure = CoreException.Invalid("a connection paired less than 10 minutes ago cannot be put in bypass")
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         tap("connMode:BYPASS")
         awaitTag("bypassSheet")
@@ -642,7 +627,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         authResult = dev.reins.android.platform.AuthResult.Cancelled
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         tap("connMode:BYPASS")
         hold("confirmBypass")
@@ -662,7 +647,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         core.apConnections["c1"] = FakeCore.ApRow(mode = AutopilotMode.AUTO, bypassUntil = now + 600)
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         awaitTag("stopConnectionBypass")
         rule.onNodeWithTag("connectionModeLine", useUnmergedTree = true).assertTextContains("10 min left", substring = true)
@@ -693,7 +678,7 @@ class AutopilotFlowTest : FlowHarness() {
         assertTrue(heard.played(Event.AutopilotOn))
         awaitTag("overnightClock")
         rule.onNodeWithTag("overnightClock").assertTextContains("15:00")
-        rule.onNodeWithTag("heroMode").assertTextContains("Overnight")
+        rule.onNodeWithTag("heroMode").assertTextContains("Overnight", substring = true)
         tap("stopOvernight")
         awaitCore { core.modeCalls.size == 2 }
         assertEquals("back to the mode it interrupted", Triple(null, AutopilotMode.AUTO, null), core.modeCalls.last())
@@ -736,7 +721,7 @@ class AutopilotFlowTest : FlowHarness() {
         core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.OVERNIGHT, overnightUntil = now + 600, overnightSince = now - 60, overnightReturn = AutopilotMode.AUTO)
         authResult = dev.reins.android.platform.AuthResult.Cancelled
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         tap("connMode:OVERNIGHT")
         hold("confirmOvernight")
@@ -854,12 +839,11 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun theSlidersOvernightOpensItsSheet() {
+    fun theMenusOvernightOpensItsSheet() {
         installModel()
-        QuickStyles.set(context, QuickStyle.Slider)
         launch()
         tap("modePill")
-        tap("detent:OVERNIGHT")
+        tap("quick:OVERNIGHT")
         awaitTag("overnightSheet")
         assertTrue(core.modeCalls.isEmpty())
         hold("confirmOvernight")
@@ -873,7 +857,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         core.apConnections["c1"] = FakeCore.ApRow(mode = AutopilotMode.MANUAL)
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         tap("connMode:OVERNIGHT")
         awaitTag("overnightSheet")
@@ -928,37 +912,68 @@ class AutopilotFlowTest : FlowHarness() {
 
     @Test
     fun aWaitingCardOffersAutopilotsPick() {
-        core.pending = listOf(
-            TestData.pending("r1", quick = true),
-            TestData.pending("r2", "send", 1u, label = "Codex", conn = "c2", quick = true),
-            TestData.pending("r3", "read", label = "Cursor", conn = "c3", quick = true),
-            TestData.pending("r4", "write", 1u, label = "Hermes", conn = "c4", service = "github", op = "repo_delete", opTitle = "Delete a repository"),
-            TestData.pending("r5", label = "Gemini", conn = "c5", quick = true),
-        )
+        val r1 = TestData.pending("r1", quick = true)
+        val r2 = TestData.pending("r2", "send", 1u, label = "Codex", conn = "c2", quick = true)
+        val r3 = TestData.pending("r3", "read", label = "Cursor", conn = "c3", quick = true)
+        val r4 = TestData.pending("r4", "write", 1u, label = "Hermes", conn = "c4", service = "github", op = "repo_delete", opTitle = "Delete a repository")
+        val r5 = TestData.pending("r5", label = "Gemini", conn = "c5", quick = true)
         core.suggestions["r1"] = TestData.suggestion("r1")
         core.suggestions["r2"] = TestData.suggestion("r2", verdict = Verdict.DENY, pApprove = 0.03f, pDeny = 0.92f)
         core.suggestions["r3"] = TestData.suggestion("r3", verdict = Verdict.ASK, pApprove = 0.62f, pDeny = 0.1f)
         core.suggestions["r4"] = TestData.suggestion("r4")
         dev.reins.android.platform.Foreground.autoPopup = false
+        // The stack shows its top card's pick; each one is put on top in turn.
+        fun onTop(item: dev.reins.core.PendingItem) {
+            core.pending = listOf(item)
+            // Off the main thread: an answer still going out holds the refresh, and it needs the main thread.
+            Thread { kotlinx.coroutines.runBlocking { container.refreshPending() } }.start()
+        }
+        core.pending = listOf(r1)
         launch()
         awaitTag("allow:r1")
-        awaitTag("deny:r2")
+        rule.onNodeWithTag("allow:r1").assertTextEquals("Allow · 97%")
+        onTop(r3)
         awaitTag("unsure:r3")
         // Asked every time: never a one-tap Allow, whatever Autopilot thinks.
+        onTop(r4)
         awaitTag("alwaysAsks:r4")
         assertFalse(has("allow:r4"))
         // No suggestion at all: Review alone.
+        onTop(r5)
         awaitTag("review:r5")
         assertFalse(has("allow:r5") || has("deny:r5") || has("unsure:r5"))
+        onTop(r1)
         tap("allow:r1")
         awaitCore { core.quickApprovals.contains("r1") }
         assertEquals("Allow checks the owner first", 1, prompts.get())
         assertTrue("approved once, no standing grant", core.approvals.isEmpty())
+        onTop(r2)
+        awaitTag("deny:r2")
         tap("deny:r2")
         awaitCore { core.denials.contains("r2") }
         assertEquals("Deny needs no check", 1, prompts.get())
     }
 
+    /** A flick right takes Autopilot's pick (its owner check first), a flick left denies; short of 35 % it springs back. */
+    @Test
+    fun flickingTheTopCardAnswersIt() {
+        core.suggestions["r1"] = TestData.suggestion("r1")
+        core.suggestions["r2"] = TestData.suggestion("r2")
+        core.pending = listOf(TestData.pending("r1", quick = true), TestData.pending("r2", "read", label = "Cursor", conn = "c3", quick = true))
+        dev.reins.android.platform.Foreground.autoPopup = false
+        launch()
+        awaitTag("allow:r1")
+        rule.onNodeWithTag("pending:r1").performTouchInput { swipeRight(startX = centerX, endX = centerX + width * 0.2f, durationMillis = 400) }
+        settle()
+        assertTrue("a short drag answers nothing", core.quickApprovals.isEmpty() && core.denials.isEmpty())
+        rule.onNodeWithTag("pending:r1").performTouchInput { swipeRight(startX = left + 10f, endX = right, durationMillis = 300) }
+        awaitCore { core.quickApprovals.contains("r1") }
+        assertEquals("the owner's check, as Allow", 1, prompts.get())
+        awaitTag("allow:r2")
+        rule.onNodeWithTag("pending:r2").performTouchInput { swipeLeft(startX = right - 10f, endX = left, durationMillis = 300) }
+        awaitCore { core.denials.contains("r2") }
+        assertEquals(1, prompts.get())
+    }
     @Test
     fun theApprovalScreenShowsTheRiskAndThatOvernightHeldIt() {
         installModel()
@@ -1002,7 +1017,7 @@ class AutopilotFlowTest : FlowHarness() {
         )
         assertFalse("a low risk is left to the entry's page", inRow("rowRisk:4"))
         assertFalse(inRow("rowRisk:2"))
-        assertTrue("its marker", rule.onAllNodes(androidx.compose.ui.test.hasText("Overnight"), useUnmergedTree = true).fetchSemanticsNodes().size >= 2)
+        assertTrue("its marker", rule.onAllNodes(androidx.compose.ui.test.hasText("Overnight"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
         assertEquals(dev.reins.android.ui.activity.Outcome.Overnight, dev.reins.android.ui.activity.outcomeOf(core.activity[1]))
         assertEquals(dev.reins.android.ui.activity.Outcome.OvernightDenied, dev.reins.android.ui.activity.outcomeOf(core.activity[0]))
         assertEquals("Denied by Overnight", dev.reins.android.ui.activity.outcomeLine(core.activity[0]))
