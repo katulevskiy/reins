@@ -47,8 +47,8 @@ enum ModeLook {
     }
 }
 
-/// The header's Autopilot pill: the global mode at a glance. Red with a live countdown while a bypass runs, amber in
-/// Lockdown, quiet otherwise.
+/// The header's Autopilot pill: the global mode at a glance. Red with a live countdown while a bypass runs, night
+/// indigo with the moon and its countdown during an Overnight, amber in Lockdown, quiet otherwise.
 struct ActivityModePill: View {
     var settings: AutopilotSettings
     var action: () -> Void
@@ -61,22 +61,22 @@ struct ActivityModePill: View {
 }
 
 /// What the mode pill shows: the mode's symbol and name, or a pulse and the time left while a bypass runs (a pulse
-/// and "Bypass" for one without an end).
+/// and "Bypass" for one without an end); the moon and the time left during an Overnight.
 struct ModePillLabel: View {
     var settings: AutopilotSettings
 
     var body: some View {
         let mode = settings.mode
         let tint = ModeLook.tint(mode)
-        let strong = mode == .bypass
+        let strong = ModeLook.running(settings)
         HStack(spacing: 6) {
-            if strong {
+            if strong && mode == .bypass {
                 PulseDot()
             } else {
                 Image(systemName: ModeLook.symbol(mode)).font(.system(size: 13, weight: .semibold))
             }
-            // A bypass without an end has nothing to count down: it reads as the mode, as on Android.
-            if strong, let until = settings.bypassUntil, !AutopilotText.isUntilOff(until) {
+            // One without an end has nothing to count down: it reads as the mode, as on Android.
+            if strong, let until = ModeLook.runningUntil(settings), !AutopilotText.isUntilOff(until) {
                 LiveClock(interval: 1) { now in
                     Text(ModeLook.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
                 }
@@ -85,19 +85,40 @@ struct ModePillLabel: View {
             }
         }
         .lineLimit(1)
-        .foregroundStyle(strong ? Color.white : tint)
+        .foregroundStyle(strong ? ModeLook.onTint(mode) : tint)
         .padding(.horizontal, 13)
         .frame(height: HeaderControl.height)
     }
 }
 
+extension ModeLook {
+    /// A bypass or an Overnight runs: the pill turns solid in its colour and counts down.
+    static func running(_ settings: AutopilotSettings) -> Bool { runningUntil(settings) != nil }
+
+    /// The end of the bypass or Overnight in force (`AutopilotText.untilOff` without one), nil otherwise.
+    static func runningUntil(_ settings: AutopilotSettings) -> Int64? {
+        switch settings.mode {
+        case .bypass: settings.bypassUntil
+        case .overnight: settings.overnightUntil
+        default: nil
+        }
+    }
+
+    /// What reads on the mode's solid colour: white on Bypass's red, and on Overnight's indigo a deep night in dark mode,
+    /// where the indigo is light.
+    static func onTint(_ mode: AutopilotMode) -> Color {
+        mode == .overnight ? Palette.dynamic(0xFFFFFF, 0x0E1033) : Color.white
+    }
+}
+
 extension View {
-    /// The mode pill's glass: red during a bypass, the mode's tint otherwise, with its label and identifier.
+    /// The mode pill's glass: solid in its colour during a bypass or an Overnight, the mode's tint otherwise, with its
+    /// label and identifier.
     func modePillGlass(_ settings: AutopilotSettings) -> some View {
         let mode = settings.mode
         let tint = ModeLook.tint(mode)
-        let strong = mode == .bypass
-        return glassEffect(.regular.tint(strong ? Palette.danger : tint.opacity(0.16)).interactive(), in: Capsule())
+        let strong = ModeLook.running(settings)
+        return glassEffect(.regular.tint(strong ? tint : tint.opacity(0.16)).interactive(), in: Capsule())
             .accessibilityLabel("Autopilot: \(ModeLook.name(mode))")
             .accessibilityIdentifier("modePill")
     }

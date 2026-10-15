@@ -175,13 +175,16 @@ enum Glance {
     /// the same end keeps its start (so the ring does not jump), a new or restarted bypass starts a new ring. `since`
     /// is when the bypass that ends last started, when known. One that runs until turned off has no end to count down
     /// to: its state says so (`untilOff`), and `until` is a date far off rather than the core's `i64::MAX`.
+    /// `overnight` makes it an Overnight's state (the same activity, in Overnight's look and with its Stop); a previous
+    /// state of the other kind starts a new ring.
     static func bypassState(
         global: Int64?,
         connections: [(label: String, until: Int64?)],
         previous: BypassActivityAttributes.ContentState?,
         approvedSince: (Date) -> Int,
         now: Int64,
-        since: Int64? = nil
+        since: Int64? = nil,
+        overnight: Bool = false
     ) -> BypassActivityAttributes.ContentState? {
         let globalUntil = global.flatMap { $0 > now ? $0 : nil }
         let running = connections.filter { ($0.until ?? 0) > now }
@@ -189,7 +192,7 @@ enum Glance {
         let untilOff = AutopilotText.isUntilOff(end)
         let until = untilOff ? Date.distantFuture : Date(timeIntervalSince1970: TimeInterval(end))
         let startedAt: Date
-        if let previous, previous.until == until, (previous.untilOff ?? false) == untilOff {
+        if let previous, previous.until == until, (previous.untilOff ?? false) == untilOff, (previous.overnight ?? false) == overnight {
             startedAt = previous.startedAt
         } else if let since, since <= now {
             startedAt = Date(timeIntervalSince1970: TimeInterval(since))
@@ -203,7 +206,8 @@ enum Glance {
             startedAt: startedAt,
             scope: bypassScope(global: globalUntil != nil, connections: running.map(\.label)),
             approvedCount: approvedSince(startedAt),
-            untilOff: untilOff ? true : nil
+            untilOff: untilOff ? true : nil,
+            overnight: overnight ? true : nil
         )
     }
 

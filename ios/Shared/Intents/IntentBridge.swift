@@ -121,6 +121,16 @@ enum IntentBridge {
         return running
     }
 
+    /// Ends every Overnight; false when none ran.
+    static func stopOvernight() async throws -> Bool {
+        let model = try await signedIn()
+        let now = Int64(Date().timeIntervalSince1970)
+        guard let s = await model.refreshAutopilot() else { return false }
+        let running = (s.overnightUntil ?? 0) > now || s.connections.contains { ($0.overnightUntil ?? 0) > now }
+        if running { await model.stopOvernights() }
+        return running
+    }
+
     /// Denies a request. One that is gone (answered, expired) is not an error: there is nothing left to deny.
     static func deny(_ requestId: String) async throws {
         guard DeepLink.isId(requestId) else { return }

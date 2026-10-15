@@ -2,8 +2,8 @@ import ActivityKit
 import OSLog
 import UIKit
 
-/// Keeps the Live Activities in step with the model: one for the requests that wait, one while a bypass runs (the
-/// iOS side of the Android app's ongoing bypass notification, with Stop). Installed once at launch; it wraps the
+/// Keeps the Live Activities in step with the model: one for the requests that wait, one while a bypass or an
+/// Overnight runs (the iOS side of the Android app's ongoing bypass notification, with Stop; a bypass shows first). Installed once at launch; it wraps the
 /// model's `onPendingChanged` / `onAutopilotChanged` hooks, keeping whatever else was set on them.
 ///
 /// The system only lets an app start a Live Activity while it is in front; updating and ending work from the
@@ -56,6 +56,14 @@ final class LiveActivityController {
                 approvedSince: { start in Self.approvedDuringBypass(model.activity, since: start) },
                 now: now,
                 since: Self.lastBypassStart(s, now: now)
+            ) ?? Glance.bypassState(
+                global: s.overnightUntil,
+                connections: s.connections.map { c in (untrusted(model.connection(c.connectionId)?.label ?? "An AI"), c.overnightUntil) },
+                previous: previous,
+                approvedSince: { start in Self.approvedDuringBypass(model.activity, since: start, by: "overnight") },
+                now: now,
+                since: Self.lastOvernightStart(s, now: now),
+                overnight: true
             )
         } else {
             nil
@@ -70,8 +78,16 @@ final class LiveActivityController {
 
     /// When the bypass that ends last started (the global one or a connection's), when the core says.
     nonisolated static func lastBypassStart(_ s: AutopilotSettings, now: Int64) -> Int64? {
+        lastStart([(s.bypassUntil, s.bypassSince)] + s.connections.map { ($0.bypassUntil, $0.bypassSince) }, now: now)
+    }
+
+    /// When the Overnight that ends last started (the global one or a connection's), when the core says.
+    nonisolated static func lastOvernightStart(_ s: AutopilotSettings, now: Int64) -> Int64? {
+        lastStart([(s.overnightUntil, s.overnightSince)] + s.connections.map { ($0.overnightUntil, $0.overnightSince) }, now: now)
+    }
+
+    private nonisolated static func lastStart(_ all: [(until: Int64?, since: Int64?)], now: Int64) -> Int64? {
         var last: (until: Int64, since: Int64?)?
-        let all: [(until: Int64?, since: Int64?)] = [(s.bypassUntil, s.bypassSince)] + s.connections.map { ($0.bypassUntil, $0.bypassSince) }
         for b in all {
             guard let until = b.until, until > now else { continue }
             if last == nil || until > (last?.until ?? 0) { last = (until, b.since) }
@@ -79,10 +95,10 @@ final class LiveActivityController {
         return last?.since
     }
 
-    /// Requests a bypass approved since it started (the count on the activity).
-    nonisolated static func approvedDuringBypass(_ activity: [ActivityEntry], since start: Date) -> Int {
+    /// Requests a bypass (or, `by` "overnight", an Overnight) approved since it started (the count on the activity).
+    nonisolated static func approvedDuringBypass(_ activity: [ActivityEntry], since start: Date, by: String = "bypass") -> Int {
         let from = Int64(start.timeIntervalSince1970)
-        return activity.filter { $0.decidedBy == "bypass" && $0.at >= from && !["denied", "failed", "expired", "error"].contains($0.outcome) }.count
+        return activity.filter { $0.decidedBy == by && $0.at >= from && !["denied", "failed", "expired", "error"].contains($0.outcome) }.count
     }
 
     private func enqueue(_ work: @escaping @MainActor () async -> Void) {
