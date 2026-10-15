@@ -84,7 +84,7 @@ fun TrustScreen(
                 TrustRunningField(
                     s,
                     onStop = { kind -> if (kind == TimedKind.Bypass) autopilot.stopBypass() else autopilot.stopOvernight() },
-                    onEndLockdown = { autopilot.setMode(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL) },
+                    onEndLockdown = { autopilot.endLockdown(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL, authenticator) },
                 )
             }
             RootHeader(

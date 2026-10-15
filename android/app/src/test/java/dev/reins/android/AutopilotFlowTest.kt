@@ -31,6 +31,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import dev.reins.android.platform.AuthResult
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -320,7 +321,7 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun lockdownIsOneTapAndEndsTheSameWay() {
+    fun lockdownIsOneTapAndEndingItAsksTheOwner() {
         openAutopilot()
         heard.clear()
         tap("mode:LOCKDOWN")
@@ -329,8 +330,16 @@ class AutopilotFlowTest : FlowHarness() {
         assertEquals(AutopilotMode.LOCKDOWN, core.modeCalls.single().second)
         assertTrue(heard.played(Event.LockdownOn))
         awaitTag("endLockdown")
+        // Ending it loosens: without the owner's pass Lockdown stays.
+        authResult = AuthResult.Cancelled
+        tap("endLockdown")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertEquals(1, core.modeCalls.size)
+        authResult = AuthResult.Success
         tap("endLockdown")
         awaitCore { core.modeCalls.size == 2 }
+        assertEquals(2, prompts.get())
         assertEquals(AutopilotMode.MANUAL, core.modeCalls.last().second)
     }
 
