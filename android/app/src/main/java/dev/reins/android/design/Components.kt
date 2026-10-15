@@ -9,6 +9,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +57,7 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
@@ -94,7 +98,7 @@ fun Modifier.pressable(
     enabled: Boolean = true,
     highlight: Color? = null,
     shape: Shape = RoundedCornerShape(16.dp),
-    dim: Float = 0.55f,
+    dim: Float = PRESSED_ALPHA,
     label: String? = null,
     /** Where its presses go; the control makes its own when null (tests pass one to press it exactly). */
     interactionSource: androidx.compose.foundation.interaction.MutableInteractionSource? = null,
@@ -225,7 +229,65 @@ fun Modifier.glass(colors: RColors, shape: Shape, elevation: Dp = 10.dp): Modifi
     .background(colors.glass, shape)
     .border(0.75.dp, colors.glassEdge, shape)
 
-enum class ButtonStyle { Primary, Accent, Secondary, Ghost, Destructive }
+/**
+ * The Signal buttons: [Inverse] (the action), [Outline] (Deny), [Soft] (This was wrong), [DangerWash] (End now),
+ * [Violet] (Allow), [OnFieldWhite] and [OnFieldWash] on a colour field, [Ghost] (quiet text).
+ */
+enum class ButtonStyle {
+    Inverse,
+    Outline,
+    Soft,
+    DangerWash,
+    Violet,
+    OnFieldWhite,
+    OnFieldWash,
+    Ghost,
+    ;
+
+    /** Its plate and its ink. */
+    fun colors(c: RColors): Pair<Color, Color> = when (this) {
+        Inverse -> c.inverse to c.onInverse
+        Outline -> Color.Transparent to c.ink
+        Soft -> c.paperSunken to c.ink
+        DangerWash -> c.dangerWash to c.danger
+        Violet -> c.violetFill to Color.White
+        OnFieldWhite -> c.onField to Color(0xFF16151B)
+        OnFieldWash -> c.onFieldWash to c.onField
+        Ghost -> Color.Transparent to c.ink2
+    }
+
+    /** On a colour field, focus is a white ring. */
+    val onField: Boolean get() = this == OnFieldWhite || this == OnFieldWash
+
+    companion object {
+        @Deprecated("Signal: Inverse", ReplaceWith("ButtonStyle.Inverse"))
+        val Primary get() = Inverse
+
+        @Deprecated("Signal: Violet", ReplaceWith("ButtonStyle.Violet"))
+        val Accent get() = Violet
+
+        @Deprecated("Signal: Soft", ReplaceWith("ButtonStyle.Soft"))
+        val Secondary get() = Soft
+
+        @Deprecated("Signal: DangerWash", ReplaceWith("ButtonStyle.DangerWash"))
+        val Destructive get() = DangerWash
+    }
+}
+
+/**
+ * Focus: a 2 dp ring 3 dp outside [shape], violet on paper and white on a field. Drawn outside the bounds, so put it
+ * before any clip.
+ */
+fun Modifier.focusRing(show: Boolean, shape: Shape, color: Color, width: Dp = 2.dp, gap: Dp = 3.dp): Modifier =
+    if (!show) this else drawWithContent {
+        drawContent()
+        val out = gap.toPx() + width.toPx() / 2
+        val ring = androidx.compose.ui.geometry.Size(size.width + out * 2, size.height + out * 2)
+        val outline = shape.createOutline(ring, layoutDirection, this)
+        translate(-out, -out) {
+            drawOutline(outline, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width.toPx()))
+        }
+    }
 
 @Composable
 fun CapsuleButton(
@@ -241,20 +303,18 @@ fun CapsuleButton(
     onClick: () -> Unit,
 ) {
     val c = LocalColors.current
-    val (bg, fg) = when (style) {
-        ButtonStyle.Primary -> c.text to c.background
-        ButtonStyle.Accent -> c.accent to Color.White
-        ButtonStyle.Secondary -> c.controlFill to c.text
-        ButtonStyle.Ghost -> Color.Transparent to c.secondary
-        ButtonStyle.Destructive -> c.danger.copy(alpha = 0.12f) to c.danger
-    }
+    val (bg, fg) = style.colors(c)
+    val source = remember { MutableInteractionSource() }
+    val focused by source.collectIsFocusedAsState()
     Row(
         modifier
             .defaultMinSize(minHeight = if (compact) 34.dp else 50.dp)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA }
+            .focusRing(focused, CircleShape, if (style.onField) c.onField else c.violet)
             .clip(CircleShape)
             .background(bg)
-            .pressable(enabled = enabled && !busy, shape = CircleShape, onClick = onClick)
+            .then(if (style == ButtonStyle.Outline) Modifier.border(1.5.dp, c.rule2, CircleShape) else Modifier)
+            .pressable(enabled = enabled && !busy, shape = CircleShape, interactionSource = source, onClick = onClick)
             .padding(horizontal = if (compact) 14.dp else 20.dp, vertical = if (compact) 7.dp else 14.dp),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
@@ -432,25 +492,32 @@ fun Screen(
     }
 }
 
-/** A switch in the accent colour. It sounds after the change lands, so a switch that governs sound is heard in its new state. */
+/**
+ * A switch: violet-fill when on, a sunken well when off, a white knob (51 × 31). It sounds after the change lands, so a
+ * switch that governs sound is heard in its new state.
+ */
 @Composable
 fun Toggle(on: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
-    val x by animateFloatAsState(if (on) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 700f), label = "toggle")
-    val track by animateColorAsState(if (on) c.accent else c.controlFill.copy(alpha = 0.16f), label = "track")
+    val reduce = LocalReduceMotion.current
+    val x by animateFloatAsState(if (on) 1f else 0f, if (reduce) Motion.reduced() else spring(dampingRatio = 0.8f, stiffness = 700f), label = "toggle")
+    val track by animateColorAsState(if (on) c.violetFill else c.paperSunken, Motion.fade(), label = "track")
+    val source = remember { MutableInteractionSource() }
+    val focused by source.collectIsFocusedAsState()
     Box(
         modifier
-            .size(width = 50.dp, height = 30.dp)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .size(width = 51.dp, height = 31.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA }
+            .focusRing(focused, CircleShape, c.violet)
             .clip(CircleShape)
             .background(track)
-            .pressable(enabled = enabled, shape = CircleShape) {
+            .pressable(enabled = enabled, shape = CircleShape, interactionSource = source) {
                 onChange(!on)
                 feedback.play(Event.toggle(!on))
             },
     ) {
-        Box(Modifier.padding(2.dp).offset(x = (20 * x).dp).size(26.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape))
+        Box(Modifier.padding(2.dp).offset { androidx.compose.ui.unit.IntOffset((20.dp.toPx() * x).toInt(), 0) }.size(27.dp).shadow(2.dp, CircleShape).background(Color.White, CircleShape))
     }
 }
 
@@ -480,7 +547,7 @@ fun SwitchRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Greyed out like the switch when a switch above turns this one off.
-        val dim = Modifier.graphicsLayer { alpha = if (enabled) 1f else 0.45f }
+        val dim = Modifier.graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA }
         if (glyph != null) {
             GlyphIcon(glyph, c.secondary, size = 21.dp, modifier = dim)
             Spacer(Modifier.width(14.dp))
@@ -498,14 +565,14 @@ fun SwitchRow(
 @Composable
 fun CheckMark(checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier) {
     val c = LocalColors.current
-    val fill by animateColorAsState(if (checked) c.accent else Color.Transparent, label = "checkFill")
+    val fill by animateColorAsState(if (checked) c.violetFill else Color.Transparent, label = "checkFill")
     Box(
         modifier
             .size(24.dp)
-            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
+            .graphicsLayer { alpha = if (enabled) 1f else DISABLED_ALPHA }
             .clip(CircleShape)
             .background(fill)
-            .border(1.5.dp, if (checked) c.accent else c.tertiary, CircleShape),
+            .border(1.5.dp, if (checked) c.violetFill else c.inkFaint, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         if (checked) GlyphIcon(Glyph.Check, Color.White, size = 14.dp, weight = 2.4f)

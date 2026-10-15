@@ -33,9 +33,11 @@ struct RootView: View {
         #if DEBUG
         // `-gallery`: every avatar on one page (provider logos, service logos, blobatars).
         .overlay { if AvatarGallery.requested { AvatarGallery() } }
+        // `-signalGallery [page]`: the Signal components, type, colours and glyphs (also Settings > Developer).
+        .overlay { if SignalGallery.requested { SignalGallery(page: SignalGallery.requestedPage) } }
         #endif
+        .toggleStyle(SignalSwitchStyle())
         .tint(Palette.accent)
-        .fontDesign(.default)
     }
 }
 
@@ -67,7 +69,7 @@ private struct LaunchPreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Activity").font(RFont.sans(34, .bold)).foregroundStyle(Palette.text).padding(.top, 12)
+            Text("Activity").textRole(.title).foregroundStyle(Palette.text).padding(.top, 12)
             let waiting = snapshot.waiting()
             if !waiting.isEmpty {
                 SectionHeader("Waiting for you").padding(.top, 8)

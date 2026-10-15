@@ -1,5 +1,5 @@
 //! The health checks (`reins doctor` in the window: the overall state, what to look at and a button where the window
-//! can fix it), opened from Overview's Health tile; and "Send a test" (`reins test`), on Overview, in the welcome
+//! can fix it), opened from Home's Health tile; and "Send a test" (`reins test`), on Home, in the welcome
 //! flow's last step and in an empty Activity.
 
 use gpui::{
@@ -166,7 +166,7 @@ impl Root {
                 )
             }
             Test::Ended(answer, timed_out) => {
-                let here = inline && d.section == crate::model::Section::Overview;
+                let here = inline && d.section == crate::model::Section::Home;
                 let (ok, text) = health::test_result(answer, *timed_out, here);
                 let color = if ok {
                     pal.success

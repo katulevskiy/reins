@@ -1,16 +1,19 @@
 //! The window. Before pairing and setup: the welcome flow, one calm column under its steps (pair, AI tools, turn on,
 //! done). Afterwards the status window: a sidebar (what Reins is doing, the sections, pausing) and the section it
-//! selects: Overview, Activity, Connections, Keys & secrets, Rules, Settings. Like the phone apps: Geist, cool
-//! neutrals, one violet accent, coloured icon squares, Lucide icons and real logos. Keyboard shortcuts
-//! ([`crate::shortcuts`]) work everywhere in it.
+//! selects: Home, Activity, Connections, Keys, Rules, Settings. In Reins Signal ([`crate::theme`]): paper, ink and
+//! hairlines, a field of colour only where something needs a decision, the Signal glyphs and real logos; its
+//! components are in [`kit`] (and, with `--demo`, in the gallery). Keyboard shortcuts ([`crate::shortcuts`]) work
+//! everywhere in it.
 
 mod activity;
 mod connections;
 mod field;
+mod gallery;
 mod health;
 mod hold;
 pub mod icons;
 mod keys;
+pub mod kit;
 mod onboarding;
 mod overview;
 mod parts;
@@ -39,7 +42,7 @@ use crate::model::{Model, Screen, Section};
 use crate::pause::{Pause, PauseFor};
 use crate::shortcuts::{self, Shortcut};
 use crate::state::Saved;
-use crate::theme::{FONT, Palette};
+use crate::theme::{Palette, SANS};
 use crate::tray::Look;
 use crate::welcome::Stage;
 use crate::work::Work;
@@ -83,7 +86,7 @@ pub struct Root {
     /// A hold to confirm in progress ([`hold`]), and how many presses there were (each its own fill).
     hold: Option<hold::Hold>,
     presses: u64,
-    /// Overview's Health tile is open to its checks.
+    /// Home's Health tile is open to its checks.
     health_open: bool,
     /// Settings' Notifications row is open to its two switches.
     notify_open: bool,
@@ -94,6 +97,10 @@ pub struct Root {
     help_page: (Screen, Section),
     /// Renders once a second while something counts down in seconds (a request's timer, a hold).
     tick: Option<Task<()>>,
+    /// The component gallery shows instead of a section (`--demo` only), and what its controls are set to.
+    gallery: bool,
+    gallery_state: gallery::State,
+    gallery_held: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -129,6 +136,9 @@ struct Data {
     /// This computer's name, and its machine project.
     computer: String,
     machine: String,
+    /// `--demo`, and the gallery showing.
+    demo: bool,
+    gallery: bool,
 }
 
 impl Data {
@@ -160,6 +170,8 @@ impl Data {
             secrets: m.secrets.clone(),
             computer: m.computer.clone(),
             machine: m.machine.clone(),
+            demo: m.demo(),
+            gallery: false,
         }
     }
 
@@ -265,6 +277,9 @@ impl Root {
             help,
             help_page,
             tick: None,
+            gallery: demo_var("REINS_DEMO_SECTION").is_some_and(|s| s.trim().eq_ignore_ascii_case("gallery")),
+            gallery_state: gallery::State::default(),
+            gallery_held: false,
             _subscriptions: subscriptions,
         };
         // `REINS_DEMO_PAUSE=hold`: "Until I resume", held from the start (it pauses when the hold ends).
@@ -374,7 +389,14 @@ impl Root {
         } else {
             None
         };
-        let content: AnyElement = if d.section == Section::Activity {
+        let content: AnyElement = if self.gallery && d.demo {
+            div()
+                .id("gallery")
+                .size_full()
+                .overflow_y_scroll()
+                .child(div().w_full().px(px(44.0)).pt(px(top)).pb(px(40.0)).child(self.gallery(d, pal, window, cx)))
+                .into_any_element()
+        } else if d.section == Section::Activity {
             // List and detail side by side, each scrolling on its own.
             self.activity(d, pal, top, cx)
         } else if let Some((page, true)) = secrets_page {
@@ -389,7 +411,7 @@ impl Root {
                 .into_any_element()
         } else {
             let page = match d.section {
-                Section::Overview | Section::Activity => self.overview(d, pal, window, cx),
+                Section::Home | Section::Activity => self.overview(d, pal, window, cx),
                 Section::Connections => Self::connections(d, pal, cx),
                 Section::Keys => self.keys(d, pal, cx),
                 Section::Rules => self.rules(d, pal, window, cx),
@@ -428,6 +450,9 @@ impl Render for Root {
         }
         let mut d = Data::of(self.model.read(cx));
         d.help = self.help;
+        d.gallery = self.gallery && d.demo;
+        // A hold's fill moves with the time held: the next frame while it does.
+        self.hold_frame(window);
         // Seconds count while a request waits, a work session is being asked for, or the test waits.
         self.keep_ticking(
             matches!(d.test, Test::Waiting(_))
@@ -449,9 +474,9 @@ impl Render for Root {
             .size_full()
             .flex()
             .flex_col()
-            .bg(pal.background)
-            .text_color(pal.text)
-            .font_family(FONT)
+            .bg(pal.paper())
+            .text_color(pal.ink())
+            .font_family(SANS)
             .text_size(px(13.0))
             .line_height(px(18.0));
         match body {

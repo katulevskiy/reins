@@ -65,13 +65,13 @@ pub struct Args {
     /// A pretend pairing (a made-up code the "phone" approves after a few seconds) and made-up activity, for
     /// screenshots and trying the app without an account. Nothing is sent anywhere. `REINS_DEMO_SCREEN` opens a
     /// screen straight away (`pair`, `tools`, `tools-connected`, `turn-on`, `turning-on`, `done`, `status`),
-    /// `REINS_DEMO_SECTION=<overview|activity|connections|keys|rules|settings>` the status window at that section,
-    /// `REINS_DEMO_TEST=1` sends the pretend test at start, `REINS_DEMO_EMPTY=1` leaves the samples out,
+    /// `REINS_DEMO_SECTION=<home|activity|connections|keys|rules|settings>` the status window at that section
+    /// (`gallery`: the component gallery), `REINS_DEMO_TEST=1` sends the pretend test at start, `REINS_DEMO_EMPTY=1` leaves the samples out,
     /// `REINS_DEMO_SESSION=1` starts with a work session running (the pretend phone approves new ones after a few
     /// seconds), `REINS_DEMO_CALM=1` leaves out the request waiting on the phone, `REINS_DEMO_PAUSED=1` (or `manual`)
     /// starts with git paused. For screenshots of what opens with a click: `REINS_DEMO_PAUSE=1` (or `manual`, or
     /// `hold`: held from the start) opens the "Pause git" sheet, `REINS_DEMO_FILTER=1` Activity's filters,
-    /// `REINS_DEMO_HEALTH=1` Overview's health checks, `REINS_DEMO_HELP=<id>` a (?).
+    /// `REINS_DEMO_HEALTH=1` Home's health checks, `REINS_DEMO_HELP=<id>` a (?).
     pub demo: bool,
 }
 
@@ -145,6 +145,9 @@ fn main() {
     app.run(move |cx: &mut App| {
         gpui_tokio::init_from_handle(cx, handle);
         theme::register_fonts(cx);
+        // Reduce Motion and Reduce Transparency, from the OS; then the grain over colour fields, baked once.
+        theme::motion::init();
+        ui::kit::field::init();
         model::Model::init(backend, args, instance, cx);
     });
     drop(runtime);

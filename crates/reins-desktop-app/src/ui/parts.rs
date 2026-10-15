@@ -1,24 +1,24 @@
-//! Building blocks, in the phone apps' language: cards with hairlines, rows with coloured icon squares, toggles,
-//! chips, segmented controls, the (?) and its bubble, rings that count down, and the "stage" (who → what) of a
-//! request. Icons are Lucide's, logos Simple Icons' ([`super::icons`]); no glyph stands in for an icon.
+//! Building blocks the screens use today, restyled in Reins Signal (phase 1: the same layout, Signal's colours,
+//! type, glyphs and press states; phase 2 moves the screens onto [`super::kit`]): plates with hairlines, rows with
+//! kind tiles, switches, pills, segmented controls, the (?) and its bubble, rings that count down, and the "stage"
+//! (who → what) of a request. Icons are the Signal glyphs, logos the brands' own marks ([`super::icons`]).
 
 use std::sync::{Arc, LazyLock};
-use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, Context, Div, ElementId, FontWeight, HighlightStyle, Hsla, Image,
-    ImageFormat, InteractiveElement as _, IntoElement, ParentElement, PathBuilder, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled as _, StyledText, anchored, canvas, deferred, div, img, point,
-    pulsating_between, px,
+    AnyElement, Context, Div, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, Image, ImageFormat,
+    InteractiveElement as _, IntoElement, ParentElement, PathBuilder, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled as _, StyledText, anchored, canvas, deferred, div, img, point, px,
 };
 use reins_desktop::doctor::Level;
 
-use super::icons::{Icon, Mark, icon};
+use super::icons::{Icon, Mark, avatar, icon};
 use super::story::Words;
 use super::{Data, Root};
 use crate::model::Step;
-use crate::theme::{MONO, Palette, Tone};
+use crate::theme::text::tracked;
+use crate::theme::{MONO, Palette, SERIF, SignalText as _, Tone, motion};
 use crate::tray::Look;
 use crate::welcome::Stage;
 
@@ -59,7 +59,7 @@ pub fn check_circle(side: f32, color: Hsla) -> Div {
         .child(icon(Icon::Check, side * 0.5, color))
 }
 
-/// A soft square of `color` with an icon in it (a kind, a rule, a setting).
+/// A kind tile: an icon in `color` over `color` at 13% (a kind, a rule, a setting).
 pub fn tile(i: Icon, color: Hsla, side: f32) -> Div {
     div()
         .flex()
@@ -67,41 +67,40 @@ pub fn tile(i: Icon, color: Hsla, side: f32) -> Div {
         .items_center()
         .justify_center()
         .size(px(side))
-        .rounded(px(side * 0.3))
-        .bg(color.opacity(0.14))
+        .rounded(px(side * 0.31))
+        .bg(color.opacity(0.13))
         .child(icon(i, side * 0.53, color))
 }
 
-/// A solid square of `tone` with a white icon (a selected section, a setting of "This computer").
-pub fn solid_tile(i: Icon, tone: Tone, pal: Palette, side: f32) -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(side))
-        .rounded(px(side * 0.3))
-        .bg(pal.tone(tone))
-        .child(icon(i, side * 0.5, pal.on_solid(tone)))
+/// A kind tile of `tone` (a neutral one is `paper-sunken` under `ink`).
+pub fn tone_tile(i: Icon, tone: Tone, pal: Palette, side: f32) -> Div {
+    super::kit::kind_tile(i.glyph(), tone, side, pal)
 }
 
-/// A logo in its neutral square (an AI tool, a git host, an API).
+/// What was a solid square of colour (a setting of "This computer"): Signal colours only what needs a decision, so
+/// a neutral tile, `ink` on `paper-sunken`.
+pub fn solid_tile(i: Icon, _tone: Tone, pal: Palette, side: f32) -> Div {
+    tone_tile(i, Tone::Neutral, pal, side)
+}
+
+/// A logo (an AI tool, a git host, an API): a brand's mark in a white circle, an icon in a neutral tile.
 pub fn logo(m: Mark, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(30.0))
-        .rounded(px(9.0))
-        .bg(pal.tile())
-        .border_1()
-        .border_color(pal.tile_border())
-        .child(m.render(17.0, pal.text, pal))
+    match m {
+        Mark::Brand(b) => avatar(b, 30.0, pal),
+        Mark::Icon(i) => tone_tile(i, Tone::Neutral, pal, 30.0),
+    }
 }
 
+/// A plate of rows: `paper-raised`, a `rule` hairline, 20 px corners.
 pub fn card(pal: Palette) -> Div {
-    div().flex().flex_col().bg(pal.elevated).border_1().border_color(pal.hairline).rounded(px(16.0)).overflow_hidden()
+    div()
+        .flex()
+        .flex_col()
+        .bg(pal.paper_raised())
+        .border_1()
+        .border_color(pal.rule())
+        .rounded(px(20.0))
+        .overflow_hidden()
 }
 
 pub fn caption(text: impl Into<SharedString>, pal: Palette) -> Div {
@@ -157,7 +156,7 @@ pub fn help_with(
         .when_else(
             open,
             |m| m.bg(pal.accent_soft).child(icon(Icon::CircleHelp, 16.0, pal.accent)),
-            |m| m.hover(|s| s.bg(pal.control_fill)).child(icon(Icon::CircleHelp, 16.0, pal.tertiary)),
+            |m| m.hover(|s| s.bg(pal.control_fill)).child(icon(Icon::CircleHelp, 16.0, pal.ink_faint())),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             // A (?) often sits in a row that is itself a toggle: the click is the (?)'s alone.
@@ -177,12 +176,12 @@ pub fn help_with(
         .w(px(width))
         .px(px(12.0))
         .py(px(9.0))
-        .rounded(px(12.0))
+        .rounded(px(14.0))
         .bg(pal.popover())
         .border_1()
         .border_color(pal.popover_border())
         .shadow_lg()
-        .text_size(px(12.0))
+        .text_size(px(12.5))
         .line_height(px(17.0))
         .font_weight(FontWeight::NORMAL)
         .text_color(pal.text)
@@ -202,36 +201,26 @@ pub fn help_with(
     )
 }
 
-/// The title of a section of the status window, with room after it (a (?), buttons).
+/// The title of a section of the status window, in the serif (`title`, 44/44), with room after it (a (?), buttons).
 pub fn page_header(title: &'static str, help: Option<Stateful<Div>>) -> Div {
     div()
         .flex()
         .items_center()
         .gap(px(10.0))
-        .min_h(px(32.0))
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.0))
-                .text_size(px(24.0))
-                .line_height(px(30.0))
-                .font_weight(FontWeight::BOLD)
-                .child(title),
-        )
+        .min_h(px(44.0))
+        .child(div().flex_1().min_w(px(0.0)).title().child(title))
         .when_some(help, ParentElement::child)
 }
 
-/// A block's small capitals title ("LATEST"), with room after it for a link.
+/// A block's label ("LATEST"): mono capitals, tracked, `ink-meta`; with room after it for a link.
 pub fn group_title(title: &str, pal: Palette) -> Div {
-    div().flex().items_center().gap(px(8.0)).px(px(4.0)).h(px(18.0)).child(
-        div()
-            .flex_1()
-            .min_w(px(0.0))
-            .text_size(px(12.0))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(pal.tertiary)
-            .child(title.to_uppercase()),
-    )
+    div()
+        .flex()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(4.0))
+        .h(px(18.0))
+        .child(div().flex_1().min_w(px(0.0)).child(tracked(title.to_owned()).text_color(pal.ink_meta())))
 }
 
 /// A titled block of a page: its small capitals title (and a (?) about it), then `body` (usually a card).
@@ -244,27 +233,35 @@ pub fn group(title: &str, help: Option<Stateful<Div>>, body: impl IntoElement, p
         .child(body)
 }
 
-/// What a button looks like.
+/// What a button looks like (Signal's looks: [`super::kit::Look`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Btn {
-    /// A grey button.
+    /// Soft: `paper-sunken`.
     Plain,
-    /// Violet: connect, start.
+    /// `violet-fill`: connect, start.
     Accent,
-    /// White on dark: continue, resume, confirm.
+    /// `inverse`: continue, resume, confirm.
     Primary,
-    /// Red text on a red tint: end, disconnect.
+    /// Red on `danger-wash`: end, disconnect.
     Danger,
 }
 
-/// A button's frame in `look`, and the colour of what goes on it.
+impl Btn {
+    /// Signal's look for it.
+    #[must_use]
+    pub fn look(self) -> super::kit::Look {
+        match self {
+            Self::Plain => super::kit::Look::Soft,
+            Self::Accent => super::kit::Look::Violet,
+            Self::Primary => super::kit::Look::Inverse,
+            Self::Danger => super::kit::Look::DangerWash,
+        }
+    }
+}
+
+/// A button's frame in `look` (a pill, 32 px; dims to 55% while pressed), and the colour of what goes on it.
 fn btn_frame(id: impl Into<ElementId>, look: Btn, pal: Palette) -> (Stateful<Div>, Hsla) {
-    let (bg, fg) = match look {
-        Btn::Plain => (pal.button(), pal.text),
-        Btn::Accent => (pal.accent, pal.on_accent),
-        Btn::Primary => (pal.primary(), pal.on_primary()),
-        Btn::Danger => (pal.danger.opacity(0.14), pal.danger),
-    };
+    let (bg, fg) = look.look().colors(pal);
     let b = div()
         .id(id.into())
         .flex()
@@ -273,15 +270,15 @@ fn btn_frame(id: impl Into<ElementId>, look: Btn, pal: Palette) -> (Stateful<Div
         .justify_center()
         .gap(px(6.0))
         .h(px(32.0))
-        .px(px(13.0))
-        .rounded(px(9.0))
+        .px(px(14.0))
+        .rounded_full()
         .bg(bg)
         .text_color(fg)
         .text_size(px(13.0))
         .font_weight(FontWeight::SEMIBOLD)
         .whitespace_nowrap()
         .cursor_pointer()
-        .hover(|s| s.opacity(0.85));
+        .active(|s| s.opacity(super::kit::button::PRESSED));
     (b, fg)
 }
 
@@ -323,18 +320,18 @@ pub fn button(
     if enabled {
         b
     } else {
-        b.opacity(0.45).cursor_default()
+        super::kit::disabled(b)
     }
 }
 
 /// A smaller [`btn`], for tiles and chips' rows.
 pub fn small(b: Stateful<Div>) -> Stateful<Div> {
-    b.h(px(26.0)).px(px(10.0)).rounded(px(8.0)).text_size(px(12.0))
+    b.h(px(28.0)).px(px(12.0)).text_size(px(12.5))
 }
 
-/// A bigger button, for the one thing a screen is for.
+/// A bigger button, for the one thing a screen is for (the desktop's 38 px).
 pub fn big(b: Stateful<Div>) -> Stateful<Div> {
-    b.h(px(38.0)).px(px(20.0)).rounded(px(11.0)).text_size(px(13.5))
+    b.h(px(38.0)).px(px(18.0)).text_size(px(14.0))
 }
 
 pub fn link(id: impl Into<ElementId>, label: impl Into<SharedString>, pal: Palette) -> Stateful<Div> {
@@ -359,7 +356,7 @@ pub fn row(pal: Palette, first: bool) -> Div {
         .py(px(10.0))
         .min_h(px(50.0))
         .min_w(px(0.0))
-        .text_size(px(13.5))
+        .text_size(px(14.0))
         .when(!first, |r| r.border_t_1().border_color(pal.hairline))
 }
 
@@ -377,43 +374,41 @@ pub fn row_text(title: impl Into<SharedString>, under: Option<AnyElement>, pal: 
         })
 }
 
+/// A switch: `violet-fill` on, `paper-sunken` off.
 pub fn toggle(on: bool, pal: Palette) -> Div {
-    let knob = div().size(px(16.0)).rounded_full().bg(gpui::white()).shadow_sm();
+    let knob = div().size(px(17.0)).rounded_full().bg(gpui::white()).shadow_sm();
     div()
         .flex()
         .flex_none()
         .items_center()
         .w(px(36.0))
         .h(px(21.0))
-        .px(px(2.5))
+        .px(px(2.0))
         .rounded_full()
         .bg(if on {
-            pal.accent
-        } else if pal.dark {
-            pal.tile_border()
+            pal.violet_fill()
         } else {
-            pal.control_fill
+            pal.paper_sunken()
         })
+        .when(!on && pal.dark, |t| t.border_1().border_color(pal.rule_2()))
         .when_else(on, Div::justify_end, Div::justify_start)
         .child(knob)
 }
 
+/// What Reins is doing, as a colour (as the shield says it): green on, violet waiting, red paused (the desktop's
+/// bypass), amber when it needs you.
 pub fn look_color(look: Look, pal: Palette) -> Hsla {
     match look {
         Look::On => pal.success,
-        Look::Paused => pal.warning,
-        Look::Waiting => pal.accent,
-        Look::Attention => pal.danger,
+        Look::Paused => pal.danger,
+        Look::Waiting => pal.violet(),
+        Look::Attention => pal.warning,
     }
 }
 
-/// A dot that breathes: something waits.
+/// A dot that breathes (35% to 100%, still under Reduce Motion): something waits.
 pub fn waiting_dot(id: impl Into<ElementId>, color: Hsla, side: f32) -> impl IntoElement {
-    div().flex_none().size(px(side)).rounded_full().bg(color).with_animation(
-        id,
-        Animation::new(Duration::from_millis(1600)).repeat().with_easing(pulsating_between(0.25, 1.0)),
-        gpui::Styled::opacity,
-    )
+    motion::breathe(div().flex_none().size(px(side)).rounded_full().bg(color), id)
 }
 
 /// A chip: an icon and a few words, tinted with `color`.
@@ -449,7 +444,7 @@ fn chip_frame(lead: bool, color: Hsla) -> Div {
 
 /// A grey chip ("Asks next time", "By your rules").
 pub fn chip_plain(i: Option<Icon>, label: impl Into<SharedString>, pal: Palette) -> Div {
-    chip(i, label, pal.secondary).bg(pal.control_fill)
+    chip(i, label, pal.ink_2()).bg(pal.paper_sunken())
 }
 
 /// A filter's choice: its label, how many, selected or not.
@@ -472,10 +467,17 @@ pub fn filter_chip(
         .text_size(px(12.0))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
+        .active(|s| s.opacity(super::kit::button::PRESSED))
         .when_else(
             selected,
-            |c| c.bg(pal.accent_soft).text_color(pal.accent),
-            |c| c.bg(pal.control_fill).text_color(pal.secondary).hover(|s| s.text_color(pal.text)),
+            |c| c.bg(pal.inverse()).text_color(pal.on_inverse()),
+            |c| {
+                c.bg(pal.paper_raised())
+                    .border_1()
+                    .border_color(pal.rule())
+                    .text_color(pal.ink_2())
+                    .hover(|s| s.text_color(pal.ink()))
+            },
         )
         .child(label.to_owned())
         .when_some(count, |c, n| {
@@ -492,13 +494,9 @@ pub fn filter_chip(
         })
 }
 
-/// The track of a segmented control.
+/// The track of a segmented control: a `paper-sunken` pill.
 pub fn segmented(pal: Palette) -> Div {
-    div().flex().flex_none().items_center().p(px(3.0)).gap(px(2.0)).rounded(px(11.0)).bg(if pal.dark {
-        pal.well()
-    } else {
-        pal.control_fill
-    })
+    div().flex().flex_none().items_center().p(px(3.0)).gap(px(2.0)).rounded_full().bg(pal.paper_sunken())
 }
 
 /// One choice of a segmented control, without its label (for one with an icon too).
@@ -512,15 +510,16 @@ pub fn segment_frame(id: impl Into<ElementId>, selected: bool, pal: Palette) -> 
         .gap(px(4.0))
         .h(px(30.0))
         .px(px(10.0))
-        .rounded(px(8.0))
-        .text_size(px(12.5))
-        .font_weight(FontWeight::SEMIBOLD)
+        .rounded_full()
+        .text_size(px(13.0))
+        .font_weight(FontWeight::MEDIUM)
         .whitespace_nowrap()
         .cursor_pointer()
+        .active(|s| s.opacity(super::kit::button::PRESSED))
         .when_else(
             selected,
-            |s| s.bg(pal.raised()).text_color(pal.text).when(!pal.dark, gpui::Styled::shadow_xs),
-            |s| s.text_color(pal.secondary).hover(|h| h.text_color(pal.text)),
+            |s| s.bg(pal.paper_raised()).border_1().border_color(pal.rule()).text_color(pal.ink()).shadow_xs(),
+            |s| s.text_color(pal.ink_2()).hover(|h| h.text_color(pal.ink())),
         )
 }
 
@@ -581,9 +580,9 @@ pub fn dots(color: Hsla, pal: Palette) -> Div {
         .flex_none()
         .items_center()
         .gap(px(4.0))
-        .child(div().size(px(4.0)).rounded_full().bg(pal.tertiary))
-        .child(div().size(px(4.0)).rounded_full().bg(pal.tertiary))
-        .child(div().size(px(4.0)).rounded_full().bg(color))
+        .child(div().size(px(5.0)).rounded_full().bg(pal.ink_faint()))
+        .child(div().size(px(5.0)).rounded_full().bg(pal.ink_faint()))
+        .child(div().size(px(5.0)).rounded_full().bg(color))
 }
 
 /// One of the stage's squares: a logo or an icon, and maybe a badge on its corner.
@@ -596,10 +595,12 @@ pub fn stage_tile(m: Mark, side: f32, badge: Option<(Icon, Hsla)>, behind: Hsla,
         .justify_center()
         .size(px(side))
         .rounded(px(side * 0.31))
-        .bg(pal.tile())
-        .border_1()
-        .border_color(pal.tile_border())
-        .child(m.render(side * 0.5, pal.text, pal))
+        .bg(pal.paper_sunken())
+        .child(match m {
+            // A logo sits in its white circle, so dark marks stay visible on dark paper.
+            Mark::Brand(b) => avatar(b, side * 0.62, pal).border_0().into_any_element(),
+            Mark::Icon(_) => m.render(side * 0.5, pal.ink()),
+        })
         .when_some(badge, |t, (i, color)| {
             t.child(
                 div()
@@ -613,7 +614,7 @@ pub fn stage_tile(m: Mark, side: f32, badge: Option<(Icon, Hsla)>, behind: Hsla,
                     .rounded(px(7.0))
                     .border_2()
                     .border_color(behind)
-                    .bg(pal.tile().blend(color.opacity(0.28)))
+                    .bg(pal.paper_raised().blend(color.opacity(0.18)))
                     .child(icon(i, 12.0, color)),
             )
         })
@@ -631,7 +632,8 @@ pub fn stage(from: Mark, to: Mark, badge: Option<(Icon, Hsla)>, color: Hsla, sid
         .child(stage_tile(to, side, badge, pal.elevated, pal))
 }
 
-/// A sentence with its important words in bold and the text colour; the rest in the secondary colour.
+/// A sentence with its important words (the target) in italic and `ink`; the rest in the caller's colour. Set it in
+/// the serif ([`SERIF`]): the italic is Instrument Serif's own.
 pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
     let mut text = String::new();
     let mut highlights = Vec::new();
@@ -642,8 +644,8 @@ pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
             highlights.push((
                 start..text.len(),
                 HighlightStyle {
-                    color: Some(pal.text),
-                    font_weight: Some(FontWeight::SEMIBOLD),
+                    color: Some(pal.ink()),
+                    font_style: Some(FontStyle::Italic),
                     ..HighlightStyle::default()
                 },
             ));
@@ -660,7 +662,7 @@ pub fn well(pal: Palette) -> Div {
         .gap(px(3.0))
         .px(px(14.0))
         .py(px(12.0))
-        .rounded(px(12.0))
+        .rounded(px(14.0))
         .bg(pal.well())
         .border_1()
         .border_color(pal.hairline)
@@ -675,7 +677,7 @@ pub fn well(pal: Palette) -> Div {
 /// A label on the left, its value on the right.
 pub fn info_row(label: &str, value: impl IntoElement, pal: Palette, first: bool) -> Div {
     row(pal, first)
-        .child(div().flex_1().text_color(pal.tertiary).child(label.to_owned()))
+        .child(div().flex_1().text_color(pal.ink_2()).child(label.to_owned()))
         .child(div().min_w(px(0.0)).flex().justify_end().text_color(pal.text).child(value))
 }
 
@@ -713,8 +715,8 @@ pub fn tag(text: impl Into<SharedString>, pal: Palette) -> Div {
         .flex_none()
         .px(px(7.0))
         .py(px(1.0))
-        .rounded(px(5.0))
-        .bg(pal.control_fill)
+        .rounded(px(6.0))
+        .bg(pal.paper_sunken())
         .font_family(MONO)
         .text_size(px(11.5))
         .line_height(px(17.0))
@@ -792,9 +794,9 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
         let here = stage == current;
         if i > 0 {
             bar = bar.child(div().w(px(36.0)).h(px(1.5)).rounded_full().bg(if stage <= current {
-                pal.accent
+                pal.violet_fill()
             } else {
-                pal.tile_border()
+                pal.rule_2()
             }));
         }
         let mark: AnyElement = match stage.number() {
@@ -813,12 +815,12 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
             .font_weight(FontWeight::SEMIBOLD)
             .when_else(
                 behind || (here && stage == Stage::Done),
-                |c| c.bg(pal.accent),
+                |c| c.bg(pal.violet_fill()),
                 |c| {
                     c.border(px(1.5)).when_else(
                         here,
-                        |c| c.border_color(pal.accent).bg(pal.accent.opacity(0.15)).text_color(pal.accent),
-                        |c| c.border_color(pal.tile_border().blend(pal.tertiary.opacity(0.4))).text_color(pal.tertiary),
+                        |c| c.border_color(pal.violet()).bg(pal.violet().opacity(0.13)).text_color(pal.violet()),
+                        |c| c.border_color(pal.rule_2()).text_color(pal.ink_meta()),
                     )
                 },
             )
@@ -841,7 +843,7 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
     bar
 }
 
-/// The sentence a screen of the welcome flow is about, centred, its important words bold; and a (?).
+/// The sentence a screen of the welcome flow is about, centred, in the serif with its target in italic; and a (?).
 pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette) -> Div {
     div()
         .flex()
@@ -850,10 +852,11 @@ pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette)
         .gap(px(8.0))
         .child(
             div()
-                .text_size(px(24.0))
-                .line_height(px(31.0))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(pal.secondary)
+                .font_family(SERIF)
+                .text_size(px(32.0))
+                .line_height(px(36.0))
+                .font_weight(FontWeight::NORMAL)
+                .text_color(pal.ink())
                 .text_center()
                 .child(sentence(words, pal)),
         )
@@ -869,7 +872,7 @@ pub fn empty_state(i: Icon, title: impl Into<SharedString>, help: Option<Statefu
         .gap(px(10.0))
         .px(px(28.0))
         .py(px(24.0))
-        .child(tile(i, pal.accent, 40.0))
+        .child(tone_tile(i, Tone::Neutral, pal, 40.0))
         .child(
             div()
                 .flex()
@@ -882,45 +885,34 @@ pub fn empty_state(i: Icon, title: impl Into<SharedString>, help: Option<Statefu
 
 /// A key on the keyboard ("Ctrl+1").
 pub fn kbd(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div().flex_none().font_family(MONO).text_size(px(12.0)).text_color(pal.text).whitespace_nowrap().child(text.into())
+    div()
+        .flex_none()
+        .font_family(MONO)
+        .text_size(px(12.0))
+        .text_color(pal.ink_2())
+        .whitespace_nowrap()
+        .child(text.into())
 }
 
-/// A tile on Overview: a small capitals label with an icon, a value, and a line or an action under it.
+/// A tile on Home: a plate with its label (mono capitals, tracked), a value, and a line or an action under it.
 pub fn stat(i: Icon, color: Hsla, label: &str, pal: Palette) -> Div {
+    let _ = (i, color);
     div()
         .flex()
         .flex_col()
         .flex_1()
         .min_w(px(0.0))
         .gap(px(3.0))
-        .p(px(14.0))
-        .rounded(px(16.0))
-        .bg(pal.elevated)
+        .px(px(20.0))
+        .py(px(18.0))
+        .rounded(px(20.0))
+        .bg(pal.paper_raised())
         .border_1()
-        .border_color(pal.hairline)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .text_size(px(11.0))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(pal.tertiary)
-                .child(icon(i, 13.0, color))
-                .child(label.to_uppercase()),
-        )
+        .border_color(pal.rule())
+        .child(tracked(label.to_owned()).text_color(pal.ink_meta()))
 }
 
-/// A popover's frame.
+/// A popover's frame: a menu's paper ([`super::kit::menu`]), with room inside.
 pub fn popover(pal: Palette) -> Div {
-    div()
-        .occlude()
-        .flex()
-        .flex_col()
-        .p(px(14.0))
-        .rounded(px(16.0))
-        .bg(pal.popover())
-        .border_1()
-        .border_color(pal.popover_border())
-        .shadow_lg()
+    super::kit::menu(pal).w_auto().p(px(14.0))
 }

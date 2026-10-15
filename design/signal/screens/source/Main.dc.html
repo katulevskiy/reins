@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Signal en plein air</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--wall:#e8e6e1;--wallink:#45434d}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--wall:#0b0b0d;--wallink:#bdbcc6}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.grain{position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500}
+.serif{font-family:var(--serif);font-weight:400}
+em{font-style:italic}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{theme}} {{grain}}" style="width: 1920px; height: 1200px; box-sizing: border-box; background: var(--wall); color: var(--ink); position: relative; overflow: hidden; display: grid; grid-template-columns: 860px 1fr; gap: 96px">
+
+  <div style="position: relative; background: var(--fp); color: #fff; border-radius: 0 0 56px 56px; height: 860px; padding: 72px 72px 64px; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden">
+    <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+    <div style="position: relative; display: flex; align-items: center; gap: 14px">
+      <span style="width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.18); display: grid; place-items: center"><svg class="g" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></span>
+      <span style="width: 34px; height: 34px; border-radius: 50%; background: #fff; display: grid; place-items: center"><img src="../../assets/logos/claude.svg" alt="" style="width: 20px; height: 20px"></span>
+      <span style="font-size: 17px; font-weight: 500">Claude Code <span style="color: rgba(255,255,255,.82)">· MacBook Pro</span></span>
+      <span style="margin-left: auto; display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 15px">
+        <svg width="26" height="26" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="3"></circle><circle cx="18" cy="18" r="15" fill="none" stroke="#fff" stroke-width="3" stroke-dasharray="94.2" stroke-dashoffset="30" stroke-linecap="round" transform="rotate(-90 18 18)"></circle></svg>0:40</span>
+    </div>
+    <div style="position: relative; margin-top: auto; display: flex; flex-direction: column; gap: 22px">
+      <div class="lbl" style="color: rgba(255,255,255,.82); font-size: 14px">GitHub · Push</div>
+      <h1 class="serif" style="margin: 0; font-size: 112px; line-height: 104px; letter-spacing: -0.02em; text-wrap: balance">Push 8 commits to <em>octo/app</em></h1>
+      <div style="display: flex; align-items: center; gap: 10px; font-size: 18px; color: rgba(255,255,255,.82)"><svg class="g" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Autopilot would allow · 97%, like 11 pushes you approved</div>
+    </div>
+  </div>
+
+  <div style="padding: 96px 96px 0 0; display: flex; flex-direction: column; gap: 44px; color: var(--ink)">
+    <div style="display: flex; align-items: center; gap: 14px">
+      <img src="../../assets/logos/reins.svg" alt="Reins" style="width: 44px; height: 44px; border-radius: 11px">
+      <span class="lbl" style="color: var(--wallink)">Reins · Design language · October 2026</span>
+    </div>
+    <h2 class="serif" style="margin: 0; font-size: 168px; line-height: 150px; letter-spacing: -0.03em">Signal,<br><em>en plein air</em></h2>
+    <p style="margin: 0; font-size: 22px; line-height: 32px; color: var(--wallink); max-width: 760px; text-wrap: pretty">Paper and ink for everything you read. A field of colour, painted, for the moment an AI asks you something. One quiet home across iPhone, Android and the computer.</p>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 48px; border-top: 1px solid var(--rule2)">
+      <div style="display: flex; gap: 18px; padding: 20px 0; border-bottom: 1px solid var(--rule2)"><span class="serif" style="font-size: 34px; line-height: 30px; color: var(--violet)">1</span><div><div style="font-size: 18px; font-weight: 600">Colour means it needs you</div><div style="font-size: 15px; line-height: 22px; color: var(--wallink); margin-top: 4px">The Signal rule stays. Nothing else is ever coloured.</div></div></div>
+      <div style="display: flex; gap: 18px; padding: 20px 0; border-bottom: 1px solid var(--rule2)"><span class="serif" style="font-size: 34px; line-height: 30px; color: var(--violet)">2</span><div><div style="font-size: 18px; font-weight: 600">Fields are pigment, not plastic</div><div style="font-size: 15px; line-height: 22px; color: var(--wallink); margin-top: 4px">A fine grain on every field, so a request feels painted.</div></div></div>
+      <div style="display: flex; gap: 18px; padding: 20px 0; border-bottom: 1px solid var(--rule2)"><span class="serif" style="font-size: 34px; line-height: 30px; color: var(--violet)">3</span><div><div style="font-size: 18px; font-weight: 600">A stack, then a river</div><div style="font-size: 15px; line-height: 22px; color: var(--wallink); margin-top: 4px">Waiting asks stack like cards. What happened flows below.</div></div></div>
+      <div style="display: flex; gap: 18px; padding: 20px 0; border-bottom: 1px solid var(--rule2)"><span class="serif" style="font-size: 34px; line-height: 30px; color: var(--violet)">4</span><div><div style="font-size: 18px; font-weight: 600">Four places, everywhere</div><div style="font-size: 15px; line-height: 22px; color: var(--wallink); margin-top: 4px">Activity, Trust, Connections, Settings on every screen size.</div></div></div>
+      <div style="display: flex; gap: 18px; padding: 20px 0; border-bottom: 1px solid var(--rule2)"><span class="serif" style="font-size: 34px; line-height: 30px; color: var(--violet)">5</span><div><div style="font-size: 18px; font-weight: 600">One tap, or one hold</div><div style="font-size: 15px; line-height: 22px; color: var(--wallink); margin-top: 4px">Reversible things take a tap. Irreversible things take a hold.</div></div></div>
+      <div style="display: flex; gap: 18px; padding: 20px 0; border-bottom: 1px solid var(--rule2)"><span class="serif" style="font-size: 34px; line-height: 30px; color: var(--violet)">6</span><div><div style="font-size: 18px; font-weight: 600">You can feel the answer</div><div style="font-size: 15px; line-height: 22px; color: var(--wallink); margin-top: 4px">Every decision has its own touch, sound and motion.</div></div></div>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 72px; right: 96px; bottom: 64px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 14px">
+    <div style="position: relative; height: 196px; border-radius: 22px; background: var(--fp); color: #fff; padding: 18px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="position: relative; color: rgba(255,255,255,.82)">Push</span><span class="serif" style="position: relative; font-size: 30px; line-height: 30px">Writes or <em>sends</em></span></div>
+    <div style="position: relative; height: 196px; border-radius: 22px; background: var(--fr); color: #fff; padding: 18px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="position: relative; color: rgba(255,255,255,.82)">Read</span><span class="serif" style="position: relative; font-size: 30px; line-height: 30px">Reads or <em>searches</em></span></div>
+    <div style="position: relative; height: 196px; border-radius: 22px; background: var(--fd); color: #fff; padding: 18px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="position: relative; color: rgba(255,255,255,.82)">Delete</span><span class="serif" style="position: relative; font-size: 30px; line-height: 30px">Can't be <em>undone</em></span></div>
+    <div style="position: relative; height: 196px; border-radius: 22px; background: var(--fg); color: #fff; padding: 18px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="position: relative; color: rgba(255,255,255,.82)">Grant</span><span class="serif" style="position: relative; font-size: 30px; line-height: 30px">Power <em>handed over</em></span></div>
+    <div style="position: relative; height: 196px; border-radius: 22px; background: var(--fa); color: #fff; padding: 18px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="position: relative; color: rgba(255,255,255,.82)">Pair</span><span class="serif" style="position: relative; font-size: 30px; line-height: 30px">Connects <em>something new</em></span></div>
+    <div style="position: relative; height: 196px; border-radius: 22px; background: var(--fc); color: #fff; padding: 18px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="position: relative; color: rgba(255,255,255,.82)">Accounts</span><span class="serif" style="position: relative; font-size: 30px; line-height: 30px">Changes an <em>account</em></span></div>
+    <div style="position: relative; height: 196px; border-radius: 22px; background: var(--fw); color: #fff; padding: 18px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="position: relative; color: rgba(255,255,255,.82)">Warn</span><span class="serif" style="position: relative; font-size: 30px; line-height: 30px">Reins <em>needs you</em></span></div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":1920,"height":1200}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'light';
+    const s = (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst';
+    const g = (this.props.grain ?? true) ? 'grain-on' : 'grain-off';
+    return { theme: t, sans: s, grain: g };
+  }
+}
+</script>
+</body>
+</html>

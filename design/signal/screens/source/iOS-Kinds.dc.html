@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>iPhone · Every kind of ask</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--dfill:#f6c9c9;--warn:#a16207;--scrim:rgba(22,21,27,.32);--wall:#e8e6e1;--wallink:#45434d}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--dfill:rgba(248,113,113,.28);--warn:#facc15;--scrim:rgba(0,0,0,.55);--wall:#0b0b0d;--wallink:#bdbcc6}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}
+.grain{position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:55px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 9px #111114,0 0 0 10.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans)}
+.isl{position:absolute;z-index:60;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000}
+.hind{position:absolute;z-index:60;bottom:8px;left:50%;margin-left:-67px;width:134px;height:5px;border-radius:3px;background:var(--ink)}
+.ask{font-family:var(--serif);font-size:42px;line-height:43px;letter-spacing:-.012em;font-weight:400;margin:0;text-wrap:balance}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.ib{appearance:none;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.18);display:grid;place-items:center;color:#fff;border:0;padding:0;flex:none}
+.seg{display:flex;background:var(--sunken);border-radius:999px;padding:4px;gap:2px}
+.seg button{appearance:none;flex:1;height:38px;border-radius:999px;border:0;background:transparent;font-family:var(--sans);font-size:14px;font-weight:500;color:var(--ink2);display:flex;align-items:center;justify-content:center;gap:4px;padding:0 4px}
+.seg button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--rule)}
+.locked{height:46px;border-radius:99px;background:var(--sunken);display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:500;color:var(--ink2)}
+.row{display:flex;align-items:center;gap:12px;min-height:52px;padding:8px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row:last-child{border-bottom:0}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.row .v{color:var(--ink);font-size:15px;font-weight:500;text-align:right}
+.av{width:28px;height:28px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+.av img{width:62%;height:62%}
+.ring circle{fill:none;stroke-width:3}
+.field{position:relative;color:#fff;border-radius:0 0 30px 30px;padding:56px 22px 22px;overflow:hidden;box-sizing:border-box}
+.field>*{position:relative}
+.field .grain{position:absolute}
+.field .lbl{color:rgba(255,255,255,.82)}
+.of2{color:rgba(255,255,255,.82)}
+.verdict{margin-top:14px;display:flex;align-items:center;gap:8px;color:rgba(255,255,255,.82);font-size:14.5px}
+.tb{display:flex;align-items:center;gap:10px}
+.tick{width:24px;height:24px;border-radius:8px;flex:none;display:grid;place-items:center;box-shadow:inset 0 0 0 1.5px var(--faint)}
+.tick.on{background:var(--vf);box-shadow:none;color:#fff}
+.tagc{font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:99px;white-space:nowrap}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 34px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box;border-top:1px solid var(--rule)}
+.well{font-family:var(--mono);font-size:12.5px;line-height:19px;padding:12px 14px;border-radius:14px;background:var(--raised);box-shadow:0 0 0 1px var(--rule);white-space:pre;color:var(--ink2);overflow:hidden}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{wall}} {{grain}}" style="width: 2860px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Every kind of ask</h1><span class="lbl" style="color: var(--wallink)">iPhone · one layout, the colour tells you what kind</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">Read · blue</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div class="field" style="background: var(--fr)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div class="tb"><button class="ib" aria-label="Close"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button><span class="av"><img src="../../assets/logos/openai.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">ChatGPT <span class="of2">· chatgpt.com</span></span><span class="mono" style="font-size: 13.5px">1:48</span></div>
+          <div class="lbl" style="margin-top: 30px">Gmail · Read</div>
+          <h2 class="ask" style="margin-top: 10px">Read 3 emails from <em>Stripe</em></h2>
+          <div class="verdict"><svg width="18" height="18" viewBox="0 0 36 36" class="ring" aria-hidden="true"><circle cx="18" cy="18" r="13" style="stroke: rgba(255,255,255,.35)"></circle><circle cx="18" cy="18" r="13" style="stroke: #fff" stroke-dasharray="82" stroke-dashoffset="32" transform="rotate(-90 18 18)"></circle></svg>Autopilot is unsure · 61%</div>
+        </div>
+        <div style="padding: 10px 24px 0">
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0"><span class="lbl">3 found · dana@acme.dev</span><a href="#" style="font-size: 14px; font-weight: 500; color: var(--violet); text-decoration: none">Clear</a></div>
+          <div class="row" style="align-items: flex-start"><span class="tick on"><svg class="g g16" viewBox="0 0 24 24" style="stroke-width: 2.2"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><div style="flex: 1"><div class="rt">Receipt for your payment</div><div class="meta">Stripe · Oct 12</div></div></div>
+          <div class="row" style="align-items: flex-start"><span class="tick on"><svg class="g g16" viewBox="0 0 24 24" style="stroke-width: 2.2"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><div style="flex: 1"><div class="rt">Your October invoice is ready</div><div class="meta">Stripe · Oct 1</div></div></div>
+          <div class="row" style="align-items: flex-start"><span class="tick"></span><div style="flex: 1; opacity: .5"><div class="rt" style="text-decoration: line-through">Your Stripe login code</div><div class="meta">Stripe · today</div></div><span class="tagc" style="color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent)">Code</span></div>
+        </div>
+        <div class="bar">
+          <div class="seg"><button class="on">Once</button><button>1 hour</button><button>1 day</button><button>Custom<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></button></div>
+          <div style="display: flex; gap: 10px"><a class="btn out" href="#" style="flex: 1">Deny</a><a class="btn inv" href="#" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Share 2</a></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Tick what to share.</b> Codes and passwords are never pre-ticked and carry a word tag. Unticking strikes a row through with a soft tick haptic; the button counts down: “Share 2”.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">Send · orange</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div class="field" style="background: var(--fp)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div class="tb"><button class="ib" aria-label="Close"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button><span class="av"><img src="../../assets/logos/claude.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">Claude <span class="of2">· claude.ai</span></span><span class="mono" style="font-size: 13.5px">1:12</span></div>
+          <div class="lbl" style="margin-top: 30px">Gmail · Send</div>
+          <h2 class="ask" style="margin-top: 10px">Send an email to <em>Anna Petrova</em></h2>
+          <div class="verdict"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Autopilot would allow · 97%</div>
+        </div>
+        <div style="padding: 8px 24px 0">
+          <div class="row"><span class="k">To</span><span class="mono" style="font-size: 13.5px">anna@example.com</span></div>
+          <div class="row"><span class="k">Subject</span><span class="v">Draft for Friday</span></div>
+          <div style="padding: 12px 0; font-size: 14.5px; line-height: 21px; color: var(--ink2); border-bottom: 1px solid var(--rule)">Hi Anna, here is the draft we talked about. The numbers in section two are still rough, more on Friday. Dana</div>
+          <div class="row"><span class="k">From</span><span class="mono" style="font-size: 13.5px">dana@acme.dev</span></div>
+        </div>
+        <div class="bar">
+          <div class="seg"><button class="on">Once</button><button>1 hour</button><button>1 day</button><button>Custom<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></button></div>
+          <div style="display: flex; gap: 10px"><a class="btn out" href="#" style="flex: 1">Deny</a><a class="btn inv" href="#" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Send</a></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Read before you send.</b> The whole message is right there, not a summary. The button says the verb, Send, and plays the send cue. Repeated sends to the same person offer “Anything like this” under Custom.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">Delete · red · hold</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div class="field" style="background: var(--fd)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div class="tb"><button class="ib" aria-label="Close"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button><span class="av"><img src="../../assets/logos/cursor.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">Cursor <span class="of2">· MacBook</span></span><span class="mono" style="font-size: 13.5px">4:51</span></div>
+          <div class="lbl" style="margin-top: 30px">GitHub · Delete</div>
+          <h2 class="ask" style="margin-top: 10px">Delete the repo <em>octo/old-api</em></h2>
+          <div class="verdict"><svg class="g g18" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Always asks · can't be undone</div>
+        </div>
+        <div style="padding: 8px 24px 0">
+          <div class="row"><span class="k">Repository</span><span class="mono" style="font-size: 13.5px">octo/old-api</span></div>
+          <div class="row"><span class="k">Last push</span><span class="v">2 years ago</span></div>
+          <div class="row"><span class="k">Holds</span><span class="v">1,284 commits · 3 open issues</span></div>
+          <div class="row"><span class="k">Account</span><span class="mono" style="font-size: 13.5px">octo-dana</span></div>
+        </div>
+        <div class="bar">
+          <div class="locked"><svg class="g g16" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Asked every time</div>
+          <div style="display: flex; gap: 10px"><a class="btn out" href="#" style="flex: 1">Deny</a><span style="flex: 1.35; position: relative; height: 54px; border-radius: 99px; background: var(--dwash); color: var(--bad); overflow: hidden; font-weight: 600; font-size: 16px"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 62%; background: var(--dfill)"></span><span style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px"><svg width="18" height="18" viewBox="0 0 36 36" class="ring" aria-hidden="true"><circle cx="18" cy="18" r="14" style="stroke: var(--dfill)"></circle><circle cx="18" cy="18" r="14" style="stroke: var(--bad)" stroke-dasharray="88" stroke-dashoffset="33" transform="rotate(-90 18 18)"></circle></svg>Keep holding</span></span></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Held, not tapped.</b> Red field, locked chooser, and a hold button mid-fill. Ticks quicken toward the end; a thud and Face ID finish it. Autopilot never decides these, and they can never be remembered.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">Grant · violet</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div class="field" style="background: var(--fg)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div class="tb"><button class="ib" aria-label="Close"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button><span class="av"><img src="../../assets/logos/claude.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">Claude <span class="of2">· claude.ai</span></span><span class="mono" style="font-size: 13.5px">2:30</span></div>
+          <div class="lbl" style="margin-top: 30px">Gmail · Permission</div>
+          <h2 class="ask" style="margin-top: 10px">Read mail from <em>@bank.com</em> without asking</h2>
+          <div class="verdict">Nothing is shared now. Matches are answered for you.</div>
+        </div>
+        <div style="padding: 8px 24px 0">
+          <div class="row"><span class="k">Only</span><span class="v" style="font-size: 14px">From @bank.com, subject “statement”</span></div>
+          <div class="row"><span class="k">Reach</span><span class="tagc" style="color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent)">Narrow</span></div>
+          <div class="row"><span class="k">Says</span><span class="v" style="font-size: 14px; font-style: italic; font-weight: 400">“To check this month's statement.”</span></div>
+          <div class="row"><span class="k">Account</span><span class="mono" style="font-size: 13.5px">dana@acme.dev</span></div>
+        </div>
+        <div class="bar">
+          <a href="#" style="height: 46px; border-radius: 99px; background: var(--sunken); display: flex; align-items: center; justify-content: space-between; padding: 0 18px; font-size: 14px; font-weight: 500; color: var(--ink); text-decoration: none"><span style="color: var(--ink2)">Allow for</span><span style="display: flex; align-items: center; gap: 4px">1 hour · at most 5 uses<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span></a>
+          <div style="display: flex; gap: 10px"><a class="btn out" href="#" style="flex: 1">Deny</a><a class="btn inv" href="#" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Allow</a></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Power handed over.</b> Violet because a grant is Reins acting for you. Reach is a word, Narrow, Broad or Everything, never just a colour. The duration pill opens a slider with detents; you can only shorten what was asked.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">MCP tool · orange</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div class="field" style="background: var(--fp)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div class="tb"><button class="ib" aria-label="Close"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button><span class="av"><img src="../../assets/logos/claude.svg" alt=""></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">Claude Code <span class="of2">· MacBook</span></span><span class="mono" style="font-size: 13.5px">0:55</span></div>
+          <div class="lbl" style="margin-top: 30px">Linear · MCP tool</div>
+          <h2 class="ask" style="margin-top: 10px">Create an issue on <em>Linear</em></h2>
+          <div class="verdict"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Autopilot would allow · 89%</div>
+        </div>
+        <div style="padding: 8px 24px 0">
+          <div class="row"><span class="k">Server</span><span class="mono" style="font-size: 13.5px">mcp.linear.app</span><span class="tagc" style="color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent)">Changes things</span></div>
+          <div class="row"><span class="k">Tool</span><span class="mono" style="font-size: 13.5px">create_issue</span></div>
+          <div style="padding: 12px 0 0"><div class="lbl" style="margin-bottom: 8px">Arguments</div>
+<div class="well">{
+  "team": "WEB",
+  "title": "Passkey sign-in fails on Safari 17",
+  "priority": 2,
+  "labels": ["bug", "auth"]
+}</div></div>
+        </div>
+        <div class="bar">
+          <div class="seg"><button class="on">Once</button><button>1 hour</button><button>1 day</button><button>Custom<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></button></div>
+          <div style="display: flex; gap: 10px"><a class="btn out" href="#" style="flex: 1">Deny</a><a class="btn inv" href="#" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Approve</a></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Any tool, same shape.</b> A tool that only reads would be blue; this one changes things, so orange. Destructive tools turn red and hold. The arguments are shown raw, in mono, because that is exactly what will run.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">Secrets · blue · always asks</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div class="field" style="background: var(--fr)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div class="tb"><button class="ib" aria-label="Close"><svg class="g g18" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></button><span class="av" style="background: rgba(255,255,255,.18); color: #fff"><svg class="g g16" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"></path></svg></span><span style="font-size: 14.5px; font-weight: 500; flex: 1">reins run <span class="of2">· MacBook</span></span><span class="mono" style="font-size: 13.5px">1:30</span></div>
+          <div class="lbl" style="margin-top: 30px">Vault · Secrets</div>
+          <h2 class="ask" style="margin-top: 10px">Hand 2 secrets to <em>deploy.sh</em></h2>
+          <div class="verdict"><svg class="g g18" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Always asks · secrets never run on Auto</div>
+        </div>
+        <div style="padding: 8px 24px 0">
+          <div class="row"><span class="k">For</span><span class="mono" style="font-size: 13px">./deploy.sh --prod</span></div>
+          <div class="row"><span class="k">Says</span><span class="v" style="font-size: 14px; font-style: italic; font-weight: 400">“Deploy the web app.”</span></div>
+          <div class="row"><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ink2)"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg><span class="rt" style="flex: 1">AWS deploy</span><span class="mono meta">password</span></div>
+          <div class="row"><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ink2)"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg><span class="rt" style="flex: 1">Sentry</span><span class="mono meta">auth token</span></div>
+          <div class="row"><span class="k">Held for</span><span class="v">30 minutes</span></div>
+        </div>
+        <div class="bar">
+          <div class="locked"><svg class="g g16" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Asked every time</div>
+          <div style="display: flex; gap: 10px"><a class="btn out" href="#" style="flex: 1">Deny</a><a class="btn inv" href="#" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Share 2</a></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Same field, same rhythm.</b> SSH sign-ins, API keys and questions from <span class="mono">reins ask</span> use this exact layout: label line, one sentence, plain rows. A question swaps the buttons for No and Yes.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark","both"],"default":"both","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":2860,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'both';
+    return {
+      wall: t === 'dark' ? 'dark' : 'light',
+      a: t === 'dark' ? 'dark' : 'light',
+      b: t === 'light' ? 'light' : 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

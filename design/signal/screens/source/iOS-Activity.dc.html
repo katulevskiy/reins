@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>iPhone · Activity</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--dfill:#f6c9c9;--warn:#a16207;--scrim:rgba(22,21,27,.32);--wall:#e8e6e1;--wallink:#45434d;--kp:#c2410c;--kr:#2563eb;--kd:#b91c1c;--kg:#5b43e8;--ka:#0e7490;--kc:#be185d;--kw:#a16207}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--dfill:rgba(248,113,113,.28);--warn:#facc15;--scrim:rgba(0,0,0,.55);--wall:#0b0b0d;--wallink:#bdbcc6;--kp:#fb923c;--kr:#60a5fa;--kd:#f87171;--kg:#a196ff;--ka:#22d3ee;--kc:#f472b6;--kw:#facc15}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}.g22{width:22px;height:22px}
+.grain{position:absolute !important;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}.light{--il:block;--id:none}.dark{--il:none;--id:block}.il{display:var(--il,block)}.id{display:var(--id,none)}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:55px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 9px #111114,0 0 0 10.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans)}
+.isl{position:absolute;z-index:60;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000}
+.hind{position:absolute;z-index:60;bottom:8px;left:50%;margin-left:-67px;width:134px;height:5px;border-radius:3px;background:var(--ink)}
+.title{font-family:var(--serif);font-size:44px;line-height:44px;letter-spacing:-.01em;font-weight:400;margin:0}
+.ask-s{font-family:var(--serif);font-size:25px;line-height:26px;letter-spacing:-.01em;font-weight:400;margin:0}
+.mood{font-family:var(--serif);font-style:italic;font-size:22px;line-height:28px;color:var(--ink2);margin:0}
+.body{font-size:15px;line-height:22px;color:var(--ink2);margin:0}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.btn.soft{background:var(--sunken)}
+.btn.sm{height:40px;font-size:14.5px;padding:0 16px}
+.btn.onf{background:#fff;color:#16151b}
+.btn.wash{background:rgba(255,255,255,.18);color:#fff}
+.ib{appearance:none;width:40px;height:40px;border-radius:50%;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;color:var(--ink);border:0;padding:0;flex:none}
+.row{display:flex;align-items:center;gap:14px;min-height:58px;padding:9px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.row .v{color:var(--ink);font-size:15px;font-weight:500;text-align:right}
+.tile{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none}
+.t-p{background:color-mix(in srgb,var(--kp) 13%,transparent);color:var(--kp)}
+.t-r{background:color-mix(in srgb,var(--kr) 13%,transparent);color:var(--kr)}
+.t-d{background:color-mix(in srgb,var(--kd) 13%,transparent);color:var(--kd)}
+.t-g{background:color-mix(in srgb,var(--kg) 13%,transparent);color:var(--kg)}
+.t-a{background:color-mix(in srgb,var(--ka) 13%,transparent);color:var(--ka)}
+.av{width:28px;height:28px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+.av img{width:62%;height:62%}
+.ring circle{fill:none;stroke-width:3}
+.chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:999px;font-size:14px;font-weight:500;background:var(--raised);box-shadow:0 0 0 1px var(--rule);color:var(--ink);white-space:nowrap;box-sizing:border-box}
+.chip.vio{background:var(--vf);color:#fff;box-shadow:none}
+.chip.inv{background:var(--inv);color:var(--oninv);box-shadow:none}
+.tabbar{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;display:flex;gap:2px;padding:6px;border-radius:999px;background:var(--inv);box-shadow:0 14px 30px -12px rgba(0,0,0,.45);z-index:30}
+.tabbar a{display:flex;align-items:center;gap:7px;height:46px;min-width:50px;justify-content:center;padding:0 14px;border-radius:999px;color:var(--oninv);opacity:.62;font-size:14.5px;font-weight:600;text-decoration:none;position:relative;box-sizing:border-box}
+.tabbar a.on{background:var(--paper);color:var(--ink);opacity:1}
+.tabbar .bd{position:absolute;top:4px;right:4px;min-width:17px;height:17px;border-radius:9px;background:var(--fp);color:#fff;font-size:10.5px;font-weight:600;display:grid;place-items:center;padding:0 4px;box-sizing:border-box}
+.menu{position:absolute;z-index:45;background:var(--raised);border-radius:20px;box-shadow:0 0 0 1px var(--rule),0 24px 48px -16px rgba(10,10,20,.35);padding:6px;box-sizing:border-box}
+.mi{display:flex;align-items:center;gap:12px;min-height:52px;padding:6px 12px;border-radius:14px;box-sizing:border-box}
+.mi.on{background:var(--sunken)}
+.mi .tt{font-size:15px;font-weight:500;color:var(--ink)}
+.mi .ss{font-size:12.5px;color:var(--meta)}
+.card{position:absolute;left:16px;right:16px;border-radius:26px;overflow:hidden;color:#fff;box-sizing:border-box}
+.card>*{position:relative}
+.fade{position:absolute;left:0;right:0;bottom:0;height:120px;background:linear-gradient(to bottom, transparent, var(--paper) 55%);z-index:20;pointer-events:none}
+.out-auto{font-size:12px;font-weight:600;color:var(--violet)}
+.out-deny{font-size:12px;font-weight:600;color:var(--bad)}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 34px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box;border-top:1px solid var(--rule)}
+@keyframes breathe{0%,100%{opacity:.35}50%{opacity:1}}
+@media (prefers-reduced-motion: reduce){.sig *{animation:none !important}}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{wall}} {{grain}}" style="width: 2400px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Activity</h1><span class="lbl" style="color: var(--wallink)">iPhone · the stack, the river, and what happened</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">01 · Two things wait</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 62px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Activity</h2><span class="chip vio"><svg class="g g16" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Auto<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span><button class="ib" aria-label="Filter"><svg class="g g18" viewBox="0 0 24 24"><path d="M4 6.5h16M7 12h10M10 17.5h4"></path></svg></button></div>
+        <p class="mood" style="position: absolute; left: 24px; right: 24px; top: 116px"><span style="font-style: normal">Two</span> things wait for you.</p>
+        <div style="position: absolute; left: 0; right: 0; top: 164px; height: 232px">
+          <div class="card" style="top: 28px; left: 36px; right: 36px; height: 180px; background: var(--fd); opacity: .9"></div>
+          <div class="card" style="top: 14px; left: 26px; right: 26px; height: 186px; background: var(--fr)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg></div>
+          <div class="card" style="top: 0; height: 200px; background: var(--fp); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 18px 30px -18px rgba(0,0,0,.45)">
+            <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+            <div style="display: flex; align-items: center; gap: 9px"><span class="av" style="width: 24px; height: 24px"><img src="../../assets/logos/claude.svg" alt=""></span><span class="lbl" style="color: rgba(255,255,255,.82); flex: 1">Gmail · Send</span><span class="mono" style="font-size: 13px; display: flex; align-items: center; gap: 6px"><svg width="18" height="18" viewBox="0 0 36 36" class="ring" aria-hidden="true"><circle cx="18" cy="18" r="14" style="stroke: rgba(255,255,255,.25)"></circle><circle cx="18" cy="18" r="14" style="stroke: #fff" stroke-dasharray="88" stroke-dashoffset="22" transform="rotate(-90 18 18)"></circle></svg>1:12</span></div>
+            <div class="ask-s">Send an email to <em>Anna Petrova</em></div>
+            <div style="font-size: 13.5px; color: rgba(255,255,255,.82)">“Draft for Friday” · from dana@acme.dev</div>
+            <div style="display: flex; gap: 8px; margin-top: auto"><a class="btn onf sm" href="#" style="flex: 1.3"><svg class="g g18" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Allow · 97%</a><a class="btn wash sm" href="#" style="flex: 1">Review</a></div>
+          </div>
+        </div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 412px">
+          <div style="display: flex; justify-content: space-between; align-items: center"><span class="lbl">Today</span><span class="meta">12 asked · 9 by Autopilot</span></div>
+          <div style="margin-top: 6px">
+            <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2.2"></circle><circle cx="7" cy="18.5" r="2.2"></circle><circle cx="17" cy="7.5" r="2.2"></circle><path d="M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">Pushed 3 commits to acme/web</div><div class="meta">Claude Code · 4 min</div></div><span class="out-auto">Auto</span></div>
+            <div class="row"><span class="tile t-r"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="M4.5 7.5 12 13l7.5-5.5"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">Read 2 emails from Stripe</div><div class="meta">ChatGPT · 18 min</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+            <div class="row"><span class="tile t-r"><svg class="g" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">Searched mail for “invoice”</div><div class="meta">Claude · 32 min · under a grant</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--violet)"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></div>
+            <div class="row"><span class="tile t-d"><svg class="g" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">Delete branch old/experiment</div><div class="meta">Cursor · 1 h</div></div><span class="out-deny">Denied</span></div>
+            <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">Sent an email to Jonas</div><div class="meta">Claude · 2 h</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+          </div>
+        </div>
+        <div class="fade"></div>
+        <nav class="tabbar"><a class="on" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg>Activity</a><a href="#" aria-label="Trust"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></a><a href="#" aria-label="Connections"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></a><a href="#" aria-label="Settings"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>The stack.</b> Waiting asks are cards in their field colour, newest on top, the rest peeking below. Swipe right to take Autopilot's pick, left to deny, tap to review. Bursts from one AI merge into one card: “Read 5 emails”. New arrivals drop onto the stack with the attention haptic.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">02 · All quiet · something broke</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 0; right: 0; top: 0; background: var(--fw); color: #fff; border-radius: 0 0 30px 30px; padding: 58px 24px 18px; overflow: hidden; z-index: 2">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="position: relative; display: flex; align-items: center; gap: 12px"><div style="flex: 1"><div class="lbl" style="color: rgba(255,255,255,.82)">Reins · Notifications</div><div class="ask-s" style="margin-top: 6px; font-size: 23px">Notifications are <em>off</em></div></div><a class="btn onf sm" href="#">Turn on</a></div>
+        </div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 168px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Activity</h2><span class="chip"><svg class="g g16" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg>Manual<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span><button class="ib" aria-label="Filter"><svg class="g g18" viewBox="0 0 24 24"><path d="M4 6.5h16M7 12h10M10 17.5h4"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 236px; display: flex; flex-direction: column; align-items: center">
+          <img class="il" src="../../assets/illustrations/pond-light.svg" alt="" style="width: 300px; height: 159px"><img class="id" src="../../assets/illustrations/pond-dark.svg" alt="" style="width: 300px; height: 159px">
+          <p class="mood" style="text-align: center; margin-top: 4px">All quiet. Three AIs are connected.</p>
+        </div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 448px">
+          <span class="lbl">Today</span>
+          <div style="margin-top: 6px">
+            <div class="row" style="background: color-mix(in srgb, var(--kp) 7%, transparent); margin: 0 -24px; padding: 9px 24px"><span class="tile" style="background: var(--fp); color: #fff"><svg class="g" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2.2"></circle><circle cx="7" cy="18.5" r="2.2"></circle><circle cx="17" cy="7.5" r="2.2"></circle><path d="M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">Pushed 8 commits to octo/app</div><div class="meta">Claude Code · now · <span style="color: var(--violet)">Allowed by you</span></div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+            <div class="row"><span class="tile t-r"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="M4.5 7.5 12 13l7.5-5.5"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">Read 2 emails from Stripe</div><div class="meta">ChatGPT · 18 min</div></div><span class="out-auto">Auto</span></div>
+            <div class="row"><span class="tile t-a"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">Connected Cursor</div><div class="meta">MacBook Pro · 1 h</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+          </div>
+        </div>
+        <div class="fade"></div>
+        <nav class="tabbar"><a class="on" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg>Activity</a><a href="#" aria-label="Trust"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></a><a href="#" aria-label="Connections"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></a><a href="#" aria-label="Settings"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Warn is a field too.</b> When Reins is broken, a short amber field runs into the top, the only colour on the screen. The pond fills the empty stack. The newest row still glows faintly in its kind colour for 4 s: that is where the fold landed.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">03 · Mode menu</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 62px; display: flex; align-items: center; gap: 8px; z-index: 46"><h2 class="title" style="flex: 1">Activity</h2><span class="chip vio" style="box-shadow: 0 0 0 4px color-mix(in srgb, var(--vf) 25%, transparent)"><svg class="g g16" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Auto<svg class="g g14" viewBox="0 0 24 24"><path d="M18 14.5l-6-6-6 6"></path></svg></span><button class="ib" aria-label="Filter"><svg class="g g18" viewBox="0 0 24 24"><path d="M4 6.5h16M7 12h10M10 17.5h4"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 116px; opacity: .35">
+          <p class="mood">All quiet. Three AIs are connected.</p>
+          <div style="margin-top: 40px"><span class="lbl">Today</span>
+            <div class="row"><span class="tile t-p"></span><div style="flex: 1"><div class="rt">Pushed 3 commits to acme/web</div><div class="meta">Claude Code · 4 min</div></div></div>
+            <div class="row"><span class="tile t-r"></span><div style="flex: 1"><div class="rt">Read 2 emails from Stripe</div><div class="meta">ChatGPT · 18 min</div></div></div>
+            <div class="row"><span class="tile t-r"></span><div style="flex: 1"><div class="rt">Searched mail for “invoice”</div><div class="meta">Claude · 32 min</div></div></div>
+          </div>
+        </div>
+        <div class="menu" style="right: 16px; top: 114px; width: 300px">
+          <div class="mi"><span class="tile" style="width: 34px; height: 34px; border-radius: 10px; background: var(--sunken); color: var(--ink)"><svg class="g g18" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg></span><div style="flex: 1"><div class="tt">Manual</div><div class="ss">You decide, with a hint</div></div></div>
+          <div class="mi on"><span class="tile" style="width: 34px; height: 34px; border-radius: 10px; background: var(--vf); color: #fff"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg></span><div style="flex: 1"><div class="tt">Auto</div><div class="ss">Decides the easy ones</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--violet)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+          <div class="mi"><span class="tile" style="width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--kw) 14%, transparent); color: var(--kw)"><svg class="g g18" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg></span><div style="flex: 1"><div class="tt">Lockdown</div><div class="ss">Deny everything at once</div></div></div>
+          <div style="height: 1px; background: var(--rule); margin: 4px 10px"></div>
+          <div class="mi"><span class="tile" style="width: 34px; height: 34px; border-radius: 10px; background: var(--dwash); color: var(--bad)"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg></span><div style="flex: 1"><div class="tt" style="color: var(--bad)">Bypass…</div><div class="ss">Approve everything for a while</div></div><svg class="g g16" viewBox="0 0 24 24" style="color: var(--faint)"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          <div style="height: 1px; background: var(--rule); margin: 4px 10px"></div>
+          <div class="mi" style="min-height: 44px"><div class="tt" style="flex: 1; font-size: 14.5px; color: var(--ink2)">Autopilot settings</div><svg class="g g16" viewBox="0 0 24 24" style="color: var(--faint)"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+        </div>
+        <nav class="tabbar" style="opacity: .35"><a class="on" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg>Activity</a><a href="#" aria-label="Trust"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></a><a href="#" aria-label="Connections"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></a><a href="#" aria-label="Settings"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Safest first.</b> The chip opens a menu that grows from it in 180 ms. Manual and Auto switch at once, Lockdown asks Face ID, Bypass opens its hold sheet. Press and slide down the rows to pick in one gesture; each row crossed ticks.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">04 · Filtered · swipe a row</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 62px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Activity</h2><span class="chip vio"><svg class="g g16" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Auto<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span><button class="ib" aria-label="Filter" style="background: var(--inv); color: var(--oninv); box-shadow: none"><svg class="g g18" viewBox="0 0 24 24"><path d="M4 6.5h16M7 12h10M10 17.5h4"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 0; top: 122px; display: flex; gap: 8px; overflow: hidden"><span class="chip">All</span><span class="chip inv">Autopilot</span><span class="chip">Denied</span><span class="chip">Grants</span><span class="chip">Any AI<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></span></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 178px">
+          <div style="display: flex; justify-content: space-between"><span class="lbl">Today</span><span class="meta">9 by Autopilot</span></div>
+          <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2.2"></circle><circle cx="7" cy="18.5" r="2.2"></circle><circle cx="17" cy="7.5" r="2.2"></circle><path d="M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8"></path></svg></span><div style="flex: 1"><div class="rt">Pushed 3 commits to acme/web</div><div class="meta">Claude Code · 4 min · 97%</div></div><span class="out-auto">Auto</span></div>
+          <div style="position: relative; margin: 0 -24px; overflow: hidden">
+            <div style="position: absolute; right: 0; top: 0; bottom: 0; width: 132px; background: var(--vf); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12.5px; font-weight: 600"><svg class="g" viewBox="0 0 24 24"><path d="M9 13.5 4.5 9 9 4.5M4.5 9H15a5 5 0 0 1 0 10h-3"></path></svg>This was wrong</div>
+            <div class="row" style="position: relative; background: var(--paper); transform: translateX(-132px); padding-left: 24px; padding-right: 24px"><span class="tile t-r"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="M4.5 7.5 12 13l7.5-5.5"></path></svg></span><div style="flex: 1"><div class="rt">Read 2 emails from Stripe</div><div class="meta">ChatGPT · 18 min · 96%</div></div><span class="out-auto">Auto</span></div>
+          </div>
+          <div class="row"><span class="tile t-r"><svg class="g" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg></span><div style="flex: 1"><div class="rt">Searched Drive for “Q3 plan”</div><div class="meta">Claude · 41 min · 94%</div></div><span class="out-auto">Auto</span></div>
+          <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z"></path></svg></span><div style="flex: 1"><div class="rt">Comment on PR #212</div><div class="meta">Cursor · 1 h · 91% deny</div></div><span class="out-deny">Denied</span></div>
+          <div style="display: flex; justify-content: space-between; margin-top: 24px"><span class="lbl">Yesterday</span></div>
+          <div class="row"><span class="tile t-p"><svg class="g" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2.2"></circle><circle cx="7" cy="18.5" r="2.2"></circle><circle cx="17" cy="7.5" r="2.2"></circle><path d="M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8"></path></svg></span><div style="flex: 1"><div class="rt">Pushed 12 commits to acme/web</div><div class="meta">Claude Code · 18:20 · 98%</div></div><span class="out-auto">Auto</span></div>
+          <div class="row"><span class="tile t-r"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><path d="M4.5 7.5 12 13l7.5-5.5"></path></svg></span><div style="flex: 1"><div class="rt">Read 4 emails from GitHub</div><div class="meta">ChatGPT · 16:02 · 95%</div></div><span class="out-auto">Auto</span></div>
+        </div>
+        <div class="fade"></div>
+        <nav class="tabbar"><a class="on" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg>Activity</a><a href="#" aria-label="Trust"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg></a><a href="#" aria-label="Connections"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></a><a href="#" aria-label="Settings"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Correct in one swipe.</b> Rows Autopilot decided offer “This was wrong” on a left swipe. A confirm sheet asks “Should this have been denied?” and Autopilot learns; what was done stays done. Filters are chips, Any AI is a menu.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">05 · What happened</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px; display: flex; justify-content: space-between"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button><button class="ib" aria-label="Share"><svg class="g g18" viewBox="0 0 24 24"><path d="M12 15V3.5M7.5 8 12 3.5 16.5 8M5 13v6.5h14V13"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 118px; display: flex; flex-direction: column; gap: 12px">
+          <div style="display: flex; align-items: center; gap: 10px"><span class="tile t-p" style="width: 46px; height: 46px; border-radius: 14px"><svg class="g g22" viewBox="0 0 24 24"><circle cx="7" cy="5.5" r="2.2"></circle><circle cx="7" cy="18.5" r="2.2"></circle><circle cx="17" cy="7.5" r="2.2"></circle><path d="M7 7.7v8.6M17 9.7c0 4-4.5 3.4-9 6.8"></path></svg></span><span class="lbl">GitHub · Push · Today 14:32</span></div>
+          <h2 class="serif" style="margin: 0; font-size: 38px; line-height: 40px; letter-spacing: -0.012em">Pushed 3 commits to <em>acme/web</em></h2>
+          <div style="display: flex; align-items: center; gap: 8px; color: var(--violet); font-size: 15px; font-weight: 500"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Allowed by Autopilot · 97%</div>
+        </div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 300px">
+          <div class="row"><span class="k">Asked by</span><span class="v" style="display: flex; align-items: center; gap: 8px"><span class="av" style="width: 22px; height: 22px"><img src="../../assets/logos/claude.svg" alt=""></span>Claude Code</span></div>
+          <div class="row"><span class="k">Branch</span><span class="mono" style="font-size: 13.5px">feature/login</span></div>
+          <div class="row"><span class="k">Account</span><span class="mono" style="font-size: 13.5px">dana-acme</span></div>
+          <div class="row" style="flex-direction: column; align-items: stretch; gap: 10px; padding: 14px 0"><div style="display: flex; justify-content: space-between"><span class="rt">Why Autopilot allowed it</span><svg class="g g16" viewBox="0 0 24 24" style="color: var(--faint)"><path d="M18 14.5l-6-6-6 6"></path></svg></div>
+            <div style="display: grid; grid-template-columns: 80px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; color: var(--ink2)"><span>Approve</span><span style="height: 6px; border-radius: 3px; background: var(--sunken); position: relative"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 97%; border-radius: 3px; background: var(--ok)"></span></span><span class="mono">97%</span><span>Confidence</span><span style="height: 6px; border-radius: 3px; background: var(--sunken); position: relative"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 92%; border-radius: 3px; background: var(--violet)"></span></span><span class="mono">92%</span></div>
+            <div class="meta" style="font-size: 13.5px; line-height: 19px">Like 11 pushes to feature branches of acme/web you approved. Profile Work.</div>
+          </div>
+        </div>
+        <div class="bar"><a class="btn soft full" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M9 13.5 4.5 9 9 4.5M4.5 9H15a5 5 0 0 1 0 10h-3"></path></svg>This was wrong</a></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Decided means paper.</b> The ask now reads in the past tense on paper, its kind tile above it, the verdict in violet. The tile is the same one the field folded into, so the screen feels like opening that row up. Share exports a plain-text record.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark","both"],"default":"both","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":2400,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'both';
+    return {
+      wall: t === 'dark' ? 'dark' : 'light',
+      a: t === 'dark' ? 'dark' : 'light',
+      b: t === 'light' ? 'light' : 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

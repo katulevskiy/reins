@@ -30,6 +30,8 @@ async-trait = "0.1.92"
 # Local clock times in the activity log ("14:32", "Oct 3").
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 futures = "0.3.34"
+# The grain baked over colour fields, handed to GPUI as its own image type (already in the tree through GPUI).
+image = { version = "0.25.10", default-features = false }
 log = "0.4.34"
 png = "0.18.1"
 qrcode = { version = "0.14.1", default-features = false }
@@ -43,7 +45,7 @@ tray-icon = { version = "0.26.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSRunningApplication"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSAccessibility", "NSApplication", "NSResponder", "NSRunningApplication", "NSWorkspace"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "0.3.6"

@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Map of every screen</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--warn:#a16207;--wall:#e8e6e1;--wallink:#45434d}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--warn:#facc15;--wall:#0b0b0d;--wallink:#bdbcc6}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+em{font-style:italic}
+.col{background:var(--paper);border-radius:26px;padding:22px 18px 18px;display:flex;flex-direction:column;gap:6px}
+.hd{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.hd .serif{font-size:32px;line-height:32px}
+.sc{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 12px;border-radius:12px;background:var(--raised);box-shadow:0 0 0 1px var(--rule);font-size:14px;font-weight:500;color:var(--ink)}
+.sc.sub{margin-left:18px;font-weight:400;color:var(--ink2);background:transparent;box-shadow:inset 0 0 0 1px var(--rule)}
+.sc.sheet{margin-left:18px;font-weight:400;color:var(--ink2);background:transparent;box-shadow:inset 0 0 0 1px var(--rule);border-style:dashed}
+.tg{margin-left:auto;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:3px 7px;border-radius:99px}
+.new{background:var(--vf);color:#fff}
+.mv{background:var(--sunken);color:var(--ink2)}
+.mg{box-shadow:inset 0 0 0 1px var(--violet);color:var(--violet)}
+.dot{width:10px;height:10px;border-radius:3px;flex:none}
+</style>
+</helmet>
+<div class="sig {{sans}} {{theme}}" style="width: 2400px; height: 1400px; box-sizing: border-box; background: var(--wall); color: var(--ink); padding: 72px 80px; display: flex; flex-direction: column; gap: 30px">
+  <div style="display: flex; align-items: flex-end; gap: 32px">
+    <h1 class="serif" style="margin: 0; font-size: 96px; line-height: 88px; letter-spacing: -0.02em">Every <em>screen</em></h1>
+    <div style="margin: 0 0 10px; display: flex; gap: 18px; align-items: center; color: var(--wallink); font-size: 14px">
+      <span style="display: flex; gap: 6px; align-items: center"><span class="tg new" style="margin: 0">New</span>doesn't exist today</span>
+      <span style="display: flex; gap: 6px; align-items: center"><span class="tg mv" style="margin: 0">Moved</span>same screen, new home</span>
+      <span style="display: flex; gap: 6px; align-items: center"><span class="tg mg" style="margin: 0">Merged</span>two became one</span>
+      <span style="display: flex; gap: 6px; align-items: center"><span class="sc sheet" style="margin: 0; min-height: 26px; font-size: 12px">Sheet</span>dashed is a sheet or menu</span>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 16px; flex: 1">
+    <div class="col">
+      <div class="hd"><span class="serif">Arrive</span></div>
+      <div class="sc">Welcome</div>
+      <div class="sc sub">Create account</div>
+      <div class="sc sub">Sign in</div>
+      <div class="sc sub">Other server</div>
+      <div class="sc">Passkey offer</div>
+      <div class="sc">Recovery code</div>
+      <div class="sc">Unlock on a new phone</div>
+      <div class="sc sub">Ask my other phone</div>
+      <div class="sc sub">Recovery code entry</div>
+      <div class="sc sub">Reset the vault</div>
+      <div class="sc">Tour<span class="tg mg">8 → 5</span></div>
+      <div class="sc sub">Requests come to you</div>
+      <div class="sc sub">What your AIs can use</div>
+      <div class="sc sub">How much to ask</div>
+      <div class="sc sub">You're in control</div>
+      <div class="sc">Privacy cover</div>
+    </div>
+    <div class="col">
+      <div class="hd"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg><span class="serif">Activity</span></div>
+      <div class="sc">The stack + the river<span class="tg new">New</span></div>
+      <div class="sc sheet">Mode menu</div>
+      <div class="sc sheet">Filter menu</div>
+      <div class="sc sub">Entry detail</div>
+      <div class="sc sub">Email</div>
+      <div class="sc">Approval · field</div>
+      <div class="sc sub">Commits · commit · files</div>
+      <div class="sc sub">Search text</div>
+      <div class="sc sheet">Remember for</div>
+      <div class="sc sheet">Allow for</div>
+      <div class="sc sheet">Autopilot's opinion</div>
+      <div class="sc">Pair a computer or AI</div>
+      <div class="sc">Add a phone</div>
+      <div class="sc">Share a file</div>
+      <div class="sc">The fold<span class="tg new">New</span></div>
+    </div>
+    <div class="col">
+      <div class="hd"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg><span class="serif">Trust</span></div>
+      <div class="sc">Trust<span class="tg mg">Autopilot + Grants</span></div>
+      <div class="sc sheet">Bypass · hold</div>
+      <div class="sc sheet">Bypass for</div>
+      <div class="sc sub">Grant</div>
+      <div class="sc sheet">Extend · Resume</div>
+      <div class="sc sub">New grant</div>
+      <div class="sc sub">Ended grants</div>
+      <div class="sc sub">Profile</div>
+      <div class="sc sheet">Rename · icon</div>
+      <div class="sc sub">Try it</div>
+      <div class="sc sheet">On-device model</div>
+      <div class="sc sub">Starting rule</div>
+    </div>
+    <div class="col">
+      <div class="hd"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg><span class="serif">Connections</span></div>
+      <div class="sc">Connections<span class="tg mv">Tab</span></div>
+      <div class="sc sheet">Connect something</div>
+      <div class="sc sub">AI or computer</div>
+      <div class="sc sheet">Icon picker</div>
+      <div class="sc sub">Scan a computer</div>
+      <div class="sc sub">Service · accounts</div>
+      <div class="sc sub">GitHub token</div>
+      <div class="sc sub">Telegram sign-in</div>
+      <div class="sc sub">MCP server · tools</div>
+      <div class="sc sub">Add MCP server</div>
+      <div class="sc sub">Vault · item · edit</div>
+      <div class="sc sub">Payments · spending<span class="tg new">iPhone</span></div>
+    </div>
+    <div class="col">
+      <div class="hd"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg><span class="serif">Settings</span></div>
+      <div class="sc">Settings</div>
+      <div class="sc sub">Devices</div>
+      <div class="sc sheet">Sign a phone out</div>
+      <div class="sc sub">Sounds and haptics</div>
+      <div class="sc sub">Recovery code</div>
+      <div class="sc sub">Vault passkeys</div>
+      <div class="sc sheet">Delete account · hold</div>
+      <div class="sc sub">Take the tour</div>
+      <div class="sc sub">Appearance<span class="tg new">New</span></div>
+    </div>
+    <div class="col">
+      <div class="hd"><span class="serif">Outside</span></div>
+      <div class="lbl" style="margin: 4px 0 2px">iPhone</div>
+      <div class="sc">Notification · actions</div>
+      <div class="sc">Live Activity · island</div>
+      <div class="sc">Bypass Live Activity</div>
+      <div class="sc">Widgets · Waiting, Mode</div>
+      <div class="sc">Controls · Siri</div>
+      <div class="lbl" style="margin: 10px 0 2px">Android</div>
+      <div class="sc">Heads-up · actions</div>
+      <div class="sc">Ongoing bypass</div>
+      <div class="sc">Quick Settings tile<span class="tg new">New</span></div>
+      <div class="sc">Home widget<span class="tg new">New</span></div>
+      <div class="sc">Update card</div>
+    </div>
+    <div class="col">
+      <div class="hd"><svg class="g" viewBox="0 0 24 24"><rect x="5" y="5.5" width="14" height="10" rx="1.5"></rect><path d="M3 18.5h18"></path></svg><span class="serif">Desktop</span></div>
+      <div class="sc">Home<span class="tg mv">Overview</span></div>
+      <div class="sc sub">Waiting field</div>
+      <div class="sc">Activity</div>
+      <div class="sc">Connections</div>
+      <div class="sc">Keys<span class="tg mv">Keys &amp; secrets</span></div>
+      <div class="sc">Rules</div>
+      <div class="sc">Settings</div>
+      <div class="sc sheet">Pause git</div>
+      <div class="sc sheet">Work session</div>
+      <div class="sc sheet">Health checks</div>
+      <div class="sc">First run · 4 steps</div>
+      <div class="sc">Tray menu</div>
+      <div class="sc">Web · connect · wait · pair</div>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+    <div style="font-size: 14.5px; line-height: 21px; color: var(--wallink)"><b style="color: var(--ink)">Activity ↔ Activity.</b> The same list on phone and computer; only the phone answers.</div>
+    <div style="font-size: 14.5px; line-height: 21px; color: var(--wallink)"><b style="color: var(--ink)">Trust ↔ Rules.</b> What runs without asking: Autopilot and grants on the phone, guard rules on the computer.</div>
+    <div style="font-size: 14.5px; line-height: 21px; color: var(--wallink)"><b style="color: var(--ink)">Connections ↔ Connections.</b> Both ends of the wire: who can ask, and what they can reach.</div>
+    <div style="font-size: 14.5px; line-height: 21px; color: var(--wallink)"><b style="color: var(--ink)">Settings ↔ Settings.</b> Account, devices, sounds, and the way out.</div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"$preview":{"width":2400,"height":1400}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: this.props.theme ?? 'light',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst'
+    };
+  }
+}
+</script>
+</body>
+</html>

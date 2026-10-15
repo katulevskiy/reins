@@ -1,0 +1,10 @@
+@font-face{font-family:"Instrument Serif";font-weight:400;font-style:normal;src:url(InstrumentSerif-Regular.ttf) format("truetype")}
+@font-face{font-family:"Instrument Serif";font-weight:400;font-style:italic;src:url(InstrumentSerif-Italic.ttf) format("truetype")}
+@font-face{font-family:"Instrument Sans";font-weight:400;font-style:normal;src:url(InstrumentSans-Regular.ttf) format("truetype")}
+@font-face{font-family:"Instrument Sans";font-weight:500;font-style:normal;src:url(InstrumentSans-Medium.ttf) format("truetype")}
+@font-face{font-family:"Instrument Sans";font-weight:600;font-style:normal;src:url(InstrumentSans-SemiBold.ttf) format("truetype")}
+@font-face{font-family:"Geist";font-weight:400;font-style:normal;src:url(Geist-Regular.ttf) format("truetype")}
+@font-face{font-family:"Geist";font-weight:500;font-style:normal;src:url(Geist-Medium.ttf) format("truetype")}
+@font-face{font-family:"Geist";font-weight:600;font-style:normal;src:url(Geist-SemiBold.ttf) format("truetype")}
+@font-face{font-family:"Geist Mono";font-weight:400;font-style:normal;src:url(GeistMono-Regular.ttf) format("truetype")}
+@font-face{font-family:"Geist Mono";font-weight:500;font-style:normal;src:url(GeistMono-Medium.ttf) format("truetype")}

@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>iPhone · Arrive</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--dfill:#f6c9c9;--warn:#a16207;--scrim:rgba(22,21,27,.32);--wall:#e8e6e1;--wallink:#45434d;--kp:#c2410c;--kr:#2563eb;--kd:#b91c1c;--kg:#5b43e8;--ka:#0e7490;--kc:#be185d;--kw:#a16207}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--dfill:rgba(248,113,113,.28);--warn:#facc15;--scrim:rgba(0,0,0,.55);--wall:#0b0b0d;--wallink:#bdbcc6;--kp:#fb923c;--kr:#60a5fa;--kd:#f87171;--kg:#a196ff;--ka:#22d3ee;--kc:#f472b6;--kw:#facc15}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}.g22{width:22px;height:22px}
+.grain{position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}.light{--il:block;--id:none}.dark{--il:none;--id:block}.il{display:var(--il,block)}.id{display:var(--id,none)}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:55px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 9px #111114,0 0 0 10.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans)}
+.isl{position:absolute;z-index:60;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000}
+.hind{position:absolute;z-index:60;bottom:8px;left:50%;margin-left:-67px;width:134px;height:5px;border-radius:3px;background:var(--ink)}
+.on-field .hind,.hind.w{background:#fff}
+.title{font-family:var(--serif);font-size:44px;line-height:44px;letter-spacing:-.01em;font-weight:400;margin:0}
+.ask{font-family:var(--serif);font-size:45px;line-height:46px;letter-spacing:-.012em;font-weight:400;margin:0;text-wrap:balance}
+.ask-s{font-family:var(--serif);font-size:25px;line-height:26px;letter-spacing:-.01em;font-weight:400;margin:0}
+.st{font-family:var(--serif);font-size:32px;line-height:34px;letter-spacing:-.01em;font-weight:400;margin:0}
+.stat{font-family:var(--serif);font-size:40px;line-height:40px;letter-spacing:-.01em}
+.mood{font-family:var(--serif);font-style:italic;font-size:22px;line-height:28px;color:var(--ink2)}
+.body{font-size:15px;line-height:22px;color:var(--ink2);margin:0}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.btn.soft{background:var(--sunken)}
+.btn.danger{background:var(--dwash);color:var(--bad)}
+.btn.sm{height:40px;font-size:14.5px;padding:0 16px}
+.btn.onf{background:#fff;color:#16151b}
+.btn.wash{background:rgba(255,255,255,.18);color:#fff}
+.btn.vio{background:var(--vf);color:#fff}
+.btn.full{width:100%}
+.link{font-size:15px;font-weight:500;color:var(--violet);background:none;border:0;padding:0;text-decoration:none}
+.ib{appearance:none;width:40px;height:40px;border-radius:50%;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;color:var(--ink);border:0;padding:0;flex:none}
+.ib.f{background:rgba(255,255,255,.18);box-shadow:none;color:#fff}
+.seg{display:flex;background:var(--sunken);border-radius:999px;padding:4px;gap:2px}
+.seg button{appearance:none;flex:1;height:38px;border-radius:999px;border:0;background:transparent;font-family:var(--sans);font-size:14px;font-weight:500;color:var(--ink2);display:flex;align-items:center;justify-content:center;gap:4px;padding:0 4px}
+.seg button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--rule)}
+.row{display:flex;align-items:center;gap:14px;min-height:56px;padding:9px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row:last-child{border-bottom:0}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.row .v{color:var(--ink);font-size:15px;font-weight:500;text-align:right}
+.chev{color:var(--faint)}
+.tile{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none}
+.t-p{background:color-mix(in srgb,var(--kp) 13%,transparent);color:var(--kp)}
+.t-r{background:color-mix(in srgb,var(--kr) 13%,transparent);color:var(--kr)}
+.t-d{background:color-mix(in srgb,var(--kd) 13%,transparent);color:var(--kd)}
+.t-g{background:color-mix(in srgb,var(--kg) 13%,transparent);color:var(--kg)}
+.t-a{background:color-mix(in srgb,var(--ka) 13%,transparent);color:var(--ka)}
+.t-c{background:color-mix(in srgb,var(--kc) 13%,transparent);color:var(--kc)}
+.t-w{background:color-mix(in srgb,var(--kw) 13%,transparent);color:var(--kw)}
+.t-n{background:var(--sunken);color:var(--ink)}
+.field{position:relative;color:#fff;border-radius:0 0 30px 30px;padding:58px 24px 26px;overflow:hidden;box-sizing:border-box}
+.field>*{position:relative}
+.field .grain{position:absolute}
+.fp{background:var(--fp)}.fr{background:var(--fr)}.fd{background:var(--fd)}.fg{background:var(--fg)}.fa{background:var(--fa)}.fc{background:var(--fc)}.fw{background:var(--fw)}
+.of2{color:rgba(255,255,255,.82)}
+.field .lbl{color:rgba(255,255,255,.82)}
+.av{width:28px;height:28px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+.av img{width:62%;height:62%}
+.svc{width:38px;height:38px;border-radius:11px;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px var(--rule)}
+.svc img{width:58%;height:58%}
+.ring circle{fill:none;stroke-width:3}
+.input{display:flex;flex-direction:column;gap:6px}
+.input label{font-size:13px;color:var(--meta);font-weight:500}
+.input input,.input .fake{height:52px;border-radius:14px;background:var(--raised);box-shadow:0 0 0 1px var(--rule);border:0;padding:0 16px;font-family:var(--sans);font-size:16px;color:var(--ink);box-sizing:border-box;display:flex;align-items:center;width:100%}
+.input.mono input,.input.mono .fake{font-family:var(--mono);font-size:15px}
+.input .fake.focus{box-shadow:0 0 0 2px var(--violet)}
+.tick{width:24px;height:24px;border-radius:8px;flex:none;display:grid;place-items:center;box-shadow:inset 0 0 0 1.5px var(--faint)}
+.tick.on{background:var(--vf);box-shadow:none;color:#fff}
+.sw{appearance:none;width:51px;height:31px;border-radius:999px;background:var(--sunken);position:relative;flex:none;border:0;padding:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:var(--vf)}.sw.on::after{left:22px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:999px;font-size:14px;font-weight:500;background:var(--raised);box-shadow:0 0 0 1px var(--rule);color:var(--ink);white-space:nowrap}
+.chip.vio{background:var(--vf);color:#fff;box-shadow:none}
+.chip.red{background:var(--fd);color:#fff;box-shadow:none}
+.chip.amb{background:var(--fw);color:#fff;box-shadow:none}
+.chip.inv{background:var(--inv);color:var(--oninv);box-shadow:none}
+.tabbar{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;display:flex;gap:2px;padding:6px;border-radius:999px;background:var(--inv);box-shadow:0 14px 30px -12px rgba(0,0,0,.45);z-index:30}
+.tabbar a{display:flex;align-items:center;gap:7px;height:46px;min-width:50px;justify-content:center;padding:0 14px;border-radius:999px;color:var(--oninv);opacity:.62;font-size:14.5px;font-weight:600;text-decoration:none;position:relative;box-sizing:border-box}
+.tabbar a.on{background:var(--paper);color:var(--ink);opacity:1}
+.tabbar .bd{position:absolute;top:7px;right:9px;min-width:16px;height:16px;border-radius:8px;background:var(--vf);color:#fff;font-size:10.5px;font-weight:600;display:grid;place-items:center;padding:0 4px;box-sizing:border-box}
+.scrim{position:absolute;inset:0;background:var(--scrim);z-index:40}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--raised);border-radius:30px 30px 0 0;z-index:41;padding:10px 24px 34px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px}
+.grab{width:38px;height:5px;border-radius:3px;background:var(--faint);margin:0 auto 4px;opacity:.7}
+.menu{position:absolute;z-index:45;background:var(--raised);border-radius:20px;box-shadow:0 0 0 1px var(--rule),0 24px 48px -16px rgba(10,10,20,.35);padding:6px;box-sizing:border-box}
+.mi{display:flex;align-items:center;gap:12px;min-height:50px;padding:6px 12px;border-radius:14px;box-sizing:border-box}
+.mi.on{background:var(--sunken)}
+.mi .tt{font-size:15px;font-weight:500;color:var(--ink)}
+.mi .ss{font-size:12.5px;color:var(--meta)}
+.toast{position:absolute;left:14px;right:14px;top:56px;background:var(--inv);color:var(--oninv);border-radius:20px;padding:14px 16px;display:flex;gap:12px;align-items:center;z-index:46;font-size:14.5px;font-weight:500;box-shadow:0 18px 40px -16px rgba(0,0,0,.5)}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 34px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box}
+@keyframes breathe{0%,100%{opacity:.35}50%{opacity:1}}
+@media (prefers-reduced-motion: reduce){.sig *{animation:none !important}}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{wall}} {{grain}}" style="width: 2400px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Arrive</h1><span class="lbl" style="color: var(--wallink)">iPhone · sign in, keys, a new phone</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">01 · Welcome</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; inset: 0; padding: 92px 28px 40px; display: flex; flex-direction: column; box-sizing: border-box">
+          <img src="../../assets/logos/reins.svg" alt="Reins" style="width: 56px; height: 56px; border-radius: 15px">
+          <img class="il" src="../../assets/illustrations/kite-light.svg" alt="" style="width: 330px; height: 248px; margin-top: 4px"><img class="id" src="../../assets/illustrations/kite-dark.svg" alt="" style="width: 330px; height: 248px; margin-top: 4px">
+          <h2 class="serif" style="margin: 6px 0 0; font-size: 54px; line-height: 52px; letter-spacing: -0.02em">Your AIs ask.<br><em>You decide.</em></h2>
+          <p class="body" style="margin-top: 14px">Reins sits between your AI agents and your accounts. When one wants to read, send or change something, this phone asks you first.</p>
+          <div style="margin-top: auto; display: flex; flex-direction: column; gap: 10px">
+            <a class="btn inv full" href="#">Continue</a>
+            <a class="btn out full" href="#">Sign in with a master password</a>
+            <a class="link" href="#" style="align-self: center; margin-top: 8px; font-size: 14px; color: var(--ink2)">Use another server</a>
+          </div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>The kite.</b> An ink drawing of the idea: the AI flies, you hold the line. Continue opens the browser sign-in; the drawing's string draws itself in 600 ms on first launch. Haptic on Continue: select.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">02 · Create account</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div style="position: absolute; inset: 0; padding: 62px 24px 34px; display: flex; flex-direction: column; gap: 18px; box-sizing: border-box">
+          <button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button>
+          <h2 class="st" style="font-size: 38px; line-height: 40px">Create your <em>account</em></h2>
+          <div class="input"><label>Email</label><div class="fake">dana@acme.dev</div></div>
+          <div class="input"><label>Master password</label><div class="fake focus" style="justify-content: space-between"><span class="mono" style="letter-spacing: .2em">••••••••••••••••</span><svg class="g g18" viewBox="0 0 24 24" style="color: var(--meta)"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></div>
+            <div style="display: flex; gap: 4px; margin-top: 4px"><span style="flex: 1; height: 4px; border-radius: 2px; background: var(--ok)"></span><span style="flex: 1; height: 4px; border-radius: 2px; background: var(--ok)"></span><span style="flex: 1; height: 4px; border-radius: 2px; background: var(--ok)"></span></div>
+            <div class="meta"><span style="color: var(--ok); font-weight: 600">Strong</span> · Longer is stronger.</div>
+          </div>
+          <div class="input"><label>Master password again</label><div class="fake"><span class="mono" style="letter-spacing: .2em">••••••••••••••••</span><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok); margin-left: auto"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div></div>
+          <div style="display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule)"><svg class="g" viewBox="0 0 24 24" style="color: var(--warn)"><path d="M12 4 21 19.5H3zM12 10v4.5M12 17.2h.01"></path></svg><span style="font-size: 14px; line-height: 20px; color: var(--ink2)">Nobody can reset your master password. Forget it and the account is lost. Write it down.</span></div>
+          <div style="display: flex; gap: 12px; align-items: center"><span class="tick on"><svg class="g g16" viewBox="0 0 24 24" style="stroke-width: 2.2"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span style="font-size: 14px; color: var(--ink2)">I accept the <a class="link" href="#" style="font-size: 14px">Terms</a> and the <a class="link" href="#" style="font-size: 14px">Privacy Policy</a></span></div>
+          <a class="btn inv full" href="#" style="margin-top: auto">Create account</a>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>One column, no surprises.</b> The strength bar fills segment by segment with a detent tick. Mismatch turns the second field's ring red and says why in the meta line. The keyboard's Next walks the fields.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">03 · Passkey offer</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; inset: 0; padding: 120px 28px 34px; display: flex; flex-direction: column; box-sizing: border-box">
+          <span class="tile t-c" style="width: 64px; height: 64px; border-radius: 18px"><svg class="g" viewBox="0 0 24 24" style="width: 32px; height: 32px"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span>
+          <h2 class="st" style="margin-top: 28px; font-size: 40px; line-height: 42px">Protect your vault with a <em>passkey</em></h2>
+          <p class="body" style="margin-top: 14px">It unlocks your vault on a new phone, without your other phone or a recovery code. Your password manager keeps it.</p>
+          <div style="margin-top: 26px; border-top: 1px solid var(--rule)">
+            <div class="row"><svg class="g" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg><span class="body" style="color: var(--ink)">Works with iCloud Keychain and 1Password</span></div>
+            <div class="row"><svg class="g" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg><span class="body" style="color: var(--ink)">Reins keeps only a sealed copy of the key</span></div>
+          </div>
+          <div style="margin-top: auto; display: flex; flex-direction: column; gap: 10px">
+            <a class="btn inv full" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Add a passkey</a>
+            <a class="btn out full" href="#">Use the recovery code only</a>
+            <span class="meta" style="text-align: center; margin-top: 4px">A recovery code comes next.</span>
+          </div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>On paper, not a field.</b> Nothing waits on an AI here, so no colour. The pink kind tile hints that this is an account matter. Success: grant chime, then the recovery code slides up.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">04 · Recovery code</div>
+      <div class="ph {{b}} on-field">
+        <div class="isl"></div>
+        <div class="field fc" style="padding-bottom: 28px">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="height: 22px"></div>
+          <div class="lbl">Account · Recovery</div>
+          <h2 class="ask" style="margin-top: 12px; font-size: 42px; line-height: 43px">Write down your <em>recovery code</em></h2>
+          <div class="of2" style="margin-top: 14px; font-size: 14.5px; line-height: 20px">It opens your vault if you lose this phone. Nobody else has it, us included.</div>
+        </div>
+        <div style="padding: 22px 24px 0; display: flex; flex-direction: column; gap: 16px">
+          <div class="mono" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 8px; font-size: 18px; font-weight: 500; letter-spacing: .04em; text-align: center; padding: 18px 12px; background: var(--raised); border-radius: 20px; box-shadow: 0 0 0 1px var(--rule)">
+            <span>K7QD</span><span>2MZR</span><span>9XHT</span><span>P4WE</span><span>B8NC</span><span>6JVL</span><span>T3FA</span><span>Y5GU</span><span>M1RS</span><span>Q9KD</span><span>H2LP</span><span>W7EZ</span><span style="grid-column: 2">C4XN</span>
+          </div>
+          <div style="display: flex; gap: 10px"><a class="btn soft sm" href="#" style="flex: 1"><svg class="g g18" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"></rect><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"></path></svg>Copy · clears in 60 s</a></div>
+          <div style="display: flex; gap: 12px; align-items: center; padding-top: 4px"><span class="tick on"><svg class="g g16" viewBox="0 0 24 24" style="stroke-width: 2.2"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span><span style="font-size: 15px">I wrote it down</span></div>
+        </div>
+        <div class="bar"><a class="btn inv full" href="#">Continue</a></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>An account field.</b> Pink because it changes how your account opens. Screenshots and screen sharing hide the code behind the privacy cover. Continue stays at 40% until the tick; toggling plays the rising pair.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">05 · Unlock on a new phone</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; inset: 0; padding: 70px 24px 34px; display: flex; flex-direction: column; box-sizing: border-box">
+          <span class="tile t-n" style="width: 52px; height: 52px; border-radius: 15px"><svg class="g" viewBox="0 0 24 24" style="width: 26px; height: 26px"><rect x="7" y="3" width="10" height="18" rx="2.5"></rect><path d="M11 18h2"></path></svg></span>
+          <h2 class="st" style="margin-top: 22px; font-size: 38px; line-height: 40px">Your account is on <em>another phone</em></h2>
+          <div class="mono meta" style="margin-top: 10px; font-size: 13.5px">dana@acme.dev</div>
+          <p class="body" style="margin-top: 18px">Open Reins on your other phone. Approve this one only if it shows the same code.</p>
+          <div class="serif" style="margin-top: 18px; font-size: 64px; line-height: 64px; letter-spacing: .08em; text-align: center; padding: 22px 0; border-radius: 22px; background: var(--raised); box-shadow: 0 0 0 1px var(--rule)">482 913</div>
+          <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 14px"><span style="width: 8px; height: 8px; border-radius: 50%; background: var(--violet); animation: breathe 1.8s ease-in-out infinite"></span><span class="meta" style="font-size: 14px">Waiting for your other phone</span></div>
+          <div style="margin-top: auto; border-top: 1px solid var(--rule)">
+            <div class="row"><span class="k" style="color: var(--ink); font-weight: 500">Unlock with a passkey</span><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+            <div class="row"><span class="k" style="color: var(--ink); font-weight: 500">Enter my recovery code</span><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+            <div class="row"><span class="k" style="color: var(--bad); font-weight: 500">Lost both? Reset the vault</span><svg class="g g16 chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></div>
+          </div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Three ways in, one screen.</b> The code is the hero: serif, spaced, impossible to misread. The other phone receives an <b>accounts</b> field, “Add <i>this iPhone</i> to your account”. Reset leads to a red hold, never a tap.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark","both"],"default":"both","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":2400,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'both';
+    return {
+      wall: t === 'dark' ? 'dark' : 'light',
+      a: t === 'dark' ? 'dark' : 'light',
+      b: t === 'light' ? 'light' : 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

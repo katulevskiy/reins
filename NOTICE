@@ -102,12 +102,15 @@ SOFTWARE.
 
 
 ================================================================================================================
-Geist and Geist Mono fonts (android/app/src/main/assets/fonts/)
+Instrument Serif, Instrument Sans, Geist and Geist Mono fonts (android/app/src/main/assets/fonts/, ios/Shared/Fonts/,
+embedded in the desktop app)
 ================================================================================================================
 
-Copyright 2024 The Geist Project Authors, https://github.com/vercel/geist-font
-Licensed under the SIL Open Font License 1.1, https://openfontlicense.org (the license is also embedded in the font
-files' metadata).
+Instrument Serif: Copyright 2022 The Instrument Serif Project Authors, https://github.com/Instrument/instrument-serif
+Instrument Sans: Copyright 2022 The Instrument Sans Project Authors, https://github.com/Instrument/instrument-sans
+Geist and Geist Mono: Copyright 2024 The Geist Project Authors, https://github.com/vercel/geist-font
+Licensed under the SIL Open Font License 1.1, https://openfontlicense.org (the full text is in
+design/signal/fonts/OFL.txt, and embedded in the font files' metadata).
 
 
 ================================================================================================================
@@ -149,19 +152,17 @@ a connection belongs to and do not imply endorsement. See also android/app/src/m
 
 
 ================================================================================================================
-Desktop app icons and logos (crates/reins-desktop-app/assets/icons/lucide/ and brands/)
+Desktop app icons, logos and drawings (crates/reins-desktop-app/assets/)
 ================================================================================================================
 
-The interface icons in assets/icons/lucide/ are copied unmodified from Lucide (lucide-static 1.56.0),
-https://lucide.dev, Copyright (c) 2026 Lucide Icons and Contributors, licensed under the ISC License; some of them
-derive from Feather, Copyright (c) 2013-present Cole Bemis, MIT License. Both licenses are in
-assets/icons/lucide/LICENSE.
+The interface glyphs in assets/icons/glyphs/ are the Reins Signal set (design/signal/assets/icons), drawn for Reins.
+The ink drawings in assets/illustrations/ and the grain in assets/textures/ come from the same design package.
 
-The brand marks in assets/icons/brands/ (Claude, Google Gemini, Cursor, GitHub, GitLab, Codeberg, Bitbucket,
-Anthropic, Gmail) are copied unmodified from Simple Icons 16.35.0, https://github.com/simple-icons/simple-icons,
-dedicated to the public domain under CC0 1.0 (assets/icons/brands/LICENSE.md). All of these marks are trademarks of
-their respective owners. They are shown only to identify the AI tool, git host or service a connection belongs to and
-do not imply endorsement.
+The brand marks in assets/icons/logos/ (Claude, Google Gemini, Cursor, GitHub, GitLab, Codeberg, Bitbucket,
+Anthropic, OpenAI, Gmail) are taken from design/signal/assets/logos, coloured versions of the Simple Icons marks
+(https://github.com/simple-icons/simple-icons, dedicated to the public domain under CC0 1.0,
+assets/icons/logos/LICENSE.md). All of these marks are trademarks of their respective owners. They are shown only
+to identify the AI tool, git host or service a connection belongs to and do not imply endorsement.
 
 
 ================================================================================================================

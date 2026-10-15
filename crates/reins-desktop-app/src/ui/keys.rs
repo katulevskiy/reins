@@ -58,11 +58,8 @@ impl Root {
                 .on_click(move |_, _, cx| cx.open_with_system(&file))
         };
         let Some(config) = d.config() else {
-            let mut page = div()
-                .flex()
-                .flex_col()
-                .gap(px(18.0))
-                .child(page_header("Keys & secrets", Some(help("keys", ABOUT, d, pal, cx))));
+            let mut page =
+                div().flex().flex_col().gap(px(18.0)).child(page_header("Keys", Some(help("keys", ABOUT, d, pal, cx))));
             page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
             let why = d
                 .snapshot
@@ -85,8 +82,7 @@ impl Root {
             div().flex().flex_col().gap(px(10.0)).child(ABOUT).child(code_block(&lines, pal)).into_any_element()
         };
         let mut page = div().flex().flex_col().gap(px(18.0)).child(
-            page_header("Keys & secrets", Some(help_with("keys", about, 520.0, d, pal, cx)))
-                .child(open_config("open-config")),
+            page_header("Keys", Some(help_with("keys", about, 520.0, d, pal, cx))).child(open_config("open-config")),
         );
         page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).px(px(4.0)).text_color(pal.danger)));
         page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal).px(px(4.0))));

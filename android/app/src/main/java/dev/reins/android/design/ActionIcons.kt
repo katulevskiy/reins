@@ -66,20 +66,19 @@ enum class ActionKind(val key: String) {
             Other -> Icons.Rounded.Key
         }
 
-    fun tint(c: RColors): Color = when (this) {
-        Search -> c.search
-        List -> c.search
-        Write -> c.send
-        Read -> c.read
-        Headlines -> c.read
-        Send -> c.send
-        Grant -> c.grant
-        Accounts -> c.accounts
-        Pair -> c.pair
-        Join -> c.pair
-        Upload -> c.read
-        Other -> c.secondary
-    }
+    /** The Signal field of this kind of operation; null for one Reins cannot name. */
+    val field: Field?
+        get() = when (this) {
+            Search, List, Read, Headlines, Upload -> Field.Read
+            Write, Send -> Field.Push
+            Grant -> Field.Grant
+            Accounts -> Field.Accounts
+            Pair, Join -> Field.Pair
+            Other -> null
+        }
+
+    /** Its colour on paper: the field's kind ink, or ink-2 for an unknown kind. */
+    fun tint(c: RColors): Color = field?.kindInk(c) ?: c.ink2
 
     companion object {
         fun of(action: String): ActionKind = entries.firstOrNull { it.key == action } ?: Other
@@ -144,7 +143,7 @@ fun CountPill(count: Int, tint: Color, modifier: Modifier = Modifier, ring: Colo
             .padding(horizontal = 4.5.dp),
         contentAlignment = Alignment.Center,
     ) {
-        RText(countText(count), RType.sans(10.5f, FontWeight.Bold), Color.White, maxLines = 1)
+        RText(countText(count), RType.sans(10.5f, FontWeight.SemiBold), Color.White, maxLines = 1)
     }
 }
 

@@ -278,7 +278,7 @@ private fun BoxScope.TimedSheets(
                 height = 50.dp,
             ) { start(minutes) }
         }
-        RText("Hold for 2 seconds", RType.sans(12f), c.tertiary, Modifier.fillMaxWidth().padding(top = 8.dp), align = TextAlign.Center)
+        RText("Hold for a second", RType.sans(12f), c.tertiary, Modifier.fillMaxWidth().padding(top = 8.dp), align = TextAlign.Center)
     }
 
     BottomSheet(open && moreOpen, kind.forTitle, onClose = {

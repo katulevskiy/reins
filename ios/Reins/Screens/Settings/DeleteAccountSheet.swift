@@ -56,7 +56,7 @@ struct DeleteAccountSheet: View {
                 if let error {
                     FormBanner(text: error)
                 }
-                // Held for two seconds, once the email is typed.
+                // Held (1.2 s), once the email is typed.
                 HoldButton(title: "Hold to delete", symbol: "trash", enabled: confirmed, busy: busy, onConfirm: delete)
                     .accessibilityIdentifier("confirmDeleteAccount")
                 // The sheet's Close is the sound (the style plays the default tap).

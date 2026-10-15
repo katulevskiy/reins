@@ -241,7 +241,7 @@ private fun RememberSheet(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
             if (forever && draft.allMail == null) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     HoldButton("Remember until I revoke", c.danger, Modifier.fillMaxWidth().testTag("rememberConfirm"), icon = null, onConfirm = confirm)
-                    RText("Hold for 2 seconds", RType.sans(12f), c.tertiary, Modifier.padding(top = 8.dp))
+                    RText("Hold for a second", RType.sans(12f), c.tertiary, Modifier.padding(top = 8.dp))
                 }
             } else {
                 val label = when {

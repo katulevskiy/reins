@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Colour</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--warn:#a16207;--wall:#e8e6e1;--wallink:#45434d;--kp:#c2410c;--kr:#2563eb;--kd:#b91c1c;--kg:#5b43e8;--ka:#0e7490;--kc:#be185d;--kw:#a16207}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--warn:#facc15;--wall:#0b0b0d;--wallink:#bdbcc6;--kp:#fb923c;--kr:#60a5fa;--kd:#f87171;--kg:#a196ff;--ka:#22d3ee;--kc:#f472b6;--kw:#facc15}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.grain{position:absolute !important;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.fchip{position:relative;overflow:hidden;border-radius:18px;height:118px;color:#fff;padding:14px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between}
+.fchip>*{position:relative}
+.sw{display:flex;align-items:center;gap:14px;padding:9px 0;border-bottom:1px solid var(--rule)}
+.sw i{width:34px;height:34px;border-radius:10px;flex:none;box-shadow:inset 0 0 0 1px rgba(127,127,140,.25)}
+.sw b{font-weight:500;font-size:14.5px;color:var(--ink);width:120px}
+.sw span{font-family:var(--mono);font-size:12.5px;color:var(--meta)}
+.sw small{font-size:13px;color:var(--ink2);margin-left:auto;text-align:right}
+.tile{width:42px;height:42px;border-radius:12px;display:grid;place-items:center}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} light {{grain}}" style="width: 1920px; height: 1200px; box-sizing: border-box; background: var(--wall); color: var(--ink); padding: 72px 80px; display: flex; flex-direction: column; gap: 40px">
+  <div style="display: flex; align-items: flex-end; gap: 40px">
+    <h1 class="serif" style="margin: 0; font-size: 96px; line-height: 88px; letter-spacing: -0.02em">Colour</h1>
+    <p style="margin: 0 0 8px; font-size: 18px; line-height: 26px; color: var(--wallink); max-width: 820px">Fields stay, paper flips. The seven fields are identical in light and dark; only paper and ink turn over. New here: kind tiles get lighter inks in dark, and every field carries a fine grain.</p>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px">
+    <div class="light" style="background: var(--paper); border-radius: 28px; padding: 26px; display: flex; flex-direction: column; gap: 16px">
+      <div class="lbl" style="color: var(--meta)">Fields on paper · light</div>
+      <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px">
+        <div class="fchip" style="background: var(--fp)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Push</span><span class="mono" style="font-size: 12px">#C2410C<br>5.2 : 1</span></div>
+        <div class="fchip" style="background: var(--fr)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Read</span><span class="mono" style="font-size: 12px">#2563EB<br>5.2 : 1</span></div>
+        <div class="fchip" style="background: var(--fd)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Delete</span><span class="mono" style="font-size: 12px">#B91C1C<br>6.5 : 1</span></div>
+        <div class="fchip" style="background: var(--fg)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Grant</span><span class="mono" style="font-size: 12px">#5B43E8<br>6.2 : 1</span></div>
+        <div class="fchip" style="background: var(--fa)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Pair</span><span class="mono" style="font-size: 12px">#0E7490<br>5.4 : 1</span></div>
+        <div class="fchip" style="background: var(--fc)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Accounts</span><span class="mono" style="font-size: 12px">#BE185D<br>6.0 : 1</span></div>
+        <div class="fchip" style="background: var(--fw)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Warn</span><span class="mono" style="font-size: 12px">#A16207<br>4.9 : 1</span></div>
+      </div>
+    </div>
+    <div class="dark" style="background: var(--paper); border-radius: 28px; padding: 26px; display: flex; flex-direction: column; gap: 16px">
+      <div class="lbl" style="color: var(--meta)">The same fields on paper · dark</div>
+      <div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px">
+        <div class="fchip" style="background: var(--fp)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Push</span><span class="serif" style="font-size: 22px; line-height: 22px">Send <em>it</em></span></div>
+        <div class="fchip" style="background: var(--fr)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Read</span><span class="serif" style="font-size: 22px; line-height: 22px">Look <em>inside</em></span></div>
+        <div class="fchip" style="background: var(--fd)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Delete</span><span class="serif" style="font-size: 22px; line-height: 22px">For <em>good</em></span></div>
+        <div class="fchip" style="background: var(--fg)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Grant</span><span class="serif" style="font-size: 22px; line-height: 22px">For <em>a while</em></span></div>
+        <div class="fchip" style="background: var(--fa)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Pair</span><span class="serif" style="font-size: 22px; line-height: 22px">Say <em>hello</em></span></div>
+        <div class="fchip" style="background: var(--fc)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Accounts</span><span class="serif" style="font-size: 22px; line-height: 22px">Keys <em>change</em></span></div>
+        <div class="fchip" style="background: var(--fw)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="color: rgba(255,255,255,.82)">Warn</span><span class="serif" style="font-size: 22px; line-height: 22px">Fix <em>me</em></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; flex: 1">
+    <div class="light" style="background: var(--paper); border-radius: 28px; padding: 26px 30px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; align-content: start">
+      <div class="lbl" style="color: var(--meta); grid-column: 1 / -1; margin-bottom: 8px">Paper and ink · light</div>
+      <div class="sw"><i style="background: #f6f6f8"></i><b>paper</b><span>#F6F6F8</span></div>
+      <div class="sw"><i style="background: #16151b"></i><b>ink</b><span>#16151B · 16.8</span></div>
+      <div class="sw"><i style="background: #ffffff"></i><b>paper-raised</b><span>#FFFFFF</span></div>
+      <div class="sw"><i style="background: #5f5e6b"></i><b>ink-2</b><span>#5F5E6B · 5.9</span></div>
+      <div class="sw"><i style="background: #ececf0"></i><b>paper-sunken</b><span>#ECECF0</span></div>
+      <div class="sw"><i style="background: #6b6a78"></i><b>ink-meta</b><span>#6B6A78 · 4.9</span></div>
+      <div class="sw"><i style="background: #e3e3ea"></i><b>rule</b><span>#E3E3EA</span></div>
+      <div class="sw"><i style="background: #a3a2ad"></i><b>ink-faint</b><span>#A3A2AD · decor</span></div>
+      <div class="sw"><i style="background: #5b43e8"></i><b>violet</b><span>#5B43E8 · 5.7</span></div>
+      <div class="sw"><i style="background: #15803d"></i><b>success</b><span>#15803D</span></div>
+      <div class="sw"><i style="background: #b91c1c"></i><b>danger</b><span>#B91C1C</span></div>
+      <div class="sw"><i style="background: #a16207"></i><b>warning</b><span>#A16207</span></div>
+      <div style="grid-column: 1 / -1; display: flex; gap: 12px; margin-top: 18px; align-items: center">
+        <span class="lbl" style="color: var(--meta); margin-right: 8px">Kind tiles</span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kp) 13%, transparent); color: var(--kp)"><svg class="g" viewBox="0 0 24 24"><path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kr) 13%, transparent); color: var(--kr)"><svg class="g" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kd) 13%, transparent); color: var(--kd)"><svg class="g" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kg) 13%, transparent); color: var(--kg)"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--ka) 13%, transparent); color: var(--ka)"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kc) 13%, transparent); color: var(--kc)"><svg class="g" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kw) 13%, transparent); color: var(--kw)"><svg class="g" viewBox="0 0 24 24"><path d="M12 4 21 19.5H3zM12 10v4.5M12 17.2h.01"></path></svg></span>
+        <span style="margin-left: auto; font-size: 13px; color: var(--ink2)">Field colour at 13% under its own ink</span>
+      </div>
+    </div>
+    <div class="dark" style="background: var(--paper); border-radius: 28px; padding: 26px 30px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; align-content: start">
+      <div class="lbl" style="color: var(--meta); grid-column: 1 / -1; margin-bottom: 8px">Paper and ink · dark</div>
+      <div class="sw"><i style="background: #121215"></i><b>paper</b><span>#121215</span></div>
+      <div class="sw"><i style="background: #ededf0"></i><b>ink</b><span>#EDEDF0 · 16.0</span></div>
+      <div class="sw"><i style="background: #1c1c21"></i><b>paper-raised</b><span>#1C1C21</span></div>
+      <div class="sw"><i style="background: #a6a6b0"></i><b>ink-2</b><span>#A6A6B0 · 7.8</span></div>
+      <div class="sw"><i style="background: #26262c"></i><b>paper-sunken</b><span>#26262C</span></div>
+      <div class="sw"><i style="background: #8e8e99"></i><b>ink-meta</b><span>#8E8E99 · 5.8</span></div>
+      <div class="sw"><i style="background: #2a2a30"></i><b>rule</b><span>#2A2A30</span></div>
+      <div class="sw"><i style="background: #63636e"></i><b>ink-faint</b><span>#63636E · decor</span></div>
+      <div class="sw"><i style="background: #a196ff"></i><b>violet</b><span>#A196FF · 7.4</span></div>
+      <div class="sw"><i style="background: #34d399"></i><b>success</b><span>#34D399</span></div>
+      <div class="sw"><i style="background: #f87171"></i><b>danger</b><span>#F87171</span></div>
+      <div class="sw"><i style="background: #facc15"></i><b>warning</b><span>#FACC15</span></div>
+      <div style="grid-column: 1 / -1; display: flex; gap: 12px; margin-top: 18px; align-items: center">
+        <span class="lbl" style="color: var(--meta); margin-right: 8px">Kind tiles</span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kp) 14%, transparent); color: var(--kp)"><svg class="g" viewBox="0 0 24 24"><path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kr) 14%, transparent); color: var(--kr)"><svg class="g" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kd) 14%, transparent); color: var(--kd)"><svg class="g" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kg) 14%, transparent); color: var(--kg)"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--ka) 14%, transparent); color: var(--ka)"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kc) 14%, transparent); color: var(--kc)"><svg class="g" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg></span>
+        <span class="tile" style="background: color-mix(in srgb, var(--kw) 14%, transparent); color: var(--kw)"><svg class="g" viewBox="0 0 24 24"><path d="M12 4 21 19.5H3zM12 10v4.5M12 17.2h.01"></path></svg></span>
+        <span style="margin-left: auto; font-size: 13px; color: var(--ink2)">New: lighter tile inks for dark paper</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 300px 300px 1fr; gap: 24px; align-items: stretch">
+    <div style="position: relative; overflow: hidden; border-radius: 22px; background: var(--fp); height: 120px; color: #fff; padding: 16px; box-sizing: border-box"><span class="lbl" style="color: rgba(255,255,255,.82)">Flat · before</span></div>
+    <div style="position: relative; overflow: hidden; border-radius: 22px; background: var(--fp); height: 120px; color: #fff; padding: 16px; box-sizing: border-box"><svg class="grain" aria-hidden="true" style="display: block"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><span class="lbl" style="position: relative; color: rgba(255,255,255,.82)">Pigment · after</span></div>
+    <div style="display: flex; flex-direction: column; justify-content: center; gap: 8px; color: var(--wallink)">
+      <div class="lbl">Grain</div>
+      <div style="font-size: 15px; line-height: 22px; max-width: 760px">One tileable grey noise texture (360 px, shown at 180 px for sharp retina grain), blended soft-light over the field. Ships as an image asset on every platform, not a live filter. It never touches paper, text or glyphs, keeps contrast within 0.1 of the flat field, and is drawn once per field, not animated. Off under Reduce Transparency.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":1920,"height":1200}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

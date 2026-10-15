@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desktop · Keys</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--side:#eeeef2;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--warn:#a16207}
+.dark{--paper:#121215;--side:#0c0c0f;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--warn:#facc15}
+.g{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}
+.lbl{font-family:var(--mono);font-size:11px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.app{display:flex;flex-wrap:wrap;min-height:100vh;background:var(--paper);color:var(--ink);font-family:var(--sans)}
+.side{flex:1 1 236px;max-width:100%;box-sizing:border-box;padding:16px 14px 18px;background:var(--side);border-right:1px solid var(--rule);display:flex;flex-direction:column;gap:16px}
+.main{flex:999 1 560px;min-width:0;padding:34px 44px 40px;box-sizing:border-box;display:flex;flex-direction:column;gap:22px}
+.lights{display:flex;gap:8px;padding:2px 4px}
+.lights i{width:12px;height:12px;border-radius:50%}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border-radius:12px;font-size:14px;color:var(--ink2);text-decoration:none}
+.nav a.on{background:var(--raised);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px var(--rule)}
+.nav kbd{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)}
+.btn{appearance:none;border:0;margin:0;height:36px;padding:0 14px;border-radius:999px;font-family:var(--sans);font-size:13.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none;white-space:nowrap}
+.btn.soft{background:var(--sunken)}
+.btn.out{box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.row{display:flex;align-items:center;gap:12px;min-height:54px;padding:6px 0;border-bottom:1px solid var(--rule);box-sizing:border-box;font-size:14px}
+.rt{font-size:14.5px;font-weight:500;color:var(--ink)}
+.meta{font-size:12.5px;line-height:17px;color:var(--meta)}
+.tile{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;flex:none;background:var(--sunken);color:var(--ink)}
+.pill{font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:99px;white-space:nowrap}
+.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 13%,transparent)}
+.nt{color:var(--ink2);background:var(--sunken)}
+.sw{appearance:none;width:40px;height:24px;border-radius:999px;background:var(--sunken);position:relative;flex:none;border:0;padding:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:var(--vf)}.sw.on::after{left:18px}
+.env{display:grid;grid-template-columns:minmax(0,1fr) 20px minmax(0,1.2fr);gap:8px;align-items:center;font-family:var(--mono);font-size:12.5px;padding:4px 0 4px 44px;color:var(--ink2)}
+.vref{background:color-mix(in srgb,var(--violet) 10%,transparent);color:var(--violet);border-radius:6px;padding:2px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+</style>
+</helmet>
+<div class="sig {{sans}} {{theme}}">
+<div class="app">
+  <aside class="side">
+    <div class="lights" aria-hidden="true"><i style="background: #ff5f57"></i><i style="background: #febc2e"></i><i style="background: #28c840"></i></div>
+    <div style="display: flex; align-items: center; gap: 10px; padding: 4px 6px 0"><img src="../../assets/logos/reins.svg" alt="" style="width: 26px; height: 26px; border-radius: 7px"><span class="serif" style="font-size: 24px">Reins</span></div>
+    <a href="#" style="display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: 16px; background: var(--raised); box-shadow: 0 0 0 1px var(--rule); text-decoration: none; color: inherit"><span class="tile" style="background: color-mix(in srgb, var(--ok) 13%, transparent); color: var(--ok)"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path><path d="M9 12l2.2 2.2L15.5 10"></path></svg></span><div><div style="font-size: 13.5px; font-weight: 600">Reins is on</div><div class="meta" style="font-size: 12px">Dana's iPhone approves</div></div></a>
+    <nav class="nav">
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V20H4z"></path><path d="M9.5 20v-5.5h5V20"></path></svg>Home<kbd>⌘1</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg>Activity<kbd>⌘2</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Connections<kbd>⌘3</kbd></a>
+      <a class="on" href="#"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg>Keys<kbd>⌘4</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg>Rules<kbd>⌘5</kbd></a>
+      <a href="#"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg>Settings<kbd>⌘6</kbd></a>
+    </nav>
+    <div style="margin-top: auto"><a class="btn soft" href="#" style="width: 100%"><svg class="g g16" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"></path></svg>Pause git</a></div>
+  </aside>
+  <main class="main">
+    <div style="display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap"><div style="flex: 1; min-width: 260px"><h1 class="serif" style="margin: 0; font-size: 44px; line-height: 44px">Keys</h1><p class="serif" style="margin: 8px 0 0; font-size: 21px; font-style: italic; color: var(--ink2)">Secrets live on your phone. Only their names live here.</p></div><a class="btn out" href="#"><svg class="g g16" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6zM14 3.5v4h4"></path></svg>Open config.toml</a></div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr)); gap: 40px">
+      <div style="display: flex; flex-direction: column; gap: 24px">
+        <div>
+          <span class="lbl">API keys</span>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">openai</div><div class="meta mono" style="font-size: 12px">vault:OpenAI/api key · held 1 h</div></div><span class="pill ok">Held until 22:34</span></div>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">anthropic</div><div class="meta mono" style="font-size: 12px">vault:Anthropic/api key · held 30 min</div></div><span class="pill nt">Asks next time</span></div>
+        </div>
+        <div>
+          <span class="lbl">Run profiles</span>
+          <div class="row" style="border-bottom: 0"><span class="tile"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"></path></svg></span><div style="flex: 1"><div class="rt mono" style="font-size: 14px">deploy</div><div class="meta">Deploy the web app to production · 2 secrets</div></div><svg class="g g14" viewBox="0 0 24 24" style="color: var(--faint)"><path d="M18 14.5l-6-6-6 6"></path></svg></div>
+          <div class="env"><span>AWS_SECRET_ACCESS_KEY</span><span style="color: var(--faint)">←</span><span class="vref">vault:AWS deploy/password</span></div>
+          <div class="env" style="padding-bottom: 10px; border-bottom: 1px solid var(--rule)"><span>SENTRY_AUTH_TOKEN</span><span style="color: var(--faint)">←</span><span class="vref">vault:Sentry/auth token</span></div>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"></path></svg></span><div style="flex: 1"><div class="rt mono" style="font-size: 14px">release</div><div class="meta">Publish packages · 1 secret</div></div><svg class="g g14" viewBox="0 0 24 24" style="color: var(--faint)"><path d="M6 9.5l6 6 6-6"></path></svg></div>
+        </div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 24px">
+        <div>
+          <span class="lbl">SSH agent</span>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"></path></svg></span><div style="flex: 1; min-width: 0"><div class="rt">SSH keys from your phone</div><div class="meta mono" style="font-size: 12px">~/.reins/ssh-agent.sock</div></div><button class="sw on" aria-label="SSH agent"></button></div>
+          <div class="row"><span style="width: 32px"></span><div style="flex: 1"><div class="rt" style="font-size: 14px">MacBook key</div><div class="meta mono" style="font-size: 11.5px">SHA256:x1Pq7nE…9fZk</div></div></div>
+          <div class="row"><span style="width: 32px"></span><div style="flex: 1"><div class="rt" style="font-size: 14px">Deploy key</div><div class="meta mono" style="font-size: 11.5px">SHA256:Hc04LmW…a2Qe</div></div></div>
+        </div>
+        <div style="padding: 18px 20px; border-radius: 20px; background: var(--raised); box-shadow: 0 0 0 1px var(--rule); display: flex; flex-direction: column; gap: 10px">
+          <span class="lbl">Use them</span>
+          <div class="mono" style="font-size: 12.5px; line-height: 20px; color: var(--ink2); white-space: pre; overflow-x: auto"><span style="color: var(--meta)"># An API, its key from your phone</span>
+OPENAI_BASE_URL=http://127.0.0.1:7457/api/openai
+<span style="color: var(--meta)"># A program with secrets</span>
+reins run --profile deploy -- ./deploy.sh
+<span style="color: var(--meta)"># ssh with your phone's keys</span>
+export SSH_AUTH_SOCK=~/.reins/ssh-agent.sock</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      theme: this.props.theme ?? 'light',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst'
+    };
+  }
+}
+</script>
+</body>
+</html>

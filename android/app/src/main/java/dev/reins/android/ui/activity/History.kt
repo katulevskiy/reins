@@ -144,7 +144,8 @@ fun rowShape(first: Boolean, last: Boolean): Shape = RoundedCornerShape(
     bottomEnd = if (last) 24.dp else 0.dp,
 )
 
-fun groupFill(c: RColors): Color = if (c.dark) Color(0xFF121215) else c.elevated
+/** The plate of a day's group: raised paper in both themes (Signal `paper-raised`). */
+fun groupFill(c: RColors): Color = c.paperRaised
 
 /** One entry of the history: what it did, who and when, and how it ended. */
 @Composable

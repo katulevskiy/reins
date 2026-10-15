@@ -1,6 +1,7 @@
 package dev.reins.android.ui.activity
 
 import dev.reins.android.design.ActionKind
+import dev.reins.android.design.Field
 import dev.reins.android.design.MCP_PREFIX
 import dev.reins.android.design.serviceName
 import dev.reins.android.ui.common.operationTitle
@@ -205,6 +206,17 @@ fun groupAction(items: List<PendingItem>, suggestions: (String) -> SuggestionVie
 
 /** The colour family of a card or a history tile: what kind of thing it does. */
 enum class Tone { Search, Read, Write, Danger, Grant, Pair, Other }
+
+/** The Signal field of a tone (reads and searches are both [Field.Read]); null for [Tone.Other]. */
+val Tone.field: Field?
+    get() = when (this) {
+        Tone.Search, Tone.Read -> Field.Read
+        Tone.Write -> Field.Push
+        Tone.Danger -> Field.Delete
+        Tone.Grant -> Field.Grant
+        Tone.Pair -> Field.Pair
+        Tone.Other -> null
+    }
 
 fun toneOf(action: String, danger: Boolean = false): Tone = when {
     danger -> Tone.Danger

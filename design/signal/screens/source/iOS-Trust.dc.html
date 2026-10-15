@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>iPhone · Trust and grants</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--dwash:#fbe3e3;--dfill:#f6c9c9;--warn:#a16207;--scrim:rgba(22,21,27,.32);--wall:#e8e6e1;--wallink:#45434d;--kp:#c2410c;--kr:#2563eb;--kg:#5b43e8;--kw:#a16207}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--dwash:rgba(248,113,113,.14);--dfill:rgba(248,113,113,.28);--warn:#facc15;--scrim:rgba(0,0,0,.55);--wall:#0b0b0d;--wallink:#bdbcc6;--kp:#fb923c;--kr:#60a5fa;--kg:#a196ff;--kw:#facc15}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}
+.grain{position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:55px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 9px #111114,0 0 0 10.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans)}
+.isl{position:absolute;z-index:60;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000}
+.hind{position:absolute;z-index:60;bottom:8px;left:50%;margin-left:-67px;width:134px;height:5px;border-radius:3px;background:var(--ink)}
+.title{font-family:var(--serif);font-size:44px;line-height:44px;letter-spacing:-.01em;font-weight:400;margin:0}
+.ask{font-family:var(--serif);font-size:40px;line-height:41px;letter-spacing:-.012em;font-weight:400;margin:0;text-wrap:balance}
+.st{font-family:var(--serif);font-size:32px;line-height:34px;letter-spacing:-.01em;font-weight:400;margin:0}
+.mood{font-family:var(--serif);font-style:italic;font-size:22px;line-height:28px;color:var(--ink2);margin:0}
+.body{font-size:15px;line-height:22px;color:var(--ink2);margin:0}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.btn.out{background:transparent;box-shadow:inset 0 0 0 1.5px var(--rule2)}
+.btn.soft{background:var(--sunken)}
+.btn.danger{background:var(--dwash);color:var(--bad)}
+.btn.sm{height:40px;font-size:14.5px;padding:0 16px}
+.ib{appearance:none;width:40px;height:40px;border-radius:50%;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;color:var(--ink);border:0;padding:0;flex:none}
+.ib.f{background:rgba(255,255,255,.18);box-shadow:none;color:#fff;width:36px;height:36px}
+.seg{display:flex;background:var(--sunken);border-radius:999px;padding:4px;gap:2px}
+.seg button{appearance:none;flex:1;height:38px;border-radius:999px;border:0;background:transparent;font-family:var(--sans);font-size:14px;font-weight:500;color:var(--ink2);display:flex;align-items:center;justify-content:center;gap:4px;padding:0 4px}
+.seg button.on{background:var(--raised);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px var(--rule)}
+.row{display:flex;align-items:center;gap:12px;min-height:56px;padding:9px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.row .k{color:var(--ink2);font-size:15px;flex:1}
+.row .v{color:var(--ink);font-size:15px;font-weight:500;text-align:right}
+.av{width:28px;height:28px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+.av img{width:62%;height:62%}
+.svc{width:38px;height:38px;border-radius:11px;background:#fff;display:grid;place-items:center;flex:none;box-shadow:0 0 0 1px var(--rule)}
+.svc img{width:58%;height:58%}
+.ring circle{fill:none}
+.chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;border-radius:999px;font-size:14px;font-weight:500;background:var(--raised);box-shadow:0 0 0 1px var(--rule);color:var(--ink);white-space:nowrap;box-sizing:border-box}
+.chip.vio{background:var(--vf);color:#fff;box-shadow:none}
+.chip.inv{background:var(--inv);color:var(--oninv);box-shadow:none}
+.field{position:relative;color:#fff;border-radius:0 0 30px 30px;padding:56px 22px 22px;overflow:hidden;box-sizing:border-box}
+.field>*{position:relative}
+.field .grain{position:absolute}
+.field .lbl{color:rgba(255,255,255,.82)}
+.of2{color:rgba(255,255,255,.82)}
+.tabbar{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;display:flex;gap:2px;padding:6px;border-radius:999px;background:var(--inv);box-shadow:0 14px 30px -12px rgba(0,0,0,.45);z-index:30}
+.tabbar a{display:flex;align-items:center;gap:7px;height:46px;min-width:50px;justify-content:center;padding:0 14px;border-radius:999px;color:var(--oninv);opacity:.62;font-size:14.5px;font-weight:600;text-decoration:none;position:relative;box-sizing:border-box}
+.tabbar a.on{background:var(--paper);color:var(--ink);opacity:1}
+.fade{position:absolute;left:0;right:0;bottom:0;height:120px;background:linear-gradient(to bottom, transparent, var(--paper) 55%);z-index:20;pointer-events:none}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 34px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box;border-top:1px solid var(--rule)}
+.scrim{position:absolute;inset:0;background:var(--scrim);z-index:40}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--raised);border-radius:30px 30px 0 0;z-index:41;padding:10px 24px 34px;box-sizing:border-box;display:flex;flex-direction:column;gap:16px}
+.grab{width:38px;height:5px;border-radius:3px;background:var(--faint);margin:0 auto 2px;opacity:.7}
+.menu{position:absolute;z-index:45;background:var(--raised);border-radius:20px;box-shadow:0 0 0 1px var(--rule),0 24px 48px -16px rgba(10,10,20,.35);padding:6px;box-sizing:border-box}
+.mi{display:flex;align-items:center;gap:12px;min-height:46px;padding:6px 12px;border-radius:14px;box-sizing:border-box;font-size:15px;font-weight:500}
+.mi.on{background:var(--sunken)}
+.input{display:flex;flex-direction:column;gap:6px}
+.input .fake{height:50px;border-radius:14px;background:var(--raised);box-shadow:0 0 0 1px var(--rule);padding:0 16px;font-size:15px;color:var(--ink);box-sizing:border-box;display:flex;align-items:center}
+.sw{appearance:none;width:51px;height:31px;border-radius:999px;background:var(--sunken);position:relative;flex:none;border:0;padding:0}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:var(--vf)}.sw.on::after{left:22px}
+.uses{display:flex;gap:3px}
+.uses i{width:12px;height:4px;border-radius:2px;background:var(--rule2)}
+.uses i.on{background:var(--violet)}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{wall}} {{grain}}" style="width: 2400px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Trust</h1><span class="lbl" style="color: var(--wallink)">iPhone · Autopilot and grants live together now</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">01 · Trust</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 62px; display: flex; align-items: center; gap: 8px"><h2 class="title" style="flex: 1">Trust</h2><button class="ib" aria-label="New grant"><svg class="g" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button></div>
+        <p class="mood" style="position: absolute; left: 24px; right: 24px; top: 116px">Autopilot decided 9 things today.</p>
+        <div style="position: absolute; left: 24px; right: 24px; top: 162px; display: flex; flex-direction: column; gap: 10px">
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+            <a href="#" style="text-decoration: none; color: inherit; background: var(--raised); border-radius: 22px; padding: 14px; box-shadow: 0 0 0 1px var(--rule)"><svg class="g" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg><div class="serif" style="font-size: 26px; margin-top: 8px">Manual</div><div class="meta">You decide, with a hint</div></a>
+            <a href="#" style="text-decoration: none; color: inherit; background: var(--raised); border-radius: 22px; padding: 14px; box-shadow: 0 0 0 2px var(--violet)"><div style="display: flex; justify-content: space-between"><svg class="g" viewBox="0 0 24 24" style="color: var(--violet)"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg><svg class="g g18" viewBox="0 0 24 24" style="color: var(--violet)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div><div class="serif" style="font-size: 26px; margin-top: 8px">Auto</div><div class="meta">Decides the easy ones</div></a>
+          </div>
+          <div style="display: flex; gap: 8px"><a class="btn soft sm" href="#" style="flex: 1"><svg class="g g18" viewBox="0 0 24 24" style="color: var(--warn)"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Lock down</a><a class="btn danger sm" href="#" style="flex: 1"><svg class="g g18" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Bypass…</a></div>
+          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; padding: 12px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule)">
+            <div><div class="serif" style="font-size: 36px; line-height: 36px">142</div><div class="meta">scored this week</div></div>
+            <div><div class="serif" style="font-size: 36px; line-height: 36px; color: var(--ok)">96%</div><div class="meta">matched you</div></div>
+            <div><div class="serif" style="font-size: 36px; line-height: 36px">3</div><div class="meta">kinds on Auto</div></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-top: 10px"><span class="lbl">Active grants · 3</span><a href="#" style="font-size: 13px; color: var(--ink2); text-decoration: none">Ended</a></div>
+          <div>
+            <div class="row"><span class="svc"><img src="../../assets/logos/gmail.svg" alt=""></span><div style="flex: 1; min-width: 0"><div class="rt">Read mail from @bank.com</div><div class="meta">Claude · 3 of 10 uses</div></div><svg width="44" height="44" viewBox="0 0 44 44" class="ring" aria-hidden="true"><circle cx="22" cy="22" r="18" style="stroke: var(--rule2)" stroke-width="3"></circle><circle cx="22" cy="22" r="18" style="stroke: var(--violet)" stroke-width="3" stroke-dasharray="113" stroke-dashoffset="40" stroke-linecap="round" transform="rotate(-90 22 22)"></circle><text x="22" y="26" text-anchor="middle" style="font-family: var(--mono); font-size: 11px; fill: var(--ink)">5h</text></svg></div>
+            <div class="row"><span class="svc"><img src="../../assets/logos/github.svg" alt=""></span><div style="flex: 1; min-width: 0"><div class="rt">Push to feature/* in acme/web</div><div class="meta">Claude Code · <span style="color: var(--bad)">ends soon</span></div></div><svg width="44" height="44" viewBox="0 0 44 44" class="ring" aria-hidden="true"><circle cx="22" cy="22" r="18" style="stroke: var(--rule2)" stroke-width="3"></circle><circle cx="22" cy="22" r="18" style="stroke: var(--bad)" stroke-width="3" stroke-dasharray="113" stroke-dashoffset="100" stroke-linecap="round" transform="rotate(-90 22 22)"></circle><text x="22" y="26" text-anchor="middle" style="font-family: var(--mono); font-size: 11px; fill: var(--bad)">4m</text></svg></div>
+          </div>
+        </div>
+        <div class="fade"></div>
+        <nav class="tabbar"><a href="#" aria-label="Activity"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg></a><a class="on" href="#"><svg class="g" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.8-7 9-4-1.2-7-4.7-7-9V6z"></path></svg>Trust</a><a href="#" aria-label="Connections"><svg class="g" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg></a><a href="#" aria-label="Settings"><svg class="g" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg></a></nav>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Everything that runs without asking, in one place.</b> Mode tiles up top, then this week's numbers, then the grants that are live. Profiles and the starting rule follow further down. Switching tiles plays lightning (to Auto) or the falling pair (to Manual).</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">02 · A grant · violet</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div class="field" style="background: var(--fg)">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="display: flex; align-items: center; gap: 10px"><button class="ib f" aria-label="Back"><svg class="g g18" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button><span class="lbl" style="flex: 1">Grant · Gmail</span></div>
+          <div style="display: flex; align-items: baseline; gap: 10px; margin-top: 26px"><span class="serif" style="font-size: 54px; line-height: 54px">5h</span><span class="serif" style="font-size: 26px; font-style: italic">left</span><svg width="34" height="34" viewBox="0 0 44 44" class="ring" aria-hidden="true" style="margin-left: auto"><circle cx="22" cy="22" r="18" style="stroke: rgba(255,255,255,.25)" stroke-width="4"></circle><circle cx="22" cy="22" r="18" style="stroke: #fff" stroke-width="4" stroke-dasharray="113" stroke-dashoffset="40" stroke-linecap="round" transform="rotate(-90 22 22)"></circle></svg></div>
+          <h2 class="ask" style="margin-top: 12px">Read mail from <em>@bank.com</em></h2>
+          <div style="margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 14.5px" class="of2"><span class="av" style="width: 22px; height: 22px"><img src="../../assets/logos/claude.svg" alt=""></span>Claude · dana@acme.dev</div>
+        </div>
+        <div style="padding: 8px 24px 0">
+          <div class="row" style="align-items: flex-start; flex-direction: column; gap: 6px; padding: 12px 0"><div style="display: flex; gap: 8px; align-items: center; font-size: 14.5px"><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ok)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>Read mail from @bank.com about “statement”</div><div style="display: flex; gap: 8px; align-items: center; font-size: 14.5px; color: var(--ink2)"><svg class="g g18" viewBox="0 0 24 24" style="color: var(--bad)"><circle cx="12" cy="12" r="8"></circle><path d="M6.5 6.5l11 11"></path></svg>Never sends, changes, or opens codes</div></div>
+          <div class="row"><span class="k">Uses</span><span class="uses"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="v">3 of 10</span></div>
+          <div class="row"><span class="k">Ends</span><span class="v">Today, 22:40</span></div>
+          <div class="row"><span class="k">Came from</span><span class="v" style="font-size: 14px">Claude asked, you allowed</span></div>
+          <div class="lbl" style="margin-top: 16px">Used for · 3</div>
+          <div class="row"><svg class="g g18" viewBox="0 0 24 24" style="color: var(--violet)"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg><span class="rt" style="flex: 1">Read “October statement”</span><span class="meta">17:42</span></div>
+        </div>
+        <div class="bar"><div style="display: flex; gap: 10px"><a class="btn soft" href="#" style="flex: 1"><svg class="g" viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5"></circle><path d="M12 9v4l2.5 1.5M9.5 2.5h5"></path></svg>Extend</a><a class="btn danger" href="#" style="flex: 1">End now</a></div></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>A grant is a field you already decided.</b> Its page keeps the violet so you remember it is power on the loose. The ring drains live; in the last two minutes it ticks every second. End now plays the revoke thud and folds back into Trust.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">03 · New grant</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px; display: flex; align-items: center; justify-content: space-between"><a href="#" style="font-size: 16px; color: var(--ink2); text-decoration: none">Cancel</a></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 108px; display: flex; flex-direction: column; gap: 14px">
+          <h2 class="title">New <em>grant</em></h2>
+          <div class="lbl" style="margin-top: 6px">For</div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap"><span class="chip inv"><span class="av" style="width: 20px; height: 20px"><img src="../../assets/logos/claude.svg" alt=""></span>Claude</span><span class="chip"><span class="av" style="width: 20px; height: 20px"><img src="../../assets/logos/openai.svg" alt=""></span>ChatGPT</span><span class="chip"><span class="av" style="width: 20px; height: 20px"><img src="../../assets/logos/claude.svg" alt=""></span>Claude Code</span></div>
+          <div class="lbl" style="margin-top: 6px">To</div>
+          <div class="seg"><button class="on"><svg class="g g16" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>Read mail</button><button><svg class="g g16" viewBox="0 0 24 24"><path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z"></path></svg>Send mail</button></div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px"><span class="lbl">From</span><span style="display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink2)">All mail<button class="sw" aria-label="All mail" style="transform: scale(.8); transform-origin: right"></button></span></div>
+          <div class="input"><div class="fake mono" style="font-family: var(--mono); font-size: 14px">@stripe.com, receipts@apple.com</div></div>
+          <div class="input"><div class="fake" style="color: var(--faint)">Subject contains (optional)</div></div>
+          <div class="lbl" style="margin-top: 6px">For how long</div>
+          <div class="seg"><button>Once</button><button>1 hour</button><button class="on">1 day</button><button>Custom<svg class="g g14" viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"></path></svg></button></div>
+        </div>
+        <div class="bar"><a class="btn inv" href="#" style="width: 100%"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Create grant</a></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>A form that reads like a sentence.</b> For Claude, to read mail, from Stripe, for a day. Your own grant is paper, not a field: nothing is asking you. All mail flips the field to “up to 7 days, never sending” and greys the address box.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">04 · Extend for</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div class="field" style="background: var(--fg); height: 330px">
+          <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+          <div style="display: flex; align-items: baseline; gap: 10px; margin-top: 62px"><span class="serif" style="font-size: 54px; line-height: 54px">4m</span><span class="serif" style="font-size: 26px; font-style: italic">left</span></div>
+          <h2 class="ask" style="margin-top: 12px">Push to <em>feature/*</em> in acme/web</h2>
+        </div>
+        <div class="scrim"></div>
+        <div class="sheet" style="top: 404px">
+          <div class="grab"></div>
+          <h3 class="st">Extend <em>for</em></h3>
+          <div class="seg"><button>Once</button><button>1 hour</button><button>1 day</button><button class="on">Custom<svg class="g g14" viewBox="0 0 24 24"><path d="M18 14.5l-6-6-6 6"></path></svg></button></div>
+          <a href="#" style="display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 500; color: var(--ink); text-decoration: none; padding: 6px 0">More options<svg class="g g16" viewBox="0 0 24 24" style="color: var(--faint)"><path d="M9.5 5.5 16 12l-6.5 6.5"></path></svg></a>
+          <div style="display: flex; gap: 10px; margin-top: auto"><a class="btn out" href="#" style="flex: 1">Cancel</a><a class="btn inv" href="#" style="flex: 1.35"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Extend</a></div>
+        </div>
+        <div class="menu" style="right: 22px; top: 336px; width: 200px">
+          <div class="mi">7 days</div>
+          <div class="mi on" style="justify-content: space-between">30 days<svg class="g g18" viewBox="0 0 24 24" style="color: var(--violet)"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></div>
+          <div style="height: 1px; background: var(--rule); margin: 4px 10px"></div>
+          <div class="mi" style="color: var(--ink2)">Other time…</div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>The menu grows upward</b> from Custom because the sheet sits low. Picking a value writes it into the segment (“30 days”) and the menu folds back into it. Extend asks Face ID, then the field's number rolls up from 4m to 30d.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">05 · Ended grants</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px">
+          <h2 class="title">Ended</h2>
+          <p class="body" style="margin-top: 8px">Resume any of these as it was, or let them go.</p>
+          <div style="margin-top: 16px">
+            <div class="row" style="align-items: flex-start"><span class="svc" style="opacity: .55"><img src="../../assets/logos/gmail.svg" alt=""></span><div style="flex: 1"><div class="rt">Read mail from @github.com</div><div class="meta">Claude · expired 2 days ago</div><div style="display: flex; gap: 8px; margin-top: 10px"><a class="btn soft sm" href="#" style="height: 34px; font-size: 13.5px"><svg class="g g16" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"></path></svg>Resume</a><a class="btn danger sm" href="#" style="height: 34px; font-size: 13.5px">Delete</a></div></div></div>
+            <div class="row" style="align-items: flex-start"><span class="svc" style="opacity: .55"><img src="../../assets/logos/github.svg" alt=""></span><div style="flex: 1"><div class="rt">Push to feature/* in octo/app</div><div class="meta">Claude Code · all 5 uses spent</div><div style="display: flex; gap: 8px; margin-top: 10px"><a class="btn soft sm" href="#" style="height: 34px; font-size: 13.5px"><svg class="g g16" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"></path></svg>Resume</a><a class="btn danger sm" href="#" style="height: 34px; font-size: 13.5px">Delete</a></div></div></div>
+            <div class="row" style="align-items: flex-start"><span class="svc" style="opacity: .55"><img src="../../assets/logos/gcalendar.svg" alt=""></span><div style="flex: 1"><div class="rt">See your calendar</div><div class="meta">ChatGPT · ended with the bypass</div><div style="display: flex; gap: 8px; margin-top: 10px"><a class="btn soft sm" href="#" style="height: 34px; font-size: 13.5px"><svg class="g g16" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"></path></svg>Resume</a><a class="btn danger sm" href="#" style="height: 34px; font-size: 13.5px">Delete</a></div></div></div>
+          </div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Dimmed, not gone.</b> Service marks drop to 55%. Resume opens the same Extend sheet with the old scope. Delete asks once, “Delete this grant for good? It can't be resumed.”, and the row slides away with the delete cue.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark","both"],"default":"both","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":2400,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'both';
+    return {
+      wall: t === 'dark' ? 'dark' : 'light',
+      a: t === 'dark' ? 'dark' : 'light',
+      b: t === 'light' ? 'light' : 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

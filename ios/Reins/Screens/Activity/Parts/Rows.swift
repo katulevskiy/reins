@@ -159,22 +159,6 @@ struct EntryMark: View {
     }
 }
 
-/// An operation's kind as a small tinted tile (36 pt, rounded).
-struct KindTile: View {
-    var kind: ActionKind
-    var size: CGFloat = 36
-
-    var body: some View {
-        let tint = ActionTile.color(kind)
-        Image(systemName: kind.symbol)
-            .font(.system(size: size * 0.45, weight: .semibold))
-            .foregroundStyle(tint)
-            .frame(width: size, height: size)
-            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
-            .accessibilityHidden(true)
-    }
-}
-
 /// One operation in the history: what it touched with what it did (the label's tile), the request in up to two lines,
 /// who and when, and how it ended. Entries the core gave no label (older ones) keep the kind's tile and sentence.
 /// `first` and `last` round the group's corners (each row is its own lazy cell).

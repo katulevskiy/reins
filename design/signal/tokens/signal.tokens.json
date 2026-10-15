@@ -1,0 +1,669 @@
+{
+  "name": "Reins Signal",
+  "version": 1,
+  "meta": {
+    "source": "design",
+    "derivedFrom": "Reins design system (reins, reins-site, zeron) + round 3 direction C",
+    "synced": "2026-10-14",
+    "redesign": "Reins Signal redesign, Oct 2026. Sans proposed: Instrument Sans (Geist kept as fallback/alternative)."
+  },
+  "color": {
+    "themes": [
+      {
+        "id": "light",
+        "name": "Light"
+      },
+      {
+        "id": "dark",
+        "name": "Dark"
+      }
+    ],
+    "tokens": [
+      {
+        "name": "paper",
+        "value": {
+          "light": "#f6f6f8",
+          "dark": "#121215"
+        },
+        "usage": "The ground of every screen. Cool paper in light, graphite in dark."
+      },
+      {
+        "name": "paper-raised",
+        "value": {
+          "light": "#ffffff",
+          "dark": "#1c1c21"
+        },
+        "usage": "Sheets, inputs, header buttons, mode tiles, the Android nav bar."
+      },
+      {
+        "name": "paper-sunken",
+        "value": {
+          "light": "#ececf0",
+          "dark": "#26262c"
+        },
+        "usage": "Segmented wells, steppers, soft buttons, tags, a switch that is off."
+      },
+      {
+        "name": "ink",
+        "value": {
+          "light": "#16151b",
+          "dark": "#ededf0"
+        },
+        "usage": "Titles, asks on paper, row titles, values (16.8:1 light, 16:1 dark on `paper`)."
+      },
+      {
+        "name": "ink-2",
+        "value": {
+          "light": "#5f5e6b",
+          "dark": "#a6a6b0"
+        },
+        "usage": "Row keys, body copy, values that aren't the point (5.9:1 light, 7.8:1 dark)."
+      },
+      {
+        "name": "ink-meta",
+        "value": {
+          "light": "#6b6a78",
+          "dark": "#8e8e99"
+        },
+        "usage": "Small meta: senders, dates, section labels, hints (4.9:1 light, 5.8:1 dark on `paper`)."
+      },
+      {
+        "name": "ink-faint",
+        "value": {
+          "light": "#a3a2ad",
+          "dark": "#63636e"
+        },
+        "usage": "Chevrons, unchecked rings, the sheet grabber. Decoration only, never text."
+      },
+      {
+        "name": "rule",
+        "value": {
+          "light": "#e3e3ea",
+          "dark": "#2a2a30"
+        },
+        "usage": "The hairline under every row and around raised plates."
+      },
+      {
+        "name": "inverse",
+        "value": {
+          "light": "#16151b",
+          "dark": "#ededf0"
+        },
+        "usage": "The main button and the floating tab bar: ink turned into a plate."
+      },
+      {
+        "name": "on-inverse",
+        "value": {
+          "light": "#ffffff",
+          "dark": "#121215"
+        },
+        "usage": "Text and glyphs on `inverse` (18:1 light, 16:1 dark)."
+      },
+      {
+        "name": "violet",
+        "value": {
+          "light": "#5b43e8",
+          "dark": "#a196ff"
+        },
+        "usage": "Reins violet as text or a glyph on paper: links, Auto tags, Autopilot's voice (5.7:1 light, 7.4:1 dark)."
+      },
+      {
+        "name": "violet-fill",
+        "value": {
+          "light": "#5b43e8",
+          "dark": "#5b43e8"
+        },
+        "usage": "Violet as a fill: switches that are on, the Auto chip, count badges. White text on it is 6.2:1."
+      },
+      {
+        "name": "success",
+        "value": {
+          "light": "#15803d",
+          "dark": "#34d399"
+        },
+        "usage": "Additions in diffs, Ready, allowed outcomes."
+      },
+      {
+        "name": "danger",
+        "value": {
+          "light": "#b91c1c",
+          "dark": "#f87171"
+        },
+        "usage": "Deletions in diffs, destructive rows, end now, red hold buttons on paper."
+      },
+      {
+        "name": "danger-wash",
+        "value": {
+          "light": "#fbe3e3",
+          "dark": "rgba(248, 113, 113, 0.14)"
+        },
+        "usage": "Fill behind a red button on paper (End now, Bypass, Hold to delete)."
+      },
+      {
+        "name": "danger-fill-2",
+        "value": {
+          "light": "#f6c9c9",
+          "dark": "rgba(248, 113, 113, 0.28)"
+        },
+        "usage": "The progress that fills a hold button as you hold."
+      },
+      {
+        "name": "warning",
+        "value": {
+          "light": "#a16207",
+          "dark": "#facc15"
+        },
+        "usage": "Warning text on paper: a flagged code, an expiring item."
+      },
+      {
+        "name": "scrim",
+        "value": {
+          "light": "rgba(22, 21, 27, 0.32)",
+          "dark": "rgba(0, 0, 0, 0.55)"
+        },
+        "usage": "Behind sheets; the field stays visible, dimmed."
+      },
+      {
+        "name": "field-push",
+        "value": {
+          "light": "#c2410c",
+          "dark": "#c2410c"
+        },
+        "usage": "Field: the AI wants to write or send (push, send email, comment). White text 5.2:1."
+      },
+      {
+        "name": "field-read",
+        "value": {
+          "light": "#2563eb",
+          "dark": "#2563eb"
+        },
+        "usage": "Field: the AI wants to read or search. White text 5.2:1."
+      },
+      {
+        "name": "field-delete",
+        "value": {
+          "light": "#b91c1c",
+          "dark": "#b91c1c"
+        },
+        "usage": "Field: irreversible (delete, force-push, pay) and Bypass. White text 6.5:1."
+      },
+      {
+        "name": "field-grant",
+        "value": {
+          "light": "#5b43e8",
+          "dark": "#5b43e8"
+        },
+        "usage": "Field: a grant, power you already handed over. White text 6.2:1."
+      },
+      {
+        "name": "field-pair",
+        "value": {
+          "light": "#0e7490",
+          "dark": "#0e7490"
+        },
+        "usage": "Field: pair a device or connect an AI. White text 5.4:1."
+      },
+      {
+        "name": "field-accounts",
+        "value": {
+          "light": "#be185d",
+          "dark": "#be185d"
+        },
+        "usage": "Field: account changes (passwords, recovery, sign-in). White text 6.0:1."
+      },
+      {
+        "name": "field-warn",
+        "value": {
+          "light": "#a16207",
+          "dark": "#a16207"
+        },
+        "usage": "Field: something is broken and needs you (notifications off, phone not approving). White text 4.9:1."
+      },
+      {
+        "name": "on-field",
+        "value": {
+          "light": "#ffffff",
+          "dark": "#ffffff"
+        },
+        "usage": "Text, glyphs and the Review button on any field."
+      },
+      {
+        "name": "on-field-2",
+        "value": {
+          "light": "rgba(255, 255, 255, 0.82)",
+          "dark": "rgba(255, 255, 255, 0.82)"
+        },
+        "usage": "Secondary text on a field: label line, device, verdict detail (14px+ only)."
+      },
+      {
+        "name": "on-field-wash",
+        "value": {
+          "light": "rgba(255, 255, 255, 0.18)",
+          "dark": "rgba(255, 255, 255, 0.18)"
+        },
+        "usage": "Translucent buttons and the close button on a field."
+      },
+      {
+        "name": "rule-2",
+        "value": {
+          "light": "#d3d3dc",
+          "dark": "#3a3a42"
+        },
+        "usage": "Stronger hairline: outline buttons, input borders."
+      },
+      {
+        "name": "kind-push",
+        "value": {
+          "light": "#c2410c",
+          "dark": "#fb923c"
+        },
+        "usage": "Kind tile ink on paper (tile fill is this at 13%, 14% in dark)."
+      },
+      {
+        "name": "kind-read",
+        "value": {
+          "light": "#2563eb",
+          "dark": "#60a5fa"
+        },
+        "usage": "Kind tile ink."
+      },
+      {
+        "name": "kind-delete",
+        "value": {
+          "light": "#b91c1c",
+          "dark": "#f87171"
+        },
+        "usage": "Kind tile ink."
+      },
+      {
+        "name": "kind-grant",
+        "value": {
+          "light": "#5b43e8",
+          "dark": "#a196ff"
+        },
+        "usage": "Kind tile ink."
+      },
+      {
+        "name": "kind-pair",
+        "value": {
+          "light": "#0e7490",
+          "dark": "#22d3ee"
+        },
+        "usage": "Kind tile ink."
+      },
+      {
+        "name": "kind-accounts",
+        "value": {
+          "light": "#be185d",
+          "dark": "#f472b6"
+        },
+        "usage": "Kind tile ink."
+      },
+      {
+        "name": "kind-warn",
+        "value": {
+          "light": "#a16207",
+          "dark": "#facc15"
+        },
+        "usage": "Kind tile ink."
+      },
+      {
+        "name": "canvas-wall",
+        "value": {
+          "light": "#e8e6e1",
+          "dark": "#0b0b0d"
+        },
+        "usage": "Design canvas background only. Not used in the apps."
+      }
+    ]
+  },
+  "type": {
+    "fonts": [
+      {
+        "family": "Geist",
+        "file": "fonts/geist-latin.woff2",
+        "weight": "100 900",
+        "style": "normal"
+      },
+      {
+        "family": "Geist Mono",
+        "file": "fonts/geist-mono-latin.woff2",
+        "weight": "100 900",
+        "style": "normal"
+      },
+      {
+        "family": "Instrument Serif",
+        "file": "fonts/instrument-serif-latin.woff2",
+        "weight": "400",
+        "style": "normal"
+      },
+      {
+        "family": "Instrument Serif",
+        "file": "fonts/instrument-serif-italic-latin.woff2",
+        "weight": "400",
+        "style": "italic"
+      }
+    ],
+    "families": {
+      "serif": "\"Instrument Serif\", Georgia, serif",
+      "sans": "\"Instrument Sans\", \"Geist\", system-ui, sans-serif",
+      "mono": "\"Geist Mono\", ui-monospace, Menlo, monospace"
+    },
+    "groups": [
+      {
+        "name": "Serif",
+        "family": "serif",
+        "styles": [
+          {
+            "name": "ask-xl",
+            "fontSize": "64px",
+            "lineHeight": "62px",
+            "fontWeight": 400,
+            "letterSpacing": "-0.015em",
+            "usage": "Asks on desktop and iPad."
+          },
+          {
+            "name": "ask",
+            "fontSize": "45px",
+            "lineHeight": "46px",
+            "fontWeight": 400,
+            "letterSpacing": "-0.012em",
+            "sample": "Push 8 commits to octo/app",
+            "usage": "The ask on a field. The target goes in italic."
+          },
+          {
+            "name": "title",
+            "fontSize": "44px",
+            "lineHeight": "44px",
+            "fontWeight": 400,
+            "letterSpacing": "-0.01em",
+            "sample": "Activity",
+            "usage": "Screen titles."
+          },
+          {
+            "name": "stat",
+            "fontSize": "40px",
+            "lineHeight": "40px",
+            "fontWeight": 400,
+            "letterSpacing": "-0.01em",
+            "sample": "142",
+            "usage": "Big numbers: stats, time left (54px on a grant field)."
+          },
+          {
+            "name": "sheet-title",
+            "fontSize": "32px",
+            "lineHeight": "34px",
+            "fontWeight": 400,
+            "letterSpacing": "-0.01em",
+            "sample": "Remember for",
+            "usage": "Sheet titles, mode tiles (26px)."
+          },
+          {
+            "name": "ask-small",
+            "fontSize": "25px",
+            "lineHeight": "26px",
+            "fontWeight": 400,
+            "letterSpacing": "-0.01em",
+            "sample": "Read 2 emails from Stripe",
+            "usage": "The ask on a waiting card."
+          },
+          {
+            "name": "mood",
+            "fontSize": "24px",
+            "lineHeight": "30px",
+            "fontWeight": 400,
+            "fontStyle": "italic",
+            "color": "ink-2",
+            "usage": "One quiet line under a title: \"Two things wait for you.\""
+          }
+        ]
+      },
+      {
+        "name": "Sans",
+        "family": "sans",
+        "styles": [
+          {
+            "name": "button",
+            "fontSize": "16.5px",
+            "fontWeight": 600,
+            "sample": "Approve",
+            "usage": "Decision buttons (14.5px on small ones)."
+          },
+          {
+            "name": "row",
+            "fontSize": "15.5px",
+            "fontWeight": 500,
+            "sample": "Push to feature/* in octo/app",
+            "usage": "Row titles."
+          },
+          {
+            "name": "body",
+            "fontSize": "15px",
+            "lineHeight": "22px",
+            "fontWeight": 400,
+            "sample": "Approved without asking. Sent means sent.",
+            "usage": "Explanations in sheets and pages."
+          },
+          {
+            "name": "meta",
+            "fontSize": "13px",
+            "lineHeight": "18px",
+            "fontWeight": 400,
+            "sample": "Claude Code \u00b7 3 of 10 uses",
+            "usage": "Row subtitles, hints, verdict lines (13.5px)."
+          },
+          {
+            "name": "tag",
+            "fontSize": "11.5px",
+            "fontWeight": 600,
+            "sample": "Recommended",
+            "usage": "Tags: Auto, Ready, Code."
+          }
+        ]
+      },
+      {
+        "name": "Mono",
+        "family": "mono",
+        "styles": [
+          {
+            "name": "label",
+            "fontSize": "11.5px",
+            "lineHeight": "14px",
+            "fontWeight": 500,
+            "letterSpacing": "0.16em",
+            "sample": "GITHUB \u00b7 PUSH",
+            "usage": "The label line on a field and section labels, set in capitals."
+          },
+          {
+            "name": "value",
+            "fontSize": "13.5px",
+            "fontWeight": 400,
+            "sample": "feature/passkeys",
+            "usage": "Branches, accounts, addresses, SHAs, the timer."
+          }
+        ]
+      }
+    ]
+  },
+  "spacing": {
+    "tokens": [
+      {
+        "name": "space-4",
+        "value": "4px",
+        "usage": "Icon to label inside tags."
+      },
+      {
+        "name": "space-8",
+        "value": "8px",
+        "usage": "Between buttons in a waiting card; tag gaps."
+      },
+      {
+        "name": "space-12",
+        "value": "12px",
+        "usage": "Label line to ask; ask to verdict on small cards."
+      },
+      {
+        "name": "space-16",
+        "value": "16px",
+        "usage": "Waiting card inset from the screen edge; top bar padding."
+      },
+      {
+        "name": "space-24",
+        "value": "24px",
+        "usage": "The screen gutter for text, lists and fields."
+      },
+      {
+        "name": "space-26",
+        "value": "26px",
+        "usage": "Above section labels."
+      },
+      {
+        "name": "space-34",
+        "value": "34px",
+        "usage": "Bottom padding of the decision bar, clear of the home indicator."
+      }
+    ]
+  },
+  "radius": {
+    "tokens": [
+      {
+        "name": "radius-tile",
+        "value": "11px",
+        "usage": "Kind tiles (38px); 46px tiles use 14px."
+      },
+      {
+        "name": "radius-input",
+        "value": "14px",
+        "usage": "Text inputs and copy fields."
+      },
+      {
+        "name": "radius-card",
+        "value": "26px",
+        "usage": "Waiting cards and mode tiles (22px)."
+      },
+      {
+        "name": "radius-field",
+        "value": "30px",
+        "usage": "The bottom corners of a field; the top runs into the screen's own corners."
+      },
+      {
+        "name": "radius-sheet",
+        "value": "30px",
+        "usage": "The top corners of sheets."
+      },
+      {
+        "name": "radius-pill",
+        "value": "9999px",
+        "usage": "Buttons, chips, segmented controls, tags, the tab bar."
+      }
+    ]
+  },
+  "shadow": {
+    "tokens": [
+      {
+        "name": "shadow-ring",
+        "value": {
+          "light": "0 0 0 1px #e3e3ea",
+          "dark": "0 0 0 1px #2a2a30"
+        },
+        "usage": "Outline for raised plates on paper: header buttons, inputs, chips."
+      },
+      {
+        "name": "shadow-nav",
+        "value": "0 14px 30px -12px rgba(0, 0, 0, 0.45)",
+        "usage": "The floating tab bar, the only thing that floats."
+      }
+    ]
+  },
+  "opacity": {
+    "tokens": [
+      {
+        "name": "opacity-off",
+        "value": "0.5",
+        "usage": "An email or item you've unchecked."
+      },
+      {
+        "name": "opacity-nav-idle",
+        "value": "0.62",
+        "usage": "Tab bar items that aren't selected."
+      }
+    ]
+  },
+  "motion-time": {
+    "note": "Durations, as plain values.",
+    "tokens": [
+      {
+        "name": "hold-duration",
+        "value": "1200ms",
+        "usage": "Hold to delete, hold to bypass, keep holding."
+      },
+      {
+        "name": "field-in",
+        "value": "320ms",
+        "usage": "A field slides down into place when a request opens."
+      },
+      {
+        "name": "fade",
+        "value": "150ms",
+        "usage": "Colour and hover changes."
+      },
+      {
+        "name": "fold",
+        "value": "360ms",
+        "usage": "Answered field folds into its kind tile at the top of the list."
+      },
+      {
+        "name": "card-fly",
+        "value": "220ms",
+        "usage": "Flicked waiting card leaves."
+      },
+      {
+        "name": "tab-pill",
+        "value": "240ms",
+        "usage": "Tab pill spring, cubic-bezier(0.3, 1.25, ...) slight overshoot."
+      },
+      {
+        "name": "sheet-rise",
+        "value": "280ms",
+        "usage": "Sheet spring over a 32% scrim."
+      },
+      {
+        "name": "drill-in",
+        "value": "300ms",
+        "usage": "Pushed page."
+      },
+      {
+        "name": "menu-open",
+        "value": "180ms",
+        "usage": "Menu grows from its trigger, scale 0.92 to 1. Closes in 120ms."
+      },
+      {
+        "name": "hold-drain",
+        "value": "180ms",
+        "usage": "Released hold drains, no haptic."
+      }
+    ]
+  },
+  "texture": {
+    "grain": {
+      "file": "assets/textures/grain.png",
+      "tileSize": "180px (asset is 360px, @2x)",
+      "blend": "soft-light",
+      "usage": "Only on colour fields (decision surfaces). Never on paper, text or glyphs. Off with Reduce Transparency."
+    }
+  },
+  "illustrations": {
+    "pond": {
+      "light": "assets/illustrations/pond-light.svg",
+      "dark": "assets/illustrations/pond-dark.svg",
+      "viewBox": "0 0 320 170",
+      "usage": "Empty / all quiet states."
+    },
+    "kite": {
+      "light": "assets/illustrations/kite-light.svg",
+      "dark": "assets/illustrations/kite-dark.svg",
+      "viewBox": "0 0 320 240",
+      "usage": "Arrival / onboarding hero."
+    }
+  }
+}

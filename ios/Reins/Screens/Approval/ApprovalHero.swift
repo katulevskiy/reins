@@ -4,14 +4,17 @@ import SwiftUI
 // one sentence, and Autopilot's score (or why there is none).
 
 extension HeroTone {
-    var color: Color {
+    /// The tone as a Signal field: writes and sends push, searches read, grants grant, what can't be undone delete.
+    var field: FieldKind {
         switch self {
-        case .write, .send: Palette.send
-        case .search: Palette.search
-        case .grant: Palette.accent
-        case .danger: Palette.danger
+        case .write, .send: .push
+        case .search: .read
+        case .grant: .grant
+        case .danger: .delete
         }
     }
+
+    var color: Color { field.ink }
 }
 
 /// An Activity entry shown again with the approval's own screen, read-only (the Android app's `ApprovalRecord`): how

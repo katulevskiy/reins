@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>iPhone · Vault</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--warn:#a16207;--wall:#e8e6e1;--wallink:#45434d}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--warn:#facc15;--wall:#0b0b0d;--wallink:#bdbcc6}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:55px;overflow:hidden;background:var(--paper);color:var(--ink);flex:none;box-shadow:0 0 0 9px #111114,0 0 0 10.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans)}
+.isl{position:absolute;z-index:60;top:11px;left:50%;margin-left:-62px;width:124px;height:36px;border-radius:20px;background:#000}
+.hind{position:absolute;z-index:60;bottom:8px;left:50%;margin-left:-67px;width:134px;height:5px;border-radius:3px;background:var(--ink)}
+.title{font-family:var(--serif);font-size:44px;line-height:44px;letter-spacing:-.01em;font-weight:400;margin:0}
+.body{font-size:15px;line-height:22px;color:var(--ink2);margin:0}
+.meta{font-size:13px;line-height:18px;color:var(--meta)}
+.rt{font-size:15.5px;font-weight:500;line-height:20px;color:var(--ink)}
+.btn{appearance:none;border:0;margin:0;height:54px;padding:0 22px;border-radius:999px;font-family:var(--sans);font-size:16.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;box-sizing:border-box;color:var(--ink);text-decoration:none}
+.btn.inv{background:var(--inv);color:var(--oninv)}
+.ib{appearance:none;width:40px;height:40px;border-radius:50%;background:var(--raised);box-shadow:0 0 0 1px var(--rule);display:grid;place-items:center;color:var(--ink);border:0;padding:0;flex:none}
+.ib.s{width:34px;height:34px;background:var(--sunken);box-shadow:none}
+.row{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 0;border-bottom:1px solid var(--rule);box-sizing:border-box}
+.tile{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none;background:var(--sunken);color:var(--ink)}
+.chev{color:var(--faint)}
+.input{display:flex;flex-direction:column;gap:6px}
+.input label{font-size:13px;color:var(--meta);font-weight:500}
+.input .fake{height:50px;border-radius:14px;background:var(--raised);box-shadow:0 0 0 1px var(--rule);padding:0 8px 0 16px;font-size:15.5px;color:var(--ink);box-sizing:border-box;display:flex;align-items:center;gap:6px}
+.kind{background:var(--raised);border-radius:20px;box-shadow:0 0 0 1px var(--rule);padding:14px;display:flex;flex-direction:column;gap:10px;min-height:118px;box-sizing:border-box}
+.bar{position:absolute;left:0;right:0;bottom:0;padding:14px 20px 34px;background:var(--paper);display:flex;flex-direction:column;gap:12px;z-index:20;box-sizing:border-box;border-top:1px solid var(--rule)}
+</style>
+</helmet>
+<div class="sig {{sans}} {{wall}}" style="width: 1940px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Vault</h1><span class="lbl" style="color: var(--wallink)">iPhone · keys your AIs use by name, never by value</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">01 · Vault</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px; display: flex; justify-content: space-between"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button><button class="ib" aria-label="Add"><svg class="g" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px">
+          <h2 class="title">Vault</h2>
+          <div style="margin-top: 14px; height: 44px; border-radius: 14px; background: var(--sunken); display: flex; align-items: center; gap: 8px; padding: 0 14px; color: var(--meta); font-size: 15px"><svg class="g g18" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"></circle><path d="M20 20l-4.2-4.2"></path></svg>Search names, usernames, websites</div>
+          <div class="lbl" style="margin-top: 20px">24 items</div>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span><div style="flex: 1"><div class="rt">OpenAI</div><div class="meta">API key · used today</div></div><svg class="g g16" viewBox="0 0 24 24" style="color: var(--warn); fill: currentColor"><path d="M12 4l2.4 5 5.3.6-3.9 3.6 1.1 5.3L12 15.8 7.1 18.5l1.1-5.3-3.9-3.6 5.3-.6z"></path></svg></div>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"></path></svg></span><div style="flex: 1"><div class="rt">Deploy key</div><div class="meta">SSH key · ed25519</div></div></div>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg></span><div style="flex: 1"><div class="rt">GitHub</div><div class="meta">Login · octo-dana</div></div></div>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg></span><div style="flex: 1"><div class="rt">AWS deploy</div><div class="meta">API key · used by deploy.sh</div></div></div>
+          <div class="row"><span class="tile"><svg class="g" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12.5" rx="2"></rect><path d="M3 10h18M7 15h3"></path></svg></span><div style="flex: 1"><div class="rt">Virtual card</div><div class="meta">Card · Visa •• 4242</div></div></div>
+          <div class="row" style="border-bottom: 0"><span class="tile"><svg class="g" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6zM14 3.5v4h4"></path></svg></span><div style="flex: 1"><div class="rt">Server notes</div><div class="meta">Secure note</div></div></div>
+          <div class="meta" style="margin-top: 14px">This phone's key for <span class="mono">reins vault add</span>: <span class="mono" style="color: var(--ink)">4821-9930-1274</span></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Hidden while shared.</b> The whole vault sits under the privacy cover when the screen is recorded. Rows are monochrome on purpose: kinds differ by glyph, not by colour, because nothing here is asking anything.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">02 · Add to the vault</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px">
+          <h2 class="title">Add to the <em>vault</em></h2>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 20px">
+            <a class="kind" href="#" style="text-decoration: none; color: inherit"><svg class="g g22" viewBox="0 0 24 24" style="width: 24px; height: 24px"><circle cx="8" cy="15.5" r="4"></circle><path d="M11 12.5 19.5 4M16.5 7l2.5 2.5M14 9.5l2 2"></path></svg><div><div class="rt">API key</div><div class="meta">For reins run and the API proxy</div></div></a>
+            <a class="kind" href="#" style="text-decoration: none; color: inherit"><svg class="g" viewBox="0 0 24 24" style="width: 24px; height: 24px"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"></path></svg><div><div class="rt">SSH key</div><div class="meta">Made here, never leaves</div></div></a>
+            <a class="kind" href="#" style="text-decoration: none; color: inherit"><svg class="g" viewBox="0 0 24 24" style="width: 24px; height: 24px"><circle cx="12" cy="8.5" r="3.8"></circle><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"></path></svg><div><div class="rt">Login</div><div class="meta">Username and password</div></div></a>
+            <a class="kind" href="#" style="text-decoration: none; color: inherit"><svg class="g" viewBox="0 0 24 24" style="width: 24px; height: 24px"><path d="M6 3.5h8l4 4v13H6zM14 3.5v4h4"></path></svg><div><div class="rt">Secure note</div><div class="meta">Any text</div></div></a>
+            <a class="kind" href="#" style="text-decoration: none; color: inherit"><svg class="g" viewBox="0 0 24 24" style="width: 24px; height: 24px"><rect x="3" y="6" width="18" height="12.5" rx="2"></rect><path d="M3 10h18M7 15h3"></path></svg><div><div class="rt">Card</div><div class="meta">For approved purchases</div></div></a>
+            <a class="kind" href="#" style="text-decoration: none; color: inherit"><svg class="g" viewBox="0 0 24 24" style="width: 24px; height: 24px"><rect x="3.5" y="5" width="17" height="14" rx="2"></rect><circle cx="9" cy="11" r="2.2"></circle><path d="M5.8 16c.6-1.5 1.8-2.3 3.2-2.3s2.6.8 3.2 2.3M14.5 10h3M14.5 13.5h3"></path></svg><div><div class="rt">Identity</div><div class="meta">Name and address</div></div></a>
+          </div>
+          <p class="meta" style="margin: 18px 0 0">Everything is encrypted on this phone with your vault's key before it reaches the server.</p>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Pick by picture.</b> Six large tiles instead of a list, each a glyph and one line. Tap and the tile expands into its form (shared element, 300 ms).</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">03 · An SSH key</div>
+      <div class="ph {{a}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px; display: flex; justify-content: space-between"><button class="ib" aria-label="Back"><svg class="g" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"></path></svg></button><button class="ib" aria-label="Edit"><svg class="g g18" viewBox="0 0 24 24"><path d="M4.5 19.5l1-4L16 5a2 2 0 0 1 3 3L8.5 18.5zM14 7l3 3"></path></svg></button></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px">
+          <h2 class="title">Deploy key</h2>
+          <div class="meta" style="margin-top: 6px">SSH key · made on this phone, Oct 9</div>
+          <p class="body" style="margin-top: 14px; font-size: 14px; line-height: 20px">Put the public key on the servers and Git hosts you sign in to. The private key stays in your vault; the phone signs with it.</p>
+          <div class="lbl" style="margin-top: 20px">Use it from the computer</div>
+          <div class="row"><span class="mono" style="font-size: 13.5px; flex: 1">vault:Deploy key/public</span><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ink2)"><rect x="8.5" y="8.5" width="11" height="11" rx="2"></rect><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"></path></svg></div>
+          <div class="lbl" style="margin-top: 20px">Fields</div>
+          <div class="row" style="align-items: flex-start"><div style="flex: 1; min-width: 0"><div class="meta">Public key</div><div class="mono" style="font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK…</div></div><button class="ib s" aria-label="Share"><svg class="g g16" viewBox="0 0 24 24"><path d="M12 15V3.5M7.5 8 12 3.5 16.5 8M5 13v6.5h14V13"></path></svg></button><button class="ib s" aria-label="Copy"><svg class="g g16" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"></rect><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"></path></svg></button></div>
+          <div class="row"><div style="flex: 1"><div class="meta">Private key</div><div style="font-size: 14.5px">Kept in the vault</div></div><svg class="g g18" viewBox="0 0 24 24" style="color: var(--ink2)"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg></div>
+          <div class="row"><div style="flex: 1"><div class="meta">Fingerprint</div><div class="mono" style="font-size: 12.5px">SHA256:x1Pq…9fZk</div></div></div>
+          <a href="#" style="display: block; margin-top: 22px; font-size: 15px; font-weight: 500; color: var(--bad); text-decoration: none">Delete this key</a>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Copy is a reference, not a secret.</b> Tapping copies <span class="mono">vault:NAME/field</span>; your phone still asks each time it's used. Revealing a password asks Face ID first.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">04 · New login</div>
+      <div class="ph {{b}}">
+        <div class="isl"></div>
+        <div style="position: absolute; left: 20px; right: 20px; top: 58px"><a href="#" style="font-size: 16px; color: var(--ink2); text-decoration: none; display: inline-block; padding: 10px 4px">Cancel</a></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 112px; display: flex; flex-direction: column; gap: 14px">
+          <h2 class="title">New <em>login</em></h2>
+          <div class="input"><label>Name</label><div class="fake">GitHub</div><span class="meta">Use it as <span class="mono">vault:GitHub/password</span></span></div>
+          <div class="input"><label>Username</label><div class="fake">octo-dana</div></div>
+          <div class="input"><label>Password</label><div class="fake" style="box-shadow: 0 0 0 2px var(--violet)"><span class="mono" style="flex: 1; letter-spacing: .2em">••••••••••••••••••</span><button class="ib s" aria-label="Generate"><svg class="g g16" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4"></path></svg></button><button class="ib s" aria-label="Show"><svg class="g g16" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></div></div>
+          <div class="input"><label>Website</label><div class="fake">github.com</div></div>
+          <div class="input"><label>One-time code key (optional)</label><div class="fake" style="color: var(--faint)">Paste or scan</div></div>
+        </div>
+        <div class="bar"><a class="btn inv" href="#" style="width: 100%"><svg class="g" viewBox="0 0 24 24"><path d="M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4h2M15.5 4h2A2.5 2.5 0 0 1 20 6.5v2M20 15.5v2a2.5 2.5 0 0 1-2.5 2.5h-2M8.5 20h-2A2.5 2.5 0 0 1 4 17.5v-2M9 9.5v1.2M15 9.5v1.2M12.2 9.5v3.8h-1M9.3 15.6c1.6 1.2 3.8 1.2 5.4 0"></path></svg>Save</a></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Generate, don't type.</b> The refresh glyph rolls a new 24-character password with a little shuffle of the dots and a select tick. Save asks Face ID, “Save GitHub in your vault”.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark","both"],"default":"both","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"$preview":{"width":1940,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const t = this.props.theme ?? 'both';
+    return {
+      wall: t === 'dark' ? 'dark' : 'light',
+      a: t === 'dark' ? 'dark' : 'light',
+      b: t === 'light' ? 'light' : 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst'
+    };
+  }
+}
+</script>
+</body>
+</html>

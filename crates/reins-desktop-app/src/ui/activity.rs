@@ -6,8 +6,7 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, anchored, deferred, div, linear_color_stop, linear_gradient, point,
-    px, relative,
+    StatefulInteractiveElement as _, Styled as _, anchored, deferred, div, point, px, relative,
 };
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
@@ -21,7 +20,7 @@ use super::story::{Story, answer};
 use super::{Data, ROWS, Root};
 use crate::format;
 use crate::model::Model;
-use crate::theme::{MONO, Palette, Tone};
+use crate::theme::{MONO, Palette, SERIF, Tone};
 
 /// The outcome filters, in order.
 const OUTCOMES: [(Option<Outcome>, &str); 6] = [
@@ -104,9 +103,10 @@ impl Root {
                 div()
                     .flex_1()
                     .min_w(px(0.0))
-                    .text_size(px(24.0))
-                    .line_height(px(30.0))
-                    .font_weight(FontWeight::BOLD)
+                    .text_size(px(44.0))
+                    .line_height(px(44.0))
+                    .font_family(SERIF)
+                    .font_weight(FontWeight::NORMAL)
                     .child("Activity"),
             )
             .child(help(
@@ -289,17 +289,12 @@ impl Root {
         {
             s.target = Mark::Brand(b);
         }
-        let color = if s.tone == Tone::Gray {
+        let color = if s.tone == Tone::Neutral {
             pal.accent
         } else {
             pal.tone(s.tone)
         };
         let (ic, tone, said) = answer(e, &d.phone());
-        let (from, to) = if pal.dark {
-            (0.16, 0.04)
-        } else {
-            (0.12, 0.03)
-        };
         let mut hero = div()
             .flex()
             .flex_col()
@@ -307,22 +302,19 @@ impl Root {
             .gap(px(12.0))
             .p(px(18.0))
             .rounded(px(18.0))
-            .bg(linear_gradient(
-                180.0,
-                linear_color_stop(pal.background.blend(color.opacity(from)), 0.0),
-                linear_color_stop(pal.background.blend(color.opacity(to)), 1.0),
-            ))
+            .bg(pal.paper_raised())
             .border_1()
-            .border_color(color.opacity(0.26))
+            .border_color(pal.rule())
             .child(stage(s.agent, s.target, Some((s.badge, color)), color, 46.0, pal))
             .child(
                 div()
                     .w_full()
                     .text_center()
-                    .text_size(px(18.0))
-                    .line_height(px(24.0))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(pal.secondary)
+                    .font_family(SERIF)
+                    .text_size(px(26.0))
+                    .line_height(px(30.0))
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(pal.ink())
                     .child(sentence(&s.sentence, pal)),
             )
             .child(

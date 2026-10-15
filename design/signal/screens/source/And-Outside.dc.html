@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Android · Outside the app</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.sig{--serif:"Instrument Serif",Georgia,serif;--mono:"Geist Mono",ui-monospace,Menlo,monospace;--fp:#c2410c;--fr:#2563eb;--fd:#b91c1c;--fg:#5b43e8;--fa:#0e7490;--fc:#be185d;--fw:#a16207;--vf:#5b43e8;font-family:var(--sans);-webkit-font-smoothing:antialiased}
+.s-inst{--sans:"Instrument Sans",system-ui,sans-serif}
+.s-geist{--sans:"Geist",system-ui,sans-serif}
+.light{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;--meta:#6b6a78;--faint:#a3a2ad;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--ok:#15803d;--bad:#b91c1c;--warn:#a16207;--wall:#e8e6e1;--wallink:#45434d}
+.dark{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;--ink2:#a6a6b0;--meta:#8e8e99;--faint:#63636e;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;--ok:#34d399;--bad:#f87171;--warn:#facc15;--wall:#0b0b0d;--wallink:#bdbcc6}
+.g{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.g14{width:14px;height:14px}.g16{width:16px;height:16px}.g18{width:18px;height:18px}
+.grain{position:absolute !important;inset:0;width:100%;height:100%;mix-blend-mode:soft-light;pointer-events:none;z-index:0;background:url(../../assets/textures/grain.png) 0 0/180px 180px repeat}.grain rect{display:none}.sig .grain{position:absolute !important}
+.grain-off .grain{display:none}
+.lbl{font-family:var(--mono);font-size:11.5px;line-height:14px;letter-spacing:.16em;text-transform:uppercase;font-weight:500;color:var(--meta)}
+.serif{font-family:var(--serif);font-weight:400}
+.mono{font-family:var(--mono)}
+em{font-style:italic}
+.board-h{display:flex;align-items:baseline;gap:24px}
+.board-h h1{font-family:var(--serif);font-weight:400;font-size:72px;line-height:72px;letter-spacing:-.02em;margin:0;color:var(--ink)}
+.strip{display:flex;gap:72px;align-items:flex-start}
+.colm{width:390px;display:flex;flex-direction:column;gap:18px;flex:none}
+.cap{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--wallink)}
+.note{font-size:13.5px;line-height:20px;color:var(--wallink)}
+.note b{font-weight:600;color:var(--ink)}
+.ph{position:relative;width:390px;height:844px;border-radius:40px;overflow:hidden;color:#fff;flex:none;box-shadow:0 0 0 8px #111114,0 0 0 9.5px #3a3a42,0 50px 90px -40px rgba(20,18,30,.55);isolation:isolate;font-family:var(--sans);background:#1d1b33}
+.punch{position:absolute;z-index:60;top:14px;left:50%;margin-left:-7px;width:14px;height:14px;border-radius:50%;background:#000}
+.hind{position:absolute;z-index:60;bottom:7px;left:50%;margin-left:-54px;width:108px;height:4px;border-radius:2px;background:#fff;opacity:.7}
+.btn{appearance:none;border:0;margin:0;height:38px;padding:0 16px;border-radius:999px;font-family:var(--sans);font-size:14px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;text-decoration:none}
+.onf{background:#fff;color:#16151b}
+.wash{background:rgba(255,255,255,.18);color:#fff}
+.av{width:24px;height:24px;border-radius:50%;background:#fff;display:grid;place-items:center;flex:none}
+.av img{width:62%;height:62%}
+.n{background:#2a2930;color:#ededf0;border-radius:24px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;position:relative;overflow:hidden}
+.n>*{position:relative}
+.n .h{display:flex;align-items:center;gap:8px;font-size:12px;color:#a6a6b0}
+.qs{height:72px;border-radius:24px;background:#2a2930;display:flex;align-items:center;gap:12px;padding:0 16px;box-sizing:border-box;position:relative;overflow:hidden}
+.qs>*{position:relative}
+.qsb{height:72px;border-radius:24px;background:#2a2930;opacity:.55}
+.icon{width:58px;height:58px;border-radius:50%;background:rgba(255,255,255,.14)}
+</style>
+</helmet>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"></feTurbulence><feColorMatrix type="saturate" values="0"></feColorMatrix><feComponentTransfer><feFuncA type="table" tableValues="0 0.6"></feFuncA></feComponentTransfer></filter></svg>
+<div class="sig {{sans}} {{wall}} {{grain}}" style="width: 2400px; height: 1320px; box-sizing: border-box; background: var(--wall); padding: 64px 80px 0; display: flex; flex-direction: column; gap: 40px">
+  <div class="board-h"><h1>Outside the app</h1><span class="lbl" style="color: var(--wallink)">Android · heads-up, shade, Quick Settings, widgets</span></div>
+  <div class="strip">
+
+    <div class="colm">
+      <div class="cap">01 · Heads-up</div>
+      <div class="ph">
+        <div class="punch"></div>
+        <svg class="grain" aria-hidden="true" style="opacity: .7"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+        <div style="position: absolute; left: 10px; right: 10px; top: 40px; border-radius: 26px; overflow: hidden; box-shadow: 0 20px 40px -18px rgba(0,0,0,.6)">
+          <div style="position: relative; background: var(--fp); padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px">
+            <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+            <div style="position: relative; display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgba(255,255,255,.82)"><img src="../../assets/logos/reins.svg" alt="" style="width: 18px; height: 18px; border-radius: 5px">Reins · Approvals · now<span class="mono" style="margin-left: auto; color: #fff">0:40</span></div>
+            <div class="serif" style="position: relative; font-size: 26px; line-height: 27px">Push 8 commits to <em>octo/app</em></div>
+            <div style="position: relative; font-size: 13px; color: rgba(255,255,255,.82)">Claude Code · Autopilot would allow · 97%</div>
+            <div style="position: relative; display: flex; gap: 8px; margin-top: 4px"><a class="btn wash" href="#" style="flex: 1">Deny</a><a class="btn onf" href="#" style="flex: 1.35"><svg class="g g16" viewBox="0 0 24 24"><path d="M12 11.5v2c0 2.6-.7 4.8-2 6.8M8.6 9.8A3.5 3.5 0 0 1 15.5 11v2.5c0 1.9-.3 3.6-.9 5.2M6 15.4c.4-1 .6-2.2.6-3.4a5.4 5.4 0 0 1 9.4-3.6M18 12v1.5c0 1.6-.2 3.1-.5 4.5M5.2 8.6A7.8 7.8 0 0 1 12 4.5c2.6 0 4.9 1.2 6.4 3.2"></path></svg>Approve</a></div>
+          </div>
+        </div>
+        <div style="position: absolute; left: 30px; right: 30px; bottom: 140px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; justify-items: center"><span class="icon"></span><span class="icon"></span><span class="icon"></span><img src="../../assets/logos/reins.svg" alt="Reins" style="width: 58px; height: 58px; border-radius: 50%"></div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Colorized, like the field.</b> Approval notifications use Android's colorized style in the field colour. Approve appears only for routine asks and still asks for the fingerprint; everything else opens the field.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">02 · The shade</div>
+      <div class="ph" style="background: #121215">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 12px; right: 12px; top: 46px; display: flex; flex-direction: column; gap: 8px">
+          <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px"><span class="qsb" style="height: 52px; border-radius: 26px"></span><span class="qsb" style="height: 52px; border-radius: 26px"></span><span class="qsb" style="height: 52px; border-radius: 26px"></span><span style="height: 52px; border-radius: 26px; background: var(--fw); display: grid; place-items: center"><svg class="g" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg></span></div>
+          <div class="n" style="background: var(--fd)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+            <div class="h" style="color: rgba(255,255,255,.82)"><svg class="g g14" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg>Reins · Bypass · ongoing</div>
+            <div style="display: flex; align-items: center; gap: 10px"><span class="serif" style="font-size: 30px; line-height: 30px">Bypass on · 47:12</span><a class="btn onf" href="#" style="margin-left: auto; height: 34px">Stop</a></div>
+            <div style="font-size: 13px; color: rgba(255,255,255,.82)">For every AI. New connections and new phones still ask.</div>
+          </div>
+          <div class="n">
+            <div class="h"><img src="../../assets/logos/reins.svg" alt="" style="width: 16px; height: 16px; border-radius: 4px">Reins · Approvals · 1 m</div>
+            <div style="font-size: 15px; font-weight: 600">Approval needed</div>
+            <div style="font-size: 14px; color: #a6a6b0">ChatGPT: Search mail for “invoice”</div>
+            <div style="display: flex; gap: 8px; margin-top: 4px"><a class="btn" href="#" style="flex: 1; background: #3a3940; color: #ededf0; height: 34px">Deny</a><a class="btn" href="#" style="flex: 1; background: #ededf0; color: #16151b; height: 34px">Review</a></div>
+          </div>
+          <div class="n">
+            <div class="h"><img src="../../assets/logos/reins.svg" alt="" style="width: 16px; height: 16px; border-radius: 4px">Reins · Autopilot · 4</div>
+            <div style="font-size: 15px; font-weight: 600">4 requests decided</div>
+            <div style="font-size: 13.5px; color: #a6a6b0; line-height: 20px">Approved · Read 2 emails from Stripe<br>Approved · Push to feature/login<br>Denied · Comment on PR #212</div>
+          </div>
+          <div class="n">
+            <div class="h"><img src="../../assets/logos/reins.svg" alt="" style="width: 16px; height: 16px; border-radius: 4px">Reins · Model download</div>
+            <div style="font-size: 15px; font-weight: 600">Downloading Autopilot's model</div>
+            <div style="height: 4px; border-radius: 2px; background: #3a3940; position: relative"><span style="position: absolute; left: 0; top: 0; bottom: 0; width: 32%; border-radius: 2px; background: #a196ff"></span></div>
+            <div class="mono" style="font-size: 12px; color: #a6a6b0">120 MB of 370 MB</div>
+          </div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>Channels by meaning.</b> Approvals ring; Autopilot approvals arrive silently and group; denials chime softly; the bypass stays ongoing in red with a live chronometer and Stop. Every channel's sound comes from the in-app set.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">03 · Quick Settings · new</div>
+      <div class="ph" style="background: #121215">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 14px; right: 14px; top: 56px; display: flex; flex-direction: column; gap: 10px">
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+            <span class="qsb"></span><span class="qsb"></span>
+            <div class="qs" style="background: var(--fw)"><svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg><svg class="g" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg><div><div style="font-size: 14px; font-weight: 600">Lockdown</div><div style="font-size: 12px; color: rgba(255,255,255,.82)">On · 4 denied</div></div></div>
+            <div class="qs"><svg class="g" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"></path></svg><div><div style="font-size: 14px; font-weight: 600">Reins</div><div style="font-size: 12px; color: #a6a6b0">2 waiting</div></div></div>
+            <div class="qs"><svg class="g" viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6z"></path></svg><div><div style="font-size: 14px; font-weight: 600">Autopilot</div><div style="font-size: 12px; color: #a6a6b0">Auto</div></div></div>
+            <span class="qsb"></span>
+            <span class="qsb"></span><span class="qsb"></span>
+          </div>
+          <div style="margin-top: 14px; padding: 16px; border-radius: 24px; background: #1c1c21; display: flex; flex-direction: column; gap: 6px"><span class="lbl" style="color: #8e8e99">Long-press a tile</span><span style="font-size: 14px; color: #a6a6b0; line-height: 20px">Lockdown opens Trust; Reins opens the stack; Autopilot opens the mode menu, the same one as in the app.</span></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>New on Android.</b> Three TileService tiles mirror iPhone's Control Center: Lockdown (amber only while on), what waits, and the mode. Turning Lockdown on from here plays the heavy thud.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">04 · Home widgets · new</div>
+      <div class="ph" style="background: #26243f">
+        <div class="punch"></div>
+        <svg class="grain" aria-hidden="true" style="opacity: .7"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+        <div style="position: absolute; left: 18px; right: 18px; top: 70px; display: flex; flex-direction: column; gap: 16px">
+          <div style="position: relative; border-radius: 28px; overflow: hidden; background: var(--fp); padding: 16px 18px; display: flex; flex-direction: column; gap: 8px">
+            <svg class="grain" aria-hidden="true"><rect width="100%" height="100%" filter="url(#grain)"></rect></svg>
+            <div style="position: relative; display: flex; align-items: center; gap: 8px"><span class="av"><img src="../../assets/logos/claude.svg" alt=""></span><span class="lbl" style="color: rgba(255,255,255,.82); flex: 1; font-size: 10.5px">Waiting · 2</span><span class="mono" style="font-size: 12.5px">0:40</span></div>
+            <div class="serif" style="position: relative; font-size: 26px; line-height: 27px">Push 8 commits to <em>octo/app</em></div>
+            <div style="position: relative; display: flex; gap: 8px; margin-top: 2px"><a class="btn wash" href="#" style="flex: 1; height: 34px">Deny</a><a class="btn onf" href="#" style="flex: 1.35; height: 34px">Review</a></div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+            <div style="border-radius: 28px; background: #f6f6f8; color: #16151b; padding: 14px; height: 150px; box-sizing: border-box; display: flex; flex-direction: column"><span class="lbl" style="font-size: 10px; color: #6b6a78">Autopilot</span><span class="serif" style="font-size: 36px; line-height: 38px; color: #5b43e8; margin-top: 4px">Auto</span><span style="font-size: 12.5px; color: #5f5e6b">9 decided today</span><span style="margin-top: auto; height: 30px; border-radius: 99px; background: #ececf0; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12.5px; font-weight: 600"><svg class="g g14" viewBox="0 0 24 24" style="color: #a16207"><rect x="5" y="10.5" width="14" height="10" rx="2.5"></rect><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"></path></svg>Lock down</span></div>
+            <div style="border-radius: 28px; background: #121215; color: #ededf0; padding: 14px; height: 150px; box-sizing: border-box; display: flex; flex-direction: column; box-shadow: 0 0 0 1px #2a2a30"><span class="lbl" style="font-size: 10px; color: #8e8e99">Grants</span><span class="serif" style="font-size: 44px; line-height: 44px; margin-top: 4px">2</span><span style="font-size: 12.5px; color: #a6a6b0">active · next ends in 47 m</span></div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; justify-items: center; margin-top: 10px"><span class="icon"></span><span class="icon"></span><img src="../../assets/logos/reins.svg" alt="Reins" style="width: 58px; height: 58px; border-radius: 50%"><span class="icon"></span></div>
+        </div>
+        <div class="hind"></div>
+      </div>
+      <div class="note"><b>New on Android, with Glance.</b> The waiting widget carries the top card of the stack, field and all; with nothing waiting it becomes paper and the pond. Widget corners follow the launcher's shape.</div>
+    </div>
+
+    <div class="colm">
+      <div class="cap">05 · Allow updates</div>
+      <div class="ph light" style="background: var(--paper); color: var(--ink)">
+        <div class="punch"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 46px; opacity: .4"><div class="serif" style="font-size: 44px; line-height: 44px">Settings</div></div>
+        <div style="position: absolute; inset: 0; background: rgba(22,21,27,.32)"></div>
+        <div style="position: absolute; left: 24px; right: 24px; top: 270px; background: var(--raised); border-radius: 30px; padding: 24px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 30px 60px -20px rgba(0,0,0,.5)">
+          <span style="width: 48px; height: 48px; border-radius: 14px; background: var(--sunken); display: grid; place-items: center"><svg class="g" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"></path></svg></span>
+          <div class="serif" style="font-size: 32px; line-height: 34px">Allow <em>updates</em></div>
+          <div style="font-size: 15px; line-height: 22px; color: var(--ink2)">Android asks once. Turn on “Allow from this source” and Reins 1.5 installs.</div>
+          <div style="display: flex; gap: 10px; margin-top: 6px"><a class="btn" href="#" style="flex: 1; height: 48px; box-shadow: inset 0 0 0 1.5px var(--rule2); color: var(--ink)">Not now</a><a class="btn" href="#" style="flex: 1.35; height: 48px; background: var(--inv); color: var(--oninv)">Allow</a></div>
+        </div>
+        <div class="hind" style="background: #16151b"></div>
+      </div>
+      <div class="note"><b>Dialogs are small sheets of paper</b> with a glyph, a serif title with one italic word, one sentence and two buttons. The same shape serves every confirm in the app.</div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark","section":"Look"},"sans":{"editor":"enum","options":["Instrument Sans","Geist"],"default":"Instrument Sans","section":"Look"},"grain":{"editor":"boolean","default":true,"section":"Look"},"$preview":{"width":2400,"height":1320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      wall: this.props.theme ?? 'dark',
+      sans: (this.props.sans ?? 'Instrument Sans') === 'Geist' ? 's-geist' : 's-inst',
+      grain: (this.props.grain ?? true) ? 'grain-on' : 'grain-off'
+    };
+  }
+}
+</script>
+</body>
+</html>

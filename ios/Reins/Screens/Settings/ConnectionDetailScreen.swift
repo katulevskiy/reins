@@ -520,7 +520,7 @@ private struct IconPickerSheet: View {
     }
 }
 
-/// Disconnecting it: held for two seconds, no dialog.
+/// Disconnecting it: held, no dialog.
 private struct DisconnectGroup: View {
     var connection: ConnectionView
     @Environment(AppModel.self) private var model

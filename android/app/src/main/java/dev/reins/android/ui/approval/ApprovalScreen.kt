@@ -155,7 +155,7 @@ internal object Surfaces {
     fun group(c: RColors) = c.elevated
     fun groupEdge(c: RColors) = if (c.dark) Color(0xFF1B1B1F) else c.hairline
     fun raised(c: RColors) = if (c.dark) Color(0xFF232327) else Color(0xFFE7E7EB)
-    fun sunken(c: RColors) = if (c.dark) Color(0xFF060606) else Color(0xFFEDEDF0)
+    fun sunken(c: RColors) = c.paperSunken
     fun segment(c: RColors) = if (c.dark) Color(0xFF1C1C20) else Color(0xFFE7E7EB)
     fun sheet(c: RColors) = if (c.dark) Color(0xFF17171A) else Color(0xFFFFFFFF)
     fun bubble(c: RColors) = if (c.dark) Color(0xFF26262B) else Color(0xFF2A2A30)
