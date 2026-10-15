@@ -77,7 +77,7 @@ impl Root {
                 None
             };
             let right: AnyElement = if r.busy {
-                div().text_size(px(12.0)).text_color(pal.tertiary).child("Connecting…").into_any_element()
+                div().text_size(px(12.0)).text_color(pal.ink_meta()).child("Connecting…").into_any_element()
             } else if r.connected {
                 div()
                     .flex()
@@ -94,7 +94,7 @@ impl Root {
                             pal,
                         )
                         .text_size(px(12.0))
-                        .text_color(pal.tertiary)
+                        .text_color(pal.ink_meta())
                         .on_click(Self::on_model(cx, move |m, cx| m.undo_tool(h, cx))),
                     )
                     .child(chip(Some(Icon::Check), "Connected", pal.success))
@@ -173,7 +173,7 @@ impl Root {
                     .child(
                         div()
                             .text_size(px(13.0))
-                            .text_color(pal.tertiary)
+                            .text_color(pal.ink_meta())
                             .child(welcome::tools_line(&rows, super::parts::this_computer())),
                     ),
             )
@@ -211,7 +211,7 @@ impl Root {
                         .cursor_pointer()
                         .child(toggle(on, pal))
                         .on_click(Self::on_model(cx, move |m, cx| m.toggle_turn_on(what, cx))),
-                    None => r.child(div().text_size(px(12.0)).text_color(pal.tertiary).child("Always")),
+                    None => r.child(div().text_size(px(12.0)).text_color(pal.ink_meta()).child("Always")),
                 }
             };
             card(pal)
@@ -284,7 +284,7 @@ impl Root {
                 Mark::Icon(Icon::Laptop),
                 Mark::Icon(Icon::ShieldCheck),
                 None,
-                pal.accent,
+                pal.violet(),
                 56.0,
                 pal,
             )))
@@ -343,7 +343,7 @@ impl Root {
                         if ok {
                             pal.success
                         } else {
-                            pal.tertiary
+                            pal.ink_meta()
                         },
                         30.0,
                     ))

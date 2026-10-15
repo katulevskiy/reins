@@ -1,45 +1,47 @@
-//! Home's work session card: start one (how long, what for, what to read, which branches to push to), wait for
-//! the phone, then the session running (its time left, what it allows) with "End now".
+//! Home's work session card (`Desk-Extras.png`): the form (how long, what for, what to read, which branches to push
+//! to), then the request waiting on the phone, or why it did not start. A running session is Home's Work session
+//! plate turned into a violet field ([`super::home`]): a session is a bundle of grants.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
     Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
-use reins_desktop::doctor::Level;
-use reins_desktop::work_session::Session;
 
 use super::field::Field;
-use super::parts::{button, caption, card, check, fine, group, help, level_mark, row, segment, segmented, waiting_dot};
-use super::{Data, Root};
+use super::icons::{Glyph, glyph};
+use super::parts::{caption, help, waiting_dot};
+use super::{Data, Root, kit};
 use crate::format;
 use crate::model::Model;
 use crate::theme::{MONO, Palette, SANS};
 use crate::work::{self, Asking, Form, Length, PushRow, READS};
 
 /// What a work session leaves out, whatever it allows.
-const STILL_ASKS: &str = "Force push, delete, vault, purchases: still asked";
+const STILL_ASKS: &str = "Force push, delete, vault and purchases still ask.";
 /// The width of the form's labels.
-const LABEL: f32 = 112.0;
+const LABEL: f32 = 110.0;
+
+/// A repository as the form names it: without its host ("github.com/acme/web" → "acme/web").
+#[must_use]
+pub fn repo_name(label: &str) -> String {
+    match label.split_once('/') {
+        Some((host, rest)) if host.contains('.') && !rest.is_empty() => rest.to_owned(),
+        _ => label.to_owned(),
+    }
+}
 
 /// A form line: its label on the left, `body` beside it.
-fn form_line(label: &'static str, body: impl IntoElement, pal: Palette, first: bool) -> Div {
-    row(pal, first)
-        .items_start()
-        .py(px(12.0))
-        .child(
-            div()
-                .flex_none()
-                .w(px(LABEL))
-                .pt(px(6.0))
-                .text_color(pal.secondary)
-                .font_weight(FontWeight::MEDIUM)
-                .child(label),
-        )
+fn form_line(label: &'static str, body: impl IntoElement, pal: Palette) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(16.0))
+        .child(div().flex_none().w(px(LABEL)).text_size(px(14.0)).text_color(pal.ink_2()).child(label))
         .child(div().flex().flex_col().flex_1().min_w(px(0.0)).gap(px(8.0)).child(body))
 }
 
-/// An integration to read: on (with a check) or off.
+/// An integration to read: on (inverse, with a check) or off.
 fn read_chip(id: &'static str, label: &'static str, on: bool, pal: Palette) -> Stateful<Div> {
     div()
         .id(SharedString::from(format!("session-read-{id}")))
@@ -47,55 +49,23 @@ fn read_chip(id: &'static str, label: &'static str, on: bool, pal: Palette) -> S
         .flex_none()
         .items_center()
         .gap(px(6.0))
-        .h(px(28.0))
+        .h(px(30.0))
         .px(px(12.0))
         .rounded_full()
-        .border_1()
-        .text_size(px(12.5))
+        .text_size(px(13.0))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
+        .active(|s| s.opacity(kit::button::PRESSED))
         .when_else(
             on,
-            |c| c.bg(pal.accent_soft).border_color(pal.accent.opacity(0.4)).text_color(pal.accent),
-            |c| {
-                c.bg(pal.elevated)
-                    .border_color(pal.hairline)
-                    .text_color(pal.secondary)
-                    .hover(|s| s.bg(pal.control_fill).text_color(pal.text))
-            },
+            |c| c.bg(pal.inverse()).text_color(pal.on_inverse()).child(glyph(Glyph::Check, 13.0, pal.on_inverse())),
+            |c| c.bg(pal.paper_sunken()).text_color(pal.ink_2()).hover(|s| s.text_color(pal.ink())),
         )
-        .when(on, |c| c.child(check(12.0, pal.accent)))
         .child(label)
 }
 
-/// The round mark at the start of the card's first line.
-fn badge(inner: impl IntoElement, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(30.0))
-        .rounded_full()
-        .bg(pal.accent_soft)
-        .child(inner)
-}
-
-/// A title with a line under it, taking the room a row has.
-fn titled(title: impl Into<SharedString>, under: impl Into<SharedString>, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w(px(0.0))
-        .gap(px(1.0))
-        .child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).child(title.into()))
-        .child(caption(under, pal))
-}
-
 impl Root {
-    /// The card: the session running, the request waiting on the phone, why it did not start, the form, or the
-    /// invitation to start one.
+    /// The card: the request waiting on the phone, why it did not start, or the form.
     pub(super) fn work_card(
         &mut self,
         d: &Data,
@@ -103,35 +73,31 @@ impl Root {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
-        let about = "Your phone approves a whole session once: for a while, your agents push to the branches you name, \
-                     read what you pick and call those tools without asking each time.";
-        let body = if let Some(session) = d.work_session() {
-            Self::work_running(session, d, pal, cx)
-        } else if let Some(asking) = &d.work.asking {
+        let body = if let Some(asking) = &d.work.asking {
             Self::work_waiting(asking, pal)
         } else if let (Some(why), Some(form)) = (&d.work.failed, &d.work.form) {
             Self::work_failed(why, form, pal, cx)
         } else if let Some(form) = &d.work.form {
             self.work_form(form, d, pal, window, cx)
         } else {
-            Self::work_invite(d, pal, cx)
+            return div().into_any_element();
         };
-        group("Work session", Some(help("session", about, d, pal, cx)), body, pal).into_any_element()
-    }
-
-    fn work_invite(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
-        let start = button("session-start", "Start", pal, false, d.paired);
-        card(pal).child(
-            row(pal, true)
-                .flex_wrap()
-                .py(px(14.0))
-                .child(caption("Approve once, work without asking", pal).flex_1().min_w(px(200.0)))
-                .child(if d.paired {
-                    start.on_click(Self::on_model(cx, Model::open_work_form))
-                } else {
-                    start
-                }),
-        )
+        let about = "Your phone approves a whole session once: for a while, your agents push to the branches you name, \
+                     read what you pick and call those tools without asking each time.";
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(kit::section_label("Work session · ask once, work freely", pal))
+                    .child(help("session", about, d, pal, cx)),
+            )
+            .child(body)
+            .into_any_element()
     }
 
     fn work_form(&mut self, form: &Form, d: &Data, pal: Palette, window: &Window, cx: &mut Context<'_, Self>) -> Div {
@@ -139,22 +105,28 @@ impl Root {
             self.branch_fields.push(cx.focus_handle());
         }
 
-        let mut lengths = segmented(pal);
+        let mut lengths = kit::segmented(pal).w_full();
         for length in Length::ALL {
             lengths = lengths.child(
-                segment(
+                kit::segment(
                     SharedString::from(format!("session-{}", length.id())),
                     length.label(),
                     form.length == length,
                     pal,
                 )
+                .h(px(32.0))
+                .px(px(10.0))
                 .on_click(Self::on_model(cx, move |m, cx| m.set_work_length(length, cx))),
             );
         }
 
-        let reason = self.text_field(Field::SessionReason, work::DEFAULT_REASON, pal, window, cx).font_family(SANS);
+        let reason = self
+            .text_field(Field::SessionReason, work::DEFAULT_REASON, pal, window, cx)
+            .bg(pal.paper_raised())
+            .font_family(SANS)
+            .text_size(px(14.0));
 
-        let mut reads = div().flex().flex_wrap().gap(px(8.0));
+        let mut reads = div().flex().flex_wrap().gap(px(6.0));
         for (id, label) in READS {
             reads = reads.child(
                 read_chip(id, label, form.read.contains(&id), pal)
@@ -162,202 +134,198 @@ impl Root {
             );
         }
 
-        let push: AnyElement =
-            if form.repos.is_empty() {
-                div()
+        let push: AnyElement = if form.repos.is_empty() {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(caption("No repositories yet", pal).text_color(pal.ink_meta()))
+                .child(help(
+                    "session-repos",
+                    "git has not reached one through Reins lately. `reins allow 2h` in a repository adds its branch.",
+                    d,
+                    pal,
+                    cx,
+                ))
+                .into_any_element()
+        } else {
+            let mut rows = div().flex().flex_col().gap(px(8.0));
+            for (i, repo) in form.repos.iter().enumerate() {
+                let Ok(slot) = u8::try_from(i) else {
+                    break;
+                };
+                let refused = match form.push_row(i) {
+                    PushRow::Refused(why) => Some(why),
+                    PushRow::Empty | PushRow::Push(_) => None,
+                };
+                let line = div()
                     .flex()
                     .items_center()
-                    .gap(px(6.0))
-                    .pt(px(6.0))
-                    .child(caption("No repositories yet", pal))
-                    .child(help(
-                        "session-repos",
-                        "git has not reached one through Reins lately. `reins allow 2h` in a repository adds its \
-                         branch.",
-                        d,
-                        pal,
-                        cx,
-                    ))
-                    .into_any_element()
-            } else {
-                let mut rows = div().flex().flex_col().gap(px(8.0));
-                for (i, repo) in form.repos.iter().enumerate() {
-                    let Ok(slot) = u8::try_from(i) else {
-                        break;
-                    };
-                    let refused = match form.push_row(i) {
-                        PushRow::Refused(why) => Some(why),
-                        PushRow::Empty | PushRow::Push(_) => None,
-                    };
-                    let line = div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.0))
-                        .child(
-                            div()
-                                .flex_none()
-                                .w(px(210.0))
-                                .truncate()
-                                .font_family(MONO)
-                                .text_size(px(12.0))
-                                .child(repo.label()),
-                        )
-                        .child(
-                            self.text_field(Field::SessionBranch(slot), "branch to push to", pal, window, cx)
-                                .when(refused.is_some(), |f| f.border_color(pal.danger.opacity(0.6))),
-                        );
-                    rows =
-                        rows.child(
-                            div().flex().flex_col().gap(px(4.0)).child(line).when_some(refused, |c, why| {
-                                c.child(fine(why, pal).pl(px(220.0)).text_color(pal.danger))
-                            }),
-                        );
-                }
-                rows.into_any_element()
-            };
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(LABEL))
+                            .truncate()
+                            .font_family(MONO)
+                            .text_size(px(13.0))
+                            .text_color(pal.ink())
+                            .child(repo_name(&repo.label())),
+                    )
+                    .child(
+                        self.text_field(Field::SessionBranch(slot), "branch to push to", pal, window, cx)
+                            .bg(pal.paper_raised())
+                            .text_size(px(13.0))
+                            .when(refused.is_some(), |f| f.border_color(pal.danger.opacity(0.6))),
+                    );
+                rows = rows.child(div().flex().flex_col().gap(px(4.0)).child(line).when_some(refused, |c, why| {
+                    c.child(div().pl(px(LABEL + 8.0)).text_size(px(12.5)).text_color(pal.danger).child(why))
+                }));
+            }
+            rows.into_any_element()
+        };
 
         let can_ask = form.request().is_some();
-        let ask = button("session-ask", "Ask my phone", pal, true, can_ask);
-        card(pal)
-            .child(form_line("How long", lengths, pal, true))
-            .child(form_line("What it's for", div().flex().child(reason), pal, false))
-            .child(form_line("Read", div().flex().flex_col().gap(px(6.0)).child(reads), pal, false))
-            .child(form_line("Push with git", push, pal, false))
+        let ask =
+            kit::button("session-ask", kit::Look::Inverse, kit::Size::Regular, Some(Glyph::Phone), "Ask my phone", pal);
+        kit::plate(pal)
+            .p(px(24.0))
+            .gap(px(14.0))
+            .child(form_line("How long", lengths, pal))
+            .child(form_line("What for", div().flex().child(reason), pal))
+            .child(form_line("Read", reads, pal))
+            .child(form_line("Push to", push, pal))
             .child(
-                row(pal, false)
-                    .py(px(12.0))
-                    .bg(pal.background.opacity(0.5))
-                    .child(fine(STILL_ASKS, pal).flex_1().min_w(px(0.0)))
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(12.0))
+                    .pt(px(14.0))
+                    .border_t_1()
+                    .border_color(pal.rule())
                     .child(
-                        button("session-cancel", "Cancel", pal, false, true)
+                        div()
+                            .flex_1()
+                            .min_w(px(200.0))
+                            .text_size(px(12.5))
+                            .text_color(pal.ink_meta())
+                            .child(STILL_ASKS),
+                    )
+                    .child(
+                        kit::button("session-cancel", kit::Look::Soft, kit::Size::Regular, None, "Cancel", pal)
                             .on_click(Self::on_model(cx, Model::close_work_form)),
                     )
                     .child(if can_ask {
                         ask.on_click(Self::on_model(cx, Model::start_work_session))
                     } else {
-                        ask
+                        kit::disabled(ask)
                     }),
             )
     }
 
     fn work_waiting(asking: &Asking, pal: Palette) -> Div {
         let left = i64::try_from(asking.left(std::time::Instant::now())).unwrap_or(0);
-        card(pal).border_color(pal.accent.opacity(0.35)).child(
-            row(pal, true)
-                .py(px(14.0))
-                .child(badge(waiting_dot("session-waiting", pal.accent, 9.0), pal))
-                .child(titled(
-                    "Approve it on your phone…",
-                    format!("{} · {}", asking.request.reason, work::summary(&asking.request)),
-                    pal,
-                ))
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(px(12.0))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(pal.accent)
-                        .child(format!("{} left", format::duration(left))),
-                ),
-        )
+        kit::plate(pal)
+            .flex_row()
+            .items_center()
+            .gap(px(12.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(32.0))
+                    .rounded(px(10.0))
+                    .bg(pal.violet().opacity(0.12))
+                    .child(waiting_dot("session-waiting", pal.violet(), 9.0)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(
+                        div()
+                            .text_size(px(14.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(pal.ink())
+                            .child("Approve it on your phone"),
+                    )
+                    .child(div().truncate().text_size(px(12.5)).text_color(pal.ink_meta()).child(format!(
+                        "{} · {}",
+                        asking.request.reason,
+                        work::summary(&asking.request)
+                    ))),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .font_family(MONO)
+                    .text_size(px(13.0))
+                    .text_color(pal.violet())
+                    .child(format!("{} left", format::duration(left))),
+            )
     }
 
     fn work_failed(why: &str, form: &Form, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
         let summary = form.request().map(|r| work::summary(&r)).unwrap_or_default();
-        card(pal).border_color(pal.danger.opacity(0.35)).child(
-            row(pal, true)
-                .flex_wrap()
-                .py(px(14.0))
-                .child(level_mark(Level::Fail, 30.0, pal))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w(px(240.0))
-                        .gap(px(1.0))
-                        .child(div().text_size(px(14.0)).font_weight(FontWeight::SEMIBOLD).child("Not started"))
-                        .child(caption(why.to_owned(), pal).text_color(pal.danger))
-                        .when(!summary.is_empty(), |c| c.child(fine(summary, pal))),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .gap(px(8.0))
-                        .child(
-                            button("session-change", "Change", pal, false, true)
-                                .on_click(Self::on_model(cx, Model::edit_work_request)),
-                        )
-                        .child(
-                            button("session-retry", "Try again", pal, true, true)
-                                .on_click(Self::on_model(cx, Model::start_work_session)),
-                        ),
-                ),
-        )
-    }
-
-    fn work_running(session: &Session, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
-        let head = row(pal, true)
-            .py(px(14.0))
-            .child(badge(div().size(px(10.0)).rounded_full().bg(pal.violet_fill()), pal))
-            .child(titled(
-                session.reason.clone(),
-                format!("Until {} · started {}", format::clock(session.expires_at), format::clock(session.started_at)),
+        kit::plate(pal)
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap(px(12.0))
+            .child(kit::kind_tile(
+                Glyph::CircleClose,
+                crate::theme::Tone::Field(crate::theme::Field::Delete),
+                32.0,
                 pal,
             ))
             .child(
                 div()
-                    .flex_none()
-                    .text_size(px(15.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(pal.accent)
-                    .child(format!("{} left", work::left(session, d.now))),
-            );
-        let mut body = card(pal).border_color(pal.accent.opacity(0.35)).child(head);
-        let mut allows = div().flex().flex_col().gap(px(6.0)).child(fine("Allowed without asking", pal));
-        for line in &session.allows {
-            allows = allows.child(
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(240.0))
+                    .child(
+                        div()
+                            .text_size(px(14.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(pal.ink())
+                            .child("Not started"),
+                    )
+                    .child(div().text_size(px(12.5)).text_color(pal.danger).child(why.to_owned()))
+                    .when(!summary.is_empty(), |c| {
+                        c.child(div().text_size(px(12.5)).text_color(pal.ink_meta()).child(summary))
+                    }),
+            )
+            .child(
                 div()
                     .flex()
-                    .items_center()
+                    .flex_none()
                     .gap(px(8.0))
-                    .child(check(13.0, pal.success))
-                    .child(div().min_w(px(0.0)).truncate().child(line.clone())),
-            );
-        }
-        if !session.skipped.is_empty() {
-            allows = allows.child(fine(format!("Not connected: {}", session.skipped.join(", ")), pal));
-        }
-        body = body.child(row(pal, false).items_start().py(px(12.0)).pl(px(58.0)).child(allows));
-        if let Some(e) = &d.work.end_error {
-            body = body.child(
-                row(pal, false)
-                    .pl(px(58.0))
-                    .child(caption(format!("Could not end it: {e}"), pal).text_color(pal.danger)),
-            );
-        }
-        let footer = row(pal, false).py(px(12.0)).bg(pal.background.opacity(0.5));
-        let footer = if d.work.ending {
-            footer.child(caption("Ending…", pal).flex_1()).child(button("session-ending", "Ending…", pal, false, false))
-        } else if d.work.confirm_end {
-            footer
-                .child(div().flex_1().min_w(px(0.0)).font_weight(FontWeight::MEDIUM).child("End it now?"))
-                .child(
-                    button("session-keep", "Keep", pal, false, true)
-                        .on_click(Self::on_model(cx, Model::keep_work_session)),
-                )
-                .child(
-                    button("session-end", "End", pal, true, true)
-                        .bg(pal.danger)
-                        .on_click(Self::on_model(cx, Model::end_work_session)),
-                )
-        } else {
-            footer.child(fine(STILL_ASKS, pal).flex_1().min_w(px(0.0))).child(
-                button("session-end-now", "End now", pal, false, true)
-                    .on_click(Self::on_model(cx, Model::confirm_end_work_session)),
+                    .child(
+                        kit::button("session-change", kit::Look::Soft, kit::Size::Regular, None, "Change", pal)
+                            .on_click(Self::on_model(cx, Model::edit_work_request)),
+                    )
+                    .child(
+                        kit::button("session-retry", kit::Look::Inverse, kit::Size::Regular, None, "Try again", pal)
+                            .on_click(Self::on_model(cx, Model::start_work_session)),
+                    ),
             )
-        };
-        body.child(footer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repositories_are_named_without_their_host() {
+        assert_eq!(repo_name("github.com/acme/web"), "acme/web");
+        assert_eq!(repo_name("acme/web"), "acme/web");
+        assert_eq!(repo_name("local"), "local");
     }
 }

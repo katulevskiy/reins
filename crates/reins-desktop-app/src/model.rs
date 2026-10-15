@@ -1493,6 +1493,13 @@ impl Model {
         self.act(async move { backend.set_harness(h, on) }, cx);
     }
 
+    /// Light, dark, or as the system says (Settings → Appearance).
+    pub fn set_appearance(&mut self, appearance: crate::theme::Appearance, cx: &mut Context<'_, Self>) {
+        self.saved.appearance = appearance;
+        self.persist();
+        cx.notify();
+    }
+
     pub fn toggle_autostart(&mut self, cx: &mut Context<'_, Self>) {
         let home = self.backend.home().to_path_buf();
         match autostart::set(&home, !self.autostart) {

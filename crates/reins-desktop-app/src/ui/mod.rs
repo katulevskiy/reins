@@ -11,11 +11,11 @@ mod field;
 mod gallery;
 mod health;
 mod hold;
+mod home;
 pub mod icons;
 mod keys;
 pub mod kit;
 mod onboarding;
-mod overview;
 mod parts;
 mod rules;
 mod secrets;
@@ -55,6 +55,8 @@ pub const MIN_HEIGHT: f32 = 560.0;
 
 /// How many activity rows show before "Show more".
 const ROWS: usize = 60;
+/// The space above a page's title (the boards' `.main` padding).
+const TOP: f32 = 34.0;
 
 #[allow(clippy::struct_excessive_bools, reason = "independent things open in the window")]
 pub struct Root {
@@ -77,6 +79,8 @@ pub struct Root {
     outcome_filter: Option<Outcome>,
     kind_filter: Option<Kind>,
     filter_open: bool,
+    /// When a press outside closed a menu (a press on its trigger then does not reopen it).
+    menu_closed: Option<std::time::Instant>,
     /// The request Activity shows on the right (by journal id; `None`: the first one).
     selected: Option<String>,
     rows_shown: usize,
@@ -95,6 +99,10 @@ pub struct Root {
     /// The (?) open now ([`parts::help`]), and the page it is on: another page closes it.
     help: Option<&'static str>,
     help_page: (Screen, Section),
+    /// The sidebar's pill under the selected section, and where it slid from.
+    nav: sidebar::NavPill,
+    /// Settings' Appearance menu is open.
+    appearance_open: bool,
     /// Renders once a second while something counts down in seconds (a request's timer, a hold).
     tick: Option<Task<()>>,
     /// The component gallery shows instead of a section (`--demo` only), and what its controls are set to.
@@ -208,15 +216,6 @@ impl Data {
         let total = story::wait_secs(e.kind, hooks, approvals).max(1);
         (total, (i64::try_from(total).unwrap_or(i64::MAX) - (self.now - e.at)).max(0))
     }
-
-    /// The mark of the git host when there is one (a force-push's target).
-    fn git_host_mark(&self) -> Option<icons::Brand> {
-        let s = self.snapshot.as_ref()?;
-        match s.git_routed.as_slice() {
-            [one] => icons::Brand::of_host(one),
-            _ => None,
-        }
-    }
 }
 
 impl Root {
@@ -261,6 +260,7 @@ impl Root {
             outcome_filter: None,
             kind_filter: None,
             filter_open: demo_var("REINS_DEMO_FILTER").is_some(),
+            menu_closed: None,
             selected: None,
             rows_shown: ROWS,
             pause_sheet: pause_demo.is_some(),
@@ -276,6 +276,8 @@ impl Root {
             profile_open: None,
             help,
             help_page,
+            nav: sidebar::NavPill::default(),
+            appearance_open: false,
             tick: None,
             gallery: demo_var("REINS_DEMO_SECTION").is_some_and(|s| s.trim().eq_ignore_ascii_case("gallery")),
             gallery_state: gallery::State::default(),
@@ -322,7 +324,11 @@ impl Root {
             Shortcut::Close => window.remove_window(),
             Shortcut::Quit => self.model.update(cx, Model::quit),
             Shortcut::Escape => {
-                let open = self.pause_sheet || self.filter_open || self.help.is_some() || self.hold.is_some();
+                let open = self.pause_sheet
+                    || self.filter_open
+                    || self.appearance_open
+                    || self.help.is_some()
+                    || self.hold.is_some();
                 if !open {
                     // Nothing open here: the phone's QR code, if it shows.
                     self.model.update(cx, |m, cx| {
@@ -333,6 +339,7 @@ impl Root {
                 }
                 self.pause_sheet = false;
                 self.filter_open = false;
+                self.appearance_open = false;
                 self.help = None;
                 self.hold = None;
                 // Out of a text field, so the next shortcuts are not typed into it.
@@ -379,60 +386,52 @@ impl Root {
 
     /// The status window: sidebar and section; the pause sheet over both.
     fn status(&mut self, d: &Data, pal: Palette, window: &mut Window, cx: &mut Context<'_, Self>) -> AnyElement {
-        let top = if cfg!(target_os = "macos") {
-            40.0
-        } else {
-            30.0
-        };
         let secrets_page = if d.section == Section::Keys {
             self.secrets_page(d, pal, window, cx)
         } else {
             None
         };
-        let content: AnyElement = if self.gallery && d.demo {
+        // A page in the boards' margins (`.main`: 34 above, 44 at the sides, 40 below), scrolling.
+        let scroll = |id: gpui::ElementId, page: AnyElement, padded: bool| {
             div()
-                .id("gallery")
+                .id(id)
                 .size_full()
                 .overflow_y_scroll()
-                .child(div().w_full().px(px(44.0)).pt(px(top)).pb(px(40.0)).child(self.gallery(d, pal, window, cx)))
+                .child(if padded {
+                    div().w_full().px(px(home::SIDE)).pt(px(TOP)).pb(px(40.0)).child(page).into_any_element()
+                } else {
+                    page
+                })
                 .into_any_element()
-        } else if d.section == Section::Activity {
-            // List and detail side by side, each scrolling on its own.
-            self.activity(d, pal, top, cx)
+        };
+        let content: AnyElement = if self.gallery && d.demo {
+            scroll("gallery".into(), self.gallery(d, pal, window, cx).into_any_element(), true)
         } else if let Some((page, true)) = secrets_page {
             // The review: its list and its panel side by side.
             page
         } else if let Some((page, false)) = secrets_page {
-            div()
-                .id("secrets-content")
-                .size_full()
-                .overflow_y_scroll()
-                .child(div().w_full().max_w(px(900.0)).mx_auto().px(px(34.0)).pt(px(top)).pb(px(34.0)).child(page))
-                .into_any_element()
+            scroll("secrets-content".into(), page, true)
         } else {
-            let page = match d.section {
-                Section::Home | Section::Activity => self.overview(d, pal, window, cx),
-                Section::Connections => Self::connections(d, pal, cx),
-                Section::Keys => self.keys(d, pal, cx),
-                Section::Rules => self.rules(d, pal, window, cx),
-                Section::Settings => self.settings(d, pal, cx),
-            };
-            div()
-                .id(("content", d.section as usize))
-                .size_full()
-                .overflow_y_scroll()
-                .child(div().w_full().max_w(px(900.0)).mx_auto().px(px(34.0)).pt(px(top)).pb(px(34.0)).child(page))
-                .into_any_element()
+            let id: gpui::ElementId = ("content", d.section as usize).into();
+            match d.section {
+                // Home pads itself: a waiting request's field runs to the edges, under the title bar.
+                Section::Home => scroll(id, self.home(d, pal, window, cx), false),
+                Section::Activity => scroll(id, self.activity(d, pal, cx), true),
+                Section::Connections => scroll(id, Self::connections(d, pal, cx), true),
+                Section::Keys => scroll(id, self.keys(d, pal, cx), true),
+                Section::Rules => scroll(id, self.rules(d, pal, window, cx), true),
+                Section::Settings => scroll(id, self.settings(d, pal, cx), true),
+            }
         };
         let mut root = div()
             .relative()
             .size_full()
             .flex()
             .flex_row()
-            .child(Self::sidebar(d, pal, cx))
+            .child(self.sidebar(d, pal, cx))
             .child(div().flex_1().min_w(px(0.0)).h_full().child(content));
         if self.pause_sheet && d.paired {
-            root = root.child(self.pause_sheet(d, pal, cx));
+            root = root.child(self.pause_sheet(pal, cx));
         }
         root.into_any_element()
     }
@@ -440,7 +439,7 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let pal = Palette::of(window);
+        let pal = Palette::of(window, self.model.read(cx).saved.appearance);
         let screen = self.model.read(cx).screen;
         let page = (screen, self.model.read(cx).section);
         if page != self.help_page {

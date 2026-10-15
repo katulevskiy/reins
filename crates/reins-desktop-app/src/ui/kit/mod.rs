@@ -16,6 +16,6 @@ pub use field::field_surface;
 pub use hold::{HoldLook, hold_button};
 pub use menu::{menu, menu_item, menu_rule, open_menu};
 pub use parts::{
-    Mode, PillLook, ask_line, empty_state, fact_row, field_label, hairline_row, kbd, kind_tile, mode_chip, pill, plate,
-    row_lines, section_label, segment, segmented, switch, tag, timer,
+    Mode, PillLook, ask_line, empty_state, fact_row, field_label, hairline_row, kbd, key_cap, kind_tile, logo_tile,
+    mode_chip, pill, plate, row_lines, section_label, segment, segmented, status_pill, switch, tag, timer,
 };

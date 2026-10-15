@@ -1,8 +1,8 @@
 //! Reins Signal, light and dark (`design/signal`): paper, ink and hairlines for everything you read, a solid field of
 //! colour only where something needs a decision ([`Field`]); and its three voices, Instrument Serif, Instrument Sans
-//! and Geist Mono ([`text`]). The colours are the generated tokens ([`tokens`]); the names the screens used before
-//! Signal ([`Palette::background`], [`Palette::accent`], …) are kept as aliases of the new values until the screens
-//! move to the new names.
+//! and Geist Mono ([`text`]). The colours are the generated tokens ([`tokens`]) by their Signal names
+//! ([`Palette::paper`], [`Palette::ink`], …), in light or dark as the system says or as picked in Settings
+//! ([`Appearance`]).
 
 pub mod motion;
 pub mod text;
@@ -223,32 +223,11 @@ impl From<Field> for Tone {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
-    // The names before Signal, now aliases of its tokens. Phase 2 moves the screens to the token methods below and
-    // these go.
-    /// `paper`.
-    pub background: Hsla,
-    /// The desktop sidebar (`side`).
-    pub sidebar: Hsla,
-    /// `paper-raised`.
-    pub elevated: Hsla,
-    /// `ink`.
-    pub text: Hsla,
-    /// `ink-2`.
-    pub secondary: Hsla,
-    /// `ink-meta`.
-    pub tertiary: Hsla,
-    /// `rule`.
-    pub hairline: Hsla,
-    /// `violet` (text and glyphs on paper; fills use [`Self::violet_fill`]).
-    pub accent: Hsla,
-    /// `violet` at 12%.
-    pub accent_soft: Hsla,
-    /// `on-field`: white on `violet-fill`.
-    pub on_accent: Hsla,
-    /// `paper-sunken`.
-    pub control_fill: Hsla,
+    /// Deletions, destructive rows, a denial: red on paper.
     pub danger: Hsla,
+    /// Additions, approvals, Ready: green on paper.
     pub success: Hsla,
+    /// Flags: amber on paper.
     pub warning: Hsla,
     /// Dark paper.
     pub dark: bool,
@@ -268,17 +247,6 @@ impl Palette {
     fn new(dark: bool) -> Self {
         let t = |t: Token| token(t, dark);
         Self {
-            background: t(tokens::PAPER),
-            sidebar: t(SIDE),
-            elevated: t(tokens::PAPER_RAISED),
-            text: t(tokens::INK),
-            secondary: t(tokens::INK_2),
-            tertiary: t(tokens::INK_META),
-            hairline: t(tokens::RULE),
-            accent: t(tokens::VIOLET),
-            accent_soft: t(tokens::VIOLET).opacity(0.12),
-            on_accent: t(tokens::ON_FIELD),
-            control_fill: t(tokens::PAPER_SUNKEN),
             danger: t(tokens::DANGER),
             success: t(tokens::SUCCESS),
             warning: t(tokens::WARNING),
@@ -434,74 +402,53 @@ impl Palette {
         }
     }
 
-    // The names before Signal (methods), as aliases.
-
-    /// `kind-read`.
+    /// For the appearance picked in Settings (`System`: the window's, light or dark), unless `REINS_APPEARANCE` says
+    /// `light` or `dark` (for screenshots of both).
     #[must_use]
-    pub fn blue(&self) -> Hsla {
-        Field::Read.kind(self)
-    }
-
-    /// `kind-push`.
-    #[must_use]
-    pub fn orange(&self) -> Hsla {
-        Field::Push.kind(self)
-    }
-
-    /// `kind-pair` (the old teal).
-    #[must_use]
-    pub fn teal(&self) -> Hsla {
-        Field::Pair.kind(self)
-    }
-
-    /// `ink-meta`.
-    #[must_use]
-    pub fn gray(&self) -> Hsla {
-        self.ink_meta()
-    }
-
-    /// `paper-sunken`.
-    #[must_use]
-    pub fn well(&self) -> Hsla {
-        self.paper_sunken()
-    }
-
-    /// `paper-sunken`.
-    #[must_use]
-    pub fn tile(&self) -> Hsla {
-        self.paper_sunken()
-    }
-
-    /// `rule`.
-    #[must_use]
-    pub fn tile_border(&self) -> Hsla {
-        self.rule()
-    }
-
-    /// `paper-raised`.
-    #[must_use]
-    pub fn popover(&self) -> Hsla {
-        self.paper_raised()
-    }
-
-    /// `rule`.
-    #[must_use]
-    pub fn popover_border(&self) -> Hsla {
-        self.rule()
-    }
-
-    /// For the window's appearance (light or dark), unless `REINS_APPEARANCE` says `light` or `dark` (for
-    /// screenshots of both).
-    #[must_use]
-    pub fn of(window: &Window) -> Self {
-        match std::env::var("REINS_APPEARANCE").as_deref() {
-            Ok("light") => return Self::light(),
-            Ok("dark") => return Self::dark(),
-            _ => {}
+    pub fn of(window: &Window, picked: Appearance) -> Self {
+        let forced = match std::env::var("REINS_APPEARANCE").as_deref() {
+            Ok("light") => Some(false),
+            Ok("dark") => Some(true),
+            _ => None,
+        };
+        let system = || matches!(window.appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark);
+        if forced.or_else(|| picked.dark()).unwrap_or_else(system) {
+            Self::dark()
+        } else {
+            Self::light()
         }
-        match window.appearance() {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self::dark(),
-            WindowAppearance::Light | WindowAppearance::VibrantLight => Self::light(),
+    }
+}
+
+/// Light or dark paper, as picked in Settings: the system's, or one of the two.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    pub const ALL: [Self; 3] = [Self::System, Self::Light, Self::Dark];
+
+    /// Dark paper or not; `None`: as the system says.
+    #[must_use]
+    pub fn dark(self) -> Option<bool> {
+        match self {
+            Self::System => None,
+            Self::Light => Some(false),
+            Self::Dark => Some(true),
+        }
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
         }
     }
 }
@@ -514,18 +461,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_old_names_are_the_new_values() {
+    fn the_palette_is_the_tokens() {
         for pal in [Palette::light(), Palette::dark()] {
-            assert_eq!(pal.background, pal.paper());
-            assert_eq!(pal.elevated, pal.paper_raised());
-            assert_eq!(pal.control_fill, pal.paper_sunken());
-            assert_eq!((pal.text, pal.secondary, pal.tertiary), (pal.ink(), pal.ink_2(), pal.ink_meta()));
-            assert_eq!(pal.hairline, pal.rule());
-            assert_eq!(pal.accent, pal.violet());
+            assert_eq!(pal.danger, pal.token(tokens::DANGER));
+            assert_eq!(pal.success, pal.token(tokens::SUCCESS));
+            assert_eq!(pal.warning, pal.token(tokens::WARNING));
         }
         assert_eq!(Palette::light().danger, rgba(0x00B9_1C1C, 1.0));
-        assert_eq!(Palette::light().sidebar, rgba(0x00EE_EEF2, 1.0));
-        assert_eq!(Palette::dark().sidebar, rgba(0x000C_0C0F, 1.0));
+        assert_eq!(Palette::light().side(), rgba(0x00EE_EEF2, 1.0));
+        assert_eq!(Palette::dark().side(), rgba(0x000C_0C0F, 1.0));
+    }
+
+    /// The appearance picked is saved by name; System follows the window.
+    #[test]
+    fn appearances_are_saved_by_name() {
+        assert_eq!(serde_json::to_string(&Appearance::Dark).unwrap(), "\"dark\"");
+        assert_eq!(serde_json::from_str::<Appearance>("\"light\"").unwrap(), Appearance::Light);
+        assert_eq!(Appearance::default(), Appearance::System);
+        assert_eq!(Appearance::System.dark(), None);
+        assert_eq!(Appearance::Dark.dark(), Some(true));
     }
 
     /// Fields stay, paper flips.

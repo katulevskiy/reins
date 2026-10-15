@@ -54,8 +54,8 @@ pub fn hint(key: &str) -> String {
 pub fn list() -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> =
         Section::ALL.iter().enumerate().map(|(i, s)| (hint(&(i + 1).to_string()), s.label().to_owned())).collect();
-    out.push((hint("r"), "Refresh".to_owned()));
-    out.push((hint("w"), "Close window".to_owned()));
+    out.push((hint("r"), "Check now".to_owned()));
+    out.push((hint("w"), "Close window, keep Reins on".to_owned()));
     out.push((hint("q"), "Quit Reins".to_owned()));
     out.push(("Esc".to_owned(), "Close what is open".to_owned()));
     out
