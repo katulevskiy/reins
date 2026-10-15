@@ -1,12 +1,23 @@
 package dev.reins.android.ui.nav
 
-/** The root tabs, as on iOS. */
-enum class Tab { Activity, Grants, Autopilot, Settings }
+/**
+ * The root tabs, as on iOS (Reins Signal): what happened, what runs without asking (Autopilot and grants), both ends
+ * of the wire, and you and this phone.
+ */
+enum class Tab(val label: String, val tag: String) {
+    Activity("Activity", "tabActivity"),
+    Trust("Trust", "tabTrust"),
+    Connections("Connections", "tabConnections"),
+    Settings("Settings", "tabSettings"),
+}
 
 /** Screens pushed on top of the tabs. */
 sealed interface Route {
-    /** Settings > Sounds & haptics. */
+    /** Settings > Sounds and vibration. */
     data object Sounds : Route
+
+    /** Settings > Appearance: paper or graphite, the grain on fields, the sans. */
+    data object Appearance : Route
 
     /** Settings > Account > Vault passkeys: the passkeys that open the vault on a new phone. */
     data object VaultPasskeys : Route
@@ -14,8 +25,8 @@ sealed interface Route {
     /** Settings > Account > Devices: the account's phones (sign out a lost one) and computers. */
     data object Devices : Route
 
-    /** Autopilot pushed from Settings (the tab shows it at its root). */
-    data object Autopilot : Route
+    /** Trust > Ended: the grants that ran out, to resume or delete. */
+    data object EndedGrants : Route
 
     /** One Autopilot profile. */
     data class AutopilotProfile(val id: String) : Route
@@ -25,11 +36,8 @@ sealed interface Route {
 
     data class Connection(val id: String) : Route
 
-    /** Settings > AI connections > Connect a computer: scan (or type) the code the desktop app or `reins login` shows. */
+    /** Connections > Connect something > Computer: scan (or type) the code the desktop app or `reins login` shows. */
     data object ConnectComputer : Route
-
-    /** The services that can be connected (Gmail, ...). */
-    data object Integrations : Route
 
     /** The Gmail accounts. */
     data object Gmail : Route
