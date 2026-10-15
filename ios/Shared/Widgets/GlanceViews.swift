@@ -26,33 +26,38 @@ enum GlanceStyle {
 
 // MARK: Pieces
 
-/// The AI behind an item: its provider's logo on the app's round plate when one is picked or its name suggests one,
+/// The connection behind an item, as the app draws it: its provider's or its platform's logo on the app's round plate,
 /// else its blobatar, the same figure the app draws (in the tinted and vibrant renderings, its initial in a disc; a
 /// link glyph for pairings, which have no AI yet).
 struct GlanceAvatar: View {
     var label: String
     var kind: Snapshot.Item.Kind = .request
     var icon: String? = nil
+    var blobatar: BlobatarLook? = nil
     var size: CGFloat = 28
     @Environment(\.widgetRenderingMode) private var renderingMode
 
     var body: some View {
-        if kind != .pairing, let provider = Providers.resolve(label: label, pick: icon) {
-            logo(provider)
-        } else if kind != .pairing, renderingMode == .fullColor, !Glance.initial(label).isEmpty {
-            blob
+        let look = AvatarLook.of(label: label, icon: icon, blobatar: blobatar)
+        if kind != .pairing, case let .provider(provider) = look {
+            logo(provider.asset, original: !provider.mono, tint: nil)
+        } else if kind != .pairing, case let .platform(platform) = look {
+            logo(platform.asset, original: false, tint: platform.brand.map { Color(uiColor: UIColor(hex: $0)) })
+        } else if kind != .pairing, renderingMode == .fullColor, case let .blob(seed, shape, colour) = look, !Glance.initial(label).isEmpty {
+            blob(seed, shape: shape, colour: colour)
         } else {
             initial
         }
     }
 
-    private func logo(_ provider: Provider) -> some View {
+    /// A logo; `original` keeps its own colours, `tint` replaces the text colour (both only in full colour).
+    private func logo(_ asset: String, original: Bool, tint: Color?) -> some View {
         let full = renderingMode == .fullColor
-        return Image(provider.asset)
-            .renderingMode(provider.mono || !full ? .template : .original)
+        return Image(asset)
+            .renderingMode(original && full ? .original : .template)
             .resizable()
             .scaledToFit()
-            .foregroundStyle(full ? Palette.text : Color.primary)
+            .foregroundStyle(full ? tint ?? Palette.text : Color.primary)
             .frame(width: size * 0.56, height: size * 0.56)
             .frame(width: size, height: size)
             .background(full ? Palette.dynamic(0xFFFFFF, 0x1D1D21) : Color.primary.opacity(0.16), in: Circle())
@@ -61,8 +66,8 @@ struct GlanceAvatar: View {
             .accessibilityHidden(true)
     }
 
-    private var blob: some View {
-        let marks = BlobatarDrawing.marks(for: label)
+    private func blob(_ seed: String, shape: Int?, colour: Int?) -> some View {
+        let marks = BlobatarDrawing.marks(for: seed, shape: shape, colour: colour)
         return Canvas { context, canvas in
             let scale = min(canvas.width, canvas.height) / 100
             context.scaleBy(x: scale, y: scale)
@@ -280,7 +285,7 @@ struct WaitingRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            GlanceAvatar(label: item.connection, kind: item.kind, icon: item.connectionIcon, size: 28)
+            GlanceAvatar(label: item.connection, kind: item.kind, icon: item.connectionIcon, blobatar: item.connectionBlobatar, size: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(Glance.operation(item)).font(RFont.fixedSans(13, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
                 let byline = Glance.byline(item)
@@ -313,7 +318,7 @@ struct WaitingSmallView: View {
                         .foregroundStyle(Palette.accent)
                         .widgetAccentable()
                     Spacer(minLength: 4)
-                    GlanceAvatar(label: newest.connection, kind: newest.kind, icon: newest.connectionIcon, size: 30)
+                    GlanceAvatar(label: newest.connection, kind: newest.kind, icon: newest.connectionIcon, blobatar: newest.connectionBlobatar, size: 30)
                 }
                 Text(list.count == 1 ? "waits for you" : "wait for you")
                     .font(RFont.fixedSans(12, .medium))
@@ -619,7 +624,7 @@ struct ApprovalLiveViews {
 
     var more: String? { state.count > 1 ? "+\(state.count - 1) more waiting" : nil }
 
-    var avatar: GlanceAvatar { GlanceAvatar(label: state.connection, kind: state.kind, icon: state.connectionIcon, size: 40) }
+    var avatar: GlanceAvatar { GlanceAvatar(label: state.connection, kind: state.kind, icon: state.connectionIcon, blobatar: state.connectionBlobatar, size: 40) }
 
     var ring: CountdownRing { CountdownRing(from: state.createdAt, to: state.expiresAt, size: 44) }
 
@@ -673,7 +678,7 @@ struct ApprovalLiveViews {
 
     // The Dynamic Island.
 
-    var compactLeading: some View { GlanceAvatar(label: state.connection, kind: state.kind, icon: state.connectionIcon, size: 24) }
+    var compactLeading: some View { GlanceAvatar(label: state.connection, kind: state.kind, icon: state.connectionIcon, blobatar: state.connectionBlobatar, size: 24) }
 
     var compactTrailing: some View {
         Countdown(from: state.createdAt, to: state.expiresAt, size: 13, color: Palette.accent)

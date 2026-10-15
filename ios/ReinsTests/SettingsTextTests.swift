@@ -103,6 +103,9 @@ final class SettingsTextTests: XCTestCase {
         XCTAssertEqual(SettingsText.iconName(nil), "Auto")
         XCTAssertEqual(SettingsText.iconName(Providers.blob), "Blobatar")
         XCTAssertEqual(SettingsText.iconName("grok"), "Grok")
+        XCTAssertEqual(SettingsText.iconName("macos"), "macOS")
+        XCTAssertEqual(SettingsText.iconName("windows"), "Windows")
+        XCTAssertEqual(SettingsText.iconName("linux"), "Linux")
     }
 
     func testAHoldTicksFasterAsItFills() {

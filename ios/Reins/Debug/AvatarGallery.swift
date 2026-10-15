@@ -18,6 +18,12 @@ struct AvatarGallery: View {
             VStack(alignment: .leading, spacing: 18) {
                 SectionHeader("Providers")
                 grid(Providers.all.map { ($0.name, AnyView(ProviderAvatar(provider: $0, size: 48))) })
+                SectionHeader("Platforms")
+                grid(Platforms.all.map { ($0.name, AnyView(PlatformAvatar(platform: $0, size: 48))) })
+                SectionHeader("Blobatar shapes and colours")
+                grid(BlobatarPalette.shapes.indices.map { i in
+                    (BlobatarPalette.shapes[i], AnyView(BlobAvatar(seed: "c4", shape: i, colour: i, size: 48)))
+                })
                 SectionHeader("Services")
                 grid(Self.services.map { ($0, AnyView(ServiceAvatar(service: $0, size: 48))) })
                 SectionHeader("Blobatars")

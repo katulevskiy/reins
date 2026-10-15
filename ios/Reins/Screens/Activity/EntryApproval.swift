@@ -5,14 +5,14 @@ import SwiftUI
 
 /// "What it asked" in words (pure, unit-tested).
 enum AskedText {
-    /// "Claude Code · laptop": the agent as it named itself (else the connection's name) and the computer it runs on;
-    /// without the computer, the connection's name when it says more than the agent's.
+    /// "Claude Code · M2A": the agent as it named itself and the connection it asked through (the computer's name,
+    /// which says more than its 127.0.0.1 host); without an agent, the connection's name and where it connects from.
     static func who(agent: String, connection: String, host: String?) -> String {
-        let agent = untrusted(agent)
+        let agent = untrusted(agent).trimmingCharacters(in: .whitespaces)
         let connection = untrusted(connection)
         let host = host.map(untrusted) ?? ""
         let first = agent.isEmpty ? connection : agent
-        let second = !host.isEmpty ? host : (!agent.isEmpty && connection != agent ? connection : "")
+        let second = agent.isEmpty ? host : connection
         var parts: [String] = []
         if !first.isEmpty { parts.append(first) }
         if !second.isEmpty && !parts.contains(second) { parts.append(second) }

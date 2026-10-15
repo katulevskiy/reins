@@ -1,20 +1,30 @@
 import SwiftUI
 import UIKit
 
-/// Blobatar figures as SwiftUI paths, built once per name.
+/// Blobatar figures as SwiftUI paths, built once per name and overrides.
 enum BlobatarDrawing {
     struct Drawn {
         let path: Path
         let color: Color
     }
 
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var cache: [String: [Drawn]] = [:]
+    private struct Key: Hashable {
+        let seed: String
+        let shape: Int?
+        let colour: Int?
+    }
 
-    static func marks(for seed: String) -> [Drawn] {
-        let key = seed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "?" : seed
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [Key: [Drawn]] = [:]
+
+    /// The figure for `seed`; `shape` and `colour` (indexes into `BlobatarPalette`) replace the ones the seed picks.
+    static func marks(for seed: String, shape: Int? = nil, colour: Int? = nil) -> [Drawn] {
+        let name = seed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "?" : seed
+        let shape = BlobatarPalette.shape(shape)
+        let tint = BlobatarPalette.colour(colour)
+        let key = Key(seed: name, shape: shape, colour: tint == nil ? nil : colour)
         if let hit = lock.withLock({ cache[key] }) { return hit }
-        let drawn = Blobatar.figure(key).marks.map { mark -> Drawn in
+        let drawn = BlobatarArt.figure(name, shape: shape, colour: tint).marks.map { mark -> Drawn in
             switch mark {
             case let .path(d, fill): Drawn(path: SVGPath.parse(d), color: color(fill))
             case let .circle(cx, cy, r, fill): Drawn(path: Path(ellipseIn: CGRect(x: cx - r, y: cy - r, width: 2 * r, height: 2 * r)), color: color(fill))
@@ -25,6 +35,12 @@ enum BlobatarDrawing {
             cache[key] = drawn
         }
         return drawn
+    }
+
+    /// The head colour of palette colour `index`, as the figure draws it (a colour swatch).
+    static func headColor(_ index: Int) -> Color {
+        guard let colour = BlobatarPalette.colour(index) else { return .gray }
+        return color(BlobatarArt.headHex(colour))
     }
 
     /// "#rrggbb".

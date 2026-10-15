@@ -156,6 +156,7 @@ enum Glance {
             createdAt: Date(timeIntervalSince1970: TimeInterval(min(item.createdAt, item.expiresAt))),
             suggestion: item.suggestion,
             connectionIcon: item.connectionIcon,
+            connectionBlobatar: item.connectionBlobatar,
             quick: item.quick
         )
     }

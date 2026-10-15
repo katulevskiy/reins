@@ -264,7 +264,7 @@ private struct AgentChip: View {
 
     var body: some View {
         SelectChip(title: untrusted(connection.label), selected: selected, leading: {
-            ConnectionAvatar(label: untrusted(connection.label), pick: connection.icon, size: 22)
+            ConnectionAvatar(connection: connection, size: 22)
         }, action: action)
     }
 }
