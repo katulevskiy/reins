@@ -295,18 +295,19 @@ struct EndedGrantRow: View {
                 service: grant.service, symbol: ActionKind.of(grant.action).symbol,
                 connectionId: grant.connectionId, label: grant.connectionLabel
             )
-            .opacity(0.7)
+            // Dimmed, not gone: the service's mark at 55 %.
+            .opacity(0.55)
             VStack(alignment: .leading, spacing: 5) {
                 Button(action: onOpen) {
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(untrusted(grant.summary))
-                            .font(RFont.sans(15.5, .medium))
-                            .foregroundStyle(Palette.text)
+                            .font(TextRole.row.font())
+                            .foregroundStyle(Palette.ink)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
-                        Text(untrusted(grant.connectionLabel) + " · " + GrantText.endedLine(grant))
-                            .font(RFont.sans(12.5))
-                            .foregroundStyle(Palette.tertiary)
+                        Text(untrustedName(grant.connectionLabel) + " · " + GrantText.endedLine(grant))
+                            .textRole(.meta)
+                            .foregroundStyle(Palette.inkMeta)
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -318,18 +319,20 @@ struct EndedGrantRow: View {
                     Button(action: onResume) {
                         Label("Resume", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(SmallCapsuleStyle(kind: .secondary))
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small))
+                    .fixedSize()
                     .accessibilityIdentifier("resume:\(grant.id)")
                     Button(role: .destructive, action: onDelete) {
-                        Label("Delete", systemImage: "trash")
+                        Text("Delete")
                     }
-                    .buttonStyle(SmallCapsuleStyle(kind: .danger))
+                    .buttonStyle(SignalButtonStyle(.danger, size: .small))
+                    .fixedSize()
                     .accessibilityIdentifier("delete:\(grant.id)")
                 }
-                .padding(.top, 6)
+                .padding(.top, 8)
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 24)
         .padding(.vertical, 14)
     }
 }

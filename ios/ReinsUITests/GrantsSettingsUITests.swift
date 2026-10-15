@@ -159,8 +159,10 @@ final class GrantsSettingsUITests: XCTestCase {
         tap("grant:g1")
         wait("grantTitle")
         XCTAssertTrue(app.staticTexts["Used 12 times"].exists)
+        // Ending a grant is held, not tapped: a tap does nothing.
         tap("revoke")
-        confirm("End now")
+        XCTAssertTrue(element("grantTitle").exists, "a tap ends nothing")
+        element("revoke").press(forDuration: 2.0)
         if pad {
             XCTAssertTrue(element("grantTitle").waitForNonExistence(timeout: 5))
         } else {
