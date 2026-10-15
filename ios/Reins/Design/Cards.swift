@@ -489,39 +489,46 @@ extension PageSectionHeader where Trailing == EmptyView {
     }
 }
 
-/// A one-line notice with one button ("Notifications are off  [Turn on]"): Activity's banners.
+/// Reins is broken and needs you (iOS-Activity.png, 02): a short amber field that runs into the top of Activity, the
+/// only colour on the screen ("REINS · NOTIFICATIONS  Notifications are *off*  [Turn on]"). Danger-tinted ones are red.
 struct CompactBanner: View {
     var text: String
     var symbol: String
     var tint: Color = Palette.warning
     var button: String
+    /// The label line: what is broken.
+    var label = "Reins"
     var action: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(tint)
-                .accessibilityHidden(true)
-            Text(text)
-                .font(RFont.sans(14.5, .medium))
-                .foregroundStyle(Palette.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button(button, action: action)
-                .font(RFont.sans(13.5, .semibold))
-                .foregroundStyle(Palette.background)
-                .padding(.horizontal, 12)
-                .frame(minHeight: 30)
-                .background(Palette.text, in: Capsule())
-                .buttonStyle(.plain)
-                .fixedSize()
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .textRole(.label)
+                .foregroundStyle(Palette.onField2)
+            HStack(alignment: .center, spacing: 12) {
+                AskText(Self.runs(text), role: .askSmall)
+                    .foregroundStyle(Palette.onField)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(button, action: action)
+                    .buttonStyle(SignalButtonStyle(.onField, size: .small, fill: false))
+                    .fixedSize()
+            }
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            FieldSurface(kind: tint == Palette.danger ? .delete : .warn)
+                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: SignalField<EmptyView>.radius, bottomTrailingRadius: SignalField<EmptyView>.radius, style: .continuous))
+                .ignoresSafeArea(edges: .top)
+        }
         .accessibilityElement(children: .contain)
+    }
+
+    /// The sentence with its last word in italic: "Notifications are" *off*.
+    static func runs(_ text: String) -> [AskText.Run] {
+        guard let space = text.lastIndex(of: " ") else { return [AskText.Run(text: text, target: true)] }
+        return [AskText.Run(text: String(text[...space])), AskText.Run(text: String(text[text.index(after: space)...]), target: true)]
     }
 }

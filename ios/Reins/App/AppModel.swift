@@ -165,6 +165,10 @@ final class AppModel {
     var section: AppSection = .activity
     /// Per section: the screens above its root. On a regular width the first is the detail column's root.
     var paths: [AppSection: [Route]] = [:]
+    /// An answer folding into Activity's river.
+    let fold = FoldState()
+    /// Autopilot's reason lines, worked out once per entry.
+    let reasons = ReasonMemory()
     var sheet: SheetTarget?
     /// The next "connect a computer" sheet opens on the code field rather than the camera (Settings' "Type code").
     var connectStartsTyped = false
@@ -622,6 +626,12 @@ final class AppModel {
     /// now and `work` runs without anyone waiting for it. If it fails, the item comes back with the next read and a few
     /// words say why ("Not approved: …").
     func answerInBackground(_ id: String, failed: String, work: @escaping @Sendable () async throws -> Void) {
+        if let item = pending.first(where: { $0.id == id }) {
+            fold.decided(FoldRequest(
+                field: ActivityText.field(item, danger: false), connectionId: item.connectionId, action: item.action,
+                after: activity.first?.id ?? 0, fromSheet: sheet?.isApproval == true
+            ))
+        }
         dropPending(id)
         Task {
             do {

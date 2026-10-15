@@ -9,6 +9,7 @@ import Foundation
 /// (passwordless sign-in) makes a new account; `-demoLocked` finds one whose keys are on another phone instead (the recovery code is `DemoData.recoveryCode`; asking the other phone
 /// works after two polls, `-demoJoinDenied` refuses; resetting the vault starts it over as a new account).
 /// `-demoJoin` has another phone ask this one for the keys.
+/// `-demoQuiet`: nothing waits (Activity's pond and its mood line).
 /// `-demoOtherPhone`: another phone approves for the account, and registering this one is refused
 /// (`CoreError.OtherApprovalDevice`) until the recovery code or the other phone's approval gives it a proof.
 enum DemoCore {
@@ -33,7 +34,8 @@ enum DemoCore {
             joinWaiting: args.contains("-demoJoin"),
             approvalElsewhere: otherPhone,
             passkeys: !args.contains("-demoNoPasskeys"),
-            passkeysOffline: args.contains("-demoPasskeysOffline")
+            passkeysOffline: args.contains("-demoPasskeysOffline"),
+            quiet: args.contains("-demoQuiet")
         )
     }
 }
@@ -128,13 +130,14 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     init(
         signedIn: Bool = true, arriveAfter: Int64? = nil, modelInstalled: Bool = true, modelOutdated: Bool = false, syncCap: Double = 5,
-        keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false
+        keysLocked: Bool = false, joinWaiting: Bool = false, approvalElsewhere: Bool = false, passkeys: Bool = true, passkeysOffline: Bool = false,
+        quiet: Bool = false
     ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
         var s = State(model: modelInstalled ? DemoData.model(.installed, update: modelOutdated) : DemoData.model(.notInstalled))
         s.session = signedIn ? SessionInfo(serverUrl: DemoData.server, email: DemoData.email) : nil
-        s.pending = seeded.items
+        s.pending = quiet ? [] : seeded.items
         s.views = seeded.views
         s.pairings = seeded.pairings
         s.blobs = seeded.blobs

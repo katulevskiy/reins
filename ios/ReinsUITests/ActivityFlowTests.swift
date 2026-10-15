@@ -212,8 +212,10 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 8))
         row.tap()
         XCTAssertTrue(element(app, "entryApproval").waitForExistence(timeout: 5))
-        XCTAssertTrue(element(app, "hero").exists)
-        XCTAssertTrue(element(app, "entryOutcome").exists, "how it ended, where Autopilot's score was")
+        // Decided means paper: the entry's own header, not the approval's field.
+        XCTAssertTrue(element(app, "entryHero").exists)
+        XCTAssertFalse(element(app, "hero").exists)
+        XCTAssertTrue(element(app, "entryOutcome").exists, "how it ended, under its line")
         XCTAssertFalse(element(app, "selectAll").exists, "nothing to tick again")
         XCTAssertFalse(element(app, "clearAll").exists)
         XCTAssertFalse(element(app, "approve").exists, "no decision dock")

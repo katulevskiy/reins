@@ -126,7 +126,7 @@ final class LiveServerUITests: XCTestCase {
         advance(to: "phoneReady", timeout: 30)
         advance(to: "onboardingDone")
         wait("onboardingDone").tap()
-        wait("integrations", 30)
+        wait("activityMood", 30)
         Thread.sleep(forTimeInterval: 3)
         XCTAssertFalse(element("registrationBanner").exists, "registering as the approval device failed")
         shot("02-signed-in")
@@ -141,10 +141,10 @@ final class LiveServerUITests: XCTestCase {
         approve("pairingSheet")
         shot("04-paired")
 
-        // Add the host's MCP server (Integrations > Add MCP server).
-        wait("integrations").tap()
+        // Add the host's MCP server (Connections > Add MCP server).
+        XCTAssertTrue(app.openTab("connections"), "no Connections tab")
         // Rows further down are made only once they scroll into view.
-        XCTAssertTrue(app.staticTexts["Gmail"].waitForExistence(timeout: 10), "Integrations did not open")
+        XCTAssertTrue(app.staticTexts["Gmail"].waitForExistence(timeout: 10), "Connections did not open")
         var tries = 0
         while !(element("addMcp").exists && element("addMcp").isHittable) && tries < 8 { app.swipeUp(); tries += 1 }
         wait("addMcp").tap()

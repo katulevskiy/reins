@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// One operation, opened. An entry that kept its approval is shown with the approval's own hero, facts and pages,
-/// read-only, with how it ended on the hero, what was asked in full below and "This was wrong" where the decision dock
-/// was. An older entry shows what it kept: who asked, what exactly, what was released or sent and to whom, who
+/// One operation, opened (iOS-Activity.png, 05): decided means paper, so the entry's own header (its kind tile, the line
+/// in the serif, the verdict) stands where the field was. An entry that kept its approval then shows the approval's
+/// facts and pages, read-only, what was asked in full below and "This was wrong" where the decision dock was. An older entry shows what it kept: who asked, what exactly, what was released or sent and to whom, who
 /// decided, and the grant that covered it.
 struct ActivityDetailScreen: View {
     var entryId: Int64
@@ -94,7 +94,7 @@ struct ActivityDetailScreen: View {
                 }
                 if let note = entry.autopilot {
                     if entry.grantId != nil { Hairline() }
-                    AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry))
+                    AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
                 }
             }
             .padding(.top, 14)
@@ -104,9 +104,7 @@ struct ActivityDetailScreen: View {
     @ViewBuilder private func content(_ entry: ActivityEntry) -> some View {
         let info = entry.info
         VStack(alignment: .leading, spacing: 0) {
-            hero(entry)
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
+            DecidedHeader(entry: entry)
 
             AskedSections(entry: entry)
 
@@ -126,7 +124,7 @@ struct ActivityDetailScreen: View {
                 }
                 if let note = entry.autopilot {
                     Hairline()
-                    AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry))
+                    AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
                 }
             }
             .padding(.top, 14)
@@ -148,91 +146,6 @@ struct ActivityDetailScreen: View {
                 GroupCard(header: "Note") { ListRow(title: note) }
             }
         }
-    }
-
-    /// The entry's hero: what it touched with what it did (the label's tile) and the request beside it, with how it
-    /// ended under it; an entry without a label has the older hero.
-    @ViewBuilder private func hero(_ entry: ActivityEntry) -> some View {
-        if let label = entry.label {
-            labelHero(entry, label)
-        } else {
-            sentenceHero(entry)
-        }
-    }
-
-    private func labelHero(_ entry: ActivityEntry, _ label: RequestLabel) -> some View {
-        let tint = entry.outcome == "denied" ? Palette.danger : KindTint.of(ActionKind.of(entry.action))
-        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
-        return HStack(alignment: .center, spacing: 14) {
-            ProviderTile(label: label, size: 44, ring: Palette.background.mix(with: tint, by: 0.12))
-            VStack(alignment: .leading, spacing: 8) {
-                LabelText(label: label, size: 17, lines: 4)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("detailTitle")
-                EntryOutcomePill(entry: entry)
-                if let risk = entry.autopilot?.risk { RiskChips(risk: risk) }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(16)
-        .background(KindTint.wash(tint), in: shape)
-        .overlay(shape.strokeBorder(tint.opacity(0.24), lineWidth: 1))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("entryHero")
-    }
-
-    /// The approval hero, after the fact: the AI, three dots, the service; the sentence; how it ended.
-    private func sentenceHero(_ entry: ActivityEntry) -> some View {
-        let kind = ActionKind.of(entry.action)
-        let tint = KindTint.of(kind)
-        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-        return VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 52)
-                HStack(spacing: 5) {
-                    Circle().fill(Palette.tertiary).frame(width: 5, height: 5)
-                    Circle().fill(Palette.tertiary).frame(width: 5, height: 5)
-                    Circle().fill(tint).frame(width: 5, height: 5)
-                }
-                ServiceTile(service: entry.service, symbol: kind.symbol, size: 52)
-            }
-            .accessibilityHidden(true)
-            Text(EntryText.title(entry))
-                .font(RFont.sans(23, .semibold))
-                .foregroundStyle(Palette.text)
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-                .minimumScaleFactor(0.8)
-                .padding(.top, 16)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("detailTitle")
-            if !entry.detail.isEmpty {
-                Text(untrusted(entry.detail))
-                    .font(RFont.sans(15))
-                    .foregroundStyle(Palette.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(4)
-                    .padding(.top, 6)
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("detailSummary")
-            }
-            EntryOutcomePill(entry: entry)
-                .padding(.top, 14)
-            if let risk = entry.autopilot?.risk {
-                RiskChips(risk: risk).padding(.top, 8)
-            }
-            Text(untrusted(entry.connectionLabel))
-                .font(RFont.sans(13))
-                .foregroundStyle(Palette.tertiary)
-                .lineLimit(1)
-                .padding(.top, 10)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 22)
-        .padding(.bottom, 18)
-        .frame(maxWidth: .infinity)
-        .background(KindTint.wash(tint), in: shape)
-        .overlay(shape.strokeBorder(tint.opacity(0.24), lineWidth: 1))
     }
 
     @ViewBuilder private func messages(_ entry: ActivityEntry) -> some View {

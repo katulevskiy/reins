@@ -125,7 +125,8 @@ final class OnboardingUITests: XCTestCase {
         tap("onboardingNext")
         wait("setupDone")
         tap("onboardingDone")
-        wait("integrations", 8)
+        // Activity, under its mood line.
+        wait("activityMood", 8)
     }
 
     func testConnectionsConnectsAComputerByItsCode() {

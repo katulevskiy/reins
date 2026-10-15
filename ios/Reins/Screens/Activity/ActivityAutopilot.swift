@@ -1,7 +1,7 @@
 import SwiftUI
 
-// The Autopilot parts of the Activity screens (the Android app's ActivityAutopilot.kt and the mode pill): the header's
-// mode pill, an entry's outcome pill, "Why Autopilot allowed it" and the "This was wrong" dock.
+// The Autopilot parts of the Activity screens (the Android app's ActivityAutopilot.kt): the modes in words, an entry's
+// outcome pill, "Why Autopilot allowed it" and the "This was wrong" dock. The header's mode chip is ActivityModeMenu.
 
 /// Autopilot's modes in words, colours and symbols, as these screens show them.
 enum ModeLook {
@@ -47,50 +47,6 @@ enum ModeLook {
     }
 }
 
-/// The header's Autopilot pill: the global mode at a glance. Red with a live countdown while a bypass runs, night
-/// indigo with the moon and its countdown during an Overnight, amber in Lockdown, quiet otherwise.
-struct ActivityModePill: View {
-    var settings: AutopilotSettings
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) { ModePillLabel(settings: settings) }
-            .buttonStyle(.plain)
-            .modePillGlass(settings)
-    }
-}
-
-/// What the mode pill shows: the mode's symbol and name, or a pulse and the time left while a bypass runs (a pulse
-/// and "Bypass" for one without an end); the moon and the time left during an Overnight.
-struct ModePillLabel: View {
-    var settings: AutopilotSettings
-
-    var body: some View {
-        let mode = settings.mode
-        let tint = ModeLook.tint(mode)
-        let strong = ModeLook.running(settings)
-        HStack(spacing: 6) {
-            if strong && mode == .bypass {
-                PulseDot()
-            } else {
-                Image(systemName: ModeLook.symbol(mode)).font(.system(size: 13, weight: .semibold))
-            }
-            // One without an end has nothing to count down: it reads as the mode, as on Android.
-            if strong, let until = ModeLook.runningUntil(settings), !AutopilotText.isUntilOff(until) {
-                LiveClock(interval: 1) { now in
-                    Text(ModeLook.clock(until: until, now: Int64(now))).font(RFont.mono(14, .semibold)).monospacedDigit()
-                }
-            } else {
-                Text(ModeLook.name(mode)).font(RFont.sans(15, .medium))
-            }
-        }
-        .lineLimit(1)
-        .foregroundStyle(strong ? ModeLook.onTint(mode) : tint)
-        .padding(.horizontal, 13)
-        .frame(height: HeaderControl.height)
-    }
-}
-
 extension ModeLook {
     /// A bypass or an Overnight runs: the pill turns solid in its colour and counts down.
     static func running(_ settings: AutopilotSettings) -> Bool { runningUntil(settings) != nil }
@@ -111,34 +67,6 @@ extension ModeLook {
     }
 }
 
-extension View {
-    /// The mode pill's glass: solid in its colour during a bypass or an Overnight, the mode's tint otherwise, with its
-    /// label and identifier.
-    func modePillGlass(_ settings: AutopilotSettings) -> some View {
-        let mode = settings.mode
-        let tint = ModeLook.tint(mode)
-        let strong = ModeLook.running(settings)
-        return glassEffect(.regular.tint(strong ? tint : tint.opacity(0.16)).interactive(), in: Capsule())
-            .accessibilityLabel("Autopilot: \(ModeLook.name(mode))")
-            .accessibilityIdentifier("modePill")
-    }
-}
-
-/// A dot that breathes, for something running now. Still when clocks are frozen (screenshots).
-private struct PulseDot: View {
-    @State private var dim = false
-
-    var body: some View {
-        Circle()
-            .fill(Color.white)
-            .frame(width: 8, height: 8)
-            .opacity(dim ? 0.35 : 1)
-            .onAppear {
-                guard Timers.live else { return }
-                withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: true)) { dim = true }
-            }
-    }
-}
 
 /// What should have happened instead of what did: a denial was a mistaken approval's correction, and the reverse.
 func correctionFor(_ entry: ActivityEntry) -> Verdict { entry.outcome == "denied" ? .approve : .deny }
@@ -313,8 +241,11 @@ struct RiskLine: View {
 struct AutopilotWhyRow: View {
     var note: AutopilotNote
     var title: String
+    /// The entry it is about, for the reason line worked out on the phone.
+    var entry: ActivityEntry? = nil
     @State private var open = false
     @Environment(\.feedback) private var feedback
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -341,6 +272,9 @@ struct AutopilotWhyRow: View {
                 detail.transition(.opacity)
             }
         }
+        .task(id: entry?.id) {
+            if let entry { await model.reasons.explain(entry, model: model) }
+        }
         .accessibilityContainer("entryAutopilot")
     }
 
@@ -351,9 +285,11 @@ struct AutopilotWhyRow: View {
                 LikelihoodRow(label: "Deny", p: note.pDeny, color: Palette.danger)
                 LikelihoodRow(label: "Confidence", p: note.confidence, color: Palette.accent)
             }
-            let reason = untrusted(note.reason)
+            // The decisions of yours it was like, counted here ("Like 11 pushes to feature branches of acme/web you
+            // approved."), else the core's own reason.
+            let reason = entry.flatMap { model.reasons.lines[$0.id] } ?? untrusted(note.reason)
             if !reason.isEmpty {
-                Text(reason).font(RFont.sans(14.5)).foregroundStyle(Palette.text)
+                Text(reason).textRole(.body).foregroundStyle(Palette.ink2).accessibilityIdentifier("autopilotReason")
             }
             if !note.neighbours.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -406,7 +342,7 @@ struct ThisWasWrongDock: View {
                         Label {
                             Text("This was wrong")
                         } icon: {
-                            Image(systemName: "arrow.uturn.backward").foregroundStyle(ModeLook.tint(.auto))
+                            GlyphIcon(.undo, size: 18).foregroundStyle(Palette.violet)
                         }
                         .opacity(busy ? 0 : 1)
                         if busy { ProgressView() }

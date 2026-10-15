@@ -159,7 +159,7 @@ final class LiveOnboardingUITests: XCTestCase {
         if !closed { shot("failed-pairing-stayed") }
         XCTAssertTrue(closed, "the pairing sheet did not close after approving")
         XCTAssertNotNil(waitForFile("host-done", 90), "the computer's session did not work")
-        wait("integrations", 30)
+        wait("activityMood", 30)
         Thread.sleep(forTimeInterval: 2)
         shot("07-activity")
 

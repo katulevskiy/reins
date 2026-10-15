@@ -8,6 +8,8 @@ struct WaitCardShell<Avatar: View, Timer: View, Actions: View>: View {
     /// "Gmail · Send": set in mono capitals.
     var label: String
     var ask: AskText
+    /// The ask's accessibility identifier (UI tests open a card by it).
+    var askIdentifier: String? = nil
     @ViewBuilder var avatar: Avatar
     @ViewBuilder var timer: Timer
     @ViewBuilder var actions: Actions
@@ -24,6 +26,7 @@ struct WaitCardShell<Avatar: View, Timer: View, Actions: View>: View {
                 timer
             }
             ask.foregroundStyle(Palette.onField)
+                .accessibilityIdentifier(askIdentifier ?? "")
             actions
         }
         .padding(.horizontal, 18)

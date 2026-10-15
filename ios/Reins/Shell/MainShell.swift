@@ -55,10 +55,11 @@ struct MainShell: View {
 // MARK: Compact
 
 /// Four navigation stacks, one per place, under Signal's tab bar (an inverse capsule floating over the content, which
-/// scrolls on beneath it). A stack is made the first time its tab is chosen and kept after, so going back to a tab
-/// finds it as it was.
+/// scrolls on beneath it), shown at a place's root and gone on the pages pushed over it, as the boards draw them. A
+/// stack is made the first time its tab is chosen and kept after, so going back to a tab finds it as it was.
 private struct TabShell: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visited: Set<AppSection> = []
 
     var body: some View {
@@ -79,9 +80,14 @@ private struct TabShell: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            SignalTabBar(items: items, selection: Binding(get: { model.section }, set: { model.select($0) }))
-                .padding(.bottom, 4)
+            // At a place's root only: a pushed page has its own bottom (a dock, "This was wrong") and its back button.
+            if model.path(model.section).isEmpty {
+                SignalTabBar(items: items, selection: Binding(get: { model.section }, set: { model.select($0) }))
+                    .padding(.bottom, 4)
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(Motion.of(Motion.easeOut(Motion.drillIn), reduce: reduceMotion), value: model.path(model.section).isEmpty)
         .onChange(of: model.section, initial: true) { _, section in visited.insert(section) }
     }
 

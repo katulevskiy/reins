@@ -40,6 +40,9 @@ final class SignalMenuController {
         var trigger: String
         var items: [SignalMenuItem]
         var selected: String?
+        /// The open menu's and its scrim's accessibility identifiers.
+        var identifier = "signalMenu"
+        var scrimIdentifier = "menuScrim"
         var onPick: (String) -> Void
     }
 
@@ -94,7 +97,7 @@ private struct SignalMenuHost: ViewModifier {
                                 }
                                 .accessibilityAddTraits(.isButton)
                                 .accessibilityLabel("Close")
-                                .accessibilityIdentifier("menuScrim")
+                                .accessibilityIdentifier(controller.open?.scrimIdentifier ?? "menuScrim")
                         }
                         if let open = controller.open, let anchor = anchors[open.trigger] {
                             let trigger = geo[anchor]
@@ -145,6 +148,7 @@ private struct SignalMenuCard: View {
         SignalMenuPanel(items: open.items, selected: open.selected, hovered: controller.hovered, onPick: onPick) { id, frame in
             controller.rows[id] = frame
         }
+        .accessibilityIdentifier(open.identifier)
     }
 }
 
@@ -255,9 +259,12 @@ extension View {
     /// Makes this view the trigger of a Signal menu: a tap opens or closes it; pressing and sliding onto a row picks it
     /// when the finger lifts, with a select tick for each row crossed. Needs a `signalMenuHost()` above it.
     func signalMenu(
-        id: String, items: [SignalMenuItem], selected: String? = nil, onPick: @escaping (String) -> Void
+        id: String, items: [SignalMenuItem], selected: String? = nil, identifier: String = "signalMenu",
+        scrimIdentifier: String = "menuScrim", onPick: @escaping (String) -> Void
     ) -> some View {
-        modifier(SignalMenuTrigger(id: id, items: items, selected: selected, onPick: onPick))
+        modifier(SignalMenuTrigger(
+            id: id, items: items, selected: selected, identifier: identifier, scrimIdentifier: scrimIdentifier, onPick: onPick
+        ))
     }
 }
 
@@ -265,6 +272,8 @@ private struct SignalMenuTrigger: ViewModifier {
     var id: String
     var items: [SignalMenuItem]
     var selected: String?
+    var identifier: String
+    var scrimIdentifier: String
     var onPick: (String) -> Void
 
     @Environment(SignalMenuController.self) private var controller: SignalMenuController?
@@ -324,6 +333,8 @@ private struct SignalMenuTrigger: ViewModifier {
     }
 
     private var open: SignalMenuController.Open {
-        SignalMenuController.Open(trigger: id, items: items, selected: selected, onPick: onPick)
+        SignalMenuController.Open(
+            trigger: id, items: items, selected: selected, identifier: identifier, scrimIdentifier: scrimIdentifier, onPick: onPick
+        )
     }
 }
