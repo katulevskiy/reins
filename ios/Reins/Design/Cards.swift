@@ -8,7 +8,7 @@ import SwiftUI
 /// The colour of a kind of operation on cards and tiles; a request that always asks is red.
 enum KindTint {
     static func of(_ kind: ActionKind, danger: Bool = false) -> Color {
-        danger ? Palette.danger : ActionTile.color(kind)
+        FieldKind.of(kind, danger: danger)?.ink ?? Palette.secondary
     }
 
     /// The approval hero's wash: the kind's colour from 16 % at the top to 4 % at the bottom, with a 24 % border.

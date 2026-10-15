@@ -110,16 +110,9 @@ struct ActionTile: View {
     var size: CGFloat = 44
     var tint: Color? = nil
 
+    /// The kind's ink (`FieldKind`); an operation with no kind is ink-2.
     static func color(_ kind: ActionKind) -> Color {
-        switch kind {
-        case .search, .list: Palette.search
-        case .write, .send: Palette.send
-        case .read, .upload, .headlines: Palette.read
-        case .grant: Palette.grant
-        case .accounts: Palette.accounts
-        case .pair, .join: Palette.pair
-        case .other: Palette.secondary
-        }
+        FieldKind.of(kind)?.ink ?? Palette.secondary
     }
 
     var body: some View {
