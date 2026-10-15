@@ -800,6 +800,8 @@ class FakeCore : ReinsCoreInterface {
     val bypassCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
     /** `startOvernight` calls, like [bypassCalls]. */
     val overnightCalls = CopyOnWriteArrayList<Pair<String?, UInt?>>()
+    /** The owner checks handed to `startOvernight` and `setOvernightWhenRisky`, refused or not. */
+    val overnightOwners = CopyOnWriteArrayList<dev.reins.core.OwnerCheck>()
     @Volatile var whenRisky = dev.reins.core.OvernightRisky.WAIT
     val whenRiskyCalls = CopyOnWriteArrayList<dev.reins.core.OvernightRisky>()
     @Volatile var stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
@@ -827,7 +829,7 @@ class FakeCore : ReinsCoreInterface {
         modeFailure = null
         downloadFailure = null
         downloadError = null
-        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls, overnightCalls, whenRiskyCalls).forEach { it.clear() }
+        listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls, overnightCalls, whenRiskyCalls, overnightOwners).forEach { it.clear() }
         whenRisky = dev.reins.core.OvernightRisky.WAIT
         stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
         replay = null
@@ -888,7 +890,8 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun setAutopilotMode(connectionId: String?, mode: AutopilotMode?, minutes: UInt?) {
         modeFailure?.let { throw it }
-        if (mode == AutopilotMode.OVERNIGHT) return startOvernight(connectionId, minutes)
+        // As the core: Overnight starts only through startOvernight, after the owner check.
+        if (mode == AutopilotMode.OVERNIGHT) throw CoreException.Invalid("Overnight starts with start_overnight, after the owner check")
         modeCalls += Triple(connectionId, mode, minutes)
         val row = if (connectionId == null) apGlobal else apConnections[connectionId] ?: ApRow()
         val next = if (mode == AutopilotMode.BYPASS) {
@@ -899,9 +902,17 @@ class FakeCore : ReinsCoreInterface {
         if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
     }
 
-    override suspend fun startOvernight(connectionId: String?, minutes: UInt?) {
+    override suspend fun startOvernight(connectionId: String?, minutes: UInt?, owner: dev.reins.core.OwnerCheck) {
+        overnightOwners += owner
         modeFailure?.let { throw it }
         if (minutes != null && (minutes == 0u || minutes > 525_600u)) throw CoreException.Invalid("Overnight lasts between 1 minute and 365 days")
+        // The core's own words for the prompt, then nothing changes without a pass.
+        val reason = when {
+            minutes == null -> "Start Overnight until you turn it off"
+            minutes % 60u == 0u -> "Start Overnight for ${minutes / 60u} h"
+            else -> "Start Overnight for $minutes min"
+        }
+        if (!owner.confirm(reason)) throw CoreException.Invalid("the owner did not confirm")
         overnightCalls += connectionId to minutes
         modeCalls += Triple(connectionId, AutopilotMode.OVERNIGHT, minutes)
         val row = if (connectionId == null) apGlobal else apConnections[connectionId] ?: ApRow()
@@ -915,7 +926,11 @@ class FakeCore : ReinsCoreInterface {
         if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
     }
 
-    override suspend fun setOvernightWhenRisky(risky: dev.reins.core.OvernightRisky) {
+    override suspend fun setOvernightWhenRisky(risky: dev.reins.core.OvernightRisky, owner: dev.reins.core.OwnerCheck) {
+        overnightOwners += owner
+        if (whenRisky == risky) return
+        val reason = if (risky == dev.reins.core.OvernightRisky.DENY) "Overnight: deny what is too risky" else "Overnight: wait for you when something is too risky"
+        if (!owner.confirm(reason)) throw CoreException.Invalid("the owner did not confirm")
         whenRiskyCalls += risky
         whenRisky = risky
     }
@@ -927,7 +942,9 @@ class FakeCore : ReinsCoreInterface {
         modeCalls += Triple(connectionId, AutopilotMode.BYPASS, minutes)
         val row = if (connectionId == null) apGlobal else apConnections[connectionId] ?: ApRow()
         val until = if (minutes == null) Long.MAX_VALUE else now() + minutes.toLong() * 60
-        val next = row.copy(mode = row.mode.takeIf { it != AutopilotMode.LOCKDOWN }, bypassUntil = until, bypassSince = now())
+        // As the core: a bypass ends the Overnight of its scope, so it never returns to it without the owner.
+        val base = if (row.mode == AutopilotMode.OVERNIGHT) row.overnightReturn else row.mode.takeIf { it != AutopilotMode.LOCKDOWN }
+        val next = row.copy(mode = base, bypassUntil = until, bypassSince = now(), overnightUntil = null, overnightSince = null, overnightReturn = null)
         if (connectionId == null) apGlobal = next else apConnections[connectionId] = next
     }
 

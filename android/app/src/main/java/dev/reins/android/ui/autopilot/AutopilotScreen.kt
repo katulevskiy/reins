@@ -217,7 +217,7 @@ fun AutopilotScreen(
             who = null,
             risky = settings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
             ratesRisk = model?.risk == true,
-            onRisky = viewModel::setOvernightWhenRisky,
+            onRisky = { viewModel.setOvernightWhenRisky(it, authenticator) },
             onStart = { minutes -> viewModel.startOvernight(minutes, authenticator = authenticator) },
             onClose = { overnightOpen = false },
         )

@@ -646,7 +646,8 @@ class AutopilotFlowTest : FlowHarness() {
         hold("confirmOvernight")
         awaitCore { core.overnightCalls.isNotEmpty() }
         assertEquals(null to 15u, core.overnightCalls.single())
-        assertEquals("the owner is checked first", listOf("Turn on Overnight for every AI" to "For 15 min"), promptTexts.toList())
+        assertEquals("the core asks the owner, in its own words", listOf("Turn on Overnight for every AI" to "Start Overnight for 15 min"), promptTexts.toList())
+        assertTrue("through the phone's own prompt", core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
         assertTrue(heard.played(Event.AutopilotOn))
         awaitTag("overnightClock")
         rule.onNodeWithTag("overnightClock").assertTextContains("15:00")
@@ -664,12 +665,43 @@ class AutopilotFlowTest : FlowHarness() {
         authResult = dev.reins.android.platform.AuthResult.Cancelled
         openAutopilot()
         tap("mode:OVERNIGHT")
+        heard.clear()
         hold("confirmOvernight")
         awaitCore { prompts.get() == 1 }
         settle()
-        assertTrue(core.overnightCalls.isEmpty() && core.modeCalls.isEmpty())
+        assertTrue("the core was asked, with an owner check", core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
+        assertTrue("and it refused", core.overnightCalls.isEmpty() && core.modeCalls.isEmpty())
         assertEquals(AutopilotMode.MANUAL, container.state.autopilot.value?.mode)
         assertFalse(has("overnightClock"))
+        assertFalse("a cancel says nothing", has("autopilotError"))
+        assertFalse(heard.played(Event.AutopilotOn))
+
+        // No screen lock at all: it says so, and still nothing changes.
+        authResult = dev.reins.android.platform.AuthResult.Unavailable
+        tap("mode:OVERNIGHT")
+        hold("confirmOvernight")
+        awaitTag("autopilotError")
+        awaitText("screen lock", substring = true)
+        assertTrue(core.overnightCalls.isEmpty())
+        assertEquals(AutopilotMode.MANUAL, container.state.autopilot.value?.mode)
+    }
+
+    @Test
+    fun anAIsOwnOvernightUnderAGlobalOneIsCheckedToo() {
+        installModel()
+        // A running Overnight shows only Stop; any other length is a new start, and every start asks the owner.
+        // Refused, the running one stays as it was.
+        core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.OVERNIGHT, overnightUntil = now + 600, overnightSince = now - 60, overnightReturn = AutopilotMode.AUTO)
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
+        launch()
+        tap("tabSettings")
+        tap("connection:c1")
+        tap("connMode:OVERNIGHT")
+        hold("confirmOvernight")
+        awaitCore { prompts.get() == 1 }
+        settle()
+        assertTrue(core.overnightCalls.isEmpty())
+        assertEquals(now + 600, core.apGlobal.overnightUntil)
     }
 
     @Test
@@ -699,8 +731,18 @@ class AutopilotFlowTest : FlowHarness() {
         tap("overnightRisky:DENY")
         awaitCore { core.whenRiskyCalls.isNotEmpty() }
         assertEquals(listOf(dev.reins.core.OvernightRisky.DENY), core.whenRiskyCalls.toList())
+        assertEquals("the owner is asked", "Change Overnight" to "Overnight: deny what is too risky", promptTexts.single())
         awaitText("Decides like Auto. Too risky is denied.")
         assertTrue("a setting, not a start", core.overnightCalls.isEmpty())
+
+        // Back to Wait is asked too; refused, it stays.
+        authResult = dev.reins.android.platform.AuthResult.Cancelled
+        tap("overnightRisky:WAIT")
+        awaitCore { prompts.get() == 2 }
+        settle()
+        assertEquals(dev.reins.core.OvernightRisky.DENY, core.whenRisky)
+        rule.onNodeWithTag("overnightRisky:DENY").assertIsSelected()
+        assertTrue(core.overnightOwners.all { it is dev.reins.android.platform.OwnerPrompt })
     }
 
     @Test
@@ -732,6 +774,8 @@ class AutopilotFlowTest : FlowHarness() {
         hold("confirmOvernight")
         awaitCore { core.overnightCalls.isNotEmpty() }
         assertEquals(null to 60u, core.overnightCalls.single())
+        assertEquals("checked from the quick menu too", "Start Overnight for 1 h", promptTexts.single().second)
+        assertTrue(core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
         awaitGone("overnightSheet")
         rule.onNodeWithContentDescription("Autopilot: Overnight").assertExists()
         tap("modePill")
@@ -778,6 +822,8 @@ class AutopilotFlowTest : FlowHarness() {
         assertTrue(core.modeCalls.isEmpty())
         hold("confirmOvernight")
         awaitCore { core.overnightCalls.isNotEmpty() }
+        assertEquals(1, prompts.get())
+        assertTrue(core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
     }
 
     @Test
@@ -793,7 +839,8 @@ class AutopilotFlowTest : FlowHarness() {
         hold("confirmOvernight")
         awaitCore { core.overnightCalls.isNotEmpty() }
         assertEquals("c1" to 60u, core.overnightCalls.single())
-        assertEquals("Turn on Overnight for Claude", promptTexts.single().first)
+        assertEquals("Turn on Overnight for Claude" to "Start Overnight for 1 h", promptTexts.single())
+        assertTrue(core.overnightOwners.single() is dev.reins.android.platform.OwnerPrompt)
         awaitTag("stopConnectionOvernight")
         rule.onNodeWithTag("connectionOvernightLine", useUnmergedTree = true).assertTextContains("1 h left", substring = true)
         tap("stopConnectionOvernight")

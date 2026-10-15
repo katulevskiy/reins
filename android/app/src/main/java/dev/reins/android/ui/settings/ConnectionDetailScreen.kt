@@ -175,7 +175,7 @@ fun ConnectionDetailScreen(
                 who = connection.label,
                 risky = apSettings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
                 ratesRisk = apSettings?.model?.risk == true,
-                onRisky = autopilot::setOvernightWhenRisky,
+                onRisky = { autopilot.setOvernightWhenRisky(it, authenticator) },
                 onStart = { minutes -> autopilot.startOvernight(minutes, connection.id, connection.label, authenticator) },
                 onClose = { overnightOpen = false },
             )

@@ -472,7 +472,7 @@ private fun SignedInContent(
                     onStopBypass = { autopilot.stopBypass() },
                     onOvernight = { minutes -> autopilot.startOvernight(minutes, authenticator = authenticator) },
                     onStopOvernight = { autopilot.stopOvernight() },
-                    onWhenRisky = autopilot::setOvernightWhenRisky,
+                    onWhenRisky = { autopilot.setOvernightWhenRisky(it, authenticator) },
                     onMore = {
                         quickOpen = false
                         app.selectTab(Tab.Autopilot)
