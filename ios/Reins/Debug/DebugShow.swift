@@ -1,7 +1,8 @@
 #if DEBUG
 /// `-show <place>` at launch (screenshots, manual checks): a tab (`activity`, `trust`, `connections`, `settings`) or a
 /// page in it: `sounds`, `devices`, `passkeys`, `appearance`, `vault`, `vaultAdd`, `vaultItem:<id>`, `connection:<id>`,
-/// `gmail`, `service:<id>`, `mcp:<id>`, `grant:<id>`, `profile:<id>`, `tryit`, `ended`, `newgrant`.
+/// `gmail`, `service:<id>`, `mcp:<id>`, `grant:<id>`, `profile:<id>`, `tryit`, `ended`, `newgrant`, and `tour` (its page
+/// from `-tourPage <n>`, 0 to 4).
 @MainActor
 enum DebugShow {
     static func open(_ value: String, in model: AppModel) {
@@ -23,6 +24,7 @@ enum DebugShow {
         case "tryit": model.show(.tryIt(nil), in: .trust)
         case "ended": model.show(.expiredGrants, in: .trust)
         case "newgrant": model.show(.newGrant(token: 1), in: .trust)
+        case "tour": model.startTour()
         default:
             if let section = AppSection(rawValue: place) { model.select(section) }
         }
