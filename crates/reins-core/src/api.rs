@@ -1141,6 +1141,56 @@ impl ReinsCore {
         .await
     }
 
+    /// Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
+    /// newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
+    /// matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.
+    pub async fn search_activity(
+        &self,
+        query: crate::types::ActivityQuery,
+        after: Option<crate::types::ActivityCursor>,
+        limit: u32,
+    ) -> Result<crate::types::ActivityPage, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.search_activity(&query, after, limit) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// When each entry matching `query` was logged, how it ended and who decided, newest first: to group the Activity
+    /// by day (in the phone's time zone) and count each day without loading the entries.
+    pub async fn activity_stamps(
+        &self,
+        query: crate::types::ActivityQuery,
+    ) -> Result<Vec<crate::types::ActivityStamp>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.activity_stamps(&query) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The integrations, kinds and connections the Activity holds: the search filters' choices.
+    pub async fn activity_facets(&self) -> Result<crate::types::ActivityFacets, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.activity_facets() }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Asks the token provider for a token and reports whether Gmail is usable.
     pub async fn gmail_status(&self) -> GmailStatus {
         let runtime = Arc::clone(&self.runtime);

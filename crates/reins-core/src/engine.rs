@@ -1021,6 +1021,42 @@ impl Engine {
         Ok(self.store.activity(limit.clamp(1, 500))?.iter().map(views::activity_entry).collect())
     }
 
+    /// One page of the entries matching `query`, newest first, after `after` (see `store::audit_search`).
+    pub fn search_activity(
+        &self,
+        query: &crate::types::ActivityQuery,
+        after: Option<crate::types::ActivityCursor>,
+        limit: u32,
+    ) -> Result<crate::types::ActivityPage, CoreError> {
+        let page = self.store.search_activity(query, after, limit)?;
+        Ok(crate::types::ActivityPage {
+            hits: page
+                .found
+                .into_iter()
+                .map(|f| crate::types::ActivityHit {
+                    entry: views::activity_entry(&f.record),
+                    snippet: f.snippet,
+                })
+                .collect(),
+            next: page.next,
+            total: page.total,
+            terms: page.terms,
+        })
+    }
+
+    /// When each entry matching `query` was logged and how it ended, newest first.
+    pub fn activity_stamps(
+        &self,
+        query: &crate::types::ActivityQuery,
+    ) -> Result<Vec<crate::types::ActivityStamp>, CoreError> {
+        self.store.activity_stamps(query)
+    }
+
+    /// The integrations, kinds and connections the Activity holds, for the filters.
+    pub fn activity_facets(&self) -> Result<crate::types::ActivityFacets, CoreError> {
+        self.store.activity_facets()
+    }
+
     /// The request of an Activity entry as its approval showed it, to be shown again read-only. A device without that
     /// copy (another one showed it) gets a push from the copy synced with the entry. `None` for an entry without
     /// either (logged before they were kept, or not about a request).
