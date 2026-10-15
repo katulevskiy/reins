@@ -33,6 +33,9 @@ const COMMIT_DIFF_TIMEOUT: Duration = Duration::from_millis(250);
 /// Bytes of patches (each commit's changes line by line) per push; the summary as a whole stays under
 /// `MAX_SUMMARY_BYTES` (`PushSummary::fit` drops the largest patches first if it would not).
 const PATCH_BUDGET: usize = 100_000;
+/// Bytes of patches in all kept for this computer's own record of an approved push (Activity's commit inspection,
+/// `crate::pushes`): the phone's, and more while this lasts.
+const KEPT_PATCH_BUDGET: usize = 1 << 20;
 /// Lines of context around each change in a patch, as git shows them.
 const PATCH_CONTEXT: usize = 3;
 /// A NUL byte this early means binary, as git decides.
@@ -57,6 +60,29 @@ pub async fn analyze_push(
     pack: Option<&Path>,
     remote: &dyn Remote,
 ) -> PushSummary {
+    analyze_push_keeping(repo, commands, push_options, pack, remote).await.0
+}
+
+/// A patch kept for this computer's record of the push but not sent to the phone: where it goes in the summary
+/// ([`with_kept`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeptPatch {
+    pub update: usize,
+    pub commit: usize,
+    pub file: usize,
+    pub patch: String,
+    pub cut: bool,
+}
+
+/// [`analyze_push`], and the patches past the phone's budget kept for the record (up to [`KEPT_PATCH_BUDGET`] of
+/// patches in all). The summary is exactly what [`analyze_push`] returns.
+pub async fn analyze_push_keeping(
+    repo: &str,
+    commands: &[Command],
+    push_options: &[String],
+    pack: Option<&Path>,
+    remote: &dyn Remote,
+) -> (PushSummary, Vec<KeptPatch>) {
     let mut notes = Notes::default();
     let pack_bytes = match pack {
         Some(p) => tokio::fs::metadata(p).await.map_or(0, |m| m.len()),
@@ -85,7 +111,8 @@ pub async fn analyze_push(
         left: LINE_BUDGET,
     };
     count_lines(&mut store, &mut updates, diffs, &mut budget, &mut notes).await;
-    describe_commits(&mut store, &mut updates, &mut budget, &mut notes).await;
+    let mut kept = Vec::new();
+    describe_commits(&mut store, &mut updates, &mut budget, &mut notes, &mut kept).await;
     let mut options: Vec<String> =
         push_options.iter().take(MAX_PUSH_OPTIONS).map(|o| non_empty(clip(o, MAX_LINE), "(empty)")).collect();
     if push_options.len() > MAX_PUSH_OPTIONS {
@@ -96,14 +123,33 @@ pub async fn analyze_push(
         notes.add(format!("GitHub: {e}"));
     }
     log::debug!("analyzed a push to {repo}: {} refs, {pack_bytes} pack bytes", updates.len());
-    PushSummary {
+    let summary = PushSummary {
         updates,
         pack_bytes,
         push_options: options,
         notes: notes.finish(),
         // Not learnt yet: the receive-pack advertisement does not name the remote's HEAD.
         default_branch: None,
+    };
+    (summary, kept)
+}
+
+/// `summary` with the patches kept for the record put in place: what this computer keeps of an approved push.
+#[must_use]
+pub fn with_kept(summary: &PushSummary, kept: &[KeptPatch]) -> PushSummary {
+    let mut full = summary.clone();
+    for k in kept {
+        let file = full
+            .updates
+            .get_mut(k.update)
+            .and_then(|u| u.commits.get_mut(k.commit))
+            .and_then(|c| c.files.get_mut(k.file));
+        if let Some(f) = file.filter(|f| f.patch.is_none()) {
+            f.patch = Some(k.patch.clone());
+            f.patch_cut = k.cut;
+        }
     }
+    full
 }
 
 /// Notes for the user: one line each, deduplicated, at most [`MAX_NOTES`].
@@ -900,13 +946,17 @@ async fn describe_commits(
     updates: &mut [RefUpdate],
     budget: &mut LineBudget,
     notes: &mut Notes,
+    kept: &mut Vec<KeptPatch>,
 ) {
     let started = Instant::now();
-    let mut patch_left = PATCH_BUDGET;
+    let mut patches = Patches {
+        phone_left: PATCH_BUDGET,
+        kept_left: KEPT_PATCH_BUDGET,
+    };
     let mut failed = 0usize;
     let mut late = 0usize;
-    for u in updates.iter_mut().filter(|u| u.change != RefChange::Delete) {
-        for c in &mut u.commits {
+    for (ui, u) in updates.iter_mut().enumerate().filter(|(_, u)| u.change != RefChange::Delete) {
+        for (ci, c) in u.commits.iter_mut().enumerate() {
             if started.elapsed() >= COMMITS_TIME {
                 late += 1;
                 continue;
@@ -923,7 +973,18 @@ async fn describe_commits(
             // Tree problems are this commit's alone; the ref's own comparison already said what matters.
             let mut quiet = Notes::default();
             match diff_commits(store, parent, oid, &mut quiet, "").await {
-                Ok(diff) if diff.complete => describe_commit(store, c, &diff, budget, &mut patch_left).await,
+                Ok(diff) if diff.complete => {
+                    let mut keep = |file: usize, patch: String, cut: bool| {
+                        kept.push(KeptPatch {
+                            update: ui,
+                            commit: ci,
+                            file,
+                            patch,
+                            cut,
+                        });
+                    };
+                    describe_commit(store, c, &diff, budget, &mut patches, &mut keep).await;
+                }
                 _ => failed += 1,
             }
         }
@@ -936,12 +997,19 @@ async fn describe_commits(
     }
 }
 
+/// The bytes of patches left: the phone's (its budget as always), and the record's (all patches together).
+struct Patches {
+    phone_left: usize,
+    kept_left: usize,
+}
+
 async fn describe_commit(
     store: &mut Store<'_>,
     c: &mut CommitInfo,
     diff: &RefDiff,
     budget: &mut LineBudget,
-    patch_left: &mut usize,
+    patches: &mut Patches,
+    keep: &mut impl FnMut(usize, String, bool),
 ) {
     let mut totals = Some((0u64, 0u64));
     for (i, f) in diff.files.iter().enumerate() {
@@ -966,12 +1034,17 @@ async fn describe_commit(
                     *ta += add as u64;
                     *td += del as u64;
                 }
-                if listed && *patch_left > 0 {
+                if listed && (patches.phone_left > 0 || patches.kept_left > 0) {
                     let (patch, cut) = patch_text(a, b, &ops);
-                    if !patch.is_empty() && patch.len() <= *patch_left {
-                        *patch_left -= patch.len();
+                    // The phone's patches as always; past its budget, kept for the record while that lasts.
+                    if !patch.is_empty() && patch.len() <= patches.phone_left {
+                        patches.phone_left -= patch.len();
+                        patches.kept_left = patches.kept_left.saturating_sub(patch.len());
                         change.patch = Some(patch);
                         change.patch_cut = cut;
+                    } else if !patch.is_empty() && patch.len() <= patches.kept_left {
+                        patches.kept_left -= patch.len();
+                        keep(i, patch, cut);
                     }
                 }
             }

@@ -11,7 +11,7 @@ use gpui::{
 };
 
 use super::icons::{Glyph, Mark, avatar, glyph};
-use super::story::Words;
+use super::story::{FactStyle, Words};
 use super::{Data, Root};
 use crate::theme::text::tracked;
 use crate::theme::{MONO, Palette, SERIF, SignalText as _, Tone, motion};
@@ -607,26 +607,33 @@ pub fn fact_rows(rows: &[super::story::Fact], min_h: f32, key_width: Option<f32>
             Some(w) => key.w(px(w)),
             None => key.flex_1(),
         };
-        let value = div()
-            .min_w(px(0.0))
-            .text_color(pal.ink())
-            .when_else(
-                f.mono,
-                |v| v.font_family(MONO).text_size(px(13.0)),
-                |v| {
-                    v.text_size(if key_width.is_some() {
-                        px(14.0)
-                    } else {
-                        px(13.5)
-                    })
-                },
-            )
-            .when(key_width.is_some(), gpui::Styled::flex_1)
-            .child(f.value.clone());
+        let text_size = if key_width.is_some() {
+            px(14.0)
+        } else {
+            px(13.5)
+        };
+        let value = div().min_w(px(0.0)).text_color(pal.ink()).when(key_width.is_some(), gpui::Styled::flex_1);
+        let value = match f.style {
+            FactStyle::Text => value.text_size(text_size).child(
+                div().flex().flex_wrap().items_baseline().gap_x(px(6.0)).child(f.value.clone()).when_some(
+                    f.tail.clone(),
+                    |v, t| {
+                        v.child(
+                            div().font_family(MONO).text_size(px(13.0)).text_color(pal.ink_2()).child(format!("· {t}")),
+                        )
+                    },
+                ),
+            ),
+            // The machine's, whole: long values wrap at any character, never cut.
+            FactStyle::Mono => {
+                value.font_family(MONO).text_size(px(13.0)).line_height(px(19.0)).child(wrapped(&f.value))
+            }
+            FactStyle::Changes => value.font_family(MONO).text_size(px(13.0)).child(changes(&f.value, pal)),
+        };
         list = list.child(
             div()
                 .flex()
-                .items_center()
+                .items_start()
                 .gap(px(12.0))
                 .min_h(px(min_h))
                 .py(px(6.0))
@@ -637,6 +644,33 @@ pub fn fact_rows(rows: &[super::story::Fact], min_h: f32, key_width: Option<f32>
         );
     }
     list
+}
+
+/// Mono text that may be long (a command, a path): each line its own block, breakable anywhere, so it wraps whole.
+pub fn wrapped(text: &str) -> Div {
+    let mut block = div().flex().flex_col().min_w(px(0.0));
+    for line in text.lines() {
+        // A zero-width space after each character lets a line without spaces break anywhere.
+        let breakable: String = line.chars().flat_map(|c| [c, '\u{200B}']).collect();
+        block = block.child(div().min_w(px(0.0)).child(breakable));
+    }
+    block
+}
+
+/// `+128 −31 · 9 files` with the additions green and the removals red.
+pub fn changes(text: &str, pal: Palette) -> Div {
+    let mut line = div().flex().flex_wrap().gap_x(px(6.0));
+    for part in text.split_whitespace() {
+        let color = if part.starts_with('+') {
+            pal.success
+        } else if part.starts_with(['−', '-']) && part.len() > 1 {
+            pal.danger
+        } else {
+            pal.ink()
+        };
+        line = line.child(div().text_color(color).child(part.to_owned()));
+    }
+    line
 }
 
 /// A block of mono text in a well (a request's detail, a code sample).

@@ -141,9 +141,15 @@ pub struct Entry {
     pub ended_at: Option<i64>,
 }
 
-fn cut(text: &str, max: usize, one_line: bool) -> String {
-    let text = if one_line {
-        text.split_whitespace().collect::<Vec<_>>().join(" ")
+/// `text` on one line, as `what`, `source` and `service` are kept: each run of whitespace one space.
+#[must_use]
+pub fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn cut(text: &str, max: usize, single: bool) -> String {
+    let text = if single {
+        one_line(text)
     } else {
         text.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect()
     };
@@ -241,6 +247,16 @@ impl Journal {
         };
         if let Err(e) = append(&Self::file(paths), entry) {
             log::warn!("activity log: {e}");
+        }
+    }
+
+    /// Keeps an approved push's commits and diff text under its entry's `id` ([`crate::pushes`]); a failure is logged.
+    pub fn keep_push(&self, id: &str, push: &crate::pushes::Push) {
+        let Some(paths) = &self.paths else {
+            return;
+        };
+        if let Err(e) = crate::pushes::keep(&paths.state_dir, id, push) {
+            log::warn!("kept pushes: {e}");
         }
     }
 

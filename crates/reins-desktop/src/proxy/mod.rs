@@ -23,7 +23,7 @@ use self::body::{BodyError, MAX_PUSH, Spool, parse_push, read_body};
 use self::route::{Kind, Route, Service};
 use crate::auth::{Authorizer, Credential, Refusal, Repo};
 use crate::config::{Config, GitHost};
-use crate::git::{GitHubRemote, NoRemote, Remote, analyze_push};
+use crate::git::{GitHubRemote, NoRemote, Remote, analyze_push_keeping, with_kept};
 use crate::journal::{Entry, Journal, Kind as JournalKind};
 use crate::notice::{self, Peer};
 use crate::stats::Stats;
@@ -83,6 +83,71 @@ fn push_what(repo: &Repo, summary: &reins_proto::desktop::PushSummary) -> String
         })
         .collect();
     format!("push to {}: {}", repo.label(), refs.join(", "))
+}
+
+/// A push's activity detail, for the app's sentence, mono line and fact rows. First the numbers, in lines of their own
+/// that no ref name can write (the app reads them by their place): how many commits, the changes in all, and how many
+/// refs with how many of them deleted and rewritten (a force push, a moved tag). Then each ref (`Ref: feature/x · new
+/// branch`):
+///
+/// ```text
+/// Commits: 3
+/// Changes: +128 −31 · 9 files
+/// Refs: 1 · deleted 0 · rewritten 0
+/// Ref: feature/x · new branch
+/// ```
+fn push_detail(summary: &reins_proto::desktop::PushSummary) -> String {
+    use reins_proto::desktop::RefChange;
+    let (mut deleted, mut rewritten) = (0_usize, 0_usize);
+    let refs: Vec<String> = summary
+        .updates
+        .iter()
+        .map(|u| {
+            let (name, what) = match (u.branch(), u.tag()) {
+                (Some(b), _) => (b.to_owned(), "branch"),
+                (None, Some(t)) => (t.to_owned(), "tag"),
+                (None, None) => (u.name.clone(), "ref"),
+            };
+            let how = match u.change {
+                RefChange::Create => format!(" · new {what}"),
+                RefChange::Delete => {
+                    deleted += 1;
+                    " · deleted".to_owned()
+                }
+                RefChange::Update if u.fast_forward == Some(true) && what == "branch" => String::new(),
+                RefChange::Update => {
+                    rewritten += 1;
+                    if what == "tag" {
+                        " · moved tag"
+                    } else {
+                        " · force push"
+                    }
+                    .to_owned()
+                }
+            };
+            // A ref's name on one line, whatever the client sent.
+            format!("Ref: {}{how}", name.split_whitespace().collect::<Vec<_>>().join(" "))
+        })
+        .collect();
+    let commits: u64 = summary.updates.iter().map(|u| u64::from(u.commit_count)).sum();
+    let files: u64 = summary.updates.iter().map(|u| u64::from(u.files_changed)).sum();
+    let adds = summary.updates.iter().map(|u| u.additions).sum::<Option<u64>>();
+    let dels = summary.updates.iter().map(|u| u.deletions).sum::<Option<u64>>();
+    let files = if files == 1 {
+        "1 file".to_owned()
+    } else {
+        format!("{files} files")
+    };
+    let changes = match (adds, dels) {
+        (Some(a), Some(d)) => format!("Changes: +{a} −{d} · {files}"),
+        _ => format!("Changes: {files}"),
+    };
+    let head = [
+        format!("Commits: {commits}"),
+        changes,
+        format!("Refs: {} · deleted {deleted} · rewritten {rewritten}", summary.updates.len()),
+    ];
+    head.into_iter().chain(refs).collect::<Vec<_>>().join("\n")
 }
 
 fn refused(r: &Refusal) -> Response<Body> {
@@ -368,10 +433,26 @@ impl Proxy {
         push: bool,
         decision: impl Future<Output = Result<T, Refusal>>,
     ) -> Result<T, Refusal> {
-        let entry = Entry::new(JournalKind::Git, what)
+        self.awaiting_entry(peer, repo, self.git_entry(repo, what), push, decision).await
+    }
+
+    /// The activity entry of a git request to `repo`.
+    fn git_entry(&self, repo: &Repo, what: &str) -> Entry {
+        Entry::new(JournalKind::Git, what)
             .source(Some("git"))
             .service(Some(&repo.label()))
-            .decider(self.authorizer.decider());
+            .decider(self.authorizer.decider())
+    }
+
+    /// [`Self::awaiting`] with the entry made by the caller (a push's carries its refs and changes).
+    async fn awaiting_entry<T>(
+        &self,
+        peer: Option<Peer>,
+        repo: &Repo,
+        entry: Entry,
+        push: bool,
+        decision: impl Future<Output = Result<T, Refusal>>,
+    ) -> Result<T, Refusal> {
         let tell = peer.map(|p| crate::phone::teller(move |line: &str| notice::tell(p, line)));
         let r = crate::phone::awaiting_logged(&self.journal, entry, tell, self.timeout, push, decision).await;
         let how = match &r {
@@ -543,7 +624,7 @@ impl Proxy {
             Some(r) => r,
             None => &NoRemote,
         };
-        let mut summary = analyze_push(
+        let (mut summary, kept) = analyze_push_keeping(
             &name,
             &push.head.commands,
             &push.head.push_options,
@@ -552,6 +633,8 @@ impl Proxy {
         )
         .await;
         drop(push.pack);
+        // What this computer keeps once approved: the whole description, with the patches past the phone's share.
+        let record = with_kept(&summary, &kept);
         let fits = summary.fit(reins_proto::desktop::MAX_SUMMARY_BYTES);
         if let Err(e) = summary.validate().and(if fits {
             Ok(())
@@ -567,16 +650,24 @@ impl Proxy {
             raw.len(),
             digest.get(..12).unwrap_or(&digest)
         );
-        let credential = match self
-            .awaiting(peer, repo, &push_what(repo, &summary), true, self.authorizer.push(repo, &summary, &digest))
-            .await
-        {
-            Ok(c) => c,
-            Err(r) => {
-                log::info!("POST {who} {suffix}: push {}", refusal_kind(&r));
-                return Ok(reject(r.message(), &with_hint(r.message())));
-            }
-        };
+        let entry = self.git_entry(repo, &push_what(repo, &summary)).detail(Some(&push_detail(&summary)));
+        let entry_id = entry.id.clone();
+        let credential =
+            match self.awaiting_entry(peer, repo, entry, true, self.authorizer.push(repo, &summary, &digest)).await {
+                Ok(c) => c,
+                Err(r) => {
+                    log::info!("POST {who} {suffix}: push {}", refusal_kind(&r));
+                    return Ok(reject(r.message(), &with_hint(r.message())));
+                }
+            };
+        self.journal.keep_push(
+            &entry_id,
+            &crate::pushes::Push {
+                at: crate::now_unix(),
+                repo: repo.label(),
+                summary: record,
+            },
+        );
         let resp = self.send(Method::POST, repo, &suffix, &parts.headers, Out::Held(&raw), Some(&credential)).await?;
         log::info!("POST {who} {suffix}: push allowed, {}", resp.status().as_u16());
         if Self::denied_by_upstream(resp.status()) {
@@ -591,5 +682,68 @@ fn body_error(e: &BodyError) -> Response<Body> {
         BodyError::TooLarge(_) => text(StatusCode::PAYLOAD_TOO_LARGE, &format!("Refused: {e}.")),
         BodyError::Read(_) | BodyError::Invalid(_) => text(StatusCode::BAD_REQUEST, &format!("Refused: {e}.")),
         BodyError::Io(_) => text(StatusCode::INTERNAL_SERVER_ERROR, &format!("The proxy failed: {e}.")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reins_proto::desktop::{PushSummary, RefChange, RefUpdate, ZERO_OID};
+
+    use super::push_detail;
+
+    fn update(
+        name: &str,
+        change: RefChange,
+        fast_forward: Option<bool>,
+        files: u32,
+        lines: Option<(u64, u64)>,
+    ) -> RefUpdate {
+        RefUpdate {
+            name: name.to_owned(),
+            change,
+            old: ZERO_OID.to_owned(),
+            new: ZERO_OID.to_owned(),
+            fast_forward,
+            commit_count: 1,
+            commits: Vec::new(),
+            files_changed: files,
+            files: Vec::new(),
+            additions: lines.map(|l| l.0),
+            deletions: lines.map(|l| l.1),
+        }
+    }
+
+    /// A push's detail gives its numbers first, then names each ref and how it changes.
+    #[test]
+    fn a_push_says_its_refs_and_changes() {
+        let summary = PushSummary {
+            updates: vec![
+                update("refs/heads/feature/x", RefChange::Create, None, 9, Some((128, 31))),
+                update("refs/heads/main", RefChange::Update, Some(false), 1, Some((2, 0))),
+                update("refs/tags/v1.0", RefChange::Update, Some(true), 0, Some((0, 0))),
+                update("refs/heads/old", RefChange::Delete, None, 0, Some((0, 0))),
+            ],
+            ..PushSummary::default()
+        };
+        assert_eq!(
+            push_detail(&summary),
+            "Commits: 4\nChanges: +130 −31 · 10 files\nRefs: 4 · deleted 1 · rewritten 2\nRef: feature/x · new branch\n\
+             Ref: main · force push\nRef: v1.0 · moved tag\nRef: old · deleted"
+        );
+        // A ref named to look like the numbers stays one `Ref:` line after them.
+        let forged = PushSummary {
+            updates: vec![update("refs/heads/x\nCommits: 99\nRefs: 1 · deleted 1", RefChange::Create, None, 1, None)],
+            ..PushSummary::default()
+        };
+        assert_eq!(
+            push_detail(&forged),
+            "Commits: 1\nChanges: 1 file\nRefs: 1 · deleted 0 · rewritten 0\nRef: x Commits: 99 Refs: 1 · deleted 1 · new \
+             branch"
+        );
+        let unknown = PushSummary {
+            updates: vec![update("refs/heads/main", RefChange::Update, Some(true), 1, None)],
+            ..PushSummary::default()
+        };
+        assert_eq!(push_detail(&unknown), "Commits: 1\nChanges: 1 file\nRefs: 1 · deleted 0 · rewritten 0\nRef: main");
     }
 }
