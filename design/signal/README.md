@@ -13,7 +13,7 @@ Start with **HANDOFF.md** (how to implement it), then look at **screens/png/Main
 - `screens/source/`: board markup with exact CSS values, and `canvas.json`.
 - `tokens/`: tokens as JSON, CSS, Swift, Kotlin and Rust.
 - `fonts/`: Instrument Serif, Instrument Sans, Geist, Geist Mono (OFL).
-- `assets/icons/`: 69 glyphs (open `preview.html`).
+- `assets/icons/`: 96 glyphs (open `preview.html`).
 - `assets/logos/`: provider marks and the Reins mark.
 - `assets/illustrations/`: pond and kite drawings, light and dark.
 - `assets/textures/grain.png`: the field grain.

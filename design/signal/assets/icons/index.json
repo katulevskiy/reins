@@ -343,5 +343,140 @@
   "name": "id-card",
   "uses": 1,
   "file": "id-card.svg"
+ },
+ {
+  "name": "help",
+  "uses": 0,
+  "file": "help.svg"
+ },
+ {
+  "name": "flask",
+  "uses": 0,
+  "file": "flask.svg"
+ },
+ {
+  "name": "speaker",
+  "uses": 0,
+  "file": "speaker.svg"
+ },
+ {
+  "name": "tray",
+  "uses": 0,
+  "file": "tray.svg"
+ },
+ {
+  "name": "camera",
+  "uses": 0,
+  "file": "camera.svg"
+ },
+ {
+  "name": "moon",
+  "uses": 0,
+  "file": "moon.svg"
+ },
+ {
+  "name": "calendar",
+  "uses": 0,
+  "file": "calendar.svg"
+ },
+ {
+  "name": "globe",
+  "uses": 0,
+  "file": "globe.svg"
+ },
+ {
+  "name": "rocket",
+  "uses": 0,
+  "file": "rocket.svg"
+ },
+ {
+  "name": "more",
+  "uses": 0,
+  "file": "more.svg"
+ },
+ {
+  "name": "arrow-forward",
+  "uses": 0,
+  "file": "arrow-forward.svg"
+ },
+ {
+  "name": "git-commit",
+  "uses": 0,
+  "file": "git-commit.svg"
+ },
+ {
+  "name": "lock-open",
+  "uses": 0,
+  "file": "lock-open.svg"
+ },
+ {
+  "name": "timer-off",
+  "uses": 0,
+  "file": "timer-off.svg"
+ },
+ {
+  "name": "folder-search",
+  "uses": 0,
+  "file": "folder-search.svg"
+ },
+ {
+  "name": "scan-search",
+  "uses": 0,
+  "file": "scan-search.svg"
+ },
+ {
+  "name": "file-code",
+  "uses": 0,
+  "file": "file-code.svg"
+ },
+ {
+  "name": "file-lock",
+  "uses": 0,
+  "file": "file-lock.svg"
+ },
+ {
+  "name": "file-text",
+  "uses": 0,
+  "file": "file-text.svg"
+ },
+ {
+  "name": "cloud-cog",
+  "uses": 0,
+  "file": "cloud-cog.svg"
+ },
+ {
+  "name": "cloud-upload",
+  "uses": 0,
+  "file": "cloud-upload.svg"
+ },
+ {
+  "name": "devices",
+  "uses": 0,
+  "file": "devices.svg"
+ },
+ {
+  "name": "circle-check",
+  "uses": 0,
+  "file": "circle-check.svg"
+ },
+ {
+  "name": "circle-close",
+  "uses": 0,
+  "file": "circle-close.svg"
+ },
+ {
+  "name": "circle-alert",
+  "uses": 0,
+  "file": "circle-alert.svg"
+ },
+ {
+  "name": "vault",
+  "uses": 0,
+  "file": "vault.svg"
+ },
+ {
+  "name": "hard-drive",
+  "uses": 0,
+  "file": "hard-drive.svg"
  }
 ]
