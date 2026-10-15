@@ -46,6 +46,9 @@ class CoreContext:
     def mcp(self, tool: str, arguments: str) -> Dict:
         return self.ask_raw({"mcp": {"tool": tool, "arguments": arguments}})
 
-    def neutral(self, cls: str, target: str, details: List[str], context: List[str]) -> Dict:
-        """The risk's third view of these facts (risk::neutral_facts): {"target", "details", "context"}."""
-        return self.ask_raw({"neutral": {"class": cls, "target": target, "details": details, "context": context}})
+    def neutral(self, cls: str, target: str, details: List[str], context: List[str], reason: str = "",
+                content: str = "") -> Dict:
+        """The risk's third view (risk::neutral_facts, risk::neutral_ai): {"target", "details", "context", "reason",
+        "content"}."""
+        return self.ask_raw({"neutral": {"class": cls, "target": target, "details": details, "context": context,
+                                         "reason": reason, "content": content}})

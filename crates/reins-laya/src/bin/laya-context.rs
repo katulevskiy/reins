@@ -19,7 +19,7 @@
 use std::io::{BufRead, Write};
 
 use reins_core::autopilot::risk::{self, Context, Outcome};
-use reins_core::autopilot::situation::Facts;
+use reins_core::autopilot::situation::{AiPart, Facts};
 use reins_core::types::{AskView, GitFileView, GitPushView, GitRefView};
 use serde_json::{Value, json};
 
@@ -104,7 +104,13 @@ fn main() {
                 ..Facts::default()
             };
             let n = risk::neutral_facts(&facts);
-            let answer = json!({"target": n.target, "details": n.details, "context": n.context});
+            let ai = AiPart {
+                reason: v["neutral"]["reason"].as_str().unwrap_or_default().to_owned(),
+                content: v["neutral"]["content"].as_str().unwrap_or_default().to_owned(),
+            };
+            let nai = risk::neutral_ai(&facts, &n, &ai);
+            let answer = json!({"target": n.target, "details": n.details, "context": n.context,
+                                "reason": nai.reason, "content": nai.content});
             if writeln!(out, "{answer}").and_then(|()| out.flush()).is_err() {
                 break;
             }

@@ -777,8 +777,14 @@ impl Engine {
         (s.s_facts, s.s_full) = situation::render(&facts, &subject.described.ai);
         // The risk's third view: the facts with what the agent wrote into them as placeholders (risk::neutral_facts),
         // read in the same run when it differs; its class can only raise the risk.
-        let neutral =
-            rates_risk.then(|| situation::render_facts(&risk::neutral_facts(&facts))).filter(|n| *n != s.s_facts);
+        // (the AI's part with them too: a hook's question and detail repeat the command)
+        let neutral = rates_risk
+            .then(|| {
+                let n = risk::neutral_facts(&facts);
+                let ai = risk::neutral_ai(&facts, &n, &subject.described.ai);
+                situation::render(&n, &ai).1
+            })
+            .filter(|n| *n != s.s_facts && *n != s.s_full);
 
         let young = gates::young(age, self.cfg.new_connection_secs)
             .then(|| "a connection paired less than 10 minutes ago".to_owned());

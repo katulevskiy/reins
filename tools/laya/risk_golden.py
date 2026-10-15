@@ -67,8 +67,11 @@ def add(cid, connector, sev, facts, ai=None, full=None, pair=None, note="", core
         f["context"] = [x for x in given if CORE_LINE.match(x)]
         f["details"] = list(f.get("details") or []) + [x for x in given if not CORE_LINE.match(x)]
     s_facts, s_full = sq.render_situation(f, ai)
-    n = CORE.neutral(f.get("class", ""), f.get("target", "") or "", list(f.get("details") or []), list(f.get("context") or []))
-    s_neutral = sq.render_situation(dict(f, target=n["target"], details=n["details"], context=n["context"]), None)[0]
+    a = ai or {}
+    n = CORE.neutral(f.get("class", ""), f.get("target", "") or "", list(f.get("details") or []), list(f.get("context") or []),
+                     a.get("reason") or "", a.get("content") or "")
+    s_neutral = sq.render_situation(dict(f, target=n["target"], details=n["details"], context=n["context"]),
+                                    {"reason": n["reason"] or None, "content": n["content"] or None})[1]
     CASES.append({"id": cid, "connector": connector, "pair": pair, "risk_facts": sev,
                   "risk_full": sev if full is None else max(full, sev), "s_facts": s_facts, "s_full": s_full,
                   "s_neutral": s_neutral, "note": note, "core": core,

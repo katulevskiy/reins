@@ -1268,7 +1268,7 @@ def sample(rng, fam: str, adv: bool = False, phrasing: str = "train", offtask: b
     if isinstance(f.get("target is new"), bool):
         f["target is new"] = "yes" if f["target is new"] else "no"
     s_facts, s_full = sq.render_situation(f, ai)
-    s_neutral = sq.render_situation(neutral_view(f), None)[0] if CORE is not None else s_facts
+    s_neutral = sq.render_situation(*neutral_view(f, ai))[1] if CORE is not None else s_full
     if s_full == s_facts:
         full_sev, full_appr = sev, appr
     assert full_sev >= sev and gd.RANK[full_appr] >= gd.RANK[appr], (fam, sev, full_sev, appr, full_appr)
@@ -1383,10 +1383,13 @@ def core_stage(c: Case, f: Dict) -> Dict:
     return ans
 
 
-def neutral_view(f: Dict) -> Dict:
-    """The facts as the risk's third view reads them (the core's risk::neutral_facts)."""
-    n = CORE.neutral(f.get("class", ""), f.get("target", "") or "", list(f.get("details") or []), list(f.get("context") or []))
-    return dict(f, target=n["target"], details=n["details"], context=n["context"])
+def neutral_view(f: Dict, ai: Optional[Dict]):
+    """The request as the risk's third view reads it (the core's risk::neutral_facts and risk::neutral_ai)."""
+    ai = ai or {}
+    n = CORE.neutral(f.get("class", ""), f.get("target", "") or "", list(f.get("details") or []), list(f.get("context") or []),
+                     ai.get("reason") or "", ai.get("content") or "")
+    return dict(f, target=n["target"], details=n["details"], context=n["context"]), {"reason": n["reason"] or None,
+                                                                                     "content": n["content"] or None}
 
 
 def phone_lines(c: Case, f: Dict):
