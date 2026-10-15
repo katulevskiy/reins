@@ -815,10 +815,79 @@ pub fn assertion_audiences(domain: &str) -> Vec<String> {
 
 #[derive(Deserialize)]
 struct AssertionClaims {
+    iss: Option<String>,
+    sub: Option<String>,
+    /// A string or a list of strings.
+    aud: Option<Value>,
     jti: Option<String>,
     exp: Option<i64>,
     nbf: Option<i64>,
     iat: Option<i64>,
+}
+
+/// The claim checks, on claims either not yet verified (the cheap pre-check) or verified.
+fn check_claims(
+    claims: AssertionClaims,
+    client_id: &str,
+    audiences: &[String],
+    now: i64,
+) -> Result<VerifiedAssertion, AssertionError> {
+    let invalid = |why: &str| AssertionError::Invalid(why.to_owned());
+    match claims.iss.as_deref() {
+        None => return Err(invalid("the client assertion has no iss")),
+        Some(iss) if iss != client_id => return Err(invalid("the client assertion's iss is not the client_id")),
+        Some(_) => {}
+    }
+    match claims.sub.as_deref() {
+        None => return Err(invalid("the client assertion has no sub")),
+        Some(sub) if sub != client_id => return Err(invalid("the client assertion's sub is not the client_id")),
+        Some(_) => {}
+    }
+    let names_us = |aud: &Value| aud.as_str().is_some_and(|a| audiences.iter().any(|ours| ours == a));
+    match &claims.aud {
+        None => return Err(invalid("the client assertion has no aud")),
+        Some(Value::Array(list)) if list.iter().any(names_us) => {}
+        Some(aud) if names_us(aud) => {}
+        Some(_) => return Err(invalid("the client assertion's aud does not name this server")),
+    }
+    let exp = claims.exp.ok_or_else(|| invalid("the client assertion has no exp"))?;
+    if exp.saturating_add(ASSERTION_SKEW_SECS) <= now {
+        return Err(invalid("the client assertion has expired"));
+    }
+    if exp > now + MAX_ASSERTION_LIFETIME_SECS + ASSERTION_SKEW_SECS {
+        return Err(invalid("the client assertion expires too far in the future"));
+    }
+    if claims.nbf.is_some_and(|nbf| nbf > now + ASSERTION_SKEW_SECS) {
+        return Err(invalid("the client assertion is not valid yet"));
+    }
+    if claims.iat.is_some_and(|iat| iat > now + ASSERTION_SKEW_SECS) {
+        return Err(invalid("the client assertion was issued in the future"));
+    }
+    let jti = claims
+        .jti
+        .filter(|j| !j.is_empty() && j.len() <= MAX_JTI_BYTES)
+        .ok_or_else(|| invalid("the client assertion needs a jti"))?;
+    Ok(VerifiedAssertion {
+        jti,
+        exp,
+    })
+}
+
+/// Everything about an assertion that needs no key: its size, an accepted algorithm, and all claims (`iss` = `sub` =
+/// `client_id`, `aud`, times, `jti`), read without checking the signature. Run first, so an assertion that could never
+/// pass costs neither a key-set fetch nor a signature check. [`verify_client_assertion`] checks the claims again once
+/// the signature has been verified.
+pub fn precheck_client_assertion(
+    assertion: &str,
+    client_id: &str,
+    audiences: &[String],
+    now: i64,
+) -> Result<(), AssertionError> {
+    assertion_header(assertion, None)?;
+    let claims = jsonwebtoken::dangerous::insecure_decode::<AssertionClaims>(assertion)
+        .map_err(|_| AssertionError::Invalid("the client assertion's claims are not valid".to_owned()))?
+        .claims;
+    check_claims(claims, client_id, audiences, now).map(|_| ())
 }
 
 /// The header's algorithm (one of [`CLIENT_ASSERTION_ALGS`], and the client's pinned one if it has one) and `kid`.
@@ -904,6 +973,8 @@ pub fn verify_client_assertion(
     now: i64,
 ) -> Result<VerifiedAssertion, AssertionError> {
     let invalid = |why: &str| AssertionError::Invalid(why.to_owned());
+    // Cheap rejects first: no key lookup or signature check for an assertion whose claims could never pass.
+    precheck_client_assertion(assertion, client_id, audiences, now)?;
     let (alg, kid) = assertion_header(assertion, pinned_alg)?;
     let jwk = select_key(jwks, alg, kid.as_deref()).ok_or(AssertionError::UnknownKey)?;
     if let AlgorithmParameters::RSA(rsa) = &jwk.algorithm
@@ -924,27 +995,19 @@ pub fn verify_client_assertion(
     let claims = jsonwebtoken::decode::<AssertionClaims>(assertion, &key, &validation)
         .map_err(|e| describe_jwt_error(&e))?
         .claims;
-    let exp = claims.exp.ok_or_else(|| invalid("the client assertion has no exp"))?;
-    if exp.saturating_add(ASSERTION_SKEW_SECS) <= now {
-        return Err(invalid("the client assertion has expired"));
-    }
-    if exp > now + MAX_ASSERTION_LIFETIME_SECS + ASSERTION_SKEW_SECS {
-        return Err(invalid("the client assertion expires too far in the future"));
-    }
-    if claims.nbf.is_some_and(|nbf| nbf > now + ASSERTION_SKEW_SECS) {
-        return Err(invalid("the client assertion is not valid yet"));
-    }
-    if claims.iat.is_some_and(|iat| iat > now + ASSERTION_SKEW_SECS) {
-        return Err(invalid("the client assertion was issued in the future"));
-    }
-    let jti = claims
-        .jti
-        .filter(|j| !j.is_empty() && j.len() <= MAX_JTI_BYTES)
-        .ok_or_else(|| invalid("the client assertion needs a jti"))?;
-    Ok(VerifiedAssertion {
-        jti,
-        exp,
-    })
+    check_claims(claims, client_id, audiences, now)
+}
+
+/// The method a client must authenticate with now: the strongest of the one bound to its grant, `private_key_jwt`
+/// if this client has ever been seen with it (in a metadata document or a stored grant), and what its current
+/// metadata document declares. A client can therefore never drop back to `none`.
+pub fn required_method(bound: AuthMethod, seen_with_keys: bool, current: Option<AuthMethod>) -> AuthMethod {
+    let seen = if seen_with_keys {
+        AuthMethod::PrivateKeyJwt
+    } else {
+        AuthMethod::None
+    };
+    bound.max(seen).max(current.unwrap_or(AuthMethod::None))
 }
 
 pub fn token_response(access_token: &str, refresh_token: &str) -> Value {
@@ -1576,8 +1639,9 @@ mod tests {
         // A tampered payload.
         let good = sign(&key, Some("k1"), &good_claims());
         let parts: Vec<&str> = good.split('.').collect();
+        // A payload that passes every claim check, swapped in under the original signature.
         let mut evil = good_claims();
-        evil["sub"] = json!("https://evil.example/client.json");
+        evil["jti"] = json!("another-jti");
         let tampered = format!("{}.{}.{}", parts[0], b64(evil.to_string().as_bytes()), parts[2]);
         assert!(invalid(verify(&tampered, &jwks, None)).contains("signature"));
 
@@ -1661,6 +1725,51 @@ mod tests {
         assert_eq!(verify(&sign(&rsa, Some("a"), &good_claims()), &ps_set, None), Err(AssertionError::UnknownKey));
         assert_eq!(AssertionError::UnknownKey.into_oauth().error, "invalid_client");
         assert_eq!(AssertionError::Invalid("x".into()).into_oauth().status, 401);
+    }
+
+    #[test]
+    fn the_precheck_needs_no_key_and_catches_what_could_never_pass() {
+        let key = rsa_key("k1", 2048, Algorithm::RS256);
+        let audiences = assertion_audiences(DOMAIN);
+        let precheck =
+            |claims: &Value| precheck_client_assertion(&sign(&key, Some("k1"), claims), CLIENT, &audiences, NOW);
+        assert_eq!(precheck(&good_claims()), Ok(()));
+        // Signed by nobody the server knows, and still fine here: the signature is checked later, with the key.
+        let stranger = ec_key("unknown");
+        assert_eq!(precheck_client_assertion(&sign(&stranger, None, &good_claims()), CLIENT, &audiences, NOW), Ok(()));
+        let with = |change: &dyn Fn(&mut Value)| {
+            let mut claims = good_claims();
+            change(&mut claims);
+            match precheck(&claims) {
+                Err(AssertionError::Invalid(why)) => why,
+                other => panic!("expected Invalid, got {other:?}"),
+            }
+        };
+        assert!(with(&|c| c["exp"] = json!(NOW - 600)).contains("expired"));
+        assert!(with(&|c| c["exp"] = json!(NOW + 3600)).contains("too far"));
+        assert!(with(&|c| c["aud"] = json!("https://other.example")).contains("aud"));
+        assert!(with(&|c| c["aud"] = json!(["https://other.example"])).contains("aud"));
+        assert!(with(&|c| c["iss"] = json!("https://evil.example/c.json")).contains("iss"));
+        assert!(with(&|c| c["sub"] = json!("https://evil.example/c.json")).contains("sub"));
+        assert!(with(&|c| drop(c.as_object_mut().unwrap().remove("jti"))).contains("jti"));
+        let none = format!("{}.{}.", b64(br#"{"alg":"none"}"#), b64(good_claims().to_string().as_bytes()));
+        assert!(precheck_client_assertion(&none, CLIENT, &audiences, NOW).is_err());
+    }
+
+    #[test]
+    fn the_required_method_never_drops_to_none() {
+        use AuthMethod::{None as Public, PrivateKeyJwt as Keys};
+        assert_eq!(required_method(Public, false, None), Public);
+        assert_eq!(required_method(Public, false, Some(Public)), Public);
+        assert_eq!(required_method(Public, false, Some(Keys)), Keys, "the document says keys now");
+        assert_eq!(
+            required_method(Public, true, Some(Public)),
+            Keys,
+            "seen with keys before; the document dropped them"
+        );
+        assert_eq!(required_method(Public, true, None), Keys, "seen with keys; the document is unavailable");
+        assert_eq!(required_method(Keys, false, Some(Public)), Keys, "the grant was issued for keys");
+        assert_eq!(required_method(Keys, false, None), Keys);
     }
 
     #[test]

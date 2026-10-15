@@ -40,6 +40,9 @@ pub const MAX_USED_ASSERTIONS: usize = 100_000;
 pub const JWKS_TTL: Duration = Duration::from_secs(300);
 /// An unknown `kid` refetches a key set at most this often (anyone can send one).
 pub const JWKS_REFETCH_INTERVAL: Duration = Duration::from_secs(30);
+/// A metadata document or key set that could not be fetched is not fetched again for this long: requests naming it
+/// get the remembered error, so repeating a request cannot repeat the fetch.
+pub const FAILED_FETCH_TTL: Duration = Duration::from_secs(30);
 /// A `jti` is remembered for as long as an assertion carrying it can be valid: its longest lifetime plus the skew
 /// on both ends.
 pub const USED_ASSERTION_TTL: Duration =
@@ -147,6 +150,7 @@ pub struct OAuthState {
     clients: Mutex<TtlMap<String, ClientInfo>>,
     jwks: Mutex<TtlMap<String, JwkSet>>,
     jwks_refetches: Mutex<TtlMap<String, ()>>,
+    failed_fetches: Mutex<TtlMap<String, String>>,
     used_assertions: Mutex<UsedAssertions>,
 }
 
@@ -162,6 +166,7 @@ impl OAuthState {
             clients: Mutex::new(TtlMap::new(CIMD_TTL, clients)),
             jwks: Mutex::new(TtlMap::new(JWKS_TTL, MAX_JWKS_CACHE)),
             jwks_refetches: Mutex::new(TtlMap::new(JWKS_REFETCH_INTERVAL, MAX_JWKS_CACHE)),
+            failed_fetches: Mutex::new(TtlMap::new(FAILED_FETCH_TTL, MAX_JWKS_CACHE)),
             used_assertions: Mutex::new(UsedAssertions::new(USED_ASSERTION_TTL, MAX_USED_ASSERTIONS)),
         }
     }
@@ -258,6 +263,16 @@ impl OAuthState {
         Self::lock(&self.jwks).insert_evicting(jwks_uri.to_owned(), set);
     }
 
+    /// Why fetching `url` failed, if it failed within [`FAILED_FETCH_TTL`].
+    pub fn failed_fetch(&self, url: &str) -> Option<String> {
+        Self::lock(&self.failed_fetches).get(&url.to_owned()).cloned()
+    }
+
+    /// Remembers that fetching `url` failed (the oldest such memory makes room when there are too many).
+    pub fn remember_failed_fetch(&self, url: &str, why: &str) {
+        Self::lock(&self.failed_fetches).insert_evicting(url.to_owned(), why.to_owned());
+    }
+
     /// Whether an unknown `kid` may fetch `jwks_uri` again now: once per [`JWKS_REFETCH_INTERVAL`] and URI, so
     /// made-up key ids cannot turn this server into a fetcher of the client's key set. The marks are per URI and the
     /// oldest is dropped when there are too many, so other clients' marks can never block this one's refetch.
@@ -283,6 +298,7 @@ impl OAuthState {
         self.clients().purge();
         Self::lock(&self.jwks).purge();
         Self::lock(&self.jwks_refetches).purge();
+        Self::lock(&self.failed_fetches).purge();
         Self::lock(&self.used_assertions).purge();
     }
 }
@@ -489,6 +505,22 @@ mod tests {
         tokio::time::advance(USED_ASSERTION_TTL).await;
         used.purge();
         assert_eq!(used.len(), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_fetches_are_remembered_briefly_and_never_fill_up() {
+        let state = OAuthState::new();
+        let url = "https://slow.example/client.json";
+        assert!(state.failed_fetch(url).is_none());
+        state.remember_failed_fetch(url, "did not answer in time");
+        assert_eq!(state.failed_fetch(url).as_deref(), Some("did not answer in time"));
+        for i in 0..2 * MAX_JWKS_CACHE {
+            state.remember_failed_fetch(&format!("https://evil-{i}.example/c.json"), "nope");
+        }
+        state.remember_failed_fetch(url, "again");
+        assert_eq!(state.failed_fetch(url).as_deref(), Some("again"), "a full memory still takes new failures");
+        tokio::time::advance(FAILED_FETCH_TTL).await;
+        assert!(state.failed_fetch(url).is_none(), "tried again after 30 s");
     }
 
     #[tokio::test(start_paused = true)]

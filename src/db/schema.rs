@@ -371,6 +371,13 @@ table! {
 }
 
 table! {
+    reins_jwt_clients (client_hash) {
+        client_hash -> Text,
+        first_seen_at -> BigInt,
+    }
+}
+
+table! {
     reins_connections (uuid) {
         uuid -> Text,
         user_uuid -> Text,
@@ -459,6 +466,8 @@ joinable!(collections_groups -> groups (groups_uuid));
 joinable!(event -> users_organizations (uuid));
 joinable!(auth_requests -> users (user_uuid));
 joinable!(sso_users -> users (user_uuid));
+
+allow_tables_to_appear_in_same_query!(reins_connections, reins_refresh_tokens);
 
 allow_tables_to_appear_in_same_query!(
     archives,

@@ -435,3 +435,132 @@ async fn the_device_flow_is_refused_to_private_key_jwt_clients() {
     let body: Value = r.json().await.unwrap();
     assert_eq!(body["error"], "unauthorized_client");
 }
+
+// ---------------------------------------------------------------------------------------
+// Downgrades and fetch bounds
+// ---------------------------------------------------------------------------------------
+
+/// Sets every stored refresh token's method to `none`, as a token issued before the `client_auth` column existed
+/// (or under an older document) would read.
+#[cfg(feature = "sqlite_system")]
+fn store_every_refresh_token_as_public(server: &Server) {
+    use diesel::{Connection, RunQueryDsl, sqlite::SqliteConnection};
+    let path = server.data_dir().join("db.sqlite3");
+    let mut db = SqliteConnection::establish(path.to_str().expect("path")).expect("open the test database");
+    diesel::sql_query("UPDATE reins_refresh_tokens SET client_auth = 'none'").execute(&mut db).expect("update");
+}
+
+/// Once a client has been seen with `private_key_jwt`, a grant stored with a weaker method does not let it skip
+/// the assertion: not at refresh, and not at revocation with an access or refresh token alone.
+#[cfg(feature = "sqlite_system")]
+#[tokio::test]
+async fn a_weaker_stored_method_never_downgrades_a_private_key_jwt_client() {
+    let server = start_server().await;
+    let phone = server.phone("olga@example.com").await;
+    phone.register_device().await;
+    let chatgpt = JwtClient::start().await;
+    let code = authorize_code(&server, &phone, "olga@example.com", &chatgpt.id).await;
+    let (status, tokens) = server.token(&code_form(&code, None, Some(&chatgpt.assertion(&server, "d1")))).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    let refresh = tokens["refresh_token"].as_str().unwrap().to_owned();
+    let access = tokens["access_token"].as_str().unwrap().to_owned();
+    store_every_refresh_token_as_public(&server);
+
+    assert_invalid_client(&server.token(&refresh_form(&refresh, None)).await, "refresh without an assertion");
+    let r = client().post(server.url("/reins/oauth/revoke")).form(&[("token", access.as_str())]).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "revoking with the access token alone");
+    let r = client().post(server.url("/reins/oauth/revoke")).form(&[("token", refresh.as_str())]).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "revoking with the refresh token alone");
+    let (_, list) = phone.get("/connections").await;
+    assert_eq!(list["connections"].as_array().map_or(0, Vec::len), 1, "nothing was revoked");
+    // With its assertion it still works.
+    let (status, body) = server.token(&refresh_form(&refresh, Some(&chatgpt.assertion(&server, "d2")))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// An assertion that fails the cheap checks (here: expired, or addressed elsewhere, with a key id the server does
+/// not know) is refused before the client's key set is fetched again.
+#[tokio::test]
+async fn cheap_checks_come_before_any_key_fetch() {
+    let server = start_server().await;
+    let phone = server.phone("pia@example.com").await;
+    phone.register_device().await;
+    let chatgpt = JwtClient::start().await;
+    let code = authorize_code(&server, &phone, "pia@example.com", &chatgpt.id).await;
+    let (_, tokens) = server.token(&code_form(&code, None, Some(&chatgpt.assertion(&server, "e1")))).await;
+    let refresh = tokens["refresh_token"].as_str().expect("refresh").to_owned();
+    assert_eq!(chatgpt.jwks_fetches(), 1);
+    let stranger = Key::new("unknown-kid");
+    let mut claims = chatgpt.claims(&server, "e2");
+    claims["exp"] = json!(now() - 600);
+    let expired = stranger.sign(&claims);
+    assert_invalid_client(&server.token(&refresh_form(&refresh, Some(&expired))).await, "expired");
+    let mut claims = chatgpt.claims(&server, "e3");
+    claims["aud"] = json!("https://other.example/token");
+    let misaddressed = stranger.sign(&claims);
+    assert_invalid_client(&server.token(&refresh_form(&refresh, Some(&misaddressed))).await, "wrong aud");
+    assert_eq!(chatgpt.jwks_fetches(), 1, "no refetch for assertions that could never pass");
+}
+
+/// A host that accepts connections and never answers.
+async fn silent_host() -> u16 {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    port
+}
+
+/// Authorize requests naming metadata documents on a host that never answers must not tie up the database: the
+/// fetch runs without a database connection, so everything else keeps working.
+#[tokio::test]
+async fn slow_metadata_hosts_do_not_hold_database_connections() {
+    let server = Server::start_with(Options {
+        allow_loopback: true,
+        env: vec![("DATABASE_MAX_CONNS", "2".to_owned()), ("DATABASE_TIMEOUT", "20".to_owned())],
+        ..Options::default()
+    })
+    .await;
+    let port = silent_host().await;
+    let mut waiting = Vec::new();
+    for i in 0..6 {
+        let url = server.authorize_url(&format!("http://127.0.0.1:{port}/client-{i}.json"));
+        waiting.push(tokio::spawn(async move { client().get(url).send().await.map(|r| r.status()) }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let started = std::time::Instant::now();
+    let body = json!({"client_name": "Claude", "redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none"});
+    let r = client().post(server.url("/reins/oauth/register")).json(&body).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    assert!(started.elapsed() < std::time::Duration::from_secs(3), "waited {:?} for the database", started.elapsed());
+    for pending in waiting {
+        let status = pending.await.unwrap().unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "the silent host times out into an error page");
+    }
+}
+
+/// Many requests naming the same failing metadata document fetch it once: concurrent ones share one fetch, later
+/// ones get the remembered failure for a short while.
+#[tokio::test]
+async fn a_failing_metadata_document_is_fetched_once_for_many_requests() {
+    let server = start_server().await;
+    let mock = MockServer::start(|_| Reply::json(404, &json!({}))).await;
+    let client_id = mock.url("/missing/client.json");
+    let mut all = Vec::new();
+    for _ in 0..8 {
+        let url = server.authorize_url(&client_id);
+        all.push(tokio::spawn(async move { client().get(url).send().await.map(|r| r.status()) }));
+    }
+    for request in all {
+        assert_eq!(request.await.unwrap().unwrap(), StatusCode::BAD_REQUEST);
+    }
+    for _ in 0..4 {
+        let r = client().get(server.authorize_url(&client_id)).send().await.unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(mock.requests().len(), 1, "one fetch for twelve requests");
+}

@@ -39,7 +39,7 @@ pub use self::organization::{
     Membership, MembershipId, MembershipStatus, MembershipType, OrgApiKeyId, Organization, OrganizationApiKey,
     OrganizationId,
 };
-pub use self::reins_client::ReinsClient;
+pub use self::reins_client::{ReinsClient, ReinsJwtClient};
 pub use self::reins_connection::{ReinsConnection, ReinsRefreshToken};
 pub use self::reins_device::ReinsDevice;
 pub use self::reins_vault_passkey::ReinsVaultPasskey;

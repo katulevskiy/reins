@@ -162,7 +162,10 @@ prefilter, so query syntax cannot widen what a grant allows.
    assertion for the exchange and for every refresh: RS256, PS256, ES256 or EdDSA, verified against its JWKS (cached
    5 minutes, fetched again once for an unknown `kid`), `iss` = `sub` = `client_id`, `aud` the token endpoint or the
    issuer, at most 5 minutes of lifetime, and a `jti` that is accepted once. The method is bound to the code and stored
-   with each refresh token, so it cannot be dropped later. Dynamic registration stays public-only.
+   with each refresh token, and a client once seen with `private_key_jwt` (document or grant) is recorded and never
+   accepted without an assertion again. Client documents and key sets are fetched without holding a database
+   connection, once per URL at a time, at most 16 at once, 5 s each; failures are remembered for 30 s. Dynamic
+   registration stays public-only.
 
 `reins login` pairs without a browser by default (OAuth device authorization, RFC 8628):
 
