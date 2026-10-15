@@ -463,3 +463,29 @@ async fn a_large_push_is_read_quickly() {
     assert_eq!(s.updates[0].files_changed, 4000);
     assert!(took < std::time::Duration::from_secs(30));
 }
+
+/// Past the phone's patch budget, patches are kept for this computer's record: the phone's summary is exactly what it
+/// was, and the record has the rest in place.
+#[tokio::test]
+async fn patches_past_the_phones_budget_are_kept_for_the_record() {
+    use reins_desktop::git::{analyze_push_keeping, with_kept};
+    let (f, base) = base_repo();
+    let wide = |tag: &str| -> Vec<u8> {
+        let line = |i: usize| [tag, &format!(" {i:03} "), &"x".repeat(180), "\n"].concat().into_bytes();
+        (0..300).flat_map(line).collect()
+    };
+    f.commit(&[("a.txt", Some(&wide("a")))], "First wide file");
+    let new = f.commit(&[("b.txt", Some(&wide("b")))], "Second wide file");
+    let pack = f.push_pack(&new, &[&base]);
+    let commands = [cmd(&base, &new, "refs/heads/main")];
+
+    let phone = analyze(&commands, Some(pack.path()), &f.remote()).await;
+    let (summary, kept) = analyze_push_keeping("o/r", &commands, &[], Some(pack.path()), &f.remote()).await;
+    assert_eq!(summary, phone, "the phone gets what it always got");
+    let patches = |s: &PushSummary| s.updates[0].commits.iter().filter(|c| c.files[0].patch.is_some()).count();
+    assert_eq!(patches(&phone), 1, "one wide patch fits the phone's budget");
+    assert_eq!(kept.len(), 1);
+    let record = with_kept(&summary, &kept);
+    assert_eq!(patches(&record), 2, "the record has both");
+    record.updates[0].commits.iter().for_each(|c| assert!(c.files[0].patch.as_ref().unwrap().starts_with("@@ ")));
+}

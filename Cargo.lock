@@ -8387,11 +8387,13 @@ dependencies = [
  "png 0.18.1",
  "qrcode",
  "reins-desktop",
+ "reins-policy",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tray-icon",
+ "url",
  "winreg 0.56.0",
 ]
 
