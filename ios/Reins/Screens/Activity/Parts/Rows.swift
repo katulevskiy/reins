@@ -100,8 +100,7 @@ enum EntryText {
     }
 
     /// "TODAY", "YESTERDAY", else the date ("Mon, Oct 12").
-    static func day(_ start: Date, now: Date) -> String {
-        let calendar = Calendar.current
+    static func day(_ start: Date, now: Date, calendar: Calendar = .current) -> String {
         if calendar.isDate(start, inSameDayAs: now) { return "Today" }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(start, inSameDayAs: yesterday) { return "Yesterday" }
         let sameYear = calendar.component(.year, from: start) == calendar.component(.year, from: now)
@@ -118,8 +117,7 @@ enum EntryText {
     }
 
     /// The entries by day, newest first, keeping their order.
-    static func days(_ entries: [ActivityEntry]) -> [(day: Date, entries: [ActivityEntry])] {
-        let calendar = Calendar.current
+    static func days(_ entries: [ActivityEntry], calendar: Calendar = .current) -> [(day: Date, entries: [ActivityEntry])] {
         var out: [(day: Date, entries: [ActivityEntry])] = []
         for entry in entries {
             let day = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(entry.at)))
@@ -213,6 +211,10 @@ struct HistoryRow: View {
     var selected = false
     var glowing = false
     var now: Int64 = Timers.nowSeconds()
+    /// The words a search found: set apart in the title.
+    var terms: [String] = []
+    /// Where the search matched outside the title, as one line under the row.
+    var snippet: ActivitySnippet? = nil
 
     var body: some View {
         let field = EntryLook.field(entry)
@@ -222,7 +224,7 @@ struct HistoryRow: View {
                 .foldTile(entry.id)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                AskRunsText(runs: line.runs, size: 18)
+                AskRunsText(runs: line.runs, size: 18, terms: terms)
                     .foregroundStyle(Palette.ink)
                     .lineLimit(2)
                     .accessibilityLabel(line.text)
@@ -241,6 +243,12 @@ struct HistoryRow: View {
                     .lineLimit(1)
                 if let risk = entry.autopilot?.risk, RiskLook.listed(risk) {
                     RiskLine(risk: risk)
+                }
+                if let snippet {
+                    Text(ActivitySearchText.snippet(snippet))
+                        .lineLimit(2)
+                        .padding(.top, 2)
+                        .accessibilityIdentifier("snippet:\(entry.id)")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

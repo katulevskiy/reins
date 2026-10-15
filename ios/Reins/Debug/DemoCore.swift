@@ -713,6 +713,49 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         throw CoreError.Service(reason: "the demo has no GitHub connection")
     }
 
+    /// The core's search, in memory: every word a case-insensitive substring of the entry's text, the filters as the
+    /// core reads them, newest first, a page at a time.
+    func searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt32) async throws -> ActivityPage {
+        locked { s in
+            let terms = DemoSearch.terms(query.text)
+            let all = s.activity.filter { DemoSearch.keeps($0, query, terms) }.sorted { ($0.at, $0.id) > ($1.at, $1.id) }
+            let rest = after.map { a in all.filter { ($0.at, $0.id) < (a.at, a.id) } } ?? all
+            let page = Array(rest.prefix(Int(min(max(limit, 1), 200))))
+            let next = rest.count > page.count ? page.last.map { ActivityCursor(at: $0.at, id: $0.id) } : nil
+            return ActivityPage(
+                hits: page.map { ActivityHit(entry: $0, snippet: DemoSearch.snippet($0, terms)) }, next: next, total: UInt32(all.count),
+                terms: terms
+            )
+        }
+    }
+
+    func activityStamps(query: ActivityQuery) async throws -> [ActivityStamp] {
+        locked { s in
+            let terms = DemoSearch.terms(query.text)
+            return s.activity.filter { DemoSearch.keeps($0, query, terms) }
+                .sorted { ($0.at, $0.id) > ($1.at, $1.id) }
+                .map(ActivityDays.stamp)
+        }
+    }
+
+    func activityFacets() async throws -> ActivityFacets {
+        locked { s in
+            func mostUsed(_ values: [String]) -> [String] {
+                let counts = Dictionary(values.map { ($0, 1) }, uniquingKeysWith: +)
+                return counts.keys.sorted { (counts[$0]!, $1) > (counts[$1]!, $0) }
+            }
+            var seen: Set<String> = []
+            let connections = s.activity.sorted { $0.at > $1.at }.compactMap { e -> ActivityConnection? in
+                guard !e.connectionId.isEmpty, seen.insert(e.connectionId).inserted else { return nil }
+                return ActivityConnection(id: e.connectionId, label: untrustedName(e.connectionLabel))
+            }
+            return ActivityFacets(
+                services: mostUsed(s.activity.map(\.service).filter { !$0.isEmpty }), actions: mostUsed(s.activity.map(\.action)),
+                connections: connections
+            )
+        }
+    }
+
     func fetchEmail(account: String?, messageId: String) async throws -> EmailContent {
         try await latency(0.25)
         return try locked { s in

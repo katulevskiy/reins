@@ -18,7 +18,7 @@ struct EmailScreen: View {
     @State private var attempt = 0
 
     var body: some View {
-        let entry = model.activity.first { $0.id == entryId }
+        let entry = model.entry(entryId)
         let logged = entry.flatMap { $0.info.messages.indices.contains(index) ? $0.info.messages[index] : nil }
         Group {
             if let entry, let logged {

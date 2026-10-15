@@ -121,6 +121,13 @@ final class AppModel {
     private(set) var pending: [PendingItem] = []
     /// Everything that happened, newest first.
     private(set) var activity: [ActivityEntry] = []
+    /// Entries read by Activity's search and its day pages, older than `activity` reaches; by id.
+    private(set) var searchedEntries: [Int64: ActivityEntry] = [:]
+    /// Activity's days opened or closed by hand this session, by day ("2026-10-15"); never saved.
+    private(set) var activityOpenDays: [String: Bool] = [:]
+    /// What Activity searches for and how it narrows it; kept while the user moves between tabs.
+    var activitySearchText = ""
+    var activityFilters = ActivityFilters()
     private(set) var grants: [GrantView] = []
     /// What a newly connected AI may do at first; nil until the user chose (it then asks for everything).
     private(set) var startingPolicy: StartingPolicy?
@@ -283,6 +290,10 @@ final class AppModel {
         deviceReplaced = false
         pending = []
         activity = []
+        searchedEntries = [:]
+        activityOpenDays = [:]
+        activitySearchText = ""
+        activityFilters = ActivityFilters()
         grants = []
         startingPolicy = nil
         accounts = []
@@ -699,6 +710,23 @@ final class AppModel {
     }
 
     var unseenActivity: Int { activity.filter { $0.id > seenActivityId }.count }
+
+    /// An entry by id: from the history read at once, else from what a search or an opened day brought in.
+    func entry(_ id: Int64) -> ActivityEntry? {
+        activity.first { $0.id == id } ?? searchedEntries[id]
+    }
+
+    /// Keeps the entries a search or a day page read, so opening one finds it beyond the history read at once.
+    func remember(_ entries: [ActivityEntry]) {
+        guard !entries.isEmpty else { return }
+        if searchedEntries.count > 2_000 { searchedEntries.removeAll() }
+        for e in entries where searchedEntries[e.id] != e { searchedEntries[e.id] = e }
+    }
+
+    /// Whether Activity's day `key` ("2026-10-15") is open; today's is unless closed. In memory for the session only.
+    func activityDayOpen(_ key: String, today: String) -> Bool { activityOpenDays[key] ?? (key == today) }
+
+    func setActivityDay(_ key: String, open: Bool) { activityOpenDays[key] = open }
 
     var activeGrants: Int { grants.filter(\.active).count }
 

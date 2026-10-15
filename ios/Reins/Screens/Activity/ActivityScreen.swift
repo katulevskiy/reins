@@ -1,39 +1,15 @@
 import SwiftUI
 
-/// History filters: everything, what Autopilot (or a bypass, or Lockdown) decided, the denials, what a grant covered.
-enum ActivityFilter: String, CaseIterable {
-    case all, autopilot, denied, grants
-
-    var title: String {
-        switch self {
-        case .all: "All"
-        case .autopilot: "Autopilot"
-        case .denied: "Denied"
-        case .grants: "Grants"
-        }
-    }
-
-    func keeps(_ entry: ActivityEntry) -> Bool {
-        switch self {
-        case .all: true
-        case .autopilot: !entry.decidedBy.isEmpty
-        case .denied: entry.outcome == "denied"
-        case .grants: entry.grantId != nil
-        }
-    }
-}
-
 /// Activity (iOS-Activity.png): when something is broken, a short amber field at the very top; the title with the mode
-/// chip and the filter; one mood line; the stack of what waits (the pond when nothing does); then the river, everything
-/// your AIs did by day, newest first, in hairline rows. An answer folds into the river. On a regular width this is the
-/// content column and an entry opens in the detail column.
+/// chip and the filter button; the search field, and the filter chips when shown or on. Browsing: one mood line, the
+/// stack of what waits (the pond when nothing does), then the river by day, newest first, in hairline rows: today open,
+/// every earlier day folded under its header with its count until opened. An answer folds into the river. Searching
+/// (words typed or a filter on): the matches by day, newest first, their words set apart. On a regular width this is
+/// the content column and an entry opens in the detail column.
 struct ActivityScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @SceneStorage("activity.filter") private var filterRaw = ActivityFilter.all.rawValue
-    /// Any AI, or one connection's entries only ("" for any).
-    @SceneStorage("activity.ai") private var aiFilter = ""
     /// What Autopilot made of each waiting request (Manual and Auto), by request id.
     @State private var suggestions: [String: SuggestionView] = [:]
     /// The list was placed where the user stopped reading; until then nothing is marked seen.
@@ -42,27 +18,65 @@ struct ActivityScreen: View {
     @State private var seen = SeenRows()
     @State private var atTop = true
     @State private var away = false
+    /// The filter chips, shown by the filter button (they also show whenever a filter is on).
+    @State private var filtersShown = false
+    /// The river's days, from the core's stamps of every entry; nil until read (the days of what is loaded until then).
+    @State private var days: [ActivityDay]?
+    /// The entries read for each opened day, by day.
+    @State private var pages: [String: DayPage] = [:]
+    /// The integrations, kinds and AIs the history holds, for the filter menus.
+    @State private var facets: ActivityFacets?
+    /// The search's matches; nil while browsing or before the first answer.
+    @State private var results: SearchResults?
 
-    private var filter: ActivityFilter { ActivityFilter(rawValue: filterRaw) ?? .all }
-
-    private var filterBinding: Binding<ActivityFilter> {
-        Binding(get: { filter }, set: { f in
-            withAnimation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion)) { filterRaw = f.rawValue }
-        })
+    /// A day's entries read so far and where the next page starts.
+    private struct DayPage {
+        var entries: [ActivityEntry] = []
+        var next: ActivityCursor?
+        var started = false
+        var loading = false
+        var done: Bool { started && next == nil }
     }
 
-    private var aiBinding: Binding<String> {
-        Binding(get: { aiFilter }, set: { id in
-            withAnimation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion)) { aiFilter = id }
-        })
+    /// What is searched: the words (trimmed) and the filters.
+    private struct SearchKey: Equatable {
+        var text: String
+        var filters: ActivityFilters
     }
 
-    private var shown: [ActivityEntry] {
-        ActivityText.filtered(model.activity, filter: filter, connection: aiFilter)
+    private struct SearchResults {
+        var key: SearchKey
+        /// The query of the first page (its `since` fixed then), for the pages after it.
+        var query: ActivityQuery
+        var hits: [ActivityHit]
+        var next: ActivityCursor?
+        var total: UInt32
+        var terms: [String]
+        var loadingMore = false
+    }
+
+    private var searchKey: SearchKey {
+        SearchKey(text: model.activitySearchText.trimmingCharacters(in: .whitespacesAndNewlines), filters: model.activityFilters)
+    }
+
+    private var searching: Bool { ActivityFilters.searching(text: model.activitySearchText, filters: model.activityFilters) }
+
+    private var textBinding: Binding<String> {
+        Binding(get: { model.activitySearchText }, set: { model.activitySearchText = $0 })
+    }
+
+    private var filtersBinding: Binding<ActivityFilters> {
+        Binding(get: { model.activityFilters }, set: { model.activityFilters = $0 })
+    }
+
+    private var filtersShownBinding: Binding<Bool> {
+        Binding(get: { filtersShown }, set: { shown in
+            withAnimation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion)) { filtersShown = shown }
+        })
     }
 
     var body: some View {
-        let entries = shown
+        let searching = self.searching
         ScrollViewReader { proxy in
             ScrollView {
                 // The warnings are often empty: outside the lazy stack, whose first rows must have a size.
@@ -70,19 +84,28 @@ struct ActivityScreen: View {
                     warnings
                     LazyVStack(alignment: .leading, spacing: 0) {
                         header.id("top")
-                        mood
-                        if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
-                        waiting
-                        if filter != .all || !aiFilter.isEmpty { filters }
-                        if entries.isEmpty {
-                            empty
+                        ActivitySearchField(text: textBinding)
+                            .padding(.horizontal, 24)
+                            .padding(.top, 12)
+                        if filtersShown || !model.activityFilters.isEmpty {
+                            ActivityFilterBar(filters: filtersBinding, facets: facets)
+                                .padding(.top, 12)
+                                .transition(.opacity)
+                        }
+                        if searching {
+                            if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
+                            found
                         } else {
-                            list(entries)
+                            mood
+                            if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
+                            waiting
+                            river
                         }
                     }
                 }
                 .padding(.bottom, 32)
             }
+            .scrollDismissesKeyboard(.immediately)
             .accessibilityContainer("activityList")
             .refreshable {
                 await model.refreshPending()
@@ -120,7 +143,11 @@ struct ActivityScreen: View {
         }
         .task(id: model.pending.filter { $0.kind == .request }.map(\.id)) { await loadSuggestions() }
         .task(id: model.fold.request?.at) { await model.fold.run(model) }
+        // New entries: the days' counts and the open days again.
+        .task(id: model.activity.map(\.id)) { await loadRiver() }
+        .task(id: searchKey) { await search(searchKey) }
         .onChange(of: atTop) { markSeenSoon() }
+        .animation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion), value: searching)
         .pageBackground()
         .foldOverlay(model.fold)
         .signalMenuHost()
@@ -130,8 +157,8 @@ struct ActivityScreen: View {
 
     // MARK: Parts
 
-    /// The title with the mode chip and the filter beside it, or under it when the column is too narrow for both (an
-    /// iPad's content column).
+    /// The title with the mode chip and the filter button beside it, or under it when the column is too narrow for both
+    /// (an iPad's content column).
     private var header: some View {
         ViewThatFits(in: .horizontal) {
             PageHeader(title: "Activity") { controls }
@@ -149,7 +176,7 @@ struct ActivityScreen: View {
             if let autopilot = model.autopilot {
                 ActivityModeMenu(settings: autopilot)
             }
-            ActivityFilterMenu(filter: filterBinding, ai: aiBinding, ais: ActivityText.ais(model.activity))
+            ActivityFilterToggle(shown: filtersShownBinding, active: !model.activityFilters.isEmpty)
         }
         .fixedSize()
     }
@@ -160,7 +187,7 @@ struct ActivityScreen: View {
             .textRole(.mood)
             .foregroundStyle(Palette.ink2)
             .padding(.horizontal, 24)
-            .padding(.top, 2)
+            .padding(.top, 14)
             .accessibilityIdentifier("activityMood")
     }
 
@@ -197,7 +224,7 @@ struct ActivityScreen: View {
             WaitStack(groups: WaitGroup.of(model.pending), suggestions: suggestions)
                 .padding(.top, 16)
                 .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: model.pending.map(\.id))
-        } else if filter == .all && !model.connections.isEmpty {
+        } else if !model.connections.isEmpty {
             // All quiet: the pond fills the empty stack.
             Illustration(.pond)
                 .frame(maxWidth: 300)
@@ -208,27 +235,8 @@ struct ActivityScreen: View {
         }
     }
 
-    /// The chosen filter, as chips to change or clear it.
-    private var filters: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(ActivityFilter.allCases, id: \.self) { f in
-                    FilterChip(title: f.title, selected: filter == f) { filterBinding.wrappedValue = f }
-                        .accessibilityIdentifier("filter:\(f.rawValue)")
-                }
-                AnyAIChip(ai: aiBinding, ais: ActivityText.ais(model.activity))
-            }
-            .padding(.horizontal, 24)
-        }
-        .padding(.top, 16)
-        .transition(.opacity)
-    }
-
     @ViewBuilder private var empty: some View {
-        if filter != .all || !aiFilter.isEmpty {
-            EmptyState(symbol: "line.3.horizontal.decrease", title: "Nothing here")
-                .accessibilityIdentifier("noAutomatic")
-        } else if model.connections.isEmpty {
+        if model.connections.isEmpty {
             // A new account: nothing can ask yet, so offer the ways to connect something.
             VStack(spacing: 10) {
                 EmptyState.calm("Nothing has asked yet.")
@@ -261,37 +269,241 @@ struct ActivityScreen: View {
         }
     }
 
-    @ViewBuilder private func list(_ entries: [ActivityEntry]) -> some View {
-        let seenId = model.seenActivityId
-        let oldestUnseen = entries.lastIndex { $0.id > seenId }.map { entries[$0].id }
-        let selected: Int64? = if case let .activityDetail(id)? = model.path(.activity).first { id } else { nil }
+    // MARK: The river by day
+
+    /// The days to show: the core's, with any day of what is loaded the stamps do not have yet.
+    private var shownDays: [ActivityDay] {
+        ActivityDays.merged(days, recent: model.activity, calendar: .current)
+    }
+
+    private func todayKey(_ now: Int64) -> String {
+        ActivityDays.key(Date(timeIntervalSince1970: TimeInterval(now)), calendar: .current)
+    }
+
+    /// The open days' rows, by day.
+    private func openRows(_ all: [ActivityDay], today: String) -> [String: [ActivityEntry]] {
+        var out: [String: [ActivityEntry]] = [:]
+        for day in all where model.activityDayOpen(day.key, today: today) {
+            out[day.key] = ActivityDays.rows(day, pages: pages[day.key]?.entries ?? [], recent: model.activity)
+        }
+        return out
+    }
+
+    /// The rows on screen while browsing, newest first.
+    private func visibleRows() -> [ActivityEntry] {
+        let all = shownDays
+        let open = openRows(all, today: todayKey(Timers.nowSeconds()))
+        return all.flatMap { open[$0.key] ?? [] }
+    }
+
+    @ViewBuilder private var river: some View {
         let now = Timers.nowSeconds()
         let today = Date(timeIntervalSince1970: TimeInterval(now))
-        ForEach(Array(EntryText.days(entries).enumerated()), id: \.element.day) { _, group in
-            PageSectionHeader(EntryText.day(group.day, now: today)) {
-                Text(ActivityText.dayCount(group.entries)).textRole(.meta).foregroundStyle(Palette.inkMeta)
-            }
-            .padding(.top, 10)
-            ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
-                let last = i == group.entries.count - 1
-                row(entry, selected: selected == entry.id, now: now)
-                // Where the entries you have not seen end: everything above this line is new.
-                if entry.id == oldestUnseen && !last {
-                    NewMarker()
-                } else if !last {
-                    Rectangle().fill(Palette.rule).frame(height: 1).padding(.leading, 76).padding(.trailing, 24)
+        let todayKey = todayKey(now)
+        let all = shownDays
+        if all.isEmpty {
+            empty
+        } else {
+            let open = openRows(all, today: todayKey)
+            let oldestUnseen = all.flatMap { open[$0.key] ?? [] }.last { $0.id > model.seenActivityId }?.id
+            let selected: Int64? = if case let .activityDetail(id)? = model.path(.activity).first { id } else { nil }
+            ForEach(all) { day in
+                let rows = open[day.key]
+                DayHeader(title: EntryText.day(day.start, now: today), day: day, open: rows != nil) { toggle(day, today: todayKey) }
+                    .padding(.top, 10)
+                if let rows {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, entry in
+                        let last = i == rows.count - 1
+                        row(entry, selected: selected == entry.id, now: now)
+                            .onAppear {
+                                if last { Task { await loadDay(day, reset: false, upTo: rows.count + Self.pageSize) } }
+                            }
+                        // Where the entries you have not seen end: everything above this line is new.
+                        if entry.id == oldestUnseen && !last {
+                            NewMarker()
+                        } else if !last {
+                            Rectangle().fill(Palette.rule).frame(height: 1).padding(.leading, 76).padding(.trailing, 24)
+                        }
+                    }
+                    if pages[day.key]?.loading == true && rows.count < day.count {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 14)
+                    }
                 }
             }
         }
     }
 
-    private func row(_ entry: ActivityEntry, selected: Bool, now: Int64) -> some View {
+    private func toggle(_ day: ActivityDay, today: String) {
+        let open = !model.activityDayOpen(day.key, today: today)
+        withAnimation(Motion.of(.smooth(duration: 0.28), reduce: reduceMotion)) { model.setActivityDay(day.key, open: open) }
+        feedback.play(.expand(open))
+        if open && pages[day.key] == nil {
+            let shown = ActivityDays.rows(day, pages: [], recent: model.activity).count
+            Task { await loadDay(day, reset: true, upTo: max(Self.pageSize, shown)) }
+        }
+    }
+
+    static let pageSize = 50
+
+    /// The days and their counts from the core, the filter menus' choices, then the open days' entries again.
+    private func loadRiver() async {
+        let core = model.core
+        do {
+            async let stampsRead = core.activityStamps(query: ActivityQuery())
+            async let facetsRead = core.activityFacets()
+            let stamps = try await stampsRead
+            let read = try await facetsRead
+            if Task.isCancelled { return }
+            days = ActivityDays.group(stamps, calendar: .current)
+            facets = read
+        } catch {
+            // The days of what is loaded stay; the next change tries again.
+            if Task.isCancelled { return }
+        }
+        let today = todayKey(Timers.nowSeconds())
+        for day in shownDays where model.activityDayOpen(day.key, today: today) {
+            let have = max(pages[day.key]?.entries.count ?? 0, ActivityDays.rows(day, pages: [], recent: model.activity).count)
+            await loadDay(day, reset: true, upTo: max(Self.pageSize, have))
+            if Task.isCancelled { return }
+        }
+    }
+
+    /// Reads `day`'s entries until `upTo` are in (or the day ends), from its start (`reset`) or after what was read.
+    private func loadDay(_ day: ActivityDay, reset: Bool, upTo: Int) async {
+        if pages[day.key]?.loading == true { return }
+        var page = reset ? DayPage() : (pages[day.key] ?? DayPage())
+        if page.done || page.entries.count >= upTo { return }
+        pages[day.key, default: DayPage()].loading = true
+        let query = ActivityQuery(since: day.since, until: day.until)
+        do {
+            while page.entries.count < upTo && !page.done {
+                let limit = UInt32(min(200, max(Self.pageSize, upTo - page.entries.count)))
+                let read = try await model.core.searchActivity(query: query, after: page.next, limit: limit)
+                let entries = read.hits.map(\.entry)
+                model.remember(entries)
+                let have = Set(page.entries.map(\.id))
+                page.entries += entries.filter { !have.contains($0.id) }
+                page.next = read.next
+                page.started = true
+                if entries.isEmpty { break }
+            }
+        } catch {
+            // What was read stays; scrolling to the end tries again.
+        }
+        page.loading = false
+        pages[day.key] = page
+    }
+
+    // MARK: Search
+
+    /// The matches by day, newest first, a page at a time; the total beside the first day.
+    @ViewBuilder private var found: some View {
+        if let r = results {
+            if r.hits.isEmpty {
+                VStack(spacing: 10) {
+                    GlyphIcon(.search, size: 30).foregroundStyle(Palette.inkMeta)
+                    Text("Nothing found").font(RFont.sans(17, .semibold)).foregroundStyle(Palette.ink)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(32)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(model.activityFilters.isEmpty ? "nothingFound" : "noAutomatic")
+            } else {
+                let now = Timers.nowSeconds()
+                let today = Date(timeIntervalSince1970: TimeInterval(now))
+                let snippets = Dictionary(r.hits.map { ($0.entry.id, $0.snippet) }, uniquingKeysWith: { first, _ in first })
+                let groups = EntryText.days(r.hits.map(\.entry))
+                let lastId = r.hits.last?.entry.id
+                let selected: Int64? = if case let .activityDetail(id)? = model.path(.activity).first { id } else { nil }
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(groups.enumerated()), id: \.element.day) { index, group in
+                        PageSectionHeader(EntryText.day(group.day, now: today)) {
+                            if index == 0 {
+                                Text("\(r.total) found")
+                                    .textRole(.meta)
+                                    .foregroundStyle(Palette.inkMeta)
+                                    .monospacedDigit()
+                                    .accessibilityIdentifier("searchTotal")
+                            }
+                        }
+                        .padding(.top, 10)
+                        ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
+                            row(entry, selected: selected == entry.id, now: now, terms: r.terms, snippet: snippets[entry.id] ?? nil, tracksSeen: false)
+                                .onAppear {
+                                    if entry.id == lastId { Task { await loadMoreResults() } }
+                                }
+                            if i < group.entries.count - 1 {
+                                Rectangle().fill(Palette.rule).frame(height: 1).padding(.leading, 76).padding(.trailing, 24)
+                            }
+                        }
+                    }
+                    if r.loadingMore {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 14)
+                    }
+                }
+                .accessibilityContainer("searchResults")
+            }
+        } else {
+            ProgressView().frame(maxWidth: .infinity).padding(.top, 32)
+        }
+    }
+
+    /// The first page for `key`, after a short pause while words are typed (a newer key cancels this one).
+    private func search(_ key: SearchKey) async {
+        guard ActivityFilters.searching(text: key.text, filters: key.filters) else {
+            results = nil
+            return
+        }
+        if results?.key.text != key.text {
+            try? await Task.sleep(for: .milliseconds(200))
+            if Task.isCancelled { return }
+        }
+        let query = key.filters.query(text: key.text, now: Date(timeIntervalSince1970: TimeInterval(Timers.nowSeconds())))
+        do {
+            let page = try await model.core.searchActivity(query: query, after: nil, limit: UInt32(Self.pageSize))
+            if Task.isCancelled { return }
+            model.remember(page.hits.map(\.entry))
+            results = SearchResults(key: key, query: query, hits: page.hits, next: page.next, total: page.total, terms: page.terms)
+        } catch {
+            if Task.isCancelled { return }
+            results = SearchResults(key: key, query: query, hits: [], next: nil, total: 0, terms: [])
+            model.notice = error.userMessage
+        }
+    }
+
+    /// The next page of matches, when the last one shown appears.
+    private func loadMoreResults() async {
+        guard var r = results, let next = r.next, !r.loadingMore else { return }
+        results?.loadingMore = true
+        do {
+            let page = try await model.core.searchActivity(query: r.query, after: next, limit: UInt32(Self.pageSize))
+            guard results?.key == r.key else { return }
+            model.remember(page.hits.map(\.entry))
+            let have = Set(r.hits.map(\.entry.id))
+            r.hits += page.hits.filter { !have.contains($0.entry.id) }
+            r.next = page.next
+            r.total = page.total
+            r.loadingMore = false
+            results = r
+        } catch {
+            if results?.key == r.key { results?.loadingMore = false }
+        }
+    }
+
+    // MARK: Rows
+
+    private func row(
+        _ entry: ActivityEntry, selected: Bool, now: Int64, terms: [String] = [], snippet: ActivitySnippet? = nil, tracksSeen: Bool = true
+    ) -> some View {
         Button {
             model.show(.activityDetail(entry.id), in: .activity)
             feedback.defaultTap()
         } label: {
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                HistoryRow(entry: entry, selected: selected, glowing: model.fold.glowing(entry.id, now: context.date), now: now)
+                HistoryRow(
+                    entry: entry, selected: selected, glowing: model.fold.glowing(entry.id, now: context.date), now: now, terms: terms,
+                    snippet: snippet
+                )
             }
         }
         .buttonStyle(RowButtonStyle())
@@ -309,6 +521,8 @@ struct ActivityScreen: View {
             }
         }
         .onScrollVisibilityChange(threshold: 0.6) { isVisible in
+            // Search results are not the river: what is seen is read there.
+            guard tracksSeen else { return }
             if isVisible { seen.visible.insert(entry.id) } else { seen.visible.remove(entry.id) }
             markSeenSoon()
         }
@@ -342,7 +556,7 @@ struct ActivityScreen: View {
     /// Opening the list lands where you stopped reading: at the oldest entry you have not seen, unless something waits.
     private func position(_ proxy: ScrollViewProxy) async {
         guard !positioned, !model.activity.isEmpty else { return }
-        let entries = shown
+        let entries = searching ? [] : visibleRows()
         if let oldest = entries.lastIndex(where: { $0.id > model.seenActivityId }), oldest > 2, model.pending.isEmpty {
             proxy.scrollTo("e:\(entries[oldest - 1].id)", anchor: .top)
             try? await Task.sleep(for: .milliseconds(300))
@@ -358,7 +572,7 @@ struct ActivityScreen: View {
         guard positioned else { return }
         if let newest = seen.visible.max() {
             model.markActivitySeen(newest)
-        } else if atTop, let first = shown.first {
+        } else if atTop, !searching, let first = visibleRows().first {
             model.markActivitySeen(first.id)
         }
     }
@@ -379,6 +593,47 @@ struct ActivityScreen: View {
 private final class SeenRows {
     var visible: Set<Int64> = []
     var settle: Task<Void, Never>?
+}
+
+/// A day of the river: its label, how many entries and how many were denied or failed, and a chevron that turns as the
+/// day opens or folds. A heading that is also its toggle.
+private struct DayHeader: View {
+    var title: String
+    var day: ActivityDay
+    var open: Bool
+    var toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .textRole(.label)
+                    .foregroundStyle(Palette.inkMeta)
+                Spacer(minLength: 8)
+                Text(ActivityDays.summary(day))
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
+                    .monospacedDigit()
+                GlyphIcon(.chevronDown, size: 14)
+                    .foregroundStyle(Palette.inkFaint)
+                    .rotationEffect(.degrees(open ? 0 : -90))
+            }
+            .padding(.leading, 22)
+            .padding(.trailing, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressDimsStyle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ActivityDays.spoken(title, day))
+        .accessibilityValue(open ? "Expanded" : "Collapsed")
+        .accessibilityHint(open ? "Folds the day" : "Opens the day")
+        .accessibilityAddTraits([.isHeader, .isButton])
+        .accessibilityAction { toggle() }
+        .accessibilityIdentifier("day:\(day.key)")
+    }
 }
 
 /// Where the entries you have not seen begin.

@@ -16,7 +16,7 @@ struct ActivityDetailScreen: View {
     @State private var looked = false
 
     var body: some View {
-        let entry = model.activity.first(where: { $0.id == entryId })
+        let entry = model.entry(entryId)
         Group {
             if let entry, let vm = recorded, let view = vm.view {
                 EntryApprovalPage(entry: entry, vm: vm, view: view) {
@@ -77,7 +77,7 @@ struct ActivityDetailScreen: View {
     private func lookUp() async {
         let shown = try? await model.core.activityApproval(entryId: entryId)
         if Task.isCancelled { return }
-        if let shown, let entry = model.activity.first(where: { $0.id == entryId }) {
+        if let shown, let entry = model.entry(entryId) {
             // What was shared is ticked: the emails' ids and the addresses the entry released.
             let released = Set(entry.info.messages.map(\.id).filter { !$0.isEmpty } + entry.info.accounts)
             recorded = ApprovalModel(recorded: shown, released: released)

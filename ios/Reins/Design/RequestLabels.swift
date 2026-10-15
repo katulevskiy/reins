@@ -164,16 +164,18 @@ struct LabelText: View {
     var size: CGFloat = 15
     var lines: Int? = 2
     var color: Color = Palette.text
+    var terms: [String] = []
 
     var body: some View {
-        Text(Self.attributed(label, size: size, color: color))
+        Text(Self.attributed(label, size: size, color: color, terms: terms))
             .lineSpacing(size * 0.18)
             .lineLimit(lines)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(RequestLabelLook.plain(label))
     }
 
-    static func attributed(_ label: RequestLabel, size: CGFloat, color: Color) -> AttributedString {
+    /// `terms`: the words a search found, set apart in the cleaned title where a word starts with one.
+    static func attributed(_ label: RequestLabel, size: CGFloat, color: Color, terms: [String] = []) -> AttributedString {
         let lead = untrusted(label.lead)
         let subject = untrusted(label.subject)
         var out = AttributedString(lead + (!lead.isEmpty && !subject.isEmpty ? " " : ""))
@@ -187,6 +189,7 @@ struct LabelText: View {
         tail.font = RFont.sans(size, .medium)
         out += tail
         out.foregroundColor = color
+        TitleHighlight.apply(&out, terms: terms)
         return out
     }
 }
