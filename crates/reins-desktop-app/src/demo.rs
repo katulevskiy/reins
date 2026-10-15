@@ -31,6 +31,8 @@ pub struct Demo {
     empty: bool,
     /// Nothing waiting on the phone (the calm Home).
     calm: bool,
+    /// What waits is a push (`REINS_DEMO_WAITING=push`), with its commits, rather than a command.
+    push_waiting: bool,
 }
 
 /// One made-up request: seconds before the start, kind, source, service, what, detail, outcome, decider, reason,
@@ -61,6 +63,20 @@ const COMMAND_DETAIL: &str = "Rule: Recursive deletes · rm -r\nMatched: rm -rf 
      javap -cp . android.service.quicksettings.Tile | grep -iE 'subtitle|STATE'; javap -cp . \
      android.service.quicksettings.TileService | grep -iE 'ACTION|startActivityAndCollapse'\n\nIn: \
      /home/dana/code/reins";
+
+/// `REINS_DEMO_WAITING=push`: the request that waits, a push of three commits to `acme/web`.
+const WAITING_PUSH: Sample = (
+    40,
+    Kind::Git,
+    Some("git"),
+    Some("github.com/acme/web"),
+    "push to github.com/acme/web: checkout-page (3 commits)",
+    Some("Commits: 3\nChanges: +32 −10 · 6 files\nRefs: 1 · deleted 0 · rewritten 0\nRef: checkout-page · new branch"),
+    Outcome::Waiting,
+    Decider::Phone,
+    None,
+    0,
+);
 
 const SAMPLES: &[Sample] = &[
     (
@@ -219,6 +235,19 @@ const SAMPLES: &[Sample] = &[
         30,
     ),
     (
+        26 * 3_600 + 40 * 60,
+        Kind::Git,
+        Some("git"),
+        Some("github.com/acme/design-system"),
+        // Logged by Reins 0.5.25 or older: the line alone says what was pushed.
+        "push to github.com/acme/design-system: tokens/spacing (2 commits), delete old-tokens",
+        None,
+        Outcome::Approved,
+        Decider::Phone,
+        None,
+        6,
+    ),
+    (
         27 * 3_600,
         Kind::Mcp,
         Some("Claude Code"),
@@ -239,6 +268,16 @@ impl Demo {
             base: now,
             empty: false,
             calm: false,
+            push_waiting: false,
+        }
+    }
+
+    /// What waits on the phone is a push to `acme/web` with its commits.
+    #[must_use]
+    pub fn push_waiting(self) -> Self {
+        Self {
+            push_waiting: true,
+            ..self
         }
     }
 
@@ -267,7 +306,13 @@ impl Demo {
             .iter()
             .enumerate()
             .filter(|(_, sample)| !(self.calm && sample.6 == Outcome::Waiting))
-            .map(|(i, &(ago, kind, source, service, what, detail, outcome, decider, reason, took))| {
+            .map(|(i, &sample)| {
+                let (ago, kind, source, service, what, detail, outcome, decider, reason, took) =
+                    if self.push_waiting && sample.6 == Outcome::Waiting {
+                        WAITING_PUSH
+                    } else {
+                        sample
+                    };
                 let at = self.base - ago;
                 Entry {
                     id: format!("demo{i}"),
@@ -376,7 +421,8 @@ impl Demo {
     #[must_use]
     pub fn push(self, id: &str) -> Option<Push> {
         let entry = self.activity().into_iter().find(|e| e.id == id)?;
-        (entry.service.as_deref() == Some("github.com/acme/web") && entry.outcome == Outcome::Approved).then(|| Push {
+        let kept = matches!(entry.outcome, Outcome::Approved | Outcome::Waiting);
+        (entry.service.as_deref() == Some("github.com/acme/web") && kept).then(|| Push {
             at: entry.ended_at.unwrap_or(entry.at),
             repo: "github.com/acme/web".to_owned(),
             summary: sample_push(entry.at),
@@ -1042,6 +1088,20 @@ mod tests {
         assert_eq!(u.commits.len(), usize::try_from(u.commit_count).unwrap());
         assert!(u.commits.iter().all(|c| c.files.iter().all(|f| f.patch.is_some())));
         assert!(entry.what.ends_with("checkout-page (3 commits)"));
+    }
+
+    /// `REINS_DEMO_WAITING=push`: what waits is a push, with its commits, and says how many.
+    #[test]
+    fn a_waiting_push_has_its_commits() {
+        let demo = Demo::new(1_700_000_000).push_waiting();
+        let entries = demo.activity();
+        let waiting = entries.iter().find(|e| e.outcome == Outcome::Waiting).expect("something waits");
+        assert!(waiting.what.starts_with("push to github.com/acme/web"));
+        let push = demo.push(&waiting.id).expect("the waiting push is kept");
+        assert_eq!(push.summary.updates[0].commits.len(), 3);
+        // The older push, logged before the numbers were written: nothing is kept for it.
+        let older = entries.iter().find(|e| e.service.as_deref() == Some("github.com/acme/design-system")).unwrap();
+        assert!(older.detail.is_none() && demo.push(&older.id).is_none());
     }
 
     #[test]

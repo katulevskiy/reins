@@ -509,6 +509,79 @@ fn push_head(e: &Entry) -> Option<PushHead> {
     })
 }
 
+/// One ref of a push as the proxy names it in the entry's line (`push to <repo>: main (3 commits), delete old`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LineRef {
+    name: String,
+    deleted: bool,
+    commits: u64,
+}
+
+/// What an entry's own line says of a push: its refs and their commits. Every entry has it, also those logged before
+/// the proxy wrote its numbers in the detail (Reins 0.5.25 and older, the activity of most pushes made so far).
+///
+/// The proxy writes the line only for a push it could describe, whose ref names hold no whitespace (git refuses them,
+/// and so does `PushSummary::validate`): each `, `-separated part is exactly `<name>`, `<name> (1 commit)`,
+/// `<name> (N commits)` or `delete <name>`, so no ref name can pass for a count. A line that is anything else gives
+/// nothing; a line cut short (`…`) gives the refs it names whole, without a count.
+struct PushLine {
+    refs: Vec<LineRef>,
+    /// Every ref is named: the commits add up.
+    whole: bool,
+}
+
+impl PushLine {
+    fn of(e: &Entry) -> Option<Self> {
+        let repo = e.service.as_deref().filter(|s| !s.is_empty())?;
+        let rest = e.what.strip_prefix("push to ")?.strip_prefix(repo)?.strip_prefix(": ")?;
+        let (rest, whole) = match rest.strip_suffix('…') {
+            // The last part is cut: it is left out.
+            Some(cut) => (cut.rsplit_once(", ").map_or("", |(named, _)| named), false),
+            None => (rest, true),
+        };
+        let part = |p: &str| -> Option<LineRef> {
+            let one_name = |n: &str| (!n.is_empty() && !n.contains(char::is_whitespace)).then(|| n.to_owned());
+            if let Some(name) = p.strip_prefix("delete ") {
+                return Some(LineRef {
+                    name: one_name(name)?,
+                    deleted: true,
+                    commits: 0,
+                });
+            }
+            let (name, commits) = match p.split_once(' ') {
+                None => (p, 0),
+                Some((name, n)) => {
+                    let n = n.strip_prefix('(')?.strip_suffix(')')?;
+                    let n = n.strip_suffix(" commits").or_else(|| n.strip_suffix(" commit").filter(|c| *c == "1"))?;
+                    if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+                        return None;
+                    }
+                    (name, n.parse::<u64>().ok()?)
+                }
+            };
+            Some(LineRef {
+                name: one_name(name)?,
+                deleted: false,
+                commits,
+            })
+        };
+        let refs = if rest.is_empty() {
+            Vec::new()
+        } else {
+            rest.split(", ").map(part).collect::<Option<Vec<_>>>()?
+        };
+        (!refs.is_empty()).then_some(Self {
+            refs,
+            whole,
+        })
+    }
+
+    /// How many commits, when every ref is named.
+    fn commits(&self) -> Option<u64> {
+        self.whole.then(|| self.refs.iter().map(|r| r.commits).sum())
+    }
+}
+
 impl Ask {
     #[must_use]
     pub fn of(e: &Entry) -> Self {
@@ -725,7 +798,8 @@ impl Ask {
     }
 
     /// Git: the repository is the proxy's (the entry's service), the numbers its own first lines ([`push_head`]); a
-    /// push without them says only that it pushed.
+    /// push logged before those lines has its refs and commits from the entry's line ([`PushLine`]), and one with
+    /// neither says only that it pushed.
     fn git(&mut self, e: &Entry, t: Tense) {
         let label = e.service.clone().unwrap_or_default();
         let (host, path) = split_repo(&label);
@@ -752,15 +826,22 @@ impl Ask {
         });
         if e.what.starts_with("push to ") {
             let head = push_head(e);
-            let deletes_only = head.as_ref().is_some_and(|h| h.refs > 0 && h.deleted == h.refs);
+            // Without the proxy's numbers (an entry logged before it wrote them), what the entry's line says.
+            let line = head.is_none().then(|| PushLine::of(e)).flatten();
+            let deletes_only = match (&head, &line) {
+                (Some(h), _) => h.refs > 0 && h.deleted == h.refs,
+                (None, Some(l)) => l.whole && l.refs.iter().all(|r| r.deleted),
+                (None, None) => false,
+            };
             let forced = head.as_ref().is_some_and(|h| h.rewritten > 0);
+            let commits = head.as_ref().map(|h| h.commits).or_else(|| line.as_ref().and_then(PushLine::commits));
             if deletes_only {
                 self.set(say("git", Verb("delete", "deleted"), "a branch of ", &repo, t));
                 self.action = "Delete".into();
                 self.badge = Glyph::Trash;
                 self.field = Field::Delete;
             } else {
-                let what = match head.as_ref().map(|h| h.commits) {
+                let what = match commits {
                     Some(n) if n > 0 => format!("{} to ", count(n, "commit", "commits")),
                     _ => "to ".to_owned(),
                 };
@@ -778,8 +859,8 @@ impl Ask {
                     Field::Push
                 };
             }
-            // The refs, each the proxy's line after its numbers.
-            let refs: Vec<String> = e
+            // The refs, each the proxy's line after its numbers; else as the entry's line names them.
+            let mut refs: Vec<String> = e
                 .detail
                 .as_deref()
                 .unwrap_or("")
@@ -792,6 +873,22 @@ impl Ask {
                 .filter_map(|l| l.strip_prefix("Ref: "))
                 .map(clean)
                 .collect();
+            if let (true, Some(l)) = (refs.is_empty(), &line) {
+                refs = l
+                    .refs
+                    .iter()
+                    .map(|r| {
+                        if r.deleted {
+                            format!("{} · deleted", clean(&r.name))
+                        } else {
+                            clean(&r.name)
+                        }
+                    })
+                    .collect();
+                if !l.whole {
+                    refs.push("…".to_owned());
+                }
+            }
             let details: Vec<String> = [refs.join(", "), clean(&host)].into_iter().filter(|s| !s.is_empty()).collect();
             self.details = (!details.is_empty()).then(|| details.join(" · "));
             if let Some(h) = head {
@@ -1281,6 +1378,61 @@ mod tests {
         delete.detail =
             Some("Commits: 0\nChanges: 0 files\nRefs: 1 · deleted 1 · rewritten 0\nRef: old · deleted".into());
         assert_eq!(said(&Ask::of(&delete).sentence), "git deleted a branch of *katulevskiy/reins*");
+    }
+
+    /// Pushes logged before the proxy wrote its numbers (Reins 0.5.25 and older: every push in Activity until then)
+    /// still say how many commits and which refs, from the entry's own line.
+    #[test]
+    fn an_older_push_counts_its_commits_from_its_line() {
+        let mut e = push();
+        e.detail = None;
+        let a = Ask::of(&e);
+        assert_eq!(said(&a.sentence), "git pushed 3 commits to *katulevskiy/reins*");
+        assert_eq!(a.details.as_deref(), Some("signal/desktop-release · github.com"));
+        assert_eq!(said(&Ask::of(&waiting(e.clone())).order), "Push 3 commits to *katulevskiy/reins*");
+        one_target(&a);
+        // Several refs add up; a branch whose commits are all there already has none; a delete says so.
+        e.what = "push to github.com/katulevskiy/reins: a (1 commit), b/c,d (12 commits), e, delete old".into();
+        let a = Ask::of(&e);
+        assert_eq!(said(&a.sentence), "git pushed 13 commits to *katulevskiy/reins*");
+        assert_eq!(a.details.as_deref(), Some("a, b/c,d, e, old · deleted · github.com"));
+        e.what = "push to github.com/katulevskiy/reins: a (1 commit)".into();
+        assert_eq!(said(&Ask::of(&e).sentence), "git pushed 1 commit to *katulevskiy/reins*");
+        e.what = "push to github.com/katulevskiy/reins: delete old".into();
+        assert_eq!(said(&Ask::of(&e).sentence), "git deleted a branch of *katulevskiy/reins*");
+        // A line cut short names the refs it has whole, and no count.
+        e.what = "push to github.com/katulevskiy/reins: a (1 commit), b (2 comm…".into();
+        let a = Ask::of(&e);
+        assert_eq!(said(&a.sentence), "git pushed to *katulevskiy/reins*");
+        assert_eq!(a.details.as_deref(), Some("a, … · github.com"));
+        // Anything not exactly the proxy's line gives nothing: another repository, a count spelt otherwise, a name
+        // with a space (git refuses those), a stray word.
+        for what in [
+            "push to github.com/acme/web: a (3 commits)",
+            "push to github.com/katulevskiy/reins: a (+3 commits)",
+            "push to github.com/katulevskiy/reins: a (2 commit)",
+            "push to github.com/katulevskiy/reins: a (1 commits) to github.com/acme/web",
+            "push to github.com/katulevskiy/reins: a b (3 commits)",
+            "push to github.com/katulevskiy/reins: a (3 commits),b",
+            "push to github.com/katulevskiy/reins: ",
+        ] {
+            e.what = what.into();
+            let a = Ask::of(&e);
+            assert_eq!(said(&a.sentence), "git pushed to *katulevskiy/reins*", "{what}");
+            assert_eq!(a.details.as_deref(), Some("github.com"), "{what}");
+        }
+    }
+
+    /// The demo's pushes read as the user's do: the one waiting and the one logged before the numbers were written.
+    #[test]
+    fn the_demo_pushes_say_their_commits() {
+        let entries = crate::demo::Demo::new(1_800_000_000).push_waiting().activity();
+        let waiting = entries.iter().find(|e| e.outcome == Outcome::Waiting).unwrap();
+        assert_eq!(said(&Ask::of(waiting).order), "Push 3 commits to *acme/web*");
+        let older = entries.iter().find(|e| e.service.as_deref() == Some("github.com/acme/design-system")).unwrap();
+        let a = Ask::of(older);
+        assert_eq!(said(&a.sentence), "git pushed 2 commits to *acme/design-system*");
+        assert_eq!(a.details.as_deref(), Some("tokens/spacing, old-tokens · deleted · github.com"));
     }
 
     #[test]

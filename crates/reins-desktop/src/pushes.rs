@@ -1,7 +1,8 @@
 //! What this computer keeps of each approved push, for Activity's commit inspection (`design/signal/ASK-TEXT.md`):
 //! its commits (SHA, subject, author, lines added and removed, the files with theirs) and the diff text of each file
 //! while about 1 MB per push lasts. One JSON file per push, named by its activity entry's id, in `pushes/` in the state
-//! directory (0600, the folder 0700); files older than [`KEEP`] go whenever a push is kept.
+//! directory (0600, the folder 0700); files older than [`KEEP`] go whenever a push is kept. The file is written when
+//! the push is asked, so the app shows it while it waits, and removed ([`forget`]) when it is not approved.
 //!
 //! The diff text is the repository's own content: whoever shows it must treat it as untrusted text.
 
@@ -18,10 +19,10 @@ const DIR: &str = "pushes";
 /// The largest file read back (a push's patches are kept under 1 MB; JSON escaping adds some).
 const MAX_FILE: u64 = 4 << 20;
 
-/// One approved push.
+/// One push, waiting or approved.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Push {
-    /// Unix seconds when it was approved.
+    /// Unix seconds when it was asked.
     pub at: i64,
     /// The repository as the proxy names it (`github.com/acme/web`).
     pub repo: String,
@@ -60,6 +61,13 @@ pub fn load(state_dir: &Path, id: &str) -> Option<Push> {
         return None;
     }
     serde_json::from_slice(&std::fs::read(&path).ok()?).ok()
+}
+
+/// Removes the push kept under entry `id`, if any.
+pub fn forget(state_dir: &Path, id: &str) {
+    if let Some(path) = file(state_dir, id) {
+        std::fs::remove_file(path).ok();
+    }
 }
 
 /// Removes the pushes kept longer than [`KEEP`] before `now`.
@@ -106,6 +114,18 @@ mod tests {
             assert_eq!(mode(&dir.path().join("pushes/abc_123-x.json")), 0o600);
             assert_eq!(mode(&dir.path().join("pushes")), 0o700);
         }
+    }
+
+    #[test]
+    fn a_push_not_approved_is_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        keep(dir.path(), "asked", &push()).unwrap();
+        keep(dir.path(), "other", &push()).unwrap();
+        forget(dir.path(), "asked");
+        forget(dir.path(), "../other");
+        forget(dir.path(), "never-kept");
+        assert_eq!(load(dir.path(), "asked"), None);
+        assert_eq!(load(dir.path(), "other"), Some(push()));
     }
 
     #[test]

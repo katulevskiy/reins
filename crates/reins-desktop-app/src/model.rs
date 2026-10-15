@@ -301,6 +301,11 @@ impl Model {
             } else {
                 demo
             };
+            let demo = if std::env::var("REINS_DEMO_WAITING").is_ok_and(|v| v == "push") {
+                demo.push_waiting()
+            } else {
+                demo
+            };
             if set("REINS_DEMO_EMPTY") {
                 demo.empty()
             } else {

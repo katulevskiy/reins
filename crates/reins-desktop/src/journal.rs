@@ -250,13 +250,21 @@ impl Journal {
         }
     }
 
-    /// Keeps an approved push's commits and diff text under its entry's `id` ([`crate::pushes`]); a failure is logged.
+    /// Keeps a push's commits and diff text under its entry's `id` ([`crate::pushes`]) when it is asked; a failure is
+    /// logged.
     pub fn keep_push(&self, id: &str, push: &crate::pushes::Push) {
         let Some(paths) = &self.paths else {
             return;
         };
         if let Err(e) = crate::pushes::keep(&paths.state_dir, id, push) {
             log::warn!("kept pushes: {e}");
+        }
+    }
+
+    /// Drops the push kept under `id`: it was not approved.
+    pub fn forget_push(&self, id: &str) {
+        if let Some(paths) = &self.paths {
+            crate::pushes::forget(&paths.state_dir, id);
         }
     }
 

@@ -652,14 +652,7 @@ impl Proxy {
         );
         let entry = self.git_entry(repo, &push_what(repo, &summary)).detail(Some(&push_detail(&summary)));
         let entry_id = entry.id.clone();
-        let credential =
-            match self.awaiting_entry(peer, repo, entry, true, self.authorizer.push(repo, &summary, &digest)).await {
-                Ok(c) => c,
-                Err(r) => {
-                    log::info!("POST {who} {suffix}: push {}", refusal_kind(&r));
-                    return Ok(reject(r.message(), &with_hint(r.message())));
-                }
-            };
+        // Kept before it is asked, so the app shows the commits while the push waits; gone again unless approved.
         self.journal.keep_push(
             &entry_id,
             &crate::pushes::Push {
@@ -668,6 +661,15 @@ impl Proxy {
                 summary: record,
             },
         );
+        let credential =
+            match self.awaiting_entry(peer, repo, entry, true, self.authorizer.push(repo, &summary, &digest)).await {
+                Ok(c) => c,
+                Err(r) => {
+                    self.journal.forget_push(&entry_id);
+                    log::info!("POST {who} {suffix}: push {}", refusal_kind(&r));
+                    return Ok(reject(r.message(), &with_hint(r.message())));
+                }
+            };
         let resp = self.send(Method::POST, repo, &suffix, &parts.headers, Out::Held(&raw), Some(&credential)).await?;
         log::info!("POST {who} {suffix}: push allowed, {}", resp.status().as_u16());
         if Self::denied_by_upstream(resp.status()) {
