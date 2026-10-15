@@ -145,6 +145,9 @@ impl JoinHub {
                     device_name: name,
                     public_key: new.public_key.clone(),
                     created_at: now,
+                    device_id: None,
+                    sign_pub: None,
+                    proof: None,
                 },
                 delivered: false,
                 status: JoinStatus::Waiting,
@@ -345,6 +348,8 @@ mod tests {
             v: 1,
             device_name: name.to_owned(),
             public_key: reins_proto::desktop::encode_key(&[9u8; 32]),
+            sign_pub: None,
+            proof: None,
         }
     }
 

@@ -16,5 +16,9 @@ sha2 = "0.10.9"
 thiserror = "2.0.20"
 zeroize = "1.9.0"
 
+[dev-dependencies]
+# Real Ed25519 signatures in the tests (the crate itself does no crypto beyond SHA-256).
+ring = "0.17.14"
+
 [lints]
 workspace = true

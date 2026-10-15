@@ -2,17 +2,21 @@
 //!
 //! Pure data and validation: no IO, no async.
 
+pub mod answer;
 pub mod blob;
+pub mod canon;
 pub mod connector;
 pub mod desktop;
 pub mod device;
 pub mod gmail;
 pub mod ids;
 pub mod join;
+pub mod oplog;
 pub mod pairing;
 pub mod payments;
 pub mod relay;
 pub mod remote_mcp;
+pub mod roster;
 mod validate;
 
 pub use validate::{ValidationError, check_version, normalize_address};
