@@ -1,9 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// The Settings section: the account card (email, server, whether this phone approves and is notified, with the one
-/// fix when something is off), Sounds & haptics, security, the tour and version, and leaving. What is connected lives on
-/// Connections, Autopilot on Trust.
+/// The Settings section (iOS-Settings.png, 01), short on purpose: you and this phone. Who is signed in (email, server,
+/// whether this phone approves and is notified, with the one fix when something is off); this phone (Devices, Sounds and
+/// haptics, Appearance); security; the tour; below the fold version, sign out, delete account. What is connected lives
+/// on Connections, Autopilot on Trust.
 ///
 /// Each group is its own small view: one `List` body holding all of them miscompiles with Xcode 27.1 beta (the app
 /// crashes destroying the list value), and small views also redraw only what changed.
@@ -100,19 +101,19 @@ private struct AccountCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 14) {
-                BlobAvatar(seed: email, size: 52)
+                BlobAvatar(seed: email, size: 48)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(email)
-                        .font(RFont.sans(17, .semibold))
-                        .foregroundStyle(Palette.text)
+                        .font(RFont.sans(16.5, .semibold))
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .environment(\.layoutDirection, .leftToRight)
                     Button(action: copyServer) {
                         HStack(spacing: 6) {
                             Text(SettingsText.host(serverUrl))
-                                .font(RFont.mono(13))
-                                .foregroundStyle(Palette.secondary)
+                                .font(RFont.mono(12.5))
+                                .foregroundStyle(Palette.inkMeta)
                                 .lineLimit(1)
                             Image(systemName: "doc.on.doc")
                                 .font(.system(size: 12))
@@ -139,7 +140,7 @@ private struct AccountCard: View {
                 case .hidden: EmptyView()
                 }
             }
-            .padding(.top, 16)
+            .padding(.top, 12)
             if access.state.needsAttention {
                 attention.padding(.top, 14)
             }
@@ -156,13 +157,11 @@ private struct AccountCard: View {
                 .accessibilityIdentifier("registerPhone")
             }
         }
-        .padding(18)
+        // On paper, a hairline under it: nothing here asks anything.
+        .padding(.horizontal, 4)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(colors: [Palette.accent.opacity(0.16), Palette.accent.opacity(0.03)], startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 26, style: .continuous)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Palette.accent.opacity(0.24), lineWidth: 1))
+        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("accountCard")
     }
@@ -245,14 +244,18 @@ private struct StatusChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: symbol).font(.system(size: 12, weight: .semibold)).accessibilityHidden(true)
-            Text(text).font(RFont.sans(13, .semibold)).lineLimit(1)
+        HStack(spacing: 5) {
+            if tone == .ok {
+                GlyphIcon(.check, size: 12).accessibilityHidden(true)
+            } else {
+                Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).accessibilityHidden(true)
+            }
+            Text(text).font(TextRole.tag.font()).lineLimit(1)
         }
         .foregroundStyle(tint)
-        .padding(.leading, 9)
-        .padding(.trailing, 12)
-        .padding(.vertical, 7)
+        .padding(.leading, 8)
+        .padding(.trailing, 10)
+        .padding(.vertical, 5)
         .background(tone == .plain ? Palette.controlFill : tint.opacity(0.12), in: Capsule())
         .accessibilityElement(children: .combine)
     }
@@ -260,20 +263,28 @@ private struct StatusChip: View {
 
 // MARK: Pages
 
-/// Sounds & haptics, with its value on the right. Autopilot moved to Trust and the integrations to Connections.
+/// This phone: its devices, Sounds and haptics, Appearance, each with its value on the right.
 private struct PagesGroup: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
+    @AppStorage(Appearance.themeKey, store: AppGroup.defaults) private var theme = Appearance.Theme.system.rawValue
 
     /// The switches as the Sounds page keeps them (in memory, observed), so the value follows them.
     private var sounds: FeedbackSettings { ((feedback as? FeedbackPreviewing)?.store ?? .shared).settings }
 
     var body: some View {
         Section {
+            if case .signedIn = model.session { DevicesRow() }
             SettingsLinkRow(
-                title: "Sounds & haptics", value: SettingsText.soundsValue(sounds), symbol: "speaker.wave.2.fill",
+                title: "Sounds and haptics", value: SettingsText.soundsValue(sounds), symbol: "speaker.wave.2",
                 tint: Palette.accounts, id: "openSounds"
             ) { model.show(.sounds) }
+            SettingsLinkRow(
+                title: "Appearance", value: Appearance.Theme(rawValue: theme)?.title ?? "System", symbol: "circle.lefthalf.filled",
+                tint: Palette.ink2, id: "openAppearance"
+            ) { model.show(.appearance) }
+        } header: {
+            GroupHeader("This phone")
         }
     }
 }
@@ -286,14 +297,13 @@ private struct SecurityGroup: View {
 
     var body: some View {
         if case .signedIn = model.session {
-            Section {
-                DevicesRow()
-                if model.recoveryCodeAvailable {
+            if model.recoveryCodeAvailable {
+                Section {
                     RecoveryCodeRow()
                     VaultPasskeysRow()
+                } header: {
+                    GroupHeader("Security")
                 }
-            } header: {
-                GroupHeader("Security")
             }
         }
     }
@@ -336,7 +346,7 @@ private struct AboutGroup: View {
 
     var body: some View {
         Section {
-            SettingsLinkRow(title: "Take the tour", symbol: "lifepreserver", tint: Palette.tertiary, id: "takeTour") { model.startTour() }
+            SettingsLinkRow(title: "Take the tour", symbol: "safari", tint: Palette.tertiary, id: "takeTour") { model.startTour() }
             SettingsRowLabel(title: "Version", chevron: false) {
                 SettingsTile(symbol: "info", tint: Palette.tertiary)
             } trailing: {
@@ -347,6 +357,8 @@ private struct AboutGroup: View {
             .accessibilityValue(SettingsText.version())
             .accessibilityIdentifier("appVersion")
             .cardRow()
+        } header: {
+            GroupHeader("Reins")
         }
     }
 }

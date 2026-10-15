@@ -66,4 +66,21 @@ extension AnyTransition {
 /// `@AppStorage(Appearance.grainKey, store: AppGroup.defaults)`; grain also stays off under Reduce Transparency.
 enum Appearance {
     static let grainKey = "appearance.grain"
+    /// Settings > Appearance > the theme: the phone's (System), always light (Paper) or always dark (Graphite).
+    static let themeKey = "appearance.theme"
+
+    enum Theme: String, CaseIterable {
+        case system, paper, graphite
+
+        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+
+        /// What the app asks for: nothing (the phone's), light or dark.
+        var scheme: ColorScheme? {
+            switch self {
+            case .system: nil
+            case .paper: .light
+            case .graphite: .dark
+            }
+        }
+    }
 }

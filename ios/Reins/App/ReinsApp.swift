@@ -3,6 +3,8 @@ import SwiftUI
 @main
 struct ReinsApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    /// Settings > Appearance: the phone's theme, Paper or Graphite, live, with a short cross-fade.
+    @AppStorage(Appearance.themeKey, store: AppGroup.defaults) private var theme = Appearance.Theme.system.rawValue
 
     var body: some Scene {
         WindowGroup {
@@ -27,6 +29,8 @@ struct ReinsApp: App {
                     LoadingView()
                 }
             }
+            .preferredColorScheme(Appearance.Theme(rawValue: theme)?.scheme)
+            .animation(.easeInOut(duration: 0.2), value: theme)
             #if DEBUG
             .onAppear { LaunchTiming.mark("first appear") }
             #endif
