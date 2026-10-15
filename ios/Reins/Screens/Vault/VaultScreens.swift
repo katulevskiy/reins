@@ -374,25 +374,78 @@ struct VaultScreen: View {
 }
 
 /// Vault > Add: what kind of item.
+/// "Add to the vault" (iOS-Vault.png, 02): pick by picture, six large tiles, each a glyph, its kind and one line.
 struct VaultAddScreen: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
 
     var body: some View {
-        List {
-            Section {
-                ForEach(NewVaultItem.allCases) { kind in
-                    SettingsLinkRow(title: kind.title, subtitle: kind.detail, symbol: kind.symbol, tint: Palette.accent, id: "newItem:\(kind.rawValue)") {
-                        model.push(.vaultEdit(id: nil, newItem: kind))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                AskText([AskText.Run(text: "Add to the "), AskText.Run(text: "vault", target: true)], role: .title)
+                    .foregroundStyle(Palette.ink)
+                    .accessibilityAddTraits(.isHeader)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(NewVaultItem.allCases) { kind in
+                        Button {
+                            feedback.play(.tap)
+                            model.push(.vaultEdit(id: nil, newItem: kind))
+                        } label: {
+                            VStack(alignment: .leading, spacing: 0) {
+                                GlyphIcon(kind.glyph, size: 22).foregroundStyle(Palette.ink)
+                                Text(kind.title).font(TextRole.row.font()).foregroundStyle(Palette.ink).padding(.top, 14)
+                                Text(kind.tileLine).textRole(.meta).foregroundStyle(Palette.inkMeta).fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(16)
+                            .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
+                            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
+                            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        }
+                        .buttonStyle(PressDim())
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("newItem:\(kind.rawValue)")
                     }
                 }
-            } header: {
-                GroupHeader("What to add")
-            } footer: {
-                GroupFooter("Everything is encrypted on this phone with your vault's key before it reaches the server.")
+                .padding(.top, 22)
+                Text("Everything is encrypted on this phone with your vault's key before it reaches the server.")
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
+                    .padding(.top, 18)
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 32)
         }
-        .reinsGrouped()
-        .navigationTitle("Add to the vault")
+        .pageBackground()
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+extension NewVaultItem {
+    /// The kind's glyph on its tile.
+    var glyph: Glyph {
+        switch self {
+        case .apiKey: .key
+        case .sshKey: .terminal
+        case .login: .person
+        case .note: .file
+        case .card: .card
+        case .identity: .idCard
+        }
+    }
+
+    /// One short line under the tile's name.
+    var tileLine: String {
+        switch self {
+        case .apiKey: "For reins run and the API proxy"
+        case .sshKey: "Made here, never leaves"
+        case .login: "Username and password"
+        case .note: "Any text"
+        case .card: "For approved purchases"
+        case .identity: "Name and address"
+        }
     }
 }
 

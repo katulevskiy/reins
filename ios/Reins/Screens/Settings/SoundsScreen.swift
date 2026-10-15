@@ -14,7 +14,7 @@ struct SoundsScreen: View {
         let s = store.settings
         List {
             Section {
-                SwitchRow(title: "Sounds & haptics", symbol: "speaker.wave.2", isOn: s.master, id: "soundsMaster") { on in
+                SwitchRow(title: "Sounds & haptics", glyph: .speaker, isOn: s.master, id: "soundsMaster") { on in
                     store.update { $0.master = on }
                 }
             } footer: {
@@ -22,23 +22,23 @@ struct SoundsScreen: View {
             }
 
             Section {
-                SwitchRow(title: "Sounds", subtitle: "Every sound in Reins", symbol: "speaker.wave.2", isOn: s.sounds,
+                SwitchRow(title: "Sounds", subtitle: "Chimes for requests and answers", glyph: .speaker, isOn: s.sounds,
                           enabled: s.master, id: "sounds") { on in store.update { $0.sounds = on } }
                 SwitchRow(title: "Interface", subtitle: nil,
-                          symbol: "square.grid.2x2", isOn: s.interfaceSounds, enabled: s.soundsOn, id: "interfaceSounds") { on in
+                          glyph: .settings, isOn: s.interfaceSounds, enabled: s.soundsOn, id: "interfaceSounds") { on in
                     store.update { $0.interfaceSounds = on }
                 }
-                SwitchRow(title: "Requests", subtitle: nil, symbol: "bell",
+                SwitchRow(title: "Requests", subtitle: nil, glyph: .bell,
                           isOn: s.requestSounds, enabled: s.soundsOn, id: "requestSounds") { on in store.update { $0.requestSounds = on } }
-                SwitchRow(title: "Sound when open", subtitle: nil, symbol: "iphone",
+                SwitchRow(title: "Sound when open", subtitle: nil, glyph: .phone,
                           isOn: s.soundWhenOpen, enabled: s.allows(.requests), id: "soundWhenOpen") { on in
                     store.update { $0.soundWhenOpen = on }
                 }
                 SwitchRow(title: "Alerts", subtitle: nil,
-                          symbol: "exclamationmark.triangle", isOn: s.alertSounds, enabled: s.soundsOn, id: "alertSounds") { on in
+                          glyph: .warning, isOn: s.alertSounds, enabled: s.soundsOn, id: "alertSounds") { on in
                     store.update { $0.alertSounds = on }
                 }
-                SwitchRow(title: "Autopilot", subtitle: nil, symbol: "sparkles",
+                SwitchRow(title: "Autopilot", subtitle: nil, glyph: .autopilot,
                           isOn: s.autopilotSounds, enabled: s.soundsOn, id: "autopilotSounds") { on in store.update { $0.autopilotSounds = on } }
                 VolumeRow(store: store, engine: engine)
             } header: {
@@ -49,7 +49,7 @@ struct SoundsScreen: View {
             }
 
             Section {
-                SwitchRow(title: "Haptics", subtitle: engine?.hapticTier, symbol: "iphone.radiowaves.left.and.right", isOn: s.haptics,
+                SwitchRow(title: "Haptics", subtitle: engine?.hapticTier, glyph: .haptics, isOn: s.haptics,
                           enabled: s.master, id: "haptics") { on in store.update { $0.haptics = on } }
                 StrengthRow(store: store)
             } header: {
@@ -57,18 +57,22 @@ struct SoundsScreen: View {
             }
 
             Section {
-                PreviewRows(engine: engine, enabled: s.soundsOn || s.hapticsOn)
+                PreviewChips(engine: engine, enabled: s.soundsOn || s.hapticsOn)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             } header: {
-                HeaderText("Try them")
+                HeaderText("Feel them")
             } footer: {
                 FooterText("Each plays its sound and haptic, even when that kind of sound is off.")
             }
         }
         .listStyle(.insetGrouped)
+        .listRowSeparatorTint(Palette.rule)
         .scrollContentBackground(.hidden)
         .pageBackground()
-        .navigationTitle("Sounds & haptics")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Sounds and haptics")
+        .navigationBarTitleDisplayMode(.large)
     }
 }
 
@@ -79,7 +83,7 @@ private struct HeaderText: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text).font(RFont.sans(13, .medium)).foregroundStyle(Palette.secondary)
+        Text(text).textRole(.label).foregroundStyle(Palette.inkMeta)
     }
 }
 
@@ -90,11 +94,11 @@ private struct FooterText: View {
     var body: some View { GroupFooter(text) }
 }
 
-/// An icon, a title with an explanation, and a switch. Greyed out like the switch when a switch above turns it off.
+/// A glyph, a title with an explanation, and a switch. Greyed out like the switch when a switch above turns it off.
 private struct SwitchRow: View {
     var title: String
     var subtitle: String?
-    var symbol: String
+    var glyph: Glyph
     var isOn: Bool
     var enabled = true
     var id: String
@@ -108,11 +112,10 @@ private struct SwitchRow: View {
             // After the change: turning the master off is silent, turning it on answers.
             feedback.play(.toggle(on))
         })) {
-            RowLabel(title: title, subtitle: subtitle, symbol: symbol, enabled: enabled)
+            RowLabel(title: title, subtitle: subtitle, glyph: glyph, enabled: enabled)
         }
-        .tint(Palette.accent)
         .disabled(!enabled)
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
         .accessibilityIdentifier(id)
     }
 }
@@ -120,25 +123,23 @@ private struct SwitchRow: View {
 private struct RowLabel: View {
     var title: String
     var subtitle: String?
-    var symbol: String
-    var tint: Color = Palette.secondary
+    var glyph: Glyph
     var enabled = true
 
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: symbol)
-                .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(tint)
+            GlyphIcon(glyph, size: 20)
+                .foregroundStyle(Palette.ink2)
                 .frame(width: 24)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(RFont.sans(16, .medium))
-                    .foregroundStyle(enabled ? Palette.text : Palette.tertiary)
+                    .textRole(.row)
+                    .foregroundStyle(enabled ? Palette.ink : Palette.inkMeta)
                 if let subtitle {
                     Text(subtitle)
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.secondary)
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.inkMeta)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -162,12 +163,11 @@ private struct VolumeRow: View {
         let enabled = s.soundsOn
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
-                RowLabel(title: "Volume", subtitle: nil,
-                         symbol: "speaker.wave.2", enabled: enabled)
+                RowLabel(title: "Volume", subtitle: nil, glyph: .speaker, enabled: enabled)
                 Spacer(minLength: 0)
                 Text("\(Int((s.volume * 100).rounded()))%")
                     .font(RFont.mono(14, .medium))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .monospacedDigit()
                     .accessibilityIdentifier("volumeValue")
             }
@@ -179,14 +179,14 @@ private struct VolumeRow: View {
                     if !editing { engine?.preview(haptic: nil, cue: FeedbackEvent.selection.cue, step: 0) }
                 }
             )
-            .tint(Palette.accent)
+            .tint(Palette.violet)
             .accessibilityLabel("Volume")
             .accessibilityValue("\(Int((s.volume * 100).rounded())) percent")
             .accessibilityIdentifier("volume")
         }
         .disabled(!enabled)
         .padding(.vertical, 4)
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
     }
 
     private func change(_ value: Float) {
@@ -206,21 +206,20 @@ private struct StrengthRow: View {
     var body: some View {
         let s = store.settings
         VStack(alignment: .leading, spacing: 12) {
-            RowLabel(title: "Strength", subtitle: "How firmly taps and alerts are felt", symbol: "dial.medium", enabled: s.hapticsOn)
-            Picker("Strength", selection: Binding(get: { store.settings.strength }, set: { level in
-                store.update { $0.strength = level }
-                feedback.play(.selection)
-            })) {
-                ForEach(HapticStrength.allCases, id: \.self) { level in
-                    Text(level.label).tag(level)
+            RowLabel(title: "Strength", subtitle: "How firmly taps and alerts are felt", glyph: .haptics, enabled: s.hapticsOn)
+            Chooser(HapticStrength.allCases.map { level in
+                Chooser.Segment(id: "strength:\(level.label)", title: level.label, selected: s.strength == level) {
+                    store.update { $0.strength = level }
+                    feedback.play(.selection)
                 }
-            }
-            .pickerStyle(.segmented)
+            })
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("strength")
         }
         .disabled(!s.hapticsOn)
+        .opacity(s.hapticsOn ? 1 : 0.5)
         .padding(.vertical, 4)
-        .listRowBackground(Palette.elevated)
+        .listRowBackground(Color.clear)
     }
 }
 
@@ -255,26 +254,39 @@ private struct Sample: Identifiable {
     ]
 }
 
-private struct PreviewRows: View {
+/// "Feel them": a grid of chips, each its name over a little score of its haptic, that plays it when tapped.
+private struct PreviewChips: View {
     var engine: FeedbackPreviewing?
     var enabled: Bool
     @State private var running = false
 
     var body: some View {
-        ForEach(Sample.all) { sample in
-            Button {
-                play(sample)
-            } label: {
-                RowLabel(title: sample.title, subtitle: sample.supporting, symbol: "play.fill",
-                         tint: enabled ? Palette.accent : Palette.tertiary, enabled: enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            ForEach(Sample.all) { sample in
+                Button {
+                    play(sample)
+                } label: {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Score(sample: sample)
+                        Text(sample.title)
+                            .font(RFont.sans(13.5, .medium))
+                            .foregroundStyle(enabled ? Palette.ink : Palette.inkMeta)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.85)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+                    .padding(12)
+                    .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(PressDimsStyle())
+                .accessibilityLabel(sample.title)
+                .accessibilityHint(sample.supporting + ". Plays its sound and haptic")
+                .accessibilityIdentifier("try:\(sample.title)")
             }
-            .buttonStyle(.plain)
-            .listRowBackground(Palette.elevated)
-            .accessibilityHint("Plays its sound and haptic")
-            .accessibilityIdentifier("try:\(sample.title)")
         }
+        .padding(.horizontal, 4)
     }
 
     private func play(_ sample: Sample) {
@@ -289,5 +301,24 @@ private struct PreviewRows: View {
             }
             running = false
         }
+    }
+}
+
+/// A haptic drawn as a score: one tick per tap it plays, rising for detents climbing the scale.
+private struct Score: View {
+    var sample: Sample
+
+    var body: some View {
+        let steps = sample.steps ?? [0]
+        let ticks = sample.events.flatMap { _ in steps }
+        HStack(alignment: .bottom, spacing: 3) {
+            ForEach(Array(ticks.enumerated()), id: \.offset) { _, step in
+                Capsule()
+                    .fill(Palette.violet)
+                    .frame(width: 3, height: CGFloat(6 + step * 3))
+            }
+        }
+        .frame(height: 18, alignment: .bottom)
+        .accessibilityHidden(true)
     }
 }

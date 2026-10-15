@@ -219,6 +219,7 @@ struct RouteView: View {
         switch route {
         case .sounds: SoundsScreen()
         case .vaultPasskeys: VaultPasskeysScreen()
+        case .appearance: AppearanceScreen()
         case .devices: DevicesScreen()
         case .vault: VaultScreen()
         case .vaultAdd: VaultAddScreen()

@@ -18,30 +18,46 @@ struct DeleteAccountSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Delete account")
-                    .font(RFont.sans(26, .semibold))
-                    .foregroundStyle(Palette.text)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Gone for good. Can't be undone.")
-                    .font(RFont.sans(15))
-                    .foregroundStyle(Palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                VStack(alignment: .leading, spacing: 10) {
+                // Your own irreversible act gets the same red field an AI's would.
+                SignalField(kind: .delete) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        RoundHeaderButton(glyph: .close, label: "Close", onField: true, size: 34, action: onClose)
+                            .disabled(busy)
+                            .accessibilityIdentifier("closeDeleteAccount")
+                        Text("Account · Delete").textRole(.label).foregroundStyle(Palette.onField2).padding(.top, 22)
+                        AskText([AskText.Run(text: "Delete "), AskText.Run(text: email, target: true)], role: .ask, lineLimit: nil)
+                            .foregroundStyle(Palette.onField)
+                            .padding(.top, 8)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Delete \(email)")
+                            .accessibilityAddTraits(.isHeader)
+                        Text("Gone for good. Can't be undone.")
+                            .font(RFont.sans(14.5))
+                            .foregroundStyle(Palette.onField2)
+                            .padding(.top, 8)
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.top, 18)
+                    .padding(.bottom, 22)
+                }
+                .padding(.horizontal, -24)
+                .padding(.top, -24)
+                // Exactly what goes.
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(SettingsText.deletionItems, id: \.self) { item in
-                        Label {
-                            Text(item).font(RFont.sans(15)).foregroundStyle(Palette.text)
-                        } icon: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.danger)
+                        HStack(alignment: .top, spacing: 12) {
+                            GlyphIcon(.close, size: 15).foregroundStyle(Palette.danger).padding(.top, 2)
+                            Text(item).font(RFont.sans(15)).foregroundStyle(Palette.ink).fixedSize(horizontal: false, vertical: true)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
+                        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(18)
-                .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                Text("Type \(email) to confirm.")
-                    .font(RFont.sans(14.5))
-                    .foregroundStyle(Palette.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text("Type your email to confirm")
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
+                    .padding(.top, 8)
                 TextField("Your email", text: $typed)
                     .textContentType(.emailAddress)
                     .keyboardType(.emailAddress)
@@ -51,6 +67,9 @@ struct DeleteAccountSheet: View {
                     .focused($focused)
                     .disabled(busy)
                     .fieldWell()
+                    .overlay(alignment: .trailing) {
+                        if confirmed { GlyphIcon(.check, size: 16).foregroundStyle(Palette.success).padding(.trailing, 14) }
+                    }
                     .environment(\.layoutDirection, .leftToRight)
                     .accessibilityIdentifier("deleteAccountEmail")
                 if let error {
@@ -61,9 +80,11 @@ struct DeleteAccountSheet: View {
                     .accessibilityIdentifier("confirmDeleteAccount")
                 // The sheet's Close is the sound (the style plays the default tap).
                 Button("Cancel", action: onClose)
-                .buttonStyle(CapsuleButtonStyle(kind: .secondary))
-                .disabled(busy)
-                .accessibilityIdentifier("cancelDeleteAccount")
+                    .font(RFont.sans(15, .medium))
+                    .foregroundStyle(Palette.ink2)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .disabled(busy)
+                    .accessibilityIdentifier("cancelDeleteAccount")
             }
             .padding(24)
         }

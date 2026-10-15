@@ -81,7 +81,7 @@ struct McpServerScreen: View {
             } header: {
                 GroupHeading("Server")
             }
-            .listRowBackground(Palette.elevated)
+            .listRowBackground(Color.clear)
 
             if mcp?.signingIn == serverId || mcp?.error != nil {
                 Section {
@@ -118,7 +118,7 @@ struct McpServerScreen: View {
             } footer: {
                 GroupFootnote("Your AIs can ask to use these tools. Tools that only read need a read permission; anything else is a change you approve. Large results go through your Reins server instead of this phone.")
             }
-            .listRowBackground(Palette.elevated)
+            .listRowBackground(Color.clear)
 
             Section {
                 HStack(spacing: 10) {

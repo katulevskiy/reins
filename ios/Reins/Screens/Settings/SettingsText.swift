@@ -141,14 +141,6 @@ enum SettingsText {
         return .autopilotModeChanged(moreAutonomy: new.autonomy > (old ?? .manual).autonomy)
     }
 
-    /// The emoji a profile shows.
-    static func profileIcon(_ p: ProfileView) -> String {
-        // A plain word ("person", "work" in accounts made before the default profiles had emoji) is no icon.
-        if let icon = p.icon?.trimmingCharacters(in: .whitespaces), !icon.isEmpty,
-           !icon.allSatisfy({ $0.isASCII && $0.isLetter }) { return icon }
-        return p.name.lowercased() == "work" ? "💼" : "🙂"
-    }
-
     /// What "Delete account" deletes, line by line, before it asks for the email.
     static let deletionItems = [
         "Your account and its vault on the server",

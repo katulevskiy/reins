@@ -95,22 +95,38 @@ struct RecoveryCodeSheet: View {
     @ViewBuilder private var screen: some View {
         ScrollView {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Recovery code")
-                .font(RFont.sans(26, .semibold))
-                .foregroundStyle(Palette.text)
-                .accessibilityAddTraits(.isHeader)
-            Text("Opens your vault if you lose this phone. Write it down and keep it safe.")
-                .font(RFont.sans(15))
-                .foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Self.rows(code), id: \.self) { row in
-                    Text(row).font(RFont.mono(19, .medium)).foregroundStyle(Palette.text)
+            // An account field: pink, because it changes how the account opens.
+            SignalField(kind: .accounts) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Account · Recovery").textRole(.label).foregroundStyle(Palette.onField2)
+                    AskText([AskText.Run(text: "Write down your "), AskText.Run(text: "recovery code", target: true)], role: .ask, lineLimit: nil)
+                        .foregroundStyle(Palette.onField)
+                        .padding(.top, 8)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Write down your recovery code")
+                        .accessibilityAddTraits(.isHeader)
+                    Text("It opens your vault if you lose this phone. Nobody else has it, us included.")
+                        .font(RFont.sans(14.5))
+                        .foregroundStyle(Palette.onField2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 10)
+                }
+                .padding(.horizontal, 22)
+                .padding(.top, 26)
+                .padding(.bottom, 24)
+            }
+            .padding(.horizontal, -24)
+            .padding(.top, -24)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 10) {
+                ForEach(Array(code.split(separator: "-").enumerated()), id: \.offset) { _, group in
+                    Text(String(group)).font(RFont.mono(18, .medium)).foregroundStyle(Palette.ink)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(18)
-            .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .padding(.horizontal, 12)
+            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
             .environment(\.layoutDirection, .leftToRight)
             .textSelection(.enabled)
             .contentShape(Rectangle())
@@ -118,20 +134,24 @@ struct RecoveryCodeSheet: View {
             .accessibilityAction(named: "Copy recovery code", copy)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("recoveryCode")
-            Button(copied ? "Copied" : "Copy") {
+            Button {
                 copy()
+            } label: {
+                Label(copied ? "Copied · clears in 60 s" : "Copy · clears in 60 s", systemImage: "doc.on.doc")
             }
-            .buttonStyle(CapsuleButtonStyle(kind: .secondary))
+            .buttonStyle(SignalButtonStyle(.soft, size: .small))
             .accessibilityIdentifier("copyRecoveryCode")
             if required {
-                Toggle("I wrote it down", isOn: $recorded)
-                    .font(RFont.sans(15))
-                    .accessibilityIdentifier("recoveryRecorded")
-                    .onChange(of: recorded) { _, on in feedback.play(.toggle(on)) }
-
+                Toggle(isOn: $recorded) {
+                    Text("I wrote it down").font(RFont.sans(15)).foregroundStyle(Palette.ink)
+                }
+                .toggleStyle(SignalSwitchStyle())
+                .accessibilityIdentifier("recoveryRecorded")
+                .onChange(of: recorded) { _, on in feedback.play(.toggle(on)) }
             }
             Button(required ? "Continue" : "Done", action: onDone)
-                .buttonStyle(CapsuleButtonStyle(kind: .primary))
+                .buttonStyle(SignalButtonLook(kind: .inverse))
+                .frame(height: 54)
                 .disabled(required && !recorded)
                 .accessibilityIdentifier("recoveryDone")
         }

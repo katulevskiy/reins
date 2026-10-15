@@ -38,7 +38,7 @@ final class OnboardingUITests: XCTestCase {
 
     /// Through the setup's pages with their forward button ("Not now" on notifications) until `id` shows.
     private func advance(to id: String, timeout: TimeInterval = 10) {
-        for _ in 0..<8 {
+        for _ in 0..<5 {
             if element(id).waitForExistence(timeout: 1.5) { return }
             if element("onboardingNext").waitForExistence(timeout: timeout) { element("onboardingNext").tap() }
         }
@@ -104,8 +104,8 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(element("create").isEnabled)
         tap("create")
 
-        // The setup: through its first pages to the computer one, where the phone approves and a computer connects by
-        // its code.
+        // The setup: through its first pages to what the AIs can use, where the phone approves and a computer connects
+        // by its code.
         advance(to: "phoneReady")
         shot("3-connect-computer")
         tap("scanQR")
@@ -116,12 +116,14 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(wait("computerConnected", 5).label.contains("Reins desktop app on studio"), "the computer just paired")
         shot("4-computer-connected")
 
-        // Step 2: the /mcp address for Claude.ai or ChatGPT, copied.
-        tap("onboardingNext")
+        // On the same page: the /mcp address for Claude.ai or ChatGPT, copied.
         XCTAssertEqual(wait("mcpAddress").label, "https://reins.example.com/mcp")
         tap("copyMcp")
         XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
         shot("5-connect-ai")
+        // How much to ask, then where things stand.
+        tap("onboardingNext")
+        wait("setupRules")
         tap("onboardingNext")
         wait("setupDone")
         tap("onboardingDone")

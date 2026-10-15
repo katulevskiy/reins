@@ -265,7 +265,37 @@ enum AutopilotText {
     }
 
     /// The icons offered for a profile.
+    /// The icons a profile can keep, as stored (the values Android stores too). They are only ever drawn as glyphs
+    /// (`profileGlyph`), never as emoji.
     static let icons = ["🙂", "💼", "🏠", "🧪", "🚀", "🔒", "🌙", "🎓"]
+
+    /// The glyph a profile's stored icon is drawn as (as on Android); anything else is a person.
+    static func profileGlyph(_ icon: String?) -> Glyph {
+        switch icon {
+        case "💼": .briefcase
+        case "🏠": .home
+        case "🧪": .flask
+        case "🚀": .rocket
+        case "🔒": .lock
+        case "🌙": .moon
+        case "🎓": .star
+        default: .person
+        }
+    }
+
+    /// What a screen reader says for a profile's icon.
+    static func profileIconName(_ icon: String?) -> String {
+        switch profileGlyph(icon) {
+        case .briefcase: "Work"
+        case .home: "Home"
+        case .flask: "Lab"
+        case .rocket: "Rocket"
+        case .lock: "Lock"
+        case .moon: "Night"
+        case .star: "Star"
+        default: "Person"
+        }
+    }
 
     /// "Try it" starting points, in the situation format of spec §4.
     struct Example: Hashable {

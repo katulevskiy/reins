@@ -1,7 +1,7 @@
 import SwiftUI
 
-// Inset-grouped lists in Reins's look (Settings, a grant's page, a connection's page): the page background behind,
-// rows on elevated cards, Geist type, small uppercase headers.
+// Grouped lists in Signal's look (Settings, a connection's page, the vault): rows on paper with rule hairlines between
+// them, never cards; monochrome tiles, since nothing on these pages is asking anything; mono capital headers.
 
 extension View {
     /// An inset-grouped list on the page background.
@@ -14,10 +14,10 @@ extension View {
             .pageBackground()
     }
 
-    /// A row on the group's card.
+    /// A row of a group: on paper, a rule hairline between it and the next.
     func cardRow() -> some View {
-        listRowBackground(Palette.elevated)
-            .listRowSeparatorTint(Palette.hairline)
+        listRowBackground(Color.clear)
+            .listRowSeparatorTint(Palette.rule)
     }
 }
 
@@ -109,11 +109,11 @@ struct InfoRow<Trailing: View>: View {
                     .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
+                Text(title).font(TextRole.row.font()).foregroundStyle(Palette.ink)
                 if let subtitle {
                     Text(subtitle)
-                        .font(RFont.sans(14))
-                        .foregroundStyle(Palette.secondary)
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.inkMeta)
                         .environment(\.layoutDirection, ltrSubtitle ? .leftToRight : direction)
                 }
             }
@@ -133,21 +133,21 @@ extension InfoRow where Trailing == EmptyView {
 
 // MARK: Settings rows
 
-/// A row's icon in the iOS Settings look: a 32-point rounded square in the row's colour with a white symbol. A
-/// destructive row's is a red wash with a red symbol (`washed`).
+/// A row's icon: a monochrome tile, the symbol in ink on paper-sunken (nothing on these pages asks anything, so no
+/// colour). A destructive row's is a red wash with a red symbol (`washed`); `tint` colours only that one.
 struct SettingsTile: View {
     var symbol: String
     var tint: Color
     var washed = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(washed ? tint.opacity(0.14) : tint)
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(washed ? tint.opacity(0.14) : Palette.paperSunken)
             .frame(width: 32, height: 32)
             .overlay {
                 Image(systemName: symbol)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(washed ? tint : Color.white)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(washed ? tint : Palette.ink2)
             }
             .accessibilityHidden(true)
     }
@@ -164,7 +164,7 @@ struct SettingsRowLabel<Leading: View, Trailing: View>: View {
     var trailing: Trailing
 
     init(
-        title: String, subtitle: String? = nil, titleColor: Color = Palette.text, chevron: Bool = true,
+        title: String, subtitle: String? = nil, titleColor: Color = Palette.ink, chevron: Bool = true,
         @ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing
     ) {
         self.title = title
@@ -180,13 +180,13 @@ struct SettingsRowLabel<Leading: View, Trailing: View>: View {
             leading
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(RFont.sans(16, .medium))
+                    .font(TextRole.row.font())
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
                 if let subtitle {
                     Text(subtitle)
-                        .font(RFont.sans(13))
-                        .foregroundStyle(Palette.tertiary)
+                        .textRole(.meta)
+                        .foregroundStyle(Palette.inkMeta)
                         .lineLimit(1)
                         .environment(\.layoutDirection, .leftToRight)
                 }

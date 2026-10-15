@@ -41,7 +41,7 @@ final class PasskeyUITests: XCTestCase {
 
     /// Through the setup's pages with their forward button ("Not now" on notifications) until `id` shows.
     private func advance(to id: String, timeout: TimeInterval = 10) {
-        for _ in 0..<8 {
+        for _ in 0..<5 {
             if element(id).waitForExistence(timeout: 1.5) { return }
             if element("onboardingNext").waitForExistence(timeout: timeout) { element("onboardingNext").tap() }
         }

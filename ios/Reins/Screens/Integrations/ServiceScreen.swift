@@ -34,6 +34,9 @@ struct AccountsScreen: View {
                 Color.clear.pageBackground()
             }
         }
+        // From the first frame, so the bar starts with the large title in the serif.
+        .navigationTitle(accounts?.view?.name ?? serviceName(serviceId))
+        .navigationBarTitleDisplayMode(.large)
         .task(id: serviceId) {
             let m: AccountsModel
             if let existing = accounts, existing.service == serviceId {
@@ -81,7 +84,7 @@ struct AccountsScreen: View {
                         .joined(separator: "\n\n")
                 )
             }
-            .listRowBackground(Palette.elevated)
+            .listRowBackground(Color.clear)
 
             Section {
                 VStack(alignment: .leading, spacing: 12) {
@@ -106,7 +109,6 @@ struct AccountsScreen: View {
         }
         .integrationList()
         .navigationTitle(service.name)
-        .navigationSubtitle("Integration")
         .navigationBarTitleDisplayMode(.large)
         .refreshable {
             feedback.play(.refresh)

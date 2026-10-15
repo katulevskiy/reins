@@ -608,13 +608,13 @@ struct ProfileEditorSheet: View {
                         feedback.play(.selection)
                         icon = e
                     } label: {
-                        Text(e)
-                            .font(.system(size: 19))
+                        GlyphIcon(AutopilotText.profileGlyph(e), size: 18)
+                            .foregroundStyle(on ? Palette.onInverse : Palette.ink)
                             .frame(width: 38, height: 38)
-                            .background(on ? Palette.accentSoft : .clear, in: Circle())
-                            .overlay(Circle().strokeBorder(on ? Palette.accent : .clear, lineWidth: 1.5))
+                            .background(on ? Palette.inverse : Palette.paperSunken, in: Circle())
                     }
                     .buttonStyle(PressDim())
+                    .accessibilityLabel(AutopilotText.profileIconName(e))
                     .accessibilityAddTraits(on ? .isSelected : [])
                     .accessibilityIdentifier("icon:\(e)")
                 }
