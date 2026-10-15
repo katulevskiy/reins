@@ -17,6 +17,10 @@ final class AppHost {
     static var isDemo: Bool { ProcessInfo.processInfo.arguments.contains("-demo") }
 
     init() {
+        #if DEBUG
+        // UI tests: start from the default sounds and haptics, whatever an earlier (interrupted) run left saved.
+        if ProcessInfo.processInfo.arguments.contains("-resetFeedback") { FeedbackSettings().save() }
+        #endif
         let feedback: Feedback = AppFeedback.make()
         if Self.isDemo, let demo = DemoCore.make() {
             // In memory: nothing to wait for.
