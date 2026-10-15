@@ -103,8 +103,8 @@ fn oauth_error(e: &OAuthError) -> JsonResponse {
     JsonResponse(Status::from_code(e.status).unwrap_or(Status::BadRequest), e.to_json())
 }
 
-fn error_flow(status: Status, title: &str, message: &str) -> Flow {
-    Flow::Page(status, pages::error_page(title, message))
+fn error_flow(at: &str, status: Status, title: &str, message: &str) -> Flow {
+    Flow::Page(status, pages::error_page(at, title, message))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -258,20 +258,32 @@ fn key_fingerprint_of(client: &PairingClient) -> Option<String> {
 #[get("/reins/oauth/authorize?<params..>")]
 async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, conn: DbConn) -> Flow {
     if ratelimit::check_limit_unauthenticated(&ip.ip).is_err() {
-        return error_flow(Status::TooManyRequests, "Too many requests", "Please wait a moment and try again.");
+        return error_flow(
+            pages::at::AUTHORIZE,
+            Status::TooManyRequests,
+            "Too many requests",
+            "Please wait a moment and try again.",
+        );
     }
     let Some(client_id) = params.get("client_id").filter(|c| !c.is_empty()) else {
-        return error_flow(Status::BadRequest, "Cannot connect", "The request has no client_id.");
+        return error_flow(pages::at::AUTHORIZE, Status::BadRequest, "Cannot connect", "The request has no client_id.");
     };
     let client = match resolve_client(client_id, &conn).await {
         Ok(c) => c,
         Err(e) => {
-            return error_flow(Status::BadRequest, "Cannot connect", &format!("The client could not be verified: {e}"));
+            return error_flow(
+                pages::at::AUTHORIZE,
+                Status::BadRequest,
+                "Cannot connect",
+                &format!("The client could not be verified: {e}"),
+            );
         }
     };
     let request = match validate_authorize(&params, &client.redirect_uris, &mcp_url()) {
         Ok(r) => r,
-        Err(AuthorizeFailure::Page(message)) => return error_flow(Status::BadRequest, "Cannot connect", &message),
+        Err(AuthorizeFailure::Page(message)) => {
+            return error_flow(pages::at::AUTHORIZE, Status::BadRequest, "Cannot connect", &message);
+        }
         Err(AuthorizeFailure::Redirect {
             redirect_uri,
             state,
@@ -288,7 +300,12 @@ async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, conn: DbCo
         }
     };
     let Ok(client_key) = desktop_client_key(&params) else {
-        return error_flow(Status::BadRequest, "Cannot connect", "The desktop app key is not valid.");
+        return error_flow(
+            pages::at::AUTHORIZE,
+            Status::BadRequest,
+            "Cannot connect",
+            "The desktop app key is not valid.",
+        );
     };
     let pairing_client = PairingClient {
         client_id: client.client_id,
@@ -305,7 +322,12 @@ async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, conn: DbCo
     };
     match OAUTH.create_session(session) {
         Ok(id) => Flow::Page(Status::Ok, pages::email_form_page(&form.0, &form.1, &id, None, form.2.as_deref())),
-        Err(_) => error_flow(Status::ServiceUnavailable, "Server busy", "Please try again in a few minutes."),
+        Err(_) => error_flow(
+            pages::at::AUTHORIZE,
+            Status::ServiceUnavailable,
+            "Server busy",
+            "Please try again in a few minutes.",
+        ),
     }
 }
 
@@ -320,14 +342,24 @@ async fn pairing_target(email: &str, conn: &DbConn) -> Option<(UserId, ReinsDevi
 #[post("/reins/oauth/authorize", data = "<data>")]
 async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State<DbPool>) -> Flow {
     let Some(body) = read_limited(data, MAX_FORM_BYTES).await else {
-        return error_flow(Status::PayloadTooLarge, "Request too large", "Please try again.");
+        return error_flow(pages::at::AUTHORIZE, Status::PayloadTooLarge, "Request too large", "Please try again.");
     };
     let form = parse_form(&body);
     let Some(session_id) = form.get("session").filter(|s| !s.is_empty()) else {
-        return error_flow(Status::BadRequest, "Link expired", "Start the connection again from your AI app.");
+        return error_flow(
+            pages::at::AUTHORIZE,
+            Status::BadRequest,
+            "Link expired",
+            "Start the connection again from your AI app.",
+        );
     };
     let Some(session) = OAUTH.session(session_id) else {
-        return error_flow(Status::BadRequest, "Link expired", "Start the connection again from your AI app.");
+        return error_flow(
+            pages::at::AUTHORIZE,
+            Status::BadRequest,
+            "Link expired",
+            "Start the connection again from your AI app.",
+        );
     };
     let form_page = |status: Status, error: &str| {
         Flow::Page(
@@ -365,7 +397,12 @@ async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State
         None => HUB.pairings.start_decoy(session.client.clone(), now),
     };
     let Ok((request, code)) = started else {
-        return error_flow(Status::ServiceUnavailable, "Server busy", "Please try again in a few minutes.");
+        return error_flow(
+            pages::at::AUTHORIZE,
+            Status::ServiceUnavailable,
+            "Server busy",
+            "Please try again in a few minutes.",
+        );
     };
     if let Some((user_uuid, device)) = &target {
         push::spawn_push(
@@ -392,7 +429,9 @@ async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State
 /// Step 3: show the code; once the phone has answered, hand the result back to the client.
 #[get("/reins/oauth/authorize/wait?<session>")]
 fn authorize_wait(session: &str) -> Flow {
-    let expired = || error_flow(Status::BadRequest, "Link expired", "Start the connection again from your AI app.");
+    let expired = || {
+        error_flow(pages::at::WAIT, Status::BadRequest, "Link expired", "Start the connection again from your AI app.")
+    };
     let Some(current) = OAUTH.session(session) else {
         return expired();
     };

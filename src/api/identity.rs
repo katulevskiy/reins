@@ -1402,6 +1402,7 @@ async fn authorize(
         return Ok(rocket::Either::Right((
             rocket::http::Status::NotFound,
             rocket::response::content::RawHtml(crate::api::reins::pages::error_page(
+                crate::api::reins::pages::at::IDENTITY_AUTHORIZE,
                 "No browser sign-in on this server",
                 "This server signs in with an email and a master password. Close this page and, in the app, use \
                  Sign in or Create account.",
