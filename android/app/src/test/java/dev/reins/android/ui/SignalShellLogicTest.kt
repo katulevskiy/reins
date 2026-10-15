@@ -119,6 +119,27 @@ class SignalShellLogicTest {
         assertTrue(bypassRunning(settings().copy(mode = AutopilotMode.BYPASS)))
     }
 
+    @Test
+    fun anAccountThatNeedsConsentSaysWhatHappenedNotTheButton() {
+        val needsAgain = { kind: String -> dev.reins.android.ui.services.needsAgain(kind) }
+        assertEquals("Token expired", needsAgain("google"))
+        assertEquals("Access turned off", needsAgain("device"))
+        assertEquals("Signed out", needsAgain("telegram"))
+        assertEquals("Locked", needsAgain("vault"))
+        assertFalse(listOf("google", "device", "telegram", "vault", "token").any { needsAgain(it) == "Allow again" })
+    }
+
+    @Test
+    fun trustsFieldIsAmberForLockdownRedForBypassVioletForOvernight() {
+        fun trustField(s: dev.reins.core.AutopilotSettings?) = dev.reins.android.ui.autopilot.trustField(s)
+        assertNull(trustField(null))
+        assertNull(trustField(settings()))
+        assertEquals(dev.reins.android.design.Field.Warn, trustField(settings().copy(mode = AutopilotMode.LOCKDOWN)))
+        assertEquals("the iOS-Trust board's amber", androidx.compose.ui.graphics.Color(0xFFA16207), dev.reins.android.design.Field.Warn.fill())
+        assertEquals(dev.reins.android.design.Field.Delete, trustField(settings().copy(mode = AutopilotMode.BYPASS, bypassUntil = 1_700_000_900)))
+        assertEquals(dev.reins.android.design.Field.Grant, trustField(settings().copy(mode = AutopilotMode.OVERNIGHT, overnightUntil = 1_700_000_900)))
+    }
+
     private fun settings() = dev.reins.core.AutopilotSettings(
         mode = AutopilotMode.MANUAL,
         baseMode = AutopilotMode.MANUAL,

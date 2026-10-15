@@ -98,6 +98,12 @@ abstract class WidgetShotsBase(private val theme: String) {
         File(dir, "sg-64-notification-icons-$theme.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
+    /** Locked down: the mode in the warn colour (amber), as on Trust's field. */
+    @Test
+    fun widgetAutopilotLockdown() {
+        shoot("sg-65-widget-autopilot-lockdown", DpSize(150.dp, 150.dp)) { AutopilotWidgetContent(AutopilotWidgetModel(AutopilotMode.LOCKDOWN, 3), open) }
+    }
+
     @Test
     fun widgetPond() {
         shoot("sg-61-widget-pond", DpSize(300.dp, 160.dp)) { WaitingWidgetContent(waitingWidgetModel(emptyList()), open) }
