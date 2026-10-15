@@ -50,7 +50,7 @@ struct McpServerScreen: View {
                         ServiceAvatar(service: "mcp", size: 40)
                         Text(untrusted(server.url))
                             .font(RFont.mono(13.5))
-                            .foregroundStyle(Palette.secondary)
+                            .foregroundStyle(Palette.ink2)
                             .lineLimit(2)
                             .truncationMode(.middle)
                             .environment(\.layoutDirection, .leftToRight)
@@ -60,15 +60,15 @@ struct McpServerScreen: View {
                     }
                     if let error = server.error.map(untrusted), !error.isEmpty {
                         Text(error)
-                            .font(RFont.sans(14))
+                            .textRole(.body)
                             .foregroundStyle(Palette.danger)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("mcpServerError")
                     }
                     if server.status == "needs_sign_in" {
                         Text("Sign in to use its tools.")
-                            .font(RFont.sans(14))
-                            .foregroundStyle(Palette.secondary)
+                            .textRole(.body)
+                            .foregroundStyle(Palette.ink2)
                             .fixedSize(horizontal: false, vertical: true)
                         ActionButton(title: "Sign in", symbol: "person.badge.key", busy: busy) {
                             Task { await mcp?.refresh(serverId) }
@@ -102,8 +102,8 @@ struct McpServerScreen: View {
             Section {
                 if server.tools.isEmpty {
                     Text(server.status == "ok" ? "This server has no tools." : "No tools yet.")
-                        .font(RFont.sans(14.5))
-                        .foregroundStyle(Palette.secondary)
+                        .textRole(.body)
+                        .foregroundStyle(Palette.ink2)
                         .padding(.vertical, 6)
                         .accessibilityIdentifier("noTools")
                 }
@@ -114,19 +114,24 @@ struct McpServerScreen: View {
                     }
                 }
             } header: {
-                GroupHeading("Tools (\(server.tools.count))")
+                HStack {
+                    GroupHeading("Tools · \(server.tools.count)")
+                    Spacer()
+                    Text("You approve each call").textRole(.meta).foregroundStyle(Palette.inkMeta).textCase(nil)
+                }
             } footer: {
                 GroupFootnote("Your AIs can ask to use these tools. Tools that only read need a read permission; anything else is a change you approve. Large results go through your Reins server instead of this phone.")
             }
             .listRowBackground(Color.clear)
 
             Section {
-                HStack(spacing: 10) {
-                    ActionButton(title: "Refresh", symbol: "arrow.clockwise", kind: .secondary, enabled: !busy) {
+                VStack(spacing: 10) {
+                    ActionButton(title: "Refresh", kind: .secondary, enabled: !busy) {
                         Task { await mcp?.refresh(serverId) }
                     }
                     .accessibilityIdentifier("mcpRefresh")
-                    ActionButton(title: "Remove server", symbol: "trash", kind: .destructive, enabled: !busy) {
+                    // Asks once: its tools, sign-in and permissions go.
+                    ActionButton(title: "Remove server", kind: .destructive, enabled: !busy) {
                         removing = true
                     }
                     .accessibilityIdentifier("mcpRemove")
@@ -167,35 +172,41 @@ private struct ToolRow: View {
         VStack(alignment: .leading, spacing: 4) {
             let title = untrusted(tool.title)
             Text(title.isEmpty ? tool.name : title)
-                .font(RFont.sans(16, .semibold))
-                .foregroundStyle(Palette.text)
+                .textRole(.row)
+                .foregroundStyle(Palette.ink)
                 .lineLimit(2)
             if tool.title != tool.name {
                 Text(untrusted(tool.name))
                     .font(RFont.mono(12.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
                     .environment(\.layoutDirection, .leftToRight)
             }
             if !tool.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(untrusted(tool.description))
-                    .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.secondary)
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.ink2)
                     .lineLimit(4)
             }
-            BadgeFlow(spacing: 6) {
+            // Badges are words: a glyph and what it means, never a coloured dot.
+            BadgeFlow(spacing: 14) {
                 ForEach(ToolBadge.of(tool), id: \.self) { badge in
-                    StatusPill(text: badge.label, tint: Self.tint(badge))
-                        .accessibilityIdentifier("badge:\(tool.name):\(badge.rawValue)")
+                    HStack(spacing: 5) {
+                        GlyphIcon(Self.glyph(badge), size: 14)
+                        Text(badge.label)
+                    }
+                    .font(TextRole.tag.font())
+                    .foregroundStyle(Self.tint(badge))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("badge:\(tool.name):\(badge.rawValue)")
                 }
             }
             .padding(.top, 6)
             Toggle(isOn: Binding(get: { tool.heavy }, set: onHeavy)) {
                 Text("Send large results through the server")
-                    .font(RFont.sans(13.5))
-                    .foregroundStyle(Palette.secondary)
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.ink2)
             }
-            .tint(Palette.accent)
             .disabled(!enabled)
             .padding(.top, 4)
             .accessibilityIdentifier("heavy:\(tool.name)")
@@ -205,12 +216,20 @@ private struct ToolRow: View {
         .accessibilityIdentifier("tool:\(tool.name)")
     }
 
+    /// Only "Asks every time" is coloured: it is the one that changes what happens.
     static func tint(_ badge: ToolBadge) -> Color {
         switch badge {
-        case .readOnly: Palette.success
-        case .changes: Palette.send
+        case .readOnly, .changes, .heavy: Palette.ink2
         case .asksEveryTime: Palette.danger
-        case .heavy: Palette.accent
+        }
+    }
+
+    static func glyph(_ badge: ToolBadge) -> Glyph {
+        switch badge {
+        case .readOnly: .eye
+        case .changes: .pencil
+        case .asksEveryTime: .lock
+        case .heavy: .cloudUpload
         }
     }
 }
