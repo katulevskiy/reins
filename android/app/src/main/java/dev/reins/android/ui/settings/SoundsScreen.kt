@@ -1,5 +1,12 @@
 package dev.reins.android.ui.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import dev.reins.android.design.pressable
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -50,7 +57,7 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
     val s by engine.store.settings.collectAsStateWithLifecycle()
     val update = engine.store::update
 
-    Screen(title = "Sounds & haptics", onBack = onBack) {
+    Screen(title = "Sounds and haptics", onBack = onBack) {
         Group(
             Modifier.padding(top = 10.dp),
             footer = "Off silences every sound and vibration in Reins, its notifications included.",
@@ -120,8 +127,8 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
             StrengthRow(s) { level -> update { copy(strength = level) } }
         }
 
-        Group(header = "Try them", footer = "Each plays its sound and haptic, even when that kind of sound is off.") {
-            PreviewRows(engine, s)
+        Group(header = "Feel them", footer = "Each plays its sound and haptic, even when that kind of sound is off.") {
+            PreviewChips(engine, s)
         }
         Spacer(Modifier.height(32.dp))
     }
@@ -167,15 +174,13 @@ private fun VolumeRow(engine: AndroidFeedback, s: FeedbackSettings) {
 @Composable
 private fun StrengthRow(s: FeedbackSettings, onChange: (HapticStrength) -> Unit) {
     val c = LocalColors.current
-    Column(Modifier.padding(16.dp)) {
-        RText("Strength", RType.sans(16f, FontWeight.Medium), if (s.hapticsOn) c.text else c.tertiary)
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // The choice is felt at the strength it picks: the chip's own haptic plays after the change.
-            HapticStrength.entries.forEach { level ->
-                SelectChip(level.label, s.strength == level, Modifier.testTag("strength:${level.name}")) { onChange(level) }
-            }
-        }
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        // Subtle · Standard · Strong in the chooser's well; the choice is felt at the strength it picks.
+        dev.reins.android.design.Chooser(
+            HapticStrength.entries.map { dev.reins.android.design.Choice(it, it.label, "strength:${it.name}") },
+            s.strength,
+            onChange,
+        )
     }
 }
 
@@ -202,31 +207,64 @@ private val samples = listOf(
     Sample("Lockdown", "Everything denied", listOf(Event.LockdownOn)),
 )
 
+/**
+ * The moments to play with, as chips two to a row: each shows its haptic as a little score (a bar per beat, taller
+ * for a stronger one) and plays it with its sound when tapped.
+ */
 @Composable
-private fun PreviewRows(engine: AndroidFeedback, s: FeedbackSettings) {
+private fun PreviewChips(engine: AndroidFeedback, s: FeedbackSettings) {
+    val c = LocalColors.current
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(false) }
     val enabled = s.soundsOn || s.hapticsOn
-    samples.forEachIndexed { i, sample ->
-        if (i > 0) Hairline(inset = 51.dp)
-        ListRow(
-            sample.title,
-            Modifier.testTag("try:${sample.title}"),
-            subtitle = sample.supporting,
-            glyph = Glyph.Play,
-            tint = if (enabled) LocalColors.current.accent else null,
-            onClick = {
-                if (enabled && !running) {
-                    running = true
-                    scope.launch {
-                        for (event in sample.events) for (step in sample.steps ?: listOf(0)) {
-                            engine.preview(event.haptic, event.cue, step)
-                            delay(sample.gapMs)
-                        }
-                        running = false
+    Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        samples.chunked(2).forEach { pair ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                pair.forEach { sample ->
+                    val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+                    Row(
+                        Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .clip(shape)
+                            .background(c.paperRaised)
+                            .border(1.dp, c.rule, shape)
+                            .pressable(enabled = enabled, shape = shape, label = sample.title) {
+                                if (!running) {
+                                    running = true
+                                    scope.launch {
+                                        for (event in sample.events) for (step in sample.steps ?: listOf(0)) {
+                                            engine.preview(event.haptic, event.cue, step)
+                                            delay(sample.gapMs)
+                                        }
+                                        running = false
+                                    }
+                                }
+                            }
+                            .semantics { contentDescription = "${sample.title}: ${sample.supporting}" }
+                            .testTag("try:${sample.title}")
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Score(sample, if (enabled) c.ink else c.inkFaint)
+                        RText(sample.title, RType.sans(14f, FontWeight.Medium), if (enabled) c.ink else c.inkMeta, Modifier.weight(1f), maxLines = 1)
                     }
                 }
-            },
-        )
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** A haptic as a little score: a bar per beat, the later ones of a climb taller. */
+@Composable
+private fun Score(sample: Sample, color: androidx.compose.ui.graphics.Color) {
+    val beats = (sample.events.size * (sample.steps?.size ?: 1)).coerceIn(1, 6)
+    Row(Modifier.height(16.dp).width(28.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Bottom) {
+        repeat(beats) { i ->
+            val h = if (sample.steps != null) 5f + 11f * (i + 1) / beats else if (i == 0) 16f else 10f
+            androidx.compose.foundation.layout.Box(Modifier.width(3.dp).height(h.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(1.dp)).background(color))
+        }
     }
 }
