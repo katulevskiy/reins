@@ -29,18 +29,21 @@ impl Default for NotifyConfig {
     }
 }
 
-/// The notification's text: the title, and the body naming what waits.
+/// The notification's text (`Desk-Extras.png`): it only says where to look, "Check your phone", over the request in
+/// one sentence ("Claude Code wants to push 3 commits to acme/web"), on one short line.
 #[must_use]
-pub fn text(what: &str) -> (String, String) {
-    let what = what.split_whitespace().collect::<Vec<_>>().join(" ");
-    let what: String = if what.chars().count() > 160 {
-        let mut s: String = what.chars().take(159).collect();
+pub fn text(sentence: &str) -> (String, String) {
+    let sentence = sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = sentence.chars();
+    let sentence: String = chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default();
+    let body: String = if sentence.chars().count() > 160 {
+        let mut s: String = sentence.chars().take(159).collect();
         s.push('…');
         s
     } else {
-        what
+        sentence
     };
-    ("Check your phone".to_owned(), format!("Reins 2FA is waiting for your OK: {what}"))
+    ("Check your phone".to_owned(), body)
 }
 
 /// The file the Reins app keeps fresh while it runs: it then shows "Check your phone" itself, through its own
@@ -115,13 +118,37 @@ pub fn chime(state_dir: &Path) {
     }
 }
 
+/// Plays `wav` (a sound the caller brings, as the phone apps' chimes) without waiting: written once to the state
+/// directory as `name`, then played as [`chime`] plays its own (`afplay` on macOS).
+pub fn play_wav(state_dir: &Path, name: &str, wav: &[u8]) {
+    let Some(file) = sound_file(state_dir, name, wav) else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let mut c = std::process::Command::new("afplay");
+        c.arg(&file);
+        detach(c);
+    }
+    #[cfg(not(target_os = "macos"))]
+    play(&file);
+}
+
 /// The chime as a WAV file in the state directory (written once).
 fn chime_file(state_dir: &Path) -> Option<PathBuf> {
-    let path = state_dir.join("chime.wav");
-    let wav = chime_wav();
+    sound_file(state_dir, "chime.wav", &chime_wav())
+}
+
+/// `wav` as the file `name` in the state directory, written when it is not there yet (or differs in length).
+fn sound_file(state_dir: &Path, name: &str, wav: &[u8]) -> Option<PathBuf> {
+    // A plain file name: nothing outside the state directory.
+    if name.contains(['/', '\\']) || name.starts_with('.') {
+        return None;
+    }
+    let path = state_dir.join(name);
     if std::fs::metadata(&path).map(|m| m.len()).ok() != Some(wav.len() as u64) {
         std::fs::create_dir_all(state_dir).ok()?;
-        std::fs::write(&path, &wav).ok()?;
+        std::fs::write(&path, wav).ok()?;
     }
     Some(path)
 }
@@ -290,9 +317,11 @@ mod tests {
 
     #[test]
     fn the_text_names_what_waits_on_one_short_line() {
-        let (title, body) = text("Claude Code wants to run:\n  git push --force");
+        let (title, body) = text("Claude Code wants to push\n  3 commits to acme/web");
         assert_eq!(title, "Check your phone");
-        assert_eq!(body, "Reins 2FA is waiting for your OK: Claude Code wants to run: git push --force");
+        assert_eq!(body, "Claude Code wants to push 3 commits to acme/web");
+        assert_eq!(text("push to acme/web (main)").1, "Push to acme/web (main)");
+        assert_eq!(text("").1, "");
         let (_, long) = text(&"x".repeat(500));
         assert!(long.chars().count() < 220 && long.ends_with('…'));
     }
@@ -329,5 +358,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = chime_file(dir.path()).unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), wav);
+    }
+
+    /// A sound the caller brings is written once, by a plain name, in the state directory only.
+    #[test]
+    fn brought_sounds_stay_in_the_state_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = sound_file(dir.path(), "chime-done.wav", b"RIFF1234").unwrap();
+        assert_eq!(file, dir.path().join("chime-done.wav"));
+        assert_eq!(std::fs::read(&file).unwrap(), b"RIFF1234");
+        for bad in ["../x.wav", "a/b.wav", ".hidden", "a\\b.wav"] {
+            assert!(sound_file(dir.path(), bad, b"x").is_none(), "{bad}");
+        }
     }
 }

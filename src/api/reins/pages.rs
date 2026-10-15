@@ -1,28 +1,111 @@
-//! Server-rendered HTML for the OAuth authorize flow (Decision 18): no JavaScript, every
-//! dynamic value HTML-escaped, relative form/refresh URLs so the pages work under any
-//! `DOMAIN` path prefix.
+//! Server-rendered HTML for the OAuth authorize flow (Decision 18), the pairing link and the sign-out landing page:
+//! no JavaScript, every dynamic value HTML-escaped, relative form/refresh/font URLs so the pages work under any
+//! `DOMAIN` path prefix. They wear Reins Signal (`design/signal`, `Desk-Extras.png` "On the web"): paper and ink in
+//! light and dark (`prefers-color-scheme`), serif titles with one italic word, inverse pill buttons, the number to tap
+//! as a 96 px serif and a pairing code in mono in a sunken well. The faces are served from here
+//! ([`font`], `font-src 'self'`); without them the serif falls back to Georgia.
 
-const STYLE: &str = "body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;min-height:100vh;\
-display:flex;align-items:center;justify-content:center;background:#f4f5f7;color:#16181d}\
-main{background:#fff;max-width:26rem;width:100%;margin:1rem;padding:2rem;border-radius:1rem;\
-box-shadow:0 4px 24px rgba(0,0,0,.08)}\
-h1{font-size:1.3rem;margin:.2rem 0 1rem}p{line-height:1.45;margin:.6rem 0}\
-.muted{color:#5d6675;font-size:.9rem}.code{font-size:3.5rem;font-weight:700;letter-spacing:.2rem;\
-text-align:center;margin:1.2rem 0;font-variant-numeric:tabular-nums}\
-.key{font-size:1.15rem;letter-spacing:.08rem;font-variant-numeric:tabular-nums}\
-input[type=email]{width:100%;box-sizing:border-box;padding:.75rem;font-size:1rem;border:1px solid #c5cbd6;\
-border-radius:.5rem;margin:.5rem 0 1rem}\
-button{width:100%;padding:.8rem;font-size:1rem;font-weight:600;border:0;border-radius:.5rem;\
-background:#175ddc;color:#fff;cursor:pointer}\
-.error{background:#fdecea;color:#8a1f17;padding:.7rem .9rem;border-radius:.5rem}\
-a:not(.button){color:#175ddc;text-underline-offset:.15em;text-decoration-thickness:1px}\
-a.button{display:block;box-sizing:border-box;text-align:center;text-decoration:none;padding:.8rem;\
-font-weight:600;border-radius:.5rem;background:#175ddc;color:#fff;margin:1rem 0}\
-.pcode{font-size:2rem;font-weight:700;letter-spacing:.15rem;text-align:center;margin:1rem 0;\
-font-family:ui-monospace,SFMono-Regular,Menlo,monospace}\
-@media (prefers-color-scheme:dark){body{background:#12141a;color:#e8eaf0}\
-main{background:#1c1f27;box-shadow:none}.muted{color:#9aa3b5}a:not(.button){color:#8db4ff}\
-input[type=email]{background:#12141a;color:#e8eaf0;border-color:#3a3f4c}.error{background:#3a1613;color:#f5b5ae}}";
+/// Signal's colours and type. Light first, then dark: paper flips, the rest follows.
+const STYLE: &str = ":root{--paper:#f6f6f8;--raised:#fff;--sunken:#ececf0;--ink:#16151b;--ink2:#5f5e6b;\
+--meta:#6b6a78;--rule:#e3e3ea;--rule2:#d3d3dc;--inv:#16151b;--oninv:#fff;--violet:#5b43e8;--bad:#b91c1c;\
+--dwash:#fbe3e3;--serif:\"Instrument Serif\",Georgia,\"Times New Roman\",serif;\
+--sans:\"Instrument Sans\",system-ui,-apple-system,\"Segoe UI\",Roboto,sans-serif;\
+--mono:\"Geist Mono\",ui-monospace,SFMono-Regular,Menlo,monospace;color-scheme:light dark}\
+@media (prefers-color-scheme:dark){:root{--paper:#121215;--raised:#1c1c21;--sunken:#26262c;--ink:#ededf0;\
+--ink2:#a6a6b0;--meta:#8e8e99;--rule:#2a2a30;--rule2:#3a3a42;--inv:#ededf0;--oninv:#121215;--violet:#a196ff;\
+--bad:#f87171;--dwash:rgba(248,113,113,.14)}}\
+body{font-family:var(--sans);margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;\
+background:var(--paper);color:var(--ink);-webkit-font-smoothing:antialiased}\
+main{background:var(--raised);max-width:24rem;width:100%;margin:1rem;padding:28px 26px;border-radius:18px;\
+box-shadow:0 0 0 1px var(--rule),0 30px 60px -30px rgba(20,18,30,.4);display:flex;flex-direction:column;gap:14px;\
+box-sizing:border-box}\
+.mark{width:36px;height:36px;border-radius:9px;display:block}\
+h1{font-family:var(--serif);font-weight:400;font-size:32px;line-height:34px;letter-spacing:-.01em;margin:0}\
+h1 em{font-style:italic}\
+p{font-size:14px;line-height:20px;margin:0;color:var(--ink2)}p strong{color:var(--ink);font-weight:600}\
+.muted{color:var(--meta);font-size:13px;line-height:18px}\
+.code{font-family:var(--serif);font-weight:400;font-size:96px;line-height:90px;letter-spacing:.02em;\
+text-align:center;padding:6px 0;font-variant-numeric:lining-nums tabular-nums}\
+.keyline{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:12px 14px;border-radius:14px;\
+background:var(--sunken);color:var(--ink2)}\
+.key{font-family:var(--serif);font-weight:400;font-size:22px;letter-spacing:.06em;color:var(--ink)}\
+label{font-size:12.5px;color:var(--meta)}\
+form{display:flex;flex-direction:column;gap:6px;margin:0}\
+input[type=email]{height:44px;box-sizing:border-box;padding:0 14px;font:inherit;font-size:15px;color:var(--ink);\
+background:var(--paper);border:0;box-shadow:0 0 0 1px var(--rule);border-radius:12px;margin-bottom:8px}\
+input[type=email]:focus{outline:2px solid var(--violet);outline-offset:3px}\
+button,a.button{display:flex;align-items:center;justify-content:center;box-sizing:border-box;height:44px;\
+padding:0 18px;border:0;border-radius:999px;background:var(--inv);color:var(--oninv);font:inherit;font-size:15px;\
+font-weight:600;text-decoration:none;cursor:pointer}\
+button:active,a.button:active{opacity:.55}\
+button:focus-visible,a.button:focus-visible{outline:2px solid var(--violet);outline-offset:3px}\
+.error{background:var(--dwash);color:var(--bad);padding:10px 14px;border-radius:12px}\
+a:not(.button){color:var(--ink2);text-underline-offset:.15em;text-decoration-thickness:1px}\
+.pcode{font-family:var(--mono);font-size:26px;letter-spacing:.1em;text-align:center;padding:14px;\
+border-radius:14px;background:var(--sunken);color:var(--ink)}\
+.wait{display:flex;align-items:center;gap:8px;color:var(--meta);font-size:13px}\
+.dot{width:8px;height:8px;border-radius:50%;background:var(--violet);flex:none;\
+animation:breathe 1.8s ease-in-out infinite}\
+@keyframes breathe{0%,100%{opacity:.35}50%{opacity:1}}\
+@media (prefers-reduced-motion:reduce){.dot{animation:none}}";
+
+/// The faces, as `@font-face` rules: `up` leads from the page back to the domain path's root (the fonts are at
+/// `reins/fonts/` there), so the URLs stay relative.
+fn font_faces(up: &str) -> String {
+    let face = |family: &str, file: &str, weight: u16, style: &str| {
+        format!(
+            "@font-face{{font-family:\"{family}\";src:url(\"{up}reins/fonts/{file}.woff2\") format(\"woff2\");\
+font-weight:{weight};font-style:{style};font-display:swap}}"
+        )
+    };
+    [
+        face("Instrument Serif", "InstrumentSerif-Regular", 400, "normal"),
+        face("Instrument Serif", "InstrumentSerif-Italic", 400, "italic"),
+        face("Instrument Sans", "InstrumentSans-Regular", 400, "normal"),
+        face("Instrument Sans", "InstrumentSans-SemiBold", 600, "normal"),
+        face("Geist Mono", "GeistMono", 400, "normal"),
+    ]
+    .concat()
+}
+
+/// The fonts the pages use, by file name.
+const FONTS: [(&str, &[u8]); 5] = [
+    ("InstrumentSerif-Regular.woff2", include_bytes!("../../static/fonts/InstrumentSerif-Regular.woff2")),
+    ("InstrumentSerif-Italic.woff2", include_bytes!("../../static/fonts/InstrumentSerif-Italic.woff2")),
+    ("InstrumentSans-Regular.woff2", include_bytes!("../../static/fonts/InstrumentSans-Regular.woff2")),
+    ("InstrumentSans-SemiBold.woff2", include_bytes!("../../static/fonts/InstrumentSans-SemiBold.woff2")),
+    ("GeistMono.woff2", include_bytes!("../../static/fonts/GeistMono.woff2")),
+];
+
+/// The Reins mark, inline (an `<img>` would need its own route): the shield and its check on the dark plate.
+const MARK: &str = "<svg class=\"mark\" viewBox=\"0 0 108 108\" aria-hidden=\"true\">\
+<rect width=\"108\" height=\"108\" rx=\"24\" fill=\"#170B33\"/>\
+<g transform=\"translate(27 27) scale(2.25)\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\
+<path d=\"M12,3l7.5,3v5.5c0,4.6 -3.1,8.4 -7.5,9.5 -4.4,-1.1 -7.5,-4.9 -7.5,-9.5V6z\" stroke=\"#C9C1FB\" \
+stroke-width=\"1.5\"/><path d=\"M8.7,12l2.4,2.4 4.2,-4.6\" stroke=\"#FFFFFF\" stroke-width=\"1.7\"/></g></svg>";
+
+/// Where the pages are served, under `{domain_path}`: each page's relative URLs are worked out from its own path
+/// ([`up_from`]), so they resolve under any `DOMAIN` path prefix.
+pub mod at {
+    /// The email form, and the errors of the authorize flow.
+    pub const AUTHORIZE: &str = "/reins/oauth/authorize";
+    /// The number to tap, and its errors.
+    pub const WAIT: &str = "/reins/oauth/authorize/wait";
+    /// The apps' browser sign-in (`identity::authorize`), on a server without one.
+    pub const IDENTITY_AUTHORIZE: &str = "/identity/connect/authorize";
+    /// A computer's pairing link.
+    pub const PAIR: &str = "/pair";
+    /// AuthKit's logout landing page.
+    pub const SIGNED_OUT: &str = "/reins/signed-out";
+}
+
+/// What leads from a page served at `path` (under the domain path) back to the domain path's root: one `../` for
+/// each folder the path is in (`/pair`: none, `/reins/oauth/authorize/wait`: three).
+#[must_use]
+pub fn up_from(path: &str) -> String {
+    let folders = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).count().saturating_sub(1);
+    "../".repeat(folders)
+}
 
 /// Escapes text for HTML element content and quoted attribute values.
 pub fn escape_html(raw: &str) -> String {
@@ -40,13 +123,15 @@ pub fn escape_html(raw: &str) -> String {
     out
 }
 
-fn layout(title: &str, head_extra: &str, body: &str) -> String {
+/// A page served at `path` (one of [`at`]): its font URLs lead from there to the font route.
+fn layout(title: &str, head_extra: &str, body: &str, path: &str) -> String {
     format!(
         "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
 <meta name=\"robots\" content=\"noindex,nofollow\">{head_extra}<title>{title}</title>\
-<style>{STYLE}</style></head><body><main>{body}</main></body></html>",
+<style>{faces}{STYLE}</style></head><body><main>{body}</main></body></html>",
         title = escape_html(title),
+        faces = font_faces(&up_from(path)),
     )
 }
 
@@ -55,8 +140,7 @@ fn key_line(fingerprint: Option<&str>) -> String {
     fingerprint
         .map(|f| {
             format!(
-                "<p>Desktop app key: <strong class=\"key\">{}</strong></p>\
-<p class=\"muted\">Your computer and your phone show the same key. Approve only if they match.</p>",
+                "<p class=\"keyline\">Desktop app key: <strong class=\"key\">{}</strong>must match your phone</p>",
                 escape_html(f)
             )
         })
@@ -75,7 +159,7 @@ pub fn email_form_page(
         error.map(|e| format!("<p class=\"error\" role=\"alert\">{}</p>", escape_html(e))).unwrap_or_default();
     let key_html = key_line(key_fingerprint);
     let body = format!(
-        "<h1>Connect {name} to Reins</h1>\
+        "{MARK}<h1>Connect <em>{name}</em> to Reins</h1>\
 <p><strong>{name}</strong> ({host}) wants to use the tools you connect in Reins. \
 Nothing is shared until you approve it on your phone.</p>{key_html}{error_html}\
 <form method=\"post\" action=\"authorize\">\
@@ -88,27 +172,27 @@ Nothing is shared until you approve it on your phone.</p>{key_html}{error_html}\
         host = escape_html(client_host),
         session = escape_html(session),
     );
-    layout("Connect to Reins", "", &body)
+    layout("Connect to Reins", "", &body, at::AUTHORIZE)
 }
 
 /// Step 2: show the code to pick on the phone; reloads itself until the phone has answered.
 pub fn wait_page(client_name: &str, code: u8, key_fingerprint: Option<&str>) -> String {
     let body = format!(
-        "<h1>Approve on your phone</h1>\
-<p>Open the Reins app and tap this number to connect <strong>{name}</strong>:</p>\
+        "<h1>Approve on <em>your phone</em></h1>\
+<p>Open Reins and tap this number to connect <strong>{name}</strong>:</p>\
 <div class=\"code\" aria-label=\"code\">{code}</div>{key_html}\
-<p class=\"muted\">This page continues automatically. If the number is not offered on your phone, \
-deny the request there.</p>",
+<p class=\"wait\"><span class=\"dot\"></span>This page continues by itself.</p>\
+<p class=\"muted\">If the number is not offered on your phone, deny the request there.</p>",
         name = escape_html(client_name),
         key_html = key_line(key_fingerprint),
     );
-    layout("Approve on your phone", "<meta http-equiv=\"refresh\" content=\"2\">", &body)
+    layout("Approve on your phone", "<meta http-equiv=\"refresh\" content=\"2\">", &body, at::WAIT)
 }
 
-/// A terminal error the user cannot recover from on this page.
-pub fn error_page(title: &str, message: &str) -> String {
-    let body = format!("<h1>{}</h1><p>{}</p>", escape_html(title), escape_html(message));
-    layout(title, "", &body)
+/// A terminal error the user cannot recover from, shown at `path` (one of [`at`]).
+pub fn error_page(path: &str, title: &str, message: &str) -> String {
+    let body = format!("{MARK}<h1>{}</h1><p>{}</p>", escape_html(title), escape_html(message));
+    layout(title, "", &body, path)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -170,15 +254,13 @@ pub fn open_in_app_link(code: &str, platform: Platform) -> String {
 /// it. `code` is `None` when the link has no valid code.
 pub fn pair_page(code: Option<&str>, platform: Platform) -> String {
     let install = format!(
-        "<p class=\"muted\">No Reins app on this phone yet? \
-<a href=\"{phone}\">Get the phone app</a>, sign in, then scan the code again. \
-The download page shows availability for your phone.</p>",
+        "<p class=\"muted\">No app yet? <a href=\"{phone}\">Get it</a>, sign in, then scan again.</p>",
         phone = escape_html(MOBILE_APP_URL),
     );
     let body = match code {
         Some(code) => format!(
-            "<h1>Connect your computer</h1>\
-<p>Your computer shows this code. Open it in the Reins app on your phone to connect the computer to your account:</p>\
+            "<h1>Connect your <em>computer</em></h1>\
+<p>Your computer shows this code. Open it in Reins on your phone:</p>\
 <div class=\"pcode\" aria-label=\"pairing code\">{code}</div>\
 <a class=\"button\" href=\"{open}\">Open in Reins</a>{install}\
 <p class=\"muted\">On a computer? Scan the QR code with your phone's camera instead.</p>",
@@ -186,12 +268,12 @@ The download page shows availability for your phone.</p>",
             open = escape_html(&open_in_app_link(code, platform)),
         ),
         None => format!(
-            "<h1>Connect your computer</h1>\
+            "<h1>Connect your <em>computer</em></h1>\
 <p>Scan the QR code your computer shows with your phone's camera, or in the Reins app: \
 <strong>Settings</strong>, <strong>Connect a computer</strong>.</p>{install}"
         ),
     };
-    layout("Connect your computer to Reins", "", &body)
+    layout("Connect your computer to Reins", "", &body, at::PAIR)
 }
 
 /// `/.well-known/apple-app-site-association`: pairing links under `{domain_path}/pair` open the iOS app of `team_id`
@@ -254,7 +336,7 @@ pub fn asset_links(fingerprints: &[String]) -> serde_json::Value {
 
 /// Routes mounted at `{domain_path}/`.
 pub fn routes() -> Vec<rocket::Route> {
-    routes![pair, signed_out]
+    routes![pair, signed_out, font]
 }
 
 /// AuthKit's logout landing page never initiates a new sign-in. The explicit link also works in Firefox,
@@ -264,10 +346,20 @@ fn signed_out() -> rocket::response::content::RawHtml<String> {
     rocket::response::content::RawHtml(layout(
         "Signed out",
         "",
-        "<h1>Signed out</h1><p>Your browser sign-in session has ended.</p>\
+        &format!(
+            "{MARK}<h1>Signed <em>out</em></h1><p>Your browser sign-in session has ended.</p>\
 <a class=\"button\" href=\"com.reins2fa.app://signed-out\">Return to Reins</a>\
-<p class=\"muted\">You can also close this page and return to the app.</p>",
+<p class=\"muted\">You can also close this page and return to the app.</p>"
+        ),
+        at::SIGNED_OUT,
     ))
+}
+
+/// The pages' faces (WOFF2, a year in caches: they never change under a name).
+#[get("/reins/fonts/<name>")]
+fn font(name: &str) -> Option<crate::util::Cached<(rocket::http::ContentType, &'static [u8])>> {
+    let (_, bytes) = FONTS.iter().find(|(file, _)| *file == name)?;
+    Some(crate::util::Cached::long((rocket::http::ContentType::new("font", "woff2"), *bytes), true))
 }
 
 /// Routes mounted at the server root `/`, where the phones look for them.
@@ -317,7 +409,7 @@ mod tests {
         for page in [
             email_form_page(EVIL, EVIL, EVIL, Some(EVIL), Some(EVIL)),
             wait_page(EVIL, 47, Some(EVIL)),
-            error_page(EVIL, EVIL),
+            error_page(at::AUTHORIZE, EVIL, EVIL),
         ] {
             assert!(!page.contains("<script"), "{page}");
             assert!(!page.contains("alert(1)</script>"), "{page}");
@@ -330,7 +422,7 @@ mod tests {
         for page in [
             email_form_page("Claude", "claude.ai", "sess", None, Some("4821 9930")),
             wait_page("Claude", 12, Some("4821 9930")),
-            error_page("t", "m"),
+            error_page(at::AUTHORIZE, "t", "m"),
         ] {
             assert!(!page.to_lowercase().contains("<script"), "{page}");
             assert!(!page.contains("http://") && !page.contains("https://"), "{page}");
@@ -419,6 +511,110 @@ S.browser_fallback_url=https%3A%2F%2Fapp.reins2fa.com%2Fget;end\""
             ])
         );
         assert_eq!(asset_links(&[]), serde_json::json!([]));
+    }
+
+    /// The font URLs of a page, as written in its `@font-face` rules.
+    fn font_urls(page: &str) -> Vec<&str> {
+        page.split("url(\"").skip(1).filter_map(|rest| rest.split_once("\")").map(|(url, _)| url)).collect()
+    }
+
+    /// Every page, at the path it is served from (under the domain path): each of its font URLs, relative, resolves
+    /// to the font route there, under any `DOMAIN` path prefix, and names a file the route serves.
+    #[test]
+    fn every_font_url_resolves_to_the_font_route() {
+        let route = routes![font].remove(0);
+        let font_path = route.uri.path().strip_suffix("<name>").unwrap().to_owned();
+        assert_eq!(font_path, "/reins/fonts/");
+        let pages = [
+            (at::AUTHORIZE, email_form_page("c", "h", "s", None, None)),
+            (at::AUTHORIZE, error_page(at::AUTHORIZE, "t", "m")),
+            (at::WAIT, wait_page("c", 1, None)),
+            (at::WAIT, error_page(at::WAIT, "Link expired", "m")),
+            (at::IDENTITY_AUTHORIZE, error_page(at::IDENTITY_AUTHORIZE, "t", "m")),
+            (at::PAIR, pair_page(None, Platform::Other)),
+            (at::PAIR, pair_page(Some("BCDF-GHJK"), Platform::Android)),
+            (at::SIGNED_OUT, signed_out().0),
+        ];
+        for domain_path in ["", "/vw", "/a/b"] {
+            for (served, page) in &pages {
+                let base = url::Url::parse(&format!("https://reins.example{domain_path}{served}")).unwrap();
+                let urls = font_urls(page);
+                assert_eq!(urls.len(), FONTS.len(), "{served}");
+                for u in urls {
+                    assert!(!u.starts_with('/') && !u.contains("://"), "{served}: {u} is relative");
+                    let resolved = base.join(u).unwrap();
+                    let file = resolved
+                        .path()
+                        .strip_prefix(&format!("{domain_path}{font_path}"))
+                        .unwrap_or_else(|| panic!("{served} under {domain_path:?}: {u} goes to {resolved}"));
+                    assert!(font(file).is_some(), "{served}: {file} is served");
+                }
+            }
+        }
+        assert_eq!(up_from(at::PAIR), "");
+        assert_eq!(up_from(at::WAIT), "../../../");
+        assert!(pages.iter().all(|(_, p)| p.contains("Georgia")), "the serif falls back to Georgia");
+    }
+
+    #[test]
+    fn the_font_files_are_small_woff2() {
+        for (file, bytes) in FONTS {
+            assert_eq!(&bytes[..4], b"wOF2", "{file}");
+            assert!(bytes.len() < 40_000, "{file} is a Latin subset");
+            assert!(font(file).is_some());
+        }
+        assert!(font("../Cargo.toml").is_none() && font("nope.woff2").is_none());
+    }
+
+    /// Titles are the serif with one italic word; the number to tap is the big serif, the pairing code mono.
+    #[test]
+    fn the_pages_speak_signal() {
+        assert!(wait_page("c", 42, None).contains("<h1>Approve on <em>your phone</em></h1>"));
+        assert!(email_form_page("Claude", "claude.ai", "s", None, None).contains("Connect <em>Claude</em> to Reins"));
+        assert!(pair_page(Some("WDJB-MJHT"), Platform::Other).contains("Connect your <em>computer</em>"));
+        assert!(STYLE.contains("prefers-color-scheme:dark") && STYLE.contains("font-size:96px"));
+        assert!(!email_form_page(EVIL, "h", "s", None, None).contains("<em><script"));
+    }
+
+    /// `REINS_PAGES_OUT=<dir> cargo test --features sqlite pages_for_screenshots -- --ignored`: writes every page at the
+    /// path it is served from (so its relative URLs resolve when the directory is served), for screenshots.
+    #[test]
+    #[ignore = "writes files, for screenshots"]
+    fn pages_for_screenshots() {
+        let Some(out) = std::env::var_os("REINS_PAGES_OUT").map(std::path::PathBuf::from) else {
+            return;
+        };
+        let pages = [
+            ("reins/oauth/authorize.html", email_form_page("Claude", "claude.ai", "s", None, None)),
+            (
+                "reins/oauth/authorize-key.html",
+                email_form_page(
+                    "Reins desktop",
+                    "127.0.0.1",
+                    "s",
+                    Some("That email has no account"),
+                    Some("7712 0458"),
+                ),
+            ),
+            ("reins/oauth/authorize/wait.html", wait_page("Claude", 42, None)),
+            ("pair.html", pair_page(Some("WDJB-MJHT"), Platform::Other)),
+            ("pair-none.html", pair_page(None, Platform::Other)),
+            (
+                "identity/connect/authorize.html",
+                error_page(
+                    at::IDENTITY_AUTHORIZE,
+                    "No browser sign-in on this server",
+                    "This server signs in with an email and a master password. Close this page and, in the app, use Sign in or Create account.",
+                ),
+            ),
+            ("reins/signed-out.html", signed_out().0),
+        ];
+        for (path, html) in pages {
+            let file = out.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            // Without the meta refresh: a screenshot waits for nothing.
+            std::fs::write(&file, html.replace("<meta http-equiv=\"refresh\" content=\"2\">", "")).unwrap();
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ use gpui::{
 use super::button::PRESSED;
 use crate::theme::text::tracked;
 use crate::theme::{Field, MONO, Palette, SANS, SignalText as _, Tone, motion};
-use crate::ui::icons::{Glyph, Illustration, glyph, illustration};
+use crate::ui::icons::{Glyph, Illustration, Mark, glyph, illustration};
 use crate::ui::parts::ring;
 
 /// A raised plate on paper: `paper-raised`, a 1 px `rule`, 20 px corners, 18 × 20 inside.
@@ -89,9 +89,9 @@ pub fn fact_row(key: impl Into<SharedString>, value: impl IntoElement, pal: Pale
     )
 }
 
-/// A switch: `violet-fill` when on, `paper-sunken` when off, a white knob.
+/// A switch (40 × 24, the desktop boards' `.sw`): `violet-fill` when on, `paper-sunken` when off, a white knob.
 pub fn switch(id: impl Into<ElementId>, on: bool, pal: Palette) -> Stateful<Div> {
-    let (w, h, knob) = (42.0, 26.0, 22.0);
+    let (w, h, knob) = (40.0, 24.0, 20.0);
     div()
         .id(id.into())
         .flex()
@@ -113,12 +113,12 @@ pub fn switch(id: impl Into<ElementId>, on: bool, pal: Palette) -> Stateful<Div>
         .child(div().size(px(knob)).rounded_full().bg(gpui::white()).shadow_sm())
 }
 
-/// A segmented control's track: a `paper-sunken` pill.
+/// A segmented control's track: a `paper-sunken` pill (3 px inside, the desktop boards' `.seg`).
 pub fn segmented(pal: Palette) -> Div {
-    div().flex().flex_none().items_center().p(px(4.0)).gap(px(2.0)).rounded_full().bg(pal.paper_sunken())
+    div().flex().flex_none().items_center().p(px(3.0)).gap(px(2.0)).rounded_full().bg(pal.paper_sunken())
 }
 
-/// One choice of it: the selected one a `paper-raised` pill with a hairline.
+/// One choice of it (30 px, 13): the selected one a `paper-raised` pill with a hairline.
 pub fn segment(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
@@ -132,11 +132,11 @@ pub fn segment(
         .items_center()
         .justify_center()
         .gap(px(4.0))
-        .h(px(32.0))
-        .px(px(12.0))
+        .h(px(30.0))
+        .px(px(14.0))
         .rounded_full()
         .font_family(SANS)
-        .text_size(px(13.5))
+        .text_size(px(13.0))
         .font_weight(FontWeight::MEDIUM)
         .whitespace_nowrap()
         .cursor_pointer()
@@ -290,6 +290,56 @@ pub fn timer(left_secs: i64, total_secs: i64, on: Hsla) -> Div {
         .text_size(px(13.0))
         .child(ring(fraction, on, on.opacity(0.25), 14.0, 1.8))
         .child(clock)
+}
+
+/// A service's or an AI tool's mark on a 32 px white tile with a hairline (the boards' `.mk`), the logo at 58%; a
+/// glyph instead sits on `paper-sunken` in `ink`.
+pub fn logo_tile(m: Mark, pal: Palette) -> Div {
+    let tile = div().flex().flex_none().items_center().justify_center().size(px(32.0)).rounded(px(10.0));
+    match m {
+        Mark::Brand(b) => tile
+            .bg(gpui::white())
+            .border_1()
+            .border_color(pal.rule())
+            .child(gpui::img(b.path()).size(gpui::relative(0.58)).flex_none()),
+        Mark::Glyph(i) => tile.bg(pal.paper_sunken()).child(glyph(i, 17.0, pal.ink())),
+    }
+}
+
+/// A key cap in a list of shortcuts ("⌘R", "Esc"): mono 12 on `paper-sunken`, `ink-2`.
+pub fn key_cap(text: impl Into<SharedString>, pal: Palette) -> Div {
+    div()
+        .flex_none()
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(7.0))
+        .bg(pal.paper_sunken())
+        .font_family(MONO)
+        .text_size(px(12.0))
+        .line_height(px(16.0))
+        .text_color(pal.ink_2())
+        .whitespace_nowrap()
+        .child(text.into())
+}
+
+/// A state as a small pill (11.5, 600): `color` on itself at 13% ("Held until 22:34", "Installed"), or `ink-2` on
+/// `paper-sunken` when `color` is `None` ("Asks next time"); a glyph before the word when given.
+pub fn status_pill(lead: Option<Glyph>, label: impl Into<SharedString>, color: Option<Hsla>, pal: Palette) -> Div {
+    let (bg, fg) = color.map_or((pal.paper_sunken(), pal.ink_2()), |c| (c.opacity(0.13), c));
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(4.0))
+        .px(px(9.0))
+        .py(px(4.0))
+        .rounded_full()
+        .bg(bg)
+        .text_color(fg)
+        .tag()
+        .whitespace_nowrap()
+        .when_some(lead, |p, g| p.child(glyph(g, 12.0, fg)))
+        .child(label.into())
 }
 
 /// A key on the keyboard ("⌘1", "Ctrl+1"): mono, `ink-meta`.

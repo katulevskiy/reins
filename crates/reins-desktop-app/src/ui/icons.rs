@@ -146,232 +146,6 @@ glyphs!(
     Warning => "warning",
 );
 
-/// The icons the screens ask for by their names before Signal (Lucide's). Each is drawn with a Signal glyph
-/// ([`Icon::glyph`]); phase 2 moves the screens to [`Glyph`] and this goes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Icon {
-    Activity,
-    ArrowLeft,
-    ArrowRight,
-    Bell,
-    Cable,
-    Calendar,
-    Check,
-    ChevronLeft,
-    ChevronRight,
-    CircleAlert,
-    CircleCheck,
-    CircleHelp,
-    CircleX,
-    Cloud,
-    CloudCog,
-    CreditCard,
-    Database,
-    CloudUpload,
-    Download,
-    Ellipsis,
-    Eye,
-    File,
-    FileCode,
-    FileLock,
-    FileText,
-    FolderSearch,
-    GitCommit,
-    GitBranch,
-    Globe,
-    HardDrive,
-    HeartPulse,
-    Infinity,
-    KeyRound,
-    Laptop,
-    LayoutDashboard,
-    ListFilter,
-    Lock,
-    LockOpen,
-    LogOut,
-    Mail,
-    MonitorSmartphone,
-    Question,
-    Package,
-    Pause,
-    Play,
-    Plus,
-    Power,
-    QrCode,
-    RefreshCw,
-    Rocket,
-    ScanSearch,
-    Send,
-    Server,
-    Settings,
-    ShieldCheck,
-    Smartphone,
-    SquareTerminal,
-    Terminal,
-    Ticket,
-    Timer,
-    TimerOff,
-    Trash,
-    TriangleAlert,
-    Unlink,
-    Vault,
-    Wrench,
-    X,
-}
-
-#[allow(dead_code, reason = "the tests go through them all")]
-impl Icon {
-    pub const ALL: &[Self] = &[
-        Self::Activity,
-        Self::ArrowLeft,
-        Self::ArrowRight,
-        Self::Bell,
-        Self::Cable,
-        Self::Calendar,
-        Self::Check,
-        Self::ChevronLeft,
-        Self::ChevronRight,
-        Self::CircleAlert,
-        Self::CircleCheck,
-        Self::CircleHelp,
-        Self::CircleX,
-        Self::Cloud,
-        Self::CloudCog,
-        Self::CreditCard,
-        Self::Database,
-        Self::CloudUpload,
-        Self::Download,
-        Self::Ellipsis,
-        Self::Eye,
-        Self::File,
-        Self::FileCode,
-        Self::FileLock,
-        Self::FileText,
-        Self::FolderSearch,
-        Self::GitCommit,
-        Self::GitBranch,
-        Self::Globe,
-        Self::HardDrive,
-        Self::HeartPulse,
-        Self::Infinity,
-        Self::KeyRound,
-        Self::Laptop,
-        Self::LayoutDashboard,
-        Self::ListFilter,
-        Self::Lock,
-        Self::LockOpen,
-        Self::LogOut,
-        Self::Mail,
-        Self::MonitorSmartphone,
-        Self::Question,
-        Self::Package,
-        Self::Pause,
-        Self::Play,
-        Self::Plus,
-        Self::Power,
-        Self::QrCode,
-        Self::RefreshCw,
-        Self::Rocket,
-        Self::ScanSearch,
-        Self::Send,
-        Self::Server,
-        Self::Settings,
-        Self::ShieldCheck,
-        Self::Smartphone,
-        Self::SquareTerminal,
-        Self::Terminal,
-        Self::Ticket,
-        Self::Timer,
-        Self::TimerOff,
-        Self::Trash,
-        Self::TriangleAlert,
-        Self::Unlink,
-        Self::Vault,
-        Self::Wrench,
-        Self::X,
-    ];
-
-    /// The Signal glyph that draws it.
-    #[must_use]
-    pub fn glyph(self) -> Glyph {
-        match self {
-            Self::Activity => Glyph::Activity,
-            Self::ArrowLeft => Glyph::ArrowBack,
-            Self::ArrowRight => Glyph::ArrowForward,
-            Self::Bell => Glyph::Bell,
-            Self::Cable => Glyph::Link,
-            Self::Calendar => Glyph::Calendar,
-            Self::Check => Glyph::Check,
-            Self::ChevronLeft => Glyph::ChevronLeft,
-            Self::ChevronRight => Glyph::ChevronRight,
-            Self::CircleAlert => Glyph::CircleAlert,
-            Self::CircleCheck => Glyph::CircleCheck,
-            Self::CircleHelp | Self::Question => Glyph::Help,
-            Self::CircleX => Glyph::CircleClose,
-            Self::Cloud => Glyph::Cloud,
-            Self::CloudCog => Glyph::CloudCog,
-            Self::CreditCard => Glyph::Card,
-            Self::Database => Glyph::Database,
-            Self::CloudUpload => Glyph::CloudUpload,
-            Self::Download => Glyph::Download,
-            Self::Ellipsis => Glyph::More,
-            Self::Eye => Glyph::Eye,
-            Self::File => Glyph::File,
-            Self::FileCode => Glyph::FileCode,
-            Self::FileLock => Glyph::FileLock,
-            Self::FileText => Glyph::FileText,
-            Self::FolderSearch => Glyph::FolderSearch,
-            Self::GitCommit => Glyph::GitCommit,
-            Self::GitBranch => Glyph::GitBranch,
-            Self::Globe => Glyph::Globe,
-            Self::HardDrive => Glyph::HardDrive,
-            Self::HeartPulse => Glyph::Heart,
-            Self::Infinity => Glyph::Infinity,
-            Self::KeyRound => Glyph::Key,
-            Self::Laptop => Glyph::Laptop,
-            Self::LayoutDashboard => Glyph::Home,
-            Self::ListFilter => Glyph::Filter,
-            Self::Lock => Glyph::Lock,
-            Self::LockOpen => Glyph::LockOpen,
-            Self::LogOut => Glyph::Quit,
-            Self::Mail => Glyph::Mail,
-            Self::MonitorSmartphone => Glyph::Devices,
-            Self::Package => Glyph::Package,
-            Self::Pause => Glyph::Pause,
-            Self::Play => Glyph::Play,
-            Self::Plus => Glyph::Plus,
-            Self::Power => Glyph::Power,
-            Self::QrCode => Glyph::QrCode,
-            Self::RefreshCw => Glyph::Refresh,
-            Self::Rocket => Glyph::Rocket,
-            Self::ScanSearch => Glyph::ScanSearch,
-            Self::Send => Glyph::Send,
-            Self::Server => Glyph::Server,
-            Self::Settings => Glyph::Settings,
-            // Rules: the plain shield, as the sidebar board draws it.
-            Self::ShieldCheck => Glyph::Shield,
-            Self::Smartphone => Glyph::Phone,
-            Self::SquareTerminal | Self::Terminal => Glyph::Terminal,
-            Self::Ticket => Glyph::Token,
-            Self::Timer => Glyph::Timer,
-            Self::TimerOff => Glyph::TimerOff,
-            Self::Trash => Glyph::Trash,
-            Self::TriangleAlert => Glyph::Warning,
-            Self::Unlink => Glyph::Unlink,
-            Self::Vault => Glyph::Vault,
-            // A tool an AI calls (MCP): the set has no wrench; the chip is the nearest "a tool in the machine".
-            Self::Wrench => Glyph::Chip,
-            Self::X => Glyph::Close,
-        }
-    }
-
-    /// The asset's path, as [`Assets`] knows it.
-    #[must_use]
-    pub fn path(self) -> &'static str {
-        self.glyph().path()
-    }
-}
-
 macro_rules! files {
     ($kind:ident, $dir:literal, $($variant:ident => $file:literal),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -477,11 +251,6 @@ pub fn glyph(g: Glyph, side: f32, color: Hsla) -> Svg {
     svg().path(g.path()).size(px(side)).flex_none().text_color(color)
 }
 
-/// An icon (by its name before Signal), `side` px square, in `color`.
-pub fn icon(icon: Icon, side: f32, color: Hsla) -> Svg {
-    glyph(icon.glyph(), side, color)
-}
-
 /// A brand's mark in its own colours, `side` px square.
 pub fn brand(brand: Brand, side: f32) -> Img {
     img(brand.path()).size(px(side)).flex_none()
@@ -505,15 +274,15 @@ pub fn avatar(b: Brand, side: f32, pal: Palette) -> Div {
 /// Either: what a logo square shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {
-    Icon(Icon),
+    Glyph(Glyph),
     Brand(Brand),
 }
 
 impl Mark {
-    /// The mark, `side` px: an icon in `color`, a brand in its own colours.
+    /// The mark, `side` px: a glyph in `color`, a brand in its own colours.
     pub fn render(self, side: f32, color: Hsla) -> AnyElement {
         match self {
-            Self::Icon(i) => icon(i, side, color).into_any_element(),
+            Self::Glyph(g) => glyph(g, side, color).into_any_element(),
             // The marks fill their square: a little smaller than an icon's strokes look.
             Self::Brand(b) => brand(b, side * 0.85).into_any_element(),
         }
@@ -576,20 +345,6 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().trim_end_matches(".svg").to_owned())
             .collect();
         assert_eq!(files, names.iter().map(|n| (*n).to_owned()).collect());
-    }
-
-    /// Every icon a screen asks for by its old (Lucide) name is drawn with a Signal glyph.
-    #[test]
-    fn every_old_icon_name_maps_to_a_glyph() {
-        for i in Icon::ALL {
-            assert!(i.path().starts_with("icons/glyphs/"), "{i:?}");
-            assert!(Glyph::ALL.contains(&i.glyph()), "{i:?}");
-            text(i.path());
-        }
-        // Different things stay told apart (the same glyph only where the meaning is the same).
-        let shared: HashSet<_> = [Icon::Terminal, Icon::SquareTerminal, Icon::CircleHelp, Icon::Question].into();
-        let glyphs: HashSet<_> = Icon::ALL.iter().filter(|i| !shared.contains(i)).map(|i| i.glyph()).collect();
-        assert_eq!(glyphs.len(), Icon::ALL.len() - shared.len());
     }
 
     #[test]

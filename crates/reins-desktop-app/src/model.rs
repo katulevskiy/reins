@@ -47,6 +47,19 @@ const APPROVED_PAUSE: Duration = Duration::from_millis(1600);
 const TURNED_ON_PAUSE: Duration = Duration::from_millis(900);
 /// How often the health checks look whether they are due.
 const HEALTH_TICK: Duration = Duration::from_secs(5);
+/// The phone apps' chimes (`ios/Reins/Resources/Sounds`, the same in `android/.../res/raw`).
+const CHIME_REQUEST: &[u8] = include_bytes!("../../../ios/Reins/Resources/Sounds/fx_chime_request.wav");
+const CHIME_DONE: &[u8] = include_bytes!("../../../ios/Reins/Resources/Sounds/fx_chime_done.wav");
+
+/// A chime the app plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Chime {
+    /// A request waits on the phone (on macOS the system's Glass).
+    Request,
+    /// A work session was approved: a grant was created.
+    Done,
+}
+
 /// `--demo`: how long the phone takes to answer the test.
 const DEMO_ANSWER: Duration = Duration::from_secs(4);
 /// The longest "what" the tray's first line quotes.
@@ -188,6 +201,8 @@ pub struct Model {
     pub note: Option<String>,
     /// The QR code that opens Activity on the phone is showing.
     pub show_phone_qr: bool,
+    /// The tray's "Until I resume…": the window opens its pause sheet there, to be held.
+    pub pause_hold_asked: bool,
     /// "Other server" is open.
     pub show_server: bool,
     pub server_input: String,
@@ -329,6 +344,7 @@ impl Model {
                 notice: None,
                 note: None,
                 show_phone_qr: false,
+                pause_hold_asked: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
                 cli_installed: args_demo || backend_cli,
@@ -405,6 +421,13 @@ impl Model {
                         cx.notify();
                     }
                 }
+                cx.defer(Self::show_window);
+            }
+            // Until resumed is held to confirm, in the window's pause sheet.
+            Action::Pause(PauseFor::Manual) if self.screen == Screen::Status => {
+                self.pause_hold_asked = true;
+                self.show_phone_qr = false;
+                cx.notify();
                 cx.defer(Self::show_window);
             }
             Action::Pause(length) => self.pause_for(length, cx),
@@ -581,7 +604,7 @@ impl Model {
             if !config.phone {
                 continue;
             }
-            let (title, body) = reins_desktop::notify::text(&e.what);
+            let (title, body) = reins_desktop::notify::text(&ui::spoken(e));
             cx.show_system_notification(gpui::SystemNotification {
                 tag: format!("reins-waiting-{}", e.id).into(),
                 title: title.into(),
@@ -590,7 +613,21 @@ impl Model {
             });
         }
         if config.phone && config.sound {
-            reins_desktop::notify::chime(&self.backend.paths().state_dir);
+            self.play(Chime::Request);
+        }
+    }
+
+    /// One of the phone apps' chimes, as the Sounds switch (`[notify] sound`) allows; never in the demo.
+    pub(crate) fn play(&self, chime: Chime) {
+        if self.demo.is_some() || !self.backend.notify_config().sound {
+            return;
+        }
+        let state_dir = &self.backend.paths().state_dir;
+        match chime {
+            // macOS has its own: the system's Glass.
+            Chime::Request if cfg!(target_os = "macos") => reins_desktop::notify::chime(state_dir),
+            Chime::Request => reins_desktop::notify::play_wav(state_dir, "chime-request.wav", CHIME_REQUEST),
+            Chime::Done => reins_desktop::notify::play_wav(state_dir, "chime-done.wav", CHIME_DONE),
         }
     }
 
@@ -660,9 +697,17 @@ impl Model {
         let paused = look == Look::Paused;
         let now = reins_desktop::now_unix();
         let session = self.snapshot.as_ref().and_then(|s| work::running(s.work_session.as_ref(), now));
+        let phone = self.saved.phone.clone().unwrap_or_else(|| "Your phone".to_owned());
+        let (status, detail) = crate::tray::status_lines(
+            look,
+            work::tray_line(look, status, session, now),
+            &phone,
+            self.pause().short(now),
+        );
         let shown = Shown {
             look,
-            status: work::tray_line(look, status, session, now),
+            status,
+            detail,
             can_pause: self.paired() && !paused,
             can_resume: self.paired() && paused,
             can_end: session.is_some() && !self.work.ending,
@@ -1491,6 +1536,13 @@ impl Model {
     pub fn set_harness(&mut self, h: Harness, on: bool, cx: &mut Context<'_, Self>) {
         let backend = Arc::clone(&self.backend);
         self.act(async move { backend.set_harness(h, on) }, cx);
+    }
+
+    /// Light, dark, or as the system says (Settings → Appearance).
+    pub fn set_appearance(&mut self, appearance: crate::theme::Appearance, cx: &mut Context<'_, Self>) {
+        self.saved.appearance = appearance;
+        self.persist();
+        cx.notify();
     }
 
     pub fn toggle_autostart(&mut self, cx: &mut Context<'_, Self>) {

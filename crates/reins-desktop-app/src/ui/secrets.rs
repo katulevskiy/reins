@@ -15,7 +15,7 @@ use reins_desktop::secrets_scan::{Confidence, Detector, Finding, Group, Risk, So
 
 use super::field::Field;
 use super::hold::Held;
-use super::icons::{Brand, Icon, Mark, icon};
+use super::icons::{Brand, Glyph, Mark, glyph};
 use super::parts::{
     Btn, big, btn, btn_icon, caption, card, check_circle, chip, chip_plain, empty, fine, help, help_with, link, logo,
     one_line, page_header, ring, row, row_text, sentence, small, stage, tile, well,
@@ -39,12 +39,12 @@ fn words(parts: &[(&str, bool)]) -> Vec<Words> {
 /// The colour a kind of source is shown in.
 fn source_color(source: Source, pal: Palette) -> Hsla {
     match source {
-        Source::Dotenv | Source::Cargo => pal.orange(),
-        Source::SshKey | Source::GitCredentials => pal.teal(),
+        Source::Dotenv | Source::Cargo => crate::theme::Field::Push.kind(&pal),
+        Source::SshKey | Source::GitCredentials => crate::theme::Field::Pair.kind(&pal),
         Source::Aws => gpui::rgb(0x00FF_9900).into(),
         Source::Npm => gpui::rgb(0x00CB_3837).into(),
-        Source::Kube | Source::Docker | Source::Gcp | Source::PyPi => pal.blue(),
-        Source::GhCli | Source::Shell | Source::Netrc => pal.secondary,
+        Source::Kube | Source::Docker | Source::Gcp | Source::PyPi => crate::theme::Field::Read.kind(&pal),
+        Source::GhCli | Source::Shell | Source::Netrc => pal.ink_2(),
     }
 }
 
@@ -52,13 +52,13 @@ fn source_color(source: Source, pal: Palette) -> Hsla {
 fn source_tile(source: Source, pal: Palette, side: f32) -> Div {
     let i = match source {
         Source::GhCli => return logo(Mark::Brand(Brand::GitHub), pal).size(px(side)),
-        Source::Dotenv => Icon::FileLock,
-        Source::SshKey => Icon::Terminal,
-        Source::GitCredentials => Icon::GitBranch,
-        Source::Npm | Source::PyPi | Source::Cargo => Icon::Package,
-        Source::Docker | Source::Aws | Source::Gcp | Source::Kube => Icon::Cloud,
-        Source::Shell => Icon::SquareTerminal,
-        Source::Netrc => Icon::Globe,
+        Source::Dotenv => Glyph::FileLock,
+        Source::SshKey => Glyph::Key,
+        Source::GitCredentials => Glyph::GitBranch,
+        Source::Npm | Source::PyPi | Source::Cargo => Glyph::Package,
+        Source::Docker | Source::Aws | Source::Gcp | Source::Kube => Glyph::Cloud,
+        Source::Shell => Glyph::Terminal,
+        Source::Netrc => Glyph::Globe,
     };
     tile(i, source_color(source, pal), side)
 }
@@ -66,11 +66,11 @@ fn source_tile(source: Source, pal: Palette, side: f32) -> Div {
 /// What makes a finding risky, as a small chip: red for a danger, yellow for plain text, grey for the keychain.
 fn risk_chip(risk: Risk, pal: Palette) -> Div {
     let (i, color) = match risk {
-        Risk::ReadableByAgents | Risk::WorldReadable => (Icon::Eye, pal.danger),
-        Risk::InGitHistory => (Icon::GitCommit, pal.danger),
-        Risk::NoPassphrase => (Icon::LockOpen, pal.danger),
-        Risk::PlainText => (Icon::FileText, pal.warning),
-        Risk::InKeychain => return chip_plain(Some(Icon::Lock), risk.label(), pal).h(px(22.0)),
+        Risk::ReadableByAgents | Risk::WorldReadable => (Glyph::Eye, pal.danger),
+        Risk::InGitHistory => (Glyph::GitCommit, pal.danger),
+        Risk::NoPassphrase => (Glyph::LockOpen, pal.danger),
+        Risk::PlainText => (Glyph::FileText, pal.warning),
+        Risk::InKeychain => return chip_plain(Some(Glyph::Lock), risk.label(), pal).h(px(22.0)),
     };
     chip(Some(i), risk.label(), color).h(px(22.0))
 }
@@ -79,8 +79,8 @@ fn risk_chip(risk: Risk, pal: Palette) -> Div {
 fn tick(on: bool, pal: Palette) -> Div {
     div().flex().flex_none().items_center().justify_center().size(px(18.0)).rounded(px(5.0)).when_else(
         on,
-        |b| b.bg(pal.violet_fill()).child(icon(Icon::Check, 12.0, pal.on_accent)),
-        |b| b.border(px(1.5)).border_color(pal.tile_border().blend(pal.tertiary.opacity(0.4))),
+        |b| b.bg(pal.violet_fill()).child(glyph(Glyph::Check, 12.0, pal.on_field())),
+        |b| b.border(px(1.5)).border_color(pal.rule().blend(pal.ink_meta().opacity(0.4))),
     )
 }
 
@@ -89,12 +89,12 @@ fn radio(on: bool, pal: Palette) -> Div {
     div().flex_none().mt(px(1.0)).size(px(18.0)).rounded_full().when_else(
         on,
         |r| r.border(px(5.0)).border_color(pal.violet_fill()),
-        |r| r.border(px(1.5)).border_color(pal.tertiary),
+        |r| r.border(px(1.5)).border_color(pal.ink_meta()),
     )
 }
 
 fn mono(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div().font_family(MONO).text_size(px(11.5)).text_color(pal.tertiary).min_w(px(0.0)).truncate().child(text.into())
+    div().font_family(MONO).text_size(px(11.5)).text_color(pal.ink_meta()).min_w(px(0.0)).truncate().child(text.into())
 }
 
 /// A small capitals heading with a count on its right.
@@ -106,7 +106,7 @@ fn heading(title: &str, right: Option<String>, pal: Palette) -> Div {
         .pt(px(6.0))
         .text_size(px(12.0))
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(pal.tertiary)
+        .text_color(pal.ink_meta())
         .child(div().flex_1().child(title.to_uppercase()))
         .when_some(right, |h, r| h.child(div().font_weight(FontWeight::NORMAL).child(r)))
 }
@@ -121,13 +121,13 @@ fn detector_mark(d: Option<Detector>, pal: Palette) -> Option<AnyElement> {
         Detector::GithubPat | Detector::GithubFineGrained | Detector::GithubApp | Detector::GithubOauth => {
             return Some(super::icons::avatar(Brand::GitHub, 18.0, pal).into_any_element());
         }
-        Detector::Postgres | Detector::MySql | Detector::MongoDb | Detector::Redis => Icon::Database,
-        Detector::AwsAccessKeyId | Detector::AwsSecretKey | Detector::GoogleApiKey => Icon::Cloud,
-        Detector::StripeLive | Detector::StripeTest => Icon::CreditCard,
-        Detector::SupabaseService | Detector::Jwt => Icon::Ticket,
-        _ => Icon::KeyRound,
+        Detector::Postgres | Detector::MySql | Detector::MongoDb | Detector::Redis => Glyph::Database,
+        Detector::AwsAccessKeyId | Detector::AwsSecretKey | Detector::GoogleApiKey => Glyph::Cloud,
+        Detector::StripeLive | Detector::StripeTest => Glyph::Card,
+        Detector::SupabaseService | Detector::Jwt => Glyph::Token,
+        _ => Glyph::Key,
     };
-    Some(icon(i, 13.0, pal.secondary).into_any_element())
+    Some(glyph(i, 13.0, pal.ink_2()).into_any_element())
 }
 
 impl Root {
@@ -143,15 +143,10 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(18.0))
-            .child(stage(Mark::Icon(Icon::Laptop), Mark::Icon(Icon::Vault), None, pal.accent, 42.0, pal))
+            .child(stage(Mark::Glyph(Glyph::Laptop), Mark::Glyph(Glyph::Vault), None, pal.violet(), 42.0, pal))
             .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .text_size(px(16.0))
-                    .line_height(px(22.0))
-                    .text_color(pal.secondary)
-                    .child(sentence(
+                div().flex_1().min_w(px(0.0)).text_size(px(16.0)).line_height(px(22.0)).text_color(pal.ink_2()).child(
+                    sentence(
                         &words(&[
                             ("Find the secrets lying around ", false),
                             (computer, true),
@@ -159,10 +154,11 @@ impl Root {
                             ("your vault", true),
                         ]),
                         pal,
-                    )),
+                    ),
+                ),
             )
             .child(
-                btn_icon("secrets-scan-start", Icon::ScanSearch, label, Btn::Primary, pal)
+                btn_icon("secrets-scan-start", Glyph::ScanSearch, label, Btn::Primary, pal)
                     .h(px(36.0))
                     .on_click(Self::on_model(cx, Model::start_scan)),
             );
@@ -173,10 +169,8 @@ impl Root {
             .items_center()
             .gap(px(6.0))
             .pl(px(42.0 * 2.0 + 24.0 + 12.0 * 2.0 + 18.0))
-            .child(
-                chip_plain(Some(Icon::ShieldCheck), "Scans here, sends nothing", pal).h(px(24.0)).text_size(px(11.5)),
-            )
-            .child(chip_plain(Some(Icon::Smartphone), "You approve each move", pal).h(px(24.0)).text_size(px(11.5)))
+            .child(chip_plain(Some(Glyph::Shield), "Scans here, sends nothing", pal).h(px(24.0)).text_size(px(11.5)))
+            .child(chip_plain(Some(Glyph::Phone), "You approve each move", pal).h(px(24.0)).text_size(px(11.5)))
             .child(help(
                 "secrets-scan",
                 "Reins looks for .env files, SSH keys, the GitHub CLI's token, git credentials, cloud and registry \
@@ -236,7 +230,7 @@ impl Root {
                 .flex()
                 .items_center()
                 .gap(px(14.0))
-                .child(ring(p.fraction.max(0.04), pal.accent, pal.tile_border(), 44.0, 4.0))
+                .child(ring(p.fraction.max(0.04), pal.violet(), pal.rule(), 44.0, 4.0))
                 .child(
                     div()
                         .flex()
@@ -258,7 +252,7 @@ impl Root {
             .h(px(6.0))
             .w_full()
             .rounded(px(3.0))
-            .bg(pal.tile_border())
+            .bg(pal.rule())
             .overflow_hidden()
             .child(div().h_full().w(relative(p.fraction.clamp(0.0, 1.0))).bg(pal.violet_fill()));
         let mut stages = card(pal);
@@ -266,23 +260,23 @@ impl Root {
             let state = p.stages.get(stage).copied().unwrap_or_default();
             let mark: Div = match stage {
                 Stage::Github => logo(Mark::Brand(Brand::GitHub), pal),
-                Stage::Projects => tile(Icon::FolderSearch, pal.secondary, 30.0).bg(pal.tile()),
-                Stage::Ssh => tile(Icon::Terminal, pal.secondary, 30.0).bg(pal.tile()),
-                Stage::Cloud => tile(Icon::Cloud, pal.secondary, 30.0).bg(pal.tile()),
-                Stage::Registries => tile(Icon::Package, pal.secondary, 30.0).bg(pal.tile()),
-                Stage::Shell => tile(Icon::SquareTerminal, pal.secondary, 30.0).bg(pal.tile()),
+                Stage::Projects => tile(Glyph::FolderSearch, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
+                Stage::Ssh => tile(Glyph::Key, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
+                Stage::Cloud => tile(Glyph::Cloud, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
+                Stage::Registries => tile(Glyph::Package, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
+                Stage::Shell => tile(Glyph::Terminal, pal.ink_2(), 30.0).bg(pal.paper_sunken()),
             };
             let right: AnyElement = match state {
                 StageState::Done(n) => div()
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .child(div().text_size(px(12.5)).text_color(pal.secondary).child(format!("{n} found")))
-                    .child(icon(Icon::CircleCheck, 16.0, pal.success))
+                    .child(div().text_size(px(12.5)).text_color(pal.ink_2()).child(format!("{n} found")))
+                    .child(glyph(Glyph::CircleCheck, 16.0, pal.success))
                     .into_any_element(),
-                StageState::Running => ring(0.35, pal.accent, pal.tile_border(), 16.0, 2.0).into_any_element(),
+                StageState::Running => ring(0.35, pal.violet(), pal.rule(), 16.0, 2.0).into_any_element(),
                 StageState::Waiting => {
-                    div().text_size(px(12.5)).text_color(pal.tertiary).child("waiting").into_any_element()
+                    div().text_size(px(12.5)).text_color(pal.ink_meta()).child("waiting").into_any_element()
                 }
             };
             stages = stages.child(
@@ -328,7 +322,7 @@ impl Root {
         row(pal, first)
             .id(SharedString::from(format!("finding-{}", f.id)))
             .cursor_pointer()
-            .hover(|s| s.bg(pal.control_fill.opacity(0.5)))
+            .hover(|s| s.bg(pal.paper_sunken().opacity(0.5)))
             .child(div().id(SharedString::from(format!("tick-{}", f.id))).p(px(4.0)).child(tick(on, pal)).on_click(
                 cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
@@ -344,10 +338,10 @@ impl Root {
                     .max_w(px(130.0))
                     .truncate()
                     .text_size(px(12.5))
-                    .text_color(pal.secondary)
+                    .text_color(pal.ink_2())
                     .child(f.summary.clone()),
             )
-            .child(icon(Icon::ChevronRight, 15.0, pal.tertiary))
+            .child(glyph(Glyph::ChevronRight, 15.0, pal.ink_meta()))
             .on_click(Self::on_model(cx, move |m, cx| {
                 let open = open.clone();
                 m.review(cx, |r| r.open = Some(open));
@@ -392,7 +386,7 @@ impl Root {
                         )),
                 )
                 .child(
-                    btn_icon("secrets-rescan", Icon::RefreshCw, "Scan again", Btn::Plain, pal)
+                    btn_icon("secrets-rescan", Glyph::Refresh, "Scan again", Btn::Plain, pal)
                         .on_click(Self::on_model(cx, Model::start_scan)),
                 ),
         );
@@ -401,9 +395,9 @@ impl Root {
             let mut row = div().flex().flex_wrap().gap(px(6.0));
             for (risk, n) in chips {
                 let (i, color, words) = match risk {
-                    Risk::ReadableByAgents => (Icon::Eye, pal.danger, format!("{n} readable by AI agents")),
-                    Risk::InGitHistory => (Icon::GitCommit, pal.danger, format!("{n} in git history")),
-                    _ => (Icon::LockOpen, pal.warning, plural(n, "key without passphrase", "keys without passphrase")),
+                    Risk::ReadableByAgents => (Glyph::Eye, pal.danger, format!("{n} readable by AI agents")),
+                    Risk::InGitHistory => (Glyph::GitCommit, pal.danger, format!("{n} in git history")),
+                    _ => (Glyph::LockOpen, pal.warning, plural(n, "key without passphrase", "keys without passphrase")),
                 };
                 row = row.child(chip(Some(i), words, color));
             }
@@ -483,19 +477,23 @@ impl Root {
                         .min_w(px(0.0))
                         .gap(px(2.0))
                         .child(div().font_weight(FontWeight::MEDIUM).child(title))
-                        .child(div().text_size(px(12.0)).line_height(px(16.0)).text_color(pal.tertiary).child(under)),
+                        .child(div().text_size(px(12.0)).line_height(px(16.0)).text_color(pal.ink_meta()).child(under)),
                 )
                 .on_click(Self::on_model(cx, move |m, cx| m.review(cx, |r| r.keep_local = keep)))
         };
         let move_label = format!("Move {n} · approve on phone");
-        let mv = big(btn_icon("secrets-move", Icon::Smartphone, move_label, Btn::Primary, pal)).w_full().h(px(42.0));
+        let mv = big(btn_icon("secrets-move", Glyph::Phone, move_label, Btn::Primary, pal)).w_full().h(px(42.0));
         let mv = if n == 0 || r.key.is_some() {
             mv.opacity(0.45).cursor_default()
         } else {
             mv.on_click(Self::on_model(cx, Model::move_secrets))
         };
         let small_caps = |t: &str| {
-            div().text_size(px(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(pal.tertiary).child(t.to_uppercase())
+            div()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(pal.ink_meta())
+                .child(t.to_uppercase())
         };
         div()
             .flex()
@@ -504,8 +502,8 @@ impl Root {
             .w(px(290.0))
             .h_full()
             .border_l_1()
-            .border_color(pal.hairline)
-            .bg(pal.sidebar)
+            .border_color(pal.rule())
+            .bg(pal.side())
             .px(px(24.0))
             .pt(px(top))
             .pb(px(24.0))
@@ -527,13 +525,13 @@ impl Root {
                         div()
                             .pb(px(4.0))
                             .text_size(px(15.0))
-                            .text_color(pal.tertiary)
+                            .text_color(pal.ink_meta())
                             .child(format!("of {}", r.total())),
                     ),
             )
             .child(
                 caption(format!("into your vault; this computer's own under \"{computer}\""), pal)
-                    .text_color(pal.tertiary)
+                    .text_color(pal.ink_meta())
                     .mt(px(2.0)),
             )
             .child(small_caps("Then").mt(px(22.0)))
@@ -592,7 +590,7 @@ impl Root {
             .mt(px(8.0))
             .p(px(12.0))
             .gap(px(8.0))
-            .child(caption("12 digits: Reins on your phone, Settings › Devices", pal).text_color(pal.tertiary))
+            .child(caption("12 digits: Reins on your phone, Settings › Devices", pal).text_color(pal.ink_meta()))
             .child(
                 div()
                     .flex()
@@ -616,7 +614,7 @@ impl Root {
                 "Merge into it"
             };
             c = c.child(
-                row(pal, first).items_start().child(icon(Icon::TriangleAlert, 14.0, pal.warning).mt(px(2.0))).child(
+                row(pal, first).items_start().child(glyph(Glyph::Warning, 14.0, pal.warning).mt(px(2.0))).child(
                     div()
                         .flex()
                         .flex_col()
@@ -638,7 +636,7 @@ impl Root {
         }
         for conflict in &plan.conflicts {
             c = c.child(
-                row(pal, first).items_start().child(icon(Icon::CircleAlert, 14.0, pal.secondary).mt(px(2.0))).child(
+                row(pal, first).items_start().child(glyph(Glyph::CircleAlert, 14.0, pal.ink_2()).mt(px(2.0))).child(
                     div().flex_1().min_w(px(0.0)).text_size(px(12.0)).line_height(px(16.0)).child(conflict.line()),
                 ),
             );
@@ -652,7 +650,7 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(2.0))
-            .child(icon(Icon::ChevronLeft, 16.0, pal.accent))
+            .child(glyph(Glyph::ChevronLeft, 16.0, pal.violet()))
             .child(format!("{} found", r.report.secrets()))
             .on_click(Self::on_model(cx, |m, cx| m.review(cx, |r| r.open = None)));
         let mut place = f.place.clone();
@@ -689,13 +687,13 @@ impl Root {
                 } else {
                     "not a secret".to_owned()
                 };
-                div().text_color(pal.tertiary).child(words).into_any_element()
+                div().text_color(pal.ink_meta()).child(words).into_any_element()
             } else {
                 div()
                     .flex()
                     .items_center()
                     .gap(px(6.0))
-                    .text_color(pal.secondary)
+                    .text_color(pal.ink_2())
                     .when_some(detector_mark(item.detector, pal), gpui::ParentElement::child)
                     .child(item.label.clone())
                     .into_any_element()
@@ -717,7 +715,7 @@ impl Root {
                             .min_w(px(0.0))
                             .font_family(MONO)
                             .text_size(px(12.5))
-                            .text_color(pal.tertiary)
+                            .text_color(pal.ink_meta())
                             .truncate()
                             .child(item.preview.clone()),
                     )
@@ -735,14 +733,14 @@ impl Root {
                 .min_w(px(0.0))
                 .text_size(px(13.0))
                 .line_height(px(19.0))
-                .text_color(pal.secondary)
+                .text_color(pal.ink_2())
                 .child(explain),
         );
         if f.source == Source::Dotenv {
             let mut w = well(pal).w(px(300.0)).flex_none().text_size(px(11.5)).line_height(px(18.0));
             let project = secrets::project_in(&r.plan(&d.computer, &d.machine), f);
             for (line, reference) in secrets::env_reins_preview(f, &r.ticked, &project).into_iter().take(8) {
-                w = w.child(div().truncate().when(!reference, |l| l.text_color(pal.tertiary)).child(line));
+                w = w.child(div().truncate().when(!reference, |l| l.text_color(pal.ink_meta())).child(line));
             }
             after = after.child(w);
         }
@@ -767,7 +765,7 @@ impl Root {
                     .bg(pal.danger.opacity(0.08))
                     .border_1()
                     .border_color(pal.danger.opacity(0.25))
-                    .child(icon(Icon::GitCommit, 16.0, pal.danger))
+                    .child(glyph(Glyph::GitCommit, 16.0, pal.danger))
                     .child(div().flex_1().text_size(px(13.0)).child("This file is in git history. Moving it doesn't unpublish it: rotate these keys."))
                     .child(help_with(
                         "secrets-rotate",
@@ -800,9 +798,9 @@ impl Root {
                     .w(px(52.0))
                     .h(px(62.0))
                     .rounded(px(14.0))
-                    .bg(pal.elevated)
+                    .bg(pal.paper_raised())
                     .border_1()
-                    .border_color(pal.tile_border())
+                    .border_color(pal.rule())
                     .font_family(MONO)
                     .text_size(px(28.0))
                     .font_weight(FontWeight::SEMIBOLD)
@@ -815,7 +813,7 @@ impl Root {
                 row(pal, i == 0)
                     .child(source_tile(*source, pal, 30.0))
                     .child(row_text(title.clone(), Some(under.clone().into_any_element()), pal))
-                    .child(ring(1.0, pal.accent, pal.tile_border(), 16.0, 2.0)),
+                    .child(ring(1.0, pal.violet(), pal.rule(), 16.0, 2.0)),
             );
         }
         let more: usize = m.targets.iter().skip(2).count();
@@ -823,9 +821,9 @@ impl Root {
             let secrets_left: usize = m.count.saturating_sub(m.targets.iter().take(2).map(|t| t.3).sum());
             list = list.child(
                 row(pal, false)
-                    .child(tile(Icon::Ellipsis, pal.secondary, 30.0).bg(pal.tile()))
+                    .child(tile(Glyph::More, pal.ink_2(), 30.0).bg(pal.paper_sunken()))
                     .child(row_text(format!("{secrets_left} more"), None, pal))
-                    .child(div().text_size(px(12.5)).text_color(pal.secondary).child("waiting for your OK")),
+                    .child(div().text_size(px(12.5)).text_color(pal.ink_2()).child("waiting for your OK")),
             );
         }
         div()
@@ -833,16 +831,16 @@ impl Root {
             .flex_col()
             .items_center()
             .pt(px(30.0))
-            .child(stage(Mark::Icon(Icon::Laptop), Mark::Icon(Icon::Smartphone), None, pal.accent, 56.0, pal))
+            .child(stage(Mark::Glyph(Glyph::Laptop), Mark::Glyph(Glyph::Phone), None, pal.violet(), 56.0, pal))
             .child(
                 div()
                     .mt(px(16.0))
                     .text_size(px(24.0))
                     .line_height(px(31.0))
-                    .text_color(pal.secondary)
+                    .text_color(pal.ink_2())
                     .child(sentence(&words(&[("Approve on ", false), (&phone, true)]), pal)),
             )
-            .child(caption("Your phone shows the same check digits", pal).mt(px(6.0)).text_color(pal.tertiary))
+            .child(caption("Your phone shows the same check digits", pal).mt(px(6.0)).text_color(pal.ink_meta()))
             .child(boxes)
             .child(list)
             .child(fine("The server only relays sealed boxes; it can't read them.", pal).mt(px(14.0)))
@@ -889,7 +887,7 @@ impl Root {
                             .font_weight(FontWeight::NORMAL)
                             .child(title),
                     )
-                    .child(caption(under, pal).text_color(pal.tertiary)),
+                    .child(caption(under, pal).text_color(pal.ink_meta())),
             )
             .child(
                 btn("secrets-done-close", "Back", Btn::Plain, pal).on_click(Self::on_model(cx, Model::secrets_home)),
@@ -901,9 +899,9 @@ impl Root {
                     .child(source_tile(line.source, pal, 30.0))
                     .child(row_text(line.what.clone(), Some(mono(line.how.clone(), pal).into_any_element()), pal))
                     .child(if line.ok {
-                        icon(Icon::CircleCheck, 16.0, pal.success)
+                        glyph(Glyph::CircleCheck, 16.0, pal.success)
                     } else {
-                        icon(Icon::TriangleAlert, 16.0, pal.warning)
+                        glyph(Glyph::Warning, 16.0, pal.warning)
                     }),
             );
         }
@@ -928,7 +926,7 @@ impl Root {
             page = page.child(
                 card(pal).child(
                     row(pal, true)
-                        .child(tile(Icon::Trash, pal.danger, 30.0))
+                        .child(tile(Glyph::Trash, pal.danger, 30.0))
                         .child(row_text(
                             "Still readable in the Trash",
                             Some(
@@ -943,7 +941,7 @@ impl Root {
                         .child(div().w(px(220.0)).flex_none().child(self.hold_button(
                             "secrets-purge",
                             Held::PurgeOriginals,
-                            Icon::Trash,
+                            Glyph::Trash,
                             "Shred",
                             "Shredded",
                             pal,
@@ -960,13 +958,21 @@ impl Root {
             .flex_1()
             .gap(px(6.0))
             .child(
-                div().flex().items_center().gap(px(10.0)).child(icon(Icon::MonitorSmartphone, 20.0, pal.blue())).child(
-                    div().text_size(px(14.5)).font_weight(FontWeight::SEMIBOLD).child("Use them on another computer"),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .child(glyph(Glyph::Devices, 20.0, crate::theme::Field::Read.kind(&pal)))
+                    .child(
+                        div()
+                            .text_size(px(14.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Use them on another computer"),
+                    ),
             )
-            .child(caption("Pair it with your phone; the same secrets are there.", pal).text_color(pal.tertiary))
+            .child(caption("Pair it with your phone; the same secrets are there.", pal).text_color(pal.ink_meta()))
             .child(div().flex().pt(px(6.0)).child(
-                small(btn_icon("secrets-pair", Icon::QrCode, "Pair a computer", Btn::Plain, pal)).on_click(
+                small(btn_icon("secrets-pair", Glyph::QrCode, "Pair a computer", Btn::Plain, pal)).on_click(
                     |_, _, cx| cx.open_url("https://github.com/katulevskiy/reins/blob/main/docs/quick-start.md"),
                 ),
             ));
@@ -980,13 +986,13 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .child(icon(Icon::CloudUpload, 20.0, pal.secondary))
+                    .child(glyph(Glyph::CloudUpload, 20.0, pal.ink_2()))
                     .child(div().flex_1().text_size(px(14.5)).font_weight(FontWeight::SEMIBOLD).child("CI and servers"))
                     .child(chip_plain(None, "Soon", pal).h(px(22.0))),
             )
             .child(
                 caption("Short-lived tokens for GitHub Actions and your servers, approved like everything else.", pal)
-                    .text_color(pal.tertiary),
+                    .text_color(pal.ink_meta()),
             );
         page = page.child(div().flex().gap(px(12.0)).mt(px(4.0)).child(pair).child(ci));
         if receipt.undone_at.is_none() && !receipt.changes.is_empty() {

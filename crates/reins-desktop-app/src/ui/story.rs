@@ -6,7 +6,7 @@
 use reins_desktop::guard::GROUPS;
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
-use super::icons::{Brand, Icon, Mark};
+use super::icons::{Brand, Glyph, Mark};
 use crate::theme::{Field, Tone};
 
 /// One piece of a sentence; `bold` ones are the words that matter.
@@ -16,14 +16,14 @@ pub struct Words {
     pub bold: bool,
 }
 
-fn plain(text: impl Into<String>) -> Words {
+pub fn plain(text: impl Into<String>) -> Words {
     Words {
         text: text.into(),
         bold: false,
     }
 }
 
-fn bold(text: impl Into<String>) -> Words {
+pub fn bold(text: impl Into<String>) -> Words {
     Words {
         text: text.into(),
         bold: true,
@@ -41,17 +41,21 @@ pub struct Story {
     /// The kind of the request, as its colour: delete for history rewrites and deletes, pair (teal) for git, …
     pub tone: Tone,
     /// The kind's icon, in a square of the tone.
-    pub icon: Icon,
+    pub icon: Glyph,
     /// Who asks (an agent's logo, or this computer).
     pub agent: Mark,
     /// What it is for (a service's logo).
     pub target: Mark,
     /// The action, on the target's corner.
-    pub badge: Icon,
+    pub badge: Glyph,
     /// A few words on why it is risky ("Rewrites history"), for the risky ones.
     pub risk: Option<&'static str>,
     /// The value row of the detail: what it is called and the value ("Command", `git push --force`).
     pub fact: Option<(&'static str, String)>,
+    /// The ask on a field, imperative, its target in italic: "Force-push to *acme-web · main*".
+    pub ask: Vec<Words>,
+    /// The label line's two parts, the kind and the action: ("git", "Force push").
+    pub label: (String, String),
 }
 
 /// The built-in rule group an entry was asked by ("(Rewriting git history)" on its `Rule:` line).
@@ -75,21 +79,21 @@ pub fn group_tone(id: &str) -> Tone {
 
 /// A built-in rule group's icon.
 #[must_use]
-pub fn group_icon(id: &str) -> Icon {
+pub fn group_icon(id: &str) -> Glyph {
     match id {
-        "git-history" => Icon::GitBranch,
-        "deletes" => Icon::Trash,
-        "infrastructure" => Icon::CloudCog,
-        "databases" => Icon::Database,
-        "publishing" => Icon::Package,
-        "payments" => Icon::CreditCard,
-        "secrets" => Icon::ScanSearch,
-        "disks" => Icon::HardDrive,
-        "env-files" => Icon::FileLock,
-        "keys" => Icon::KeyRound,
-        "cloud" => Icon::Cloud,
-        "reins" => Icon::ShieldCheck,
-        _ => Icon::Ticket,
+        "git-history" => Glyph::GitBranch,
+        "deletes" => Glyph::Trash,
+        "infrastructure" => Glyph::CloudCog,
+        "databases" => Glyph::Database,
+        "publishing" => Glyph::Package,
+        "payments" => Glyph::Card,
+        "secrets" => Glyph::ScanSearch,
+        "disks" => Glyph::HardDrive,
+        "env-files" => Glyph::FileLock,
+        "keys" => Glyph::Key,
+        "cloud" => Glyph::Cloud,
+        "reins" => Glyph::Shield,
+        _ => Glyph::Token,
     }
 }
 
@@ -146,9 +150,9 @@ pub fn agent_mark(source: Option<&str>) -> Mark {
     } else if s.contains("cursor") {
         Mark::Brand(Brand::Cursor)
     } else if s.contains("codex") || s.contains("reins run") {
-        Mark::Icon(Icon::SquareTerminal)
+        Mark::Glyph(Glyph::Terminal)
     } else {
-        Mark::Icon(Icon::Laptop)
+        Mark::Glyph(Glyph::Laptop)
     }
 }
 
@@ -177,20 +181,20 @@ fn git_parts(what: &str) -> (String, String) {
 }
 
 /// An MCP tool's action and service: `gmail_send` → ("send an email", "Gmail").
-fn mcp_parts(tool: &str) -> (String, Option<String>, Mark, Icon) {
+fn mcp_parts(tool: &str) -> (String, Option<String>, Mark, Glyph) {
     let (service, action) = tool.split_once('_').unwrap_or((tool, ""));
     let (mark, name) = match service {
         "gmail" => (Mark::Brand(Brand::Gmail), Some("Gmail")),
         "github" => (Mark::Brand(Brand::GitHub), Some("GitHub")),
-        "calendar" => (Mark::Icon(Icon::Calendar), Some("Calendar")),
-        _ => (Mark::Icon(Icon::Wrench), None),
+        "calendar" => (Mark::Glyph(Glyph::Calendar), Some("Calendar")),
+        _ => (Mark::Glyph(Glyph::Chip), None),
     };
     let (verb, badge) = match (service, action) {
-        ("gmail", "send") => ("send an email".to_owned(), Icon::Send),
-        ("gmail", "read" | "search") => ("read your email".to_owned(), Icon::Mail),
-        ("calendar", "create_event") => ("create an event".to_owned(), Icon::Plus),
-        ("github", "create_issue") => ("open an issue".to_owned(), Icon::Plus),
-        _ => (format!("use {tool}"), Icon::Wrench),
+        ("gmail", "send") => ("send an email".to_owned(), Glyph::Send),
+        ("gmail", "read" | "search") => ("read your email".to_owned(), Glyph::Mail),
+        ("calendar", "create_event") => ("create an event".to_owned(), Glyph::Plus),
+        ("github", "create_issue") => ("open an issue".to_owned(), Glyph::Plus),
+        _ => (format!("use {tool}"), Glyph::Chip),
     };
     (verb, name.map(str::to_owned), mark, badge)
 }
@@ -211,12 +215,14 @@ impl Story {
             title: e.what.clone(),
             who: who_line,
             tone: Tone::Field(Field::Push),
-            icon: Icon::SquareTerminal,
+            icon: Glyph::Terminal,
             agent,
-            target: Mark::Icon(Icon::SquareTerminal),
-            badge: Icon::Terminal,
+            target: Mark::Glyph(Glyph::Terminal),
+            badge: Glyph::Terminal,
             risk: None,
             fact: None,
+            ask: vec![plain(e.what.clone())],
+            label: (kind.to_owned(), "Run".to_owned()),
         };
         match e.kind {
             Kind::Command => {
@@ -228,7 +234,7 @@ impl Story {
                 let delete = first.first().is_some_and(|c| matches!(*c, "rm" | "rd" | "rmdir" | "Remove-Item"));
                 s.tone = group.map_or(Tone::Field(Field::Push), group_tone);
                 s.risk = group.and_then(group_risk);
-                s.icon = group.map_or(Icon::SquareTerminal, group_icon);
+                s.icon = group.map_or(Glyph::Terminal, group_icon);
                 s.badge = s.icon;
                 s.fact = Some(("Command", cmd.clone()));
                 if force_push {
@@ -240,21 +246,26 @@ impl Story {
                     s.sentence =
                         vec![plain(format!("{who}{}", wants(e))), bold("force-push"), plain(" to "), bold(&to)];
                     s.title = format!("Force-push to {to}");
-                    s.icon = Icon::GitBranch;
-                    s.badge = Icon::GitBranch;
-                    s.target = Mark::Icon(Icon::GitBranch);
+                    s.ask = vec![plain("Force-push to "), bold(&to)];
+                    s.label = ("git".to_owned(), "Force push".to_owned());
+                    s.icon = Glyph::GitBranch;
+                    s.badge = Glyph::GitBranch;
+                    s.target = Mark::Glyph(Glyph::GitBranch);
                 } else if delete {
                     let what = first.iter().skip(1).filter(|a| !a.starts_with('-')).copied().collect::<Vec<_>>();
                     s.sentence =
                         vec![plain(format!("{who}{}", wants(e))), bold("delete"), plain(" "), bold(what.join(" "))];
+                    s.ask = vec![plain("Delete "), bold(what.join(" "))];
+                    "Delete".clone_into(&mut s.label.1);
                     s.title = cmd;
-                    s.icon = Icon::Trash;
-                    s.badge = Icon::Trash;
-                    s.target = Mark::Icon(Icon::HardDrive);
+                    s.icon = Glyph::Trash;
+                    s.badge = Glyph::Trash;
+                    s.target = Mark::Glyph(Glyph::HardDrive);
                 } else {
                     s.sentence = vec![plain(format!("{who}{}", wants(e))), plain("run "), bold(&cmd)];
+                    s.ask = vec![plain("Run "), bold(&cmd)];
                     s.title = cmd;
-                    s.target = Mark::Icon(Icon::SquareTerminal);
+                    s.target = Mark::Glyph(Glyph::Terminal);
                 }
             }
             Kind::File => {
@@ -265,26 +276,28 @@ impl Story {
                     .map_or(("open", e.what.as_str()), |(v, p)| (v, p));
                 let group = group_of(e);
                 s.tone = Tone::Field(Field::Read);
-                s.icon = Icon::FileLock;
-                s.badge = Icon::FileLock;
-                s.target = Mark::Icon(group.map_or(Icon::FileLock, group_icon));
+                s.icon = Glyph::FileLock;
+                s.badge = Glyph::FileLock;
+                s.target = Mark::Glyph(group.map_or(Glyph::FileLock, group_icon));
                 s.sentence = vec![plain(format!("{who}{}", wants(e))), bold(verb), plain(" "), bold(path)];
                 s.title = format!("{} {path}", capitalised(verb));
+                s.ask = vec![plain(format!("{} ", capitalised(verb))), bold(path)];
+                s.label.1 = capitalised(verb);
                 s.fact = Some(("File", path.to_owned()));
             }
             Kind::Mcp => {
                 let tool = e.service.clone().unwrap_or_else(|| e.what.clone());
                 let (verb, service, target, badge) = mcp_parts(&tool);
                 // Reads and searches are read; everything else a tool does acts (push).
-                s.tone = Tone::Field(if badge == Icon::Mail {
+                s.tone = Tone::Field(if badge == Glyph::Mail {
                     Field::Read
                 } else {
                     Field::Push
                 });
                 s.icon = if target == Mark::Brand(Brand::Gmail) {
-                    Icon::Mail
+                    Glyph::Mail
                 } else {
-                    Icon::Wrench
+                    Glyph::Chip
                 };
                 s.target = target;
                 s.badge = badge;
@@ -297,18 +310,26 @@ impl Story {
                     Some(service) => format!("{} with {service}", capitalised(&verb)),
                     None => capitalised(&verb),
                 };
+                s.ask = match &service {
+                    Some(service) => vec![plain(format!("{} with ", capitalised(&verb))), bold(service)],
+                    None => vec![plain("Use "), bold(&tool)],
+                };
+                s.label =
+                    (service.unwrap_or_else(|| kind.to_owned()), capitalised(verb.split(' ').next().unwrap_or("use")));
                 s.fact = Some(("Tool", tool));
             }
             Kind::Git => {
                 let (verb, to) = git_parts(&e.what);
                 let host = e.service.as_deref().unwrap_or("");
                 s.tone = Tone::Field(Field::Pair);
-                s.icon = Icon::GitBranch;
-                s.badge = Icon::GitBranch;
-                s.agent = Mark::Icon(Icon::Laptop);
-                s.target = Brand::of_host(host).map_or(Mark::Icon(Icon::GitBranch), Mark::Brand);
+                s.icon = Glyph::GitBranch;
+                s.badge = Glyph::GitBranch;
+                s.agent = Mark::Glyph(Glyph::Laptop);
+                s.target = Brand::of_host(host).map_or(Mark::Glyph(Glyph::GitBranch), Mark::Brand);
                 s.sentence = vec![plain(format!("git{}", wants(e))), bold(&verb), plain(" to "), bold(&to)];
                 s.title = format!("{} to {to}", capitalised(&verb));
+                s.ask = vec![plain(format!("{} to ", capitalised(&verb))), bold(&to)];
+                s.label = ("git".to_owned(), capitalised(&verb));
                 let host_name = host.split('/').next().unwrap_or(host);
                 s.who = format!("git · {host_name}");
                 s.fact = Some(("Repository", host.to_owned()));
@@ -317,12 +338,12 @@ impl Story {
                 let name =
                     e.service.clone().or_else(|| e.what.rsplit(' ').next().map(str::to_owned)).unwrap_or_default();
                 s.tone = Tone::Field(Field::Read);
-                s.icon = Icon::KeyRound;
-                s.badge = Icon::KeyRound;
+                s.icon = Glyph::Key;
+                s.badge = Glyph::Key;
                 s.target = if name.contains("anthropic") {
                     Mark::Brand(Brand::Anthropic)
                 } else {
-                    Mark::Icon(Icon::Globe)
+                    Mark::Glyph(Glyph::Globe)
                 };
                 // Who calls it is on the detail's first line ("Codex calls https://…").
                 let caller = e
@@ -337,6 +358,8 @@ impl Story {
                 let who = caller.unwrap_or(who);
                 s.sentence = vec![plain(format!("{who}{}", wants(e))), plain("use "), bold(format!("the {name} key"))];
                 s.title = format!("The key for {name}");
+                s.ask = vec![plain("Use "), bold(format!("the {name} key"))];
+                "Use".clone_into(&mut s.label.1);
                 "API key".clone_into(&mut s.who);
                 s.fact = Some(("API", name));
             }
@@ -344,24 +367,26 @@ impl Story {
                 let host = e.service.clone().unwrap_or_default();
                 let key = e.what.split_once(" with ").map(|(_, k)| k.to_owned());
                 s.tone = Tone::Neutral;
-                s.icon = Icon::Terminal;
-                s.badge = Icon::KeyRound;
-                s.agent = Mark::Icon(Icon::Laptop);
-                s.target = Brand::of_host(&host).map_or(Mark::Icon(Icon::Server), Mark::Brand);
+                s.icon = Glyph::Terminal;
+                s.badge = Glyph::Key;
+                s.agent = Mark::Glyph(Glyph::Laptop);
+                s.target = Brand::of_host(&host).map_or(Mark::Glyph(Glyph::Server), Mark::Brand);
                 s.sentence = vec![plain(format!("ssh{}", wants(e))), bold("sign in"), plain(" to "), bold(&host)];
                 s.title = match &key {
                     Some(k) => format!("ssh {host} with {k}"),
                     None => format!("ssh {host}"),
                 };
                 "SSH".clone_into(&mut s.who);
+                s.ask = vec![plain("Sign in to "), bold(&host)];
+                s.label = ("SSH".to_owned(), "Sign in".to_owned());
                 s.fact = Some(("Host", host));
             }
             Kind::Secrets => {
                 let what = e.what.strip_prefix("secrets for ").unwrap_or(&e.what).trim_matches('`').to_owned();
                 s.tone = Tone::Field(Field::Grant);
-                s.icon = Icon::Lock;
-                s.badge = Icon::KeyRound;
-                s.target = Mark::Icon(Icon::Lock);
+                s.icon = Glyph::Lock;
+                s.badge = Glyph::Key;
+                s.target = Mark::Glyph(Glyph::Lock);
                 s.sentence = vec![
                     plain(format!("{who}{}", wants(e))),
                     plain("get "),
@@ -370,59 +395,185 @@ impl Story {
                     bold(&what),
                 ];
                 s.title = format!("Secrets for {what}");
+                s.ask = vec![plain("Get secrets for "), bold(&what)];
+                "Get".clone_into(&mut s.label.1);
                 s.fact = Some(("Command", what));
             }
             Kind::Ask => {
                 s.tone = Tone::Field(Field::Grant);
-                s.icon = Icon::Question;
-                s.badge = Icon::Question;
-                s.target = Mark::Icon(Icon::Smartphone);
+                s.icon = Glyph::Help;
+                s.badge = Glyph::Help;
+                s.target = Mark::Glyph(Glyph::Phone);
                 s.sentence = vec![plain(format!("{who} asks: ")), bold(&e.what)];
+                "Ask".clone_into(&mut s.label.1);
             }
         }
         s
     }
 }
 
-/// How a row ends: an icon in a colour, or a chip.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ending {
-    Icon(Icon, Tone),
-    /// "By your rules" (let through without asking).
-    Rules,
-    /// "Waiting", violet.
-    Waiting,
-}
-
-#[must_use]
-pub fn ending(e: &Entry) -> Ending {
-    match e.outcome {
-        Outcome::Waiting => Ending::Waiting,
-        Outcome::Approved => Ending::Icon(Icon::CircleCheck, Tone::Success),
-        Outcome::Denied | Outcome::Blocked => Ending::Icon(Icon::CircleX, Tone::Field(Field::Delete)),
-        Outcome::TimedOut => Ending::Icon(Icon::TimerOff, Tone::Field(Field::Warn)),
-        Outcome::Failed => Ending::Icon(Icon::CircleAlert, Tone::Field(Field::Delete)),
-        Outcome::Allowed => Ending::Rules,
-    }
-}
-
 /// The detail's chip: how it ended and where ("Approved on Dana's iPhone").
 #[must_use]
-pub fn answer(e: &Entry, phone: &str) -> (Icon, Tone, String) {
+pub fn answer(e: &Entry, phone: &str) -> (Glyph, Tone, String) {
     let on = |word: &str| match e.decider {
         Decider::Phone => format!("{word} on {phone}"),
         Decider::Local => format!("{word} here"),
         Decider::Settings => format!("{word} by your rules"),
     };
     match e.outcome {
-        Outcome::Waiting => (Icon::Smartphone, Tone::Field(Field::Grant), "Waiting on your phone".to_owned()),
-        Outcome::Approved => (Icon::Smartphone, Tone::Success, on("Approved")),
-        Outcome::Denied => (Icon::Smartphone, Tone::Field(Field::Delete), on("Denied")),
-        Outcome::TimedOut => (Icon::TimerOff, Tone::Field(Field::Warn), "No answer".to_owned()),
-        Outcome::Failed => (Icon::CircleAlert, Tone::Field(Field::Delete), "Couldn't ask".to_owned()),
-        Outcome::Allowed => (Icon::Check, Tone::Neutral, "Allowed by your rules".to_owned()),
-        Outcome::Blocked => (Icon::CircleX, Tone::Field(Field::Delete), "Blocked by your rules".to_owned()),
+        Outcome::Waiting => (Glyph::Phone, Tone::Field(Field::Grant), "Waiting on your phone".to_owned()),
+        Outcome::Approved => (Glyph::Phone, Tone::Success, on("Approved")),
+        Outcome::Denied => (Glyph::Phone, Tone::Field(Field::Delete), on("Denied")),
+        Outcome::TimedOut => (Glyph::TimerOff, Tone::Field(Field::Warn), "No answer".to_owned()),
+        Outcome::Failed => (Glyph::CircleAlert, Tone::Field(Field::Delete), "Couldn't ask".to_owned()),
+        Outcome::Allowed => (Glyph::Check, Tone::Neutral, "Allowed by your rules".to_owned()),
+        Outcome::Blocked => (Glyph::CircleClose, Tone::Field(Field::Delete), "Blocked by your rules".to_owned()),
     }
+}
+
+/// The request as one plain sentence, for a notification: "Claude Code wants to force-push to acme-web · main".
+#[must_use]
+pub fn spoken(e: &Entry) -> String {
+    Story::of(e).sentence.iter().map(|w| w.text.as_str()).collect()
+}
+
+/// The field a request waits on: its kind's ([`Field::of`]), or delete when a rule says it can't be undone, read when
+/// a tool only reads.
+#[must_use]
+pub fn field_of(e: &Entry) -> Field {
+    match Story::of(e).tone {
+        // git's decided rows wear teal; asking, a push is a push.
+        Tone::Field(Field::Pair) | Tone::Neutral | Tone::Success => Field::of(e.kind),
+        Tone::Field(f) => f,
+    }
+}
+
+/// Who asks, and where from: "Claude Code · ~/code/acme-web".
+#[must_use]
+pub fn who_from(e: &Entry) -> String {
+    let who = who_of(e);
+    match e.detail.as_deref().and_then(|d| d.lines().find_map(|l| l.trim().strip_prefix("In:"))) {
+        Some(dir) if !dir.trim().is_empty() => format!("{who} · {}", dir.trim()),
+        _ => who,
+    }
+}
+
+/// A fact about a request, as a row: its key, its value, and whether the value is the machine's (mono).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fact {
+    pub key: String,
+    pub value: String,
+    pub mono: bool,
+}
+
+fn fact(key: &str, value: impl Into<String>, mono: bool) -> Fact {
+    Fact {
+        key: key.to_owned(),
+        value: value.into(),
+        mono,
+    }
+}
+
+/// What a request does, as rows ("Command", "In", "Rule", …), read from its detail's `Key: value` lines; and the
+/// detail's other lines (commit messages, a question's text), for the transcript.
+#[must_use]
+pub fn facts(e: &Entry) -> (Vec<Fact>, Vec<String>) {
+    let mut rows = Vec::new();
+    let mut rest = Vec::new();
+    let mut lines = e.detail.as_deref().unwrap_or("").lines().map(str::trim).peekable();
+    while let Some(line) = lines.next() {
+        if line.is_empty() {
+            continue;
+        }
+        if line == "Command:" {
+            if let Some(cmd) = lines.next_if(|l| !l.is_empty()) {
+                rows.push(fact("Command", cmd, true));
+            }
+            continue;
+        }
+        let known = [
+            ("Command:", "Command", true),
+            ("In:", "In", true),
+            ("File:", "File", true),
+            ("Arguments:", "Arguments", true),
+            ("Secret:", "Secret", true),
+            ("Secrets:", "Secrets", true),
+            ("Key:", "Key", false),
+            ("Lease:", "Held for", false),
+            ("Rule:", "Rule", false),
+            ("Allowed by your rule:", "Rule", true),
+        ];
+        match known.iter().find_map(|(prefix, key, mono)| line.strip_prefix(prefix).map(|v| (key, v.trim(), mono))) {
+            // A built-in rule by its name ("Rewriting git history"), else as written.
+            Some((&"Rule", value, _)) => {
+                let named = value.rsplit_once('(').and_then(|(_, n)| n.strip_suffix(')'));
+                rows.push(named.map_or_else(|| fact("Rule", value, true), |n| fact("Rule", n, false)));
+            }
+            Some((key, value, mono)) => rows.push(fact(key, value, *mono)),
+            None => rest.push(line.to_owned()),
+        }
+    }
+    match e.kind {
+        Kind::Git => {
+            if let Some(host) = e.service.as_deref() {
+                rows.insert(0, fact("Repository", host, true));
+            }
+            // The first line counts the commits ("3 commits to main").
+            if !rest.is_empty() && rest[0].contains("commit") {
+                rows.push(fact("Commits", rest.remove(0), false));
+            }
+            rows.push(fact("The token", "stays on your phone", false));
+        }
+        Kind::Api | Kind::Ssh => {
+            if let Some((label, value)) = Story::of(e).fact {
+                rows.insert(0, fact(label, value, true));
+            }
+            // The API's caller line is the agent's, said above.
+            rest.retain(|l| !l.contains(" calls "));
+            rows.push(fact("The key", "stays on your phone", false));
+        }
+        Kind::Mcp => {
+            if let Some(tool) = e.service.as_deref() {
+                rows.insert(0, fact("Tool", tool, true));
+            }
+        }
+        Kind::Command | Kind::File | Kind::Secrets | Kind::Ask => {}
+    }
+    (rows, rest)
+}
+
+/// The request as a terminal would have shown it: the command, what Reins did, and what the agent was told.
+#[must_use]
+pub fn transcript(e: &Entry, phone: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let (rows, rest) = facts(e);
+    if let Some(cmd) = rows.iter().find(|f| f.key == "Command") {
+        lines.push(format!("$ {}", cmd.value));
+    } else {
+        lines.push(format!("reins: {}", e.what));
+    }
+    lines.extend(rest);
+    let took = e.ended_at.map(|end| crate::format::duration(end - e.at));
+    let after = |words: String| match &took {
+        Some(t) => format!("reins: {words} ({t})"),
+        None => format!("reins: {words}"),
+    };
+    if e.decider == Decider::Phone {
+        lines.push(format!("reins: asking {phone}…"));
+    }
+    match e.outcome {
+        Outcome::Waiting => {}
+        Outcome::Approved => lines.push(after(format!("approved on {phone}"))),
+        Outcome::Denied => lines.push(after(format!("denied on {phone}"))),
+        Outcome::TimedOut => lines.push(after(format!("no answer from {phone}"))),
+        Outcome::Failed => lines.push(format!("reins: couldn't ask {phone}")),
+        Outcome::Allowed => lines.push("reins: allowed by your rules".to_owned()),
+        Outcome::Blocked => lines.push("reins: blocked by your rules".to_owned()),
+    }
+    if let Some(reason) = e.reason.as_deref().filter(|_| e.outcome != Outcome::Approved) {
+        lines.push(format!("{} was told: {reason}", who_of(e)));
+    }
+    lines
 }
 
 /// How long the phone has to answer `e`, in seconds: the hooks' wait for commands and files, the approvals' for the
@@ -472,6 +623,8 @@ mod tests {
         );
         let s = Story::of(&e);
         assert_eq!(said(&s), "Claude Code wants to *force-push* to *acme-web · main*");
+        // The notification says it plainly.
+        assert_eq!(spoken(&e), "Claude Code wants to force-push to acme-web · main");
         assert_eq!((s.tone, s.risk), (Tone::Field(Field::Delete), Some("Rewrites history")));
         assert_eq!(s.agent, Mark::Brand(Brand::Claude));
         assert_eq!(s.title, "Force-push to acme-web · main");
@@ -491,7 +644,7 @@ mod tests {
         rm.outcome = Outcome::Denied;
         let s = Story::of(&rm);
         assert_eq!(said(&s), "Claude Code asked to *delete* */*");
-        assert_eq!((s.tone, s.icon, s.title.as_str()), (Tone::Field(Field::Delete), Icon::Trash, "rm -rf /"));
+        assert_eq!((s.tone, s.icon, s.title.as_str()), (Tone::Field(Field::Delete), Glyph::Trash, "rm -rf /"));
 
         let ls = Story::of(&entry(Kind::Command, Some("Codex"), None, "Codex wants to run: make deploy", None));
         assert_eq!(said(&ls), "Codex wants to run *make deploy*");
@@ -506,7 +659,7 @@ mod tests {
     fn tools_git_keys_ssh_and_questions() {
         let mail = Story::of(&entry(Kind::Mcp, Some("Codex"), Some("gmail_send"), "Codex: gmail_send", None));
         assert_eq!(said(&mail), "Codex wants to *send an email* with *Gmail*");
-        assert_eq!((mail.target, mail.badge), (Mark::Brand(Brand::Gmail), Icon::Send));
+        assert_eq!((mail.target, mail.badge), (Mark::Brand(Brand::Gmail), Glyph::Send));
         assert_eq!(mail.title, "Send an email with Gmail");
 
         let other = Story::of(&entry(Kind::Mcp, Some("Codex"), Some("notion_search"), "Codex: notion_search", None));
@@ -526,7 +679,7 @@ mod tests {
             Some("Codex calls https://api.anthropic.com through Reins"),
         ));
         assert_eq!(said(&key), "Codex wants to use *the anthropic key*");
-        assert_eq!((key.target, key.agent), (Mark::Brand(Brand::Anthropic), Mark::Icon(Icon::SquareTerminal)));
+        assert_eq!((key.target, key.agent), (Mark::Brand(Brand::Anthropic), Mark::Glyph(Glyph::Terminal)));
 
         let ssh = Story::of(&entry(
             Kind::Ssh,
@@ -558,12 +711,12 @@ mod tests {
     #[test]
     fn endings_and_answers() {
         let mut e = entry(Kind::Git, None, None, "push", None);
-        assert_eq!(ending(&e), Ending::Waiting);
+        assert_eq!(answer(&e, "Dana's iPhone").2, "Waiting on your phone");
         e.outcome = Outcome::Approved;
         assert_eq!(answer(&e, "Dana's iPhone").2, "Approved on Dana's iPhone");
         e.outcome = Outcome::Allowed;
         e.decider = Decider::Settings;
-        assert_eq!(ending(&e), Ending::Rules);
+        assert_eq!(answer(&e, "Dana's iPhone").2, "Allowed by your rules");
         assert_eq!(wait_secs(Kind::Command, 120, 300), 120);
         assert_eq!(wait_secs(Kind::Git, 120, 300), 300);
     }

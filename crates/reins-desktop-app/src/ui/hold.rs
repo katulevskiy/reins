@@ -9,7 +9,7 @@ use gpui::{
     Context, Div, ElementId, InteractiveElement as _, MouseButton, SharedString, Stateful, Styled as _, Window,
 };
 
-use super::icons::Icon;
+use super::icons::Glyph;
 use super::{Root, kit};
 use crate::model::Model;
 use crate::pause::PauseFor;
@@ -114,14 +114,14 @@ impl Root {
         &self,
         id: impl Into<ElementId>,
         what: Held,
-        idle: Icon,
+        idle: Glyph,
         label: impl Into<SharedString>,
         done: impl Into<SharedString>,
         pal: Palette,
         cx: &Context<'_, Self>,
     ) -> Stateful<Div> {
         let look = self.hold_progress(what).map_or(HoldLook::Idle, HoldLook::Filling);
-        let b = kit::hold_button(id, idle.glyph(), label, done, look, 38.0, pal);
+        let b = kit::hold_button(id, idle, label, done, look, 38.0, pal);
         Self::hold_area(b, what, cx)
     }
 }
