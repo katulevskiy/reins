@@ -33,6 +33,8 @@ import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
+import androidx.glance.layout.size
+import androidx.glance.layout.width
 import androidx.glance.semantics.contentDescription
 import androidx.glance.semantics.semantics
 import androidx.glance.text.FontFamily
@@ -108,9 +110,23 @@ fun WaitingWidgetContent(model: WaitingWidgetModel, open: Intent) {
             .semantics { contentDescription = "${top.ask}. Opens the request." },
     ) {
         Column(GlanceModifier.fillMaxSize().padding(16.dp)) {
-            Text(waitingLabel(model).uppercase(), style = label(OnField2), maxLines = 1)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // The request's icon (the integration with the action on its corner), ringed in the field.
+                val context = androidx.glance.LocalContext.current
+                val px = (26 * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+                val icon = runCatching { dev.reins.android.ui.common.IntegrationBitmap.draw(context, top.provider, top.action, px, top.field.fill().toArgb()) }.getOrNull()
+                if (icon != null) {
+                    Image(ImageProvider(icon), contentDescription = null, modifier = GlanceModifier.size(26.dp))
+                    Spacer(GlanceModifier.width(8.dp))
+                }
+                Text(waitingLabel(model).uppercase(), style = label(OnField2), maxLines = 1)
+            }
             Spacer(GlanceModifier.height(8.dp))
             Text(top.ask, style = TextStyle(color = OnField, fontSize = 21.sp, fontFamily = FontFamily.Serif), maxLines = 3)
+            top.details?.let {
+                Spacer(GlanceModifier.height(3.dp))
+                Text(it, style = TextStyle(color = OnField, fontSize = 12.sp, fontFamily = FontFamily.Monospace), maxLines = 2)
+            }
             Spacer(GlanceModifier.height(4.dp))
             Text(top.who, style = TextStyle(color = OnField2, fontSize = 12.sp), maxLines = 1)
             Spacer(GlanceModifier.defaultWeight())
