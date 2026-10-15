@@ -1549,7 +1549,11 @@ class AppFlowTest {
         tap("tabConnections")
         tap("service:gmail")
         awaitTag("googleSignInNote")
-        rule.onNodeWithTag("googleSignInNote").assertTextContains("hasn't verified this app", substring = true)
+        // A short line; the way through Google's warning is behind its (?).
+        awaitText("Google may warn you first")
+        assertTrue(rule.onAllNodes(hasText("hasn't verified this app", substring = true)).fetchSemanticsNodes().isEmpty())
+        tap("help:Google's warning")
+        awaitText("If Google says it hasn't verified this app: Advanced, then Go to Reins.")
     }
 
     @Test

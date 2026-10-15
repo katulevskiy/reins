@@ -116,7 +116,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
     private fun await(tag: String) {
         rule.waitUntil(10_000) {
             settle()
-            rule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
+            // A tag inside a merged row (a row's detail line) is found in the unmerged tree.
+            rule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() ||
+                rule.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -453,7 +455,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("12-settings")
         rule.onNodeWithTag("pageEnd").performScrollTo()
         shoot("12b-settings-scrolled")
-        rule.onNodeWithTag("accountCard").performScrollTo()
+        // Connecting and a connection's page live on Connections now.
+        tap("tabConnections")
         tap("connect")
         await("sheetScanQr")
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
@@ -689,7 +692,6 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch()
         tap("tabConnections")
         await("mcp:linear")
-        rule.onNodeWithTag("addMcp").performScrollTo()
         shoot("40-mcp-list")
         tap("mcp:linear")
         await("tool:export_project")
@@ -703,6 +705,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
     fun mcpAdd() {
         launch()
         tap("tabConnections")
+        tap("connect")
         tap("addMcp")
         await("mcpUrl")
         shoot("42-mcp-add")
@@ -1408,10 +1411,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.model = installed
         core.apConnections["c1"] = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO, profileId = "work")
         launch()
-        tap("tabSettings")
+        tap("tabConnections")
         tap("connection:c1")
         await("connectionMode")
-        rule.onNodeWithTag("connProfile:work").performScrollTo()
         repeat(20) { rule.mainClock.advanceTimeBy(50) }
         shoot("78-connection-autopilot")
     }
@@ -1532,21 +1534,12 @@ abstract class ScreenshotsBase(private val suffix: String) {
         if (rule.onAllNodes(hasTestTag("notificationsLater")).fetchSemanticsNodes().isNotEmpty()) tap("notificationsLater") else tap("setupNext")
         await("setupIntegrations")
         shoot("14b2-setup-integrations")
-        tap("setupNext")
-        await("setupRules")
-        shoot("14b25-setup-rules")
-        tap("setupNext")
-        await("setupAutopilot")
-        shoot("14b3-setup-autopilot")
-        tap("setupNext")
-        await("setupComputer")
-        shoot("14c-setup-computer")
         tap("typeCode")
         await("pairCode")
         shoot("14d-setup-type-code")
         tap("setupNext")
-        await("setupAi")
-        shoot("14e-setup-ai")
+        await("setupRules")
+        shoot("14b25-setup-rules")
         tap("setupNext")
         await("setupFinished")
         shoot("14f-setup-done")
@@ -1630,17 +1623,26 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     @Test
     fun vaultAdd() {
-        openVault()
-        tap("openVault")
-        tap("vaultAdd")
-        await("newItem:ApiKey")
-        shoot("97-vault-add")
-        tap("newItem:SshKey")
-        await("vaultName")
-        rule.onNodeWithTag("vaultName").performTextInput("Laptop")
-        tap("vaultGenerate")
-        await("sshMade")
-        shoot("98-vault-ssh-made")
+        // Making a key asks for the screen lock first: here it passes.
+        val biometrics = dev.reins.android.platform.AuthenticatorProvider.factory
+        dev.reins.android.platform.AuthenticatorProvider.factory = {
+            dev.reins.android.platform.Authenticator { _, _ -> dev.reins.android.platform.AuthResult.Success }
+        }
+        try {
+            openVault()
+            tap("openVault")
+            tap("vaultAdd")
+            await("newItem:ApiKey")
+            shoot("97-vault-add")
+            tap("newItem:SshKey")
+            await("vaultName")
+            rule.onNodeWithTag("vaultName").performTextInput("Laptop")
+            tap("vaultGenerate")
+            await("sshMade")
+            shoot("98-vault-ssh-made")
+        } finally {
+            dev.reins.android.platform.AuthenticatorProvider.factory = biometrics
+        }
     }
 
     @Test

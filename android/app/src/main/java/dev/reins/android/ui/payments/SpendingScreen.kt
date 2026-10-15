@@ -1,5 +1,7 @@
 package dev.reins.android.ui.payments
 
+import dev.reins.android.design.hairlineBelow
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -56,16 +58,20 @@ fun SpendingScreen(viewModel: PaymentsViewModel, onBack: () -> Unit) {
             Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) { Spinner(c.secondary, size = 32.dp) }
             return@Screen
         }
-        Card(Modifier.padding(16.dp)) {
-            Column(Modifier.padding(20.dp).testTag("spentThisMonth")) {
-                RText("This month", RType.sans(13f, FontWeight.Medium), c.secondary)
-                Spacer(Modifier.height(4.dp))
-                RText(totalsText(spending.totals), RType.sans(34f, FontWeight.SemiBold), c.text)
-                for (ai in spending.byAi) {
-                    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        RText(ai.connectionLabel, RType.sans(15f), c.secondary, Modifier.weight(1f), maxLines = 1)
-                        RText(totalsText(ai.totals), RType.sans(15f, FontWeight.Medium), c.text)
-                    }
+        // The month at a glance in one serif number (And-Pay 03), then each AI's share.
+        Column(Modifier.padding(horizontal = 22.dp).padding(top = 8.dp).testTag("spentThisMonth")) {
+            dev.reins.android.design.LabelText("This month", c.inkMeta)
+            RText(totalsText(spending.totals), RType.serif(60f, 64f), c.ink, Modifier.padding(top = 6.dp), maxLines = 2, ltr = true)
+            RText(
+                spending.purchases.size.let { if (it == 1) "1 purchase" else "$it purchases" },
+                RType.meta,
+                c.inkMeta,
+                Modifier.padding(top = 2.dp),
+            )
+            for (ai in spending.byAi) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp).hairlineBelow(c.rule).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RText(dev.reins.android.ui.common.untrustedName(ai.connectionLabel), RType.sans(15f), c.ink2, Modifier.weight(1f), maxLines = 1)
+                    RText(totalsText(ai.totals), RType.value, c.ink, ltr = true)
                 }
             }
         }
@@ -92,23 +98,23 @@ private fun PurchaseRow(p: PurchaseRecordView, busy: Boolean, viewModel: Payment
     val context = LocalContext.current
     var open by rememberSaveable(p.id) { mutableStateOf(p.mismatch != null) }
     Column(Modifier.fillMaxWidth().testTag("purchase:${p.id}")) {
+        // A purchase: the store and who bought it, the amount in mono (so digits line up), and its status as a word in
+        // a pill.
         Row(
-            Modifier.fillMaxWidth().pressable { open = !open }.padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().pressable(highlight = c.paperSunken) { open = !open }.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            GlyphIcon(methodGlyph(p.methodKind), if (p.mismatch != null) c.danger else c.secondary, size = 21.dp)
-            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                RText(untrusted(p.merchant), RType.sans(16f, FontWeight.Medium), c.text, maxLines = 1)
-                RText("${untrusted(p.connectionLabel)} · ${formatTime(p.at)}", RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp), maxLines = 1)
+                RText(untrusted(p.merchant), RType.row, c.ink, maxLines = 1)
+                RText("${untrusted(p.connectionLabel)} · ${formatTime(p.at)}", RType.meta, c.inkMeta, Modifier.padding(top = 2.dp), maxLines = 1)
             }
-            Column(horizontalAlignment = Alignment.End) {
-                RText(p.chargedText ?: p.totalText, RType.sans(16f, FontWeight.SemiBold), c.text)
-                RText(statusWord(p), RType.sans(12.5f), statusColor(p), Modifier.padding(top = 2.dp))
-            }
+            Spacer(Modifier.width(10.dp))
+            RText(p.chargedText ?: p.totalText, RType.mono(14.5f, FontWeight.Medium), c.ink, ltr = true)
+            Spacer(Modifier.width(10.dp))
+            dev.reins.android.design.Pill(statusWord(p), statusColor(p), Modifier.testTag("status:${p.id}"))
         }
         if (!open) return@Column
-        Column(Modifier.padding(start = 51.dp, end = 16.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             p.mismatch?.let {
                 Banner(
                     "The card made for ${p.domain} was charged by ${untrusted(it)}. It was closed, and spend limits for ${untrusted(p.connectionLabel)} wait until you have looked at this.",
@@ -158,8 +164,8 @@ private fun PurchaseRow(p: PurchaseRecordView, busy: Boolean, viewModel: Payment
 private fun Detail(label: String, value: String) {
     val c = LocalColors.current
     Row {
-        RText(label, RType.sans(13.5f), c.secondary, Modifier.width(112.dp))
-        RText(value, RType.sans(13.5f), c.text, Modifier.weight(1f), ltr = label == "Store")
+        RText(label, RType.meta, c.inkMeta, Modifier.width(112.dp))
+        RText(value, RType.sans(13.5f), c.ink, Modifier.weight(1f), ltr = label == "Store")
     }
 }
 
@@ -175,9 +181,10 @@ private fun statusWord(p: PurchaseRecordView): String = when {
 @Composable
 private fun statusColor(p: PurchaseRecordView) = LocalColors.current.let { c ->
     when {
-        p.mismatch != null -> c.danger
+        // Check this is amber: something went wrong and you should look.
+        p.mismatch != null -> c.warning
         p.status == "completed" -> c.success
-        p.status == "failed" || p.status == "cancelled" -> c.tertiary
-        else -> c.secondary
+        p.status == "failed" || p.status == "cancelled" -> c.inkMeta
+        else -> c.violet
     }
 }

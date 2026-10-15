@@ -27,6 +27,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import androidx.compose.ui.unit.sp
+import dev.reins.android.design.AskText
+import dev.reins.android.design.Field
+import dev.reins.android.design.LabelText
+import dev.reins.android.design.fieldSurface
 import dev.reins.android.design.Banner
 import dev.reins.android.design.BannerKind
 import dev.reins.android.design.ButtonStyle
@@ -66,51 +73,61 @@ fun DeleteAccountSheet(email: String, ui: DeleteAccountUi, onDelete: (String) ->
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = !ui.busy, dismissOnClickOutside = !ui.busy),
     ) {
         DialogFeedback()
+        // A red field: what goes can't come back, and it is held, never tapped.
+        val shape = RoundedCornerShape(28.dp)
         Column(
-            Modifier.padding(horizontal = 20.dp).fillMaxWidth().glass(c, RoundedCornerShape(26.dp), 16.dp)
-                .verticalScroll(rememberScrollState()).padding(22.dp).testTag("deleteAccountSheet"),
+            Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(shape).background(c.paper)
+                .verticalScroll(rememberScrollState()).testTag("deleteAccountSheet"),
         ) {
-            RText("Delete account", RType.sans(19f, FontWeight.SemiBold), c.text)
-            Spacer(Modifier.height(8.dp))
-            RText("Gone for good. Can't be undone.", RType.sans(15f, lineHeight = 21f), c.secondary)
-            Spacer(Modifier.height(14.dp))
-            deletionItems.forEach { item ->
-                Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
-                    GlyphIcon(Glyph.Close, c.danger, size = 16.dp)
-                    Spacer(Modifier.width(10.dp))
-                    RText(item, RType.sans(14.5f, lineHeight = 20f), c.text)
+            Column(
+                Modifier.fillMaxWidth().fieldSurface(Field.Delete, RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)).padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                LabelText("Account · Delete", c.onField2)
+                AskText("Delete your account", c.onField, target = "account", style = RType.serif(34f, 38f), minSize = 28.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GlyphIcon(Glyph.Lock, c.onField2, size = 16.dp)
+                    RText("Gone for good. Can't be undone.", RType.sans(14.5f), c.onField2)
                 }
             }
-            Spacer(Modifier.height(14.dp))
-            RText("Type $email to confirm.", RType.sans(14.5f, lineHeight = 20f), c.secondary)
-            Spacer(Modifier.height(8.dp))
-            RTextField(
-                typed, { typed = it }, "Your email", tag = "deleteAccountEmail", enabled = !ui.busy,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Email,
-                    autoCorrectEnabled = false,
-                    capitalization = KeyboardCapitalization.None,
-                ),
-            )
-            ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "deleteAccountError") }
-            Spacer(Modifier.height(18.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                dev.reins.android.design.HoldButton(
-                    "Hold to delete",
-                    c.danger,
-                    Modifier.fillMaxWidth().testTag("confirmDeleteAccount"),
-                    icon = androidx.compose.material.icons.Icons.Rounded.Delete,
-                    enabled = deletionConfirmed(typed, email) && !ui.busy,
-                    busy = ui.busy,
-                    height = 50.dp,
-                ) { onDelete(typed) }
-                CapsuleButton(
-                    "Cancel",
-                    Modifier.fillMaxWidth().testTag("cancelDeleteAccount"),
-                    style = ButtonStyle.Secondary,
-                    enabled = !ui.busy,
-                    onClick = onDismiss,
+            Column(Modifier.padding(22.dp)) {
+                deletionItems.forEach { item ->
+                    Row(Modifier.padding(vertical = 5.dp), verticalAlignment = Alignment.Top) {
+                        GlyphIcon(Glyph.Close, c.danger, size = 16.dp)
+                        Spacer(Modifier.width(10.dp))
+                        RText(item, RType.sans(14.5f, lineHeight = 20f), c.ink)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                RText("Type $email to confirm.", RType.sans(14.5f, lineHeight = 20f), c.ink2)
+                Spacer(Modifier.height(8.dp))
+                RTextField(
+                    typed, { typed = it }, "Your email", tag = "deleteAccountEmail", enabled = !ui.busy,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        autoCorrectEnabled = false,
+                        capitalization = KeyboardCapitalization.None,
+                    ),
                 )
+                ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "deleteAccountError") }
+                Spacer(Modifier.height(18.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    dev.reins.android.design.HoldButton(
+                        "Hold to delete",
+                        c.danger,
+                        Modifier.fillMaxWidth().testTag("confirmDeleteAccount"),
+                        icon = androidx.compose.material.icons.Icons.Rounded.Delete,
+                        enabled = deletionConfirmed(typed, email) && !ui.busy,
+                        busy = ui.busy,
+                    ) { onDelete(typed) }
+                    dev.reins.android.design.SignalButton(
+                        "Cancel",
+                        Modifier.fillMaxWidth().testTag("cancelDeleteAccount"),
+                        style = ButtonStyle.Ghost,
+                        enabled = !ui.busy,
+                        onClick = onDismiss,
+                    )
+                }
             }
         }
     }

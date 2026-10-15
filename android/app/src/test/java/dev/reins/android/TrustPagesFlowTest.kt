@@ -3,9 +3,7 @@ package dev.reins.android
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,14 +38,16 @@ class TrustPagesFlowTest : FlowHarness() {
     @Test
     fun endingAGrantIsHeldNotTapped() {
         core.grants = listOf(TestData.grant("g1"))
+        // The fake core is shared between tests: what an earlier one ended is not this one's.
+        core.revokedGrants.clear()
         launch()
         tap("tabTrust")
         tap("grant:g1")
-        // A tap alone ends nothing.
-        rule.onNodeWithTag("revoke").performTouchInputTap()
-        settle()
+        awaitTag("revoke")
         assertTrue(core.revokedGrants.isEmpty())
+        // Held through, with no dialog to confirm in.
         hold("revoke")
+        assertFalse(showsText("End this grant now?"))
         awaitCore { core.revokedGrants.contains("g1") }
     }
 
@@ -78,6 +78,4 @@ class TrustPagesFlowTest : FlowHarness() {
             .flatMap { node -> node.config.getOrElseNullable(androidx.compose.ui.semantics.SemanticsProperties.Text) { null }.orEmpty().map { it.text } }
         assertFalse("no emoji is shown: $texts", texts.any { emoji.containsMatchIn(it) })
     }
-
-    private fun androidx.compose.ui.test.SemanticsNodeInteraction.performTouchInputTap() = performTouchInput { click() }
 }
