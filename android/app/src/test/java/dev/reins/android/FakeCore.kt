@@ -1048,7 +1048,14 @@ class FakeCore : ReinsCoreInterface {
             throw it
         }
         progress.progress(412_000_000u, 0u)
-        model = model.copy(state = ModelState.INSTALLED, downloadedBytes = 0u, sizeBytes = 412_000_000u)
+        // An update replaces the older model with the newer one, which rates risk.
+        model = model.copy(
+            state = ModelState.INSTALLED,
+            downloadedBytes = 0u,
+            sizeBytes = 412_000_000u,
+            risk = model.risk || model.update,
+            update = false,
+        )
         return model
     }
 

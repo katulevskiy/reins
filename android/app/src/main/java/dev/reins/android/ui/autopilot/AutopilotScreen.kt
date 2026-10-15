@@ -133,7 +133,7 @@ fun AutopilotScreen(
     var newProfile by remember { mutableStateOf(false) }
     var modeHelp by rememberSaveable { mutableStateOf(false) }
     val model = ui.model ?: settings?.model
-    val modelReady = model?.state == ModelState.INSTALLED
+    val modelReady = AutopilotText.modelUsable(model)
     val covered = bypassOpen || overnightOpen || modelOpen
     LaunchedEffect(covered) { onCovered(covered) }
     DisposableEffect(Unit) { onDispose { onCovered(false) } }
@@ -180,7 +180,7 @@ fun AutopilotScreen(
                     Modifier.testTag("openModel"),
                     icon = Icons.Rounded.Memory,
                     tint = c.read,
-                    valueContent = { ModelValue(model, ui.job) },
+                    valueContent = { ModelValue(model, ui.job, onUpdate = viewModel::download) },
                 ) { modelOpen = true }
                 SettingsRow(
                     "Try it",
@@ -516,12 +516,28 @@ internal fun StatTiles(stats: List<Stat>, modifier: Modifier = Modifier) {
     }
 }
 
-/** The model row's value: Ready, how far the download is, or Download. */
+/** The model row's value: Ready, Update (a tap downloads the newer model), how far the download is, or Download. */
 @Composable
-private fun ModelValue(model: ModelStatus?, job: DownloadJob) {
+private fun ModelValue(model: ModelStatus?, job: DownloadJob, onUpdate: () -> Unit) {
     val c = LocalColors.current
     when {
         model == null -> Unit
+        AutopilotText.modelUpdatable(model) && job == DownloadJob.Waiting ->
+            RText("Waiting", RType.sans(15f, FontWeight.Medium), c.secondary, Modifier.testTag("modelUpdateWaiting"), maxLines = 1)
+        AutopilotText.modelUpdatable(model) && job == DownloadJob.Running ->
+            RText("…", RType.mono(14f), c.secondary, maxLines = 1)
+        AutopilotText.modelUpdatable(model) -> Row(
+            Modifier
+                .clip(CircleShape)
+                .pressable(shape = CircleShape, onClick = onUpdate)
+                .testTag("updateModel")
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Rounded.Download, null, Modifier.size(16.dp), tint = c.accent)
+            Spacer(Modifier.width(5.dp))
+            RText("Update", RType.sans(15f, FontWeight.Medium), c.accent, maxLines = 1)
+        }
         model.state == ModelState.INSTALLED -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("modelInstalled")) {
             Icon(Icons.Rounded.CheckCircle, null, Modifier.size(16.dp), tint = c.success)
             Spacer(Modifier.width(5.dp))
@@ -668,6 +684,9 @@ internal fun ModelDetails(
             if (model.state == ModelState.FAILED) c.danger else c.secondary,
             Modifier.padding(top = 12.dp),
         )
+        if (AutopilotText.modelUpdatable(model) && !waiting) {
+            RText(AutopilotText.MODEL_UPDATE_LINE, RType.sans(13f), c.tertiary, Modifier.padding(top = 6.dp).testTag("modelUpdateLine"))
+        }
         if (downloading) {
             val fraction = AutopilotText.fraction(model)
             if (fraction != null) {
@@ -683,14 +702,26 @@ internal fun ModelDetails(
             when {
                 downloading -> Unit
                 waiting -> CapsuleButton("Cancel", Modifier.testTag("cancelDownload"), style = ButtonStyle.Secondary, compact = true, onClick = onCancel)
-                model.state == ModelState.INSTALLED -> CapsuleButton(
-                    "Delete model",
-                    Modifier.testTag("deleteModel"),
-                    style = ButtonStyle.Destructive,
-                    compact = true,
-                    glyph = Glyph.Trash,
-                    onClick = onDelete,
-                )
+                model.state == ModelState.INSTALLED -> {
+                    if (model.update) {
+                        CapsuleButton(
+                            "Update",
+                            Modifier.testTag("updateModelDetails"),
+                            style = ButtonStyle.Accent,
+                            compact = true,
+                            glyph = Glyph.Download,
+                            onClick = onDownload,
+                        )
+                    }
+                    CapsuleButton(
+                        "Delete model",
+                        Modifier.testTag("deleteModel"),
+                        style = ButtonStyle.Destructive,
+                        compact = true,
+                        glyph = Glyph.Trash,
+                        onClick = onDelete,
+                    )
+                }
                 else -> CapsuleButton(
                     if (model.state == ModelState.FAILED) "Try again" else "Download",
                     Modifier.fillMaxWidth().testTag("downloadModel"),
