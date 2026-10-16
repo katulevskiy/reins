@@ -655,12 +655,11 @@ extension AutopilotText {
         return m.state == .installed || (m.state == .downloading && m.update)
     }
 
-    /// The model's row once it is installed: "v2 · Updated today", or just "v2" when the day is not known.
-    static func modelInstalledLine(_ m: ModelStatus, now: Date = Date(), calendar: Calendar = .current) -> String {
-        let version = "v\(m.version)"
-        guard let ago = updatedAgo(m.updatedAt, now: now, calendar: calendar) else { return version }
-        return version + " · " + ago
-    }
+    /// The model row's value once it is installed: "v2" (when it was updated, `updatedAgo`, is the row's second line).
+    static func modelVersion(_ m: ModelStatus) -> String { "v\(m.version)" }
+
+    /// The same for VoiceOver, with the tick next to it: "Ready, version 2".
+    static func modelVersionSpoken(_ m: ModelStatus) -> String { "Ready, version \(m.version)" }
 
     /// The model card's state line.
     static func modelState(_ m: ModelStatus, waitingForNetwork: Bool, wifiOnly: Bool) -> String {

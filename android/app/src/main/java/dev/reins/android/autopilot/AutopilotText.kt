@@ -494,12 +494,11 @@ object AutopilotText {
     fun modelUsable(m: ModelStatus?): Boolean =
         m != null && (m.state == ModelState.INSTALLED || (m.state == ModelState.DOWNLOADING && m.update))
 
-    /** "v2", whatever way the build spells the version. */
+    /**
+     * The model row's value once installed, "v2", whatever way the build spells the version. It stays this short so it
+     * is never cut off; when it was updated ([updatedAgo]) is the row's second line.
+     */
     fun modelVersion(m: ModelStatus): String = m.version.trim().let { if (it.startsWith("v", ignoreCase = true)) it else "v$it" }
-
-    /** The model row once installed: "v2 · Updated today", or just "v2" when the core does not know since when. */
-    fun modelRowValue(m: ModelStatus, now: Long, zone: ZoneId = ZoneId.systemDefault()): String =
-        listOfNotNull(modelVersion(m), updatedAgo(m.updatedAt, now, zone)).joinToString(" · ")
 
     /**
      * When the model in use was put in use ([updatedAt], unix seconds), in calendar days of [zone] before [now] (unix

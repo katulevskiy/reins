@@ -283,11 +283,14 @@ final class AutopilotTextTests: XCTestCase {
         let now = at(2026, 10, 15, 14)
         var m = model(.installed)
         m.version = "2"
-        XCTAssertEqual(AutopilotText.modelInstalledLine(m, now: now, calendar: utc), "v2", "when it was put in use is not known")
+        // The value on the right stays short; when it was updated is the row's second line.
+        XCTAssertEqual(AutopilotText.modelVersion(m), "v2")
+        XCTAssertEqual(AutopilotText.modelVersionSpoken(m), "Ready, version 2")
+        XCTAssertNil(AutopilotText.updatedAgo(m.updatedAt, now: now, calendar: utc), "when it was put in use is not known: no line")
         m.updatedAt = secs(at(2026, 10, 15, 9))
-        XCTAssertEqual(AutopilotText.modelInstalledLine(m, now: now, calendar: utc), "v2 · Updated today")
+        XCTAssertEqual(AutopilotText.updatedAgo(m.updatedAt, now: now, calendar: utc), "Updated today")
         m.updatedAt = secs(at(2026, 10, 12))
-        XCTAssertEqual(AutopilotText.modelInstalledLine(m, now: now, calendar: utc), "v2 · Updated 3 days ago")
+        XCTAssertEqual(AutopilotText.updatedAgo(m.updatedAt, now: now, calendar: utc), "Updated 3 days ago")
     }
 
     func testTheExamplesUseTheSituationFormat() {

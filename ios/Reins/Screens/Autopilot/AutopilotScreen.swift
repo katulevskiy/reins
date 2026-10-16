@@ -224,17 +224,21 @@ struct ModelRow: View {
     var action: () -> Void
 
     var body: some View {
-        AutopilotLinkRow(title: "On-device model", symbol: "cpu", tint: Palette.kindRead, identifier: "modelRow") {
+        AutopilotLinkRow(title: "On-device model", symbol: "cpu", tint: Palette.kindRead, identifier: "modelRow",
+                         subtitle: ap.model.flatMap { $0.state == .installed ? AutopilotText.updatedAgo($0.updatedAt) : nil }) {
             if let m = ap.model {
                 if m.state == .installed {
+                    // Short enough never to be cut ("v2"); when it was updated is the row's second line.
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle").font(.system(size: 14, weight: .medium))
                             .foregroundStyle(Palette.success)
-                        Text(AutopilotText.modelInstalledLine(m))
+                        Text(AutopilotText.modelVersion(m))
                             .font(RFont.sans(15))
                             .foregroundStyle(Palette.ink2)
-                            .lineLimit(1)
+                            .fixedSize()
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(AutopilotText.modelVersionSpoken(m))
                     .accessibilityIdentifier("modelInstalled")
                 } else if m.state == .downloading || ap.downloadJob == .running {
                     Text(AutopilotText.fraction(m).map { "\(Int($0 * 100))%" } ?? "…")
@@ -256,6 +260,8 @@ struct AutopilotLinkRow<Trailing: View>: View {
     var symbol: String
     var tint: Color
     var identifier: String
+    /// A short line under the title ("Updated today").
+    var subtitle: String? = nil
     @ViewBuilder var trailing: Trailing
     var action: () -> Void
     @Environment(\.feedback) private var feedback
@@ -265,7 +271,7 @@ struct AutopilotLinkRow<Trailing: View>: View {
             feedback.play(.tap)
             action()
         } label: {
-            SettingsRowLabel(title: title) {
+            SettingsRowLabel(title: title, subtitle: subtitle) {
                 SettingsTile(symbol: symbol, tint: tint)
             } trailing: {
                 trailing

@@ -436,9 +436,12 @@ fun ModelRows(viewModel: AutopilotViewModel, s: AutopilotSettings, sheets: Autop
     val model = ui.model ?: s.model
     val modelReady = AutopilotText.modelUsable(model)
     TrustLabel("Autopilot", Modifier.padding(top = 26.dp, bottom = 2.dp))
+    val now = rememberNowMillis(60_000) / 1000
     HairlineRow(
         "On-device model",
         Modifier.testTag("openModel"),
+        // When it was updated is the row's second line (it wraps); the value on the right stays short ("v2").
+        subtitle = model.takeIf { it.state == ModelState.INSTALLED }?.let { AutopilotText.updatedAgo(it.updatedAt, now) },
         leading = { PlainTile(Glyph.Chip) },
         trailing = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -561,8 +564,8 @@ internal fun SectionHeader(text: String, modifier: Modifier = Modifier, trailing
 
 
 /**
- * The model row's value: its version and when it was updated ("v2 · Updated today"), how far a download is (a newer
- * model updating by itself too), or Download.
+ * The model row's value: its version ("v2"; when it was updated is the row's second line), how far a download is (a
+ * newer model updating by itself too), or Download.
  */
 @Composable
 private fun ModelValue(model: ModelStatus?, job: DownloadJob) {
@@ -572,8 +575,7 @@ private fun ModelValue(model: ModelStatus?, job: DownloadJob) {
         model.state == ModelState.INSTALLED -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("modelInstalled")) {
             Icon(Icons.Rounded.CheckCircle, null, Modifier.size(16.dp), tint = c.success)
             Spacer(Modifier.width(5.dp))
-            val now = rememberNowMillis(60_000) / 1000
-            RText(AutopilotText.modelRowValue(model, now), RType.sans(15f, FontWeight.Medium), c.secondary, Modifier.testTag("modelVersion"), maxLines = 1)
+            RText(AutopilotText.modelVersion(model), RType.sans(15f, FontWeight.Medium), c.secondary, Modifier.testTag("modelVersion"), maxLines = 1)
         }
         model.state == ModelState.DOWNLOADING || job == DownloadJob.Running ->
             RText(AutopilotText.fraction(model)?.let(AutopilotText::percent) ?: "…", RType.mono(14f), c.secondary, maxLines = 1)

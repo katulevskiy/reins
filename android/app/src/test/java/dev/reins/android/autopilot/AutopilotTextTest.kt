@@ -339,12 +339,13 @@ class AutopilotTextTest {
     }
 
     @Test
-    fun `the installed model's row says its version and when it was updated`() {
+    fun `the installed model's row says its version, and when it was updated on its second line`() {
         val now = at(2026, 10, 15, 9)
         val model = TestData.modelStatus(ModelState.INSTALLED, updatedAt = at(2026, 10, 15, 8))
-        assertEquals("v1 · Updated today", AutopilotText.modelRowValue(model, now, zone))
-        assertEquals("v1", AutopilotText.modelRowValue(model.copy(updatedAt = null), now, zone))
-        assertEquals("v2", AutopilotText.modelRowValue(model.copy(version = "v2", updatedAt = null), now, zone))
+        assertEquals("v1", AutopilotText.modelVersion(model))
+        assertEquals("v2", AutopilotText.modelVersion(model.copy(version = "v2")))
+        assertEquals("Updated today", AutopilotText.updatedAgo(model.updatedAt, now, zone))
+        assertNull("not known: no second line", AutopilotText.updatedAgo(null, now, zone))
     }
 
     @Test
