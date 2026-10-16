@@ -191,6 +191,14 @@ impl VaultKey {
 }
 
 impl MasterKey {
+    /// HMAC-SHA256 of `context` keyed by the master key: a key for one purpose (the recovery wrap's, phone roles),
+    /// independent of the vault keys [`MasterKey::stretch`] derives.
+    pub fn derive(&self, context: &[u8]) -> Zeroizing<[u8; 32]> {
+        let mut out = Zeroizing::new([0u8; 32]);
+        out.copy_from_slice(hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, &self.0[..]), context).as_ref());
+        out
+    }
+
     /// HKDF-Expand of the master key into the two keys that protect the user key (`info` = "enc" and "mac"; the
     /// output is one block long, so it is a single HMAC).
     pub fn stretch(&self) -> VaultKey {

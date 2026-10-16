@@ -840,7 +840,10 @@ impl Engine {
 
     /// An upload waiting for the user.
     pub fn blob_view(&self, id: &str) -> Result<BlobView, CoreError> {
-        Ok(blob_view(&self.parked_blob(id)?))
+        let info = self.parked_blob(id)?;
+        let mut view = blob_view(&info);
+        self.names().blob(&info.connection_id.0, &mut view);
+        Ok(view)
     }
 
     /// The user decided on an upload: approved, it can be downloaded with its link (and used); refused, the server
@@ -865,7 +868,13 @@ impl Engine {
 
     /// [`Engine::answer_blob`] for a caller that already claimed the upload (the user, or Autopilot).
     pub(crate) async fn answer_blob_claimed(&self, id: &str, approve: bool) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
         let session = self.session()?;
+        if approve {
+            self.require_decider_fresh(&session).await?;
+        } else {
+            self.require_decider()?;
+        }
         let info = self.parked_blob(id)?;
         let decision = BlobDecision {
             v: PROTOCOL_VERSION,

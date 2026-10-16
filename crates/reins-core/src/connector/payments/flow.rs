@@ -126,7 +126,9 @@ impl Engine {
         // may approve, what this AI's earlier cards were charged with is read again (and shown with the plan).
         let locked = self.ap_mode_for(connection, now)? == AutopilotMode::Lockdown;
         let limits = !locked && self.payments.limits_may_apply(&one, connection, now).await?;
-        let mut plan = match self.payments.plan(call, connection, &request.connection_label, &seal).await {
+        // The AI by the name the user gave it (the mandate's agent, the budgets), else its own.
+        let named = self.names().label(connection, &crate::avatar::shown_label(&request.connection_label));
+        let mut plan = match self.payments.plan(call, connection, &named, &seal).await {
             Ok(plan) => plan,
             Err(e) => return self.fail_connector(session, request, call, &e).await,
         };
@@ -154,11 +156,13 @@ impl Engine {
             && let Some(limit) = self.payments.covering_limit(&plan, connection, request.created_at, unix_now())?
             // Lockdown may have been switched on while the charges were read.
             && self.ap_mode_for(connection, unix_now())? != AutopilotMode::Lockdown
+            // Paid without asking only while the server confirms this phone is still the primary (else it asks).
+            && self.require_decider_fresh(session).await.is_ok()
         {
             let approval = Approval {
                 request_id: &request.id.0,
                 connection_id: connection,
-                connection_label: &request.connection_label,
+                connection_label: &named,
                 approved_by: &limit.id,
                 seal,
             };
@@ -170,18 +174,20 @@ impl Engine {
                     let mut audit = self.audit_connector(request, call, action_of(call), "sent", &detail, None, &[]);
                     audit.info.note = Some(format!("Within the spend limit: {}", limit_summary(&limit)));
                     // Every purchase a limit approves is told to the user, like Autopilot's own decisions.
-                    self.notifier.auto_decided(crate::autopilot::AutoDecisionView {
+                    let mut decided = crate::autopilot::AutoDecisionView {
                         request_id: request.id.0.clone(),
                         kind: crate::types::PendingKind::Request,
                         connection_id: connection.to_owned(),
-                        connection_label: text::one_line(&request.connection_label),
+                        connection_label: crate::avatar::shown_label(&request.connection_label),
                         title: format!("Bought {}", plan.cart.summary()),
                         verdict: Verdict::Approve,
                         decided_by: "spend limit".to_owned(),
                         p_approve: 1.0,
                         confidence: 1.0,
                         activity_id: None,
-                    });
+                    };
+                    self.names().decision(&mut decided);
+                    self.notifier.auto_decided(decided);
                     self.finish(session, request, audit, connector_result(data)).await
                 }
                 Err(e) => self.fail_connector(session, request, call, &e).await,
@@ -240,10 +246,11 @@ impl Engine {
                 "A spend limit can pay with a virtual card only: its cap is enforced by the card.",
             ));
         }
+        let named = self.names().label(connection, &crate::avatar::shown_label(&request.connection_label));
         let approval = Approval {
             request_id,
             connection_id: connection,
-            connection_label: &request.connection_label,
+            connection_label: &named,
             approved_by: BY_USER,
             seal,
         };
@@ -254,11 +261,14 @@ impl Engine {
             if let Some(why) = self.payments.refusal(&plan.cart, connection, Self::margin(plan, method), now)? {
                 return Err(CoreError::invalid(format!("{why} Change the budget in Payments, or deny this.")));
             }
+            // A purchase is not taken back: paid (by the user's tap or by Autopilot) only while the server confirms
+            // this phone is still the primary.
+            self.require_decider_fresh(session).await?;
             self.payments.perform(&one, plan, method, choice.address_id.as_deref(), &approval).await?
         };
         let mut note = None;
         if let Some(limit) = choice.limit.as_ref() {
-            match self.payments.add_limit(limit, connection, &request.connection_label, now) {
+            match self.payments.add_limit(limit, connection, &named, now) {
                 Ok(made) => note = Some(format!("Spend limit added: {}", made.summary)),
                 Err(e) => note = Some(format!("The spend limit was not added: {e}")),
             }
@@ -271,6 +281,8 @@ impl Engine {
 
     /// The user approved a purchase on the purchase screen. Like [`Engine::approve`], with their picks.
     pub async fn approve_purchase(&self, request_id: &str, choice: PurchaseChoice) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
+        self.require_decider()?;
         let Some(_claim) = self.claim(request_id) else {
             return Err(CoreError::NotFound);
         };

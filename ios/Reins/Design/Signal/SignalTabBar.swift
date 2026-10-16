@@ -21,6 +21,9 @@ struct SignalTabBar<Tab: Hashable>: View {
     var items: [Item]
     @Binding var selection: Tab
 
+    /// Its height before it has been measured: a 44 pt tab in 6 pt of capsule.
+    static var estimatedHeight: CGFloat { 56 }
+
     @Namespace private var pill
     @Environment(\.feedback) private var feedback
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -75,4 +78,18 @@ struct SignalTabBar<Tab: Hashable>: View {
         .shadow(color: .black.opacity(0.3), radius: 12, y: 14)
         .accessibilityElement(children: .contain)
     }
+}
+
+extension View {
+    /// Room for the floating tab bar under a root page: its scrolling content (and anything that keeps to the safe
+    /// area, as an empty state or the "Latest" button) ends `bar` plus a small margin above the bottom, so the last
+    /// row sits fully above the bar when scrolled to the end. `bar` is the bar's height and its gap to the safe area.
+    func tabBarClearance(_ bar: CGFloat) -> some View {
+        safeAreaPadding(.bottom, bar + TabBarClearance.margin)
+    }
+}
+
+enum TabBarClearance {
+    /// Between the last row and the top of the tab bar.
+    static let margin: CGFloat = 12
 }

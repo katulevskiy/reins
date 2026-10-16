@@ -320,7 +320,15 @@ class UnlockViewModel(
             _ui.value = UnlockUi()
             return
         }
-        val info = (container.state.session.value as? SessionState.SignedIn)?.info ?: container.core.session()
+        val info = (container.state.session.value as? SessionState.SignedIn)?.info ?: try {
+            container.readSession()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A busy store says nothing: stay on this screen, still locked, not signed out.
+            _ui.update { it.copy(busy = false) }
+            return
+        }
         if (info == null) {
             container.setKeysLocked(false)
             container.refreshSession()

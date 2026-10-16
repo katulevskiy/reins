@@ -28,14 +28,11 @@ struct GitFacts: View {
                 ForEach(Array(git.refs.enumerated()), id: \.offset) { i, ref in
                     if !ref.commits.isEmpty || ref.commitCount > 0 {
                         DrillRow(title: ApprovalWords.commits(Int(ref.commitCount)), id: "gitCommits:\(i)", page: .commits(ref: i)) {
-                            HStack(spacing: 8) {
-                                if ref.hiddenChars { WarnTag(text: "Hidden", tint: Palette.danger, small: true) }
-                                Counts(additions: ref.additions, deletions: ref.deletions).accessibilityIdentifier("gitTotals:\(i)")
-                            }
+                            RefGlance(ref: ref, index: i)
                         }
                     } else if ref.filesChanged > 0 {
                         DrillRow(title: ApprovalWords.files(Int(ref.filesChanged)), id: "gitFiles:\(i)", page: .files(ref: i)) {
-                            Counts(additions: ref.additions, deletions: ref.deletions).accessibilityIdentifier("gitTotals:\(i)")
+                            RefGlance(ref: ref, index: i)
                         }
                     }
                 }
@@ -56,6 +53,34 @@ struct GitFacts: View {
         if ref.change == "create" { return Palette.success }
         if ref.kind == "tag" { return Palette.violet }
         return nil
+    }
+}
+
+/// A ref's folded row, beside its title: how many of its items deserve a closer look ("2 of 8 to look at") and its
+/// lines added and removed; under them "Hidden" when anything in it has hidden characters and "Rewrites history" when
+/// it does, flagged or not.
+private struct RefGlance: View {
+    var ref: GitRefView
+    var index: Int
+
+    var body: some View {
+        let summary = AttentionText.summary(ref)
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 8) {
+                if let summary {
+                    WarnTag(text: summary, tint: Palette.warning, small: true).accessibilityIdentifier("gitAttention:\(index)")
+                }
+                Counts(additions: ref.additions, deletions: ref.deletions).accessibilityIdentifier("gitTotals:\(index)")
+            }
+            if ref.hiddenChars || AttentionText.rewrites(ref) {
+                HStack(spacing: 8) {
+                    if ref.hiddenChars { WarnTag(text: "Hidden", tint: Palette.danger, small: true).accessibilityIdentifier("gitHidden:\(index)") }
+                    if AttentionText.rewrites(ref) {
+                        WarnTag(text: "Rewrites history", tint: Palette.danger, small: true).accessibilityIdentifier("gitRewrites:\(index)")
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -82,7 +107,8 @@ struct CommitsPage: View {
                 }
                 .padding(.horizontal, 22)
                 FactGroup {
-                    ForEach(Array(ref.commits.enumerated()), id: \.offset) { j, commit in
+                    // Flagged first; each row still opens its commit by its place in the push.
+                    ForEach(AttentionText.ordered(ref.commits) { $0.attention?.level }, id: \.offset) { j, commit in
                         CommitRow(commit: commit, page: .commit(ref: refIndex, index: j)).accessibilityIdentifier("gitCommit:\(refIndex):\(j)")
                     }
                     let unlisted = Int(ref.commitCount) - ref.commits.count
@@ -119,7 +145,10 @@ private struct CommitRow: View {
                     HStack(spacing: 8) {
                         Text(untrusted(ApprovalWords.displayName(commit.author))).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta).lineLimit(1)
                         Counts(additions: commit.additions, deletions: commit.deletions, size: 12)
-                        if commit.hiddenChars { WarnTag(text: "Hidden", tint: Palette.danger, small: true) }
+                        if AttentionText.hiddenApart(commit.hiddenChars, commit.attention) { WarnTag(text: "Hidden", tint: Palette.danger, small: true) }
+                    }
+                    if let mark = AttentionText.mark(commit.attention) {
+                        AttentionTag(mark: mark, id: "commitAttention:\(commit.shortSha)").padding(.top, 3)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -169,6 +198,10 @@ struct CommitPage: View {
                             Counts(additions: commit.additions, deletions: commit.deletions, size: 12.5)
                         }
                     }
+                    // Why this commit is worth a look; hidden characters keep their own tag and (?) below.
+                    if let mark = AttentionText.mark(commit.attention, shown: commit.hiddenChars ? [.hiddenChars] : []) {
+                        AttentionTag(mark: mark, id: "commitAttention").padding(.top, 6)
+                    }
                     if commit.hiddenChars {
                         HStack(spacing: 8) {
                             WarnTag(text: "Hidden characters", tint: Palette.danger).accessibilityIdentifier("hiddenChars")
@@ -184,7 +217,7 @@ struct CommitPage: View {
                 }
                 if let changed = commit.filesChanged {
                     FactGroup {
-                        ForEach(Array(commit.files.enumerated()), id: \.offset) { j, file in
+                        ForEach(AttentionText.ordered(commit.files) { $0.attention?.level }, id: \.offset) { j, file in
                             FileRow(file: file, id: "commitFile:\(j)", expandable: true)
                         }
                         let unlisted = Int(changed) - commit.files.count
@@ -207,7 +240,7 @@ struct FilesPage: View {
         if let refs = view.git?.refs, refs.indices.contains(refIndex) {
             let ref = refs[refIndex]
             FactGroup {
-                ForEach(Array(ref.files.enumerated()), id: \.offset) { j, file in
+                ForEach(AttentionText.ordered(ref.files) { $0.attention?.level }, id: \.offset) { j, file in
                     FileRow(file: file, id: "gitFile:\(refIndex):\(j)", expandable: false)
                 }
                 let unlisted = Int(ref.filesChanged) - ref.files.count
@@ -249,12 +282,17 @@ private struct FileRow: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "doc.text").font(.system(size: 14)).foregroundStyle(Palette.ink2)
-                    (Text(path.0).foregroundStyle(Palette.inkMeta) + Text(path.1).foregroundStyle(Palette.ink))
-                        .font(RFont.mono(13))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .environment(\.layoutDirection, .leftToRight)
-                    if file.hiddenChars { WarnTag(text: "Hidden", tint: Palette.danger, small: true) }
+                    VStack(alignment: .leading, spacing: 5) {
+                        (Text(path.0).foregroundStyle(Palette.inkMeta) + Text(path.1).foregroundStyle(Palette.ink))
+                            .font(RFont.mono(13))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .environment(\.layoutDirection, .leftToRight)
+                        if let mark = AttentionText.mark(file.attention) {
+                            AttentionTag(mark: mark, id: "\(id):attention")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if AttentionText.hiddenApart(file.hiddenChars, file.attention) { WarnTag(text: "Hidden", tint: Palette.danger, small: true) }
                     if file.binary {
                         Text("binary").font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
                     } else {

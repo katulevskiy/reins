@@ -61,13 +61,12 @@ struct OnboardingScreen: View {
         }
         .pageBackground()
         .animation(.smooth(duration: 0.3), value: page)
-        // Swipe sideways between pages, as well as the buttons.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30).onEnded { drag in
-                guard abs(drag.translation.width) > abs(drag.translation.height) * 1.5, abs(drag.translation.width) > 60 else { return }
-                go(drag.translation.width < 0 ? 1 : -1)
-            }
-        )
+        // Swipe sideways between pages, as well as the buttons. Only a sideways movement begins it (SidewaysPan), so the
+        // page under it scrolls from the first points of a touch.
+        .gesture(SidewaysPan { drag, cancelled in
+            guard !cancelled, abs(drag.translation.width) > abs(drag.translation.height) * 1.5, abs(drag.translation.width) > 60 else { return }
+            go(drag.translation.width < 0 ? 1 : -1)
+        })
         // The pairing a scanned code (or an opened link) stands for is answered right here.
         .sheet(item: $model.sheet) { target in
             SheetContent(target: target, regular: sizeClass == .regular)

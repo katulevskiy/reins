@@ -30,6 +30,19 @@ pub trait OwnerCheck: Send + Sync {
     async fn confirm(&self, reason: String) -> Result<bool, ForeignError>;
 }
 
+/// Keeps the process from being suspended while it holds the store's cross-process file lock (iOS: a file in the App
+/// Group container, shared with the notification extension; iOS ends a process suspended with such a lock held,
+/// `0xdead10cc`). Installed once per process with `install_store_lock_guard`, before the first `ReinsCore`.
+#[uniffi::export(with_foreign)]
+pub trait StoreLockGuard: Send + Sync {
+    /// The process is about to take the lock: hold off suspension (a background task, an expiring activity) until
+    /// `unlocked`. False when that cannot be promised (the process is being suspended): the lock is not taken and the
+    /// call that needed it fails with a storage error.
+    fn locking(&self) -> bool;
+    /// The lock was given back (each `locking` that returned true is followed by exactly one of these).
+    fn unlocked(&self);
+}
+
 #[uniffi::export(with_foreign)]
 pub trait Notifier: Send + Sync {
     /// An item waits for the user (after Autopilot looked at it: `item.suggestion` says what it would do).

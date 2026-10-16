@@ -544,7 +544,8 @@ pub struct SyncResponse {
     /// The primary's latest heartbeat.
     #[serde(default)]
     pub heartbeat: Option<Heartbeat>,
-    /// The lowest `seq` every current member acknowledged ([`Ack`]): tombstones at or below it may go.
+    /// The lowest `seq` every current member acknowledged ([`Ack`]): the server's own bookkeeping (which ops it may
+    /// drop behind a checkpoint). Phones take nothing from it: what they forget is decided by the log alone.
     pub min_acked_seq: u64,
     pub waiting: Waiting,
     /// Requests, pairings and joins answered recently (ids).

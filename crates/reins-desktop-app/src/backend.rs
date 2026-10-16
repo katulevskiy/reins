@@ -241,6 +241,12 @@ impl Backend {
         Identity::load_or_create(&self.paths.identity_file()).map_err(|e| e.to_string())
     }
 
+    /// The name the user gave this computer on the phone (`Ok(None)`: none).
+    pub async fn phone_name(&self) -> Result<Option<String>, String> {
+        let identity = self.identity()?;
+        reins_desktop::computer::phone_name(&self.paths, &identity).await
+    }
+
     /// Where the app may not stay: the setup needs a copy of Reins that is still there after a restart.
     #[must_use]
     pub fn location_problem() -> Option<&'static str> {

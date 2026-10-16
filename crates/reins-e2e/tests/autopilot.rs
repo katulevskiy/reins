@@ -110,7 +110,7 @@ async fn setup(email: &str) -> Setup {
     let code = ai.browser_code(&wait_url).await;
     let item = phone.wait_for_item(Duration::from_secs(20)).await;
     assert_eq!(item.kind, PendingKind::Pairing);
-    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned())).await.unwrap();
+    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned()), true).await.unwrap();
     ai.finish_authorization(&wait_url).await;
     let added = phone
         .core
@@ -243,7 +243,7 @@ async fn a_pairing_is_never_approved_automatically() {
     }
     assert!(decided(&s.phone).is_empty());
     assert_eq!(s.phone.core.pending().await.unwrap().len(), 1);
-    s.phone.core.answer_pairing(item.id, true, Some(code), Some("Second".to_owned())).await.unwrap();
+    s.phone.core.answer_pairing(item.id, true, Some(code), Some("Second".to_owned()), true).await.unwrap();
     other.finish_authorization(&wait_url).await;
     assert_eq!(s.phone.core.connections().await.unwrap().len(), 2);
 }

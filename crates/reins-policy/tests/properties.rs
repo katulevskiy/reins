@@ -170,8 +170,14 @@ fn covers_read(g: &Grant, conn: &ConnectionId, now: i64, m: &MessageFacts) -> bo
     &g.connection_id == conn && active_ref(g, now) && matches!(&g.scope, Scope::Read(s) if s.matches(m))
 }
 
+/// Cases for the grant-soundness properties. Unset or unreadable means 256, proptest's own default.
+/// The weekly CI run and a manual dispatch set `PROPTEST_CASES` to 2,000.
+fn proptest_cases() -> u32 {
+    std::env::var("PROPTEST_CASES").ok().and_then(|value| value.parse().ok()).unwrap_or(256)
+}
+
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(2_000))]
+    #![proptest_config(ProptestConfig::with_cases(proptest_cases()))]
 
     #[test]
     fn read_decisions_are_sound_and_complete(

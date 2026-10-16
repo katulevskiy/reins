@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// Builds the process's one core and model at launch, before any scene: pushes and notification actions arrive in
 /// the background with no UI, and need both. The core opens off the main thread (SQLite, the data key through the
@@ -12,6 +13,8 @@ final class AppHost {
     private(set) var startupError: String?
     @ObservationIgnored let notifier = AppNotifier()
     @ObservationIgnored private let arrival = Arrival<AppModel>()
+    @ObservationIgnored private var modelRuntime: OnnxModelRuntime?
+    @ObservationIgnored private var backgroundObservers: [NSObjectProtocol] = []
 
     /// Launched with `-demo`: an in-memory core with sample data, no server.
     static var isDemo: Bool { ProcessInfo.processInfo.arguments.contains("-demo") }
@@ -29,14 +32,21 @@ final class AppHost {
             settle(model)
         } else {
             let notifier = notifier
+            // Before the core opens the store: the app holds a background task while it holds the store's lock.
+            let keepAwake = AppKeepAwake()
             Task {
                 let opened = await Task.detached(priority: .userInitiated) {
-                    Result { try CoreFactory.make(notifier: notifier) }
+                    Result {
+                        StoreLocking.install(keepAwake, waitMillis: CoreFactory.appLockWaitMillis)
+                        return try CoreFactory.make(notifier: notifier)
+                    }
                 }.value
                 switch opened {
                 case let .success(core):
                     // Autopilot's forward pass; the core loads the model on first need.
-                    core.setModelRuntime(runtime: OnnxModelRuntime.forApp())
+                    let runtime = OnnxModelRuntime.forApp()
+                    core.setModelRuntime(runtime: runtime)
+                    modelRuntime = runtime
                     settle(AppModel(core: core, feedback: feedback, authenticator: Authenticator()))
                 case let .failure(error):
                     startupError = error.userMessage
@@ -78,6 +88,7 @@ final class AppHost {
             IntentBridge.model = model
             LiveActivityController.shared.install(model: model)
         }
+        if let model { followBackground(model) }
         arrival.settle(model)
         guard let model else { return }
         Task {
@@ -95,6 +106,28 @@ final class AppHost {
             }
             #endif
         }
+    }
+}
+
+extension AppHost {
+    /// Keeps the model, the core and the ONNX runtime told whether the app is in the background, from launch (a push or
+    /// a background refresh may be why it launched) on.
+    fileprivate func followBackground(_ model: AppModel) {
+        let runtime = modelRuntime
+        let apply: @MainActor @Sendable (Bool) -> Void = { background in
+            model.setInBackground(background)
+            runtime?.setBackground(background)
+        }
+        apply(UIApplication.shared.applicationState == .background)
+        let center = NotificationCenter.default
+        backgroundObservers = [
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { apply(true) }
+            },
+            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { apply(false) }
+            },
+        ]
     }
 }
 

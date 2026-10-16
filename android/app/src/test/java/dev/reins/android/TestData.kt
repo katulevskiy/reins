@@ -248,6 +248,82 @@ object TestData {
         `class` = if (tags) "releases" else "code", git = git,
     )
 
+    // ---- what deserves a closer look (the iOS app's DemoData, `-demoAttention`) ---------------------------------
+
+    fun attention(level: dev.reins.core.AttentionLevel, vararg reasons: Pair<dev.reins.core.ReasonCode, String>) =
+        dev.reins.core.Attention(level, reasons.map { dev.reins.core.AttentionReason(it.first, it.second) })
+
+    val ciAttention = attention(dev.reins.core.AttentionLevel.CLOSE, dev.reins.core.ReasonCode.CHANGES_CI to "Changes CI")
+    val deletesAttention = attention(dev.reins.core.AttentionLevel.LOOK, dev.reins.core.ReasonCode.DELETES_FILE to "Deletes a file")
+
+    /** 8 commits, all listed, as the core marks them: the 6th changes CI (Close), the 3rd deletes a file (Look). */
+    fun attentionCommits(): List<GitCommitView> {
+        fun file(path: String, status: String, additions: UInt, deletions: UInt, attention: dev.reins.core.Attention? = null) =
+            GitFileView(path, status, additions, deletions, false, attention = attention)
+        fun commit(sha: String, subject: String, author: String, hours: Long, file: GitFileView, attention: dev.reins.core.Attention? = null) =
+            GitCommitView(
+                sha, subject, author, 1_700_000_000 - hours * 3_600, 1u, listOf(file),
+                file.additions?.toULong(), file.deletions?.toULong(), attention = attention,
+            )
+        val ada = "Ada Lovelace <ada@example.com>"
+        val grace = "Grace Hopper <grace@example.com>"
+        return listOf(
+            commit("9f3c2a1", "Log in with a passkey when the browser offers one", ada, 1, file("src/auth/passkey.ts", "added", 121u, 0u)),
+            commit("c07a9e3", "Keep the session for 30 days", grace, 2, file("src/session/store.ts", "modified", 12u, 4u)),
+            commit("4be81d0", "Remove the old login form", ada, 3, file("src/ui/LoginForm.tsx", "deleted", 0u, 120u, deletesAttention), deletesAttention),
+            commit("17d0f5b", "Document the login flow", ada, 4, file("docs/login.md", "added", 40u, 0u)),
+            commit("e2a4c66", "Bump dependencies", "dependabot[bot] <support@github.com>", 5, file("package-lock.json", "modified", 30u, 12u)),
+            commit("5d91b07", "Run the release on every tag", grace, 6, file(".github/workflows/release.yml", "modified", 14u, 3u, ciAttention), ciAttention),
+            commit("88b13f2", "Fix a typo", grace, 7, file("README.md", "modified", 1u, 1u)),
+            commit("a41e6c2", "Show the passkey prompt in dark mode", ada, 8, file("src/ui/PasskeyPrompt.css", "modified", 9u, 2u)),
+        )
+    }
+
+    /** A push of 8 commits where 2 deserve a closer look. */
+    fun attentionPushView(): ApprovalView {
+        val commits = attentionCommits()
+        val ref = gitRef(
+            "feature/passkeys", commitCount = 8u, commits = commits, filesChanged = 8u, files = commits.flatMap { it.files },
+            additions = 227u, deletions = 142u,
+        )
+        return gitPushView(gitPush(ref, packBytes = 48_213u)).copy(
+            requestId = "req23", preview = listOf("Push 8 commits to feature/passkeys", "Log in with a passkey when the browser offers one", "+227 −142 in 8 files"),
+        )
+    }
+
+    /** 12 emails found, 2 flagged by the core: a password reset (Close) and an invoice (Look). Both start ticked. */
+    fun attentionEmails(): List<MessageView> {
+        val plain = listOf(
+            Triple("Dana Wu <dana@corp.example>", "Offsite agenda", "Day one starts at 9 with the roadmap review."),
+            Triple("IT <it@corp.example>", "Laptop refresh", "Your new laptop is ready for pick-up at the front desk."),
+            Triple("Sam Ortiz <sam@corp.example>", "Lunch on Friday?", "There is a new place by the station."),
+            Triple("Product <product@corp.example>", "Roadmap notes", "The notes from Tuesday are in the shared folder."),
+            Triple("Mia Chen <mia@corp.example>", "Design review moved", "We moved it to 3pm so Leo can join."),
+            Triple("Calendar <calendar@corp.example>", "Weekly sync", "Updated: the room changed to Atlas."),
+            Triple("Leo Park <leo@corp.example>", "Re: slides", "Looks good, two small comments on slide 4."),
+            Triple("HR <hr@corp.example>", "Holiday schedule", "The office closes on the 24th and the 31st."),
+            Triple("Ops <ops@corp.example>", "Maintenance window", "The build servers restart on Sunday at 2am."),
+            Triple("Ana Silva <ana@corp.example>", "Team photo", "The photos from the offsite are up."),
+        ).mapIndexed { i, (from, subject, snippet) -> MessageView("n$i", from, subject, 1_700_000_000L - 3_600L * (i + 2), snippet, false, false) }
+        val reset = MessageView(
+            "n10", "Acme <no-reply@acme.example>", "Reset your password", 1_700_000_000L - 1_800, "Someone asked to reset your password. The link works for an hour.",
+            false, false, attention(dev.reins.core.AttentionLevel.CLOSE, dev.reins.core.ReasonCode.PASSWORD_RESET to "Password reset"),
+        )
+        val invoice = MessageView(
+            "n11", "Acme Billing <billing@acme.example>", "Invoice #2291", 1_700_000_000L - 86_400, "Your invoice for September is attached.",
+            false, false, attention(dev.reins.core.AttentionLevel.LOOK, dev.reins.core.ReasonCode.FINANCE to "Bank or invoice"),
+        )
+        return plain.toMutableList().apply {
+            add(3, reset)
+            add(8, invoice)
+        }
+    }
+
+    /** A Gmail search that finds 12 emails, 2 of them worth a closer look. */
+    fun attentionSearchView(waitUntil: Long? = null) = searchView(waitUntil).copy(
+        requestId = "req12", query = "newer_than:7d", account = "work@corp.example", messages = attentionEmails(), count = 12u,
+    )
+
     /** The desktop app asks to clone and fetch: an ordinary item list, no git section. */
     fun gitFetchView() = fetchView().copy(
         requestId = "req21", connectionLabel = "M2A", service = "github", account = "octo-cat",

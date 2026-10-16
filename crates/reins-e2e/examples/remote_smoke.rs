@@ -37,7 +37,7 @@ async fn main() {
     let item = phone.wait_for_item(Duration::from_secs(30)).await;
     let view = phone.core.pairing_view(item.id.clone()).await.expect("pairing view");
     assert!(view.choices.contains(&code), "the browser code is one of the phone's three choices");
-    phone.core.answer_pairing(item.id, true, Some(code), Some("remote smoke".to_owned())).await.expect("pair");
+    phone.core.answer_pairing(item.id, true, Some(code), Some("remote smoke".to_owned()), true).await.expect("pair");
     ai.finish_when_approved(&wait_url, Duration::from_secs(30)).await;
     println!("ai: connected (code {code} matched)");
 

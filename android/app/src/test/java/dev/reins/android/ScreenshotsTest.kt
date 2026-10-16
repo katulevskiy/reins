@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.swipeDown
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -371,6 +372,38 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("7-pairing")
     }
 
+    /** A second Claude.ai account: "Claude 2" in the name field, the cursor in it, and why. */
+    @Test
+    fun pairingSecondAccount() {
+        history()
+        core.connections = listOf(TestData.connection("c1", "Claude").copy(ownLabel = "Claude", clientName = "Claude"))
+        core.pending = listOf(TestData.pairingItem("p2"))
+        core.pairing = PairingView("p2", "Claude", "claude.ai", byteArrayOf(7, 42, 88), 1_700_000_200, null, "Claude 2", 1u)
+        launch(link("pairing", "p2"))
+        await("pairSameClient")
+        rule.onNodeWithTag("label").performScrollTo()
+        shoot("7b-pairing-second-account")
+    }
+
+    /** A connection's Name: the field with the user's name, its own as the placeholder, what it calls itself. */
+    @Test
+    fun renameConnection() {
+        history()
+        core.connections = listOf(
+            TestData.connection("c1", "Claude (work)").copy(name = "Claude (work)", ownLabel = "Claude", clientName = "Claude", lastUsedAt = now - 300),
+            TestData.connection("c2", "Claude").copy(ownLabel = "Claude", clientName = "Claude"),
+        )
+        launch()
+        tap("tabConnections")
+        tap("connection:c1")
+        await("connectionCalledItself")
+        shoot("13c-connection-renamed")
+        tap("connectionRename")
+        await("renameField")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("13d-connection-rename-field")
+    }
+
     @Test
     fun activityDetails() {
         history()
@@ -653,6 +686,33 @@ abstract class ScreenshotsBase(private val suffix: String) {
         val gone = TestData.gitRef("old-experiment", change = "delete", commitCount = 0u, commits = emptyList(), filesChanged = 0u, files = emptyList(), additions = null, deletions = null)
         openGit(TestData.gitPushView(TestData.gitPush(tag, branch, gone), noStanding = true, tags = true))
         shoot("32-git-tags-unknown")
+    }
+
+    /** A push of 8 commits where 2 deserve a closer look: one changes CI (Close), one deletes a file (Look). */
+    @Test
+    fun attentionPush() {
+        openGit(TestData.attentionPushView())
+        shoot("attention-1-push")
+        tap("gitCommits:0")
+        await("gitCommit:0:5")
+        shoot("attention-2-commits")
+        tap("gitCommit:0:5")
+        await("commitSubject")
+        shoot("attention-3-commit")
+    }
+
+    /** A search that finds 12 emails, 2 worth a closer look (a password reset, an invoice); both start ticked. */
+    @Test
+    fun attentionEmails() {
+        history()
+        val view = TestData.attentionSearchView(waitUntil = now + 40)
+        core.pending = listOf(TestData.pending(view.requestId, "search", 12u, waitUntil = now + 40, label = view.connectionLabel, account = view.account))
+        core.approval = view
+        launch(link("request", view.requestId))
+        await("check:n11")
+        shoot("attention-4-emails")
+        rule.onNodeWithTag("messagesHeader").performScrollTo()
+        shoot("attention-5-emails-list")
     }
 
     @Test
@@ -1054,6 +1114,102 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("bypassUntilOff")
         frames()
         shoot("64b-autopilot-bypass-until-off")
+    }
+
+    /**
+     * Drags Trust up by [dp] and holds still before letting go, so the page stops where the finger did (no fling): the
+     * running field is then exactly as far folded as the page has scrolled.
+     */
+    private fun dragTrust(dp: Float) {
+        rule.onNodeWithTag("trustScroll").performTouchInput {
+            val px = dp * density
+            down(androidx.compose.ui.geometry.Offset(centerX, height * 0.75f))
+            repeat(24) { moveBy(androidx.compose.ui.geometry.Offset(0f, -px / 24f), delayMillis = 16) }
+            advanceEventTime(400)
+            up()
+        }
+        frames()
+    }
+
+    /** A running mode's field stays pinned on top of Trust and folds as the page scrolls: open, half way, compact. */
+    private fun foldTrust(name: String, row: FakeCore.ApRow, clockTag: String?) {
+        core.model = installed
+        autopilotPeople()
+        automaticHistory()
+        core.apGlobal = row
+        launch()
+        tap("tabTrust")
+        await("trustField:open")
+        clockTag?.let(::await)
+        frames()
+        shoot("$name-open")
+        dragTrust(110f)
+        await("trustField:folding")
+        shoot("$name-folding")
+        dragTrust(400f)
+        await("trustField:compact")
+        clockTag?.let(::await)
+        shoot("$name-compact")
+        // Back at the top it opens again.
+        rule.onNodeWithTag("trustScroll").performTouchInput { swipeDown(top + 10f, bottom - 10f, durationMillis = 300) }
+        frames(40)
+        await("trustField:open")
+    }
+
+    @Test
+    fun trustBypassFolds() = foldTrust("64d-trust-bypass", FakeCore.ApRow(bypassUntil = now + 47 * 60 + 12, bypassSince = now - 12 * 60), "bypassClock")
+
+    @Test
+    fun trustOvernightFolds() = foldTrust(
+        "64e-trust-overnight",
+        FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.OVERNIGHT, overnightUntil = now + 6 * 3_600, overnightSince = now - 12 * 60, overnightReturn = dev.reins.core.AutopilotMode.MANUAL),
+        "overnightClock",
+    )
+
+    @Test
+    fun trustLockdownFolds() = foldTrust("64f-trust-lockdown", FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.LOCKDOWN), null)
+
+    /** A bypass that approved 100 requests: the latest three and "Show all 97"; opened, the rest in place. */
+    @Test
+    fun trustBypassListFolds() {
+        core.model = installed
+        autopilotPeople()
+        val subjects = listOf("an email from @bank.com", "the calendar for today", "mail about the invoice", "the thread with Anna")
+        core.activity = (0 until 100).map { k ->
+            TestData.entry(
+                1_000L + k, action = "read", outcome = "released", count = 1u, at = now - 700 + k * 6, decidedBy = "bypass",
+                label = TestData.label("gmail", "read", "Read", subjects[k % subjects.size]),
+            )
+        }.reversed()
+        core.apGlobal = FakeCore.ApRow(bypassUntil = now + 47 * 60 + 12, bypassSince = now - 12 * 60)
+        launch()
+        tap("tabTrust")
+        await("runningShowAll")
+        frames()
+        shoot("64g-trust-bypass-list-folded")
+        tap("runningShowAll")
+        await("runningShowLess")
+        frames(20)
+        shoot("64h-trust-bypass-list-open")
+    }
+
+    /** Scrolled to the end, the last row of Trust and of Connections sits above the docked tab bar. */
+    @Test
+    fun pageBottomsClearTheTabBar() {
+        core.model = installed
+        autopilotPeople()
+        mcpServers()
+        launch()
+        tap("tabTrust")
+        await("pageEnd")
+        rule.onNodeWithTag("pageEnd").performScrollTo()
+        frames()
+        shoot("69-trust-bottom")
+        tap("tabConnections")
+        await("pageEnd")
+        rule.onNodeWithTag("pageEnd").performScrollTo()
+        frames()
+        shoot("69b-connections-bottom")
     }
 
     @Test

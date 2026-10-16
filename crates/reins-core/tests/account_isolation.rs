@@ -93,7 +93,7 @@ async fn unavailable_browser_logout_still_locks_local_account_and_retires_old_ca
     let old = app.engine();
     old.register_account("github", "alice-private-integration").unwrap();
     assert_eq!(app.logout_with_browser().await.unwrap(), None);
-    assert!(app.session().await.is_none());
+    assert!(app.session().await.unwrap().is_none());
     assert_eq!(old.register_account("github", "late").unwrap_err(), CoreError::NotLoggedIn);
     assert_eq!(app.accounts().await.unwrap().len(), 0);
 }
@@ -266,7 +266,7 @@ async fn deleting_the_account_refreshes_an_old_token_then_signs_out_and_forgets_
     app.delete_account("  Alice@Example.com ".to_owned()).await.unwrap();
     let tokens = tokens.lock().unwrap().clone();
     assert_ne!(tokens[0], tokens[1], "the second attempt carries a newly issued token");
-    assert!(app.session().await.is_none());
+    assert!(app.session().await.unwrap().is_none());
     assert_eq!(old.register_account("github", "late").unwrap_err(), CoreError::NotLoggedIn);
     assert_eq!(sealed_files(dir.path()), Vec::<String>::new(), "the encrypted account file and its sync base are gone");
     assert_eq!(app.accounts().await.unwrap().len(), 0);
@@ -292,7 +292,7 @@ async fn a_refused_deletion_leaves_the_account_signed_in_and_says_why() {
             .await;
         let error = app.delete_account("alice@example.com".to_owned()).await.unwrap_err();
         assert!(matches!(&error, CoreError::Invalid { reason } if reason.contains(says)), "{code}: {error:?}");
-        assert!(app.session().await.is_some(), "{code}: still signed in");
+        assert!(app.session().await.unwrap().is_some(), "{code}: still signed in");
         assert!(app.accounts().await.unwrap().iter().any(|a| a.account == "alice-private-integration"));
     }
     assert_eq!(sealed_accounts(dir.path()), 1);
@@ -317,5 +317,5 @@ async fn another_phone_proves_itself_with_the_password_it_signed_in_with() {
         .mount(&server)
         .await;
     app.delete_account("alice@example.com".to_owned()).await.unwrap();
-    assert!(app.session().await.is_none());
+    assert!(app.session().await.unwrap().is_none());
 }

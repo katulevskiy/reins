@@ -449,6 +449,11 @@ async fn post_join(
         return Err(bad_request("This is the approval device"));
     }
     let new: NewJoin = parse_versioned(&read_body_limited(data, MAX_BODY_BYTES).await?)?;
+    // An account with phone roles takes enrollments only (commit, challenge, reveal): a join over one key would let
+    // whoever relays it pick a key matching six digits offline.
+    if new.commitment.is_none() && super::roles::has_roster(&user_key(&headers), &conn).await? {
+        return Err(bad_request("This account has phone roles: a phone joins by enrolling as a viewer"));
+    }
     let created = HUB
         .joins
         .create(&user_key(&headers), &headers.device.uuid.to_string(), key.hash(), &new, now_unix())

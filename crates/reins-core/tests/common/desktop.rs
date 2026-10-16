@@ -118,7 +118,7 @@ impl Desk {
             .with_priority(1)
             .mount(&self.server)
             .await;
-        self.core.answer_pairing("p1".to_owned(), true, Some(47), None).await.unwrap();
+        self.core.answer_pairing("p1".to_owned(), true, Some(47), None, false).await.unwrap();
     }
 
     /// What the phone answered, by request id.

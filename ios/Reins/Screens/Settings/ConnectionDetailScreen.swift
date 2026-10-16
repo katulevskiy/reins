@@ -71,6 +71,13 @@ private struct ConnectionHeader: View {
                         .minimumScaleFactor(0.6)
                         .accessibilityAddTraits(.isHeader)
                         .accessibilityIdentifier("connectionName")
+                    if let itself = SettingsText.calledItself(connection) {
+                        Text(itself)
+                            .textRole(.meta)
+                            .foregroundStyle(Palette.inkMeta)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("connectionCalledItself")
+                    }
                     Text(SettingsText.connectionHeadline(connection))
                         .textRole(.meta)
                         .foregroundStyle(Palette.inkMeta)
@@ -393,6 +400,14 @@ private struct ConnectionInfoGroup: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("connectedOn")
             .cardRow()
+            SettingsRowLabel(title: "Last used", chevron: false) {
+                SettingsTile(symbol: "clock", tint: Palette.inkMeta)
+            } trailing: {
+                RowValue(SettingsText.lastUsed(connection))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("lastUsed")
+            .cardRow()
             if let error {
                 FormBanner(text: error).cardRow()
             }
@@ -422,16 +437,38 @@ private struct ConnectionInfoGroup: View {
 
 // MARK: Icon, disconnect
 
-/// The icon it shows everywhere: the current pick, opening the picker.
+/// Its name and the icon it shows everywhere: the name opens a field, the icon the picker.
 private struct ConnectionIconGroup: View {
     var connection: ConnectionView
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
     @State private var picking = false
+    @State private var naming = false
     @State private var error: String?
 
     var body: some View {
         Section {
+            Button {
+                naming = true
+                feedback.defaultTap()
+            } label: {
+                SettingsRowLabel(title: "Name") {
+                    SettingsTile(symbol: "pencil", tint: Palette.inkMeta)
+                } trailing: {
+                    RowValue(untrustedName(connection.label, limit: 28))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Name")
+            .accessibilityValue(untrustedName(connection.label))
+            .accessibilityIdentifier("connectionRename")
+            .cardRow()
+            .sheet(isPresented: $naming) {
+                RenameSheet(connection: connection) { naming = false }
+                    .environment(model)
+                    .environment(\.feedback, feedback)
+            }
+            .presentationFeedback(naming)
             Button {
                 picking = true
                 feedback.defaultTap()
@@ -476,6 +513,103 @@ private struct ConnectionIconGroup: View {
                 feedback.play(.error)
                 self.error = error.userMessage
             }
+        }
+    }
+}
+
+/// The name field: the user's name for it, its own as the placeholder. Empty (or the clear button) gives it its own
+/// name back. What it calls itself stays under the field.
+struct RenameSheet: View {
+    var connection: ConnectionView
+    var done: () -> Void
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
+    @State private var text: String
+    @State private var busy = false
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    init(connection: ConnectionView, done: @escaping () -> Void) {
+        self.connection = connection
+        self.done = done
+        _text = State(initialValue: connection.name ?? "")
+    }
+
+    private var own: String {
+        untrustedName(connection.ownLabel.isEmpty ? connection.label : connection.ownLabel, limit: 64)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Name")
+                .font(RFont.sans(18, .semibold))
+                .foregroundStyle(Palette.ink)
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 8) {
+                TextField(own, text: $text)
+                    .font(RFont.sans(16))
+                    .focused($focused)
+                    .submitLabel(.done)
+                    .textInputAutocapitalization(.words)
+                    .onSubmit(save)
+                    .onChange(of: text) { _, new in if new.count > PairingModel.maxLabel { text = String(new.prefix(PairingModel.maxLabel)) } }
+                    .accessibilityLabel("Name")
+                    .accessibilityIdentifier("renameField")
+                if !text.isEmpty {
+                    Button {
+                        text = ""
+                        feedback.play(.selection)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.inkFaint)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Use its own name")
+                    .accessibilityIdentifier("renameClear")
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
+            Text("Calls itself " + PairWords.quoted(connection.clientName.isEmpty ? own : connection.clientName))
+                .textRole(.meta)
+                .foregroundStyle(Palette.inkMeta)
+                .lineLimit(1)
+                .accessibilityIdentifier("renameItself")
+            if let error { FormBanner(text: error) }
+            Button(action: save) {
+                Label { Text("Save") } icon: { Image(systemName: "checkmark") }
+                    .font(RFont.sans(16, .semibold))
+                    .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(busy)
+            .accessibilityIdentifier("renameSave")
+        }
+        .padding(20)
+        .presentationDetents([.height(300)])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Palette.paper)
+        .onAppear { focused = true }
+        .accessibilityIdentifier("renameSheet")
+    }
+
+    private func save() {
+        guard !busy else { return }
+        busy = true
+        error = nil
+        let id = connection.id
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            do {
+                try await model.renameConnection(id, to: typed.isEmpty ? nil : typed)
+                feedback.play(.close)
+                done()
+            } catch {
+                feedback.play(.error)
+                self.error = error.userMessage
+            }
+            busy = false
         }
     }
 }

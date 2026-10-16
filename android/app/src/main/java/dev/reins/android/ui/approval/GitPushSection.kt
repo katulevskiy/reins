@@ -59,6 +59,7 @@ import dev.reins.core.GitCommitView
 import dev.reins.core.GitFileView
 import dev.reins.core.GitPushView
 import dev.reins.core.GitRefView
+import dev.reins.core.ReasonCode
 import kotlinx.coroutines.launch
 
 private const val HIDDEN_HELP = "Invisible characters can make code read unlike what it does. They show as � here."
@@ -95,20 +96,10 @@ internal fun GitFacts(view: ApprovalView, git: GitPushView) {
                 git.refs.forEachIndexed { i, ref ->
                     when {
                         ref.commits.isNotEmpty() || ref.commitCount > 0u -> add {
-                            DrillRow(commitsWord(ref.commitCount.toInt()), "gitCommits:$i", { nav.push(ApprovalPage.Commits(i)) }) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (ref.hiddenChars()) {
-                                        WarnTag("Hidden", c.danger, small = true)
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-                                    Counts(ref.additions, ref.deletions, modifier = Modifier.testTag("gitTotals:$i"))
-                                }
-                            }
+                            DrillRow(commitsWord(ref.commitCount.toInt()), "gitCommits:$i", { nav.push(ApprovalPage.Commits(i)) }) { RefGlance(ref, i) }
                         }
                         ref.filesChanged > 0u -> add {
-                            DrillRow(filesWord(ref.filesChanged.toInt()), "gitFiles:$i", { nav.push(ApprovalPage.Files(i)) }) {
-                                Counts(ref.additions, ref.deletions, modifier = Modifier.testTag("gitTotals:$i"))
-                            }
+                            DrillRow(filesWord(ref.filesChanged.toInt()), "gitFiles:$i", { nav.push(ApprovalPage.Files(i)) }) { RefGlance(ref, i) }
                         }
                     }
                 }
@@ -116,6 +107,34 @@ internal fun GitFacts(view: ApprovalView, git: GitPushView) {
         )
         git.notes.forEachIndexed { k, note ->
             RText(untrusted(note), RType.sans(12.5f, lineHeight = 17f), c.tertiary, Modifier.padding(horizontal = 24.dp).testTag("gitNote:$k"))
+        }
+    }
+}
+
+/**
+ * A ref's folded row, beside its title: how many of its items deserve a closer look ("2 of 8 to look at") and its lines
+ * added and removed; under them "Hidden" when anything in it has hidden characters and "Rewrites history" when it does,
+ * flagged or not.
+ */
+@Composable
+private fun RefGlance(ref: GitRefView, i: Int) {
+    val c = LocalColors.current
+    val summary = attentionSummary(ref)
+    val hidden = ref.hiddenChars()
+    val rewrites = rewritesHistory(ref)
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (summary != null) {
+                WarnTag(summary, c.warning, Modifier.testTag("gitAttention:$i"), small = true)
+                Spacer(Modifier.width(8.dp))
+            }
+            Counts(ref.additions, ref.deletions, modifier = Modifier.testTag("gitTotals:$i"))
+        }
+        if (hidden || rewrites) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (hidden) WarnTag("Hidden", c.danger, Modifier.testTag("gitHidden:$i"), small = true)
+                if (rewrites) WarnTag("Rewrites history", c.danger, Modifier.testTag("gitRewrites:$i"), small = true)
+            }
         }
     }
 }
@@ -160,7 +179,8 @@ internal fun CommitsPage(view: ApprovalView, refIndex: Int) {
     }
     FactGroup(
         rows = buildList<@Composable () -> Unit> {
-            ref.commits.forEachIndexed { j, commit ->
+            // Flagged first; each row still opens its commit by its place in the push.
+            attentionOrder(ref.commits) { it.attention?.level }.forEach { (j, commit) ->
                 add { CommitRow(commit, Modifier.testTag("gitCommit:$refIndex:$j")) { nav.push(ApprovalPage.Commit(refIndex, j)) } }
             }
             val unlisted = ref.commitCount.toInt() - ref.commits.size
@@ -199,8 +219,9 @@ private fun CommitRow(commit: GitCommitView, modifier: Modifier, onOpen: () -> U
             Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 RText(untrusted(authorName(commit.author)), RType.sans(12.5f), c.tertiary, Modifier.weight(1f, fill = false))
                 Counts(commit.additions, commit.deletions, 12f)
-                if (commit.hiddenChars) WarnTag("Hidden", c.danger, Modifier.testTag("commitHidden"), small = true)
+                if (hiddenApart(commit.hiddenChars, commit.attention)) WarnTag("Hidden", c.danger, Modifier.testTag("commitHidden"), small = true)
             }
+            attentionMark(commit.attention)?.let { AttentionTag(it, Modifier.padding(top = 6.dp).testTag("commitAttention:${commit.shortSha}")) }
         }
         if (opens) {
             Spacer(Modifier.width(6.dp))
@@ -227,6 +248,10 @@ internal fun CommitPage(view: ApprovalView, refIndex: Int, index: Int) {
                 Counts(commit.additions, commit.deletions, 12.5f)
             }
         }
+        // Why this commit is worth a look; hidden characters keep their own tag and (?) below.
+        attentionMark(commit.attention, if (commit.hiddenChars) setOf(ReasonCode.HIDDEN_CHARS) else emptySet())?.let {
+            AttentionTag(it, Modifier.padding(top = 12.dp).testTag("commitAttention"))
+        }
         if (commit.hiddenChars) {
             Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 WarnTag("Hidden characters", c.danger, Modifier.testTag("hiddenChars"))
@@ -246,7 +271,7 @@ internal fun CommitPage(view: ApprovalView, refIndex: Int, index: Int) {
     }
     FactGroup(
         rows = buildList<@Composable () -> Unit> {
-            files.forEachIndexed { j, file -> add { FileRow(file, "commitFile:$j", expandable = true) } }
+            attentionOrder(files) { it.attention?.level }.forEach { (j, file) -> add { FileRow(file, "commitFile:$j", expandable = true) } }
             val unlisted = commit.filesChanged!!.toInt() - files.size
             if (unlisted > 0) add { NotListed("$unlisted more not listed", "commitFilesNotListed") }
         },
@@ -260,7 +285,7 @@ internal fun FilesPage(view: ApprovalView, refIndex: Int) {
     FactGroup(
         modifier = Modifier.padding(top = 6.dp),
         rows = buildList<@Composable () -> Unit> {
-            ref.files.forEachIndexed { j, file -> add { FileRow(file, "gitFile:$refIndex:$j", expandable = false) } }
+            attentionOrder(ref.files) { it.attention?.level }.forEach { (j, file) -> add { FileRow(file, "gitFile:$refIndex:$j", expandable = false) } }
             val unlisted = ref.filesChanged.toInt() - ref.files.size
             if (unlisted > 0) add { NotListed("$unlisted more not listed", "gitFilesNotListed:$refIndex") }
         },
@@ -301,17 +326,20 @@ private fun FileRow(file: GitFileView, tag: String, expandable: Boolean) {
         ) {
             Icon(Icons.Rounded.Description, null, Modifier.size(16.dp), tint = c.secondary)
             Spacer(Modifier.width(10.dp))
-            BasicText(
-                buildAnnotatedString {
-                    withStyle(SpanStyle(color = c.tertiary)) { append(dir) }
-                    append(name)
-                },
-                // Wrapped whole, never cut in the middle: the path is what the change touches.
-                Modifier.weight(1f).testTag("$tag:path"),
-                style = RType.mono(13f).copy(color = c.text),
-            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                BasicText(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = c.tertiary)) { append(dir) }
+                        append(name)
+                    },
+                    // Wrapped whole, never cut in the middle: the path is what the change touches.
+                    Modifier.testTag("$tag:path"),
+                    style = RType.mono(13f).copy(color = c.text),
+                )
+                attentionMark(file.attention)?.let { AttentionTag(it, Modifier.testTag("$tag:attention")) }
+            }
             Spacer(Modifier.width(8.dp))
-            if (file.hiddenChars) {
+            if (hiddenApart(file.hiddenChars, file.attention)) {
                 WarnTag("Hidden", c.danger, Modifier.testTag("$tag:hidden"), small = true)
                 Spacer(Modifier.width(6.dp))
             }

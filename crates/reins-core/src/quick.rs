@@ -436,6 +436,7 @@ impl Engine {
             });
             view.quick = quick_view(&parked, &view, repeats);
         }
+        self.names().approval(&mut view);
         Ok(view)
     }
 

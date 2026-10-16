@@ -536,7 +536,7 @@ final class AutopilotFlowTests: XCTestCase {
 
     func testAJustPairedConnectionCannotBeBypassedAndSaysWhy() async throws {
         await start()
-        try await core.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: nil)
+        try await core.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: nil, nameEdited: false)
         await model.refreshConnections()
         let fresh = try XCTUnwrap(model.connections.first { $0.label == "Gemini" })
         let refusal = try XCTUnwrap(ap.bypassRefusal(fresh.id))
