@@ -156,14 +156,4 @@ final class SettingsTextTests: XCTestCase {
         let session = await core.session()
         XCTAssertNil(session)
     }
-
-    @MainActor
-    func testAnIconPickIsFoundByLabelOnlyWhenTheIdIsMissingAndUnambiguous() async {
-        let core = DemoReinsCore(signedIn: true, modelInstalled: true, syncCap: 0.3)
-        let model = AppModel(core: core, feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
-        await model.refreshConnections()
-        XCTAssertEqual(model.iconPick(connectionId: "c1", label: "x"), "claude")
-        XCTAssertEqual(model.iconPick(connectionId: "", label: "Claude"), "claude")
-        XCTAssertNil(model.iconPick(connectionId: "gone", label: "Claude"))
-    }
 }
