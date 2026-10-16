@@ -456,6 +456,20 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     // Phone roles: the demo account has none (legacy), so the role calls report that and the changes refuse.
     func phoneRole() async throws -> PhoneRole { .legacy }
     func rosterSummary(refresh: Bool) async throws -> RosterSummary? { nil }
+    func liveSync(waitSecs: UInt32) async throws -> LiveSyncState { Self.legacyLive }
+    func liveSyncState() async throws -> LiveSyncState { Self.legacyLive }
+    func proposalCreate(kind: String, title: String, rowsJson: String) async throws -> String {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func proposalWithdraw(id: String) async throws { throw CoreError.NotFound }
+    func proposals() async throws -> [ProposalView] { [] }
+    func proposalPreview(id: String) async throws -> ProposalPreview { throw CoreError.NotFound }
+    func proposalKeep(id: String, digest: String) async throws { throw CoreError.NotFound }
+    func proposalDiscard(id: String) async throws { throw CoreError.NotFound }
+    private static let legacyLive = LiveSyncState(
+        role: .legacy, epoch: 0, appliedSeq: 0, headSeq: 0, primaryName: "", primarySeenAt: nil, primaryHeadSeq: nil,
+        live: false, forked: nil, disagrees: false, waitingForKey: false, queued: 0, counterGaps: 0, notice: nil
+    )
     func rosterCreate(deviceName: String, codeOrPassword: String?) async throws -> RosterSummary {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
@@ -476,7 +490,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     func rosterRecoverPreview(codeOrPassword: String) async throws -> RecoveryPreview {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
-    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String) async throws -> RosterSummary {
+    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String, confirmation: String?) async throws -> RosterSummary {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
     func rosterRemoveMember(deviceId: String) async throws { throw CoreError.NotFound }

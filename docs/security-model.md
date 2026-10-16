@@ -495,10 +495,39 @@ Details: [autopilot.md](autopilot.md).
     Autopilot modes or grants say. But it can still open the vault and, with the master key, the recovery wrap, and so
     recover to primary. Only rotating the account secret (a vault reset now; recovery-code rotation is a follow-up)
     revokes it for good.
-  - **A demoted primary keeps its tokens until the sync engine stage.** After a handover or a recovery the old
-    primary drops the owner seed, the recovery wrap's key and the card provider's key at once, but its integration
-    tokens and the payment mandate key stay in its local store until the sync engine (the next stage) wipes them on
-    every phone that is not the primary. Until then they are as safe as that phone's lock.
+  - **Tokens stay with the primary.** In the op log a token (and the payment mandate key) is sealed to the
+    credential key on top of the view key, so a viewer syncs "GitHub · octocat" and never the token. A phone that sees
+    it is not the primary (a viewer, a removed phone, a primary replaced by a handover or a recovery) deletes every
+    integration token and the mandate key it holds, at once; until it runs once after the change, they are as safe as
+    that phone's lock.
+  - **What a viewer adds is a proposal.** It is inert until the primary keeps it. The primary shows Keep / Discard
+    from the payload it opened (sealed to the credential key), not from the viewer's title, and keeps exactly what it
+    showed: new rows only (nothing replaced), an integration's account with its token or an MCP server with its own,
+    the columns a proposal may set (what a server says of its tools is listed again by the primary), never a key of
+    Reins, of payments or of this installation, a grant, a mode, a paired computer or a setting.
+  - **A viewer cannot stop the log.** An op sealed under a key id no roster entry brought is refused, not waited for;
+    an op signed before a phone's anchor is skipped once the phone has a state.
+  - **A phone that recovers verifies before it signs.** It reads the log with its recovery proof (it is no member
+    yet), applies it under the roster before the recovery (the outgoing primary's checkpoint, then the signed ops),
+    and names as the old primary's last op only what it verified, never past a gap (the old primary's ops after a
+    gap are dropped, with a warning). Nothing the old primary's key can produce blocks a recovery, since a thief may
+    hold it: what does not check out is for the user to confirm. With anything of the old primary in the log, its
+    last heartbeat must verify (its key, an epoch of its tenure), reach its checkpoint and its newest op, sign the
+    same history at its head, and count no more of its own ops than were verified; a missing, stale or forged one,
+    a server that serves less than that heartbeat signed, or a server that claims the old primary wrote more than it
+    serves, asks the user ("Recover without the lost phone's last status?") and signs nothing until confirmed. A
+    new account (nothing of the old primary in the log) needs no heartbeat. A checkpoint the phone cannot verify
+    asks to start afresh. Whatever a recovering phone takes from a checkpoint it did not apply op by op (which a
+    thief holding the old primary could have put just before) is untrusted, marked before it loads and tightened
+    row by row as it is materialized, until every row of it was seen: every grant revoked, every mode Manual
+    (Lockdown stays) and no Bypass, Autopilot's learning and approved targets forgotten and its profiles reset,
+    paired computers to pair again, MCP servers' tools listed again and their address to be checked, every "always
+    ask" asking, the starting policy the strictest, payments with no limit, tolerance, default card or address,
+    phone pay or merchant account, this phone's payment ledger kept, every connection's Autopilot age reset, secrets
+    seen only added to, and no token taken from it. What the new primary sets afterwards is never tightened again.
+  - **A replaced primary cannot stop the others.** Only the current primary's heartbeat at the current epoch can show a
+    fork (and stop applying for good); one from a replaced primary or an older epoch that disagrees is a warning ("Your
+    devices may disagree"), never kept.
   - A phone with no roster of its own that recovers cannot tell a current roster from an older, consistent one a
     server kept (with that time's recovery wrap). The recovery shows the members it would recover into, the epoch and
     the owner key's fingerprint, and signs nothing until the user confirms; a phone that verified the roster before

@@ -535,6 +535,11 @@ impl std::fmt::Debug for RecoveryWrapRequest {
 pub struct RecoveryWrap {
     pub epoch: u64,
     pub recovery_wrap: String,
+    /// The last op counter the server stored of the primary the recovery replaces. Never what a recovery names (that
+    /// is what the phone itself verified of the log): a cross-check only, a phone refuses to sign when the server
+    /// claims more than it serves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_counter: Option<u64>,
 }
 
 /// `PUT /reins/api/member`: a member's push token (viewers get `sync` pushes; the primary's token stays with

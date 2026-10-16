@@ -7,6 +7,7 @@ mod payments;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use reins_proto::oplog::Restriction;
 use zeroize::Zeroizing;
 
 use crate::autopilot::{
@@ -16,6 +17,7 @@ use crate::autopilot::{
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
+use crate::live_sync::{LiveSyncState, ProposalPreview, ProposalView};
 use crate::roles::{
     EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview, RosterSummary,
 };
@@ -444,6 +446,112 @@ impl ReinsCore {
         .await
     }
 
+    /// One cycle of the live sync on an account with phone roles: sends this phone's changes, applies the log, checks
+    /// the roster and the primary's heartbeat. `wait_secs` (at most 25) long-polls for news when there is none; a
+    /// viewer's foreground loop calls it again and again. On an account without phone roles it only says so.
+    pub async fn live_sync(&self, wait_secs: u32) -> Result<LiveSyncState, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.live_sync(wait_secs)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Where the live view stood after the last cycle (no network): the "Live" / "last seen" bar.
+    pub async fn live_sync_state(&self) -> Result<LiveSyncState, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(async { engine.live_sync_state() }).await
+        })
+        .await
+    }
+
+    /// On a viewer: proposes an account, a token, an MCP server or an icon (`rows_json`: a list of
+    /// `{"table", "value"}`) for the primary to keep or discard. Returns its id.
+    pub async fn proposal_create(&self, kind: String, title: String, rows_json: String) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.proposal_create(&kind, &title, &rows_json)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the viewer that proposed it: takes a proposal back.
+    pub async fn proposal_withdraw(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.proposal_withdraw(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The proposals waiting for the primary (on every phone of the roster).
+    pub async fn proposals(&self) -> Result<Vec<ProposalView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.proposals()).await
+        })
+        .await
+    }
+
+    /// On the primary: what a proposal really adds (opened with the credential key). Show Keep / Discard from this,
+    /// never from the proposal's kind and title, and hand its digest to `proposal_keep`.
+    pub async fn proposal_preview(&self, id: String) -> Result<ProposalPreview, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.run_account(engine.proposal_preview(&id)).await
+        })
+        .await
+    }
+
+    /// On the primary, behind biometrics: keeps a proposal as it was previewed (`digest`): what it adds becomes the
+    /// primary's own, unopened by anyone else.
+    pub async fn proposal_keep(&self, id: String, digest: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.proposal_keep(&id, &digest)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the primary: discards a proposal.
+    pub async fn proposal_discard(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.proposal_discard(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// The account's phones as this phone verified them (`refresh`: fetched and verified again first). `None` on a
     /// legacy account.
     pub async fn roster_summary(&self, refresh: bool) -> Result<Option<RosterSummary>, CoreError> {
@@ -618,19 +726,22 @@ impl ReinsCore {
 
     /// Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
     /// becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
-    /// phones changed since, nothing is signed.
+    /// phones changed since, nothing is signed. `confirmation`: the token of the `RecoveryNeedsConfirmation` the
+    /// user accepted (none at first).
     pub async fn roster_recover(
         &self,
         code_or_password: String,
         device_name: String,
         tip: String,
+        confirmation: Option<String>,
     ) -> Result<RosterSummary, CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let typed = Zeroizing::new(code_or_password);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
-            let summary = engine.run_account(engine.roster_recover(typed, &device_name, &tip)).await?;
+            let summary =
+                engine.run_account(engine.roster_recover(typed, &device_name, &tip, confirmation.as_deref())).await?;
             runtime.check_engine(&engine)?;
             match runtime.activate_unlocked().await {
                 Ok(()) | Err(CoreError::NotLoggedIn) => {}
@@ -965,7 +1076,16 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.revoke_grant(&grant_id) }).await;
+            let result = engine
+                .run_account(async {
+                    engine.revoke_grant(&grant_id)?;
+                    engine
+                        .brake_out(Restriction::RevokeGrant {
+                            grant_id: grant_id.clone(),
+                        })
+                        .await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -1320,7 +1440,16 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.delete_grant(&grant_id) }).await;
+            let result = engine
+                .run_account(async {
+                    engine.delete_grant(&grant_id)?;
+                    engine
+                        .brake_out(Restriction::RevokeGrant {
+                            grant_id: grant_id.clone(),
+                        })
+                        .await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -1613,12 +1742,25 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             // Lockdown and stopping a running bypass are the brake: any member may pull it (Q2).
-            if !engine.is_brake(connection_id.as_deref(), mode)? {
+            let brake = engine.is_brake(connection_id.as_deref(), mode)?;
+            if !brake {
                 engine.require_decider()?;
             }
             engine.ensure_active()?;
-            let result =
-                engine.run_account(async { engine.set_autopilot_mode(connection_id, mode, minutes).await }).await;
+            let restriction = if mode == Some(AutopilotMode::Lockdown) {
+                Restriction::Lockdown
+            } else {
+                Restriction::StopBypass
+            };
+            let result = engine
+                .run_account(async {
+                    engine.set_autopilot_mode(connection_id, mode, minutes).await?;
+                    if brake {
+                        engine.brake_out(restriction).await?;
+                    }
+                    Ok(())
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await

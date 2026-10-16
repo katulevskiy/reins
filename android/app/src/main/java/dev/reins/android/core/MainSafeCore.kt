@@ -42,7 +42,10 @@ import dev.reins.core.EnrollStart
 import dev.reins.core.EnrollView
 import dev.reins.core.HandoverProgress
 import dev.reins.core.HandoverView
+import dev.reins.core.LiveSyncState
 import dev.reins.core.PhoneRole
+import dev.reins.core.ProposalPreview
+import dev.reins.core.ProposalView
 import dev.reins.core.RecoveryPreview
 import dev.reins.core.RosterSummary
 import dev.reins.core.JoinProgress
@@ -238,6 +241,23 @@ class MainSafeCore(
 
     override suspend fun rosterSummary(refresh: Boolean): RosterSummary? = io { rosterSummary(refresh) }
 
+    override suspend fun liveSync(waitSecs: UInt): LiveSyncState = io { liveSync(waitSecs) }
+
+    override suspend fun liveSyncState(): LiveSyncState = io { liveSyncState() }
+
+    override suspend fun proposalCreate(kind: String, title: String, rowsJson: String): String =
+        io { proposalCreate(kind, title, rowsJson) }
+
+    override suspend fun proposalWithdraw(id: String) = io { proposalWithdraw(id) }
+
+    override suspend fun proposals(): List<ProposalView> = io { proposals() }
+
+    override suspend fun proposalPreview(id: String): ProposalPreview = io { proposalPreview(id) }
+
+    override suspend fun proposalKeep(id: String, digest: String) = io { proposalKeep(id, digest) }
+
+    override suspend fun proposalDiscard(id: String) = io { proposalDiscard(id) }
+
     override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): RosterSummary =
         io { rosterCreate(deviceName, codeOrPassword) }
 
@@ -264,8 +284,12 @@ class MainSafeCore(
     override suspend fun rosterRecoverPreview(codeOrPassword: String): RecoveryPreview =
         io { rosterRecoverPreview(codeOrPassword) }
 
-    override suspend fun rosterRecover(codeOrPassword: String, deviceName: String, tip: String): RosterSummary =
-        io { rosterRecover(codeOrPassword, deviceName, tip) }
+    override suspend fun rosterRecover(
+        codeOrPassword: String,
+        deviceName: String,
+        tip: String,
+        confirmation: String?,
+    ): RosterSummary = io { rosterRecover(codeOrPassword, deviceName, tip, confirmation) }
 
     override suspend fun rosterRemoveMember(deviceId: String) = io { rosterRemoveMember(deviceId) }
 

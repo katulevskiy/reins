@@ -35,6 +35,7 @@
 //! come back); one older than [`PROPOSAL_TTL_SECS`] is no longer shown.
 
 pub mod checkpoint;
+pub(crate) mod local;
 mod rules;
 #[cfg(test)]
 mod tests;
@@ -65,6 +66,11 @@ const KEPT_SEQS: u64 = 4_096;
 pub const HOLD_SEQS: u64 = 1_000;
 /// How many ops a tombstone of a record whose removal is no security decision is kept after the removal.
 pub const TOMBSTONE_KEEP_SEQS: u64 = 10_000;
+/// The most Activity the log keeps, in bytes of its records (the newest first): a checkpoint stays well under
+/// [`reins_proto::oplog::MAX_CHECKPOINT_BYTES`] whatever the entries carry.
+pub const ACTIVITY_BYTES: i64 = 3 * 1024 * 1024;
+/// How often (in seqs) the Activity byte budget is enforced.
+pub(crate) const ACTIVITY_TRIM_EVERY: u64 = 32;
 /// The tables whose removals are remembered for good (`super::GUARDED`'s records).
 const GUARDED_TABLES: [Table; 6] =
     [Table::Grants, Table::Accounts, Table::Secrets, Table::McpServers, Table::DesktopKeys, Table::Targets];
@@ -374,6 +380,32 @@ pub fn record(conn: &Connection, table: Table, key: &str) -> Result<Option<Recor
     raw.map(record_of).transpose()
 }
 
+/// Every record, tombstones included (the sync engine compares them with the store).
+pub fn all_records(conn: &Connection) -> Result<Vec<Record>, CoreError> {
+    let mut stmt = conn.prepare(&format!("SELECT {RECORD_COLUMNS} FROM oplog_records ORDER BY tbl, key"))?;
+    let raws = stmt.query_map([], record_from_row)?.collect::<Result<Vec<_>, _>>()?;
+    raws.into_iter().map(record_of).collect()
+}
+
+/// The oldest `seq` whose op this phone still keeps (`None`: none yet).
+pub fn first_kept_seq(conn: &Connection) -> Result<Option<u64>, CoreError> {
+    let first: Option<i64> = conn.query_row("SELECT min(seq) FROM oplog_seqs", [], |r| r.get(0))?;
+    Ok(first.map(as_u64))
+}
+
+/// Whether the log this phone applied (its last [`KEPT_SEQS`]) holds the op of hash `op_hash`.
+pub fn holds_op(conn: &Connection, op_hash: &[u8; 32]) -> Result<bool, CoreError> {
+    Ok(conn
+        .query_row("SELECT 1 FROM oplog_seqs WHERE op_hash = ?1", [hex32(op_hash)], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
+/// The last counter this phone took of the ops `author` signed with `sign_pub` (0: none).
+pub fn author_last_counter(conn: &Connection, author: &str, sign_pub: &str) -> Result<u64, CoreError> {
+    author_counter(conn, author, sign_pub)
+}
+
 /// The live records of `table`, by key.
 pub fn records(conn: &Connection, table: Table) -> Result<Vec<Record>, CoreError> {
     let mut stmt = conn.prepare(&format!(
@@ -418,13 +450,28 @@ pub fn counter_gaps(conn: &Connection) -> Result<Vec<(String, String, u64)>, Cor
     Ok(rows.into_iter().map(|(a, k, g)| (a, k, as_u64(g))).collect())
 }
 
-/// The member who signed `op` (as the roster stood at its epoch), whatever it may write.
-fn signer_of<'a>(op: &Op, ctx: &'a Context<'_>) -> Result<Result<&'a Member, Refusal>, Halt> {
+/// The member who signed `op` (as the roster stood at its epoch), whatever it may write. An op signed before the
+/// first entry this phone verified halts applying only while the phone has applied nothing (it loads a checkpoint
+/// first); once it has a state, such an op is refused and applying goes on (a member signing at an old epoch cannot
+/// stop a phone enrolled later).
+fn signer_of<'a>(op: &Op, ctx: &'a Context<'_>, started: bool) -> Result<Result<&'a Member, Refusal>, Halt> {
     let first = ctx.roster.entries.first().map_or(0, |e| e.epoch);
     if op.epoch > ctx.roster.epoch() {
         return Err(Halt::UnknownEpoch(op.epoch));
     }
     if op.epoch < first {
+        if started {
+            // Signed before the first entry this phone verified: checked against the key its author has there (a
+            // member keeps its key), so that its counter moves as on every phone; its role cannot be judged here, so
+            // it is refused when its turn comes.
+            return Ok(ctx
+                .roster
+                .entries
+                .first()
+                .and_then(|e| e.role_of(&op.author))
+                .map(|(_, m)| m)
+                .ok_or(Refusal::NotAuthorized(OpRefusal::UnknownEpoch)));
+        }
         return Err(Halt::Unverifiable(op.epoch));
     }
     if op.account != ctx.account {
@@ -555,7 +602,7 @@ fn judge_and_apply(
     if let Err(e) = op.validate() {
         return Ok(Outcome::Refused(Refusal::Invalid(e.to_string())));
     }
-    let signer = match signer_of(op, ctx)? {
+    let signer = match signer_of(op, ctx, s.seq > 0)? {
         Ok(member) => member,
         Err(refusal) => return Ok(Outcome::Refused(refusal)),
     };
@@ -568,12 +615,6 @@ fn judge_and_apply(
     }
     // Authentic from here: the log's epoch moves, and the author's counter.
     s.log_epoch = s.log_epoch.max(op.epoch);
-    // A view key this phone lacks halts here, whenever the op's turn comes.
-    if let Some(kid) = decode_payload(&op.body).and_then(|sealed| sealed_kid(&sealed))
-        && ctx.keyring.get(kid).is_none()
-    {
-        return Err(Halt::MissingKey(kid));
-    }
     let last = author_counter(tx, &op.author, &signer.sign_pub)?;
     if op.counter <= last {
         return Ok(Outcome::Refused(Refusal::CounterReplay));
@@ -632,9 +673,17 @@ fn take_turn(tx: &Transaction<'_>, ctx: &Context<'_>, op: &Op, seq: u64) -> Resu
     let Some(sealed) = decode_payload(&op.body) else {
         return Ok(Outcome::Refused(Refusal::Unopenable));
     };
-    let kid = sealed_kid(&sealed).unwrap_or(0);
+    let Some(kid) = sealed_kid(&sealed) else {
+        return Ok(Outcome::Refused(Refusal::Unopenable));
+    };
     if ctx.keyring.get(kid).is_none() {
-        return Err(Halt::MissingKey(kid));
+        // Applying waits only for a key this phone can be given: one an entry of the roster brought, at or before the
+        // epoch the (authorized) author signed at. Any other key id is the author's own garbage: refused, and every
+        // phone goes on (a viewer cannot stop the log with a key id no one has).
+        if kid <= op.epoch && ctx.roster.view_key_signer(kid).is_some() {
+            return Err(Halt::MissingKey(kid));
+        }
+        return Ok(Outcome::Refused(Refusal::Unopenable));
     }
     let Ok(plain) = ctx.keyring.open(&body_associated_data(op), &sealed) else {
         return Ok(Outcome::Refused(Refusal::Unopenable));
@@ -728,6 +777,15 @@ fn prune(tx: &Transaction<'_>, seq: u64) -> Result<(), CoreError> {
              (SELECT seq FROM oplog_records WHERE tbl = ?1 ORDER BY seq DESC LIMIT 1 OFFSET ?2)",
         params![table_name(Table::Audit), AUDIT_RETENTION - 1],
     )?;
+    // And at most ACTIVITY_BYTES of it (newest first), so a checkpoint fits: checked every few ops, at the same seqs
+    // on every phone.
+    if seq.is_multiple_of(ACTIVITY_TRIM_EVERY) {
+        tx.execute(
+            "DELETE FROM oplog_records WHERE tbl = ?1 AND seq IN (SELECT seq FROM (SELECT seq, sum(length(coalesce(value, '')))
+                 OVER (ORDER BY seq DESC, key) AS total FROM oplog_records WHERE tbl = ?1) WHERE total > ?2)",
+            params![table_name(Table::Audit), ACTIVITY_BYTES],
+        )?;
+    }
     Ok(())
 }
 

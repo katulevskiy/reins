@@ -56,6 +56,14 @@ pub enum CoreError {
     /// bypass and revoking a grant (the brake) stay open to it.
     #[error("This phone views the account; decisions are made on the primary phone.")]
     ViewerOnly,
+    /// `roster_recover`: the account's history could not be fully checked (`reason`, for the user). Ask whether to
+    /// recover anyway, then call it again with `token` as its confirmation: it stands for exactly what the user was
+    /// shown, so a recovery that would find something else asks again.
+    #[error("{reason}")]
+    RecoveryNeedsConfirmation {
+        reason: String,
+        token: String,
+    },
 }
 
 impl CoreError {

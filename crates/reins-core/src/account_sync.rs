@@ -44,6 +44,10 @@ impl Engine {
         if self.store.owner.is_none() {
             return Ok(());
         }
+        // An account with phone roles syncs by the op log (`live_sync.rs`); the snapshot is retired for it.
+        if self.holds_roster_now()? {
+            return Box::pin(self.live_sync_now()).await;
+        }
         let _guard = self.account_sync.lock().await;
         match self.pull_locked().await? {
             Pulled::Merged => self.upload_locked().await,
@@ -130,6 +134,9 @@ impl Engine {
         // Nothing written since the last sync (most calls only read): skip exporting and hashing everything.
         if self.synced_writes.load(Ordering::Acquire) == self.store.write_count() {
             return Ok(());
+        }
+        if self.holds_roster_now()? {
+            return Box::pin(self.live_sync_now()).await;
         }
         let _guard = self.account_sync.lock().await;
         self.upload_locked().await

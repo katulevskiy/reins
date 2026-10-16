@@ -19,7 +19,7 @@ use crate::store::{Store, StoredGrant};
 /// What was evaluated for a request is kept this long after it (corrections from Activity need it).
 pub const SUGGESTION_RETENTION_SECS: i64 = 30 * 86_400;
 const DAY_SECS: i64 = 86_400;
-const SALT_AAD: &str = "autopilot.salt";
+pub(crate) const SALT_AAD: &str = "autopilot.salt";
 /// `meta` key prefix (then the scope) of when a running bypass started.
 const BYPASS_SINCE_KEY: &str = "autopilot_bypass_since:";
 /// `meta` key prefix (then the connection) of when the server says a connection was made.
@@ -181,11 +181,11 @@ pub struct StoredProfile {
     pub profile: Profile,
 }
 
-fn profile_aad(id: &str) -> String {
+pub(crate) fn profile_aad(id: &str) -> String {
     format!("autopilot.profile:{id}")
 }
 
-fn memory_aad(profile_id: &str, request_id: &str) -> String {
+pub(crate) fn memory_aad(profile_id: &str, request_id: &str) -> String {
     format!("autopilot.memory:{profile_id}:{request_id}")
 }
 

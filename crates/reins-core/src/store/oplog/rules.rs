@@ -238,7 +238,8 @@ fn restrict(
         }
         Restriction::Lockdown => {
             let live = record(tx, Table::AutopilotSettings, GLOBAL_SCOPE)?.and_then(|r| r.value);
-            let mut row = live.filter(Json::is_object).unwrap_or_else(|| serde_json::json!({}));
+            // No global setting yet (an account left on Manual), or one removed: a whole row, as the store keeps it.
+            let mut row = live.filter(Json::is_object).unwrap_or_else(|| serde_json::json!({"scope": ""}));
             if let Some(obj) = row.as_object_mut() {
                 obj.insert("mode".to_owned(), Json::from("lockdown"));
                 obj.insert("bypass_until".to_owned(), Json::Null);

@@ -325,14 +325,15 @@ fn epochs_and_view_keys_this_phone_lacks_halt_applying() {
         ),
         Err(Halt::Unverifiable(1))
     );
-    // Sealed with a view key that came in later (kid 3, after a removal).
+    // Sealed with a view key that came in later (kid 4, which w's removal brought): applying waits for it.
+    remove_w(&mut w);
     let mut newer = ViewKeyring::default();
-    newer.insert(w.owner.view_key("acct", 3));
+    newer.insert(w.owner.view_key("acct", 4));
     let body = OpBody {
         v: 1,
         change: put(Table::Meta, "a", None, json!(1)),
     };
-    let sealed = seal_op("acct", &newer, &key_of("p"), "p", 3, 1, OpClass::Primary, false, &body).unwrap();
+    let sealed = seal_op("acct", &newer, &key_of("p"), "p", 4, 1, OpClass::Primary, false, &body).unwrap();
     assert_eq!(
         apply(
             &mut conn,
@@ -342,10 +343,145 @@ fn epochs_and_view_keys_this_phone_lacks_halt_applying() {
                 op: sealed.clone()
             }
         ),
-        Err(Halt::MissingKey(3))
+        Err(Halt::MissingKey(4))
     );
-    w.keyring.insert(w.owner.view_key("acct", 3));
+    w.keyring.insert(w.owner.view_key("acct", 4));
     assert_eq!(run(&mut conn, &w, 1, &[sealed]), [Outcome::Applied]);
+}
+
+/// The chain goes on with w removed (epoch 4, which brings view key 4).
+fn remove_w(w: &mut World) {
+    let e4 = next(w.roster.current(), RosterReason::Remove, member("p", 1), vec![member("v", 2)], &w.owner);
+    let mut chain = w.roster.entries.clone();
+    chain.push(e4);
+    w.roster = w.roster.updated(&chain).unwrap();
+}
+
+/// An op of `author` at `epoch` with `counter`, its body sealed under a key of id `kid` (whatever key that is).
+fn sealed_with(w: &World, kid: u64, author: &str, epoch: u64, counter: u64, class: OpClass, change: Change) -> Op {
+    let mut ring = ViewKeyring::default();
+    ring.insert(crate::roles::keys::ViewKey::from_bytes(kid, w.owner.view_key("acct", 1).as_bytes()).unwrap());
+    let body = OpBody {
+        v: 1,
+        change,
+    };
+    seal_op("acct", &ring, &key_of(author), author, epoch, counter, class, false, &body).unwrap()
+}
+
+#[test]
+fn a_key_id_no_one_has_is_refused_and_the_log_goes_on() {
+    let mut w = World::new(false);
+    remove_w(&mut w);
+    let mut conn = store();
+    // A viewer seals its proposal and its brake under key ids no roster entry brought: refused, never a halt.
+    let garbage =
+        sealed_with(&w, u64::MAX, "v", 4, 1, OpClass::Proposal, put(Table::Proposals, "v/1", None, json!({})));
+    let brake = sealed_with(&w, 3, "v", 4, 2, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    // A key id an entry brought, but after the epoch the op was signed at: refused too.
+    let early = sealed_with(&w, 4, "v", 3, 3, OpClass::Proposal, put(Table::Proposals, "v/2", None, json!({})));
+    w.counters.insert("p".to_owned(), 0);
+    let next_op = w.op("p", 4, OpClass::Primary, put(Table::Meta, "after", None, json!(1)));
+    assert_eq!(
+        run(&mut conn, &w, 1, &[garbage, brake, early, next_op]),
+        [
+            Outcome::Refused(Refusal::Unopenable),
+            Outcome::Refused(Refusal::Unopenable),
+            Outcome::Refused(Refusal::Unopenable),
+            Outcome::Applied
+        ]
+    );
+    assert_eq!(value(&conn, Table::Meta, "after"), Some(json!(1)), "the log went on");
+    // Their counters are taken all the same: no gap holds anyone's later op back.
+    assert!(counter_gaps(&conn).unwrap().is_empty());
+    // A removed phone's op is refused before its key is looked at: no halt either.
+    let removed = sealed_with(&w, u64::MAX, "w", 4, 1, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    assert!(matches!(run(&mut conn, &w, 5, &[removed])[..], [Outcome::Refused(_)]));
+}
+
+#[test]
+fn an_op_from_before_a_phones_anchor_stops_only_a_phone_with_nothing_applied() {
+    let mut w = World::new(false);
+    let mut anchored = World::new(false);
+    anchored.owner = OwnerSeed::from_bytes(w.owner.as_bytes()).unwrap();
+    anchored.keyring = w.keyring.clone();
+    anchored.roster = w.roster.clone();
+    anchored.roster.entries.remove(0);
+    // Applying from nothing: the old op halts (the phone loads a checkpoint first).
+    let old = w.op("p", 1, OpClass::Primary, put(Table::Meta, "old", None, json!(1)));
+    w.counters.clear();
+    assert_eq!(
+        apply(
+            &mut store(),
+            &anchored.ctx(),
+            &SyncedOp {
+                seq: 1,
+                op: old
+            }
+        ),
+        Err(Halt::Unverifiable(1))
+    );
+    // Once it has a state, an op signed before its anchor (a member signing at an old epoch) is refused and skipped.
+    let mut conn = store();
+    let first = w.op("p", 3, OpClass::Primary, put(Table::Meta, "first", None, json!(1)));
+    let late_old = w.op("v", 1, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    let after = w.op("p", 3, OpClass::Primary, put(Table::Meta, "after", None, json!(1)));
+    // The refused op takes its author's counter all the same: v's next op is not held behind it.
+    let v_next = w.op("v", 3, OpClass::Proposal, put(Table::Proposals, "v/1", None, json!({})));
+    assert_eq!(
+        run(&mut conn, &anchored, 1, &[first, late_old, after, v_next]),
+        [
+            Outcome::Applied,
+            Outcome::Refused(Refusal::NotAuthorized(OpRefusal::UnknownEpoch)),
+            Outcome::Applied,
+            Outcome::Applied
+        ]
+    );
+}
+
+#[test]
+fn a_fresh_recovered_primary_may_start_only_from_the_checkpoint_right_before_its_recovery() {
+    // p primary until epoch 3; v recovers at epoch 4.
+    let mut w = World::new(false);
+    let mut e4 =
+        w.roster.current().successor(RosterReason::Recovery, member("v", 2), vec![member("w", 3)], 20).unwrap();
+    e4.recovery_wrap_hash = hex32(&[4; 32]);
+    let new_owner = OwnerSeed::generate().unwrap();
+    e4.owner_pub = new_owner.owner_key().unwrap().public_b64();
+    e4.credential_pub = new_owner.credential_key().public_b64();
+    let e4 = sign(e4, &w.owner);
+    let mut chain = w.roster.entries.clone();
+    chain.push(e4);
+    w.roster = w.roster.updated(&chain).unwrap();
+    let mut old = store();
+    let first_op = w.op("p", 3, OpClass::Primary, put(Table::Meta, "a", None, json!(1)));
+    run(&mut old, &w, 1, &[first_op]);
+    let right_before = checkpoint::produce(&old, &w.ctx(), &key_of("p"), "p", 3).unwrap();
+    let older_epoch = checkpoint::produce(&old, &w.ctx(), &key_of("p"), "p", 2).unwrap();
+    let by_viewer = checkpoint::produce(&old, &w.ctx(), &key_of("w"), "w", 3).unwrap();
+    for refused in [&older_epoch, &by_viewer] {
+        assert!(checkpoint::load_bootstrap(&mut store(), &w.ctx(), refused).is_err());
+    }
+    assert_eq!(checkpoint::load_bootstrap(&mut store(), &w.ctx(), &right_before).unwrap(), CheckpointCheck::Loaded);
+}
+
+#[test]
+fn activity_is_trimmed_to_its_byte_budget_the_same_on_every_phone() {
+    let mut w = World::new(false);
+    let (mut a, mut b) = (store(), store());
+    let big = "x".repeat(60 * 1024);
+    let count =
+        usize::try_from(ACTIVITY_BYTES / (60 * 1024)).unwrap() + 2 * usize::try_from(ACTIVITY_TRIM_EVERY).unwrap();
+    let ops: Vec<Op> = (0..count).map(|i| activity(&mut w, "p", json!({"n": i, "detail": big})).1).collect();
+    run(&mut a, &w, 1, &ops);
+    run(&mut b, &w, 1, &ops);
+    let kept: i64 = records(&a, Table::Audit)
+        .unwrap()
+        .iter()
+        .map(|r| i64::try_from(r.value.as_ref().unwrap().to_string().len()).unwrap())
+        .sum();
+    assert!(kept <= ACTIVITY_BYTES + 64 * 1024 * i64::try_from(ACTIVITY_TRIM_EVERY).unwrap(), "{kept}");
+    assert!(records(&a, Table::Audit).unwrap().len() < count, "the oldest went");
+    assert_eq!(state_digest(&a).unwrap(), state_digest(&b).unwrap());
 }
 
 #[test]
@@ -915,4 +1051,26 @@ fn the_store_keeps_the_log_in_its_sealed_database() {
     // The op log is this phone's own bookkeeping: never in a portable snapshot.
     let exported = String::from_utf8(store.export_account().unwrap().to_vec()).unwrap();
     assert!(!exported.contains("oplog"));
+}
+
+#[test]
+fn the_log_knows_its_own_ops_by_identity() {
+    let mut w = World::new(false);
+    let mut conn = store();
+    let brake = w.op("v", 3, OpClass::Restrictive, Change::Restrict(Restriction::StopBypass));
+    let other = w.op("v", 3, OpClass::Restrictive, Change::Restrict(Restriction::StopBypass));
+    run(&mut conn, &w, 1, std::slice::from_ref(&brake));
+    assert!(holds_op(&conn, &brake.hash().unwrap()).unwrap());
+    assert!(!holds_op(&conn, &other.hash().unwrap()).unwrap(), "the same change, another op");
+}
+
+#[test]
+fn a_lockdown_on_no_setting_makes_a_row_and_names_no_profile() {
+    let mut w = World::new(false);
+    let mut conn = store();
+    let lock = w.op("v", 3, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    run(&mut conn, &w, 1, &[lock]);
+    let row = value(&conn, Table::AutopilotSettings, "*").unwrap();
+    assert_eq!((row["scope"].clone(), row["mode"].clone()), (json!(""), json!("lockdown")));
+    assert!(row.get("profile_id").is_none(), "a profile only the store knows is left as it is: {row}");
 }

@@ -107,6 +107,8 @@ pub struct RosterSummary {
     pub members: Vec<RosterMemberView>,
     /// A short fingerprint of the owner key ("a1b2 c3d4").
     pub owner_fingerprint: String,
+    /// After a recovery: what the user should know of what it found (else empty).
+    pub warnings: Vec<String>,
 }
 
 /// What a recovery would make of the account's phones, for the user to check before it is signed.
@@ -205,6 +207,8 @@ struct Recovering {
     wrap_key: Zeroizing<[u8; 32]>,
     old_seed: OwnerSeed,
     carried: ViewKeyring,
+    /// The outgoing primary's last op the server says it stored.
+    reported_counter: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -372,7 +376,7 @@ impl Engine {
             .map_or_else(|| Ok(ViewKeyring::default()), |raw| ViewKeyring::from_bytes(&raw))
     }
 
-    fn save_keyring(&self, slot: &str, ring: &ViewKeyring) -> Result<(), CoreError> {
+    pub(crate) fn save_keyring(&self, slot: &str, ring: &ViewKeyring) -> Result<(), CoreError> {
         self.store.device_secret_put(VIEW_KEYS, slot, &ring.to_bytes()?)
     }
 
@@ -387,6 +391,11 @@ impl Engine {
     /// The view-key grants this phone owes members (after a removal or a recovery); the sync delivers them.
     pub(crate) fn outgoing_grants(&self, slot: &str) -> Result<Vec<OutgoingGrant>, CoreError> {
         Ok(self.load(VIEW_GRANTS, slot)?.unwrap_or_default())
+    }
+
+    /// The sync queued them: none owed now.
+    pub(crate) fn clear_outgoing_grants(&self, slot: &str) -> Result<(), CoreError> {
+        self.store.device_secret_delete(VIEW_GRANTS, slot)
     }
 
     fn owe_grants(&self, slot: &str, grants: Vec<OutgoingGrant>) -> Result<(), CoreError> {
@@ -499,7 +508,7 @@ impl Engine {
         })
     }
 
-    fn standing_in(&self, roster: &LocalRoster) -> Result<Standing, CoreError> {
+    pub(crate) fn standing_in(&self, roster: &LocalRoster) -> Result<Standing, CoreError> {
         Ok(roster.standing(&self.store.device_id()?, &self.sign_key()?.public_b64()))
     }
 
@@ -516,9 +525,21 @@ impl Engine {
             return Ok(None);
         };
         let fetched = api_call!(session, |api| api.roster()).map_err(ApiFailure::into_core)?;
-        let updated = local.updated_seen(&fetched.entries, |m| self.seen_counter(m))?;
+        let mut updated = local.updated_seen(&fetched.entries, |m| self.seen_counter(m))?;
         if updated != local {
             self.save_roster(&account.slot, &updated)?;
+        }
+        if fetched.entries.last().is_some_and(|tip| tip.epoch > updated.epoch()) {
+            // An entry names more of the outgoing primary's ops than this phone applied: the log first (with the
+            // entries before it known), then again.
+            if let Err(e) = Box::pin(self.catch_up_log(session, account)).await {
+                log::debug!("the log did not catch up before the roster: {e}");
+            }
+            let again = updated.updated_seen(&fetched.entries, |m| self.seen_counter(m))?;
+            if again != updated {
+                self.save_roster(&account.slot, &again)?;
+                updated = again;
+            }
         }
         self.reconcile_roles(account, &updated)?;
         Ok(Some(updated))
@@ -561,6 +582,7 @@ impl Engine {
             role: self.standing_in(&roster)?.into(),
             members,
             owner_fingerprint: roster.owner_fingerprint(),
+            warnings: Vec::new(),
         }))
     }
 
@@ -633,6 +655,11 @@ impl Engine {
     /// A seed no entry names yet (a recovery the server has not confirmed) is kept. Never called because the server
     /// answered an empty roster: that is no reason to drop anything.
     pub(crate) fn reconcile_roles(&self, account: &Account, roster: &LocalRoster) -> Result<(), CoreError> {
+        // A viewer, or a phone no longer in the roster, holds no integration token nor the mandate key (the primary
+        // opens them): forgotten as soon as this phone sees it is not the primary.
+        if self.standing_in(roster)? != Standing::Primary {
+            self.store.wipe_tokens()?;
+        }
         let Some(seed) = self.owner_seed(&account.slot)? else {
             return Ok(());
         };
@@ -763,6 +790,10 @@ impl Engine {
     /// The last op of the outgoing `primary` this phone took, for the handover or recovery entry to name: its ops up to
     /// there stay its history; any later one is a replaced primary's (the brake only).
     fn last_counter(&self, primary: &Member) -> Result<u64, CoreError> {
+        // This phone's own: what it queued counts too, sent or not, so no op it numbered falls outside the bound.
+        if primary.device_id == self.store.device_id()? && primary.sign_pub == self.sign_key()?.public_b64() {
+            return self.own_last_counter();
+        }
         self.store.oplog(|c| crate::store::oplog::last_counter(c, primary))?
     }
 
@@ -971,9 +1002,15 @@ impl Engine {
             .map_err(|e| CoreError::invalid(format!("The account's roster does not verify: {e}")))?;
         let base = match self.local_roster(&account.slot)? {
             Some(local) => local.updated_seen(&fetched, |m| self.seen_counter(m))?,
-            None => LocalRoster::anchored(
-                fetched.last().cloned().ok_or_else(|| CoreError::invalid("This account has no phone roles."))?,
-            )?,
+            // A fresh phone keeps the whole chain it verified from the genesis (the wrap it opens is bound to the newest
+            // entry, which commits to every one before it): it can then verify the account's history, not only what
+            // is written after its recovery.
+            None => match fetched.first() {
+                Some(genesis) if genesis.epoch == 1 => LocalRoster::created(genesis.clone())?.updated(&fetched)?,
+                _ => LocalRoster::anchored(
+                    fetched.last().cloned().ok_or_else(|| CoreError::invalid("This account has no phone roles."))?,
+                )?,
+            },
         };
         let latest = base.current().clone();
         let request = RecoveryWrapRequest {
@@ -1005,6 +1042,7 @@ impl Engine {
             wrap_key,
             old_seed,
             carried,
+            reported_counter: wrap.primary_counter.unwrap_or(0),
         })
     }
 
@@ -1045,12 +1083,14 @@ impl Engine {
     /// The primary is lost: with the recovery code (or the master password) this phone opens the recovery wrap, makes
     /// a new owner seed that the old owner key signs in, and becomes primary (epoch + 1, the old primary removed, a
     /// new view key for the viewers). `tip`: the [`RecoveryPreview::tip`] the user confirmed; the server's roster must
-    /// still end there.
+    /// still end there. `confirmation`: the token of the [`CoreError::RecoveryNeedsConfirmation`] the user accepted;
+    /// the recovery goes on only if it finds exactly that again.
     pub async fn roster_recover(
         &self,
         code_or_password: Zeroizing<String>,
         device_name: &str,
         tip: &str,
+        confirmation: Option<&str>,
     ) -> Result<RosterSummary, CoreError> {
         let session = self.session()?;
         let one = self.roles.changing.lock().await;
@@ -1062,6 +1102,7 @@ impl Engine {
             wrap_key,
             old_seed,
             carried,
+            reported_counter,
         } = self.prepare_recovery(&session, &account, code_or_password).await?;
         let latest = base.current().clone();
         if latest.hash_hex().map_err(|e| CoreError::invalid(e.to_string()))? != tip {
@@ -1081,7 +1122,38 @@ impl Engine {
         let mut entry = latest
             .successor(RosterReason::Recovery, me, viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
-        entry.primary_counter = Some(self.last_counter(&latest.primary)?);
+        // The log first, verified under the roster before this recovery (the outgoing primary's checkpoint and the
+        // signed ops after it): the entry names only the outgoing primary's ops this phone verified. A server that
+        // claims to hold more of them than it serves is refused: nothing is signed.
+        let check = self
+            .recovery_catch_up(
+                &session,
+                &account,
+                &base,
+                &ring,
+                master.hash.as_ref(),
+                &latest.primary,
+                reported_counter,
+            )
+            .await?;
+        if !check.confirm.is_empty() {
+            // Bound to what the user saw: the findings, the counter the entry names, the head and the tip.
+            let token = crate::store::records::digest(&serde_json::json!({
+                "confirm": check.confirm,
+                "counter": check.counter,
+                "head": check.head,
+                "tip": tip,
+            }));
+            if confirmation != Some(token.as_str()) {
+                return Err(CoreError::RecoveryNeedsConfirmation {
+                    reason: check.confirm.join(" "),
+                    token,
+                });
+            }
+        }
+        let mut warnings = check.warnings;
+        warnings.extend(check.confirm);
+        entry.primary_counter = Some(check.counter);
         entry.owner_pub = seed.owner_key()?.public_b64();
         entry.credential_pub = seed.credential_key().public_b64();
         let new_wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ring)?;
@@ -1132,7 +1204,9 @@ impl Engine {
             self.adopt_secret(secret).await?;
         }
         drop(one);
-        self.roster_summary(false).await?.ok_or(CoreError::NotFound)
+        let mut summary = self.roster_summary(false).await?.ok_or(CoreError::NotFound)?;
+        summary.warnings = warnings;
+        Ok(summary)
     }
 
     // ---- handover -----------------------------------------------------------------------------------------------
@@ -1323,6 +1397,25 @@ impl Engine {
     /// This phone becomes a viewer and drops the owner seed and the keys that moved.
     pub async fn handover_approve(&self, id: &str, device_id: &str) -> Result<(), CoreError> {
         let session = self.session()?;
+        // This phone's last changes go into the log first: the entry names its last op, and the server takes no entry
+        // naming an op it does not have.
+        if let Err(e) = self.live_sync_now().await {
+            log::warn!("the last changes did not reach the server before the handover: {e}");
+        }
+        if self.has_unsent_ops()? {
+            return Err(CoreError::invalid(
+                "This phone's last changes have not reached the server yet. Try the handover again once online.",
+            ));
+        }
+        // What no op could carry (too large) lives only here: the new primary would never have it.
+        let kept = self.unpublished_rows()?;
+        if !kept.is_empty() {
+            return Err(CoreError::invalid(format!(
+                "Some of this phone's data is too large to reach the other phones ({}). Remove or shrink it, then hand \
+                 over.",
+                kept.join(", ")
+            )));
+        }
         let _one = self.roles.changing.lock().await;
         let account = self.roles_account(&session).await?;
         let request = api_call!(&session, |api| api.handover_request(id)).map_err(ApiFailure::into_core)?;

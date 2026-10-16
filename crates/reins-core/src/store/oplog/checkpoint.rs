@@ -220,6 +220,18 @@ fn current_primary_key(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Op
         .flatten())
 }
 
+/// The key of the primary this phone's recovery replaced, when `author` at `epoch` is it at the epoch right before
+/// that recovery entry (the only checkpoint a fresh recovered phone may start from, as untrusted).
+fn predecessor_key(ctx: &Context<'_>, epoch: u64, author: &str) -> Option<[u8; 32]> {
+    let entries = &ctx.roster.entries;
+    let current = ctx.roster.current();
+    let i = entries.iter().rposition(|e| {
+        e.reason == reins_proto::roster::RosterReason::Recovery && e.primary.same_keys(&current.primary)
+    })?;
+    let before = entries.get(i.checked_sub(1)?)?;
+    (before.epoch == epoch && before.primary.device_id == author).then(|| before.primary.sign_key().ok()).flatten()
+}
+
 /// The signing key of the primary at `epoch` (any epoch this phone verified), for a heartbeat's fork evidence.
 fn primary_key_at(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Option<[u8; 32]>, Halt> {
     if epoch > ctx.roster.epoch() {
@@ -233,13 +245,63 @@ fn primary_key_at(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Option<
 
 /// Checks a checkpoint (from the server) and, when it is ahead of this phone, loads it in place of the store.
 pub fn load(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result<CheckpointCheck, Halt> {
+    load_from(conn, ctx, cp, Start::Current)
+}
+
+/// [`load`] for a phone with no log state at all that verifies the current primary's history: a checkpoint signed with
+/// the current primary's key at an earlier epoch of its tenure (it was primary, with that key, at every epoch since) is
+/// taken too, so that a roster change the primary wrote no checkpoint after does not lock a recovery out. What it loads
+/// is untrusted all the same (the caller tightens it).
+pub fn load_tenure(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result<CheckpointCheck, Halt> {
+    load_from(conn, ctx, cp, Start::Tenure)
+}
+
+/// Which checkpoints a load takes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Start {
+    /// The current primary's, at the current epoch.
+    Current,
+    /// On a phone with nothing: also the current primary's from an earlier epoch of its tenure.
+    Tenure,
+    /// On a phone with nothing that recovered: also the replaced primary's, right before the recovery.
+    Bootstrap,
+}
+
+/// The current primary's key, when `author` at `epoch` is it and it was primary with that key at every epoch since.
+fn tenure_key(ctx: &Context<'_>, epoch: u64, author: &str) -> Option<[u8; 32]> {
+    let current = ctx.roster.current();
+    let since: Vec<_> = ctx.roster.entries.iter().filter(|e| e.epoch >= epoch).collect();
+    let held =
+        since.first().is_some_and(|e| e.epoch == epoch) && since.iter().all(|e| e.primary.same_keys(&current.primary));
+    (held && current.primary.device_id == author).then(|| current.primary.sign_key().ok()).flatten()
+}
+
+/// [`load`] for a primary that has no log state at all (a fresh phone that recovered the account) and so can verify
+/// no checkpoint of the current epoch, which it would write itself: it takes one signed by the primary of the
+/// checkpoint's epoch (any epoch it verified). A replaced primary's key could sign one; only a phone that has nothing
+/// else uses it, and it then writes its own checkpoint.
+pub fn load_bootstrap(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result<CheckpointCheck, Halt> {
+    load_from(conn, ctx, cp, Start::Bootstrap)
+}
+
+fn load_from(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint, start: Start) -> Result<CheckpointCheck, Halt> {
     let bad = |why: &str| Halt::Core(CoreError::invalid(format!("The checkpoint is refused: {why}.")));
     cp.validate().map_err(|e| bad(&e.to_string()))?;
     if cp.account != ctx.account {
         return Err(bad("it is another account's"));
     }
-    let key = current_primary_key(ctx, cp.epoch, &cp.author)?
-        .ok_or_else(|| bad("it is not from the current primary at the current epoch"))?;
+    let s0 = state(conn)?;
+    let fresh = s0.seq == 0
+        && s0.forked.is_none()
+        && conn.query_row("SELECT count(*) FROM oplog_records", [], |r| r.get::<_, i64>(0))? == 0;
+    let key = match current_primary_key(ctx, cp.epoch, &cp.author)? {
+        Some(key) => key,
+        None if start == Start::Bootstrap && fresh => predecessor_key(ctx, cp.epoch, &cp.author)
+            .ok_or_else(|| bad("it is not the replaced primary's own, at the epoch right before the recovery"))?,
+        None if start == Start::Tenure && fresh => tenure_key(ctx, cp.epoch, &cp.author)
+            .ok_or_else(|| bad("it is not the current primary's own, from its tenure"))?,
+        None => return Err(bad("it is not from the current primary at the current epoch")),
+    };
     let message = cp.signing_bytes().map_err(|e| bad(&e.to_string()))?;
     let sig = parse_sig(&cp.sig).ok_or_else(|| bad("not a signature"))?;
     if !ed25519_verify(&key, &message, &sig) {
@@ -416,6 +478,7 @@ pub fn heartbeat(
         head_seq: s.seq,
         applied_hash: hex32(&s.applied_hash),
         t: ctx.now,
+        last_counter: Some(super::author_last_counter(conn, author, &signer.public_b64())?),
         sig: String::new(),
     };
     hb.sig = signer.sign_b64(&hb.signing_bytes().map_err(|e| CoreError::invalid(e.to_string()))?);
