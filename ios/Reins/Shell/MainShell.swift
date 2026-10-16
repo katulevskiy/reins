@@ -61,6 +61,8 @@ private struct TabShell: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visited: Set<AppSection> = []
+    /// The tab bar's measured height (an estimate until it has been laid out).
+    @State private var barHeight: CGFloat = SignalTabBar<AppSection>.estimatedHeight
     /// The keyboard is up (Activity's search): the tab bar steps aside rather than ride on it over the results.
     @State private var keyboardUp = false
 
@@ -71,7 +73,10 @@ private struct TabShell: View {
                 if visited.contains(section) || section == model.section {
                     let shown = section == model.section
                     NavigationStack(path: Binding(get: { model.path(section) }, set: { model.paths[section] = $0 })) {
+                        // The one place the room under the tab bar is given: every root page scrolls its last row
+                        // clear of the bar. Pushed pages have no tab bar, so they get none.
                         SectionRoot(section: section)
+                            .tabBarClearance(keyboardUp ? 0 : barHeight + Self.barGap)
                             .navigationDestination(for: Route.self) { RouteView(route: $0) }
                     }
                     .pageFeedback(model.path(section).count)
@@ -81,12 +86,14 @@ private struct TabShell: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .overlay(alignment: .bottom) {
             // At a place's root only: a pushed page has its own bottom (a dock, "This was wrong") and its back button.
-            // Never on the keyboard: while it is up the results take its inset and the bar comes back when it goes.
+            // It floats over the page, which scrolls on beneath it; the page's room for it is `tabBarClearance`. Never on
+            // the keyboard: while it is up the results take its inset and the bar comes back when it goes.
             if model.path(model.section).isEmpty && !keyboardUp {
                 SignalTabBar(items: items, selection: Binding(get: { model.section }, set: { model.select($0) }))
-                    .padding(.bottom, 4)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
+                    .padding(.bottom, Self.barGap)
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -108,6 +115,9 @@ private struct TabShell: View {
 
     /// A bypass is on: its dot breathes on Trust.
     private var bypassRunning: Bool { model.autopilot?.mode == .bypass }
+
+    /// The tab bar floats this far above the bottom safe area.
+    private static let barGap: CGFloat = 4
 }
 
 // MARK: Regular
