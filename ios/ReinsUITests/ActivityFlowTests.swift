@@ -310,4 +310,36 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(element(app, "diffLoadError").exists)
         shot(app, "synced-retry")
     }
+
+    // MARK: The keyboard and the clock
+
+    /// With the search keyboard up the tab bar steps aside instead of riding on the keyboard over the results, and it
+    /// comes back when the keyboard goes.
+    func testTheTabBarStepsAsideForTheKeyboard() {
+        let app = launch()
+        let tab = app.tab("activity")
+        expectToAppear(tab)
+        let search = element(app, "activitySearch")
+        expectToAppear(search)
+        search.tap()
+        search.typeText("Read")
+        expectToAppear(element(app, "searchResults"))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(tab.waitForNonExistence(timeout: 3), "no tab bar on top of the keyboard")
+        shot(app, "activity-keyboard")
+        // A drag on the results puts the keyboard away; the tab bar comes back.
+        element(app, "searchResults").swipeUp()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(tab.waitForExistence(timeout: 3), "the tab bar is back")
+    }
+
+    /// Rows scrolled up pass under paper at the top, never under the clock's digits.
+    func testRowsScrollUnderPaperAtTheTop() {
+        let app = launch()
+        expectToAppear(element(app, "activityMood"))
+        let start = element(app, "activityMood").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.02, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -420)),
+                    withVelocity: XCUIGestureVelocity(rawValue: 800), thenHoldForDuration: 0.4)
+        shot(app, "activity-scrolled")
+    }
 }

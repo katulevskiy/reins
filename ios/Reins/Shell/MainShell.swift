@@ -61,6 +61,8 @@ private struct TabShell: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visited: Set<AppSection> = []
+    /// The keyboard is up (Activity's search): the tab bar steps aside rather than ride on it over the results.
+    @State private var keyboardUp = false
 
     var body: some View {
         @Bindable var model = model
@@ -81,13 +83,17 @@ private struct TabShell: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // At a place's root only: a pushed page has its own bottom (a dock, "This was wrong") and its back button.
-            if model.path(model.section).isEmpty {
+            // Never on the keyboard: while it is up the results take its inset and the bar comes back when it goes.
+            if model.path(model.section).isEmpty && !keyboardUp {
                 SignalTabBar(items: items, selection: Binding(get: { model.section }, set: { model.select($0) }))
                     .padding(.bottom, 4)
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(Motion.of(Motion.easeOut(Motion.drillIn), reduce: reduceMotion), value: model.path(model.section).isEmpty)
+        .animation(Motion.of(Motion.easeOut(Motion.drillIn), reduce: reduceMotion), value: keyboardUp)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
         .onChange(of: model.section, initial: true) { _, section in visited.insert(section) }
     }
 
