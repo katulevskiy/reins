@@ -2496,10 +2496,21 @@ async fn a_push_to_the_default_branch_always_asks_in_auto_and_overnight() {
         env.relay(&id, OLD, push_to(&key, &id, "feature/x", RefChange::Update, true)).await;
         assert!(env.decided().iter().any(|(d, v, _)| *d == id && *v == Verdict::Approve), "{mode:?} {id}");
     }
-    // A hook asking about the command reads the same way, in either mode.
-    for (i, command) in ["git push origin main", "git push origin HEAD:main", "git push", "git push --all origin"]
-        .into_iter()
-        .enumerate()
+    // A hook asking about the command reads the same way, in either mode, however git is made to spell it.
+    for (i, command) in [
+        "git push origin main",
+        "git push origin HEAD:main",
+        "git push",
+        "git push --all origin",
+        "git push origin HEAD:refs/heads//main",
+        "git push origin HEAD:heads/main",
+        "git -C ~/dev/app push origin main",
+        "git --namespace x push origin main",
+        "git -c alias.p=push p origin main",
+        "git p origin main",
+    ]
+    .into_iter()
+    .enumerate()
     {
         for mode in [AutopilotMode::Auto, AutopilotMode::Overnight] {
             env.mode(None, mode).await;
@@ -2510,6 +2521,15 @@ async fn a_push_to_the_default_branch_always_asks_in_auto_and_overnight() {
             assert!(s.reason.contains("default branch"), "{mode:?} {command}: {}", s.reason);
         }
     }
+    // A plain push of a feature branch, approved once by the user, is still Autopilot's.
+    env.mode(None, AutopilotMode::Manual).await;
+    env.relay("hook-seed", OLD, hook_ask(&key, "", "command:git push", "git push origin feature/x")).await;
+    env.approve("hook-seed").await;
+    env.unlock("desktop/ask").await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.relay("hook-feature", OLD, hook_ask(&key, "", "command:git push", "git push origin feature/x")).await;
+    let s = env.suggestion("hook-feature").await;
+    assert!(env.decided().iter().any(|(d, v, _)| d == "hook-feature" && *v == Verdict::Approve), "{s:?}");
 }
 
 // ---- profiles --------------------------------------------------------------------------------------------------------
