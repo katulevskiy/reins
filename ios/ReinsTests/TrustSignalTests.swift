@@ -100,6 +100,7 @@ final class TrustSignalTests: XCTestCase {
         XCTAssertEqual(TrustFold.held(500, range: 200), 200, "nothing past the fold redraws the field")
         XCTAssertEqual(TrustFold.held(-30, range: 200), 0)
         XCTAssertEqual(TrustFold.heroOpacity(0), 1)
+        XCTAssertEqual(TrustFold.heroOpacity(0.35), 0, "gone before the button crosses it")
         XCTAssertEqual(TrustFold.heroOpacity(0.45), 0)
         XCTAssertEqual(TrustFold.stateValue(0), "open")
         XCTAssertEqual(TrustFold.stateValue(0.4), "folding")
