@@ -9,7 +9,8 @@
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
 //!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
 //!   phone (at most [`super::pairing::MAX_PER_PARTY`] open per email, shared with decoys for that email, and the same
-//!   number per client network), wrong proofs sent to take its approval role;
+//!   number per client network), wrong proofs sent to take its approval role (a device key that proved itself
+//!   within a day keeps its own tries);
 //! - a device: concurrent `GET /pending` and `GET /sync` long-polls;
 //! - a phone of an account with phone roles (key: account and device): op uploads per minute, proposals per hour;
 //! - an account with phone roles: roster changes per hour, ops and bytes its log holds (`REINS_ACCOUNT_LOG_*`);
@@ -19,7 +20,7 @@
 //!   ([`super::pairing::MAX_PER_PARTY`]). The address is [`client_network`].
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     hash::Hash,
     net::IpAddr,
     num::NonZeroU32,
@@ -287,9 +288,116 @@ pub static DEVICE_PROOFS_PER_DEVICE: LazyLock<FailureLimit<String>> = LazyLock::
     )
 });
 
-/// Devices (`<user id>/<device id>`) that sent a right recovery proof before: they keep their own tries when other
-/// devices used up the account's limit, so a flood from new device ids never locks the owner out.
-pub static PROVEN_DEVICES: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Mutex::default);
+/// How long a right recovery proof exempts that device key from the account-wide limit.
+const PROVEN_FOR: Duration = Duration::from_hours(24);
+
+/// Most device keys remembered at once. A new proof past this drops the oldest.
+const PROVEN_CAP: usize = 10_000;
+
+struct ProvenEntry {
+    at: Instant,
+    /// Vaultwarden device id that proved, so signing that id out can drop the exemption when the key is not stored
+    /// on a member row. Not part of the exemption: a different key on this id is not exempt.
+    device_uuid: String,
+}
+
+/// Device keys that sent a right recovery proof, keyed by `<user id>/<device key hash>`: the same hash
+/// [`require_approval_device`](super::device_api::require_approval_device) and the roster's member check compare.
+#[derive(Default)]
+pub struct ProvenDevices {
+    entries: Mutex<HashMap<String, ProvenEntry>>,
+}
+
+impl ProvenDevices {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, ProvenEntry>> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn map_key(user: &str, device_key: &str) -> String {
+        format!("{user}/{device_key}")
+    }
+
+    /// Whether `device_key` proved itself for `user` within [`PROVEN_FOR`]. An empty key never is.
+    pub fn is_proven(&self, user: &str, device_key: &str) -> bool {
+        self.is_proven_at(user, device_key, Instant::now())
+    }
+
+    fn is_proven_at(&self, user: &str, device_key: &str, now: Instant) -> bool {
+        if device_key.is_empty() {
+            return false;
+        }
+        let mut entries = self.lock();
+        let key = Self::map_key(user, device_key);
+        let Some(entry) = entries.get(&key) else {
+            return false;
+        };
+        if now.saturating_duration_since(entry.at) < PROVEN_FOR {
+            return true;
+        }
+        entries.remove(&key);
+        false
+    }
+
+    /// Remembers a right proof from `device_key` (the device key hash) on `device_uuid`. No key, nothing remembered.
+    pub fn remember(&self, user: &str, device_key: &str, device_uuid: &str) {
+        self.remember_at(user, device_key, device_uuid, Instant::now());
+    }
+
+    fn remember_at(&self, user: &str, device_key: &str, device_uuid: &str, now: Instant) {
+        if device_key.is_empty() {
+            return;
+        }
+        let mut entries = self.lock();
+        entries.retain(|_, entry| now.saturating_duration_since(entry.at) < PROVEN_FOR);
+        let key = Self::map_key(user, device_key);
+        if !entries.contains_key(&key)
+            && entries.len() >= PROVEN_CAP
+            && let Some(oldest) = entries.iter().min_by_key(|(_, entry)| entry.at).map(|(k, _)| k.clone())
+        {
+            entries.remove(&oldest);
+        }
+        entries.insert(
+            key,
+            ProvenEntry {
+                at: now,
+                device_uuid: device_uuid.to_owned(),
+            },
+        );
+    }
+
+    fn forget(&self, user: &str, device_key: &str) {
+        if device_key.is_empty() {
+            return;
+        }
+        self.lock().remove(&Self::map_key(user, device_key));
+    }
+
+    /// Drops every exemption this Vaultwarden device id proved, for this account.
+    pub fn forget_device(&self, user: &str, device_uuid: &str) {
+        let prefix = format!("{user}/");
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|key, entry| !(key.starts_with(&prefix) && entry.device_uuid == device_uuid));
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.lock().len()
+    }
+}
+
+/// Device keys (`<user id>/<device key hash>`) that sent a right recovery proof: for [`PROVEN_FOR`] they keep their
+/// own tries when other devices used up the account's limit, so a flood from new device ids never locks the owner
+/// out. The key is the device key hash, the same identity the approval device and a roster member are checked by. A
+/// caller that sent no device key is never exempt. The entry is dropped when that device is signed out, deleted, or
+/// leaves the roster ([`forget_proven`]).
+pub static PROVEN_DEVICES: LazyLock<ProvenDevices> = LazyLock::new(ProvenDevices::default);
+
+/// Drops the proof exemption for this device key, if it has one.
+pub fn forget_proven(user: &str, device_key: &str) {
+    PROVEN_DEVICES.forget(user, device_key);
+}
 
 /// Outbound requests (file sends and fetches, proxied MCP calls) made for one account (key: user id).
 pub static OUTBOUND_REQUESTS: LazyLock<RateLimit<String>> =
@@ -481,5 +589,57 @@ mod tests {
         assert!(validate_settings((1 << 30) + 1, 20, 20).unwrap_err().contains("REINS_BLOB_MAX_BYTES"));
         assert!(validate_settings(1 << 30, 0, 20).unwrap_err().contains("REINS_BLOB_ACCOUNT_FILES"));
         assert!(validate_settings(1 << 30, 20, 0).unwrap_err().contains("REINS_BLOB_MAX_DOWNLOADS"));
+    }
+
+    #[test]
+    fn a_proven_exemption_is_that_device_key_until_it_expires_or_is_forgotten() {
+        let set = ProvenDevices::default();
+        let t0 = Instant::now();
+        set.remember_at("user", "key-a", "device-1", t0);
+        assert!(set.is_proven_at("user", "key-a", t0), "the key that proved is exempt");
+        assert!(!set.is_proven_at("user", "key-b", t0), "another key of the same device id is not");
+        assert!(!set.is_proven_at("other", "key-a", t0), "another account is not");
+        set.remember_at("user", "", "device-1", t0);
+        assert_eq!(set.len(), 1, "a device with no key is not remembered");
+
+        let just_before = (t0 + PROVEN_FOR).checked_sub(Duration::from_nanos(1)).unwrap();
+        assert!(set.is_proven_at("user", "key-a", just_before));
+        assert!(!set.is_proven_at("user", "key-a", t0 + PROVEN_FOR), "a day later it is gone");
+        assert_eq!(set.len(), 0, "an expired entry is dropped on use");
+
+        set.remember_at("user", "stale", "device-1", t0);
+        set.remember_at("user", "fresh", "device-1", t0 + PROVEN_FOR);
+        assert!(!set.is_proven_at("user", "stale", t0 + PROVEN_FOR), "insert prunes what has expired");
+        assert!(set.is_proven_at("user", "fresh", t0 + PROVEN_FOR));
+
+        set.remember_at("user", "other", "device-2", t0 + PROVEN_FOR);
+        set.forget("user", "fresh");
+        assert!(!set.is_proven_at("user", "fresh", t0 + PROVEN_FOR));
+        assert!(set.is_proven_at("user", "other", t0 + PROVEN_FOR), "forgetting one key leaves the rest");
+        set.forget_device("user", "device-2");
+        assert!(!set.is_proven_at("user", "other", t0 + PROVEN_FOR), "removing the device drops what it proved");
+        set.remember_at("user-b", "kept", "device-2", t0 + PROVEN_FOR);
+        set.forget_device("user", "device-2");
+        assert!(set.is_proven_at("user-b", "kept", t0 + PROVEN_FOR), "another account's device is left alone");
+    }
+
+    #[test]
+    fn proven_devices_drop_the_oldest_past_the_cap() {
+        let set = ProvenDevices::default();
+        let t0 = Instant::now();
+        let cap = u64::try_from(PROVEN_CAP).unwrap();
+        for n in 0..cap {
+            set.remember_at("user", &format!("k{n}"), "device", t0 + Duration::from_secs(n));
+        }
+        assert_eq!(set.len(), PROVEN_CAP);
+        let later = t0 + Duration::from_secs(cap + 5);
+        set.remember_at("user", "k1", "device", later);
+        assert_eq!(set.len(), PROVEN_CAP, "refreshing a key does not grow the set or drop another");
+        assert!(set.is_proven_at("user", "k0", later));
+        set.remember_at("user", "newest", "device", later + Duration::from_secs(1));
+        assert_eq!(set.len(), PROVEN_CAP);
+        assert!(set.is_proven_at("user", "newest", later + Duration::from_secs(1)));
+        assert!(!set.is_proven_at("user", "k0", later + Duration::from_secs(1)), "the oldest proof is the one dropped");
+        assert!(set.is_proven_at("user", "k1", later + Duration::from_secs(1)));
     }
 }

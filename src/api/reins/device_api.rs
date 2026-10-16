@@ -45,7 +45,7 @@ use crate::{
         DbConn, DbPool,
         models::{
             Device, DeviceId, ROLE_PRIMARY, ReinsConnection, ReinsDevice, ReinsDeviceSignout, ReinsMember, ReinsRoster,
-            ReinsSsoSession,
+            ReinsSsoSession, UserId,
         },
     },
 };
@@ -157,10 +157,35 @@ pub fn user_key(headers: &Headers) -> String {
     headers.user.uuid.to_string()
 }
 
+/// Drops the recovery-proof exemption of `device_uuid`: the device key it presented, the key its member row keeps,
+/// the approval device's key when this is that device, and any key this device id proved with.
+pub async fn clear_proven_device(user: &str, device_uuid: &str, presented: Option<&str>, conn: &DbConn) {
+    if let Some(key) = presented {
+        super::limits::forget_proven(user, key);
+    }
+    match ReinsMember::find(user, device_uuid, conn).await {
+        Ok(Some(member)) => {
+            if let Some(key) = member.key_hash.as_deref() {
+                super::limits::forget_proven(user, key);
+            }
+        }
+        Ok(None) => {}
+        Err(e) => warn!("Reins: reading a device key to drop its proof exemption failed: {e:?}"),
+    }
+    if let Some(row) = ReinsDevice::find_by_user(&UserId::from(user.to_owned()), conn).await
+        && row.device_uuid.to_string() == device_uuid
+        && let Some(key) = row.key_hash.as_deref()
+    {
+        super::limits::forget_proven(user, key);
+    }
+    super::limits::PROVEN_DEVICES.forget_device(user, device_uuid);
+}
+
 /// Return the provider's logout URL to the native app. Visiting it in the same browser as sign-in clears
 /// AuthKit's cookie; a server-side HTTP request cannot do that. The caller cannot supply a session id or redirect.
 #[post("/reins/api/logout")]
-async fn post_logout(headers: Headers, conn: DbConn) -> PhoneResult<Json<Value>> {
+async fn post_logout(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<Value>> {
+    clear_proven_device(&user_key(&headers), &headers.device.uuid.to_string(), key.hash(), &conn).await;
     let browser_url = if crate::sso_workos::enabled() {
         ReinsSsoSession::latest_for_device(&headers.user.uuid, &headers.device.uuid, &conn)
             .await
@@ -666,6 +691,7 @@ async fn delete_device(
         warn!("Reins: unregistering a signed-out device from push failed: {e:?}");
     }
     signout.sign_out(&conn).await.map_err(|e| internal(&e))?;
+    clear_proven_device(&user, &target.uuid.to_string(), None, &conn).await;
     HUB.joins.forget_device(&user, &target.uuid.to_string());
     // A roster member signed out gets no more sync pushes (the roster itself changes only by the primary's signature).
     if let Err(e) = ReinsMember::set_token(&user, &target.uuid.to_string(), None, now_unix(), &conn).await {
