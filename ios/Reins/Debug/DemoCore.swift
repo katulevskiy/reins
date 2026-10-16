@@ -447,11 +447,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     }
     func proposalWithdraw(id: String) async throws { throw CoreError.NotFound }
     func proposals() async throws -> [ProposalView] { [] }
-    func proposalKeep(id: String) async throws { throw CoreError.NotFound }
+    func proposalPreview(id: String) async throws -> ProposalPreview { throw CoreError.NotFound }
+    func proposalKeep(id: String, digest: String) async throws { throw CoreError.NotFound }
     func proposalDiscard(id: String) async throws { throw CoreError.NotFound }
     private static let legacyLive = LiveSyncState(
-        role: .legacy, epoch: 0, appliedSeq: 0, headSeq: 0, primaryName: "", primarySeenAt: nil, live: false,
-        forked: nil, disagrees: false, waitingForKey: false, queued: 0, notice: nil
+        role: .legacy, epoch: 0, appliedSeq: 0, headSeq: 0, primaryName: "", primarySeenAt: nil, primaryHeadSeq: nil,
+        live: false, forked: nil, disagrees: false, waitingForKey: false, queued: 0, counterGaps: 0, notice: nil
     )
     func rosterCreate(deviceName: String, codeOrPassword: String?) async throws -> RosterSummary {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")

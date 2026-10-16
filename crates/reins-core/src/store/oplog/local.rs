@@ -117,9 +117,24 @@ pub(crate) fn drop_queued(conn: &Connection, queued: &[Queued]) -> Result<(), Co
     Ok(())
 }
 
-/// Forgets the ops the log brought back applied (this phone's counter is past them).
-pub(crate) fn prune_outbox(conn: &Connection, applied: u64) -> Result<(), CoreError> {
-    conn.execute("DELETE FROM oplog_outbox WHERE counter <= ?1", [as_i64(applied)])?;
+/// Forgets the sent ops the log brought back applied (this phone's counter is past them). An unsent one at or below
+/// that counter is not forgotten here: the caller renumbers it (or finds it landed).
+pub(crate) fn prune_sent(conn: &Connection, applied: u64) -> Result<(), CoreError> {
+    conn.execute("DELETE FROM oplog_outbox WHERE sent = 1 AND counter <= ?1", [as_i64(applied)])?;
+    Ok(())
+}
+
+/// Takes ops out of the outbox and nothing else (they are renumbered, or landed already).
+pub(crate) fn forget_queued(conn: &Connection, queued: &[Queued]) -> Result<(), CoreError> {
+    for q in queued {
+        conn.execute("DELETE FROM oplog_outbox WHERE counter = ?1", [as_i64(q.counter)])?;
+    }
+    Ok(())
+}
+
+/// Forgets what this phone last saw of a record (the next publish compares the store with the log afresh).
+pub(crate) fn forget_mirror(conn: &Connection, table: &str, key: &str) -> Result<(), CoreError> {
+    conn.execute("DELETE FROM oplog_mirror WHERE tbl = ?1 AND key = ?2", params![table, key])?;
     Ok(())
 }
 

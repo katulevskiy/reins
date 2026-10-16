@@ -325,14 +325,15 @@ fn epochs_and_view_keys_this_phone_lacks_halt_applying() {
         ),
         Err(Halt::Unverifiable(1))
     );
-    // Sealed with a view key that came in later (kid 3, after a removal).
+    // Sealed with a view key that came in later (kid 4, which w's removal brought): applying waits for it.
+    remove_w(&mut w);
     let mut newer = ViewKeyring::default();
-    newer.insert(w.owner.view_key("acct", 3));
+    newer.insert(w.owner.view_key("acct", 4));
     let body = OpBody {
         v: 1,
         change: put(Table::Meta, "a", None, json!(1)),
     };
-    let sealed = seal_op("acct", &newer, &key_of("p"), "p", 3, 1, OpClass::Primary, false, &body).unwrap();
+    let sealed = seal_op("acct", &newer, &key_of("p"), "p", 4, 1, OpClass::Primary, false, &body).unwrap();
     assert_eq!(
         apply(
             &mut conn,
@@ -342,10 +343,133 @@ fn epochs_and_view_keys_this_phone_lacks_halt_applying() {
                 op: sealed.clone()
             }
         ),
-        Err(Halt::MissingKey(3))
+        Err(Halt::MissingKey(4))
     );
-    w.keyring.insert(w.owner.view_key("acct", 3));
+    w.keyring.insert(w.owner.view_key("acct", 4));
     assert_eq!(run(&mut conn, &w, 1, &[sealed]), [Outcome::Applied]);
+}
+
+/// The chain goes on with w removed (epoch 4, which brings view key 4).
+fn remove_w(w: &mut World) {
+    let e4 = next(w.roster.current(), RosterReason::Remove, member("p", 1), vec![member("v", 2)], &w.owner);
+    let mut chain = w.roster.entries.clone();
+    chain.push(e4);
+    w.roster = w.roster.updated(&chain).unwrap();
+}
+
+/// An op of `author` at `epoch` with `counter`, its body sealed under a key of id `kid` (whatever key that is).
+fn sealed_with(w: &World, kid: u64, author: &str, epoch: u64, counter: u64, class: OpClass, change: Change) -> Op {
+    let mut ring = ViewKeyring::default();
+    ring.insert(crate::roles::keys::ViewKey::from_bytes(kid, w.owner.view_key("acct", 1).as_bytes()).unwrap());
+    let body = OpBody {
+        v: 1,
+        change,
+    };
+    seal_op("acct", &ring, &key_of(author), author, epoch, counter, class, false, &body).unwrap()
+}
+
+#[test]
+fn a_key_id_no_one_has_is_refused_and_the_log_goes_on() {
+    let mut w = World::new(false);
+    remove_w(&mut w);
+    let mut conn = store();
+    // A viewer seals its proposal and its brake under key ids no roster entry brought: refused, never a halt.
+    let garbage =
+        sealed_with(&w, u64::MAX, "v", 4, 1, OpClass::Proposal, put(Table::Proposals, "v/1", None, json!({})));
+    let brake = sealed_with(&w, 3, "v", 4, 2, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    // A key id an entry brought, but after the epoch the op was signed at: refused too.
+    let early = sealed_with(&w, 4, "v", 3, 3, OpClass::Proposal, put(Table::Proposals, "v/2", None, json!({})));
+    w.counters.insert("p".to_owned(), 0);
+    let next_op = w.op("p", 4, OpClass::Primary, put(Table::Meta, "after", None, json!(1)));
+    assert_eq!(
+        run(&mut conn, &w, 1, &[garbage, brake, early, next_op]),
+        [
+            Outcome::Refused(Refusal::Unopenable),
+            Outcome::Refused(Refusal::Unopenable),
+            Outcome::Refused(Refusal::Unopenable),
+            Outcome::Applied
+        ]
+    );
+    assert_eq!(value(&conn, Table::Meta, "after"), Some(json!(1)), "the log went on");
+    // Their counters are taken all the same: no gap holds anyone's later op back.
+    assert!(counter_gaps(&conn).unwrap().is_empty());
+    // A removed phone's op is refused before its key is looked at: no halt either.
+    let removed = sealed_with(&w, u64::MAX, "w", 4, 1, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    assert!(matches!(run(&mut conn, &w, 5, &[removed])[..], [Outcome::Refused(_)]));
+}
+
+#[test]
+fn an_op_from_before_a_phones_anchor_stops_only_a_phone_with_nothing_applied() {
+    let mut w = World::new(false);
+    let mut anchored = World::new(false);
+    anchored.owner = OwnerSeed::from_bytes(w.owner.as_bytes()).unwrap();
+    anchored.keyring = w.keyring.clone();
+    anchored.roster = w.roster.clone();
+    anchored.roster.entries.remove(0);
+    // Applying from nothing: the old op halts (the phone loads a checkpoint first).
+    let old = w.op("p", 1, OpClass::Primary, put(Table::Meta, "old", None, json!(1)));
+    w.counters.clear();
+    assert_eq!(
+        apply(
+            &mut store(),
+            &anchored.ctx(),
+            &SyncedOp {
+                seq: 1,
+                op: old
+            }
+        ),
+        Err(Halt::Unverifiable(1))
+    );
+    // Once it has a state, an op signed before its anchor (a member signing at an old epoch) is refused and skipped.
+    let mut conn = store();
+    let first = w.op("p", 3, OpClass::Primary, put(Table::Meta, "first", None, json!(1)));
+    let late_old = w.op("v", 1, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    let after = w.op("p", 3, OpClass::Primary, put(Table::Meta, "after", None, json!(1)));
+    assert_eq!(
+        run(&mut conn, &anchored, 1, &[first, late_old, after]),
+        [Outcome::Applied, Outcome::Refused(Refusal::NotAuthorized(OpRefusal::UnknownEpoch)), Outcome::Applied]
+    );
+}
+
+#[test]
+fn a_fresh_primary_may_start_from_its_predecessors_checkpoint_and_no_one_else() {
+    let mut w = World::new(true);
+    let mut old_primary = store();
+    let ops = [w.op("p", 3, OpClass::Primary, put(Table::Meta, "a", None, json!(1)))];
+    run(&mut old_primary, &w, 1, &ops);
+    let cp = checkpoint::produce(&old_primary, &w.ctx(), &key_of("p"), "p", 3).unwrap();
+    // The ordinary load refuses a replaced primary's checkpoint; a primary with nothing at all may start from it.
+    assert!(checkpoint::load(&mut store(), &w.ctx(), &cp).is_err());
+    let mut fresh = store();
+    assert_eq!(checkpoint::load_bootstrap(&mut fresh, &w.ctx(), &cp).unwrap(), CheckpointCheck::Loaded);
+    assert_eq!(value(&fresh, Table::Meta, "a"), Some(json!(1)));
+    // A phone that has a state never takes it that way.
+    let mut started = store();
+    run(&mut started, &w, 1, &ops);
+    let more = w.op("v", 4, OpClass::Primary, put(Table::Meta, "b", None, json!(2)));
+    run(&mut started, &w, 2, &[more]);
+    let older = checkpoint::produce(&old_primary, &w.ctx(), &key_of("p"), "p", 3).unwrap();
+    assert!(checkpoint::load_bootstrap(&mut started, &w.ctx(), &older).is_err());
+}
+
+#[test]
+fn activity_is_trimmed_to_its_byte_budget_the_same_on_every_phone() {
+    let mut w = World::new(false);
+    let (mut a, mut b) = (store(), store());
+    let big = "x".repeat(60 * 1024);
+    let count =
+        usize::try_from(ACTIVITY_BYTES / (60 * 1024)).unwrap() + 2 * usize::try_from(ACTIVITY_TRIM_EVERY).unwrap();
+    let ops: Vec<Op> = (0..count).map(|i| activity(&mut w, "p", json!({"n": i, "detail": big})).1).collect();
+    run(&mut a, &w, 1, &ops);
+    run(&mut b, &w, 1, &ops);
+    let kept: i64 = records(&a, Table::Audit)
+        .unwrap()
+        .iter()
+        .map(|r| i64::try_from(r.value.as_ref().unwrap().to_string().len()).unwrap())
+        .sum();
+    assert!(kept <= ACTIVITY_BYTES + 64 * 1024 * i64::try_from(ACTIVITY_TRIM_EVERY).unwrap(), "{kept}");
+    assert!(records(&a, Table::Audit).unwrap().len() < count, "the oldest went");
+    assert_eq!(state_digest(&a).unwrap(), state_digest(&b).unwrap());
 }
 
 #[test]

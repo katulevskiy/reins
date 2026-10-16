@@ -233,13 +233,36 @@ fn primary_key_at(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Option<
 
 /// Checks a checkpoint (from the server) and, when it is ahead of this phone, loads it in place of the store.
 pub fn load(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result<CheckpointCheck, Halt> {
+    load_from(conn, ctx, cp, false)
+}
+
+/// [`load`] for a primary that has no log state at all (a fresh phone that recovered the account) and so can verify
+/// no checkpoint of the current epoch, which it would write itself: it takes one signed by the primary of the
+/// checkpoint's epoch (any epoch it verified). A replaced primary's key could sign one; only a phone that has nothing
+/// else uses it, and it then writes its own checkpoint.
+pub fn load_bootstrap(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result<CheckpointCheck, Halt> {
+    load_from(conn, ctx, cp, true)
+}
+
+fn load_from(
+    conn: &mut Connection,
+    ctx: &Context<'_>,
+    cp: &Checkpoint,
+    bootstrap: bool,
+) -> Result<CheckpointCheck, Halt> {
     let bad = |why: &str| Halt::Core(CoreError::invalid(format!("The checkpoint is refused: {why}.")));
     cp.validate().map_err(|e| bad(&e.to_string()))?;
     if cp.account != ctx.account {
         return Err(bad("it is another account's"));
     }
-    let key = current_primary_key(ctx, cp.epoch, &cp.author)?
-        .ok_or_else(|| bad("it is not from the current primary at the current epoch"))?;
+    let fresh = state(conn)?.seq == 0;
+    let key = match current_primary_key(ctx, cp.epoch, &cp.author)? {
+        Some(key) => key,
+        None if bootstrap && fresh => {
+            primary_key_at(ctx, cp.epoch, &cp.author)?.ok_or_else(|| bad("its author was not the primary"))?
+        }
+        None => return Err(bad("it is not from the current primary at the current epoch")),
+    };
     let message = cp.signing_bytes().map_err(|e| bad(&e.to_string()))?;
     let sig = parse_sig(&cp.sig).ok_or_else(|| bad("not a signature"))?;
     if !ed25519_verify(&key, &message, &sig) {

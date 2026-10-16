@@ -497,9 +497,17 @@ Details: [autopilot.md](autopilot.md).
     it is not the primary (a viewer, a removed phone, a primary replaced by a handover or a recovery) deletes every
     integration token and the mandate key it holds, at once; until it runs once after the change, they are as safe as
     that phone's lock.
-  - **What a viewer adds is a proposal.** It is inert until the primary keeps it; what the primary keeps is what the
-    proposal's payload holds (sealed to the credential key), limited to an account, its token, an MCP server or an
-    icon, never a grant, a mode, a paired computer or a setting.
+  - **What a viewer adds is a proposal.** It is inert until the primary keeps it. The primary shows Keep / Discard
+    from the payload it opened (sealed to the credential key), not from the viewer's title, and keeps exactly what it
+    showed: new rows only (nothing replaced), an integration's account with its token or an MCP server with its own,
+    the columns a proposal may set (what a server says of its tools is listed again by the primary), never a key of
+    Reins, of payments or of this installation, a grant, a mode, a paired computer or a setting.
+  - **A viewer cannot stop the log.** An op sealed under a key id no roster entry brought is refused, not waited for;
+    an op signed before a phone's anchor is skipped once the phone has a state.
+  - **A fresh phone that recovers** names, as the old primary's last op, the counter the server says it stored (it
+    could not read the log before it was a member), so every phone keeps the same history of the old primary. A
+    server that lies low can only deny service, which it could anyway; one that lies high needs the old primary's
+    key as well to have anything accepted.
   - **A replaced primary cannot stop the others.** Only the current primary's heartbeat at the current epoch can show a
     fork (and stop applying for good); one from a replaced primary or an older epoch that disagrees is a warning ("Your
     devices may disagree"), never kept.

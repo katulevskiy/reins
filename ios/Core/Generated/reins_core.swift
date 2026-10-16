@@ -3080,10 +3080,16 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func proposalDiscard(id: String) async throws 
     
     /**
-     * On the primary, behind biometrics: keeps a proposal (what it adds becomes the primary's own, unopened by
-     * anyone else).
+     * On the primary, behind biometrics: keeps a proposal as it was previewed (`digest`): what it adds becomes the
+     * primary's own, unopened by anyone else.
      */
-    func proposalKeep(id: String) async throws 
+    func proposalKeep(id: String, digest: String) async throws 
+    
+    /**
+     * On the primary: what a proposal really adds (opened with the credential key). Show Keep / Discard from this,
+     * never from the proposal's kind and title, and hand its digest to `proposal_keep`.
+     */
+    func proposalPreview(id: String) async throws  -> ProposalPreview
     
     /**
      * On the viewer that proposed it: takes a proposal back.
@@ -4989,21 +4995,41 @@ open func proposalDiscard(id: String)async throws   {
 }
     
     /**
-     * On the primary, behind biometrics: keeps a proposal (what it adds becomes the primary's own, unopened by
-     * anyone else).
+     * On the primary, behind biometrics: keeps a proposal as it was previewed (`digest`): what it adds becomes the
+     * primary's own, unopened by anyone else.
      */
-open func proposalKeep(id: String)async throws   {
+open func proposalKeep(id: String, digest: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_proposal_keep(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterString.lower(digest)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary: what a proposal really adds (opened with the credential key). Show Keep / Discard from this,
+     * never from the proposal's kind and title, and hand its digest to `proposal_keep`.
+     */
+open func proposalPreview(id: String)async throws  -> ProposalPreview  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_proposal_preview(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeProposalPreview_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -12096,7 +12122,12 @@ public struct LiveSyncState: Equatable, Hashable {
      */
     public var primarySeenAt: Int64?
     /**
-     * The primary's heartbeat is under two minutes old and matches what this phone applied.
+     * The head the current primary signed in its latest heartbeat that verified.
+     */
+    public var primaryHeadSeq: UInt64?
+    /**
+     * The current primary's latest heartbeat verified, is under two minutes old, and signs the very history this
+     * phone applied up to its head (not ahead of this phone).
      */
     public var live: Bool
     /**
@@ -12116,6 +12147,10 @@ public struct LiveSyncState: Equatable, Hashable {
      */
     public var queued: UInt32
     /**
+     * Authors whose ops never all came (a gap in their counters): something was withheld.
+     */
+    public var counterGaps: UInt32
+    /**
      * Something to show, if the last cycle did not finish.
      */
     public var notice: String?
@@ -12133,7 +12168,11 @@ public struct LiveSyncState: Equatable, Hashable {
          * When the primary's latest heartbeat was signed (unix seconds), if one came.
          */primarySeenAt: Int64?, 
         /**
-         * The primary's heartbeat is under two minutes old and matches what this phone applied.
+         * The head the current primary signed in its latest heartbeat that verified.
+         */primaryHeadSeq: UInt64?, 
+        /**
+         * The current primary's latest heartbeat verified, is under two minutes old, and signs the very history this
+         * phone applied up to its head (not ahead of this phone).
          */live: Bool, 
         /**
          * Why this phone stopped applying (the log forked), if it did: show it, and recover or reinstall.
@@ -12148,6 +12187,9 @@ public struct LiveSyncState: Equatable, Hashable {
          * This phone's changes not yet in the log.
          */queued: UInt32, 
         /**
+         * Authors whose ops never all came (a gap in their counters): something was withheld.
+         */counterGaps: UInt32, 
+        /**
          * Something to show, if the last cycle did not finish.
          */notice: String?) {
         self.role = role
@@ -12156,11 +12198,13 @@ public struct LiveSyncState: Equatable, Hashable {
         self.headSeq = headSeq
         self.primaryName = primaryName
         self.primarySeenAt = primarySeenAt
+        self.primaryHeadSeq = primaryHeadSeq
         self.live = live
         self.forked = forked
         self.disagrees = disagrees
         self.waitingForKey = waitingForKey
         self.queued = queued
+        self.counterGaps = counterGaps
         self.notice = notice
     }
 
@@ -12186,11 +12230,13 @@ public struct FfiConverterTypeLiveSyncState: FfiConverterRustBuffer {
                 headSeq: FfiConverterUInt64.read(from: &buf), 
                 primaryName: FfiConverterString.read(from: &buf), 
                 primarySeenAt: FfiConverterOptionInt64.read(from: &buf), 
+                primaryHeadSeq: FfiConverterOptionUInt64.read(from: &buf), 
                 live: FfiConverterBool.read(from: &buf), 
                 forked: FfiConverterOptionString.read(from: &buf), 
                 disagrees: FfiConverterBool.read(from: &buf), 
                 waitingForKey: FfiConverterBool.read(from: &buf), 
                 queued: FfiConverterUInt32.read(from: &buf), 
+                counterGaps: FfiConverterUInt32.read(from: &buf), 
                 notice: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -12202,11 +12248,13 @@ public struct FfiConverterTypeLiveSyncState: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.headSeq, into: &buf)
         FfiConverterString.write(value.primaryName, into: &buf)
         FfiConverterOptionInt64.write(value.primarySeenAt, into: &buf)
+        FfiConverterOptionUInt64.write(value.primaryHeadSeq, into: &buf)
         FfiConverterBool.write(value.live, into: &buf)
         FfiConverterOptionString.write(value.forked, into: &buf)
         FfiConverterBool.write(value.disagrees, into: &buf)
         FfiConverterBool.write(value.waitingForKey, into: &buf)
         FfiConverterUInt32.write(value.queued, into: &buf)
+        FfiConverterUInt32.write(value.counterGaps, into: &buf)
         FfiConverterOptionString.write(value.notice, into: &buf)
     }
 }
@@ -13725,11 +13773,179 @@ public func FfiConverterTypeProfileView_lower(_ value: ProfileView) -> RustBuffe
 
 
 /**
+ * What a proposal really adds (opened with the credential key): Keep / Discard is shown from this.
+ */
+public struct ProposalPreview: Equatable, Hashable {
+    public var id: String
+    public var authorName: String
+    public var kind: String
+    public var rows: [ProposalRowView]
+    /**
+     * Hand it back to `proposal_keep`: Keep refuses anything else than what was shown.
+     */
+    public var digest: String
+    /**
+     * Why Keep would refuse it, if it would.
+     */
+    public var refused: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, authorName: String, kind: String, rows: [ProposalRowView], 
+        /**
+         * Hand it back to `proposal_keep`: Keep refuses anything else than what was shown.
+         */digest: String, 
+        /**
+         * Why Keep would refuse it, if it would.
+         */refused: String?) {
+        self.id = id
+        self.authorName = authorName
+        self.kind = kind
+        self.rows = rows
+        self.digest = digest
+        self.refused = refused
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ProposalPreview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProposalPreview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProposalPreview {
+        return
+            try ProposalPreview(
+                id: FfiConverterString.read(from: &buf), 
+                authorName: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterString.read(from: &buf), 
+                rows: FfiConverterSequenceTypeProposalRowView.read(from: &buf), 
+                digest: FfiConverterString.read(from: &buf), 
+                refused: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ProposalPreview, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.authorName, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterSequenceTypeProposalRowView.write(value.rows, into: &buf)
+        FfiConverterString.write(value.digest, into: &buf)
+        FfiConverterOptionString.write(value.refused, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProposalPreview_lift(_ buf: RustBuffer) throws -> ProposalPreview {
+    return try FfiConverterTypeProposalPreview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProposalPreview_lower(_ value: ProposalPreview) -> RustBuffer {
+    return FfiConverterTypeProposalPreview.lower(value)
+}
+
+
+/**
+ * One row a proposal adds, as the primary opened it.
+ */
+public struct ProposalRowView: Equatable, Hashable {
+    /**
+     * `accounts`, `secrets`, `mcp_servers` or `connection_prefs`.
+     */
+    public var table: String
+    public var key: String
+    /**
+     * What the row is: the service and account, the server's name and URL, the icon (never a token).
+     */
+    public var summary: String
+    /**
+     * A row with this key exists already: Keep refuses the proposal.
+     */
+    public var replaces: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `accounts`, `secrets`, `mcp_servers` or `connection_prefs`.
+         */table: String, key: String, 
+        /**
+         * What the row is: the service and account, the server's name and URL, the icon (never a token).
+         */summary: String, 
+        /**
+         * A row with this key exists already: Keep refuses the proposal.
+         */replaces: Bool) {
+        self.table = table
+        self.key = key
+        self.summary = summary
+        self.replaces = replaces
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ProposalRowView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProposalRowView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProposalRowView {
+        return
+            try ProposalRowView(
+                table: FfiConverterString.read(from: &buf), 
+                key: FfiConverterString.read(from: &buf), 
+                summary: FfiConverterString.read(from: &buf), 
+                replaces: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ProposalRowView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.table, into: &buf)
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterBool.write(value.replaces, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProposalRowView_lift(_ buf: RustBuffer) throws -> ProposalRowView {
+    return try FfiConverterTypeProposalRowView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProposalRowView_lower(_ value: ProposalRowView) -> RustBuffer {
+    return FfiConverterTypeProposalRowView.lower(value)
+}
+
+
+/**
  * A proposal waiting for the primary.
  */
 public struct ProposalView: Equatable, Hashable {
     /**
-     * `<author>/<id>`: pass it back to keep, discard or withdraw.
+     * `<author>/<id>`: pass it back to preview, keep, discard or withdraw.
      */
     public var id: String
     public var authorId: String
@@ -13738,7 +13954,7 @@ public struct ProposalView: Equatable, Hashable {
      */
     public var authorName: String
     /**
-     * What it adds ("github", "mcp", …) and how the proposing phone named it: display only.
+     * What it adds ("github", "mcp", …) and how the proposing phone named it: display only, never what Keep shows.
      */
     public var kind: String
     public var title: String
@@ -13752,13 +13968,13 @@ public struct ProposalView: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `<author>/<id>`: pass it back to keep, discard or withdraw.
+         * `<author>/<id>`: pass it back to preview, keep, discard or withdraw.
          */id: String, authorId: String, 
         /**
          * The proposing phone's name in the roster.
          */authorName: String, 
         /**
-         * What it adds ("github", "mcp", …) and how the proposing phone named it: display only.
+         * What it adds ("github", "mcp", …) and how the proposing phone named it: display only, never what Keep shows.
          */kind: String, title: String, receivedAt: Int64, 
         /**
          * This phone proposed it.
@@ -22182,6 +22398,31 @@ fileprivate struct FfiConverterSequenceTypeProfileView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeProposalRowView: FfiConverterRustBuffer {
+    typealias SwiftType = [ProposalRowView]
+
+    public static func write(_ value: [ProposalRowView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeProposalRowView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ProposalRowView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ProposalRowView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeProposalRowView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeProposalView: FfiConverterRustBuffer {
     typealias SwiftType = [ProposalView]
 
@@ -23093,7 +23334,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_proposal_discard() != 16377) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_proposal_keep() != 26656) {
+    if (uniffi_reins_core_checksum_method_reinscore_proposal_keep() != 42315) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_proposal_preview() != 30022) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_proposal_withdraw() != 14929) {

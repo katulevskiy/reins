@@ -498,10 +498,18 @@ async fn post_recovery_wrap(data: Data<'_>, headers: Headers, conn: DbConn) -> P
     let latest =
         ReinsRoster::latest(&user_key(&headers), &conn).await.map_err(|e| internal(&e))?.ok_or_else(no_roster)?;
     check_recovery_proof(&headers, Some(&request.master_password_hash))?;
-    let recovery_wrap = latest.recovery_wrap.ok_or_else(not_found)?;
+    let recovery_wrap = latest.recovery_wrap.clone().ok_or_else(not_found)?;
+    let entry: RosterEntry = serde_json::from_str(&latest.entry)
+        .map_err(|e| internal(&crate::Error::new("A stored roster entry does not parse", e.to_string())))?;
+    let members = ReinsMember::all(&user_key(&headers), &conn).await.map_err(|e| internal(&e))?;
+    let primary_counter = members
+        .iter()
+        .find(|m| m.device_uuid == entry.primary.device_id && m.sign_pub == entry.primary.sign_pub)
+        .and_then(|m| u64::try_from(m.last_counter).ok());
     Ok(Json(RecoveryWrap {
         epoch: u64::try_from(latest.epoch).unwrap_or(0),
         recovery_wrap,
+        primary_counter,
     }))
 }
 

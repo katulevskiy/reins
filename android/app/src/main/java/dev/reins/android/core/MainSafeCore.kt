@@ -44,6 +44,7 @@ import dev.reins.core.HandoverProgress
 import dev.reins.core.HandoverView
 import dev.reins.core.LiveSyncState
 import dev.reins.core.PhoneRole
+import dev.reins.core.ProposalPreview
 import dev.reins.core.ProposalView
 import dev.reins.core.RecoveryPreview
 import dev.reins.core.RosterSummary
@@ -250,7 +251,9 @@ class MainSafeCore(
 
     override suspend fun proposals(): List<ProposalView> = io { proposals() }
 
-    override suspend fun proposalKeep(id: String) = io { proposalKeep(id) }
+    override suspend fun proposalPreview(id: String): ProposalPreview = io { proposalPreview(id) }
+
+    override suspend fun proposalKeep(id: String, digest: String) = io { proposalKeep(id, digest) }
 
     override suspend fun proposalDiscard(id: String) = io { proposalDiscard(id) }
 

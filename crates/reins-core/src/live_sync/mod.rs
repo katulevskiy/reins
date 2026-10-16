@@ -25,14 +25,18 @@ mod net;
 mod proposals;
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use data_encoding::BASE64URL_NOPAD;
-use reins_proto::oplog::{Change, HEARTBEAT_EVERY_SECS, LIVE_SECS, OpBody, OpClass, Restriction, SyncResponse, Table};
+use reins_proto::canon::decode_payload;
+use reins_proto::oplog::{
+    Change, HEARTBEAT_EVERY_SECS, LIVE_SECS, MAX_CHECKPOINT_BYTES, OpBody, OpClass, Restriction, SyncResponse, Table,
+    body_associated_data,
+};
 use serde_json::{Value as Json, json};
 
-pub use proposals::ProposalView;
+pub use proposals::{ProposalPreview, ProposalRowView, ProposalView};
 
 use crate::CoreError;
 use crate::engine::Engine;
@@ -65,16 +69,35 @@ const CHECKPOINT_EPOCH: &str = "checkpoint-epoch";
 const EPOCH_KEY: &str = "~reins.epoch";
 /// The record key prefix of a view-key grant (`~reins.view-grant/<device>/<kid>`, a `meta` record).
 const GRANT_PREFIX: &str = "~reins.view-grant/";
+/// How long a refused (or too large) checkpoint waits before the next try.
+const CHECKPOINT_BACKOFF_SECS: i64 = 3_600;
+/// The tables a viewer keeps only as the log has them (its own leftovers deleted): what decides or connects.
+const LOG_ONLY: &[Table] = &[
+    Table::Grants,
+    Table::AutopilotSettings,
+    Table::Profiles,
+    Table::Targets,
+    Table::Accounts,
+    Table::DesktopKeys,
+    Table::McpServers,
+];
 
 /// What the live loop knows besides the log (memory only: nothing of it is kept).
 #[derive(Default)]
 pub(crate) struct State {
     /// A primary other than the current one signed another history than this phone applied (a warning).
     disagrees: Mutex<bool>,
+    /// The last heartbeat that verified: what it said of this phone, when it was signed, the head it signed.
+    verified: Mutex<Option<(HeartbeatCheck, i64, u64)>>,
     /// The server's cursor from the last sync, passed back so that a long-poll waits for news.
     cursor: Mutex<Option<String>>,
-    /// When this phone (the primary) last posted a heartbeat.
+    /// When this phone (the primary) last posted a heartbeat, and at which epoch (a new one posts at once).
     heartbeat_posted: AtomicI64,
+    heartbeat_epoch: AtomicU64,
+    /// No checkpoint is tried before then (one was refused, or would not fit).
+    checkpoint_after: AtomicI64,
+    /// Brakes and proposals of this phone the server refused for good: shown once, never dropped silently.
+    refused: Mutex<Vec<String>>,
     /// The last state shown.
     last: Mutex<Option<LiveSyncState>>,
 }
@@ -91,7 +114,10 @@ pub struct LiveSyncState {
     pub primary_name: String,
     /// When the primary's latest heartbeat was signed (unix seconds), if one came.
     pub primary_seen_at: Option<i64>,
-    /// The primary's heartbeat is under two minutes old and matches what this phone applied.
+    /// The head the current primary signed in its latest heartbeat that verified.
+    pub primary_head_seq: Option<u64>,
+    /// The current primary's latest heartbeat verified, is under two minutes old, and signs the very history this
+    /// phone applied up to its head (not ahead of this phone).
     pub live: bool,
     /// Why this phone stopped applying (the log forked), if it did: show it, and recover or reinstall.
     pub forked: Option<String>,
@@ -101,6 +127,8 @@ pub struct LiveSyncState {
     pub waiting_for_key: bool,
     /// This phone's changes not yet in the log.
     pub queued: u32,
+    /// Authors whose ops never all came (a gap in their counters): something was withheld.
+    pub counter_gaps: u32,
     /// Something to show, if the last cycle did not finish.
     pub notice: Option<String>,
 }
@@ -164,6 +192,7 @@ impl Engine {
         let _guard = self.account_sync.lock().await;
         let state = self.live_cycle(&session, &account, wait_secs).await?;
         *self.live().last.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.clone());
+        self.live().refused.lock().unwrap_or_else(PoisonError::into_inner).clear();
         Ok(state)
     }
 
@@ -186,11 +215,13 @@ impl Engine {
             head_seq: 0,
             primary_name: String::new(),
             primary_seen_at: None,
+            primary_head_seq: None,
             live: false,
             forked: None,
             disagrees: false,
             waiting_for_key: false,
             queued: 0,
+            counter_gaps: 0,
             notice: None,
         }
     }
@@ -214,16 +245,33 @@ impl Engine {
         if let Some(keys) = self.sync_keys(account)?
             && keys.standing == Standing::Primary
         {
+            // A primary that never brought its store up to the log (it just recovered the account, or took over) takes
+            // the log first: what it publishes is then a change of the log's state, never its own empty store's.
+            if self.store.oplog(|c| local::mark(c, MATERIALIZED_SEQ))??.is_none() {
+                let first = self.pull_and_apply(session, account, 0).await?;
+                if first.notice.is_some() || first.waiting_for_key {
+                    notice = first.notice.or(Some("The account's log is not all here yet.".to_owned()));
+                } else {
+                    self.materialize(account)?;
+                }
+            }
             self.deliver_grants(account, &keys)?;
-            self.publish(account, &keys)?;
-            self.mark_epoch(account, &keys)?;
+            if self.store.oplog(|c| local::mark(c, MATERIALIZED_SEQ))??.is_some() {
+                self.publish(account, &keys)?;
+                self.mark_epoch(account, &keys)?;
+            }
         }
-        if let Err(e) = self.upload_outbox(session).await {
+        if let Err(e) = self.upload_outbox(session, account).await {
             notice = Some(format!("Changes wait to reach the server: {e}"));
         }
         let pulled = self.pull_and_apply(session, account, wait).await?;
         notice = notice.or(pulled.notice);
-        self.materialize(account)?;
+        let failed = self.materialize(account)?;
+        if failed > 0 {
+            notice = notice.or(Some(format!(
+                "{failed} changes from the account's log could not be written on this phone; the next sync tries again."
+            )));
+        }
         // The roster after the log: ops signed before a roster change are judged as the roster stood.
         if let Some(response) = &pulled.response {
             let known = self.local_roster(&account.slot)?.map_or(0, |r| r.epoch());
@@ -238,7 +286,7 @@ impl Engine {
             if keys.standing != Standing::Primary {
                 // A viewer opens no token; a demoted primary forgets them (and drops what it can no longer send).
                 self.store.wipe_tokens()?;
-                self.drop_primary_ops()?;
+                self.drop_primary_ops(account)?;
             }
             if let Some(response) = &pulled.response {
                 self.check_live_heartbeat(account, &keys, response)?;
@@ -272,35 +320,38 @@ impl Engine {
         };
         let s = self.store.oplog(|c| oplog::state(c))??;
         let queued = self.store.oplog(|c| local::outbox(c))??.len();
-        let heartbeat = response.and_then(|r| r.heartbeat.as_ref());
+        let gaps = self.store.oplog(|c| oplog::counter_gaps(c))??.len();
         let disagrees = *self.live().disagrees.lock().unwrap_or_else(PoisonError::into_inner);
         let current = roster.as_ref().map(LocalRoster::current);
-        // Live: a fresh heartbeat of the current primary, signed while it was primary with the keys it has now (an
-        // older epoch's counts when no one else was primary since; a replaced primary's never does).
-        let fresh = heartbeat.is_some_and(|h| {
-            unix_now() - h.t < LIVE_SECS
-                && roster.as_ref().is_some_and(|r| {
-                    let current = r.current();
-                    current.primary.device_id == h.author
-                        && h.epoch <= current.epoch
-                        && r.entries
-                            .iter()
-                            .filter(|e| e.epoch >= h.epoch)
-                            .all(|e| e.primary.same_keys(&current.primary))
-                })
+        // Only a heartbeat that verified as the current primary's, at the current epoch: Matches is live, Behind (it
+        // signed a head this phone has not applied) is not.
+        let verified = *self.live().verified.lock().unwrap_or_else(PoisonError::into_inner);
+        let of_primary = verified.filter(|(check, _, _)| {
+            matches!(check, HeartbeatCheck::Matches | HeartbeatCheck::Behind | HeartbeatCheck::Unknown)
         });
+        let fresh =
+            of_primary.is_some_and(|(check, t, _)| check == HeartbeatCheck::Matches && unix_now() - t < LIVE_SECS);
+        // Shown until the user's own sync showed them (a background cycle never takes them).
+        let refused = self.live().refused.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let notice = if refused.is_empty() {
+            notice
+        } else {
+            Some(refused.join(" "))
+        };
         Ok(LiveSyncState {
             role,
             epoch: roster.as_ref().map_or(0, LocalRoster::epoch),
             applied_seq: s.seq,
             head_seq: response.map_or(s.seq, |r| r.head_seq),
             primary_name: current.map(|c| c.primary.name.clone()).unwrap_or_default(),
-            primary_seen_at: heartbeat.map(|h| h.t),
+            primary_seen_at: of_primary.map(|(_, t, _)| t),
+            primary_head_seq: of_primary.map(|(_, _, head)| head),
             live: role == PhoneRole::Primary || (fresh && s.forked.is_none() && !disagrees),
             forked: s.forked,
             disagrees,
             waiting_for_key,
             queued: u32::try_from(queued).unwrap_or(u32::MAX),
+            counter_gaps: u32::try_from(gaps).unwrap_or(u32::MAX),
             notice,
         })
     }
@@ -581,7 +632,7 @@ impl Engine {
             Change::Restrict(restriction),
             (&covers.0, &covers.1),
         )?;
-        if let Err(e) = self.upload_outbox(&session).await {
+        if let Err(e) = self.upload_outbox(&session, &account).await {
             log::warn!("the brake waits to reach the server: {e}");
         }
         Ok(())
@@ -599,13 +650,71 @@ impl Engine {
         Ok(())
     }
 
-    /// A phone that is no longer primary sends no primary op: they would be refused (and must not go out late).
-    fn drop_primary_ops(&self) -> Result<(), CoreError> {
-        self.store.oplog(|c| -> Result<(), CoreError> {
-            let primary: Vec<local::Queued> =
-                local::outbox(c)?.into_iter().filter(|q| q.op.class == OpClass::Primary && !q.sent).collect();
-            local::drop_queued(c, &primary)
-        })?
+    /// A phone that is no longer primary sends no primary op: they would be refused (and must not go out late). What
+    /// it queued above them (its brake as a viewer) is renumbered, so no counter gap holds it back on the others.
+    fn drop_primary_ops(&self, account: &Account) -> Result<(), CoreError> {
+        let primary: Vec<local::Queued> = self
+            .store
+            .oplog(|c| local::outbox(c))??
+            .into_iter()
+            .filter(|q| q.op.class == OpClass::Primary && !q.sent)
+            .collect();
+        if primary.is_empty() {
+            return Ok(());
+        }
+        self.drop_and_renumber(account, &primary, None)
+    }
+
+    /// Takes `dropped` out of the outbox (their records compared afresh by the next publish; a brake or proposal among
+    /// them is told to the user, `why`), and renumbers every unsent op queued above them.
+    fn drop_and_renumber(
+        &self,
+        account: &Account,
+        dropped: &[local::Queued],
+        why: Option<&str>,
+    ) -> Result<(), CoreError> {
+        let Some(keys) = self.sync_keys(account)? else {
+            return Ok(());
+        };
+        let lowest = dropped.iter().map(|q| q.counter).min().unwrap_or(u64::MAX);
+        if let Some(why) = why {
+            let mut refused = self.live().refused.lock().unwrap_or_else(PoisonError::into_inner);
+            for q in dropped.iter().filter(|q| q.op.class != OpClass::Primary) {
+                let what = if q.op.class == OpClass::Restrictive {
+                    "A brake"
+                } else {
+                    "A proposal"
+                };
+                refused.push(format!("{what} from this phone was refused by the server: {why}"));
+            }
+        }
+        self.store.oplog(|c| local::drop_queued(c, dropped))??;
+        let above: Vec<local::Queued> =
+            self.store.oplog(|c| local::outbox(c))??.into_iter().filter(|q| !q.sent && q.counter > lowest).collect();
+        self.renumber(account, &keys, above)
+    }
+
+    /// Queues `ops` again under new counters (after everything this phone took or queued), each with its change as it
+    /// was: what a primary op can no longer be (this phone is not primary) is dropped instead.
+    fn renumber(&self, account: &Account, keys: &Keys, ops: Vec<local::Queued>) -> Result<(), CoreError> {
+        if ops.is_empty() {
+            return Ok(());
+        }
+        self.store.oplog(|c| local::forget_queued(c, &ops))??;
+        for q in ops {
+            let body = (q.op.class != OpClass::Primary || keys.standing == Standing::Primary)
+                .then(|| open_body(&keys.ring, &q.op))
+                .flatten();
+            match body {
+                Some(body) => {
+                    self.enqueue(account, keys, &keys.ring, q.op.class, body.change, (&q.table, &q.key))?;
+                }
+                None => {
+                    self.store.oplog(|c| local::forget_mirror(c, &q.table, &q.key))??;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Whether this phone keeps a token for `service`/`account` (tests: a viewer never does).
@@ -623,7 +732,7 @@ impl Engine {
     // ---- 2. upload ----------------------------------------------------------------------------------------------
 
     /// Sends the outbox's unsent ops, in counter order. Ok when nothing waits to be sent.
-    pub(crate) async fn upload_outbox(&self, session: &Session) -> Result<(), CoreError> {
+    pub(crate) async fn upload_outbox(&self, session: &Session, account: &Account) -> Result<(), CoreError> {
         loop {
             let batch: Vec<local::Queued> =
                 self.store.oplog(|c| local::outbox(c))??.into_iter().filter(|q| !q.sent).take(UPLOAD_BATCH).collect();
@@ -637,13 +746,29 @@ impl Engine {
                     self.store.oplog(|c| local::mark_sent(c, &counters))??;
                 }
                 Err(ApiFailure::Status {
-                    status: status @ (400..=428 | 430..=499),
+                    status: 409 | 429,
                     code,
                     message,
                 }) => {
-                    // Refused for good: dropped, and their records compared afresh by the next publish.
-                    log::warn!("the server refused {} ops ({status} {code}): {message}", batch.len());
-                    self.store.oplog(|c| local::drop_queued(c, &batch))??;
+                    // A counter the server holds already (renumbered once this phone's own ops come back applied), a
+                    // full log (the primary writes a checkpoint), or too many at once: kept, and tried again.
+                    return Err(CoreError::invalid(format!(
+                        "the server holds this phone's changes back ({code}): {message}"
+                    )));
+                }
+                Err(ApiFailure::Status {
+                    status: status @ 400..=499,
+                    code,
+                    message,
+                }) => {
+                    // Refused for good: the op the server names (else the batch) is dropped, and every one queued above
+                    // it renumbered.
+                    log::warn!("the server refused ops ({status} {code}): {message}");
+                    let refused = match refused_index(&message) {
+                        Some(i) if i < batch.len() => vec![batch[i].clone()],
+                        _ => batch,
+                    };
+                    self.drop_and_renumber(account, &refused, Some(&message))?;
                     return Err(CoreError::invalid(format!("the server refused this phone's changes: {message}")));
                 }
                 Err(e) => return Err(e.into_core()),
@@ -741,6 +866,20 @@ impl Engine {
                         });
                     }
                     Some(Err(e)) => {
+                        // A primary with no state at all (it recovered the account on a fresh phone) cannot verify
+                        // a checkpoint of its own epoch, which it writes itself: it starts from the last one there is.
+                        let primary = self
+                            .local_roster(&account.slot)?
+                            .map(|r| self.standing_in(&r))
+                            .transpose()?
+                            .is_some_and(|st| st == Standing::Primary);
+                        if primary
+                            && s.seq == 0
+                            && let Some(Ok(_)) =
+                                self.with_context(account, |c, ctx| checkpoint::load_bootstrap(c, ctx, &cp))?
+                        {
+                            continue;
+                        }
                         return Ok(Pulled {
                             response: Some(response),
                             waiting_for_key: false,
@@ -872,9 +1011,9 @@ impl Engine {
     // ---- 4. into the store --------------------------------------------------------------------------------------
 
     /// Writes into the store every record that changed since the mirror (see the module docs).
-    fn materialize(&self, account: &Account) -> Result<(), CoreError> {
+    fn materialize(&self, account: &Account) -> Result<usize, CoreError> {
         let Some(keys) = self.sync_keys(account)? else {
-            return Ok(());
+            return Ok(0);
         };
         let primary = keys.standing == Standing::Primary;
         let credential = if primary {
@@ -883,8 +1022,7 @@ impl Engine {
             None
         };
         // This phone's ops the log took are no longer pending (their records are the log's now, joined or not).
-        let own = self.own_applied_counter()?;
-        self.store.oplog(|c| local::prune_outbox(c, own))??;
+        self.settle_outbox(account, &keys)?;
         let (all, mirror, pending, since, applied) = self.store.oplog(|c| -> Result<_, CoreError> {
             Ok((
                 oplog::all_records(c)?,
@@ -895,6 +1033,9 @@ impl Engine {
             ))
         })??;
         let audit = table_name(Table::Audit);
+        let mut failed = 0;
+        let live_keys: HashSet<(Table, String)> =
+            all.iter().filter(|r| r.value.is_some()).map(|r| (r.table, r.key.clone())).collect();
         for record in all {
             if record.key.starts_with(RESERVED_PREFIX) || records::sql_table(record.table).is_none() {
                 continue;
@@ -962,7 +1103,8 @@ impl Engine {
                 None => None,
             };
             let digest = plain.as_ref().map(records::digest).unwrap_or_default();
-            let local_key = seen.and_then(|m| m.local.clone());
+            // A row this phone had before it took the log (a leftover from before phone roles) is found by its key.
+            let local_key = seen.and_then(|m| m.local.clone()).or_else(|| records::local_of(record.table, &record.key));
             if seen.is_some_and(|m| m.digest == digest) {
                 self.set_mirror(&tbl, &record.key, Some(record.version.clone()), digest, local_key)?;
                 continue;
@@ -972,12 +1114,72 @@ impl Engine {
                     self.set_mirror(&tbl, &record.key, Some(record.version.clone()), digest, found.or(local_key))?;
                 }
                 Err(e) => {
+                    // Not marked seen: the next sync tries again (a brake that does not land is an error, not a note).
                     log::warn!("a {tbl} record from the log is not written here: {e}");
-                    self.set_mirror(&tbl, &record.key, Some(record.version.clone()), String::new(), local_key)?;
+                    failed += 1;
                 }
             }
         }
-        self.store.oplog(|c| local::set_mark(c, MATERIALIZED_SEQ, &applied.to_string()))?
+        if !primary && applied > 0 {
+            failed += self.drop_leftovers(&live_keys, &pending)?;
+        }
+        if failed == 0 {
+            self.store.oplog(|c| local::set_mark(c, MATERIALIZED_SEQ, &applied.to_string()))??;
+        }
+        Ok(failed)
+    }
+
+    /// On a viewer: rows of the security tables the log does not have (left from before phone roles, or removed since)
+    /// are deleted, so that none can become live state if this phone is primary one day.
+    fn drop_leftovers(
+        &self,
+        live: &HashSet<(Table, String)>,
+        pending: &HashSet<(String, String)>,
+    ) -> Result<usize, CoreError> {
+        let mut failed = 0;
+        for row in self.store.sync_rows()? {
+            if !LOG_ONLY.contains(&row.table) || live.contains(&(row.table, row.key.clone())) {
+                continue;
+            }
+            let tbl = table_name(row.table);
+            if pending.contains(&(tbl.clone(), row.key.clone()))
+                || pending.contains(&(tbl, local::WHOLE_TABLE.to_owned()))
+            {
+                continue;
+            }
+            if let Err(e) = self.store.write_sync_row(row.table, &row.key, Some(&row.local), None) {
+                log::warn!("a leftover row is not removed here: {e}");
+                failed += 1;
+            }
+        }
+        Ok(failed)
+    }
+
+    /// Forgets the ops of this phone the log brought back applied. One that was never marked sent, at or below this
+    /// phone's counter now, either landed (its record has its version) or lost its number to another: renumbered.
+    fn settle_outbox(&self, account: &Account, keys: &Keys) -> Result<(), CoreError> {
+        let own = self.own_applied_counter()?;
+        let stale: Vec<local::Queued> = self.store.oplog(|c| -> Result<Vec<local::Queued>, CoreError> {
+            local::prune_sent(c, own)?;
+            Ok(local::outbox(c)?.into_iter().filter(|q| !q.sent && q.counter <= own).collect())
+        })??;
+        let mut landed = Vec::new();
+        let mut lost = Vec::new();
+        for q in stale {
+            let version = Version::of(&q.op);
+            let record = table_of(&q.table)
+                .map(|t| self.store.oplog(|c| oplog::record(c, t, &q.key)))
+                .transpose()?
+                .transpose()?
+                .flatten();
+            if record.is_some_and(|r| r.version == version) {
+                landed.push(q);
+            } else {
+                lost.push(q);
+            }
+        }
+        self.store.oplog(|c| local::forget_queued(c, &landed))??;
+        self.renumber(account, keys, lost)
     }
 
     fn own_applied_counter(&self) -> Result<u64, CoreError> {
@@ -990,25 +1192,43 @@ impl Engine {
 
     fn check_live_heartbeat(&self, account: &Account, keys: &Keys, response: &SyncResponse) -> Result<(), CoreError> {
         let Some(hb) = &response.heartbeat else {
+            *self.live().verified.lock().unwrap_or_else(PoisonError::into_inner) = None;
             return Ok(());
         };
         if keys.standing == Standing::Primary && hb.author == keys.me {
             return Ok(());
         }
         let checked = self.with_context(account, |c, ctx| oplog::check_heartbeat(c, ctx, hb))?;
-        let disagrees = matches!(checked, Some(Ok(HeartbeatCheck::Disagrees)));
+        let mut verified = self.live().verified.lock().unwrap_or_else(PoisonError::into_inner);
         match checked {
-            Some(Err(Halt::Forked(why))) => log::warn!("the primary's heartbeat shows another history: {why}"),
-            Some(Err(e)) => log::debug!("a heartbeat was not checked: {e}"),
-            _ => {}
+            Some(Ok(check)) => {
+                *verified = Some((check, hb.t, hb.head_seq));
+                let mut disagrees = self.live().disagrees.lock().unwrap_or_else(PoisonError::into_inner);
+                match check {
+                    HeartbeatCheck::Disagrees => *disagrees = true,
+                    HeartbeatCheck::Matches => *disagrees = false,
+                    _ => {}
+                }
+            }
+            // Not verified: as if there were none (the warning stays as it was).
+            Some(Err(e)) => {
+                *verified = None;
+                match e {
+                    Halt::Forked(why) => log::warn!("the primary's heartbeat shows another history: {why}"),
+                    other => log::debug!("a heartbeat was not checked: {other}"),
+                }
+            }
+            None => *verified = None,
         }
-        *self.live().disagrees.lock().unwrap_or_else(PoisonError::into_inner) = disagrees;
         Ok(())
     }
 
     async fn post_heartbeat(&self, session: &Session, account: &Account, keys: &Keys) {
         let now = unix_now();
-        if now - self.live().heartbeat_posted.load(Ordering::Acquire) < HEARTBEAT_EVERY_SECS {
+        let epoch = keys.roster.epoch();
+        if now - self.live().heartbeat_posted.load(Ordering::Acquire) < HEARTBEAT_EVERY_SECS
+            && self.live().heartbeat_epoch.load(Ordering::Acquire) == epoch
+        {
             return;
         }
         let made = self
@@ -1017,7 +1237,10 @@ impl Engine {
             return;
         };
         match api_call!(session, |api| api.heartbeat(&hb)) {
-            Ok(()) => self.live().heartbeat_posted.store(now, Ordering::Release),
+            Ok(()) => {
+                self.live().heartbeat_posted.store(now, Ordering::Release);
+                self.live().heartbeat_epoch.store(epoch, Ordering::Release);
+            }
             Err(e) => log::debug!("the heartbeat was not posted: {}", e.into_core()),
         }
     }
@@ -1049,7 +1272,7 @@ impl Engine {
                 || response.checkpoint_seq.is_none()
                 || now - at >= CHECKPOINT_EVERY_SECS
                 || epoch < keys.roster.epoch());
-        if !due || s.forked.is_some() {
+        if !due || s.forked.is_some() || now < self.live().checkpoint_after.load(Ordering::Acquire) {
             return;
         }
         let made = self
@@ -1057,6 +1280,12 @@ impl Engine {
         let Ok(Some(Ok(cp))) = made else {
             return;
         };
+        let size = decode_payload(&cp.body).map_or(usize::MAX, |b| b.len());
+        if size > MAX_CHECKPOINT_BYTES {
+            log::warn!("the checkpoint would be {size} bytes, over the server's limit; not sent, tried again later");
+            self.live().checkpoint_after.store(now + CHECKPOINT_BACKOFF_SECS, Ordering::Release);
+            return;
+        }
         match api_call!(session, |api| api.put_checkpoint(&cp)) {
             Ok(()) => {
                 let marked = self.store.oplog(|c| -> Result<(), CoreError> {
@@ -1067,7 +1296,38 @@ impl Engine {
                     log::debug!("{e}");
                 }
             }
-            Err(e) => log::debug!("the checkpoint was not stored: {}", e.into_core()),
+            // Another checkpoint got there first: nothing to wait for.
+            Err(ApiFailure::Status {
+                status: 409,
+                ..
+            }) => {}
+            Err(e) => {
+                // Refused, or the server could not be reached: not rebuilt every cycle.
+                let wait = if matches!(e, ApiFailure::Status { .. }) {
+                    CHECKPOINT_BACKOFF_SECS
+                } else {
+                    60
+                };
+                self.live().checkpoint_after.store(now + wait, Ordering::Release);
+                log::debug!("the checkpoint was not stored: {}", e.into_core());
+            }
         }
     }
+}
+
+/// The op index a refusal of `POST /ops` names ("op 3: …").
+fn refused_index(message: &str) -> Option<usize> {
+    message.strip_prefix("op ")?.split(':').next()?.trim().parse().ok()
+}
+
+/// The table an outbox row names.
+fn table_of(name: &str) -> Option<Table> {
+    serde_json::from_value(Json::String(name.to_owned())).ok()
+}
+
+/// An op's body, opened with this phone's keys.
+fn open_body(ring: &ViewKeyring, op: &reins_proto::oplog::Op) -> Option<OpBody> {
+    let sealed = decode_payload(&op.body)?;
+    let plain = ring.open(&body_associated_data(op), &sealed).ok()?;
+    serde_json::from_slice(&plain).ok()
 }

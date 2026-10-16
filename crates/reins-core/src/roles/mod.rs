@@ -205,6 +205,8 @@ struct Recovering {
     wrap_key: Zeroizing<[u8; 32]>,
     old_seed: OwnerSeed,
     carried: ViewKeyring,
+    /// The outgoing primary's last op the server says it stored.
+    reported_counter: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -997,9 +999,15 @@ impl Engine {
             .map_err(|e| CoreError::invalid(format!("The account's roster does not verify: {e}")))?;
         let base = match self.local_roster(&account.slot)? {
             Some(local) => local.updated_seen(&fetched, |m| self.seen_counter(m))?,
-            None => LocalRoster::anchored(
-                fetched.last().cloned().ok_or_else(|| CoreError::invalid("This account has no phone roles."))?,
-            )?,
+            // A fresh phone keeps the whole chain it verified from the genesis (the wrap it opens is bound to the newest
+            // entry, which commits to every one before it): it can then verify the account's history, not only what
+            // is written after its recovery.
+            None => match fetched.first() {
+                Some(genesis) if genesis.epoch == 1 => LocalRoster::created(genesis.clone())?.updated(&fetched)?,
+                _ => LocalRoster::anchored(
+                    fetched.last().cloned().ok_or_else(|| CoreError::invalid("This account has no phone roles."))?,
+                )?,
+            },
         };
         let latest = base.current().clone();
         let request = RecoveryWrapRequest {
@@ -1031,6 +1039,7 @@ impl Engine {
             wrap_key,
             old_seed,
             carried,
+            reported_counter: wrap.primary_counter.unwrap_or(0),
         })
     }
 
@@ -1088,6 +1097,7 @@ impl Engine {
             wrap_key,
             old_seed,
             carried,
+            reported_counter,
         } = self.prepare_recovery(&session, &account, code_or_password).await?;
         let latest = base.current().clone();
         if latest.hash_hex().map_err(|e| CoreError::invalid(e.to_string()))? != tip {
@@ -1107,7 +1117,9 @@ impl Engine {
         let mut entry = latest
             .successor(RosterReason::Recovery, me, viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
-        entry.primary_counter = Some(self.last_counter(&latest.primary)?);
+        // What this phone saw of the outgoing primary, or what the server stored of it if more (a phone that never read
+        // the log): the other phones applied those ops already, so the new primary keeps the same history.
+        entry.primary_counter = Some(self.last_counter(&latest.primary)?.max(reported_counter));
         entry.owner_pub = seed.owner_key()?.public_b64();
         entry.credential_pub = seed.credential_key().public_b64();
         let new_wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ring)?;

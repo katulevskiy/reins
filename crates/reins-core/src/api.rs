@@ -17,7 +17,7 @@ use crate::autopilot::{
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
-use crate::live_sync::{LiveSyncState, ProposalView};
+use crate::live_sync::{LiveSyncState, ProposalPreview, ProposalView};
 use crate::roles::{
     EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview, RosterSummary,
 };
@@ -490,16 +490,29 @@ impl ReinsCore {
         .await
     }
 
-    /// On the primary, behind biometrics: keeps a proposal (what it adds becomes the primary's own, unopened by
-    /// anyone else).
-    pub async fn proposal_keep(&self, id: String) -> Result<(), CoreError> {
+    /// On the primary: what a proposal really adds (opened with the credential key). Show Keep / Discard from this,
+    /// never from the proposal's kind and title, and hand its digest to `proposal_keep`.
+    pub async fn proposal_preview(&self, id: String) -> Result<ProposalPreview, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.run_account(engine.proposal_preview(&id)).await
+        })
+        .await
+    }
+
+    /// On the primary, behind biometrics: keeps a proposal as it was previewed (`digest`): what it adds becomes the
+    /// primary's own, unopened by anyone else.
+    pub async fn proposal_keep(&self, id: String, digest: String) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.require_decider()?;
             engine.ensure_active()?;
-            let result = engine.run_account(engine.proposal_keep(&id)).await;
+            let result = engine.run_account(engine.proposal_keep(&id, &digest)).await;
             runtime.finish(&engine, result)
         })
         .await

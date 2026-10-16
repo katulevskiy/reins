@@ -387,7 +387,7 @@ async fn roster_create_enroll_handover_and_recovery() {
     let (status, body) = c.post("/roster", &recovery).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (_, wrap) = c.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
-    assert_eq!(wrap, json!({"epoch": 4, "recovery_wrap": NEW_WRAP}), "the recovery replaced the wrap");
+    assert_eq!(wrap, json!({"epoch": 4, "recovery_wrap": NEW_WRAP, "primary_counter": 0}), "the recovery replaced the wrap");
     acct.chain.push(e4);
     assert_eq!(c.get("/pending?wait=0").await.0, StatusCode::OK);
     assert_eq!(error(&b.get("/pending?wait=0").await.1), "not_approval_device");
@@ -756,7 +756,7 @@ async fn the_recovery_wrap_is_bound_to_the_roster_and_given_only_with_a_proof() 
     let (status, body) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": "wrong"})).await;
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "wrong_proof"));
     let (status, body) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
-    assert_eq!((status, body), (StatusCode::OK, json!({"epoch": 1, "recovery_wrap": WRAP})));
+    assert_eq!((status, body), (StatusCode::OK, json!({"epoch": 1, "recovery_wrap": WRAP, "primary_counter": 0})));
     // Only a rewrap (or a recovery) replaces it, and with the wrap the entry names.
     let b = acct.server.second_device("wren@example.com").await;
     acct.enroll(&b, &keys(2), "Pixel").await;
@@ -774,7 +774,7 @@ async fn the_recovery_wrap_is_bound_to_the_roster_and_given_only_with_a_proof() 
     assert_eq!(status, StatusCode::OK, "{body}");
     acct.chain.push(rewrap);
     let (_, wrap) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
-    assert_eq!(wrap, json!({"epoch": 3, "recovery_wrap": NEW_WRAP}));
+    assert_eq!(wrap, json!({"epoch": 3, "recovery_wrap": NEW_WRAP, "primary_counter": 0}));
     // A removal that keeps the wrap in force is refused (an older wrap would still fit the roster after it), and so
     // is one whose wrap is not the one it names.
     let removal = signed(

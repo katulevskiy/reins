@@ -184,6 +184,44 @@ fn record_key(name: &str, local: &[Json]) -> String {
     }
 }
 
+/// How the store finds the row a record names, from the record key alone (a row this phone had before it took the
+/// log); `None` for a key that is a hash.
+pub(crate) fn local_of(table: Table, key: &str) -> Option<String> {
+    if key.starts_with('#') || key.starts_with(RESERVED_PREFIX) {
+        return None;
+    }
+    if table == Table::Meta {
+        return Some(Json::Array(vec![Json::String(meta_store_key(key))]).to_string());
+    }
+    let name = sql_table(table)?;
+    match key_columns(name) {
+        [_] => {
+            let value = if name == "autopilot_settings" && key == GLOBAL_SCOPE.1 {
+                GLOBAL_SCOPE.0
+            } else {
+                key
+            };
+            Some(Json::Array(vec![Json::String(value.to_owned())]).to_string())
+        }
+        [_, _] => {
+            let parts: Vec<Json> = serde_json::from_str(key).ok()?;
+            (parts.len() == 2 && parts.iter().all(Json::is_string)).then(|| Json::Array(parts).to_string())
+        }
+        _ => None,
+    }
+}
+
+/// The record key a proposed or written row files under (its key columns).
+pub(crate) fn key_of_row(table: Table, row: &Json) -> Option<String> {
+    let name = sql_table(table)?;
+    let keys = key_columns(name);
+    if keys.is_empty() {
+        return None;
+    }
+    let local: Vec<Json> = keys.iter().map(|k| row.get(*k).cloned().unwrap_or(Json::Null)).collect();
+    local.iter().all(|v| !v.is_null()).then(|| record_key(name, &local))
+}
+
 fn is_local_meta(key: &str) -> bool {
     DEVICE_META.contains(&key)
         || key.starts_with(TOMBSTONE_PREFIX)
@@ -372,6 +410,17 @@ impl Store {
             return Ok(None);
         };
         let mut row = value.as_object().cloned().ok_or_else(|| bad("a row"))?;
+        // A record that does not carry its key column (built by a rule from nothing) takes it from its key.
+        if let [column] = key_columns(name)
+            && !row.contains_key(*column)
+            && let Some(parts) = local_of(table, key).and_then(|l| serde_json::from_str::<Vec<Json>>(&l).ok())
+            && let Some(first) = parts.into_iter().next()
+        {
+            row.insert((*column).to_owned(), first);
+        }
+        if name == "autopilot_settings" && !row.contains_key("updated_at") {
+            row.insert("updated_at".to_owned(), Json::from(crate::store::unix_now()));
+        }
         if name == "grants" {
             let grant = row.remove("grant").ok_or_else(|| bad("a grant"))?;
             serde_json::from_value::<reins_policy::Grant>(grant.clone()).map_err(|_| bad("a grant"))?;
