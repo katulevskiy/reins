@@ -13,7 +13,8 @@ use reins_proto::{
     check_version,
     device::{
         ApiError, Connections, DEVICE_KEY_HEADER, DeviceInfo, DeviceRegistered, DeviceRegistration, DeviceSignOut,
-        Devices, MAX_PENDING_WAIT_SECS, PairingResult, Pending, TAKEOVER_REFUSED, codes, device_key_hash,
+        Devices, MAX_PENDING_WAIT_SECS, MAX_SEALED_NAME_CHARS, PairingResult, Pending, SealedName, TAKEOVER_REFUSED,
+        codes, device_key_hash,
     },
     ids::{ConnectionId, PairingId, RequestId},
     pairing::{PairingClaim, PairingRequest, PairingResponse, PushKind, PushMessage},
@@ -66,6 +67,7 @@ pub fn routes() -> Vec<Route> {
         post_pairing_claim,
         get_connections,
         delete_connection,
+        put_connection_name,
         get_devices,
         delete_device,
         post_logout,
@@ -530,6 +532,34 @@ async fn delete_connection(id: &str, headers: Headers, key: DeviceKey, conn: DbC
         return Err(not_found());
     };
     connection.delete(&conn).await.map_err(|e| internal(&e))?;
+    Ok(Status::NoContent)
+}
+
+/// A11: the name the user gave a computer, boxed on the phone from its inbox key to the desktop app's key, kept for the
+/// app to pick up (`GET /reins/desktop/phone`). The approval device only, like every other change to a connection; the
+/// server can neither read it nor make one the app accepts, and every boxed name is the same length.
+#[put("/reins/api/connections/<id>/name", data = "<data>")]
+async fn put_connection_name(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let body: SealedName = serde_json::from_slice(&read_body_limited(data, 4096).await?)
+        .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    if let Some(sealed) = &body.sealed
+        && (sealed.is_empty()
+            || sealed.len() > MAX_SEALED_NAME_CHARS
+            || !sealed.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+    {
+        return Err(bad_request("the sealed name must be base64url, at most 1024 characters"));
+    }
+    let Some(connection) = ReinsConnection::find_by_uuid_and_user(id, &headers.user.uuid, &conn).await else {
+        return Err(not_found());
+    };
+    ReinsConnection::set_sealed_name(&connection.uuid, body.sealed, &conn).await.map_err(|e| internal(&e))?;
     Ok(Status::NoContent)
 }
 

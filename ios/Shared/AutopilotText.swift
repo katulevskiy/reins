@@ -574,12 +574,28 @@ extension AutopilotText {
 
     static func replayLine(_ r: ThresholdReplay) -> String { replayParts(r).map(\.text).joined() }
 
-    /// A kind of request in one line, for its row: on Auto, always asks, or how far from unlocking.
+    /// Where a kind of request stands.
+    enum KindState { case auto, asks, paused, locked }
+
+    static func kindState(_ c: ClassView) -> KindState {
+        if c.manual == false { return .locked }
+        if c.paused { return .paused }
+        return c.autoApprove ? .auto : .asks
+    }
+
+    /// A kind of request in one word, for its row: Auto, Asks, Paused (after a wrong answer) or Locked by you.
     static func kindLine(_ c: ClassView) -> String {
-        if c.manual == false { return "Always asks" }
-        if c.autoApprove { return "On Auto · \(c.decisions) \(c.decisions == 1 ? "decision" : "decisions")" }
-        if c.decisionsToUnlock > 0 { return "\(c.decisionsToUnlock) more to unlock" }
-        return "Learning"
+        switch kindState(c) {
+        case .auto: "Auto"
+        case .asks: "Asks"
+        case .paused: "Paused"
+        case .locked: "Locked by you"
+        }
+    }
+
+    /// The quiet line above the kinds: "Learning your preferences · 140 answers".
+    static func learningLine(_ p: ProfileView) -> String {
+        "Learning your preferences · \(p.memoryCount) \(p.memoryCount == 1 ? "answer" : "answers")"
     }
 
     /// "Claude Code, ChatGPT · 140 decisions": the AIs a profile learns from, then how much it remembers.
@@ -603,26 +619,16 @@ extension AutopilotText {
         .map { untrusted($0.label) }
     }
 
-    /// How far a class is on its way to approving by itself, 0...1 (full once it may).
-    static func unlockProgress(_ c: ClassView) -> Double {
-        if c.autoApprove { return 1 }
-        let total = c.decisions + c.decisionsToUnlock
-        guard total > 0 else { return 0 }
-        return min(max(Double(c.decisions) / Double(total), 0), 1)
-    }
-
     /// Where a class stands, in one line.
     static func classStatus(_ c: ClassView) -> String {
-        if c.manual == false { return "Locked by you · always asks" }
-        if c.manual == true && c.autoApprove { return "Unlocked by you · approves on its own" }
-        if c.autoApprove && c.autoDeny { return "Approves and denies on its own" }
-        if c.autoApprove { return "Approves on its own" }
-        if c.decisionsToUnlock > 0 {
-            let n = c.decisionsToUnlock
-            return "\(n) more \(n == 1 ? "decision" : "decisions") to unlock" + (c.autoDeny ? " · denies on its own" : "")
+        switch kindState(c) {
+        case .locked: return "Locked by you · always asks"
+        case .paused: return "Paused after a wrong answer"
+        case .asks: return "Asks until it knows this kind"
+        case .auto:
+            if c.manual == true { return "Trusted by you · approves when sure" }
+            return c.autoDeny ? "Approves and denies when sure" : "Approves when sure"
         }
-        if c.autoDeny { return "Denies on its own · learning to approve" }
-        return "Learning · accuracy must reach 95%"
     }
 
     /// "12 approved · 1 denied · 96% accurate".

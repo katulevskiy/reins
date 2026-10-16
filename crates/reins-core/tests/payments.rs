@@ -247,7 +247,7 @@ async fn pair_desktop(env: &Env, connection: &str, label: &str) -> SecretKey {
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing(id, true, Some(47), None).await.unwrap();
+    env.core.answer_pairing(id, true, Some(47), None, false).await.unwrap();
     key
 }
 
@@ -275,6 +275,38 @@ async fn answer(env: &Env, id: &str) -> Value {
         .rev()
         .find(|r| r.method.as_str() == "POST" && r.url.path() == format!("/reins/api/requests/{id}/response"));
     serde_json::from_slice(&found.unwrap_or_else(|| panic!("{id} was not answered")).body).unwrap()
+}
+
+/// Makes the account a phone-roles account with this phone as its primary; then the server answers no roster fetch,
+/// so nothing can confirm the phone is still the primary.
+async fn primary_the_server_cannot_confirm(env: &Env) {
+    Mock::given(method("GET"))
+        .and(path("/reins/api/roster"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"entries": []})))
+        .mount(&env.server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/reins/api/roster"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"epoch": 1, "hash": "00".repeat(32)})))
+        .mount(&env.server)
+        .await;
+    env.core.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    Mock::given(method("GET"))
+        .and(path("/reins/api/roster"))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+}
+
+/// Whether the phone posted an answer to `id`.
+async fn answered(env: &Env, id: &str) -> bool {
+    env.server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .any(|r| r.method.as_str() == "POST" && r.url.path() == format!("/reins/api/requests/{id}/response"))
 }
 
 fn cart() -> Value {
@@ -628,6 +660,43 @@ async fn a_spend_limit_approves_what_it_covers_and_asks_about_the_rest() {
     env.core.payments_remove_limit(id).await.unwrap();
     assert!(env.core.payments_overview().await.unwrap().limits.is_empty());
     nothing_kept_holds_a_card_number(&env).await;
+}
+
+#[tokio::test]
+async fn nothing_is_paid_unless_the_server_confirms_this_phone_is_still_the_primary() {
+    let env = env().await;
+    env.core.payments_connect_provider("privacy".into(), PRIVACY_KEY.into(), false, false).await.unwrap();
+    let named = json!({"payment_method": "virtual_card", "ship_to": "home"});
+    let (first, _) = ask(&env, "purchase_request", &cart_with(&named)).await;
+    let mut with_limit = choose("virtual_card");
+    with_limit.limit = Some(SpendLimitInput {
+        connection_id: String::new(),
+        merchants: vec!["amazon.com".into()],
+        method: "virtual_card".into(),
+        currency: "USD".into(),
+        per_purchase: 3_000,
+        per_period: 60_000,
+        period: LimitPeriod::Day,
+        duration_secs: 7 * 86_400,
+    });
+    env.core.approve_purchase(first, with_limit).await.unwrap();
+    env.core.start_bypass(None, Some(60)).await.unwrap();
+    primary_the_server_cannot_confirm(&env).await;
+    let cards_before = env.privacy.received_requests().await.unwrap().len();
+    // A spend limit covers it and Bypass is on: still nothing is paid. The limit leaves it to the user, and
+    // Autopilot's approval (the purchase screen's picks) is refused before the charge.
+    let (second, _) = ask(&env, "purchase_request", &cart_with(&named)).await;
+    assert!(!answered(&env, &second).await, "paid without the server confirming the primary");
+    // Nor by a tap on the purchase screen.
+    if env.core.pending().await.unwrap().iter().any(|p| p.id == second) {
+        assert!(env.core.approve_purchase(second.clone(), choose("virtual_card")).await.is_err());
+    }
+    assert!(!answered(&env, &second).await);
+    let new_cards = env.privacy.received_requests().await.unwrap()[cards_before..]
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path() == "/cards")
+        .count();
+    assert_eq!(new_cards, 0, "no card was made for it");
 }
 
 #[tokio::test]

@@ -142,6 +142,12 @@ pub struct MemoryRow {
     pub base_full: [f32; 3],
     pub e_facts: Embedding,
     pub e_full: Embedding,
+    /// The request itself passed Auto's fully relaxed risk check (read with certainty, no tripwire, the risk within
+    /// what full trust accepts: `decide::risk_ok` at 1). Only such decisions measure the agreement that relaxes the
+    /// risk check (`gates::ClassStats::trust_decided`): one held for its risk never helps release it. False for rows
+    /// remembered before this was kept.
+    #[serde(default)]
+    pub risk_clear: bool,
 }
 
 impl MemoryRow {
@@ -253,6 +259,7 @@ pub(crate) mod tests {
             base_full: [0.0; 3],
             e_facts: Embedding::from_vector(e),
             e_full: Embedding::from_vector(e),
+            risk_clear: true,
         }
     }
 

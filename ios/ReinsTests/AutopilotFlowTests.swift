@@ -458,13 +458,16 @@ final class AutopilotFlowTests: XCTestCase {
     func testAProfileTakesAPresetAndAClassLock() async throws {
         await start()
         let personal = try XCTUnwrap(ap.profile("personal"))
-        XCTAssertEqual(AutopilotText.classStatus(try XCTUnwrap(personal.classes.first { $0.classKey == "github/write/push" })), "Approves on its own")
+        XCTAssertEqual(AutopilotText.classStatus(try XCTUnwrap(personal.classes.first { $0.classKey == "github/write/push" })), "Approves when sure")
+        XCTAssertEqual(AutopilotText.kindState(try XCTUnwrap(personal.classes.first { $0.classKey == "gmail/read" })), .paused)
         await ap.setPreset("personal", .cautious)
         XCTAssertEqual(ap.profile("personal")?.preset, .cautious)
         XCTAssertEqual(ap.profile("personal")?.approveAt, 0.98)
         await ap.setClassLock("personal", "gmail/read", locked: false)
         XCTAssertTrue(feedback.lastWas(.autopilotOn), "unlocking is felt as more autonomy")
         XCTAssertEqual(ap.profile("personal")?.classes.first { $0.classKey == "gmail/read" }?.manual, true)
+        let trusted = try XCTUnwrap(ap.profile("personal")?.classes.first { $0.classKey == "gmail/read" })
+        XCTAssertEqual(AutopilotText.classStatus(trusted), "Trusted by you · approves when sure", "a trust by hand clears the pause")
         await ap.setClassLock("personal", "gmail/read", locked: true)
         XCTAssertEqual(ap.profile("personal")?.classes.first { $0.classKey == "gmail/read" }?.manual, false)
     }
@@ -568,7 +571,7 @@ final class AutopilotFlowTests: XCTestCase {
 
     func testAJustPairedConnectionCannotBeBypassedAndSaysWhy() async throws {
         await start()
-        try await core.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: nil)
+        try await core.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: nil, nameEdited: false)
         await model.refreshConnections()
         let fresh = try XCTUnwrap(model.connections.first { $0.label == "Gemini" })
         let refusal = try XCTUnwrap(ap.bypassRefusal(fresh.id))

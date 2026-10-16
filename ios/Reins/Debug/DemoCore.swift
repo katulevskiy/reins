@@ -175,6 +175,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
             default: break
             }
+            // `-demoRunningEntries N`: N requests that mode decided, one every few seconds of its 12 minutes.
+            if let j = args.firstIndex(of: "-demoRunningEntries"), j + 1 < args.count, let n = Int(args[j + 1]) {
+                let decidedBy = args[i + 1]
+                let firstId = (s.activity.map(\.id).max() ?? 0) + 1
+                let decided = (0..<n).map { k in
+                    DemoData.entry(
+                        firstId + Int64(k), at: now - 700 + Int64(k * 600 / max(n, 1)), action: "read",
+                        outcome: decidedBy == "lockdown" ? "denied" : "released", detail: "Request \(k + 1)", decidedBy: decidedBy
+                    )
+                }
+                s.activity = decided.reversed() + s.activity
+            }
         }
         if args.contains("-demoSyncedPush") || args.contains("-demoSyncedPushFails"), let push = s.views["req20"], let git = push.git,
            let i = s.activity.firstIndex(where: { $0.id == 14 }) {
@@ -441,6 +453,37 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func joinCancel() async throws { locked { $0.joinPolls = nil } }
 
+    // Phone roles: the demo account has none (legacy), so the role calls report that and the changes refuse.
+    func phoneRole() async throws -> PhoneRole { .legacy }
+    func rosterSummary(refresh: Bool) async throws -> RosterSummary? { nil }
+    func rosterCreate(deviceName: String, codeOrPassword: String?) async throws -> RosterSummary {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func enrollBegin(deviceName: String) async throws -> EnrollStart {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func enrollPoll() async throws -> EnrollProgress { throw CoreError.NotFound }
+    func enrollCancel() async throws {}
+    func enrollView(id: String) async throws -> EnrollView { throw CoreError.NotFound }
+    func enrollConfirm(id: String, approve: Bool) async throws { throw CoreError.NotFound }
+    func handoverRequest() async throws -> String {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func handoverPoll() async throws -> HandoverProgress { throw CoreError.NotFound }
+    func handoverRequests() async throws -> [HandoverView] { [] }
+    func handoverApprove(id: String, deviceId: String) async throws { throw CoreError.NotFound }
+    func handoverDeny(id: String) async throws { throw CoreError.NotFound }
+    func rosterRecoverPreview(codeOrPassword: String) async throws -> RecoveryPreview {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String) async throws -> RosterSummary {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func rosterRemoveMember(deviceId: String) async throws { throw CoreError.NotFound }
+    func rosterRewrap(newPassword: String) async throws {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+
     func joinView(id: String) async throws -> JoinView {
         try locked { s in
             guard let v = s.joins[id] else { throw CoreError.NotFound }
@@ -540,6 +583,23 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// An AI app asks to connect, parked like a pushed pairing (a second account of one already connected, for one).
+    /// Returns its id.
+    func addDemoPairing(clientName: String, clientHost: String) async throws -> String {
+        locked { s in
+            s.nextConnection += 1
+            let id = "pair-demo-\(s.nextConnection)"
+            let p = PairingView(
+                id: id, clientName: clientName, clientHost: clientHost, choices: Data([7, 42, 88]),
+                createdAt: Self.now(), keyFingerprint: nil
+            )
+            s.pairings[id] = p
+            s.pending.insert(DemoData.pairingItem(p), at: 0)
+            s.pendingVersion += 1
+            return id
+        }
+    }
+
     /// A desktop app on "studio" asks to pair, parked like a pushed pairing. Codes starting with "BBBB" have expired.
     func pairingByCode(userCode: String) async throws -> PairingView {
         try await latency()
@@ -559,10 +619,44 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// As the core: the name field starts with the client's own name, or "Claude 2" when the same client is connected
+    /// already (the same name from the same host).
     func pairingView(pairingId: String) async throws -> PairingView {
         try locked { s in
-            guard let p = s.pairings[pairingId] else { throw CoreError.NotFound }
+            guard var p = s.pairings[pairingId] else { throw CoreError.NotFound }
+            let same = s.connections.filter {
+                $0.clientHost.lowercased() == p.clientHost.lowercased()
+                    && ($0.clientName.isEmpty ? $0.label : $0.clientName).lowercased() == p.clientName.lowercased()
+            }.count
+            p.sameClient = UInt32(same)
+            p.suggestedName = p.clientName
+            if same > 0 {
+                let taken = Set(s.connections.map { $0.label.lowercased() })
+                var n = same + 1
+                while taken.contains("\(p.clientName) \(n)".lowercased()) { n += 1 }
+                p.suggestedName = "\(p.clientName) \(n)"
+            }
             return p
+        }
+    }
+
+    /// As the core: one clean line of at most 64 characters; blank takes the name away.
+    func renameConnection(connectionId: String, name: String?) async throws -> String? {
+        try locked { s in
+            guard let i = s.connections.firstIndex(where: { $0.id == connectionId }) else { throw CoreError.NotFound }
+            let clean = name.map { untrustedName($0, limit: 64) }.flatMap { $0.isEmpty ? nil : $0 }
+            var c = s.connections[i]
+            if c.ownLabel.isEmpty { c.ownLabel = c.name == nil ? c.label : c.clientName }
+            if c.clientName.isEmpty { c.clientName = c.ownLabel }
+            let old = c.label
+            c.name = clean
+            c.label = clean ?? c.ownLabel
+            s.connections[i] = c
+            for j in s.pending.indices where s.pending[j].connectionId == connectionId && s.pending[j].connectionLabel == old {
+                s.pending[j].connectionLabel = c.label
+            }
+            s.pendingVersion += 1
+            return clean
         }
     }
 
@@ -681,7 +775,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?) async throws {
+    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws {
         try await latency()
         try locked { s in
             guard let p = s.pairings[pairingId] else { throw CoreError.NotFound }
@@ -689,14 +783,22 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             s.pairings[pairingId] = nil
             guard approve else { return }
             s.nextConnection += 1
-            let name = label.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } ?? p.clientName
+            let typed = label.map { untrustedName($0, limit: 64) }.flatMap { $0.isEmpty ? nil : $0 }
+            // As the core: only a name the user edited is theirs, and never the client's own or the suggestion.
+            let own = [p.clientName, p.suggestedName].map { untrustedName($0, limit: 64).lowercased() }
+            let given: String? = nameEdited ? typed.flatMap { own.contains($0.lowercased()) ? nil : $0 } : nil
+            // A second of the same client keeps the suggestion's number as part of its own name ("Claude 2").
+            let number: UInt32? = p.sameClient > 0 ? p.suggestedName.split(separator: " ").last.flatMap { UInt32($0) } : nil
+            let ownLabel = number.map { "\(p.clientName) \($0)" } ?? p.clientName
+            let name = given ?? ownLabel
             let id = "c\(s.nextConnection)"
             // The demo's computers are Macs (a real one says its platform in the name it registers with).
             let platform: String? = p.keyFingerprint != nil ? "macos" : nil
             s.connections.append(ConnectionView(
                 id: id, label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil, keyFingerprint: p.keyFingerprint,
-                autoIcon: Self.autoIcon(label: name, computer: p.keyFingerprint != nil, platform: platform), platform: platform,
-                blobatar: Self.firstBlobatar(id, others: s.connections.compactMap(\.blobatar))
+                autoIcon: Self.autoIcon(label: p.clientName, computer: p.keyFingerprint != nil, platform: platform), platform: platform,
+                blobatar: Self.firstBlobatar(id, others: s.connections.compactMap(\.blobatar)),
+                name: given, ownLabel: ownLabel, number: given == nil ? number : nil, clientName: p.clientName
             ))
         }
     }
@@ -1358,6 +1460,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func setModelRuntime(runtime: ModelRuntime) {}
 
+    func setBackground(background: Bool) {}
+
     func autopilotSettings() async throws -> AutopilotSettings {
         locked { s in
             let now = Self.now()
@@ -1602,7 +1706,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    /// `locked` true: always asked; false: unlocked by hand (decides on its own); nil: back to what the numbers say.
+    /// `locked` true: always asked; false: trusted by hand (no cautious start, no pause); nil: back to Autopilot.
     func setClassLock(profileId: String, classKey: String, locked lockedValue: Bool?) async throws {
         locked { s in
             guard let i = s.profiles.firstIndex(where: { $0.id == profileId }) else { return }
@@ -1610,7 +1714,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 guard c.classKey == classKey else { return c }
                 var c = c
                 c.manual = lockedValue.map { !$0 }
-                c.autoApprove = lockedValue == false || (lockedValue == nil && c.decisionsToUnlock == 0 && (c.shadowAccuracy ?? 0) >= 0.95)
+                // as the core: a lock wins, a trust by hand clears a pause, else Auto runs unless paused
+                c.autoApprove = lockedValue == false || (lockedValue == nil && !c.paused)
+                c.paused = lockedValue == nil && c.paused
                 if lockedValue == true { c.autoDeny = false }
                 return c
             }

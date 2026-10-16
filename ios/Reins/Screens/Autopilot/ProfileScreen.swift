@@ -86,9 +86,9 @@ struct ProfileScreen: View {
             Text("Its AIs move to the default profile.")
         }
         .presentationFeedback(delete)
-        .alert(unlocking.map { "Let Auto approve \($0.label)?" } ?? "", isPresented: Binding(get: { unlocking != nil }, set: { if !$0 { unlocking = nil } })) {
+        .alert(unlocking.map { "Trust \($0.label) now?" } ?? "", isPresented: Binding(get: { unlocking != nil }, set: { if !$0 { unlocking = nil } })) {
             Button("Cancel", role: .cancel) { unlocking = nil }
-            Button("Unlock") {
+            Button("Trust") {
                 if let cls = unlocking {
                     feedback.quietClose()
                     Task { await ap.setClassLock(profileId, cls.classKey, locked: false) }
@@ -96,7 +96,7 @@ struct ProfileScreen: View {
                 unlocking = nil
             }
         } message: {
-            Text("Auto approves these when it is sure. The riskiest still ask.")
+            Text("Auto skips its cautious start for these. The riskiest still ask.")
         }
         .presentationFeedback(unlocking != nil)
     }
@@ -139,6 +139,14 @@ struct ProfileScreen: View {
             .animation(.smooth(duration: 0.25), value: profile.preset)
 
             AutopilotGroup(header: "Kinds of request") {
+                if profile.memoryCount > 0 {
+                    Text(AutopilotText.learningLine(profile))
+                        .font(RFont.sans(12.5))
+                        .foregroundStyle(Palette.inkMeta)
+                        .padding(.horizontal, 14)
+                        .padding(.top, 10)
+                        .accessibilityIdentifier("learningLine")
+                }
                 if profile.classes.isEmpty {
                     EmptyState(symbol: "sparkles", title: "Nothing learned yet", message: "Your answers teach it.")
                         .accessibilityIdentifier("noClasses")
@@ -335,21 +343,19 @@ private struct ThresholdSlider: View {
                 }
                 .frame(width: w, height: 28)
                 .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { drag in
-                            dragging = true
-                            let p = min(max(Int((drag.location.x / max(w, 1) * 100).rounded()), lo), hi)
-                            if p != value {
-                                value = p
-                                feedback.play(.detent, step: p - lo)
-                            }
-                        }
-                        .onEnded { _ in
-                            dragging = false
-                            onCommit()
-                        }
-                )
+                // The page scrolls: a tap sets the threshold where it lands, and a drag moves it only when the finger
+                // goes sideways (SidewaysPan), so a scroll that starts on the track scrolls.
+                .onTapGesture { point in
+                    set(point.x, width: w)
+                    onCommit()
+                }
+                .gesture(SidewaysPan(onChanged: { drag in
+                    dragging = true
+                    set(drag.location.x, width: w)
+                }, onEnded: { _, _ in
+                    dragging = false
+                    onCommit()
+                }))
             }
             .frame(height: 28)
         }
@@ -366,10 +372,19 @@ private struct ThresholdSlider: View {
         }
         .accessibilityIdentifier(identifier)
     }
+
+    /// The threshold under `x` on a track `width` wide, with a detent tick for each step.
+    private func set(_ x: CGFloat, width: CGFloat) {
+        let p = min(max(Int((x / max(width, 1) * 100).rounded()), lo), hi)
+        if p != value {
+            value = p
+            feedback.play(.detent, step: p - lo)
+        }
+    }
 }
 
-/// One kind of request: a ring that fills with the user's answers toward Auto (full and green once on it, a lock when
-/// it always asks), where it stands, and, opened, its numbers and the lock.
+/// One kind of request: its state (a full green ring on Auto, an empty one when it asks, a pause after a wrong answer,
+/// a lock when the user locked it) in a glyph and a word, and, opened, its numbers and the lock.
 private struct KindRow: View {
     var cls: ClassView
     var onLock: (Bool?) -> Void
@@ -377,21 +392,25 @@ private struct KindRow: View {
     @Environment(\.feedback) private var feedback
 
     var body: some View {
-        let locked = cls.manual == false
+        let state = AutopilotText.kindState(cls)
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) { open.toggle() }
                 feedback.play(.expand(open))
             } label: {
                 HStack(spacing: 12) {
-                    if locked {
+                    switch state {
+                    case .locked, .paused:
                         Circle().fill(Palette.paperSunken)
                             .frame(width: 34, height: 34)
-                            .overlay { Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(Palette.ink2) }
-                    } else {
+                            .overlay {
+                                Image(systemName: state == .locked ? "lock.fill" : "pause.fill")
+                                    .font(.system(size: 13)).foregroundStyle(Palette.ink2)
+                            }
+                    case .auto, .asks:
                         ProgressRing(
-                            fraction: AutopilotText.unlockProgress(cls),
-                            tint: cls.autoApprove ? Palette.success : Palette.kindRead, size: 34, stroke: 3.5
+                            fraction: state == .auto ? 1 : 0,
+                            tint: state == .auto ? Palette.success : Palette.kindRead, size: 34, stroke: 3.5
                         )
                     }
                     VStack(alignment: .leading, spacing: 2) {
@@ -403,11 +422,7 @@ private struct KindRow: View {
                             .accessibilityIdentifier("kindLine:\(cls.classKey)")
                     }
                     Spacer(minLength: 8)
-                    if cls.autoApprove && !locked {
-                        StatusPill(text: "Auto", tint: Palette.success)
-                    } else {
-                        Chevron().rotationEffect(.degrees(open ? 90 : 0))
-                    }
+                    Chevron().rotationEffect(.degrees(open ? 90 : 0))
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
@@ -423,7 +438,7 @@ private struct KindRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(AutopilotText.classStatus(cls))
                             .font(RFont.sans(13, .medium))
-                            .foregroundStyle(locked ? Palette.ink2 : cls.autoApprove ? Palette.success : Palette.kindRead)
+                            .foregroundStyle(state == .auto ? Palette.success : state == .asks ? Palette.kindRead : Palette.ink2)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("classStatus:\(cls.classKey)")
                         Text(AutopilotText.classNumbers(cls)).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
@@ -431,7 +446,7 @@ private struct KindRow: View {
                     FlowRow(spacing: 8) {
                         AutopilotChip(title: "Learn by itself", selected: cls.manual == nil, identifier: "lock:auto:\(cls.classKey)") { onLock(nil) }
                         AutopilotChip(title: "Always ask", selected: cls.manual == false, identifier: "lock:on:\(cls.classKey)") { onLock(true) }
-                        AutopilotChip(title: "Unlock now", selected: cls.manual == true, identifier: "lock:off:\(cls.classKey)") { onLock(false) }
+                        AutopilotChip(title: "Trust now", selected: cls.manual == true, identifier: "lock:off:\(cls.classKey)") { onLock(false) }
                     }
                 }
                 .padding(.leading, 60)

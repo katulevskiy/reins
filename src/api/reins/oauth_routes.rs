@@ -13,6 +13,7 @@ use std::{
 
 use reins_proto::{
     desktop,
+    ids::PairingId,
     pairing::{PushKind, PushMessage},
 };
 use rocket::{
@@ -38,7 +39,9 @@ use super::{
     },
     oauth_state::{AuthSession, FetchKind, OAUTH, StartedPairing},
     outbound, pages,
-    pairing::{PairingClient, PairingStatus, StartError as PairingStart, sanitize_client_name},
+    pairing::{
+        PairingClient, PairingStatus, StartError as PairingStart, email_cap_key, generate_choices, sanitize_client_name,
+    },
     push,
 };
 use crate::{
@@ -52,6 +55,7 @@ use crate::{
         models::{ReinsClient, ReinsConnection, ReinsDevice, ReinsJwtClient, ReinsRefreshToken, User, UserId},
     },
     ratelimit,
+    util::get_uuid,
 };
 
 const MAX_FORM_BYTES: u64 = 16 * 1024;
@@ -764,6 +768,22 @@ fn wait_location(session: &str) -> String {
     format!("{}/reins/oauth/authorize/wait?session={session}", CONFIG.domain_path())
 }
 
+/// The cap refused another pairing. The browser still gets the wait page, and nothing is stored or pushed, so the
+/// page is the same for a full account and for an email that has none.
+fn display_only_wait(session_id: &str) -> Flow {
+    let (code, _) = generate_choices();
+    OAUTH.set_pairing(
+        session_id,
+        StartedPairing {
+            id: PairingId(get_uuid()),
+            code,
+            user_uuid: None,
+            display_only: true,
+        },
+    );
+    Flow::Redirect(wait_location(session_id))
+}
+
 /// The optional `reins_client_key` the desktop app adds to the authorize URL. Present means it must be a valid key:
 /// a malformed one is refused rather than dropped, so the phone never pairs the app without the key it expects.
 fn desktop_client_key(params: &HashMap<String, String>) -> Result<Option<String>, ()> {
@@ -915,22 +935,20 @@ async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State
         return form_page(Status::TooManyRequests, &message);
     }
     let now = now_unix();
-    let target = pairing_target(&email, &conn).await;
+    // The cap is decided before the account lookup, and it is the same key for a real pairing and a decoy. A network
+    // that already holds its share is refused here, for every email, still with the ordinary wait page.
     let network = limits::client_network(ip.ip).to_string();
-    let started = match &target {
-        Some((user_uuid, _)) => HUB.pairings.start(&user_uuid.to_string(), session.client.clone(), now),
-        // The email is not stored on a decoy. The address is, so one address cannot fill the map with unknown emails.
-        // The refusal reads the same as an account's, which is what keeps an unknown email indistinguishable.
-        None => HUB.pairings.start_decoy(session.client.clone(), &network, now),
-    };
+    let cap_key = email_cap_key(&email);
+    if HUB.pairings.capped_for(&cap_key, &network) {
+        return display_only_wait(session_id);
+    }
+    let target = pairing_target(&email, &conn).await;
+    let user = target.as_ref().map(|(user_uuid, _)| user_uuid.to_string());
+    let started = HUB.pairings.start_email(&cap_key, &network, user.as_deref(), session.client.clone(), now);
     let (request, code) = match started {
         Ok(started) => started,
-        Err(PairingStart::Party) => {
-            return form_page(
-                Status::TooManyRequests,
-                "Too many connection requests for this account. Please try again in a few minutes.",
-            );
-        }
+        // Same page as a decoy that was stored: a probe cannot tell which emails exist, or which are full.
+        Err(PairingStart::Party) => return display_only_wait(session_id),
         Err(PairingStart::Busy) => {
             return error_flow(
                 pages::at::AUTHORIZE,
@@ -956,7 +974,8 @@ async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State
         StartedPairing {
             id: request.id,
             code,
-            user_uuid: target.map(|(user_uuid, _)| user_uuid.to_string()),
+            user_uuid: user,
+            display_only: false,
         },
     );
     Flow::Redirect(wait_location(session_id))
@@ -984,11 +1003,12 @@ fn authorize_wait(session: &str) -> Flow {
             &iss,
         ))
     };
+    let show_wait = |code: u8| {
+        let fingerprint = key_fingerprint_of(&current.client);
+        Flow::Page(Status::Ok, pages::wait_page(&current.client.client_name, code, fingerprint.as_deref()))
+    };
     match HUB.pairings.status(&pairing.id) {
-        Some(PairingStatus::Waiting) => {
-            let fingerprint = key_fingerprint_of(&current.client);
-            Flow::Page(Status::Ok, pages::wait_page(&current.client.client_name, pairing.code, fingerprint.as_deref()))
-        }
+        Some(PairingStatus::Waiting) => show_wait(pairing.code),
         Some(PairingStatus::Approved {
             connection_id,
         }) => {
@@ -1020,6 +1040,12 @@ fn authorize_wait(session: &str) -> Flow {
             deny("The request was denied on the phone.")
         }
         None => {
+            // A refused cap never created a pairing. Keep showing the wait page for the life of the session: an
+            // immediate timeout would tell it apart from a pairing that is still open. An expired decoy is not
+            // display-only, so it still ends here.
+            if pairing.display_only {
+                return show_wait(pairing.code);
+            }
             OAUTH.take_session(session);
             deny("The request timed out.")
         }

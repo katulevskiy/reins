@@ -59,16 +59,16 @@ Relaxed
 Custom
 Approves at 95%, denies at 90%.
 KINDS OF REQUEST
+Learning your preferences · 140 answers
 Push to a branch
-On Auto · 48 decisions
 Auto
 Send an email
-3 more to unlock
+Asks
 Delete anything
-Always asks
+Locked by you
 Run a command
-Learning · 6 of 20
-Learning you can watch. Each kind fills its ring toward 20 decisions at 95% agreement, then turns green and earns the Auto tag. Tapping a row offers Learn by itself, Always ask, or Unlock now. Below the fold: Try this profile, Use for every AI, Forget what it learned.
+Paused
+One word per kind. Auto from the first request (cautious until your answers add up), Asks, Paused after a wrong answer, or Locked by you. Tapping a row offers Learn by itself, Always ask, or Trust now. Below the fold: Try this profile, Use for every AI, Forget what it learned.
 05 · TRY IT
 Try it
 Push a branch

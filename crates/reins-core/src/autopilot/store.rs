@@ -43,7 +43,7 @@ pub struct Profile {
     /// The user's own thresholds; when set, they apply instead of the preset's.
     #[serde(default)]
     pub custom: Option<Thresholds>,
-    /// Class key → unlocked (`true`) or locked (`false`) by hand.
+    /// Class key → locked (`true`) or unlocked (`false`) by hand (`Engine::set_class_lock`).
     #[serde(default)]
     pub manual: BTreeMap<String, bool>,
     #[serde(default)]
@@ -124,6 +124,10 @@ pub struct Judged {
     /// The highest class any view (facts, full, neutral) gave on its own: the class shown is never below it.
     #[serde(default)]
     pub risk_view_max: Option<super::types::RiskLevel>,
+    /// What Auto's verdict rested on besides the probabilities; `None` for evaluations made before the cold start
+    /// (replayed with the rule of then, [`super::decide::would`]).
+    #[serde(default)]
+    pub evidence: Option<super::decide::Evidence>,
 }
 
 /// How a request was finally decided.
@@ -581,13 +585,16 @@ impl Store {
     }
 
     /// The keyed hash of a connection's target ("" without a target).
-    pub fn ap_target_key(&self, connection_id: &str, target: &str) -> Result<String, CoreError> {
+    /// The keyed hash of a target as one connection reaches it in one class (`service/action/class`): approving a
+    /// read of something never makes a send or a write to it known. (Keys made before the class was part of it no
+    /// longer match: those targets ask once again.)
+    pub fn ap_target_key(&self, connection_id: &str, class_key: &str, target: &str) -> Result<String, CoreError> {
         let target = target.trim().to_lowercase();
         if target.is_empty() {
             return Ok(String::new());
         }
         let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &self.ap_salt()?);
-        let tag = ring::hmac::sign(&key, format!("{connection_id}\0{target}").as_bytes());
+        let tag = ring::hmac::sign(&key, format!("{connection_id}\0{class_key}\0{target}").as_bytes());
         Ok(data_encoding::HEXLOWER.encode(tag.as_ref()))
     }
 

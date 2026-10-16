@@ -37,6 +37,14 @@ import dev.reins.core.EmailContent
 import dev.reins.core.GitCommitView
 import dev.reins.core.GmailStatus
 import dev.reins.core.GrantView
+import dev.reins.core.EnrollProgress
+import dev.reins.core.EnrollStart
+import dev.reins.core.EnrollView
+import dev.reins.core.HandoverProgress
+import dev.reins.core.HandoverView
+import dev.reins.core.PhoneRole
+import dev.reins.core.RecoveryPreview
+import dev.reins.core.RosterSummary
 import dev.reins.core.JoinProgress
 import dev.reins.core.JoinStart
 import dev.reins.core.JoinView
@@ -79,8 +87,8 @@ class MainSafeCore(
 
     override suspend fun activity(limit: UInt): List<ActivityEntry> = io { activity(limit) }
 
-    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?) =
-        io { answerPairing(pairingId, approve, chosenCode, label) }
+    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?, nameEdited: Boolean) =
+        io { answerPairing(pairingId, approve, chosenCode, label, nameEdited) }
 
     override suspend fun approvalView(requestId: String): ApprovalView = io { approvalView(requestId) }
 
@@ -166,6 +174,7 @@ class MainSafeCore(
         io { serviceAccountStatus(service, account) }
 
     override suspend fun setConnectionIcon(connectionId: String, icon: String?) = io { setConnectionIcon(connectionId, icon) }
+    override suspend fun renameConnection(connectionId: String, name: String?): String? = io { renameConnection(connectionId, name) }
 
     override suspend fun setConnectionBlobatar(connectionId: String, shape: UByte, colour: UByte): Blobatar =
         io { setConnectionBlobatar(connectionId, shape, colour) }
@@ -225,6 +234,43 @@ class MainSafeCore(
 
     override suspend fun joinCancel() = io { joinCancel() }
 
+    override suspend fun phoneRole(): PhoneRole = io { phoneRole() }
+
+    override suspend fun rosterSummary(refresh: Boolean): RosterSummary? = io { rosterSummary(refresh) }
+
+    override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): RosterSummary =
+        io { rosterCreate(deviceName, codeOrPassword) }
+
+    override suspend fun enrollBegin(deviceName: String): EnrollStart = io { enrollBegin(deviceName) }
+
+    override suspend fun enrollPoll(): EnrollProgress = io { enrollPoll() }
+
+    override suspend fun enrollCancel() = io { enrollCancel() }
+
+    override suspend fun enrollView(id: String): EnrollView = io { enrollView(id) }
+
+    override suspend fun enrollConfirm(id: String, approve: Boolean) = io { enrollConfirm(id, approve) }
+
+    override suspend fun handoverRequest(): String = io { handoverRequest() }
+
+    override suspend fun handoverPoll(): HandoverProgress = io { handoverPoll() }
+
+    override suspend fun handoverRequests(): List<HandoverView> = io { handoverRequests() }
+
+    override suspend fun handoverApprove(id: String, deviceId: String) = io { handoverApprove(id, deviceId) }
+
+    override suspend fun handoverDeny(id: String) = io { handoverDeny(id) }
+
+    override suspend fun rosterRecoverPreview(codeOrPassword: String): RecoveryPreview =
+        io { rosterRecoverPreview(codeOrPassword) }
+
+    override suspend fun rosterRecover(codeOrPassword: String, deviceName: String, tip: String): RosterSummary =
+        io { rosterRecover(codeOrPassword, deviceName, tip) }
+
+    override suspend fun rosterRemoveMember(deviceId: String) = io { rosterRemoveMember(deviceId) }
+
+    override suspend fun rosterRewrap(newPassword: String) = io { rosterRewrap(newPassword) }
+
     override suspend fun joinView(id: String): JoinView = io { joinView(id) }
 
     override suspend fun answerJoin(id: String, approve: Boolean) = io { answerJoin(id, approve) }
@@ -247,8 +293,10 @@ class MainSafeCore(
     override suspend fun setSecretsAlwaysAsk(project: String, env: String, always: Boolean?) =
         io { setSecretsAlwaysAsk(project, env, always) }
 
+    /** Null when signed out. A failure is thrown: the store could not be read, which is not signed out. */
     override suspend fun session(): SessionInfo? = io { session() }
 
+    /** Null when there is nothing to show. A failure is thrown and leaves any banner already shown. */
     override suspend fun accountSyncNotice(): String? = io { accountSyncNotice() }
 
     override suspend fun dismissAccountSyncNotice() = io { dismissAccountSyncNotice() }
@@ -314,6 +362,9 @@ class MainSafeCore(
 
     /** Not suspending: the runtime is handed over as the core is built (see `AppContainer.createRealCore`). */
     override fun setModelRuntime(runtime: ModelRuntime) = delegate.setModelRuntime(runtime)
+
+    /** Not suspending: the core skips loading Autopilot's model while the app is in the background. */
+    override fun setBackground(background: Boolean) = delegate.setBackground(background)
 
     override suspend fun autopilotSettings(): AutopilotSettings = io { autopilotSettings() }
 

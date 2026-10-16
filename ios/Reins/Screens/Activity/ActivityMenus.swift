@@ -78,30 +78,31 @@ struct ActivityModeMenu: View {
             guard let until, !AutopilotText.isUntilOff(until) else { return "" }
             return " · " + ModeLook.clock(until: until, now: now)
         }
+        // What loosens control, or stops what runs, needs a tap on its row: a slide from the chip never picks it.
         return [
             SignalMenuItem(
-                id: "quick:MANUAL", title: "Manual", subtitle: AutopilotText.line(.manual), glyph: .person
+                id: "quick:MANUAL", title: "Manual", subtitle: AutopilotText.line(.manual), glyph: .person, tapOnly: lockdown
             ),
             SignalMenuItem(
                 id: "quick:AUTO", title: "Auto", subtitle: !modelReady ? "Needs the model" : AutopilotText.line(.auto),
-                glyph: .autopilot, tone: .solid(Palette.violetFill)
+                glyph: .autopilot, tone: .solid(Palette.violetFill), tapOnly: s.mode == .manual || lockdown
             ),
             overnight
                 ? SignalMenuItem(
                     id: "quick:OVERNIGHT", title: "\(AutopilotText.overnightName) on\(left(s.overnightUntil))", subtitle: "Tap to stop",
-                    glyph: .moon, tone: .solid(Palette.violetFill)
+                    glyph: .moon, tone: .solid(Palette.violetFill), tapOnly: true
                 )
                 : SignalMenuItem(
                     id: "quick:OVERNIGHT", title: AutopilotText.overnightName, subtitle: AutopilotText.line(.overnight),
                     glyph: .moon, tone: .kind(.grant), more: true
                 ),
             lockdown
-                ? SignalMenuItem(id: "quick:LOCKDOWN", title: "Locked down", subtitle: "Tap to end", glyph: .lock, tone: .solid(Palette.fieldWarn))
+                ? SignalMenuItem(id: "quick:LOCKDOWN", title: "Locked down", subtitle: "Tap to end", glyph: .lock, tone: .solid(Palette.fieldWarn), tapOnly: true)
                 : SignalMenuItem(id: "quick:LOCKDOWN", title: "Lockdown", subtitle: "Deny everything now", glyph: .lock, tone: .kind(.warn)),
             bypass
                 ? SignalMenuItem(
                     id: "quick:BYPASS", title: "Bypass on\(left(s.bypassUntil))", subtitle: "Tap to stop", glyph: .autopilot,
-                    tone: .solid(Palette.fieldDelete), separated: true
+                    tone: .solid(Palette.fieldDelete), separated: true, tapOnly: true
                 )
                 : SignalMenuItem(
                     id: "quick:BYPASS", title: "Bypass…", subtitle: "Approve everything for a while", glyph: .autopilot,

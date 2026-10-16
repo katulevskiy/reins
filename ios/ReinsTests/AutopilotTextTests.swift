@@ -26,9 +26,9 @@ final class AutopilotTextTests: XCTestCase {
     }
 
     private func classView(decisions: UInt32 = 12, approved: UInt32 = 11, denied: UInt32 = 1, accuracy: Float? = nil, autoApprove: Bool = false,
-                           autoDeny: Bool = false, manual: Bool? = nil, toUnlock: UInt32 = 8) -> ClassView {
+                           autoDeny: Bool = false, manual: Bool? = nil, paused: Bool = false) -> ClassView {
         ClassView(classKey: "github/write/push", label: "GitHub · write · push", decisions: decisions, approved: approved, denied: denied,
-                  shadowAccuracy: accuracy, autoApprove: autoApprove, autoDeny: autoDeny, manual: manual, decisionsToUnlock: toUnlock)
+                  shadowAccuracy: accuracy, autoApprove: autoApprove, autoDeny: autoDeny, manual: manual, paused: paused)
     }
 
     private func suggestion(verdict: Verdict = .approve, pDeny: Float = 0.02, floor: Bool = false, novel: Bool = false, judged: Bool = true,
@@ -174,11 +174,13 @@ final class AutopilotTextTests: XCTestCase {
                        ["41 decided", "12 asked"])
         XCTAssertEqual(AutopilotText.share(nil), "—")
         XCTAssertEqual(AutopilotText.share(0.94), "94%")
-        XCTAssertEqual(AutopilotText.kindLine(classView(decisions: 31, autoApprove: true, toUnlock: 0)), "On Auto · 31 decisions")
-        XCTAssertEqual(AutopilotText.kindLine(classView(decisions: 1, autoApprove: true, toUnlock: 0)), "On Auto · 1 decision")
-        XCTAssertEqual(AutopilotText.kindLine(classView(toUnlock: 8)), "8 more to unlock")
-        XCTAssertEqual(AutopilotText.kindLine(classView(autoApprove: true, manual: false)), "Always asks")
-        XCTAssertEqual(AutopilotText.kindLine(classView(toUnlock: 0)), "Learning")
+        // a kind's state in one word: no "more to unlock" any more, Auto runs from the first request
+        XCTAssertEqual(AutopilotText.kindLine(classView(decisions: 1, autoApprove: true)), "Auto")
+        XCTAssertEqual(AutopilotText.kindLine(classView()), "Asks")
+        XCTAssertEqual(AutopilotText.kindLine(classView(paused: true)), "Paused")
+        XCTAssertEqual(AutopilotText.kindLine(classView(autoApprove: true, manual: false, paused: true)), "Locked by you")
+        XCTAssertEqual(AutopilotText.learningLine(profile()), "Learning your preferences · 140 answers")
+        XCTAssertEqual(AutopilotText.learningLine(profile("work", isDefault: false, memory: 1)), "Learning your preferences · 1 answer")
     }
 
     func testAProfileNamesTheAIsThatLearnIntoIt() {
@@ -214,14 +216,15 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertTrue(AutopilotText.suggestionNotes(suggestion(judged: false, reason: "No model on this phone")).contains("No model on this phone"))
     }
 
-    func testAClassFillsItsRingWithAnswersAndIsFullOnceItRunsByItself() {
-        XCTAssertEqual(AutopilotText.unlockProgress(classView(decisions: 12, toUnlock: 8)), 0.6, accuracy: 0.001)
-        XCTAssertEqual(AutopilotText.unlockProgress(classView(autoApprove: true, toUnlock: 0)), 1)
-        XCTAssertEqual(AutopilotText.classStatus(classView()), "8 more decisions to unlock")
-        XCTAssertEqual(AutopilotText.classStatus(classView(toUnlock: 1)), "1 more decision to unlock")
+    func testAClassSaysWhereItStandsNeverHowFarFromUnlocking() {
+        XCTAssertEqual(AutopilotText.kindState(classView(autoApprove: true)), .auto)
+        XCTAssertEqual(AutopilotText.kindState(classView(paused: true)), .paused)
+        XCTAssertEqual(AutopilotText.classStatus(classView()), "Asks until it knows this kind")
+        XCTAssertEqual(AutopilotText.classStatus(classView(paused: true)), "Paused after a wrong answer")
         XCTAssertEqual(AutopilotText.classStatus(classView(manual: false)), "Locked by you · always asks")
-        XCTAssertEqual(AutopilotText.classStatus(classView(autoApprove: true, toUnlock: 0)), "Approves on its own")
-        XCTAssertEqual(AutopilotText.classStatus(classView(autoApprove: true, manual: true, toUnlock: 0)), "Unlocked by you · approves on its own")
+        XCTAssertEqual(AutopilotText.classStatus(classView(autoApprove: true)), "Approves when sure")
+        XCTAssertEqual(AutopilotText.classStatus(classView(autoApprove: true, autoDeny: true)), "Approves and denies when sure")
+        XCTAssertEqual(AutopilotText.classStatus(classView(autoApprove: true, manual: true)), "Trusted by you · approves when sure")
         XCTAssertEqual(AutopilotText.classNumbers(classView(accuracy: 0.96)), "11 approved · 1 denied · 96% accurate")
     }
 

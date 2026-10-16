@@ -52,7 +52,7 @@ impl Store {
 
     /// The connections of every paired desktop app.
     pub fn desktop_connections(&self) -> Result<Vec<String>, CoreError> {
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let mut stmt = conn.prepare("SELECT connection_id FROM desktop_keys ORDER BY pinned_at")?;
         let ids = stmt.query_map([], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
         Ok(ids)

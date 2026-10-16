@@ -182,6 +182,144 @@ async fn connection_requests_are_limited_per_email_whether_it_has_an_account_or_
     assert_eq!(submit_email(&server, &client_id, "else@example.com").await.0, StatusCode::SEE_OTHER, "per email");
 }
 
+/// Above the per-email burst, so these tests reach the in-memory pairing cap. Login and anonymous bursts stay high
+/// enough that those limiters do not cut a probe short.
+fn pairing_cap_env() -> Options {
+    with_env(&[
+        ("REINS_PAIRING_RATELIMIT_MAX_BURST", "0"),
+        ("LOGIN_RATELIMIT_MAX_BURST", "100"),
+        ("UNAUTHENTICATED_RATELIMIT_MAX_BURST", "100"),
+    ])
+}
+
+/// One authorize attempt: post status, wait-page status, and the wait page with its code replaced by `00`.
+async fn probe_once(server: &Server, client_id: &str, email: &str) -> (StatusCode, StatusCode, String) {
+    let page = client().get(server.authorize_url(client_id)).send().await.unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let html = page.text().await.unwrap();
+    let session = between(&html, "name=\"session\" value=\"", "\"").to_owned();
+    let posted = client()
+        .post(server.url("/reins/oauth/authorize"))
+        .form(&[("session", session.as_str()), ("email", email)])
+        .send()
+        .await
+        .unwrap();
+    let post_status = posted.status();
+    if post_status != StatusCode::SEE_OTHER {
+        return (post_status, StatusCode::OK, posted.text().await.unwrap_or_default());
+    }
+    let location = posted.headers()["location"].to_str().unwrap().to_owned();
+    let wait = client().get(server.url(&location)).send().await.unwrap();
+    let wait_status = wait.status();
+    let body = wait.text().await.unwrap_or_default();
+    let code = between(&body, "aria-label=\"code\">", "<");
+    let page = body.replacen(&format!("aria-label=\"code\">{code}<"), "aria-label=\"code\">00<", 1);
+    (post_status, wait_status, page)
+}
+
+async fn probe_email(
+    server: &Server,
+    client_id: &str,
+    email: &str,
+    times: usize,
+) -> Vec<(StatusCode, StatusCode, String)> {
+    let mut out = Vec::with_capacity(times);
+    for _ in 0..times {
+        out.push(probe_once(server, client_id, email).await);
+    }
+    out
+}
+
+/// The server holds 8 open pairings for one network. Past that, a real account and an unknown email must still
+/// answer with the same wait page: a 429, or a shorter run, would say which email exists.
+#[tokio::test]
+async fn a_probe_gets_the_same_pages_for_a_real_account_and_an_unknown_email() {
+    let mut server = Server::start_with(pairing_cap_env()).await;
+    let phone = server.phone("real@example.com").await;
+    phone.register_device().await;
+    let client_id = server.register_client().await;
+    let real = probe_email(&server, &client_id, "real@example.com", 9).await;
+    let (_, pending) = phone.get("/pending?wait=0").await;
+    assert_eq!(pending["pairings"].as_array().map(Vec::len), Some(8), "the ninth was not stored");
+    server.restart().await;
+    let unknown = probe_email(&server, &client_id, "nobody@example.com", 9).await;
+    assert_eq!(real, unknown);
+    for (post, wait, page) in &real {
+        assert_eq!((*post, *wait), (StatusCode::SEE_OTHER, StatusCode::OK));
+        assert!(page.contains("aria-label=\"code\">00<"), "{page}");
+        assert!(page.contains("http-equiv=\"refresh\""), "{page}");
+        assert!(!page.contains("Too many connection requests"), "{page}");
+    }
+}
+
+async fn register_named_client(server: &Server, name: &str) -> String {
+    let body = json!({"client_name": name, "redirect_uris": [crate::harness::REDIRECT],
+        "token_endpoint_auth_method": "none", "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"]});
+    let response = client().post(server.url("/reins/oauth/register")).json(&body).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let doc: Value = response.json().await.unwrap();
+    doc["client_id"].as_str().unwrap().to_owned()
+}
+
+/// Submits `email` as if from `ip` (the test client is loopback, which may set `X-Real-IP`). Returns the post
+/// status and, for a redirect, the wait-page body.
+async fn submit_from(server: &Server, client_id: &str, email: &str, ip: &str) -> (StatusCode, String) {
+    let page = client().get(server.authorize_url(client_id)).send().await.unwrap().text().await.unwrap();
+    let session = between(&page, "name=\"session\" value=\"", "\"").to_owned();
+    let posted = client()
+        .post(server.url("/reins/oauth/authorize"))
+        .header("X-Real-IP", ip)
+        .form(&[("session", session.as_str()), ("email", email)])
+        .send()
+        .await
+        .unwrap();
+    let status = posted.status();
+    if status != StatusCode::SEE_OTHER {
+        return (status, posted.text().await.unwrap_or_default());
+    }
+    let location = posted.headers()["location"].to_str().unwrap().to_owned();
+    let wait = client().get(server.url(&location)).send().await.unwrap();
+    assert_eq!(wait.status(), StatusCode::OK);
+    (status, wait.text().await.unwrap_or_default())
+}
+
+/// Eight pairings typed from one network must not stop the account's owner, on another network, from connecting.
+#[tokio::test]
+async fn a_flood_from_one_network_does_not_use_up_the_accounts_slots() {
+    let server = Server::start_with(pairing_cap_env()).await;
+    let phone = server.phone("owner@example.com").await;
+    phone.register_device().await;
+    let flood_client = register_named_client(&server, "Flood").await;
+    let owner_client = register_named_client(&server, "Owner").await;
+    for _ in 0..8 {
+        let (status, page) = submit_from(&server, &flood_client, "owner@example.com", "203.0.113.1").await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+        assert!(page.contains("aria-label=\"code\">"), "{page}");
+    }
+    let (status, page) = submit_from(&server, &flood_client, "owner@example.com", "203.0.113.1").await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "a full network still sees the wait page, {page}");
+    assert!(!page.contains("Too many connection requests"), "{page}");
+
+    let (status, page) = submit_from(&server, &owner_client, "owner@example.com", "198.51.100.2").await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    let shown: u64 = between(&page, "aria-label=\"code\">", "<").parse().unwrap();
+    let (_, pending) = phone.get("/pending?wait=0").await;
+    let pairings = pending["pairings"].as_array().unwrap();
+    assert_eq!(pairings.len(), 8, "{pending}");
+    let owner = pairings.iter().find(|p| p["client_name"] == "Owner").expect("the owner's pairing was stored");
+    let choices: Vec<u64> = owner["choices"].as_array().unwrap().iter().map(|c| c.as_u64().unwrap()).collect();
+    assert!(choices.contains(&shown), "shown {shown} not in {choices:?}");
+    let id = owner["id"].as_str().unwrap();
+    let (status, body) = phone
+        .post(
+            &format!("/pairings/{id}/response"),
+            &json!({"v": 1, "approved": true, "chosen_code": shown, "label": null}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
 #[tokio::test]
 async fn dynamic_client_registration_is_limited_per_address() {
     let options = with_env(&[("REINS_REGISTER_RATELIMIT_SECONDS", "600"), ("REINS_REGISTER_RATELIMIT_MAX_BURST", "2")]);

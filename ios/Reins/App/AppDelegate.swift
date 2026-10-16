@@ -36,16 +36,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // No push on this device (simulator without APNs, no entitlement): the foreground long-poll still works.
     }
 
-    /// A background push (`replaced`), or any push while the app runs.
+    /// A background push (`replaced`), or any push while the app runs. The handler is called once, within
+    /// `BackgroundBudget.limit` whatever is still running (iOS ends an app that answers late), under a background task.
     func application(
         _ application: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
-        let host = host
-        Task { @MainActor in
-            completionHandler(await PushReceiver.handle(userInfo, host: host))
-        }
+        PushReceiver.receive(userInfo, host: host, completion: completionHandler)
     }
 }
 

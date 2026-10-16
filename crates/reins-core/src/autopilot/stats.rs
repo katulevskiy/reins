@@ -1,5 +1,5 @@
 //! What Autopilot's page and a profile's page count: how often Autopilot agreed with the user, and what a profile's
-//! last days would have been at other thresholds (the stored evaluations replayed through [`decide::would`]).
+//! last days would have been at other thresholds (the stored evaluations replayed through [`decide::verdict`]).
 
 use std::collections::BTreeMap;
 
@@ -36,7 +36,7 @@ fn wanted(s: &Suggestion, corrections: &BTreeMap<String, Verdict>) -> Option<Ver
 }
 
 /// Replays a profile's evaluations at (θ_a, θ_d): each judged request is decided or asked as Auto would have at these
-/// thresholds (class gates aside); requests that always ask count as asked.
+/// thresholds (its cold-start bar as it stood then, the class gates aside); requests that always ask count as asked.
 pub fn replay(
     suggestions: &[Suggestion],
     corrections: &BTreeMap<String, Verdict>,
@@ -60,7 +60,12 @@ pub fn replay(
             deny: j.probs[1],
             ask: j.probs[2],
         };
-        match decide::would(probs, s.novel, j.escalate, thresholds) {
+        // as Auto judged it (its cold-start bar included); evaluations from before the cold start by the rule of then
+        let verdict = match j.evidence {
+            Some(e) => decide::verdict(probs, j.escalate, thresholds, e),
+            None => decide::would(probs, s.novel, j.escalate, thresholds),
+        };
+        match verdict {
             Verdict::Ask => out.asked += 1,
             v => {
                 out.decided += 1;
@@ -111,6 +116,7 @@ mod tests {
                 risk_declared: false,
                 risk_threshold: None,
                 risk_view_max: None,
+                evidence: None,
             }),
             verdict: Verdict::Ask,
             reason: String::new(),
@@ -187,6 +193,7 @@ mod tests {
             base_full: [0.0; 3],
             e_facts: Embedding::from_vector(&[1.0]),
             e_full: Embedding::from_vector(&[1.0]),
+            risk_clear: true,
         };
         assert_eq!(agreement(&[]), (None, 0));
         let rows = [

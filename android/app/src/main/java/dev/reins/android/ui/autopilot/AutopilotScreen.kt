@@ -116,7 +116,8 @@ import androidx.compose.ui.semantics.text
 import dev.reins.android.design.ButtonSize
 import androidx.compose.ui.draw.drawBehind
 import dev.reins.android.design.Field
-import dev.reins.android.design.FieldHeader
+import dev.reins.android.design.FieldHeaderShape
+import dev.reins.android.design.fieldSurface
 import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.HairlineRow
 import dev.reins.android.design.LabelText
@@ -164,49 +165,68 @@ fun trustField(s: AutopilotSettings?): Field? = when {
 }
 
 /**
- * A running bypass, Overnight or lockdown as a field at the top of Trust (iOS-Autopilot 02, 03): the time left as the
- * hero ("47:12 *left*", or the infinity sign without an end), what it is doing in the serif, what still asks, and the
- * one way out, full width.
+ * A running bypass, Overnight or lockdown as a field pinned at the top of Trust (iOS-Autopilot 02, 03): the time left
+ * as the hero ("47:12 *left*", or the infinity sign without an end), what it is doing in the serif, what still asks,
+ * and the one way out, full width. As the page scrolls ([scrolled], px) it folds into a compact bar ([FoldingField]):
+ * the label line and the timer stay, the sentence fades, the button moves to the timer's right. Labels and tags are
+ * the same in both states.
  */
 @Composable
-fun TrustRunningField(s: AutopilotSettings, onStop: (TimedKind) -> Unit, onEndLockdown: () -> Unit) {
+fun TrustRunningField(
+    s: AutopilotSettings,
+    fold: RunningFold,
+    scrolled: () -> Int,
+    onStop: (TimedKind) -> Unit,
+    onEndLockdown: () -> Unit,
+) {
     val c = LocalColors.current
     val field = trustField(s) ?: return
     val run = running(s)
-    FieldHeader(field, Modifier.testTag("trustField")) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (run != null) dev.reins.android.design.BreathingDot(c.onField, size = 7.dp) else GlyphIcon(Glyph.Lock, c.onField2, size = 14.dp)
-            LabelText("Autopilot · ${AutopilotText.name(s.mode)}", c.onField2, Modifier.weight(1f))
-            if (run != null && AutopilotText.isUntilOff(run.until)) FieldClock(run.kind, run.until)
-        }
-        if (run != null && !AutopilotText.isUntilOff(run.until)) HeroClock(run.kind, run.until)
-        val (hero, italic) = when (run?.kind) {
-            TimedKind.Bypass -> "Approving everything" to "everything"
-            TimedKind.Overnight -> "${AutopilotText.OVERNIGHT} decides" to "decides"
-            null -> "Everything that would ask is denied" to "is denied"
-        }
-        androidx.compose.foundation.text.BasicText(
-            askString(hero, italic),
-            Modifier.testTag("heroMode"),
-            style = RType.serif(32f, 36f).copy(color = c.onField),
-        )
-        if (run != null) RunningLine(run.kind, run.until, run.since, s, c.onField2)
-        if (run != null) {
-            SignalButton(
-                "Stop now",
-                Modifier.padding(top = 4.dp).fillMaxWidth().testTag(run.kind.action("stop")),
-                style = dev.reins.android.design.ButtonStyle.OnFieldWhite,
-            ) { onStop(run.kind) }
-        } else {
-            SignalButton(
-                "End lockdown",
-                Modifier.padding(top = 4.dp).fillMaxWidth().testTag("endLockdown"),
-                style = dev.reins.android.design.ButtonStyle.OnFieldWhite,
-                glyph = Glyph.LockOpen,
-                onClick = onEndLockdown,
-            )
-        }
-    }
+    FoldingField(
+        fold,
+        scrolled,
+        surface = { Box(Modifier.fieldSurface(field, FieldHeaderShape)) },
+        label = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (run != null) dev.reins.android.design.BreathingDot(c.onField, size = 7.dp) else GlyphIcon(Glyph.Lock, c.onField2, size = 14.dp)
+                LabelText("Autopilot · ${AutopilotText.name(s.mode)}", c.onField2, Modifier.weight(1f))
+                if (run != null && AutopilotText.isUntilOff(run.until)) FieldClock(run.kind, run.until)
+            }
+        },
+        clock = if (run != null && !AutopilotText.isUntilOff(run.until)) ({ HeroClock(run.kind, run.until) }) else null,
+        hero = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val (hero, italic) = when (run?.kind) {
+                    TimedKind.Bypass -> "Approving everything" to "everything"
+                    TimedKind.Overnight -> "${AutopilotText.OVERNIGHT} decides" to "decides"
+                    null -> "Everything that would ask is denied" to "is denied"
+                }
+                androidx.compose.foundation.text.BasicText(
+                    askString(hero, italic),
+                    Modifier.testTag("heroMode"),
+                    style = RType.serif(32f, 36f).copy(color = c.onField),
+                )
+                if (run != null) RunningLine(run.kind, run.until, run.since, s, c.onField2)
+            }
+        },
+        button = {
+            if (run != null) {
+                SignalButton(
+                    "Stop now",
+                    Modifier.testTag(run.kind.action("stop")),
+                    style = dev.reins.android.design.ButtonStyle.OnFieldWhite,
+                ) { onStop(run.kind) }
+            } else {
+                SignalButton(
+                    "End lockdown",
+                    Modifier.testTag("endLockdown"),
+                    style = dev.reins.android.design.ButtonStyle.OnFieldWhite,
+                    glyph = Glyph.LockOpen,
+                    onClick = onEndLockdown,
+                )
+            }
+        },
+    )
 }
 
 /** The time left as the field's hero: "47:12 *left*", in the serif, on its own clock. */

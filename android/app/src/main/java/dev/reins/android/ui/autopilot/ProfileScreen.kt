@@ -181,6 +181,9 @@ fun ProfileScreen(
         }
 
         LabelText("Kinds of request", c.inkMeta, Modifier.padding(top = 28.dp, bottom = 4.dp))
+        if (profile.memoryCount > 0u) {
+            RText(AutopilotText.learningLine(profile), RType.meta, c.inkMeta, Modifier.padding(bottom = 4.dp).testTag("learningLine"))
+        }
         if (profile.classes.isEmpty()) {
             EmptyState(Glyph.Sparkle, "Nothing learned yet", "Your answers teach it.", tag = "noClasses")
         }
@@ -253,9 +256,9 @@ fun ProfileScreen(
         }
         unlocking?.let { cls ->
             ConfirmDialog(
-                title = "Let Auto approve ${cls.label}?",
-                text = "Auto approves these when it is sure. The riskiest still ask.",
-                confirmLabel = "Unlock",
+                title = "Trust ${cls.label} now?",
+                text = "Auto skips its cautious start for these. The riskiest still ask.",
+                confirmLabel = "Trust",
                 onConfirm = {
                     unlocking = null
                     viewModel.setClassLock(profile.id, cls.classKey, false)
@@ -403,8 +406,8 @@ private fun ThresholdSlider(label: String, value: Float, tint: Color, tag: Strin
 }
 
 /**
- * One kind of request: a ring (full and green on Auto, filling in blue while it learns, a lock when it always asks),
- * where it stands, and, opened, the lock.
+ * One kind of request: its state (a full green ring on Auto, an empty one when it asks, a pause after a wrong answer,
+ * a lock when you locked it) in a glyph and a word, and, opened, its numbers and the lock.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -412,7 +415,7 @@ private fun KindRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
     var open by remember { mutableStateOf(false) }
-    val locked = cls.manual == false
+    val state = AutopilotText.kindState(cls)
     Column(Modifier.fillMaxWidth().testTag("class:${cls.classKey}")) {
         Row(
             Modifier
@@ -425,12 +428,13 @@ private fun KindRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
                 .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            when {
-                locked -> Box(Modifier.size(34.dp).clip(CircleShape).background(c.paperSunken), contentAlignment = Alignment.Center) {
-                    GlyphIcon(Glyph.Lock, c.ink2, size = 15.dp)
-                }
-                cls.autoApprove -> ProgressRing(1f, c.success, size = 34.dp, stroke = 3.5.dp)
-                else -> ProgressRing(AutopilotText.unlockProgress(cls), c.search, size = 34.dp, stroke = 3.5.dp)
+            when (state) {
+                AutopilotText.KindState.LOCKED, AutopilotText.KindState.PAUSED ->
+                    Box(Modifier.size(34.dp).clip(CircleShape).background(c.paperSunken), contentAlignment = Alignment.Center) {
+                        GlyphIcon(if (state == AutopilotText.KindState.LOCKED) Glyph.Lock else Glyph.Pause, c.ink2, size = 15.dp)
+                    }
+                AutopilotText.KindState.AUTO -> ProgressRing(1f, c.success, size = 34.dp, stroke = 3.5.dp)
+                AutopilotText.KindState.ASKS -> ProgressRing(0f, c.search, size = 34.dp, stroke = 3.5.dp)
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -438,11 +442,7 @@ private fun KindRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
                 RText(AutopilotText.kindLine(cls), RType.meta, c.inkMeta, Modifier.padding(top = 2.dp).testTag("classStatus:${cls.classKey}"), maxLines = 1)
             }
             Spacer(Modifier.width(8.dp))
-            if (cls.autoApprove) {
-                Pill("Auto", c.violet)
-            } else {
-                GlyphIcon(if (open) Glyph.ChevronUp else Glyph.ChevronDown, c.inkMeta, size = 16.dp)
-            }
+            GlyphIcon(if (open) Glyph.ChevronUp else Glyph.ChevronDown, c.inkMeta, size = 16.dp)
         }
         AnimatedVisibility(
             open,
@@ -454,7 +454,7 @@ private fun KindRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SignalChip("Learn by itself", cls.manual == null, Modifier.testTag("lock:auto:${cls.classKey}")) { onLock(null) }
                     SignalChip("Always ask", cls.manual == false, Modifier.testTag("lock:on:${cls.classKey}")) { onLock(true) }
-                    SignalChip("Unlock now", cls.manual == true, Modifier.testTag("lock:off:${cls.classKey}")) { onLock(false) }
+                    SignalChip("Trust now", cls.manual == true, Modifier.testTag("lock:off:${cls.classKey}")) { onLock(false) }
                 }
             }
         }

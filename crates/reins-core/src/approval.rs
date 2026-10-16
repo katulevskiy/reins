@@ -194,7 +194,10 @@ impl Engine {
 
     /// Approves a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn approve_claimed(&self, request_id: &str, choice: ApprovalChoice) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say), and it checks with
+        // the server that it still is the primary before the action runs: an email sent is not taken back.
         let session = self.session()?;
+        self.require_decider_fresh(&session).await?;
         let (_, mut parked) = self.parked(request_id)?;
         let now = unix_now();
         if matches!(parked.request.call, ToolCall::Mcp(_)) {
@@ -353,6 +356,8 @@ impl Engine {
 
     /// Denies a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn deny_claimed(&self, request_id: &str) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
+        self.require_decider()?;
         let session = self.session()?;
         let (_, parked) = self.parked(request_id)?;
         let now = unix_now();
@@ -556,8 +561,32 @@ impl Engine {
         serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked pairing"))
     }
 
-    pub fn pairing_view(&self, id: &str) -> Result<PairingView, CoreError> {
-        Ok(views::pairing_view(&self.parked_pairing(id)?))
+    pub async fn pairing_view(&self, id: &str) -> Result<PairingView, CoreError> {
+        let view = views::pairing_view(&self.parked_pairing(id)?);
+        Ok(self.named_pairing(view).await.0)
+    }
+
+    /// The name a pairing's name field starts with: its own, or one of its own ("Claude 2") when a connection of the
+    /// same client is there already, which the user is asked to make theirs; and that number, which the connection
+    /// keeps when the user names it nothing else. The connections come from the server; without them the pairing keeps
+    /// its own name.
+    async fn named_pairing(&self, mut view: PairingView) -> (PairingView, Option<u32>) {
+        let connections = match self.connections().await {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("could not list the connections to name a new one: {e}");
+                return (view, None);
+            }
+        };
+        let same = connections
+            .iter()
+            .filter(|c| crate::names::same_client(&view.client_name, &view.client_host, &c.client_name, &c.client_host))
+            .count();
+        let taken: Vec<String> = connections.into_iter().map(|c| c.label).collect();
+        let number = crate::names::suggested_number(&view.client_name, same, &taken);
+        view.suggested_name = crate::names::suggested_name(&view.client_name, same, &taken);
+        view.same_client = u32::try_from(same).unwrap_or(u32::MAX);
+        (view, number)
     }
 
     /// The pairing a computer's code stands for (scanned from its QR code, or from a link): the server hands it to this
@@ -582,14 +611,14 @@ impl Engine {
         };
         let id = pairing.id.0.clone();
         // Scanned twice: the pairing is parked already.
-        if let Ok(view) = self.pairing_view(&id) {
+        if let Ok(view) = self.pairing_view(&id).await {
             return Ok(view);
         }
         let Some(_guard) = self.begin(&id)? else {
-            return self.pairing_view(&id);
+            return self.pairing_view(&id).await;
         };
         self.park_pairing(pairing)?;
-        self.pairing_view(&id)
+        self.pairing_view(&id).await
     }
 
     /// Sends the user's answer for an AI-connection request.
@@ -599,8 +628,15 @@ impl Engine {
         approve: bool,
         chosen_code: Option<u8>,
         label: Option<String>,
+        name_edited: bool,
     ) -> Result<(), CoreError> {
         let session = self.session()?;
+        if approve {
+            // A connection approved is a new asker: only while this phone is still the primary.
+            self.require_decider_fresh(&session).await?;
+        } else {
+            self.require_decider()?;
+        }
         let Some(_claim) = self.claim(id) else {
             return Err(CoreError::NotFound);
         };
@@ -613,6 +649,15 @@ impl Engine {
                 return Err(CoreError::invalid("that number was not offered"));
             }
         }
+        // What the field started with: the suggestion ("Claude 2") is made from the client's name, so it is no more the
+        // user's than that name is; its number stays with the connection's own name when the user gives it none.
+        let (suggested, number) = if approve {
+            let (view, number) = self.named_pairing(views::pairing_view(&pairing)).await;
+            (view.suggested_name, number)
+        } else {
+            (String::new(), None)
+        };
+        let given = given_name(&pairing.client_name, &suggested, label.as_deref(), name_edited);
         let response = PairingResponse {
             v: PROTOCOL_VERSION,
             approved: approve,
@@ -621,10 +666,18 @@ impl Engine {
             } else {
                 None
             },
-            label: label.map(|l| text::truncate_chars(&text::one_line(&l), 64)).filter(|l| !l.is_empty()),
+            // The name the user gives it stays with the account (synced, sealed): the server keeps the client's own.
+            label: None,
         };
         let now = unix_now();
-        let result = api_call!(&session, |api| api.answer_pairing(id, &response));
+        // With a roster, the primary signs the answer (the server checks it); without one it goes as it is.
+        let bytes = serde_json::to_vec(&response).map_err(|e| CoreError::storage(e.to_string()))?;
+        let signed = self.signed_answer(&session, reins_proto::answer::AnswerKind::Pairing, id, &bytes).await?;
+        let result = if let Some(signed) = &signed {
+            api_call!(&session, |api| api.answer_pairing_body(id, signed))
+        } else {
+            api_call!(&session, |api| api.answer_pairing(id, &response))
+        };
         let (outcome, detail) = match &result {
             Ok(r) if approve && r.connection_id.is_some() => ("released", format!("connected {}", pairing.client_name)),
             Ok(_) => ("denied", format!("refused {}", pairing.client_name)),
@@ -637,15 +690,29 @@ impl Engine {
         };
         // The desktop app's key, compared by the user on both screens, now belongs to this connection.
         let new_connection = result.as_ref().ok().filter(|_| approve).and_then(|r| r.connection_id.as_ref());
+        if let Some(connection) = new_connection {
+            match (given.as_deref(), number) {
+                (Some(name), _) => self.store.set_connection_name(&connection.0, Some(name))?,
+                // A second account of a client already connected: told apart by a number, never a name of the user's.
+                (None, Some(n)) => self.store.set_connection_number(&connection.0, Some(n))?,
+                (None, None) => {}
+            }
+        }
         let key = pairing.client_key.as_deref().and_then(reins_proto::desktop::decode_key);
         let mut note = format!("From {}", pairing.client_host);
         if let (Some(connection), Some(key)) = (new_connection, key) {
             let key = reins_proto::desktop::encode_key(&key);
             // The name the user saw, kept on the phone: a purchase sealed to this app names it from here.
-            let named = response.label.clone().unwrap_or_else(|| text::one_line(&pairing.client_name));
+            let named = given.clone().unwrap_or_else(|| text::one_line(&pairing.client_name));
             self.store.pin_desktop_key(&connection.0, &key, &text::truncate_chars(&named, 64), now)?;
             if let Some(fingerprint) = reins_proto::desktop::key_fingerprint(&key) {
                 note = format!("{note}. Desktop app key {fingerprint}");
+            }
+            // The computer shows the name it was given from the start (else the next listing leaves it).
+            if given.is_some()
+                && let Err(e) = self.send_computer_name(&connection.0, given.as_deref()).await
+            {
+                log::warn!("could not leave the new computer its name: {e}");
             }
         }
         self.store.append_audit(&AuditRecord {
@@ -671,7 +738,7 @@ impl Engine {
         if let Some(connection) = new_connection
             && self.starting_policy()? == Some(crate::types::StartingPolicy::HeadlinesFirstHour)
         {
-            let label = label_for_grants(&pairing.client_name, response.label.as_deref());
+            let label = label_for_grants(&pairing.client_name, given.as_deref());
             if let Err(e) = self.grant_starter_headlines(&connection.0, &label, now) {
                 log::warn!("could not give the new connection its starting grants: {e}");
             }
@@ -681,6 +748,22 @@ impl Engine {
         self.notifier.item_resolved(id.to_owned());
         result.map(drop).map_err(ApiFailure::into_core)
     }
+}
+
+/// The name the user gave a new connection in the name field (`names::typed_name`): only when the user edited the
+/// field (`name_edited`), and never a name the field was given, the client's own or the suggestion made from it
+/// (`suggested`), however it is spelled: all are cleaned the same way and compared without case, so that spacing,
+/// case or invisible characters cannot pass the client's name off as the user's. Otherwise the connection goes by its
+/// own name, which stays untrusted.
+fn given_name(client_name: &str, suggested: &str, typed: Option<&str>, name_edited: bool) -> Option<String> {
+    if !name_edited {
+        return None;
+    }
+    let name = crate::names::typed_name(typed?)?;
+    let key = |s: &str| crate::names::typed_name(s).map(|n| n.to_lowercase());
+    let typed_key = key(&name);
+    let own = [client_name.to_owned(), crate::avatar::shown_label(client_name), suggested.to_owned()];
+    (!own.iter().any(|o| key(o).is_some_and(|k| Some(k) == typed_key))).then_some(name)
 }
 
 /// The name grants show for a new connection: the one the user gave it, else the client's.
@@ -708,6 +791,42 @@ fn count(n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a name the user edited is theirs, and never the client's own or the suggestion, however it is spelled.
+    #[test]
+    fn the_clients_own_name_never_becomes_the_users() {
+        let given = |client: &str, suggested: &str, typed: &str, edited: bool| {
+            given_name(client, suggested, Some(typed), edited)
+        };
+        // Edited into a name of the user's own: theirs, cleaned.
+        assert_eq!(given("Claude", "Claude 2", " Claude (work)\n", true).as_deref(), Some("Claude (work)"));
+        // Not edited: never the user's, whatever the field holds.
+        assert_eq!(given("Claude", "Claude 2", "Claude 2", false), None, "the suggestion, as it came");
+        assert_eq!(given("Claude", "Claude", "Claude", false), None);
+        assert_eq!(given("Evil", "Evil", "Totally mine", false), None, "the flag decides, not the text");
+        // Edited back to the client's own name or the suggestion, spelled any way: still not the user's.
+        for typed in [
+            "Claude",
+            "  claude ",
+            "CLAUDE",
+            "Cl\u{200b}aude",
+            "\u{feff}Claude\u{202e}",
+            "Claude\n",
+            "claude 2",
+            "Claude\u{200d}  2",
+            "CLAUDE 2 ",
+        ] {
+            assert_eq!(given("Claude", "Claude 2", typed, true), None, "{typed:?}");
+        }
+        // The name as a computer registers it, or as the lists show it.
+        assert_eq!(given("M2A (macOS)", "M2A", "m2a", true), None);
+        assert_eq!(given("M2A (macOS)", "M2A", "m2a (MACOS)", true), None);
+        // A client whose own name is odd is compared cleaned too.
+        assert_eq!(given("  Gro\u{200b}k ", "Grok", "grok", true), None);
+        // Nothing typed, or nothing left once cleaned: no name.
+        assert_eq!(given_name("Claude", "Claude", None, true), None);
+        assert_eq!(given("Claude", "Claude", "\u{200b} ", true), None);
+    }
 
     fn conn() -> ConnectionId {
         "c1".into()

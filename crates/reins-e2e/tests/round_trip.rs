@@ -60,7 +60,7 @@ async fn connected(relay_wait: u64, offline: u64, pushes: &MockServer) -> (Serve
     let wait_url = ai.start_authorization(EMAIL).await;
     let code = ai.browser_code(&wait_url).await;
     let item = phone.wait_for_item(Duration::from_secs(20)).await;
-    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned())).await.unwrap();
+    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned()), true).await.unwrap();
     ai.finish_authorization(&wait_url).await;
     (server, phone, ai)
 }
@@ -144,7 +144,7 @@ async fn a_phone_that_cannot_be_woken_is_reported_at_once_with_when_it_was_last_
     let wait_url = ai.start_authorization(EMAIL).await;
     let code = ai.browser_code(&wait_url).await;
     let item = phone.wait_for_item(Duration::from_secs(20)).await;
-    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned())).await.unwrap();
+    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned()), true).await.unwrap();
     ai.finish_authorization(&wait_url).await;
     // The app is closed now: nothing heard from the phone for longer than an open app ever waits between polls.
     tokio::time::sleep(Duration::from_secs(11)).await;

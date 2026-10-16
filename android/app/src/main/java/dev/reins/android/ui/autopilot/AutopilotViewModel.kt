@@ -510,11 +510,18 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** [locked]: true always asks, false lets Auto approve now, null lets the numbers decide. */
+    /** [locked]: true always asks, false trusts the kind now (no cautious start, no pause), null lets Autopilot decide. */
     fun setClassLock(id: String, classKey: String, locked: Boolean?) {
-        // The chips sound their own choice; unlocking (after its warning) is felt as more autonomy.
+        // The chips sound their own choice; trusting (after its warning) is felt as more autonomy.
         if (locked == false) container.feedback.play(Event.AutopilotOn)
-        editProfile(id) { p -> p.copy(classes = p.classes.map { if (it.classKey == classKey) it.copy(manual = locked?.not(), autoApprove = locked?.not() ?: it.autoApprove) else it }) }
+        editProfile(id) { p ->
+            p.copy(
+                classes = p.classes.map {
+                    if (it.classKey != classKey) it
+                    else it.copy(manual = locked?.not(), autoApprove = locked?.not() ?: it.autoApprove, paused = locked == null && it.paused)
+                },
+            )
+        }
         perform {
             container.core.setClassLock(id, classKey, locked)
             loadProfiles()

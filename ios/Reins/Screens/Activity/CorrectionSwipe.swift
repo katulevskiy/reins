@@ -8,7 +8,11 @@ struct CorrectionSwipe: ViewModifier {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var offset: CGFloat = 0
-    @State private var sideways: Bool?
+    /// A sideways swipe is going on: the row does not look pressed while it slides.
+    @State private var swiping = false
+    /// Where this swipe started: shut (0) or open (-reveal), read once when it begins. Read on every move instead, a
+    /// row that passed half open mid-swipe jumped to the open place plus the finger's travel, and a short swipe asked.
+    @State private var swipeStart: CGFloat?
     @State private var asking = false
 
     /// How far the row opens.
@@ -17,11 +21,12 @@ struct CorrectionSwipe: ViewModifier {
     func body(content: Content) -> some View {
         if ThisWasWrongDock.offered(entry) {
             content
+                .disabled(swiping)
                 .background(Palette.paper)
                 .offset(x: offset)
                 .background(alignment: .trailing) { action }
                 .clipped()
-                .simultaneousGesture(swipe)
+                .gesture(swipe)
                 .accessibilityAction(named: "This was wrong") { asking = true }
                 .alert(Correction.question(entry), isPresented: $asking) {
                     Button(Correction.answer(entry)) {
@@ -46,6 +51,8 @@ struct CorrectionSwipe: ViewModifier {
 
     private var action: some View {
         Button {
+            // Not the finger that swiped the row shut, lifting on it.
+            guard !SidewaysPan.swiping else { return }
             close()
             asking = true
         } label: {
@@ -64,27 +71,26 @@ struct CorrectionSwipe: ViewModifier {
         .accessibilityIdentifier("swipeWrong:\(entry.id)")
     }
 
-    private var swipe: some Gesture {
-        DragGesture(minimumDistance: 14)
-            .onChanged { drag in
-                if sideways == nil { sideways = abs(drag.translation.width) > abs(drag.translation.height) }
-                guard sideways == true else { return }
-                let start: CGFloat = offset <= -Self.reveal / 2 ? -Self.reveal : 0
-                offset = min(0, start + drag.translation.width)
-            }
-            .onEnded { drag in
-                defer { sideways = nil }
-                guard sideways == true else { return }
-                if offset < -Self.reveal * 1.6 {
-                    // A long swipe asks at once.
-                    close()
-                    asking = true
-                } else {
-                    withAnimation(Motion.of(Motion.cardSpring(0.3), reduce: reduceMotion)) {
-                        offset = offset < -Self.reveal / 2 ? -Self.reveal : 0
-                    }
+    /// Sideways only (SidewaysPan): a touch that moves up or down is the list's from its first points.
+    private var swipe: SidewaysPan {
+        SidewaysPan(onChanged: { drag in
+            swiping = true
+            let start = swipeStart ?? (offset <= -Self.reveal / 2 ? -Self.reveal : 0)
+            swipeStart = start
+            offset = min(0, start + drag.translation.width)
+        }, onEnded: { _, cancelled in
+            swiping = false
+            swipeStart = nil
+            if !cancelled && offset < -Self.reveal * 1.6 {
+                // A long swipe asks at once.
+                close()
+                asking = true
+            } else {
+                withAnimation(Motion.of(Motion.cardSpring(0.3), reduce: reduceMotion)) {
+                    offset = offset < -Self.reveal / 2 ? -Self.reveal : 0
                 }
             }
+        })
     }
 
     private func close() {

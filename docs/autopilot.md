@@ -12,7 +12,7 @@ There is a global mode, and each connection can have its own (in that connection
 | Mode | What happens |
 |---|---|
 | **Manual** | Every request waits for you, and once the model is installed the approval screen shows what Autopilot would do and why ("Autopilot would approve · 97%", "Like 4 times you approved: ..."). Each of your answers teaches it. The default. |
-| **Auto** | Autopilot approves what it is confident is safe, denies what it is confident is harmful, and asks you about the rest. Only for kinds of request that have earned it ([below](#how-auto-earns-trust)). |
+| **Auto** | Autopilot approves what it is confident is safe, denies what it is confident is harmful, and asks you about the rest. It works from the first request: cautious while it knows little of a kind, and tuned by your answers as they add up ([below](#how-auto-decides-on-its-own)). |
 | **Overnight** | For agents left working: Auto, plus the risky actions Auto always leaves to you (a recursive delete, a force push, a destructive tool), weighed by a risk model instead. What it rates **catastrophic in context** (deleting the default branch, `rm -rf ~`, dropping a production database, a key sent to an unknown host, a mass email), and anything the phone cannot read with certainty, waits for you; catastrophic ones are denied instead if you choose "If something is too risky: deny it". Runs until you turn it off or until a time you pick, then returns to the mode it interrupted. Turning it on, changing its length and changing "If something is too risky" each ask for your fingerprint, face or screen lock; turning it off does not. Needs a model that rates risk; without one it decides like Auto. [Details](#overnight). |
 | **Bypass** | Approves everything at once, every kind of request (the hard floor below included), for any length from a minute to a year (15 minutes by default), or **until you turn it off**. Only new connections and new phones still ask. A standing permission an AI asks for during it is taken back the moment the bypass ends, however it ends (stopped, run out, locked down, another mode), and says "Ended with the bypass" in Activity; a timed bypass also caps it at its planned end. Turning it on approves what already waits, too. It applies to every AI, whatever mode an AI has of its own, except one locked down. A persistent notification with a countdown (or, without an end, how long it has run) and **Stop** stays up while it is on. Turning it on is a hold, then your fingerprint, face or screen lock. Needs no model, so it answers even when the app is not open. A bypass of a single AI is not available in its first 10 minutes. |
 | **Lockdown** | Denies everything at once, including what is already waiting. New connection requests still reach you. A global Lockdown overrides every connection's own mode. Needs no model. |
@@ -23,8 +23,9 @@ importance.
 
 ## Overnight
 
-Overnight is for letting an agent work while you are away. It decides like Auto (what you taught it, in kinds you
-unlocked, within Auto's limits), and the risky actions Auto always leaves to you are weighed instead: it asks a second
+Overnight is for letting an agent work while you are away. It approves whatever Auto would approve, and, as before the
+cold start, what you taught it in kinds unlocked by their numbers (20 decisions, 95% agreement) or by hand, within
+Auto's limits; and the risky actions Auto always leaves to you are weighed instead: it asks a second
 model output, the **risk**, how bad a request would be if it were a mistake, in its context:
 
 | Risk | Examples | Overnight |
@@ -117,24 +118,44 @@ The model's answer is then blended with your history:
 Autopilot's own automatic decisions are never added to the memory, so it cannot reinforce its own mistakes. When it
 gets something wrong, open the entry in **Activity** (the **Automatic** filter shows its decisions) and tap **This
 was wrong**. The correction counts three times as much as a normal decision, and if it was a wrong approval, that kind
-of request goes back to asking you.
+of request pauses (below).
 
-## How Auto earns trust
+## How Auto decides on its own
 
 Auto works per **kind of request** (service, action and class, for example `github/write/push` or `gmail/read`; a
 harness hook's question is of its guard group, `desktop/ask/env-files`, only when everything its command or file list
 does falls in that group as the phone reads it, else `desktop/ask`; its target is exactly that file, or exactly that
-command in that folder, so a learnt answer never covers another command):
+command in that folder, so a learnt answer never covers another command). There is no break-in period per kind:
 
-- **Auto-approve** unlocks after at least 20 of your decisions of that kind, when Autopilot would have agreed with you
-  at least 95% of the time over the last 50, and never suggested approving something you denied in the last 20.
-- **Auto-deny** unlocks after at least 10 decisions of that kind, when it never suggested denying something you
-  approved in the last 20.
-- A request to a **target it has not seen you approve** (a new repository, a new recipient) is asked, never
-  auto-approved.
+- A request to a **target you have never approved for that AI, in that kind of request** (a new repository, a new
+  recipient, a first read of your mail) always asks, reads included. Once you approve it, Auto can handle that target
+  in that kind from the next request. Approving a read of something never makes a send or a push to it known, and a
+  target you deny asks again.
+- **Auto-approve** works from the first request of a kind, with a stricter bar while your answers to that kind are
+  few: the model must be at least 97% sure (or your profile's own threshold, if stricter). The bar comes down in a
+  straight line to your profile's threshold by 20 answers, as memory and the adapter take over from the base model.
+- **Risk** counts at every stage. Auto never approves what the phone could not read with certainty or what trips one
+  of its certain facts (deleting your home directory, force-pushing the default branch), and never what the risk model
+  rates 30% or more likely severe or catastrophic, not even in a kind you trust by hand. Until your answers show
+  measured agreement (Autopilot's suggestions matched at least 95% of your decisions, over at least 10 of them), it
+  also needs the request rated clearly benign (at least 90% benign, under 5% severe or catastrophic); that requirement
+  eases in a straight line from 10 to 20 agreeing decisions, never below 50% benign. Only your decisions on requests
+  clear of risk, with the model in use, count as agreement: approving requests it held for their risk never releases
+  that hold. Without a model that rates risk, a kind asks until then.
+- **Pushes to the default branch** (or `main`, `master`, `trunk`, `develop`, `production`, `prod`, `release…` when the
+  default is not known) always ask in Auto, whatever the model says; force pushes and branch deletes are on the hard
+  floor. Overnight keeps its own rules for these, and outside the floor it weighs it applies Auto's risk checks too.
+- **Paused:** when you say an automatic approval was wrong (Auto's or Overnight's), or deny something Autopilot would
+  have approved, auto-approve pauses for that kind, and a trust you gave it by hand is taken back. It resumes once the
+  wrong one is out of your last 20 answers there and Autopilot again agrees with at least 95% of what you decided.
+- **Auto-deny** stays cautious: a kind can deny on its own after at least 10 of your decisions, when it never
+  suggested denying something you approved in the last 20. Before that, it denies only what its risk rating is at
+  least 90% sure is catastrophic and its deny probability reaches your threshold.
 - **Rate limit:** at most 30 automatic approvals per connection per 10 minutes, and 200 per day. Beyond that it asks,
   and tells you that it paused for that connection.
-- You can unlock or lock a kind by hand on the profile screen.
+- On the profile screen each kind shows **Auto**, **Asks**, **Paused** or **Locked by you**. You can lock a kind
+  (it always asks) or trust it now (your profile's threshold from the first request, without the cautious start; the
+  risk checks above still apply); a lock always wins.
 
 Thresholds come from a preset per profile:
 

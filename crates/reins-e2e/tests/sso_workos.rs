@@ -47,7 +47,7 @@ async fn mobile_logout_ends_only_its_device_and_next_login_requires_fresh_authen
     let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
     assert_eq!(query["session_id"], workos.sessions()[0]);
     assert_eq!(query["return_to"], format!("{}/reins/signed-out", server.base));
-    assert!(first.core.session().await.is_none());
+    assert!(first.core.session().await.unwrap().is_none());
     let count: i64 =
         db.query_row("SELECT COUNT(*) FROM devices WHERE uuid=?1", [&first_device], |row| row.get(0)).unwrap();
     assert_eq!(count, 0, "server-side access and refresh tokens must be revoked too");
@@ -253,7 +253,7 @@ async fn sso_sign_in_makes_a_keyless_vault_that_follows_workos() {
     assert_eq!(prelogin_iterations(&server, "ada@example.com").await, 600_000);
     // The already signed-in approval phone learns the change through its usual poll, before token expiry.
     first.core.sync(0).await.expect("poll current WorkOS metadata");
-    assert_eq!(first.core.session().await.unwrap().email, "ada@lovelace.dev");
+    assert_eq!(first.core.session().await.unwrap().unwrap().email, "ada@lovelace.dev");
     let accounts = first.core.accounts().await.unwrap();
     assert!(accounts.iter().any(|a| a.service == "vault" && a.account == "ada@lovelace.dev"));
     assert!(!accounts.iter().any(|a| a.service == "vault" && a.account == "ada@example.com"));
@@ -447,14 +447,14 @@ async fn deleting_the_account_in_the_app_deletes_its_workos_user_too() {
     assert!(matches!(&down, CoreError::Invalid { reason } if reason.contains("nothing was deleted")), "{down:?}");
     assert_eq!(workos.deleted_users(), Vec::<String>::new());
     assert_eq!(prelogin_iterations(&server, &hedy.email).await, 100_000, "the account is still there");
-    assert!(phone.core.session().await.is_some());
+    assert!(phone.core.session().await.unwrap().is_some());
     phone.core.sync(0).await.expect("still the approval device");
 
     workos.fail_deletes(false);
     phone.core.delete_account(" Hedy@Example.com ".to_owned()).await.expect("deleted");
     assert_eq!(workos.deleted_users(), [hedy.id.as_str()]);
     assert_eq!(prelogin_iterations(&server, &hedy.email).await, 600_000, "the account is gone");
-    assert!(phone.core.session().await.is_none());
+    assert!(phone.core.session().await.unwrap().is_none());
     assert_eq!(sealed_accounts(phone.data_dir()), 0, "and so is the phone's encrypted copy");
     assert!(matches!(other.core.register_device(None).await, Err(CoreError::NotLoggedIn)));
     let db = rusqlite::Connection::open(server.database_path()).unwrap();

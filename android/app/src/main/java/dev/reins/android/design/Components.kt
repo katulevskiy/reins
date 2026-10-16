@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
@@ -817,6 +818,8 @@ fun RTextField(
     singleLine: Boolean = true,
     password: Boolean = false,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    /** Puts the cursor in the field when asked (the name of a second account of the same AI). */
+    focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     val c = LocalColors.current
     val style = if (mono) RType.mono(14.5f) else RType.sans(16f)
@@ -830,7 +833,9 @@ fun RTextField(
         BasicTextField(
             value,
             onChange,
-            Modifier.fillMaxWidth().then(if (tag != null) Modifier.testTag(tag) else Modifier),
+            Modifier.fillMaxWidth()
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .then(if (tag != null) Modifier.testTag(tag) else Modifier),
             enabled = enabled,
             textStyle = style.copy(color = c.text),
             cursorBrush = SolidColor(c.accent),

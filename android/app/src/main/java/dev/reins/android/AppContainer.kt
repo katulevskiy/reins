@@ -49,6 +49,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicLong
@@ -170,12 +171,58 @@ class AppContainer(private val context: Context) {
         ).also { it.setModelRuntime(modelRuntime) }
     }
 
+    /**
+     * The signed-in session, or null when signed out. A read that fails (the store is busy, or the core failed) is
+     * tried again a few times, then thrown. That failure says nothing about who is signed in: the caller keeps the
+     * previous state and does not show the sign-in screen.
+     */
+    internal suspend fun readSession(): SessionInfo? = retryCoreRead { core.session() }
+
+    /** Tries [block] a few times. The last failure is thrown; it is not turned into an empty result. */
+    private suspend fun <T> retryCoreRead(block: suspend () -> T): T {
+        var waitMs = SESSION_RETRY_MS
+        var last: Exception = IllegalStateException("core read failed")
+        repeat(SESSION_READ_ATTEMPTS) { attempt ->
+            try {
+                return block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                last = e
+                if (attempt < SESSION_READ_ATTEMPTS - 1) {
+                    delay(waitMs)
+                    waitMs *= 2
+                }
+            }
+        }
+        throw last
+    }
+
+    /**
+     * Whether a fresh read is still [info] (null: signed out). A failed read is false: not a different session, and
+     * not signed out.
+     */
+    private suspend fun sessionMatches(epoch: Long, info: SessionInfo?): Boolean {
+        if (!state.isCurrent(epoch)) return false
+        val current = try {
+            readSession()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return false
+        }
+        return state.isCurrent(epoch) && current == info
+    }
+
     suspend fun refreshSession() {
         val epoch = state.accountEpoch.value
         val info = try {
-            core.session()
-        } catch (e: CoreException) {
-            null
+            readSession()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A busy or failed store says nothing about the session: keep what is already on screen.
+            return
         }
         if (!state.isCurrent(epoch)) return
         if (info != null) {
@@ -206,7 +253,8 @@ class AppContainer(private val context: Context) {
                     onboarding.isPending(info), deviceStatus.needsTakeover())
             }
             // Stage every secret locally until the final identity check; no partially refreshed UI belongs to another login.
-            if (!state.isCurrent(epoch) || core.session() != info || !state.isCurrent(epoch)) return
+            // A failed re-read keeps the previous state: it is not a sign-out.
+            if (!sessionMatches(epoch, info)) return
             state.setSession(SessionState.SignedIn(info)) {
                 state.setRecoveryToRecord(if (needsRecording) code else null)
                 state.setVaultPasskeyOffer(offerPasskey)
@@ -218,7 +266,7 @@ class AppContainer(private val context: Context) {
                 state.setApprovalTakeover(device.takeover)
             }
         } else {
-            if (!state.isCurrent(epoch) || core.session() != null || !state.isCurrent(epoch)) return
+            if (!sessionMatches(epoch, null)) return
             state.setSession(SessionState.SignedOut)
         }
         state.markSessionChecked()
@@ -229,11 +277,11 @@ class AppContainer(private val context: Context) {
         }
     }
 
-    /** The core's sync notice, if any (a banner on Activity). One already shown stays until it is dismissed. */
+    /** The core's sync notice, if any (a banner on Activity). A failed read leaves the one already shown. */
     suspend fun refreshSyncNotice() {
         val epoch = state.accountEpoch.value
         val notice = try {
-            core.accountSyncNotice()
+            retryCoreRead { core.accountSyncNotice() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -534,7 +582,8 @@ class AppContainer(private val context: Context) {
      */
     suspend fun registerDevice(force: Boolean) {
         val epoch = state.accountEpoch.value
-        val info = core.session() ?: return
+        // A failed read throws and changes nothing. Null is signed out: there is no device to register.
+        val info = readSession() ?: return
         val keysOpen = core.accountKeys() != AccountKeys.LOCKED
         val (replaced, locked) = withContext(Dispatchers.IO) {
             deviceStatus.selectAccount(info)
@@ -546,11 +595,10 @@ class AppContainer(private val context: Context) {
         try {
             core.registerDevice(token)
         } catch (e: CoreException.OtherApprovalDevice) {
-            if (!state.isCurrent(epoch) || core.session() != info) throw e
-            setApprovalTakeover(true)
+            if (sessionMatches(epoch, info)) setApprovalTakeover(true)
             throw e
         }
-        if (!state.isCurrent(epoch) || core.session() != info) return
+        if (!sessionMatches(epoch, info)) return
         withContext(Dispatchers.IO) {
             deviceStatus.setReplaced(false)
             deviceStatus.setApprovalDevice(true)
@@ -637,6 +685,9 @@ class AppContainer(private val context: Context) {
     private companion object {
         const val ACTIVITY_LIMIT = 300u
         const val FOCUS_REFRESH_MS = 2_000L
+        /** How many times a session read is tried, and the first wait between tries (the next wait is twice as long). */
+        const val SESSION_READ_ATTEMPTS = 3
+        const val SESSION_RETRY_MS = 400L
     }
 
     /** Runs [block] and lets cancellation through; every other failure is reported to [onError]. */
