@@ -93,6 +93,12 @@ impl MockServer {
     pub fn requests(&self) -> Vec<Recorded> {
         self.requests.lock().unwrap().clone()
     }
+
+    /// The requests that did not come from a local port prober: tools on a developer's machine may send `HEAD /`
+    /// to every new local port, which the server under test never does.
+    pub fn requests_not_probes(&self) -> Vec<Recorded> {
+        self.requests().into_iter().filter(|r| !(r.method == "HEAD" && r.path == "/")).collect()
+    }
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {

@@ -26,7 +26,7 @@ func findConnection(_ connections: [ConnectionView], id: String, label: String) 
     return named.count == 1 ? named[0] : nil
 }
 
-/// An AI connection's avatar, with the icon the user picked for it.
+/// A connection's avatar as it shows everywhere, looked up by id; the one its name suggests when it is gone.
 struct ConnectionIcon: View {
     var connectionId: String
     var label: String
@@ -34,11 +34,11 @@ struct ConnectionIcon: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        ConnectionAvatar(
-            label: untrusted(label),
-            pick: findConnection(model.connections, id: connectionId, label: label)?.icon,
-            size: size
-        )
+        if let connection = findConnection(model.connections, id: connectionId, label: label) {
+            ConnectionAvatar(connection: connection, size: size)
+        } else {
+            ConnectionAvatar(label: untrusted(label), pick: nil, size: size)
+        }
     }
 }
 
@@ -100,14 +100,26 @@ enum EntryText {
     }
 
     /// "TODAY", "YESTERDAY", else the date ("Mon, Oct 12").
-    static func day(_ start: Date, now: Date) -> String {
-        let calendar = Calendar.current
+    static func day(_ start: Date, now: Date, calendar: Calendar = .current) -> String {
         if calendar.isDate(start, inSameDayAs: now) { return "Today" }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(start, inSameDayAs: yesterday) { return "Yesterday" }
         let sameYear = calendar.component(.year, from: start) == calendar.component(.year, from: now)
         return sameYear
             ? start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
             : start.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    /// The line under a row's title: who asked and when, "M2A · 5 min ago"; with the agent that asked on it when it
+    /// named itself, "Claude Code · M2A · 5 min ago".
+    static func byline(_ entry: ActivityEntry, now: Int64) -> String {
+        byline(label: entry.connectionLabel, agent: entry.request?.agent, time: time(entry.at, now: now))
+    }
+
+    static func byline(label: String, agent: String?, time: String) -> String {
+        let label = untrusted(label)
+        let agent = untrusted(agent ?? "").trimmingCharacters(in: .whitespaces)
+        let who = agent.isEmpty || agent == label ? [label] : [agent, label]
+        return (who.filter { !$0.isEmpty } + [time]).joined(separator: " · ")
     }
 
     /// The time on the row: "5 min ago" today, "18:20" before.
@@ -118,8 +130,7 @@ enum EntryText {
     }
 
     /// The entries by day, newest first, keeping their order.
-    static func days(_ entries: [ActivityEntry]) -> [(day: Date, entries: [ActivityEntry])] {
-        let calendar = Calendar.current
+    static func days(_ entries: [ActivityEntry], calendar: Calendar = .current) -> [(day: Date, entries: [ActivityEntry])] {
         var out: [(day: Date, entries: [ActivityEntry])] = []
         for entry in entries {
             let day = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(entry.at)))
@@ -213,6 +224,10 @@ struct HistoryRow: View {
     var selected = false
     var glowing = false
     var now: Int64 = Timers.nowSeconds()
+    /// The words a search found: set apart in the title.
+    var terms: [String] = []
+    /// Where the search matched outside the title, as one line under the row.
+    var snippet: ActivitySnippet? = nil
 
     var body: some View {
         let field = EntryLook.field(entry)
@@ -222,7 +237,7 @@ struct HistoryRow: View {
                 .foldTile(entry.id)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                AskRunsText(runs: line.runs, size: 18)
+                AskRunsText(runs: line.runs, size: 18, terms: terms)
                     .foregroundStyle(Palette.ink)
                     .lineLimit(2)
                     .accessibilityLabel(line.text)
@@ -235,12 +250,18 @@ struct HistoryRow: View {
                         .environment(\.layoutDirection, .leftToRight)
                         .accessibilityIdentifier("entryDetails:\(entry.id)")
                 }
-                Text("\(untrusted(entry.connectionLabel)) · \(EntryText.time(entry.at, now: now))")
+                Text(EntryText.byline(entry, now: now))
                     .textRole(.meta)
                     .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
                 if let risk = entry.autopilot?.risk, RiskLook.listed(risk) {
                     RiskLine(risk: risk)
+                }
+                if let snippet {
+                    Text(ActivitySearchText.snippet(snippet))
+                        .lineLimit(2)
+                        .padding(.top, 2)
+                        .accessibilityIdentifier("snippet:\(entry.id)")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

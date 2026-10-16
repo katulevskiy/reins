@@ -206,6 +206,7 @@ async fn a_gzip_push_body_is_read_for_approval_and_forwarded_as_sent() {
     let pack = std::process::Command::new("git")
         .current_dir(home.path("priv"))
         .args(["pack-objects", "--stdout", "--revs", "-q"])
+        .envs(reins_desktop::config::home_env(home.dir.path()))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()

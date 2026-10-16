@@ -26,50 +26,8 @@ enum ActivityText {
         }
     }
 
-    /// The irregular and common verbs a request starts with, in the past: what was done reads as done ("Pushed 3
-    /// commits"); what was denied keeps its ask ("Delete branch old/experiment").
-    private static let pastTense: [String: String] = [
-        "push": "Pushed", "read": "Read", "send": "Sent", "search": "Searched", "delete": "Deleted", "create": "Created",
-        "use": "Used", "open": "Opened", "list": "Listed", "share": "Shared", "write": "Wrote", "run": "Ran", "make": "Made",
-        "add": "Added", "update": "Updated", "comment": "Commented", "merge": "Merged", "close": "Closed", "connect": "Connected",
-        "see": "Saw", "get": "Got", "give": "Gave", "hand": "Handed", "move": "Moved", "change": "Changed", "edit": "Edited",
-        "remove": "Removed", "reply": "Replied", "forward": "Forwarded", "archive": "Archived", "label": "Labelled",
-        "fetch": "Fetched", "upload": "Uploaded", "download": "Downloaded", "sign": "Signed", "release": "Released",
-    ]
-
-    /// `lead` in the past when the entry was done: its first word, if it is a verb this knows.
-    static func past(_ lead: String) -> String {
-        let space = lead.firstIndex(of: " ") ?? lead.endIndex
-        let first = String(lead[..<space])
-        guard let done = pastTense[first.lowercased()] else { return lead }
-        return done + lead[space...]
-    }
-
     /// An entry that went through (not denied, not failed) reads in the past.
     static func done(_ entry: ActivityEntry) -> Bool { entry.outcome != "denied" && entry.outcome != "error" }
-
-    /// The entries a filter and an AI keep (`connection` "" for any AI): a filter of what is loaded, nothing asked of the core.
-    static func filtered(_ entries: [ActivityEntry], filter: ActivityFilter, connection: String) -> [ActivityEntry] {
-        guard filter != .all || !connection.isEmpty else { return entries }
-        return entries.filter { (filter == .all || filter.keeps($0)) && (connection.isEmpty || $0.connectionId == connection) }
-    }
-
-    /// The AIs in the history, newest first, once each: (connection id, its name).
-    static func ais(_ entries: [ActivityEntry]) -> [(id: String, name: String)] {
-        var seen: Set<String> = []
-        var out: [(id: String, name: String)] = []
-        for e in entries where !e.connectionId.isEmpty && seen.insert(e.connectionId).inserted {
-            out.append((e.connectionId, untrusted(e.connectionLabel)))
-        }
-        return out
-    }
-
-    /// The river's count for a day: "12 asked · 9 by Autopilot" ("" for none).
-    static func dayCount(_ entries: [ActivityEntry]) -> String {
-        guard !entries.isEmpty else { return "" }
-        let auto = entries.filter { !$0.decidedBy.isEmpty }.count
-        return auto == 0 ? "\(entries.count) asked" : "\(entries.count) asked · \(auto) by Autopilot"
-    }
 
     /// The label line of a waiting card: "Gmail · Send" (set in mono capitals), from the core's provider and action.
     static func label(_ item: PendingItem) -> String { AskLabels.pending(item, field: field(item, danger: false)).kind }

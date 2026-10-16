@@ -86,6 +86,9 @@ pub struct Root {
     branch_fields: Vec<FocusHandle>,
     /// The secrets review's field for the phone key's digits.
     phone_key_field: FocusHandle,
+    /// The secrets review's list (only the rows in view are drawn), and the rows it was made for.
+    scan_list: gpui::ListState,
+    scan_list_of: usize,
     /// Activity's filters: one outcome, one kind (`None`: all), and whether their popover is open.
     outcome_filter: Option<Outcome>,
     kind_filter: Option<Kind>,
@@ -161,6 +164,8 @@ struct Data {
     /// This computer's name, and its machine project.
     computer: String,
     machine: String,
+    /// The name the phone shows for this computer.
+    shown_as: String,
     /// `--demo`, and the gallery showing.
     demo: bool,
     gallery: bool,
@@ -195,6 +200,7 @@ impl Data {
             secrets: m.secrets.clone(),
             computer: m.computer.clone(),
             machine: m.machine.clone(),
+            shown_as: m.shown_as.clone(),
             demo: m.demo(),
             gallery: false,
         }
@@ -275,6 +281,8 @@ impl Root {
             session_reason: cx.focus_handle(),
             branch_fields: Vec::new(),
             phone_key_field: cx.focus_handle(),
+            scan_list: gpui::ListState::new(0, gpui::ListAlignment::Top, px(600.0)),
+            scan_list_of: 0,
             outcome_filter: None,
             kind_filter: None,
             filter_open: demo_var("REINS_DEMO_FILTER").is_some(),

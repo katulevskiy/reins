@@ -14,10 +14,9 @@ final class ActivityFlowTests: XCTestCase {
         app.launch()
         // The first launch of a run can race xcodebuild still installing the app, which then comes up again without
         // these arguments (on the real sign-in screen): once, launch it again, and say so in the log. The demo shows
-        // its tab bar, or a linked item's sheet over it.
+        // its Activity tab (Signal's own bar, not a system tab bar), or a linked item's sheet over it.
         let demo = app.descendants(matching: .any).matching(NSPredicate(
-            format: "elementType == %d OR identifier IN %@",
-            XCUIElement.ElementType.tabBar.rawValue, ["approvalSheet", "pairingSheet", "uploadSheet"]
+            format: "identifier IN %@", ["tab:activity", "approvalSheet", "pairingSheet", "uploadSheet"]
         )).firstMatch
         if !demo.waitForExistence(timeout: 20) {
             XCTContext.runActivity(named: "Relaunching: the demo's first screen did not appear") { activity in
@@ -193,6 +192,30 @@ final class ActivityFlowTests: XCTestCase {
         shot(app, "activity-pairing-picked")
         element(app, "approve").tap()
         XCTAssertTrue(element(app, "pairingSheet").waitForNonExistence(timeout: 5))
+    }
+
+    /// The river by day: today open, earlier days folded until their header is tapped; words typed search the history
+    /// and the matches replace the stack; a filter alone searches too.
+    func testTheRiverFoldsByDayAndSearches() {
+        let app = launch(extra: ["-demoQuiet"])
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        let today = element(app, String(format: "day:%04d-%02d-%02d", c.year!, c.month!, c.day!))
+        expectToAppear(today)
+        XCTAssertEqual(today.value as? String, "Expanded")
+        let search = element(app, "activitySearch")
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Dinner")
+        expectToAppear(element(app, "searchResults"))
+        XCTAssertFalse(element(app, "pond").exists, "searching hides the stack")
+        shot(app, "activity-search")
+        element(app, "clearSearch").tap()
+        expectToAppear(element(app, "pond"))
+        element(app, "filterToggle").tap()
+        element(app, "filter:outcome").tap()
+        element(app, "filter:denied").tap()
+        expectToAppear(element(app, "searchResults"))
+        shot(app, "activity-filtered")
     }
 
     func testAnEntryOpensAndAnEmailInItOpensInFull() {
@@ -399,5 +422,74 @@ final class ActivityFlowTests: XCTestCase {
         element(app, "deny").tap()
         XCTAssertTrue(element(app, "uploadSheet").waitForNonExistence(timeout: 5))
         XCTAssertFalse(element(app, "pending:blob_q3numbers").exists)
+    }
+
+    // MARK: A push decided on another device
+
+    /// Opens a synced push's first commit: its changes were not kept on this iPhone, and Load from GitHub brings them.
+    private func openSyncedCommit(_ extra: String) -> XCUIApplication {
+        let app = launch("reins://activity?id=14", extra: [extra])
+        let commits = element(app, "gitCommits:0")
+        expectToAppear(commits, timeout: 15)
+        commits.tap()
+        let first = element(app, "gitCommit:0:0")
+        expectToAppear(first, timeout: 5)
+        first.tap()
+        expectToAppear(element(app, "diffNotKept"), timeout: 5)
+        return app
+    }
+
+    func testAPushFromAnotherDeviceLoadsItsDiffFromGitHub() {
+        let app = openSyncedCommit("-demoSyncedPush")
+        shot(app, "synced-not-kept")
+        element(app, "loadDiff").tap()
+        XCTAssertTrue(element(app, "diffNotKept").waitForNonExistence(timeout: 8), "loaded, the note goes")
+        element(app, "commitFile:0").tap()
+        expectToAppear(element(app, "commitFile:0:diff"), timeout: 5)
+        shot(app, "synced-loaded")
+    }
+
+    func testALoadThatFailsSaysWhyAndOffersRetry() {
+        let app = openSyncedCommit("-demoSyncedPushFails")
+        element(app, "loadDiff").tap()
+        expectToAppear(element(app, "retryDiff"), timeout: 8)
+        XCTAssertTrue(element(app, "diffLoadError").exists)
+        shot(app, "synced-retry")
+    }
+
+    // MARK: Loosening needs a tap
+
+    /// From Lockdown, a press on the mode chip that slides onto Manual or Auto and lifts changes nothing: the menu stays
+    /// open, and only a tap on the row ends the lockdown.
+    func testALooseningModeIsNeverPickedByASlide() {
+        let app = launch(extra: ["-demoMode", "lockdown"])
+        let pill = element(app, "modePill")
+        expectToAppear(pill)
+        XCTAssertTrue(pill.label.contains("Lockdown"), pill.label)
+        for row in ["quick:MANUAL", "quick:AUTO"] {
+            // Where the row sits once the menu is open; then closed again.
+            pill.tap()
+            let target = element(app, row)
+            expectToAppear(target, timeout: 5)
+            let onRow = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: target.frame.midX, dy: target.frame.midY))
+            element(app, "quickScrim").tap()
+            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
+            // One gesture from the closed chip: press until the menu opens, slide onto the row, lift.
+            let start = pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.6, thenDragTo: onRow, withVelocity: .slow, thenHoldForDuration: 0.2)
+            XCTAssertTrue(element(app, "autopilotQuick").waitForExistence(timeout: 2), "the menu stays open (\(row))")
+            XCTAssertTrue(pill.label.contains("Lockdown"), "still locked down after a slide onto \(row)")
+            element(app, "quickScrim").tap()
+            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
+        }
+        // A tap on the row, once the menu is open, does it.
+        pill.tap()
+        let manual = element(app, "quick:MANUAL")
+        expectToAppear(manual, timeout: 5)
+        shot(app, "lockdown-menu")
+        manual.tap()
+        XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
+        let unlocked = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'Manual'"), object: pill)
+        XCTAssertEqual(XCTWaiter().wait(for: [unlocked], timeout: 5), .completed, "a tap ended the lockdown: \(pill.label)")
     }
 }

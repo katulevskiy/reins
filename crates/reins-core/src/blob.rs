@@ -392,7 +392,7 @@ pub fn blob_view(info: &BlobInfo) -> BlobView {
     };
     BlobView {
         id: info.id.0.clone(),
-        connection_label: text::truncate_chars(&text::one_line(&info.connection_label), 64),
+        connection_label: crate::avatar::shown_label(&info.connection_label),
         name: clean_name(&info.name),
         size: info.size,
         content_type: text::one_line(&info.content_type),

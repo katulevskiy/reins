@@ -31,6 +31,9 @@ struct SignalMenuItem: Identifiable, Equatable {
     /// The row opens something further (a chevron).
     var more = false
     var enabled = true
+    /// Picked only by a tap on the row once the menu is open, never by sliding onto it from the trigger and lifting: a
+    /// change that loosens control (Auto, ending a lockdown) or stops what runs (a bypass, an Overnight).
+    var tapOnly = false
 }
 
 /// The open menu, kept by the host.
@@ -40,6 +43,11 @@ final class SignalMenuController {
         var trigger: String
         var items: [SignalMenuItem]
         var selected: String?
+        /// The rows ticked in a menu that picks several (Activity's filters); `selected` is the one of a menu that
+        /// picks one.
+        var chosen: Set<String> = []
+        /// A pick ticks or unticks its row and the menu stays open (a menu that picks several).
+        var staysOpen = false
         /// The open menu's and its scrim's accessibility identifiers.
         var identifier = "signalMenu"
         var scrimIdentifier = "menuScrim"
@@ -107,7 +115,7 @@ private struct SignalMenuHost: ViewModifier {
                                 ? min(max(trigger.maxX - width, 12), geo.size.width - width - 12)
                                 : min(max(trigger.minX, 12), geo.size.width - width - 12)
                             // Below the trigger, unless it sits low: then it grows upward.
-                            let estimate = CGFloat(open.items.count) * 56 + 12
+                            let estimate = min(CGFloat(open.items.count) * 56, SignalMenuPanel.tallest) + 12
                             let up = trigger.maxY + 8 + estimate > geo.size.height && trigger.minY - 8 - estimate > 0
                             SignalMenuCard(controller: controller, open: open, onPick: pick)
                                 .frame(width: width)
@@ -129,7 +137,7 @@ private struct SignalMenuHost: ViewModifier {
     private func pick(_ item: SignalMenuItem) {
         guard let open = controller.open else { return }
         feedback.play(.selection)
-        close()
+        if !open.staysOpen { close() }
         open.onPick(item.id)
     }
 
@@ -145,7 +153,7 @@ private struct SignalMenuCard: View {
     var onPick: (SignalMenuItem) -> Void
 
     var body: some View {
-        SignalMenuPanel(items: open.items, selected: open.selected, hovered: controller.hovered, onPick: onPick) { id, frame in
+        SignalMenuPanel(items: open.items, selected: open.selected, chosen: open.chosen, hovered: controller.hovered, onPick: onPick) { id, frame in
             controller.rows[id] = frame
         }
         .accessibilityIdentifier(open.identifier)
@@ -157,23 +165,47 @@ private struct SignalMenuCard: View {
 struct SignalMenuPanel: View {
     var items: [SignalMenuItem]
     var selected: String?
+    /// The rows ticked in a menu that picks several.
+    var chosen: Set<String> = []
     var hovered: String? = nil
     var onPick: (SignalMenuItem) -> Void = { _ in }
     /// Where each row is, in the host's space.
     var onRowFrame: ((String, CGRect) -> Void)? = nil
 
+    /// A longer menu scrolls within this height (about seven rows and a half, so the cut row says there is more).
+    static let tallest: CGFloat = 400
+
     var body: some View {
+        Group {
+            if items.count > 7 {
+                ScrollView { rows }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight: Self.tallest)
+            } else {
+                rows
+            }
+        }
+        .padding(6)
+        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
+        // 0 24 48 -16 rgba(10, 10, 20, .35), without the negative spread SwiftUI can't draw.
+        .shadow(color: Color(red: 10 / 255, green: 10 / 255, blue: 20 / 255).opacity(0.22), radius: 18, y: 18)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var rows: some View {
         VStack(spacing: 0) {
             ForEach(items) { item in
+                let on = item.id == selected || chosen.contains(item.id)
                 if item.separated {
                     Rectangle().fill(Palette.rule).frame(height: 1).padding(.horizontal, 10).padding(.vertical, 4)
                 }
                 Button { onPick(item) } label: {
-                    SignalMenuRow(item: item, selected: item.id == selected, hovered: item.id == hovered)
+                    SignalMenuRow(item: item, selected: on, hovered: item.id == hovered)
                 }
                 .buttonStyle(PressDimsStyle())
                 .disabled(!item.enabled)
-                .accessibilityAddTraits(item.id == selected ? .isSelected : [])
+                .accessibilityAddTraits(on ? .isSelected : [])
                 .accessibilityIdentifier(item.id)
                 .background {
                     if let onRowFrame {
@@ -187,12 +219,6 @@ struct SignalMenuPanel: View {
                 }
             }
         }
-        .padding(6)
-        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
-        // 0 24 48 -16 rgba(10, 10, 20, .35), without the negative spread SwiftUI can't draw.
-        .shadow(color: Color(red: 10 / 255, green: 10 / 255, blue: 20 / 255).opacity(0.22), radius: 18, y: 18)
-        .accessibilityElement(children: .contain)
     }
 }
 
@@ -258,13 +284,16 @@ extension View {
 
     /// Makes this view the trigger of a Signal menu: a tap opens or closes it; pressing a moment and sliding onto a row
     /// picks it when the finger lifts, with a select tick for each row crossed; a finger that moves at once scrolls the
-    /// page instead. Needs a `signalMenuHost()` above it.
+    /// page instead. A `tapOnly` row is never picked by a slide: only a tap on it, once the menu is open. Needs a
+    /// `signalMenuHost()` above it. `chosen` and `staysOpen`: a menu that picks several, its ticked rows; a tap on a row
+    /// ticks or unticks it and the menu stays open.
     func signalMenu(
-        id: String, items: [SignalMenuItem], selected: String? = nil, identifier: String = "signalMenu",
-        scrimIdentifier: String = "menuScrim", onPick: @escaping (String) -> Void
+        id: String, items: [SignalMenuItem], selected: String? = nil, chosen: Set<String> = [], staysOpen: Bool = false,
+        identifier: String = "signalMenu", scrimIdentifier: String = "menuScrim", onPick: @escaping (String) -> Void
     ) -> some View {
         modifier(SignalMenuTrigger(
-            id: id, items: items, selected: selected, identifier: identifier, scrimIdentifier: scrimIdentifier, onPick: onPick
+            id: id, items: items, selected: selected, chosen: chosen, staysOpen: staysOpen, identifier: identifier,
+            scrimIdentifier: scrimIdentifier, onPick: onPick
         ))
     }
 }
@@ -273,6 +302,8 @@ private struct SignalMenuTrigger: ViewModifier {
     var id: String
     var items: [SignalMenuItem]
     var selected: String?
+    var chosen: Set<String>
+    var staysOpen: Bool
     var identifier: String
     var scrimIdentifier: String
     var onPick: (String) -> Void
@@ -299,6 +330,16 @@ private struct SignalMenuTrigger: ViewModifier {
             .accessibilityAction {
                 controller?.toggle(open)
             }
+            // A menu that stays open shows what a pick changed.
+            .onChange(of: Refresh(items: items, selected: selected, chosen: chosen)) {
+                if let controller, controller.open?.trigger == id { controller.open = open }
+            }
+    }
+
+    private struct Refresh: Equatable {
+        var items: [SignalMenuItem]
+        var selected: String?
+        var chosen: Set<String>
     }
 
     /// The finger stayed on the trigger: the menu opens under it, ready for a slide.
@@ -318,7 +359,8 @@ private struct SignalMenuTrigger: ViewModifier {
         guard let controller, let start = pressedAt else { return }
         guard (point.y - start.y).magnitude > 8 || sliding else { return }
         sliding = true
-        let row = controller.row(at: point)?.id
+        // A row a slide cannot pick is not lit by one either.
+        let row = controller.row(at: point).flatMap { $0.tapOnly ? nil : $0.id }
         if row != controller.hovered {
             controller.hovered = row
             if row != nil { feedback.play(.selection) }
@@ -336,6 +378,11 @@ private struct SignalMenuTrigger: ViewModifier {
             return
         }
         if sliding, let row = controller.row(at: point) {
+            guard !row.tapOnly else {
+                // Lifted on a row that needs a tap: the menu stays open for one, and nothing changes.
+                controller.hovered = nil
+                return
+            }
             feedback.play(.selection)
             controller.close()
             onPick(row.id)
@@ -355,7 +402,8 @@ private struct SignalMenuTrigger: ViewModifier {
 
     private var open: SignalMenuController.Open {
         SignalMenuController.Open(
-            trigger: id, items: items, selected: selected, identifier: identifier, scrimIdentifier: scrimIdentifier, onPick: onPick
+            trigger: id, items: items, selected: selected, chosen: chosen, staysOpen: staysOpen, identifier: identifier,
+            scrimIdentifier: scrimIdentifier, onPick: onPick
         )
     }
 }

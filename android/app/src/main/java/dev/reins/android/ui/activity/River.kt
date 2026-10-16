@@ -1,6 +1,7 @@
 package dev.reins.android.ui.activity
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,7 +32,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.runtime.Immutable
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.sp
+import dev.reins.core.ActivitySnippet
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,7 +54,6 @@ import dev.reins.android.design.MenuItem
 import dev.reins.android.design.Motion
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
-import dev.reins.android.design.SignalChip
 import dev.reins.android.design.SignalMenu
 import dev.reins.android.design.StatusWord
 import dev.reins.android.design.hairlineBelow
@@ -62,6 +68,13 @@ import dev.reins.android.ui.common.askSentence
 import dev.reins.android.ui.common.untrusted
 import dev.reins.core.ActivityEntry
 import dev.reins.core.ConnectionView
+import dev.reins.core.ActivityDecider
+import dev.reins.core.ActivityFacets
+import dev.reins.core.ActivityOutcome
+import dev.reins.android.state.ActivitySearch
+import dev.reins.android.state.ActivityWindow
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import kotlin.math.roundToInt
 
 // The river (Reins Signal, iOS-Activity 01, 02 and 04): what was decided, as paper rows. A kind tile, what it did,
@@ -78,13 +91,54 @@ fun DayLabel(label: String, count: String?, modifier: Modifier = Modifier) {
 }
 
 /**
+ * A day of the river that opens and closes: its label in mono capitals, its count and what went wrong ("14 · 2
+ * denied"), and a chevron that turns as it opens. A heading that says whether it is open.
+ */
+@Composable
+fun DayHeader(day: DayCount, label: String, open: Boolean, modifier: Modifier = Modifier, onToggle: () -> Unit) {
+    val c = LocalColors.current
+    val reduce = LocalReduceMotion.current
+    val turn by animateFloatAsState(if (open) 0f else -90f, if (reduce) Motion.reduced() else Motion.fold(false), label = "dayChevron")
+    Row(
+        modifier
+            .fillMaxWidth()
+            .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), label = if (open) "Collapse" else "Expand", onClick = onToggle)
+            .semantics(mergeDescendants = true) {
+                heading()
+                contentDescription = "$label, ${daySpoken(day)}"
+                stateDescription = if (open) "Expanded" else "Collapsed"
+            }
+            .testTag("day:${day.day}")
+            .padding(start = 24.dp, end = 20.dp, top = 22.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LabelText(label, if (open) c.inkMeta else c.ink2, Modifier.weight(1f))
+        RText(daySummary(day), RType.meta, c.inkMeta, Modifier.testTag("daySummary:${day.day}"), maxLines = 1)
+        GlyphIcon(Glyph.ChevronDown, c.inkFaint, size = 14.dp, modifier = Modifier.graphicsLayer { rotationZ = turn })
+    }
+}
+
+/**
  * One decided entry: its kind tile, what it did (the row's words), who and when (and "under a grant", Autopilot's
  * share when filtering by it), and how it ended. [landed]: the fold just put it here; its tile is the solid field and
  * the row glows faintly, then both settle to paper.
  */
 @Composable
-fun RiverRow(entry: ActivityEntry, nowSeconds: Long, landed: Boolean, showShare: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun RiverRow(
+    entry: ActivityEntry,
+    nowSeconds: Long,
+    landed: Boolean,
+    showShare: Boolean,
+    modifier: Modifier = Modifier,
+    /** Words searched (lower case): set apart where the title and who asked match them. */
+    terms: List<String> = emptyList(),
+    /** Where a search matched outside what the row shows: one more line under it. */
+    snippet: ActivitySnippet? = null,
+    onClick: () -> Unit,
+) {
     val c = LocalColors.current
+    val hit = matchStyle()
     val reduce = LocalReduceMotion.current
     val sentence = remember(entry) { askSentence(entry) }
     val field = actionField(sentence.action)
@@ -129,9 +183,11 @@ fun RiverRow(entry: ActivityEntry, nowSeconds: Long, landed: Boolean, showShare:
                     detailsMaxLines = 1,
                     tag = "entryTitle:${entry.id}",
                     detailsTag = "entryDetails:${entry.id}",
+                    terms = terms,
+                    highlight = hit.title,
                 )
                 val meta = buildAnnotatedString {
-                    append(untrusted(entry.connectionLabel))
+                    append(AnnotatedString(untrusted(entry.connectionLabel)).highlighted(terms, hit.text))
                     append(" · ")
                     append(rowTime(entry.at, nowSeconds))
                     if (entry.grantId != null && entry.decidedBy.isEmpty()) append(" · under a grant")
@@ -139,6 +195,7 @@ fun RiverRow(entry: ActivityEntry, nowSeconds: Long, landed: Boolean, showShare:
                     if (landed) withStyle(SpanStyle(color = c.violet)) { append(" · ${outcomeLine(entry)}") }
                 }
                 androidx.compose.material3.Text(meta, color = c.inkMeta, style = RType.meta, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                snippet?.let { SnippetLine(it, hit, Modifier.padding(top = 3.dp).testTag("snippet:${entry.id}")) }
                 entry.autopilot?.risk?.takeIf { AutopilotText.riskWorthListing(it) }?.let { risk ->
                     dev.reins.android.ui.autopilot.RiskChip(risk, Modifier.padding(top = 4.dp).testTag("rowRisk:${entry.id}"), small = true)
                 }
@@ -146,6 +203,37 @@ fun RiverRow(entry: ActivityEntry, nowSeconds: Long, landed: Boolean, showShare:
             OutcomeEnd(outcomeOf(entry), Modifier.testTag("outcome:${entry.id}"))
         }
     }
+}
+
+/** How a match is set apart: a soft violet wash, and never by colour alone (an underline in the serif, weight elsewhere). */
+@Immutable
+data class MatchStyle(val title: SpanStyle, val text: SpanStyle)
+
+@Composable
+fun matchStyle(): MatchStyle {
+    val c = LocalColors.current
+    return remember(c) {
+        val wash = c.violet.copy(alpha = if (c.dark) 0.24f else 0.14f)
+        MatchStyle(
+            title = SpanStyle(background = wash, textDecoration = TextDecoration.Underline),
+            text = SpanStyle(color = c.ink, fontWeight = FontWeight.SemiBold, background = wash),
+        )
+    }
+}
+
+/** Where a search matched outside the row: the field in tiny mono capitals, then the words, the matches set apart. */
+@Composable
+private fun SnippetLine(snippet: ActivitySnippet, hit: MatchStyle, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    val text = remember(snippet, hit, c) {
+        snippetString(
+            snippet,
+            label = RType.label.copy(fontSize = 9.5.sp, color = c.inkMeta).toSpanStyle(),
+            hit = hit.text,
+            rest = SpanStyle(color = c.inkMeta),
+        )
+    }
+    BasicText(text, modifier, style = RType.sans(13f, lineHeight = 18f).copy(color = c.inkMeta), maxLines = 2, overflow = TextOverflow.Ellipsis)
 }
 
 /** Autopilot's share for its decision: "97%", or "91% deny". */
@@ -173,56 +261,122 @@ fun OutcomeEnd(outcome: Outcome, modifier: Modifier = Modifier) {
 }
 
 /**
- * The filters, as chips under the header: All, Autopilot, Denied, Grants, and "Any AI", a menu of who asked.
+ * The filters, as chips under the header, each a menu: Outcome, Who, Kind (integrations and kinds), AI and When. A chip
+ * with a pick is ink and says it; the round clear button drops them all.
  */
 @Composable
 fun FilterRow(
-    selected: HistoryFilter,
-    ai: String?,
+    search: ActivitySearch,
+    facets: ActivityFacets?,
     connections: List<ConnectionView>,
     modifier: Modifier = Modifier,
-    onSelect: (HistoryFilter) -> Unit,
-    onAi: (String?) -> Unit,
+    onChange: (ActivitySearch) -> Unit,
 ) {
     val c = LocalColors.current
-    val feedback = LocalFeedback.current
-    var menu by remember { mutableStateOf(false) }
     Row(
         modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 24.dp).testTag("filterRow"),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        HistoryFilter.entries.forEach { f ->
-            SignalChip(f.label, f == selected, Modifier.testTag("filter:${f.name.lowercase()}")) { if (f != selected) onSelect(f) }
-        }
-        Box {
-            val who = connections.firstOrNull { it.id == ai }?.let { untrusted(it.label) }
-            Row(
+        if (search.filtered) {
+            Box(
                 Modifier
-                    .heightIn(min = 34.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
-                    .background(if (ai != null) c.inverse else c.paperRaised)
-                    .then(if (ai != null) Modifier else Modifier.border(1.dp, c.rule, CircleShape))
-                    .pressable(shape = CircleShape, label = "Any AI") {
-                        menu = true
-                        feedback.play(Event.Open)
+                    .background(c.paperSunken)
+                    .pressable(shape = CircleShape, label = "Clear filters") {
+                        onChange(search.copy(outcomes = emptySet(), deciders = emptySet(), services = emptySet(), actions = emptySet(), connections = emptySet(), window = ActivityWindow.Any))
                     }
-                    .testTag("filter:ai")
-                    .padding(horizontal = 13.dp, vertical = 7.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val fg = if (ai != null) c.onInverse else c.ink
-                RText(who ?: "Any AI", RType.sans(14f, FontWeight.Medium), fg, maxLines = 1)
-                GlyphIcon(Glyph.ChevronDown, fg, size = 14.dp)
-            }
-            SignalMenu(
-                expanded = menu,
-                onDismiss = { menu = false },
-                alignEnd = false,
-                width = 240.dp,
-                items = listOf(MenuItem("Any AI", selected = ai == null, tag = "ai:any") { onAi(null) }) +
-                    connections.map { conn -> MenuItem(untrusted(conn.label), selected = ai == conn.id, tag = "ai:${conn.id}") { onAi(conn.id) } },
-            )
+                    .semantics { contentDescription = "Clear filters" }
+                    .testTag("filtersClear"),
+                contentAlignment = Alignment.Center,
+            ) { GlyphIcon(Glyph.Close, c.ink, size = 16.dp) }
         }
+        MenuChip(
+            chipText(ActivityOutcome.entries.filter { it in search.outcomes }.map(::outcomeName), "Outcome"),
+            active = search.outcomes.isNotEmpty(),
+            tag = "filter:outcome",
+            name = "Outcome",
+            items = ActivityOutcome.entries.map { o ->
+                MenuItem(outcomeName(o), selected = o in search.outcomes, tag = "outcome:${o.name.lowercase()}") { onChange(search.copy(outcomes = search.outcomes.toggled(o))) }
+            },
+        )
+        MenuChip(
+            chipText(ActivityDecider.entries.filter { it in search.deciders }.map(::deciderName), "Who"),
+            active = search.deciders.isNotEmpty(),
+            tag = "filter:who",
+            name = "Who decided",
+            items = ActivityDecider.entries.map { d ->
+                MenuItem(deciderName(d), selected = d in search.deciders, tag = "who:${d.name.lowercase()}") { onChange(search.copy(deciders = search.deciders.toggled(d))) }
+            },
+        )
+        val services = (facets?.services.orEmpty() + search.services).distinct()
+        val actions = (facets?.actions.orEmpty() + search.actions).distinct()
+        MenuChip(
+            chipText(services.filter { it in search.services }.map(::serviceLabel) + actions.filter { it in search.actions }.map(::kindName), "Kind"),
+            active = search.services.isNotEmpty() || search.actions.isNotEmpty(),
+            tag = "filter:kind",
+            name = "Kind",
+            items = services.map { sv ->
+                MenuItem(serviceLabel(sv), selected = sv in search.services, tag = "service:$sv") { onChange(search.copy(services = search.services.toggled(sv))) }
+            } + actions.mapIndexed { i, a ->
+                MenuItem(kindName(a), glyph = kindGlyph(a), selected = a in search.actions, divider = i == 0 && services.isNotEmpty(), tag = "action:$a") {
+                    onChange(search.copy(actions = search.actions.toggled(a)))
+                }
+            },
+        )
+        // Who asked: the connections with entries, else (until they are read) the ones connected now.
+        val ais = facets?.connections?.map { it.id to it.label } ?: connections.map { it.id to it.label }
+        MenuChip(
+            chipText(ais.filter { it.first in search.connections }.map { untrusted(it.second) }, "Any AI"),
+            active = search.connections.isNotEmpty(),
+            tag = "filter:ai",
+            name = "Which AI",
+            items = listOf(MenuItem("Any AI", selected = search.connections.isEmpty(), tag = "ai:any") { onChange(search.copy(connections = emptySet())) }) +
+                ais.map { (id, label) -> MenuItem(untrusted(label), selected = id in search.connections, tag = "ai:$id") { onChange(search.copy(connections = search.connections.toggled(id))) } },
+        )
+        MenuChip(
+            if (search.window == ActivityWindow.Any) "When" else windowName(search.window),
+            active = search.window != ActivityWindow.Any,
+            tag = "filter:when",
+            name = "When",
+            items = listOf(ActivityWindow.Today, ActivityWindow.Week, ActivityWindow.Month, ActivityWindow.Any).map { w ->
+                MenuItem(windowName(w), selected = w == search.window, tag = "when:${w.name.lowercase()}") { onChange(search.copy(window = w)) }
+            },
+        )
+    }
+}
+
+/** A filter chip that opens its menu: raised with a hairline, ink when something is picked. */
+@Composable
+private fun MenuChip(text: String, active: Boolean, tag: String, name: String, items: List<MenuItem>) {
+    val c = LocalColors.current
+    val feedback = LocalFeedback.current
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier
+                .heightIn(min = 34.dp)
+                .clip(CircleShape)
+                .background(if (active) c.inverse else c.paperRaised)
+                .then(if (active) Modifier else Modifier.border(1.dp, c.rule, CircleShape))
+                .pressable(shape = CircleShape, label = name) {
+                    menu = true
+                    feedback.play(Event.Open)
+                }
+                .semantics {
+                    selected = active
+                    if (active) stateDescription = text
+                }
+                .testTag(tag)
+                .padding(horizontal = 13.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val fg = if (active) c.onInverse else c.ink
+            RText(text, RType.sans(14f, FontWeight.Medium), fg, maxLines = 1)
+            GlyphIcon(Glyph.ChevronDown, fg, size = 14.dp)
+        }
+        SignalMenu(expanded = menu, onDismiss = { menu = false }, items = items, alignEnd = false, width = 240.dp)
     }
 }

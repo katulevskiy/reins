@@ -5,14 +5,14 @@ import SwiftUI
 
 /// "What it asked" in words (pure, unit-tested).
 enum AskedText {
-    /// "Claude Code · laptop": the agent as it named itself (else the connection's name) and the computer it runs on;
-    /// without the computer, the connection's name when it says more than the agent's.
+    /// "Claude Code · M2A": the agent as it named itself and the connection it asked through (the computer's name,
+    /// which says more than its 127.0.0.1 host); without an agent, the connection's name and where it connects from.
     static func who(agent: String, connection: String, host: String?) -> String {
-        let agent = untrusted(agent)
+        let agent = untrusted(agent).trimmingCharacters(in: .whitespaces)
         let connection = untrusted(connection)
         let host = host.map(untrusted) ?? ""
         let first = agent.isEmpty ? connection : agent
-        let second = !host.isEmpty ? host : (!agent.isEmpty && connection != agent ? connection : "")
+        let second = agent.isEmpty ? host : connection
         var parts: [String] = []
         if !first.isEmpty { parts.append(first) }
         if !second.isEmpty && !parts.contains(second) { parts.append(second) }
@@ -194,6 +194,8 @@ struct EntryApprovalPage<Below: View>: View {
     var entry: ActivityEntry
     var vm: ApprovalModel
     var view: ApprovalView
+    /// A push's changes not kept here, loaded from GitHub on its commit page.
+    var diffs: PushDiffs? = nil
     @ViewBuilder var below: Below
     @State private var nav = ApprovalNav()
 
@@ -208,8 +210,9 @@ struct EntryApprovalPage<Below: View>: View {
             .padding(.bottom, 24)
         }
         .environment(nav)
+        .environment(diffs)
         .environment(\.approvalRecord, record)
-        .modifier(EntryPagesLevel(nav: nav, view: view, record: record, level: 0))
+        .modifier(EntryPagesLevel(nav: nav, view: view, record: record, diffs: diffs, level: 0))
         .accessibilityContainer("entryApproval")
     }
 }
@@ -220,6 +223,7 @@ private struct EntryPagesLevel: ViewModifier {
     var nav: ApprovalNav
     var view: ApprovalView
     var record: ApprovalRecord
+    var diffs: PushDiffs?
     var level: Int
 
     func body(content: Content) -> some View {
@@ -238,8 +242,9 @@ private struct EntryPagesLevel: ViewModifier {
             .navigationTitle(page.title(in: view))
             .navigationBarTitleDisplayMode(.inline)
             .environment(nav)
+            .environment(diffs)
             .environment(\.approvalRecord, record)
-            .modifier(EntryPagesLevel(nav: nav, view: view, record: record, level: level + 1))
+            .modifier(EntryPagesLevel(nav: nav, view: view, record: record, diffs: diffs, level: level + 1))
         }
     }
 }

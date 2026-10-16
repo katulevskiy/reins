@@ -1,7 +1,10 @@
 //! AI-connection pairing (spec §4.5 step 2-3, contracts A5/A6): the browser shows a
 //! two-digit code, the phone picks it among three choices.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
 
 use rand::RngExt;
 use reins_proto::{
@@ -10,19 +13,21 @@ use reins_proto::{
     pairing::{PairingRequest, PairingResponse},
 };
 
-use super::{
-    ITEM_TTL,
-    relay::ItemSignal,
-    ttl::{Full, TtlMap},
-};
+use super::{ITEM_TTL, relay::ItemSignal, ttl::TtlMap};
 use crate::util::get_uuid;
 
 pub const CODE_MIN: u8 = 10;
 pub const CODE_MAX: u8 = 99;
 /// Longest client name or connection label kept (characters).
 pub const MAX_NAME_CHARS: usize = 64;
-/// Upper bound on pairings (including decoys) held in memory.
+/// Upper bound on pairings (including decoys) held in memory. It never refuses a party that is under
+/// [`MAX_PER_PARTY`] while someone else holds more, and a decoy is dropped before any real pairing.
 pub const MAX_PAIRINGS: usize = 1_000;
+/// Open pairings one account may have at once. Decoys for an unknown email share this number, per client address
+/// ([`super::limits::client_network`]). Above the default pairing burst of 5, so one burst still fits, and far below
+/// [`MAX_PAIRINGS`], so one party cannot fill the map. Evicting a pending approval would drop it silently, so a party
+/// at this cap is refused alone instead.
+pub const MAX_PER_PARTY: usize = 8;
 pub const UNKNOWN_CLIENT: &str = "Unknown client";
 
 /// Returns the browser code and three distinct codes in `CODE_MIN..=CODE_MAX`, in random
@@ -126,11 +131,87 @@ enum Stage {
 struct PairingEntry {
     /// `None` for decoys (unknown email): no phone ever sees them.
     user: Option<String>,
+    /// Set for a decoy: the requester's address, so one address cannot fill the map with unknown emails.
+    decoy_party: Option<String>,
     client: PairingClient,
     code: u8,
     request: PairingRequest,
     delivered: bool,
     stage: Stage,
+}
+
+/// Why a pairing was not started.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StartError {
+    /// This account, or this address's decoys, already has [`MAX_PER_PARTY`] open. Nobody else is affected.
+    Party,
+    /// The map is full of this party's own entries, or of approvals already in progress. Another party is not
+    /// refused for that: its start drops a decoy, or the oldest open pairing of whoever holds the most.
+    Busy,
+}
+
+/// Who a new pairing is limited as.
+enum Slot<'a> {
+    User(&'a str),
+    /// Unknown email. `party` is the requester's network, not the email (which is not stored).
+    Decoy(&'a str),
+}
+
+fn party_limited(map: &TtlMap<PairingId, PairingEntry>, slot: &Slot<'_>) -> bool {
+    let held = match slot {
+        Slot::User(user) => map.values().filter(|e| e.user.as_deref() == Some(*user)).count(),
+        Slot::Decoy(party) => map.values().filter(|e| e.decoy_party.as_deref() == Some(*party)).count(),
+    };
+    held >= MAX_PER_PARTY
+}
+
+/// The party in `counts` with strictly more than `mine` entries, the fullest such. Ties are arbitrary.
+fn fullest_over(counts: HashMap<String, usize>, mine: usize) -> Option<String> {
+    counts.into_iter().filter(|(_, n)| *n > mine).max_by_key(|(_, n)| *n).map(|(party, _)| party)
+}
+
+/// Makes one free slot for `slot`. A real pairing drops a decoy first (a decoy can never be approved), then the
+/// oldest still-open pairing of another account that holds more open pairings than this one. An approval already
+/// being stored, or one the browser has not collected yet, is kept. A decoy drops only another address's decoy, and
+/// only when that address holds more of them.
+fn make_room(map: &mut TtlMap<PairingId, PairingEntry>, slot: &Slot<'_>) -> bool {
+    match slot {
+        Slot::User(user) => {
+            if map.evict_where(|e| e.user.is_none()) {
+                return true;
+            }
+            let mine =
+                map.values().filter(|e| e.user.as_deref() == Some(*user) && matches!(e.stage, Stage::Open)).count();
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            for entry in map.values() {
+                if let Some(owner) = entry.user.as_deref()
+                    && owner != *user
+                    && matches!(entry.stage, Stage::Open)
+                {
+                    *counts.entry(owner.to_owned()).or_default() += 1;
+                }
+            }
+            let Some(hog) = fullest_over(counts, mine) else {
+                return false;
+            };
+            map.evict_where(|e| e.user.as_deref() == Some(hog.as_str()) && matches!(e.stage, Stage::Open))
+        }
+        Slot::Decoy(party) => {
+            let mine = map.values().filter(|e| e.decoy_party.as_deref() == Some(*party)).count();
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            for entry in map.values() {
+                if let Some(owner) = entry.decoy_party.as_deref()
+                    && owner != *party
+                {
+                    *counts.entry(owner.to_owned()).or_default() += 1;
+                }
+            }
+            let Some(hog) = fullest_over(counts, mine) else {
+                return false;
+            };
+            map.evict_where(|e| e.decoy_party.as_deref() == Some(hog.as_str()))
+        }
+    }
 }
 
 enum Verdict {
@@ -182,20 +263,25 @@ impl PairingHub {
         self.pairings.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn insert(&self, user: Option<String>, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full> {
+    fn insert(
+        &self,
+        slot: &Slot<'_>,
+        client: PairingClient,
+        now_unix: i64,
+    ) -> Result<(PairingRequest, u8), StartError> {
         let (code, choices) = generate_choices();
-        self.insert_with(user, client, code, choices, false, now_unix).map(|request| (request, code))
+        self.insert_with(slot, client, code, choices, false, now_unix).map(|request| (request, code))
     }
 
     fn insert_with(
         &self,
-        user: Option<String>,
+        slot: &Slot<'_>,
         client: PairingClient,
         code: u8,
         choices: [u8; 3],
         delivered: bool,
         now_unix: i64,
-    ) -> Result<PairingRequest, Full> {
+    ) -> Result<PairingRequest, StartError> {
         let client = PairingClient {
             client_name: sanitize_client_name(&client.client_name),
             ..client
@@ -209,15 +295,30 @@ impl PairingHub {
             created_at: now_unix,
             client_key: client.client_key.clone(),
         };
+        let (user, decoy_party) = match slot {
+            Slot::User(user) => (Some((*user).to_owned()), None),
+            Slot::Decoy(party) => (None, Some((*party).to_owned())),
+        };
         let entry = PairingEntry {
             user,
+            decoy_party,
             client,
             code,
             request: request.clone(),
             delivered,
             stage: Stage::Open,
         };
-        self.lock().insert(request.id.clone(), entry)?;
+        let mut map = self.lock();
+        map.purge();
+        if party_limited(&map, slot) {
+            return Err(StartError::Party);
+        }
+        // A party under its cap is never refused because the map is full of someone else. A decoy never takes the
+        // place of a real pairing; a real pairing drops a decoy before it drops anyone's open request.
+        if !map.has_room() && !make_room(&mut map, slot) {
+            return Err(StartError::Busy);
+        }
+        map.insert(request.id.clone(), entry).map_err(|_| StartError::Busy)?;
         Ok(request)
     }
 
@@ -230,20 +331,26 @@ impl PairingHub {
         code: u8,
         choices: [u8; 3],
         now_unix: i64,
-    ) -> Result<PairingRequest, Full> {
-        self.insert_with(Some(user.to_owned()), client, code, choices, true, now_unix)
+    ) -> Result<PairingRequest, StartError> {
+        self.insert_with(&Slot::User(user), client, code, choices, true, now_unix)
     }
 
     /// Starts a pairing for `user`'s approval device; returns it and the browser code.
-    pub fn start(&self, user: &str, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full> {
-        let started = self.insert(Some(user.to_owned()), client, now_unix)?;
+    pub fn start(&self, user: &str, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), StartError> {
+        let started = self.insert(&Slot::User(user), client, now_unix)?;
         self.signal.notify();
         Ok(started)
     }
 
-    /// Indistinguishable from `start` for the browser, but bound to no user (Decision 19).
-    pub fn start_decoy(&self, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full> {
-        self.insert(None, client, now_unix)
+    /// Indistinguishable from [`PairingHub::start`] for the browser, but bound to no user (Decision 19). `party` is
+    /// the requester's address ([`super::limits::client_network`]), not the email, which is not stored.
+    pub fn start_decoy(
+        &self,
+        client: PairingClient,
+        party: &str,
+        now_unix: i64,
+    ) -> Result<(PairingRequest, u8), StartError> {
+        self.insert(&Slot::Decoy(party), client, now_unix)
     }
 
     /// Open pairings of `user` never handed out before, oldest first; marks them delivered.
@@ -343,6 +450,39 @@ impl PairingHub {
     pub fn forget_user(&self, user: &str) {
         self.lock().retain(|e| e.user.as_deref() != Some(user));
     }
+
+    /// Open pairings of `user`, oldest first, without marking them delivered (what a viewer shows).
+    pub fn peek_waiting(&self, user: &str) -> Vec<PairingRequest> {
+        let mut out: Vec<PairingRequest> = self
+            .lock()
+            .values()
+            .filter(|e| e.user.as_deref() == Some(user) && matches!(e.stage, Stage::Open))
+            .map(|e| e.request.clone())
+            .collect();
+        out.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        out
+    }
+
+    /// Ids of `user`'s answered pairings still held.
+    pub fn answered_ids(&self, user: &str) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .lock()
+            .values()
+            .filter(|e| e.user.as_deref() == Some(user) && !matches!(e.stage, Stage::Open))
+            .map(|e| e.request.id.0.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Hands `user`'s open pairings to the next `GET /pending` again (a new primary took the role).
+    pub fn requeue(&self, user: &str) {
+        for e in self.lock().values_mut().filter(|e| e.user.as_deref() == Some(user) && matches!(e.stage, Stage::Open))
+        {
+            e.delivered = false;
+        }
+        self.signal.notify();
+    }
 }
 
 #[cfg(test)]
@@ -426,7 +566,7 @@ mod tests {
         let (req, _) = h.start("u1", desktop.clone(), 0).unwrap();
         assert_eq!(req.client_key.as_deref(), Some(key.as_str()));
         assert_eq!(h.take_undelivered("u1")[0].client_key.as_deref(), Some(key.as_str()));
-        let (decoy, _) = h.start_decoy(desktop, 0).unwrap();
+        let (decoy, _) = h.start_decoy(desktop, "203.0.113.9", 0).unwrap();
         assert_eq!(decoy.client_key, Some(key), "a decoy must look exactly like a real pairing");
         assert_eq!(h.start("u1", client(), 0).unwrap().0.client_key, None);
     }
@@ -533,7 +673,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn decoys_look_real_but_nobody_can_see_or_answer_them() {
         let h = hub();
-        let (req, code) = h.start_decoy(client(), 0).unwrap();
+        let (req, code) = h.start_decoy(client(), "203.0.113.9", 0).unwrap();
         assert!(req.choices.contains(&code));
         assert_eq!(h.status(&req.id), Some(PairingStatus::Waiting));
         assert!(h.take_undelivered("").is_empty());
@@ -548,5 +688,70 @@ mod tests {
         tokio::time::advance(Duration::from_secs(600)).await;
         assert_eq!(h.status(&req.id), None);
         assert_eq!(h.answer("u1", &req.id, &approve(code, None)), Err(PairingAnswerError::NotFound));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_account_cannot_fill_pairings_for_everyone() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), MAX_PER_PARTY + 4);
+        let (first, _) = h.start("attacker", client(), 1).unwrap();
+        for n in 1..MAX_PER_PARTY {
+            h.start("attacker", client(), i64::try_from(n).unwrap_or(0)).unwrap();
+        }
+        assert_eq!(h.start("attacker", client(), 99).unwrap_err(), StartError::Party);
+        let (victim, _) = h.start("victim", client(), 100).unwrap();
+        assert_eq!(h.status(&victim.id), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&first.id), Some(PairingStatus::Waiting), "refusing the attacker drops nothing of theirs");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_address_of_unknown_emails_cannot_block_another_or_a_real_pairing() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), MAX_PER_PARTY + 4);
+        for _ in 0..MAX_PER_PARTY {
+            h.start_decoy(client(), "203.0.113.1", 0).unwrap();
+        }
+        assert_eq!(h.start_decoy(client(), "203.0.113.1", 0).unwrap_err(), StartError::Party);
+        let (other, _) = h.start_decoy(client(), "203.0.113.2", 0).unwrap();
+        let (real, _) = h.start("victim", client(), 0).unwrap();
+        assert_eq!(h.status(&other.id), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&real.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_map_gives_a_new_account_the_fullest_accounts_oldest_open_pairing() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), 2);
+        let (oldest, _) = h.start("attacker", client(), 1).unwrap();
+        let (newer, _) = h.start("attacker", client(), 2).unwrap();
+        assert_eq!(h.start("attacker", client(), 3).unwrap_err(), StartError::Busy, "it does not drop its own");
+        assert_eq!(h.status(&oldest.id), Some(PairingStatus::Waiting));
+        let (victim, _) = h.start("victim", client(), 4).unwrap();
+        assert_eq!(h.status(&oldest.id), None, "the account that held the most loses its oldest");
+        assert_eq!(h.status(&newer.id), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&victim.id), Some(PairingStatus::Waiting));
+        // Tied with the victim: the attacker cannot take the slot back.
+        assert_eq!(h.start("attacker", client(), 5).unwrap_err(), StartError::Busy);
+        assert_eq!(h.status(&victim.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_decoy_cannot_push_out_a_real_pairing_and_a_real_pairing_can_push_out_a_decoy() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), 1);
+        let (real, _) = h.start("victim", client(), 0).unwrap();
+        assert_eq!(h.start_decoy(client(), "203.0.113.1", 1).unwrap_err(), StartError::Busy);
+        assert_eq!(h.status(&real.id), Some(PairingStatus::Waiting));
+
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), 1);
+        let (decoy, _) = h.start_decoy(client(), "203.0.113.1", 0).unwrap();
+        let (real, _) = h.start("victim", client(), 1).unwrap();
+        assert_eq!(h.status(&decoy.id), None);
+        assert_eq!(h.status(&real.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_approval_in_progress_is_not_dropped_to_make_room() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), 1);
+        let (req, code) = h.start("attacker", client(), 0).unwrap();
+        h.answer("attacker", &req.id, &approve(code, None)).unwrap();
+        assert_eq!(h.start("victim", client(), 1).unwrap_err(), StartError::Busy);
+        assert_eq!(h.status(&req.id), Some(PairingStatus::Waiting), "still storing the connection");
     }
 }

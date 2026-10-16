@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 /// Any string works: the server stores a salted PBKDF2 of whatever the client sends.
 pub const PASSWORD_HASH: &str = "reins-test-master-password-hash";
 
+#[derive(Clone)]
 pub struct Options {
     pub relay_wait_secs: u64,
     pub offline_secs: u64,
@@ -36,6 +37,8 @@ pub struct Server {
     pub base: String,
     child: Child,
     dir: PathBuf,
+    port: u16,
+    options: Options,
 }
 
 pub fn client() -> Client {
@@ -74,13 +77,36 @@ impl Server {
     async fn try_start(port: u16, options: &Options) -> Result<Self, String> {
         let dir = std::env::temp_dir().join(format!("reins-it-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("temp dir");
+        let mut server = Self {
+            base: format!("http://127.0.0.1:{port}"),
+            child: Self::spawn(&dir, port, options),
+            dir,
+            port,
+            options: options.clone(),
+        };
+        server.wait_alive().await?;
+        Ok(server)
+    }
+
+    /// Stops the server and starts it again on the same port and data folder: the database stays, everything the
+    /// server keeps in memory (caches, sessions, codes) is gone.
+    pub async fn restart(&mut self) {
+        self.child.kill().ok();
+        self.child.wait().ok();
+        self.child = Self::spawn(&self.dir, self.port, &self.options);
+        if let Err(log) = self.wait_alive().await {
+            panic!("server did not restart:\n{log}");
+        }
+    }
+
+    fn spawn(dir: &std::path::Path, port: u16, options: &Options) -> Child {
         let log = File::create(dir.join("server.log")).expect("log file");
         let base = format!("http://127.0.0.1:{port}");
         let mut command = Command::new(env!("CARGO_BIN_EXE_vaultwarden"));
         command
-            .current_dir(&dir)
+            .current_dir(dir)
             .env_clear()
-            .env("DATA_FOLDER", &dir)
+            .env("DATA_FOLDER", dir)
             .env("DOMAIN", &base)
             .env("ROCKET_ADDRESS", "127.0.0.1")
             .env("ROCKET_PORT", port.to_string())
@@ -93,14 +119,7 @@ impl Server {
             command.env("REINS_TEST_ALLOW_LOOPBACK", "true");
         }
         command.envs(options.env.iter().map(|(k, v)| (*k, v.as_str())));
-        let child = command.stdout(log.try_clone().expect("log clone")).stderr(log).spawn().expect("spawn vaultwarden");
-        let mut server = Self {
-            base,
-            child,
-            dir,
-        };
-        server.wait_alive().await?;
-        Ok(server)
+        command.stdout(log.try_clone().expect("log clone")).stderr(log).spawn().expect("spawn vaultwarden")
     }
 
     async fn wait_alive(&mut self) -> Result<(), String> {
@@ -206,7 +225,7 @@ async fn startup_rejects_a_mock_answering_alive_on_the_reserved_port() {
     };
     assert!(error.contains("Address already in use"), "{error}");
     assert!(started.elapsed() < Duration::from_secs(20), "did not notice the child exited");
-    assert!(mock.requests().is_empty(), "probed a server the child never bound");
+    assert!(mock.requests_not_probes().is_empty(), "probed a server the child never bound");
 }
 
 impl Drop for Server {

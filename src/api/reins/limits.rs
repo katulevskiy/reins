@@ -8,9 +8,14 @@
 //! - an AI connection: requests to `/mcp` and the desktop API per minute, calls waiting for the phone at once;
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
 //!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
-//!   phone, wrong proofs sent to take its approval role;
-//! - an approval device: concurrent `GET /pending` long-polls;
-//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer).
+//!   phone (at most [`super::pairing::MAX_PER_PARTY`] open per account), wrong proofs sent to take its approval role;
+//! - a device: concurrent `GET /pending` and `GET /sync` long-polls;
+//! - a phone of an account with phone roles (key: account and device): op uploads per minute, proposals per hour;
+//! - an account with phone roles: roster changes per hour, ops and bytes its log holds (`REINS_ACCOUNT_LOG_*`);
+//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer, at most
+//!   [`super::device_flow::MAX_PER_ADDRESS`] open), "add another phone" join requests (with at most
+//!   [`super::join::MAX_PER_USER`] open per account). Unknown-email pairing decoys are capped per address too
+//!   ([`super::pairing::MAX_PER_PARTY`]). The address is [`client_network`].
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -198,6 +203,19 @@ impl<K: Hash + Eq + Clone> FailureLimit<K> {
     }
 }
 
+/// The address a limit sees: the IPv4 address, or the /64 of an IPv6 address (one host usually holds a whole /64, so
+/// single addresses in it would each get their own quota). IPv4-mapped IPv6 is the IPv4 address.
+pub fn client_network(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(std::net::Ipv6Addr::from(octets))
+        }
+        v4 @ IpAddr::V4(_) => v4,
+    }
+}
+
 /// Whole seconds to wait, rounded up, at least 1 (what error messages and `Retry-After` show).
 pub fn retry_secs(wait: Duration) -> u64 {
     (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1)
@@ -232,6 +250,15 @@ pub static DEVICE_AUTHORIZATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(||
     RateLimit::with_period(CONFIG.reins_pairing_ratelimit_seconds(), CONFIG.reins_pairing_ratelimit_max_burst())
 });
 
+/// Client documents (OAuth client metadata documents and key sets) fetched because of requests from one IP address:
+/// a burst of 20, then one every 3 s. Every fetch a request makes the server do is charged to the request's address;
+/// refreshes of documents the server already holds (known clients) are not. A request over budget is refused alone.
+pub static CLIENT_DOCUMENT_FETCHES: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(3, 20));
+
+/// Background refreshes of client documents the server holds that requests from one IP address may start: a burst
+/// of 10, then one every 6 s. Over it, the request is served from what the server holds, without a refresh.
+pub static CLIENT_DOCUMENT_REFRESHES: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(6, 10));
+
 /// OAuth dynamic client registrations per IP address.
 pub static REGISTRATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
     RateLimit::with_period(CONFIG.reins_register_ratelimit_seconds(), CONFIG.reins_register_ratelimit_max_burst())
@@ -258,6 +285,58 @@ pub static OUTBOUND_REQUESTS: LazyLock<RateLimit<String>> =
 pub static OUTBOUND_RUNNING: LazyLock<Concurrency<String>> =
     LazyLock::new(|| Concurrency::new(CONFIG.reins_outbound_max_concurrent()));
 
+/// "Add another phone" join requests (`POST /reins/api/joins`, also enrollments) per IP address.
+pub static JOIN_CREATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
+    RateLimit::with_period(CONFIG.reins_join_ratelimit_seconds(), CONFIG.reins_join_ratelimit_max_burst())
+});
+
+/// `POST /reins/api/ops` requests of one phone (key: user id and device id).
+pub static MEMBER_OP_REQUESTS: LazyLock<RateLimit<(String, String)>> =
+    LazyLock::new(|| RateLimit::per_minute(CONFIG.reins_member_op_requests_per_minute()));
+
+/// Proposal ops of one phone (key: user id and device id): the hourly number, all of which may come at once.
+pub static MEMBER_PROPOSALS: LazyLock<RateLimit<(String, String)>> = LazyLock::new(|| {
+    let per_hour = CONFIG.reins_member_proposals_per_hour();
+    RateLimit::with_period(
+        if per_hour == 0 {
+            0
+        } else {
+            3600 / u64::from(per_hour).max(1)
+        },
+        per_hour,
+    )
+});
+
+/// Handover requests of one phone (key: user id and device id): each wakes the primary.
+pub static HANDOVER_REQUESTS: LazyLock<RateLimit<(String, String)>> = LazyLock::new(|| {
+    let per_hour = CONFIG.reins_handover_requests_per_hour();
+    RateLimit::with_period(
+        if per_hour == 0 {
+            0
+        } else {
+            3600 / u64::from(per_hour).max(1)
+        },
+        per_hour,
+    )
+});
+
+/// Alert pushes to an account's primary for viewers' proposals and brakes (key: user id): one per half minute; the
+/// rest reach it by its poll (`log_head`), unannounced.
+pub static PRIMARY_ALERTS: LazyLock<RateLimit<String>> = LazyLock::new(|| RateLimit::with_period(30, 1));
+
+/// Roster appends of one account (key: user id).
+pub static ROSTER_CHANGES: LazyLock<RateLimit<String>> = LazyLock::new(|| {
+    let per_hour = CONFIG.reins_roster_changes_per_hour();
+    RateLimit::with_period(
+        if per_hour == 0 {
+            0
+        } else {
+            3600 / u64::from(per_hour).max(1)
+        },
+        per_hour,
+    )
+});
+
 /// Housekeeping: drops rate-limit state of keys that are back at a full budget.
 pub fn retain_recent() {
     CONNECTION_REQUESTS.retain_recent();
@@ -265,8 +344,16 @@ pub fn retain_recent() {
     PAIRINGS.retain_recent();
     DEVICE_AUTHORIZATIONS.retain_recent();
     REGISTRATIONS.retain_recent();
+    CLIENT_DOCUMENT_FETCHES.retain_recent();
+    CLIENT_DOCUMENT_REFRESHES.retain_recent();
     OUTBOUND_REQUESTS.retain_recent();
     DEVICE_PROOFS.retain_recent();
+    MEMBER_OP_REQUESTS.retain_recent();
+    MEMBER_PROPOSALS.retain_recent();
+    ROSTER_CHANGES.retain_recent();
+    HANDOVER_REQUESTS.retain_recent();
+    PRIMARY_ALERTS.retain_recent();
+    JOIN_CREATIONS.retain_recent();
 }
 
 /// Cross-field checks of the limit settings; only called when Reins is enabled.

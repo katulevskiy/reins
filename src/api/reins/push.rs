@@ -9,7 +9,7 @@ use super::{
 };
 use crate::db::{
     DbPool,
-    models::{ReinsDevice, UserId},
+    models::{ReinsDevice, ReinsMember, UserId},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,9 +47,22 @@ static TEST_PUSH_URL: std::sync::LazyLock<Option<String>> = std::sync::LazyLock:
 static TEST_PUSH_CLIENT: std::sync::LazyLock<Option<reqwest::Client>> =
     std::sync::LazyLock::new(|| crate::http_client::get_reqwest_client_builder(false).build().ok());
 
+/// Whose token a push goes to: where an unregistered token is forgotten.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Owner {
+    ApprovalDevice,
+    /// A roster member's token (`reins_members`).
+    Member,
+}
+
 /// Wakes the approval device without blocking the caller (Decision 31).
 pub fn spawn_push(pool: DbPool, user_uuid: UserId, token: Option<String>, push: PushMessage) {
     spawn_push_then(pool, user_uuid, token, push, || {});
+}
+
+/// Wakes a roster member (a viewer) with its own token ([`ReinsMember::fcm_token`]).
+pub fn spawn_member_push(pool: DbPool, user_uuid: UserId, token: Option<String>, push: PushMessage) {
+    spawn_push_for(pool, user_uuid, token, push, Owner::Member, || {});
 }
 
 /// Like [`spawn_push`], and says whether a push is under way: `false` when there is no token or no sender (the phone
@@ -59,6 +72,17 @@ pub fn spawn_push_then(
     user_uuid: UserId,
     token: Option<String>,
     push: PushMessage,
+    failed: impl FnOnce() + Send + 'static,
+) -> bool {
+    spawn_push_for(pool, user_uuid, token, push, Owner::ApprovalDevice, failed)
+}
+
+fn spawn_push_for(
+    pool: DbPool,
+    user_uuid: UserId,
+    token: Option<String>,
+    push: PushMessage,
+    owner: Owner,
     failed: impl FnOnce() + Send + 'static,
 ) -> bool {
     if let Some(url) = TEST_PUSH_URL.as_ref() {
@@ -105,10 +129,14 @@ pub fn spawn_push_then(
             Ok(SendOutcome::Unregistered) => {
                 warn!("{service:?} token of the Reins device of {user_uuid} is unregistered; clearing it");
                 failed();
-                if let Ok(conn) = pool.get().await
-                    && let Err(e) = ReinsDevice::clear_fcm_token(&user_uuid, &token, &conn).await
-                {
-                    warn!("Could not clear the Reins push token: {e:?}");
+                if let Ok(conn) = pool.get().await {
+                    let cleared = match owner {
+                        Owner::ApprovalDevice => ReinsDevice::clear_fcm_token(&user_uuid, &token, &conn).await,
+                        Owner::Member => ReinsMember::clear_token(user_uuid.as_ref(), &token, &conn).await,
+                    };
+                    if let Err(e) = cleared {
+                        warn!("Could not clear the Reins push token: {e:?}");
+                    }
                 }
             }
             Err(e) => {

@@ -6,7 +6,8 @@ import UIKit
 enum DemoData {
     static let server = "https://reins.example.com"
     static let email = "me@example.com"
-    static let desktop = "Reins desktop app on laptop"
+    /// The Mac the desktop app runs on, by its own name (the core's cleaned label).
+    static let desktop = "M2A"
     /// The demo account's recovery code (`AccountSecret`'s format: thirteen groups of four, base32).
     static let recoveryCode = "TKRQ-7HXM-2PLA-W4ZD-QE6N-B3VY-JF5C-K8SU-RM2G-XT7H-NAPQ-D6WL-ZE4B"
 
@@ -25,14 +26,28 @@ enum DemoData {
 
     // ---- connections ------------------------------------------------------------------------------------------
 
+    /// The seeded connections, as the core sends them: computers by their own names with their platform's logo, AIs
+    /// with their provider's when the name says which, the rest a blobatar; every one a blobatar of its own colour and
+    /// shape. "M2A" (c6) is the Mac the desktop requests come from, "honeypot" (c7) a Linux box.
     static func connections(_ now: Int64) -> [ConnectionView] {
-        [
-            ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: now - 86_400 * 40, lastUsedAt: now - 60, icon: "claude", keyFingerprint: nil),
-            ConnectionView(id: "c2", label: "My ChatGPT", clientHost: "chatgpt.com", createdAt: now - 86_400 * 21, lastUsedAt: now - 120, icon: "openai", keyFingerprint: nil),
-            ConnectionView(id: "c3", label: "Hermes agent", clientHost: "hermes.local", createdAt: now - 86_400 * 9, lastUsedAt: now - 7_200, icon: nil, keyFingerprint: nil),
-            ConnectionView(id: "c4", label: "notes-bot", clientHost: "notes.example.com", createdAt: now - 86_400 * 5, lastUsedAt: now - 3_600, icon: nil, keyFingerprint: nil),
-            ConnectionView(id: "c5", label: "Cursor", clientHost: "cursor.com", createdAt: now - 86_400 * 3, lastUsedAt: now - 1_800, icon: "cursor", keyFingerprint: nil),
-            ConnectionView(id: "c6", label: desktop, clientHost: "laptop", createdAt: now - 86_400 * 2, lastUsedAt: now - 300, icon: nil, keyFingerprint: "4821 9930"),
+        func blob(_ id: String, _ shape: UInt8, _ colour: UInt8) -> Blobatar { Blobatar(seed: id, shape: shape, colour: colour) }
+        return [
+            ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: now - 86_400 * 40, lastUsedAt: now - 60, icon: nil, keyFingerprint: nil,
+                           autoIcon: "claude", blobatar: blob("c1", 0, 1)),
+            ConnectionView(id: "c2", label: "My ChatGPT", clientHost: "chatgpt.com", createdAt: now - 86_400 * 21, lastUsedAt: now - 120, icon: "openai", keyFingerprint: nil,
+                           autoIcon: "openai", blobatar: blob("c2", 1, 7)),
+            ConnectionView(id: "c3", label: "Hermes agent", clientHost: "hermes.local", createdAt: now - 86_400 * 9, lastUsedAt: now - 7_200, icon: nil, keyFingerprint: nil,
+                           autoIcon: "hermes", blobatar: blob("c3", 2, 4)),
+            ConnectionView(id: "c4", label: "notes-bot", clientHost: "notes.example.com", createdAt: now - 86_400 * 5, lastUsedAt: now - 3_600, icon: nil, keyFingerprint: nil,
+                           autoIcon: Providers.blob, blobatar: blob("c4", 5, 9)),
+            ConnectionView(id: "c5", label: "Cursor", clientHost: "cursor.com", createdAt: now - 86_400 * 3, lastUsedAt: now - 1_800, icon: "cursor", keyFingerprint: nil,
+                           autoIcon: "cursor", blobatar: blob("c5", 3, 2)),
+            ConnectionView(id: "c6", label: desktop, clientHost: "127.0.0.1", createdAt: now - 86_400 * 2, lastUsedAt: now - 300, icon: nil, keyFingerprint: "4821 9930",
+                           autoIcon: "macos", platform: "macos", blobatar: blob("c6", 4, 6)),
+            ConnectionView(id: "c7", label: "honeypot", clientHost: "127.0.0.1", createdAt: now - 86_400 * 2, lastUsedAt: now - 5_400, icon: nil, keyFingerprint: "7315 0264",
+                           autoIcon: "linux", platform: "linux", blobatar: blob("c7", 6, 10)),
+            ConnectionView(id: "c8", label: "Grok", clientHost: "grok.com", createdAt: now - 86_400, lastUsedAt: now - 9_000, icon: nil, keyFingerprint: nil,
+                           autoIcon: "grok", blobatar: blob("c8", 8, 11)),
         ]
     }
 
@@ -526,7 +541,7 @@ enum DemoData {
 
         // Pairings: an AI on the web (three codes to pick from), and the desktop app with its key's digits.
         let pair1 = PairingView(id: "pair1", clientName: "Gemini", clientHost: "gemini.google.com", choices: Data([7, 42, 88]), createdAt: now - 12, keyFingerprint: nil)
-        let pair2 = PairingView(id: "pair2", clientName: "Reins desktop app on studio", clientHost: "studio", choices: Data([19, 63, 5]), createdAt: now - 600, keyFingerprint: "4821 9930")
+        let pair2 = PairingView(id: "pair2", clientName: "studio", clientHost: "studio", choices: Data([19, 63, 5]), createdAt: now - 600, keyFingerprint: "4821 9930")
         items.append(pairingItem(pair1))
         items.append(pairingItem(pair2))
 

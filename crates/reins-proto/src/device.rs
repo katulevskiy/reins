@@ -48,6 +48,30 @@ pub mod codes {
     pub const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
     /// 403 to `POST /account/reset`: this device has not just signed in (or its sign-in was already spent on a reset).
     pub const REAUTH_REQUIRED: &str = "reauth_required";
+    /// 403: the caller is not a member (primary or viewer) of the account's roster.
+    pub const NOT_A_MEMBER: &str = "not_a_member";
+    /// 409: the account has no roster yet (phone roles start with `POST /roster`, reason `create`).
+    pub const NO_ROSTER: &str = "no_roster";
+    /// 409 to `POST /roster`: the entry is not the one after the current one (a rollback, a replay or a concurrent
+    /// change); fetch the roster again.
+    pub const EPOCH_CONFLICT: &str = "epoch_conflict";
+    /// 400 to `POST /roster`: the entry breaks the chain or its reason's rules.
+    pub const BAD_ROSTER: &str = "bad_roster";
+    /// 403: a signature (roster entry, op, checkpoint, heartbeat or answer) does not verify.
+    pub const BAD_SIGNATURE: &str = "bad_signature";
+    /// 403 to an answer: the account has a roster, so answers carry the primary's signature
+    /// ([`crate::answer::SignedAnswer`]).
+    pub const SIGNATURE_REQUIRED: &str = "signature_required";
+    /// 403 to `POST /ops`: the author may not write this class of op ([`crate::oplog::authorize_op`]).
+    pub const OP_REFUSED: &str = "op_refused";
+    /// 409 to `POST /ops`: the author's counter does not rise (a replay); the message gives the last one stored.
+    pub const COUNTER_REPLAY: &str = "counter_replay";
+    /// 409 to `POST /ops`: the account's log holds as many ops or bytes as it may; write a checkpoint first.
+    pub const LOG_FULL: &str = "log_full";
+    /// 410 to `PUT /account-state` once the account has a roster: state travels as ops now.
+    pub const LEGACY_RETIRED: &str = "legacy_retired";
+    /// 409 to `PUT /device` from another device of an account with a roster: the role moves by handover or recovery.
+    pub const USE_HANDOVER: &str = "use_handover";
 }
 
 /// How long after a sign-in the device may reset its account's vault (`POST /reins/api/account/reset`).
@@ -160,12 +184,24 @@ pub struct Pending {
     /// Phones of the account asking for its secret ([`crate::join`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub joins: Vec<crate::join::JoinRequest>,
+    /// Viewers asking to become primary ([`crate::roster::HandoverRequest`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub handovers: Vec<crate::roster::HandoverRequest>,
+    /// Accounts with a roster: the op log's head `seq`, so proposals and viewers' restrictive ops reach the primary on
+    /// this poll. `GET /pending?log=<seq>` also returns as soon as the head passes `<seq>`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_head: Option<u64>,
 }
 
 impl Pending {
+    /// No item waits (the log head is not an item).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.requests.is_empty() && self.pairings.is_empty() && self.blobs.is_empty() && self.joins.is_empty()
+        self.requests.is_empty()
+            && self.pairings.is_empty()
+            && self.blobs.is_empty()
+            && self.joins.is_empty()
+            && self.handovers.is_empty()
     }
 }
 
@@ -318,10 +354,14 @@ mod tests {
             }],
             blobs: vec![],
             joins: vec![],
+            handovers: vec![],
+            log_head: Some(4),
         };
         assert!(!p.is_empty());
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["pairings"][0]["choices"], json!([12, 47, 83]));
+        assert_eq!(v["log_head"], 4);
+        assert!(v.get("handovers").is_none());
         assert_eq!(serde_json::from_value::<Pending>(v).unwrap(), p);
     }
 

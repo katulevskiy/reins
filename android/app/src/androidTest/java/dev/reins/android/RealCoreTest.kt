@@ -32,7 +32,8 @@ class RealCoreTest {
     private val dirs = mutableListOf<File>()
 
     private object NoGoogle : GoogleTokenProvider {
-        override suspend fun accessToken(): String = throw ForeignException.NeedsUserInteraction()
+        override suspend fun accessToken(account: String, service: String): String =
+            throw ForeignException.NeedsUserInteraction()
     }
 
     private object NoNotifications : Notifier {
@@ -42,9 +43,20 @@ class RealCoreTest {
         override fun autopilotChanged(event: dev.reins.core.AutopilotEvent) = Unit
     }
 
+    /** The app's constructor: no on-phone integrations, and this build's Telegram credentials (empty when unset). */
+    private fun openCore(dir: File, alias: String): ReinsCore = ReinsCore(
+        dir.absolutePath,
+        KeystoreKeyWrapper(alias),
+        NoGoogle,
+        NoNotifications,
+        null,
+        BuildConfig.TELEGRAM_API_ID,
+        BuildConfig.TELEGRAM_API_HASH,
+    )
+
     private fun newCore(): ReinsCore {
         val dir = File(context.cacheDir, "core-${UUID.randomUUID()}").also { dirs += it; it.mkdirs() }
-        return ReinsCore(dir.absolutePath, KeystoreKeyWrapper("reins_test_${UUID.randomUUID()}"), NoGoogle, NoNotifications)
+        return openCore(dir, "reins_test_${UUID.randomUUID()}")
     }
 
     @After
@@ -65,8 +77,8 @@ class RealCoreTest {
     fun theStoreSurvivesReopeningWithTheSameKeystoreKey() = runBlocking {
         val dir = File(context.cacheDir, "core-${UUID.randomUUID()}").also { dirs += it; it.mkdirs() }
         val alias = "reins_test_${UUID.randomUUID()}"
-        ReinsCore(dir.absolutePath, KeystoreKeyWrapper(alias), NoGoogle, NoNotifications).close()
-        val reopened = ReinsCore(dir.absolutePath, KeystoreKeyWrapper(alias), NoGoogle, NoNotifications)
+        openCore(dir, alias).close()
+        val reopened = openCore(dir, alias)
         assertNull(reopened.session())
     }
 

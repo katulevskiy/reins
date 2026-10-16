@@ -19,12 +19,13 @@ fun findConnection(connections: List<ConnectionView>, connectionId: String, labe
     connections.firstOrNull { it.id == connectionId }
         ?: if (connectionId.isEmpty()) connections.singleOrNull { it.label == label } else null
 
-/** The icon pick stored for a connection, if the user chose one. */
-@Composable
-fun rememberIconPick(connectionId: String, label: String = ""): String? =
-    findConnection(LocalConnections.current, connectionId, label)?.icon
-
+/** A connection's icon by id: the one it shows everywhere, or, for one that is gone, the icon its [label] suggests. */
 @Composable
 fun ConnectionIcon(connectionId: String, label: String, modifier: Modifier = Modifier, size: Dp = 40.dp) {
-    ConnectionAvatar(untrusted(label), rememberIconPick(connectionId, label), modifier, size)
+    val connection = findConnection(LocalConnections.current, connectionId, label)
+    if (connection != null) {
+        ConnectionAvatar(connection, modifier, size)
+    } else {
+        ConnectionAvatar(untrusted(label), null, modifier, size)
+    }
 }

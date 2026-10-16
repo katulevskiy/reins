@@ -371,6 +371,13 @@ table! {
 }
 
 table! {
+    reins_jwt_clients (client_hash) {
+        client_hash -> Text,
+        first_seen_at -> BigInt,
+    }
+}
+
+table! {
     reins_connections (uuid) {
         uuid -> Text,
         user_uuid -> Text,
@@ -428,6 +435,56 @@ table! {
     }
 }
 
+table! {
+    reins_members (user_uuid, device_uuid) {
+        user_uuid -> Text,
+        device_uuid -> Text,
+        role -> Text,
+        sign_pub -> Text,
+        key_hash -> Nullable<Text>,
+        fcm_token -> Nullable<Text>,
+        last_counter -> BigInt,
+        acked_seq -> BigInt,
+        heartbeat -> Nullable<Text>,
+        heartbeat_at -> Nullable<BigInt>,
+        updated_at -> BigInt,
+    }
+}
+
+table! {
+    reins_rosters (user_uuid, epoch) {
+        user_uuid -> Text,
+        epoch -> BigInt,
+        entry -> Text,
+        entry_hash -> Text,
+        recovery_wrap -> Nullable<Text>,
+        bundle -> Nullable<Text>,
+        created_at -> BigInt,
+    }
+}
+
+table! {
+    reins_ops (user_uuid, seq) {
+        user_uuid -> Text,
+        seq -> BigInt,
+        author -> Text,
+        sign_pub -> Text,
+        counter -> BigInt,
+        op -> Text,
+        size -> Integer,
+        created_at -> BigInt,
+    }
+}
+
+table! {
+    reins_checkpoints (user_uuid, seq) {
+        user_uuid -> Text,
+        seq -> BigInt,
+        checkpoint -> Text,
+        created_at -> BigInt,
+    }
+}
+
 joinable!(archives -> users (user_uuid));
 joinable!(archives -> ciphers (cipher_uuid));
 joinable!(attachments -> ciphers (cipher_uuid));
@@ -459,6 +516,8 @@ joinable!(collections_groups -> groups (groups_uuid));
 joinable!(event -> users_organizations (uuid));
 joinable!(auth_requests -> users (user_uuid));
 joinable!(sso_users -> users (user_uuid));
+
+allow_tables_to_appear_in_same_query!(reins_connections, reins_refresh_tokens);
 
 allow_tables_to_appear_in_same_query!(
     archives,

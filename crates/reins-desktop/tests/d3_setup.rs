@@ -3,15 +3,11 @@
 use std::path::Path;
 use std::process::Command;
 
-use reins_desktop::config::{Config, HostEntry};
+use reins_desktop::config::{Config, HostEntry, home_env};
 use reins_desktop::setup::{Git, Scope};
 
 fn git(home: &Path) -> Git {
-    Git::default()
-        .env("HOME", home)
-        .env("XDG_CONFIG_HOME", home.join(".config"))
-        .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+    Git::under(home)
 }
 
 fn config(enabled: &[&str]) -> Config {
@@ -31,9 +27,7 @@ fn config(enabled: &[&str]) -> Config {
 fn rewritten(home: &Path, url: &str) -> String {
     let out = Command::new("git")
         .args(["ls-remote", "--get-url", url])
-        .env("HOME", home)
-        .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .envs(home_env(home))
         .current_dir(home)
         .output()
         .unwrap();
@@ -80,7 +74,9 @@ fn a_repository_scope_and_a_custom_host() {
     let home = tempfile::tempdir().unwrap();
     let g = git(home.path());
     let repo = home.path().join("r");
-    assert!(Command::new("git").args(["init", "-q"]).arg(&repo).env("HOME", home.path()).status().unwrap().success());
+    assert!(
+        Command::new("git").args(["init", "-q"]).arg(&repo).envs(home_env(home.path())).status().unwrap().success()
+    );
     let c: Config = toml::from_str(
         "listen = \"127.0.0.1:9001\"\n[[git.hosts]]\nhost = \"git.example.com\"\nservice = \"gitlab\"\n",
     )
