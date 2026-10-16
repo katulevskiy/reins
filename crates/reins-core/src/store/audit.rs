@@ -44,12 +44,17 @@ pub(crate) fn snapshot_json(parked: &crate::views::ParkedRequest) -> Option<Vec<
     (json.len() <= MAX_SNAPSHOT).then_some(json)
 }
 
-/// Stores entry `seq`'s sealed snapshot (if any) and prunes those past [`SNAPSHOT_RETENTION`].
-fn keep_snapshot(conn: &rusqlite::Connection, seq: i64, sealed: Option<&[u8]>) -> rusqlite::Result<()> {
+/// Stores entry `seq`'s sealed snapshot (if any) and prunes those past `snapshot_retention`.
+fn keep_snapshot(
+    conn: &rusqlite::Connection,
+    seq: i64,
+    sealed: Option<&[u8]>,
+    snapshot_retention: i64,
+) -> rusqlite::Result<()> {
     if let Some(sealed) = sealed {
         conn.execute("INSERT OR REPLACE INTO audit_snapshots (seq, data) VALUES (?1, ?2)", params![seq, sealed])?;
     }
-    conn.execute("DELETE FROM audit_snapshots WHERE seq <= ?1 - ?2", params![seq, SNAPSHOT_RETENTION])?;
+    conn.execute("DELETE FROM audit_snapshots WHERE seq <= ?1 - ?2", params![seq, snapshot_retention])?;
     Ok(())
 }
 
@@ -181,7 +186,18 @@ pub struct AuditRecord {
 
 impl Store {
     /// Appends an entry (stamped with who is deciding, see [`crate::autopilot::context`]); returns its row number.
+    /// Keeps the newest [`AUDIT_RETENTION`] entries and [`SNAPSHOT_RETENTION`] snapshots.
     pub fn append_audit(&self, record: &AuditRecord) -> Result<i64, CoreError> {
+        self.append_audit_keeping(record, AUDIT_RETENTION, SNAPSHOT_RETENTION)
+    }
+
+    /// [`append_audit`] with an explicit cap, so tests can drive the same delete without inserting thousands of rows.
+    fn append_audit_keeping(
+        &self,
+        record: &AuditRecord,
+        retention: i64,
+        snapshot_retention: i64,
+    ) -> Result<i64, CoreError> {
         let detail = self.seal(DETAIL_AAD, record.detail.as_bytes())?;
         let mut info = record.info.clone();
         crate::autopilot::context::stamp(&mut info);
@@ -213,8 +229,8 @@ impl Store {
             ],
         )?;
         let seq = conn.last_insert_rowid();
-        conn.execute("DELETE FROM audit WHERE seq <= (SELECT MAX(seq) FROM audit) - ?1", params![AUDIT_RETENTION])?;
-        if let Err(e) = keep_snapshot(&conn, seq, snapshot.as_deref()) {
+        conn.execute("DELETE FROM audit WHERE seq <= (SELECT MAX(seq) FROM audit) - ?1", params![retention])?;
+        if let Err(e) = keep_snapshot(&conn, seq, snapshot.as_deref(), snapshot_retention) {
             log::error!("an activity entry is kept without its approval: {e}");
         }
         drop(conn);
@@ -391,14 +407,16 @@ mod tests {
 
     #[test]
     fn retention_is_bounded() {
+        // The delete bound is a parameter. Production still passes AUDIT_RETENTION; this drives a few dozen rows.
+        const BOUND: i64 = 40;
         let dir = tempfile::tempdir().unwrap();
         let store = open(dir.path());
-        for at in 0..AUDIT_RETENTION + 3 {
-            store.append_audit(&record(at)).unwrap();
+        for at in 0..BOUND + 3 {
+            store.append_audit_keeping(&record(at), BOUND, SNAPSHOT_RETENTION).unwrap();
         }
         let count: i64 = store.lock().unwrap().query_row("SELECT COUNT(*) FROM audit", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, AUDIT_RETENTION);
-        assert_eq!(store.activity(1).unwrap()[0].at, AUDIT_RETENTION + 2);
+        assert_eq!(count, BOUND);
+        assert_eq!(store.activity(1).unwrap()[0].at, BOUND + 2);
     }
 
     fn parked(call: serde_json::Value, items: Vec<crate::connector::Item>) -> crate::views::ParkedRequest {
@@ -521,18 +539,30 @@ mod tests {
 
     #[test]
     fn snapshots_are_pruned_with_their_entries() {
+        // Same delete as production, which passes SNAPSHOT_RETENTION. A few dozen rows is enough to pass the cap.
+        const BOUND: i64 = 40;
         let dir = tempfile::tempdir().unwrap();
         let store = open(dir.path());
-        for at in 0..SNAPSHOT_RETENTION + 5 {
+        for at in 0..BOUND + 5 {
             let mut rec = record(at);
             rec.info.snapshot = Some(Box::new(parked(
                 serde_json::json!({"service": "telegram", "op": "read", "args": {}}),
                 Vec::new(),
             )));
-            store.append_audit(&rec).unwrap();
+            store.append_audit_keeping(&rec, AUDIT_RETENTION, BOUND).unwrap();
         }
         let count: i64 =
             store.lock().unwrap().query_row("SELECT COUNT(*) FROM audit_snapshots", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, SNAPSHOT_RETENTION);
+        assert_eq!(count, BOUND);
+        let newest_at: i64 = store
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT a.at FROM audit_snapshots s JOIN audit a ON a.seq = s.seq ORDER BY s.seq DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(newest_at, BOUND + 4);
     }
 }

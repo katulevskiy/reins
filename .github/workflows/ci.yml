@@ -40,6 +40,7 @@ jobs:
       rust: ${{ steps.paths.outputs.rust }}
       android: ${{ steps.paths.outputs.android }}
       docker: ${{ steps.paths.outputs.docker }}
+      desktop: ${{ steps.paths.outputs.desktop }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -51,27 +52,34 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          rust=false android=false docker=false
+          rust=false android=false docker=false desktop=false
           if [[ "$EVENT" == workflow_dispatch || "$EVENT" == schedule || -z "$BASE_SHA" ||
                 "$BASE_SHA" == 0000000000000000000000000000000000000000 ]] ||
              ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            rust=true android=true docker=true
+            rust=true android=true docker=true desktop=true
           else
             while IFS= read -r -d '' path; do
               case "$path" in
-                .github/workflows/ci.yml) rust=true android=true docker=true ;;
+                .github/workflows/ci.yml) rust=true android=true docker=true desktop=true ;;
                 # The release's workflow and actions, CODEOWNERS, templates: the checks job (always run) lints them.
                 .github/*) ;;
-                Cargo.*|rust-toolchain.toml|crates/reins-core/*|crates/reins-proto/*|crates/reins-policy/*)
-                  rust=true android=true ;;
+                # Toolchain and cargo config change every Rust build, including the desktop apps and Android natives.
+                Cargo.*|rust-toolchain.toml|.cargo/*) rust=true android=true desktop=true ;;
+                # reins-desktop depends on reins-proto and reins-policy; reins-desktop-app depends on those and reins-desktop.
+                # reins-core is on this lane as well: desktop CI should run when the shared core crate changes.
+                crates/reins-core/*|crates/reins-proto/*|crates/reins-policy/*)
+                  rust=true android=true desktop=true ;;
+                crates/reins-desktop/*|crates/reins-desktop-app/*) rust=true desktop=true ;;
                 rustfmt.toml|build.rs|src/*|macros/*|crates/*|migrations/*|tests/*) rust=true ;;
                 android/*) android=true ;;
+                # The Windows desktop job runs this installer against the test build.
+                scripts/install.ps1) rust=true android=true desktop=true ;;
                 scripts/*) rust=true android=true ;;
                 docker/*|Dockerfile|.dockerignore|.hadolint.yaml) docker=true ;;
               esac
             done < <(git diff --name-only -z "$BASE_SHA" HEAD)
           fi
-          { echo "rust=$rust"; echo "android=$android"; echo "docker=$docker"; } >> "$GITHUB_OUTPUT"
+          { echo "rust=$rust"; echo "android=$android"; echo "docker=$docker"; echo "desktop=$desktop"; } >> "$GITHUB_OUTPUT"
 
   checks:
     name: Format, docs, scripts and workflow checks
@@ -138,6 +146,10 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # 2,000 grant-soundness cases on the weekly run and on a manual dispatch. Pull requests and pushes
+    # to main stay at 256: a release waits for main's CI.
+    env:
+      PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '256' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -153,9 +165,7 @@ jobs:
           tool: nextest@0.9.146
       # Cargo builds the normal server binary for tests/reins_server (CARGO_BIN_EXE_vaultwarden).
       # Nextest compiles all targets before starting E2E tests, so a separate server build is redundant.
-      # The tests' temporary directories on tmpfs: the encrypted store rewrites and syncs its whole file on every
-      # change, and on the runner's disk store::audit::tests::retention_is_bounded (5,000 appends) alone took four
-      # minutes of the run's five. The tests and what they check are unchanged.
+      # The tests' temporary directories on tmpfs: the encrypted store rewrites and syncs its whole file on every change.
       - name: Run all Rust tests
         env:
           REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
@@ -190,7 +200,7 @@ jobs:
   desktop-linux:
     name: Desktop UI on Linux (clippy + tests)
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -242,7 +252,7 @@ jobs:
     name: Desktop app on macOS (clippy + tests)
     # The release builds the desktop app for macOS too (release.yml); this keeps it compiling and its tests passing.
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -265,7 +275,7 @@ jobs:
     # The release builds the desktop app for Windows too (release.yml); this keeps it compiling and its tests passing,
     # and runs the background service for real (tests/windows_service.rs writes this runner's HKCU Run key).
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: windows-2025
     timeout-minutes: 60
     env:
