@@ -17,7 +17,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.work.NetworkType
 import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
+import dev.reins.android.autopilot.ModelUpdateGate
+import dev.reins.android.autopilot.NetworkConditions
 import dev.reins.android.autopilot.WorkModelDownloads
+import dev.reins.android.autopilot.WorkModelUpdates
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.FeedbackProvider
 import androidx.compose.ui.test.performTouchInput
@@ -54,6 +57,19 @@ class AutopilotFlowTest : FlowHarness() {
     @After
     fun stopListening() {
         FeedbackProvider.observer = null
+        NetworkConditions.override = null
+    }
+
+    /** A tag inside a row that reads as one (its parts are merged for accessibility). */
+    private fun awaitInside(tag: String) {
+        rule.waitUntil(10_000) {
+            settle()
+            rule.onAllNodes(androidx.compose.ui.test.hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun network(online: Boolean = true, unmetered: Boolean = true, powerSave: Boolean = false, dataSaver: Boolean = false) {
+        NetworkConditions.override = { ModelUpdateGate.Conditions(online, unmetered, powerSave, dataSaver) }
     }
 
     private fun installModel() {
@@ -381,7 +397,7 @@ class AutopilotFlowTest : FlowHarness() {
         assertEquals("the core downloads nothing before the network is there", 0, core.downloads.get())
         runDownloadJob()
         awaitCore { core.downloads.get() == 1 }
-        awaitText("Ready")
+        awaitInside("modelInstalled")
         tap("openModel")
         awaitTag("deleteModel")
     }
@@ -437,22 +453,19 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun anOlderModelShowsUpdateWhichDownloadsTheNewerOneOnWifi() {
-        core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, update = true)
+    fun theModelRowShowsItsVersionAndWhenItWasUpdatedWithNoUpdateButton() {
+        core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, update = true, updatedAt = now)
         openAutopilot()
-        awaitTag("updateModel")
-        assertFalse("Update replaces Ready", showsText("Ready"))
+        awaitInside("modelInstalled")
+        rule.onNodeWithTag("modelVersion", useUnmergedTree = true).assertTextEquals("v1")
+        awaitText("Updated today")
         awaitTag("statScored")
-        tap("updateModel")
-        awaitText("Waiting")
-        val request = WorkManager.getInstance(context).getWorkInfosForUniqueWork(WorkModelDownloads.NAME).get().single()
-        assertEquals(NetworkType.UNMETERED, request.constraints.requiredNetworkType)
-        assertEquals("the core downloads nothing before the network is there", 0, core.downloads.get())
-        runDownloadJob()
-        awaitCore { core.downloads.get() == 1 }
-        awaitText("Ready")
-        awaitGone("updateModel")
-        assertFalse(core.model.update)
+        assertFalse("a newer model comes by itself: nothing to tap", has("updateModel"))
+        assertFalse(has("modelUpdateWaiting"))
+        tap("openModel")
+        awaitTag("deleteModel")
+        assertFalse(has("updateModelDetails"))
+        assertFalse(showsText("A newer model is available", substring = true))
     }
 
     @Test
@@ -465,17 +478,93 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun theModelDetailsSayWhatTheUpdateBringsAndStartIt() {
+    fun theAppSchedulesQuietUpdatesOnWifiWithBatteryAndStorageToSpare() {
+        installModel()
+        openAutopilot()
+        val work = WorkManager.getInstance(context)
+        awaitCore {
+            work.getWorkInfosForUniqueWork(WorkModelUpdates.NOW).get().isNotEmpty() &&
+                work.getWorkInfosForUniqueWork(WorkModelUpdates.DAILY).get().isNotEmpty()
+        }
+        val infos = work.getWorkInfosForUniqueWork(WorkModelUpdates.NOW).get() + work.getWorkInfosForUniqueWork(WorkModelUpdates.DAILY).get()
+        infos.forEach {
+            assertEquals(NetworkType.UNMETERED, it.constraints.requiredNetworkType)
+            assertTrue(it.constraints.requiresBatteryNotLow())
+            assertTrue(it.constraints.requiresStorageNotLow())
+        }
+        assertTrue("nothing is downloaded before Wi-Fi", core.updateCalls.isEmpty())
+    }
+
+    @Test
+    fun updateAutomaticallyIsOnAndCanBeTurnedOff() {
+        installModel()
+        openAutopilot()
+        tap("openModel")
+        awaitTag("autoUpdate")
+        tap("autoUpdate")
+        awaitCore { core.autoUpdateCalls.toList() == listOf(false) }
+        assertFalse(core.autoUpdate)
+        assertEquals(false, container.state.autopilot.value?.autoUpdate)
+    }
+
+    @Test
+    fun checkNowIsBehindMoreAndUpdatesTheModel() {
+        network()
         core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, update = true)
         openAutopilot()
         tap("openModel")
-        awaitText("rates risk, which Overnight needs", substring = true)
-        tap("updateModelDetails")
-        awaitText("Waiting for Wi-Fi")
-        runDownloadJob()
-        awaitCore { core.downloads.get() == 1 }
-        rule.waitUntil(10_000) { !showsText("rates risk, which Overnight needs", substring = true) }
-        awaitGone("updateModelDetails")
+        awaitTag("modelMore")
+        assertFalse("More starts closed", has("checkNow"))
+        tap("modelMore")
+        tap("checkNow")
+        awaitTag("checkResult")
+        rule.onNodeWithTag("checkResult", useUnmergedTree = true).assertTextEquals("Updated")
+        assertEquals("the user's check, not the automatic one", listOf(false), core.updateCalls.toList())
+        assertEquals("2", core.model.version)
+    }
+
+    @Test
+    fun checkNowSaysWhenTheModelIsUpToDate() {
+        network(powerSave = true, dataSaver = true)
+        installModel()
+        openAutopilot()
+        tap("openModel")
+        tap("modelMore")
+        tap("checkNow")
+        awaitTag("checkResult")
+        rule.onNodeWithTag("checkResult", useUnmergedTree = true).assertTextEquals("Up to date")
+        assertEquals("Battery Saver and Data Saver do not stop the user's check", listOf(false), core.updateCalls.toList())
+    }
+
+    @Test
+    fun checkNowOnMobileDataWaitsForWifiInTheBackground() {
+        network(unmetered = false)
+        core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, update = true)
+        openAutopilot()
+        tap("openModel")
+        tap("modelMore")
+        tap("checkNow")
+        awaitTag("checkResult")
+        rule.onNodeWithTag("checkResult", useUnmergedTree = true).assertTextEquals("Waiting for Wi-Fi")
+        assertTrue("nothing downloads on mobile data", core.updateCalls.isEmpty())
+        val waiting = WorkManager.getInstance(context).getWorkInfosForUniqueWork(WorkModelUpdates.NOW).get()
+        assertTrue(waiting.isNotEmpty())
+        waiting.forEach { assertEquals(NetworkType.UNMETERED, it.constraints.requiredNetworkType) }
+    }
+
+    @Test
+    fun aCheckNowThatFailsSaysWhyAndKeepsTheModel() {
+        network()
+        core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, update = true)
+        core.updateFailure = CoreException.Service("the newer model failed its self-check")
+        openAutopilot()
+        tap("openModel")
+        tap("modelMore")
+        tap("checkNow")
+        awaitTag("checkResult")
+        rule.onNodeWithTag("checkResult", useUnmergedTree = true).assertTextContains("failed its self-check", substring = true)
+        assertEquals(ModelState.INSTALLED, core.model.state)
+        assertTrue(has("deleteModel"))
     }
 
     // ---- profiles ---------------------------------------------------------------------------------------------------

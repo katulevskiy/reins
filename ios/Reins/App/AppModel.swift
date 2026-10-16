@@ -215,19 +215,29 @@ final class AppModel {
 
     /// Autopilot's model coming down: the job, its bytes, the network it waits for (the screen, the Live Activity).
     let modelDownloads: ModelDownloads
+    /// A newer model coming down by itself on Wi-Fi (no notification, sound or Live Activity), and "Check now".
+    let modelAutoUpdate: ModelAutoUpdater
 
     init(core: any ReinsCoreProtocol, feedback: Feedback, authenticator: Authenticating, demo: Bool = false,
-         modelDownloads: ModelDownloads? = nil) {
+         modelDownloads: ModelDownloads? = nil, modelAutoUpdate: ModelAutoUpdater? = nil) {
         self.core = core
         self.feedback = feedback
         self.authenticator = authenticator
         self.demo = demo
         self.passkeys = demo ? DemoPasskeys() : PlatformPasskeys()
         self.modelDownloads = modelDownloads ?? ModelDownloads(core: core, feedback: feedback)
+        self.modelAutoUpdate = modelAutoUpdate ?? ModelAutoUpdater(core: CoreModelUpdates(core: core))
         self.modelDownloads.onFinished = { [weak self] failure in
             await self?.refreshAutopilot()
             self?.onModelDownloadFinished?(failure)
         }
+        self.modelAutoUpdate.canRun = { [weak self] in
+            guard let self, case .signedIn = self.session else { return false }
+            return true
+        }
+        self.modelAutoUpdate.downloadBusy = { [weak self] in self?.modelDownloads.job != .idle }
+        self.modelAutoUpdate.wifiOnly = { [weak self] in self?.autopilot?.wifiOnly ?? true }
+        self.modelAutoUpdate.onFinished = { [weak self] in await self?.refreshAutopilot() }
     }
 
     // MARK: Session

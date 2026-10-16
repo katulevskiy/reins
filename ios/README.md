@@ -121,7 +121,7 @@ Reins/Shell/ adaptive shell: tab bar on a compact width, sidebar | list | detail
 Reins/Design/ components, avatars (provider logos, the blobatar port), countdowns, grant clocks
 Reins/Feedback/ haptics (Core Haptics patterns ported from Android's HapticDesign) and sounds (AVAudioEngine,
              Zeron's sound set, the detent ladder), the feedback store
-Reins/Platform/ notifications and their actions, grant reminders, background refresh, Google sign-in, MCP
+Reins/Platform/ notifications and their actions, grant reminders, background refresh and model update, Google sign-in, MCP
              sign-in, Live Activities, Face ID
 Reins/Screens/ activity, approval / pairing / upload sheets, grants, settings, integrations, MCP, Autopilot, sign-in
 Reins/Autopilot/ ONNX Runtime model runner and the model download
@@ -161,7 +161,7 @@ unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1)
 | Argument | Effect |
 |---|---|
 | `-demo` | DemoCore instead of the real core: every kind of request, activity, grants, integrations, Autopilot |
-| `-signedout`, `-demoArrive`, `-demoNoModel`, `-demoOldModel`, `-noPopup`, `-demoQuiet`, `-demoWarn` | Demo variants (start signed out, a request arrives after 6 s, no model, an older model with an update, no automatic sheet, nothing waiting, the warn field) |
+| `-signedout`, `-demoArrive`, `-demoNoModel`, `-demoOldModel`, `-noPopup`, `-demoQuiet`, `-demoWarn` | Demo variants (start signed out, a request arrives after 6 s, no model, an older model that updates itself on Wi-Fi, no automatic sheet, nothing waiting, the warn field) |
 | `-open reins://...` | Opens a link at launch (`simctl openurl` stops at a prompt) |
 | `-freezeTime <unix seconds>` | Stops the clocks, for screenshots |
 | `-hinge bent\|closed\|flat` | Forces a fold posture (the Simulator cannot fold from a script) |

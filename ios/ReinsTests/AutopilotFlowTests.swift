@@ -9,7 +9,10 @@ final class AutopilotFlowTests: XCTestCase {
     private var feedback: EventFeedback!
     private var owner: AnswerAuthenticator!
     private var network: FakeNetwork!
+    /// The network as the automatic update sees it (its own watcher, as in the app).
+    private var updateNetwork: FakeNetwork!
     private var surroundings: FakeSurroundings!
+    private var background: FakeBackgroundTime!
     private var core: DemoReinsCore!
     private var model: AppModel!
     private var ap: AutopilotModel!
@@ -18,10 +21,13 @@ final class AutopilotFlowTests: XCTestCase {
         feedback = EventFeedback()
         owner = AnswerAuthenticator()
         network = FakeNetwork()
+        updateNetwork = FakeNetwork()
         surroundings = FakeSurroundings()
+        background = FakeBackgroundTime()
         core = DemoReinsCore(modelInstalled: modelInstalled, modelOutdated: modelOutdated, syncCap: 0.3)
         let downloads = ModelDownloads(core: core, feedback: feedback, network: network, surroundings: surroundings)
-        model = AppModel(core: core, feedback: feedback, authenticator: owner, demo: true, modelDownloads: downloads)
+        let updates = ModelAutoUpdater(core: CoreModelUpdates(core: core), network: updateNetwork, power: FakePower(), background: background)
+        model = AppModel(core: core, feedback: feedback, authenticator: owner, demo: true, modelDownloads: downloads, modelAutoUpdate: updates)
         await model.refreshSession()
         ap = AutopilotModel(app: model)
         await ap.refresh()
@@ -388,27 +394,56 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertFalse(ap.modelReady)
     }
 
-    func testAnOlderModelUpdatesLikeADownloadAndKeepsScoringMeanwhile() async {
+    func testAnOlderModelUpdatesItselfOnWifiAndKeepsScoringMeanwhile() async {
         await start(modelOutdated: true)
-        XCTAssertTrue(ap.modelUpdatable, "the row says Update, not Ready")
         XCTAssertTrue(ap.modelReady)
-        network.set(.cellular)
-        XCTAssertTrue(ap.needsMobileDataConsent(), "Wi-Fi only holds for an update too")
-        ap.download()
-        XCTAssertEqual(ap.downloadJob, .waiting)
-        XCTAssertTrue(ap.modelUpdatable)
-        network.set(.unmetered)
-        XCTAssertEqual(ap.downloadJob, .running, "Wi-Fi came back")
-        await until { model.modelDownloads.downloaded > 0 }
+        XCTAssertEqual(model.autopilot?.autoUpdate, true, "on by default")
+        updateNetwork.set(.cellular)
+        await model.modelAutoUpdate.check(.launch)
+        XCTAssertTrue(model.modelAutoUpdate.waiting, "an automatic update waits for Wi-Fi")
+        XCTAssertEqual(ap.model?.state, .installed)
+        updateNetwork.set(.unmetered)
+        await until { model.modelAutoUpdate.downloaded > 0 }
         XCTAssertEqual(ap.model?.state, .downloading)
         XCTAssertNotNil(AutopilotText.fraction(ap.model!), "the row shows how far, as a download does")
-        XCTAssertFalse(ap.modelUpdatable)
         XCTAssertTrue(ap.modelReady, "the older model still scores while the newer one comes")
-        await until { ap.downloadJob == .idle }
+        XCTAssertEqual(ap.downloadJob, .idle, "not the first download's job")
+        await until { !model.modelAutoUpdate.running }
         await until { model.autopilot?.model.update == false }
-        XCTAssertEqual(ap.model?.state, .installed, "Ready")
-        XCTAssertFalse(ap.modelUpdatable)
+        XCTAssertEqual(ap.model?.state, .installed)
+        XCTAssertEqual(model.autopilot?.model.version, "2")
+        XCTAssertNotNil(model.autopilot?.model.updatedAt)
         XCTAssertEqual(model.autopilot?.model.risk, true, "the newer model rates risk")
+        XCTAssertEqual(background.log, ["begin", "end"])
+        XCTAssertTrue(surroundings.log.isEmpty, "no Live Activity")
+        XCTAssertFalse(feedback.played(.grantCreated), "no sound or haptic")
+        XCTAssertFalse(feedback.played(.error))
+    }
+
+    func testUpdateAutomaticallyCanBeTurnedOff() async throws {
+        await start(modelOutdated: true)
+        await ap.setAutoUpdate(false)
+        XCTAssertTrue(feedback.lastWas(.toggleOff))
+        XCTAssertEqual(model.autopilot?.autoUpdate, false)
+        let read = try await core.autopilotSettings()
+        XCTAssertFalse(read.autoUpdate)
+        await model.modelAutoUpdate.check(.launch)
+        XCTAssertFalse(model.modelAutoUpdate.running)
+        XCTAssertTrue(background.log.isEmpty, "nothing ran")
+        XCTAssertEqual(model.autopilot?.model.update, true, "the older model stays")
+    }
+
+    func testCheckNowUpdatesAnOlderModelAndSaysSo() async {
+        await start(modelOutdated: true)
+        await ap.setAutoUpdate(false)
+        await ap.checkModelNow()
+        XCTAssertEqual(ap.modelCheckResult, .updated)
+        XCTAssertEqual(ap.modelCheckResult?.text, "Updated")
+        XCTAssertFalse(ap.checkingModel)
+        XCTAssertEqual(model.autopilot?.model.update, false)
+        XCTAssertEqual(model.autopilot?.model.version, "2")
+        await ap.checkModelNow()
+        XCTAssertEqual(ap.modelCheckResult?.text, "Up to date")
     }
 
     func testTheModelCanBeDeleted() async {
@@ -601,4 +636,17 @@ private final class FakeSurroundings: DownloadSurroundings {
     func activityStarted(total: UInt64) { log.append("activity") }
     func activityProgress(downloaded: UInt64, total: UInt64) {}
     func activityEnded(failed: Bool) { log.append(failed ? "ended:failed" : "ended:ok") }
+}
+
+@MainActor
+private final class FakePower: PowerWatching {
+    var lowPower = false
+    var onChange: ((Bool) -> Void)?
+}
+
+@MainActor
+private final class FakeBackgroundTime: BackgroundTime {
+    var log: [String] = []
+    func begin() { log.append("begin") }
+    func end() { log.append("end") }
 }

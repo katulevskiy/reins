@@ -15,6 +15,11 @@ import dev.reins.core.RiskLevel
 import dev.reins.core.RiskView
 import dev.reins.core.SuggestionView
 import dev.reins.core.Verdict
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /** Autopilot's words, kept apart from the screens so they can be tested on the JVM. */
@@ -496,11 +501,30 @@ object AutopilotText {
     fun modelUsable(m: ModelStatus?): Boolean =
         m != null && (m.state == ModelState.INSTALLED || (m.state == ModelState.DOWNLOADING && m.update))
 
-    /** An older model is installed and a newer one can be downloaded. */
-    fun modelUpdatable(m: ModelStatus?): Boolean = m != null && m.state == ModelState.INSTALLED && m.update
+    /**
+     * The model row's value once installed, "v2", whatever way the build spells the version. It stays this short so it
+     * is never cut off; when it was updated ([updatedAgo]) is the row's second line.
+     */
+    fun modelVersion(m: ModelStatus): String = m.version.trim().let { if (it.startsWith("v", ignoreCase = true)) it else "v$it" }
 
-    /** Under the model's details when a newer one is there to download. */
-    const val MODEL_UPDATE_LINE = "A newer model is available: it also rates risk, which Overnight needs."
+    /**
+     * When the model in use was put in use ([updatedAt], unix seconds), in calendar days of [zone] before [now] (unix
+     * seconds): "Updated today", "yesterday", "3 days ago" up to six, then the date ("Updated Mar 4", with the year when
+     * it is not this one). Null when not known.
+     */
+    fun updatedAgo(updatedAt: Long?, now: Long, zone: ZoneId = ZoneId.systemDefault()): String? {
+        if (updatedAt == null) return null
+        val then = Instant.ofEpochSecond(updatedAt).atZone(zone).toLocalDate()
+        val today = Instant.ofEpochSecond(now).atZone(zone).toLocalDate()
+        val days = ChronoUnit.DAYS.between(then, today)
+        return when {
+            days <= 0 -> "Updated today"
+            days == 1L -> "Updated yesterday"
+            days < 7 -> "Updated $days days ago"
+            then.year == today.year -> "Updated " + then.format(DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH))
+            else -> "Updated " + then.format(DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH))
+        }
+    }
 
     /** The model card's state line. */
     fun modelState(m: ModelStatus, waitingForNetwork: Boolean, wifiOnly: Boolean): String = when {

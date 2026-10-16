@@ -3036,6 +3036,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func modelStatus() async  -> ModelStatus
     
     /**
+     * An automatic update has something to do (asks nobody): the app then waits for Wi-Fi to call `update_model`.
+     */
+    func modelUpdatePending() async  -> Bool
+    
+    /**
      * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
      * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
      * unknown or expired code is `NotFound`.
@@ -3043,6 +3048,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func pairingByCode(userCode: String) async throws  -> PairingView
     
     func pairingView(pairingId: String) async throws  -> PairingView
+    
+    /**
+     * Stops the model download running now; it ends with `CoreError::Network` and keeps what arrived, so the next
+     * `update_model` goes on from there. The app calls it when the phone leaves Wi-Fi during an automatic update (or
+     * Low Power or Low Data Mode comes on). A downloaded model already being checked is not stopped.
+     */
+    func pauseModelDownload() async 
     
     /**
      * Items parked for the user, newest first.
@@ -3191,6 +3203,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func session() async throws  -> SessionInfo?
     
     /**
+     * "Update automatically" (on by default).
+     */
+    func setAutopilotAutoUpdate(on: Bool) async throws 
+    
+    /**
      * Sets the global mode (`connection_id` = `None`) or one connection's. `mode` = `None` returns the global mode to
      * its default, or makes the connection follow the global mode. `Bypass` lasts `minutes` (default 15, at most a
      * year; `start_bypass` also starts one without an end) and is refused for a connection paired less than 10
@@ -3333,6 +3350,15 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * platform's passkey UI returned), as the recovery code does.
      */
     func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data) async throws 
+    
+    /**
+     * Updates the model when a newer one this build trusts is published: downloaded (continuing an interrupted
+     * download), checked against the hashes built into the core, run once, and only then put in use, between
+     * decisions. The model in use stays if anything fails. `automatic`: the app's own check, which does nothing when
+     * "Update automatically" is off or the newer model already failed; else the user's "Check now". The app calls it
+     * only when the network allows (Wi-Fi, not Low Power or Low Data mode, for an automatic one).
+     */
+    func updateModel(automatic: Bool, progress: DownloadProgress) async throws  -> ModelUpdateOutcome
     
     /**
      * Creates an item; its id.
@@ -4799,6 +4825,26 @@ open func modelStatus()async  -> ModelStatus  {
 }
     
     /**
+     * An automatic update has something to do (asks nobody): the app then waits for Wi-Fi to call `update_model`.
+     */
+open func modelUpdatePending()async  -> Bool  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_model_update_pending(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_i8,
+            completeFunc: ffi_reins_core_rust_future_complete_i8,
+            freeFunc: ffi_reins_core_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
      * The pairing a computer's code stands for (`BCDF-GHJK`, scanned from its QR code or opened from a link; case,
      * spaces and dashes do not count). It is parked like a pushed pairing and answered with `answer_pairing`. An
      * unknown or expired code is `NotFound`.
@@ -4832,6 +4878,28 @@ open func pairingView(pairingId: String)async throws  -> PairingView  {
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePairingView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Stops the model download running now; it ends with `CoreError::Network` and keeps what arrived, so the next
+     * `update_model` goes on from there. The app calls it when the phone leaves Wi-Fi during an automatic update (or
+     * Low Power or Low Data Mode comes on). A downloaded model already being checked is not stopped.
+     */
+open func pauseModelDownload()async   {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_pause_model_download(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+            
         )
 }
     
@@ -5375,6 +5443,25 @@ open func session()async throws  -> SessionInfo?  {
 }
     
     /**
+     * "Update automatically" (on by default).
+     */
+open func setAutopilotAutoUpdate(on: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_autopilot_auto_update(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(on)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Sets the global mode (`connection_id` = `None`) or one connection's. `mode` = `None` returns the global mode to
      * its default, or makes the connection follow the global mode. `Bypass` lasts `minutes` (default 15, at most a
      * year; `start_bypass` also starts one without an end) and is refused for a connection paired less than 10
@@ -5836,6 +5923,29 @@ open func unlockWithVaultPasskey(credentialId: Data, prfOutput: Data)async throw
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Updates the model when a newer one this build trusts is published: downloaded (continuing an interrupted
+     * download), checked against the hashes built into the core, run once, and only then put in use, between
+     * decisions. The model in use stays if anything fails. `automatic`: the app's own check, which does nothing when
+     * "Update automatically" is off or the newer model already failed; else the user's "Check now". The app calls it
+     * only when the network allows (Wi-Fi, not Low Power or Low Data mode, for an automatic one).
+     */
+open func updateModel(automatic: Bool, progress: DownloadProgress)async throws  -> ModelUpdateOutcome  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_update_model(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(automatic),FfiConverterTypeDownloadProgress_lower(progress)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeModelUpdateOutcome_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -9093,6 +9203,10 @@ public struct AutopilotSettings: Equatable, Hashable {
      * Download the model on Wi-Fi only (the app's download job honours it).
      */
     public var wifiOnly: Bool
+    /**
+     * A newer model this build trusts is downloaded and put in use by itself (on Wi-Fi; the app decides when).
+     */
+    public var autoUpdate: Bool
     public var model: ModelStatus
     /**
      * Connections with a mode or a profile of their own.
@@ -9129,7 +9243,10 @@ public struct AutopilotSettings: Equatable, Hashable {
          */defaultProfileId: String, 
         /**
          * Download the model on Wi-Fi only (the app's download job honours it).
-         */wifiOnly: Bool, model: ModelStatus, 
+         */wifiOnly: Bool, 
+        /**
+         * A newer model this build trusts is downloaded and put in use by itself (on Wi-Fi; the app decides when).
+         */autoUpdate: Bool = true, model: ModelStatus, 
         /**
          * Connections with a mode or a profile of their own.
          */connections: [ConnectionAutopilot]) {
@@ -9142,6 +9259,7 @@ public struct AutopilotSettings: Equatable, Hashable {
         self.overnightWhenRisky = overnightWhenRisky
         self.defaultProfileId = defaultProfileId
         self.wifiOnly = wifiOnly
+        self.autoUpdate = autoUpdate
         self.model = model
         self.connections = connections
     }
@@ -9171,6 +9289,7 @@ public struct FfiConverterTypeAutopilotSettings: FfiConverterRustBuffer {
                 overnightWhenRisky: FfiConverterTypeOvernightRisky.read(from: &buf), 
                 defaultProfileId: FfiConverterString.read(from: &buf), 
                 wifiOnly: FfiConverterBool.read(from: &buf), 
+                autoUpdate: FfiConverterBool.read(from: &buf), 
                 model: FfiConverterTypeModelStatus.read(from: &buf), 
                 connections: FfiConverterSequenceTypeConnectionAutopilot.read(from: &buf)
         )
@@ -9186,6 +9305,7 @@ public struct FfiConverterTypeAutopilotSettings: FfiConverterRustBuffer {
         FfiConverterTypeOvernightRisky.write(value.overnightWhenRisky, into: &buf)
         FfiConverterString.write(value.defaultProfileId, into: &buf)
         FfiConverterBool.write(value.wifiOnly, into: &buf)
+        FfiConverterBool.write(value.autoUpdate, into: &buf)
         FfiConverterTypeModelStatus.write(value.model, into: &buf)
         FfiConverterSequenceTypeConnectionAutopilot.write(value.connections, into: &buf)
     }
@@ -12923,6 +13043,10 @@ public struct ModelStatus: Equatable, Hashable {
      * then removes the older).
      */
     public var update: Bool
+    /**
+     * When the installed model was put in use (unix seconds), if known.
+     */
+    public var updatedAt: Int64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -12945,7 +13069,10 @@ public struct ModelStatus: Equatable, Hashable {
         /**
          * The installed model is an older one this build still trusts; `download_model` installs the newer one (and
          * then removes the older).
-         */update: Bool = false) {
+         */update: Bool = false, 
+        /**
+         * When the installed model was put in use (unix seconds), if known.
+         */updatedAt: Int64? = nil) {
         self.state = state
         self.id = id
         self.label = label
@@ -12956,6 +13083,7 @@ public struct ModelStatus: Equatable, Hashable {
         self.runtimeReady = runtimeReady
         self.risk = risk
         self.update = update
+        self.updatedAt = updatedAt
     }
 
     
@@ -12983,7 +13111,8 @@ public struct FfiConverterTypeModelStatus: FfiConverterRustBuffer {
                 error: FfiConverterOptionString.read(from: &buf), 
                 runtimeReady: FfiConverterBool.read(from: &buf), 
                 risk: FfiConverterBool.read(from: &buf), 
-                update: FfiConverterBool.read(from: &buf)
+                update: FfiConverterBool.read(from: &buf), 
+                updatedAt: FfiConverterOptionInt64.read(from: &buf)
         )
     }
 
@@ -12998,6 +13127,7 @@ public struct FfiConverterTypeModelStatus: FfiConverterRustBuffer {
         FfiConverterBool.write(value.runtimeReady, into: &buf)
         FfiConverterBool.write(value.risk, into: &buf)
         FfiConverterBool.write(value.update, into: &buf)
+        FfiConverterOptionInt64.write(value.updatedAt, into: &buf)
     }
 }
 
@@ -19371,6 +19501,121 @@ public func FfiConverterTypeModelState_lower(_ value: ModelState) -> RustBuffer 
 
 
 /**
+ * What `update_model` did.
+ */
+
+public enum ModelUpdateOutcome: Equatable, Hashable {
+    
+    /**
+     * The model in use is the newest this build trusts.
+     */
+    case upToDate
+    /**
+     * No model is installed: the first download is the user's to start.
+     */
+    case notInstalled
+    /**
+     * Updating automatically is off (an automatic check only).
+     */
+    case off
+    /**
+     * The host does not have the newer model yet (or has another package under its name).
+     */
+    case unavailable
+    /**
+     * The newer model failed its check before; automatic checks leave it alone until "Check now".
+     */
+    case rejected
+    /**
+     * The newer model was downloaded, verified, passed its self-check and is in use.
+     */
+    case updated
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ModelUpdateOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelUpdateOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = ModelUpdateOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelUpdateOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .upToDate
+        
+        case 2: return .notInstalled
+        
+        case 3: return .off
+        
+        case 4: return .unavailable
+        
+        case 5: return .rejected
+        
+        case 6: return .updated
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ModelUpdateOutcome, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .upToDate:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .notInstalled:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .off:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .unavailable:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .rejected:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .updated:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelUpdateOutcome_lift(_ buf: RustBuffer) throws -> ModelUpdateOutcome {
+    return try FfiConverterTypeModelUpdateOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelUpdateOutcome_lower(_ value: ModelUpdateOutcome) -> RustBuffer {
+    return FfiConverterTypeModelUpdateOutcome.lower(value)
+}
+
+
+
+/**
  * What Overnight does with a request its risk model rates catastrophic.
  */
 
@@ -23073,10 +23318,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_model_status() != 15718) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_model_update_pending() != 36444) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_pairing_by_code() != 29957) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_pairing_view() != 14669) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_pause_model_download() != 7554) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_pending() != 41948) {
@@ -23163,6 +23414,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_session() != 56857) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_auto_update() != 15593) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_mode() != 21760) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -23233,6 +23487,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_unlock_with_vault_passkey() != 6226) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_update_model() != 13553) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_vault_create() != 43120) {

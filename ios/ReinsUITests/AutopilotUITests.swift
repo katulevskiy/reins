@@ -228,6 +228,22 @@ final class AutopilotUITests: XCTestCase {
         waitFor("downloadModel")
     }
 
+    /// The model updates itself; its sheet has the switch, and "Check now" under More says what came of it.
+    func testTheModelSheetUpdatesAutomaticallyAndChecksUnderMore() {
+        launch()
+        scrollTo("modelInstalled")
+        waitFor("modelInstalled")
+        tap("modelRow")
+        waitFor("modelSheet")
+        waitFor("autoUpdate")
+        waitFor("modelUpdated")
+        XCTAssertFalse(element("checkModelNow").exists, "More starts closed")
+        tap("modelMore")
+        tap("checkModelNow")
+        waitFor("checkModelResult", timeout: 10)
+        shot("autopilot-model-check")
+    }
+
     func testAProfileShowsItsKindsAndThresholds() {
         launch()
         scrollTo("profile:personal")

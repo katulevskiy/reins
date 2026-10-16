@@ -217,42 +217,28 @@ struct ModelOffer: View {
     }
 }
 
-/// "On-device model": Ready, Update (a tap downloads the newer model), the download's percent, or Download; opens the
-/// model's details.
+/// "On-device model": its version and when it was updated ("v2 · Updated today"), the download's percent (a first
+/// download or an update coming down by itself), or Download; opens the model's details.
 struct ModelRow: View {
     var ap: AutopilotModel
-    var onUpdate: () -> Void
     var action: () -> Void
-    @Environment(\.feedback) private var feedback
 
     var body: some View {
-        AutopilotLinkRow(title: "On-device model", symbol: "cpu", tint: Palette.kindRead, identifier: "modelRow") {
+        AutopilotLinkRow(title: "On-device model", symbol: "cpu", tint: Palette.kindRead, identifier: "modelRow",
+                         subtitle: ap.model.flatMap { $0.state == .installed ? AutopilotText.updatedAgo($0.updatedAt) : nil }) {
             if let m = ap.model {
-                if ap.modelUpdatable, ap.downloadJob == .waiting {
-                    Text("Waiting").font(RFont.sans(15)).foregroundStyle(Palette.ink2)
-                        .accessibilityIdentifier("modelUpdateWaiting")
-                } else if ap.modelUpdatable {
-                    Button {
-                        feedback.play(.tap)
-                        onUpdate()
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "arrow.down.circle").font(.system(size: 14, weight: .medium))
-                            Text("Update").font(RFont.sans(15, .medium))
-                        }
-                        .foregroundStyle(Palette.violet)
-                        .padding(.horizontal, 6)
-                        .frame(minHeight: 30)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("updateModel")
-                } else if m.state == .installed {
+                if m.state == .installed {
+                    // Short enough never to be cut ("v2"); when it was updated is the row's second line.
                     HStack(spacing: 5) {
                         Image(systemName: "checkmark.circle").font(.system(size: 14, weight: .medium))
-                        Text("Ready").font(RFont.sans(15))
+                            .foregroundStyle(Palette.success)
+                        Text(AutopilotText.modelVersion(m))
+                            .font(RFont.sans(15))
+                            .foregroundStyle(Palette.ink2)
+                            .fixedSize()
                     }
-                    .foregroundStyle(Palette.success)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(AutopilotText.modelVersionSpoken(m))
                     .accessibilityIdentifier("modelInstalled")
                 } else if m.state == .downloading || ap.downloadJob == .running {
                     Text(AutopilotText.fraction(m).map { "\(Int($0 * 100))%" } ?? "…")
@@ -265,12 +251,6 @@ struct ModelRow: View {
         } action: {
             action()
         }
-        // The row reads as one element; Update stays reachable as its action.
-        .accessibilityActions {
-            if ap.modelUpdatable, ap.downloadJob == .idle {
-                Button("Update", action: onUpdate)
-            }
-        }
     }
 }
 
@@ -280,6 +260,8 @@ struct AutopilotLinkRow<Trailing: View>: View {
     var symbol: String
     var tint: Color
     var identifier: String
+    /// A short line under the title ("Updated today").
+    var subtitle: String? = nil
     @ViewBuilder var trailing: Trailing
     var action: () -> Void
     @Environment(\.feedback) private var feedback
@@ -289,7 +271,7 @@ struct AutopilotLinkRow<Trailing: View>: View {
             feedback.play(.tap)
             action()
         } label: {
-            SettingsRowLabel(title: title) {
+            SettingsRowLabel(title: title, subtitle: subtitle) {
                 SettingsTile(symbol: symbol, tint: tint)
             } trailing: {
                 trailing
@@ -336,7 +318,8 @@ struct ProfileRow: View {
     }
 }
 
-/// The model's details: what it is, getting it or removing it, and the Wi-Fi only switch.
+/// The model's details: what it is, getting it or removing it, the Wi-Fi only and Update automatically switches, and
+/// "Check now" under More.
 struct ModelSheet: View {
     var ap: AutopilotModel
     @State private var deleteAsk = false
@@ -358,7 +341,11 @@ struct ModelSheet: View {
                     }
                     .accessibilityIdentifier("closeModel")
                 }
-                ModelCard(ap: ap, wifiOnly: ap.settings?.wifiOnly ?? true, onDownload: download, onDelete: { deleteAsk = true })
+                ModelCard(ap: ap, wifiOnly: ap.settings?.wifiOnly ?? true, autoUpdate: ap.settings?.autoUpdate ?? true,
+                          onDownload: download, onDelete: { deleteAsk = true })
+                if AutopilotText.modelUsable(ap.model) {
+                    ModelMore(ap: ap)
+                }
             }
             .padding(20)
         }
@@ -386,10 +373,11 @@ struct ModelSheet: View {
     }
 }
 
-/// The on-device model: what it is, whether it is here, getting it and removing it, and the Wi-Fi only switch.
+/// The on-device model: what it is, whether it is here, getting it and removing it, and its two switches.
 private struct ModelCard: View {
     var ap: AutopilotModel
     var wifiOnly: Bool
+    var autoUpdate: Bool
     var onDownload: () -> Void
     var onDelete: () -> Void
 
@@ -399,7 +387,13 @@ private struct ModelCard: View {
                 details(m)
                 RowDivider(inset: 64)
             }
-            WifiOnlyRow(on: wifiOnly) { on in Task { await ap.setWifiOnly(on) } }
+            ModelSwitchRow(title: "Download on Wi-Fi only", symbol: "wifi", on: wifiOnly, identifier: "wifiOnly") { on in
+                Task { await ap.setWifiOnly(on) }
+            }
+            RowDivider(inset: 64)
+            ModelSwitchRow(title: "Update automatically", symbol: "arrow.triangle.2.circlepath", on: autoUpdate, identifier: "autoUpdate") { on in
+                Task { await ap.setAutoUpdate(on) }
+            }
         }
     }
 
@@ -432,13 +426,12 @@ private struct ModelCard: View {
                 .font(RFont.sans(13.5, .medium))
                 .foregroundStyle(m.state == .failed ? Palette.danger : Palette.ink2)
                 .padding(.top, 12)
-            if AutopilotText.modelUpdatable(m), !waiting {
-                Text(AutopilotText.modelUpdateLine)
+            if m.state == .installed, let ago = AutopilotText.updatedAgo(m.updatedAt) {
+                Text(ago)
                     .font(RFont.sans(13))
                     .foregroundStyle(Palette.inkMeta)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 6)
-                    .accessibilityIdentifier("modelUpdateLine")
+                    .padding(.top, 4)
+                    .accessibilityIdentifier("modelUpdated")
             }
             if downloading {
                 MeterBar(fraction: AutopilotText.fraction(m), tint: Palette.violet, height: 8)
@@ -457,15 +450,9 @@ private struct ModelCard: View {
                     ActionButton(title: "Cancel", kind: .secondary, compact: true) { ap.cancelDownload() }
                         .padding(.top, 14)
                 } else if m.state == .installed {
-                    HStack(spacing: 10) {
-                        if m.update {
-                            ActionButton(title: "Update", symbol: "arrow.down.circle", kind: .accent, compact: true, action: onDownload)
-                                .accessibilityIdentifier("updateModelDetails")
-                        }
-                        ActionButton(title: "Delete model", symbol: "trash", kind: .destructive, compact: true, action: onDelete)
-                            .accessibilityIdentifier("deleteModel")
-                    }
-                    .padding(.top, 14)
+                    ActionButton(title: "Delete model", symbol: "trash", kind: .destructive, compact: true, action: onDelete)
+                        .accessibilityIdentifier("deleteModel")
+                        .padding(.top, 14)
                 } else {
                     ActionButton(
                         title: m.state == .failed ? "Try again" : "Download",
@@ -484,22 +471,72 @@ private struct ModelCard: View {
     }
 }
 
-/// "Download on Wi-Fi only", a switch row.
-private struct WifiOnlyRow: View {
+/// A switch row of the model's card ("Download on Wi-Fi only", "Update automatically").
+private struct ModelSwitchRow: View {
+    var title: String
+    var symbol: String
     var on: Bool
+    var identifier: String
     var onChange: (Bool) -> Void
 
     var body: some View {
         Toggle(isOn: Binding(get: { on }, set: onChange)) {
             HStack(spacing: 14) {
-                IconTile(symbol: "wifi", tint: Palette.violet, size: 34)
-                Text("Download on Wi-Fi only").font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink)
+                IconTile(symbol: symbol, tint: Palette.violet, size: 34)
+                Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink)
             }
         }
         .tint(Palette.violet)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .accessibilityIdentifier("wifiOnly")
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// "More", closed at first: "Check now" and what it came to ("Up to date", "Updated", "Waiting for Wi-Fi").
+private struct ModelMore: View {
+    var ap: AutopilotModel
+    @Environment(\.feedback) private var feedback
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.smooth) { open.toggle() }
+                feedback.play(.expand(open))
+            } label: {
+                HStack {
+                    Text("More").font(RFont.sans(15, .medium))
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .foregroundStyle(Palette.violet)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("modelMore")
+            .accessibilityValue(open ? "Open" : "Closed")
+            if open {
+                HStack(spacing: 12) {
+                    ActionButton(title: "Check now", symbol: "arrow.clockwise", kind: .secondary, busy: ap.checkingModel, compact: true) {
+                        Task { await ap.checkModelNow() }
+                    }
+                    .accessibilityIdentifier("checkModelNow")
+                    if let result = ap.modelCheckResult {
+                        Text(result.text)
+                            .font(RFont.sans(13.5, .medium))
+                            .foregroundStyle(result.failed ? Palette.danger : Palette.ink2)
+                            .lineLimit(3)
+                            .accessibilityIdentifier("checkModelResult")
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .transition(.opacity)
+            }
+        }
     }
 }
 

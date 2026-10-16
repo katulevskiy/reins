@@ -10,8 +10,8 @@ use std::sync::Arc;
 use zeroize::Zeroizing;
 
 use crate::autopilot::{
-    AutopilotMode, AutopilotSettings, AutopilotStats, DownloadProgress, ModelRuntime, ModelStatus, OvernightRisky,
-    Preset, ProfileView, SuggestionView, ThresholdReplay, Verdict,
+    AutopilotMode, AutopilotSettings, AutopilotStats, DownloadProgress, ModelRuntime, ModelStatus, ModelUpdateOutcome,
+    OvernightRisky, Preset, ProfileView, SuggestionView, ThresholdReplay, Verdict,
 };
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
@@ -1922,6 +1922,56 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.download_model(progress).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Updates the model when a newer one this build trusts is published: downloaded (continuing an interrupted
+    /// download), checked against the hashes built into the core, run once, and only then put in use, between
+    /// decisions. The model in use stays if anything fails. `automatic`: the app's own check, which does nothing when
+    /// "Update automatically" is off or the newer model already failed; else the user's "Check now". The app calls it
+    /// only when the network allows (Wi-Fi, not Low Power or Low Data mode, for an automatic one).
+    pub async fn update_model(
+        &self,
+        automatic: bool,
+        progress: Arc<dyn DownloadProgress>,
+    ) -> Result<ModelUpdateOutcome, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.update_model(automatic, progress).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Stops the model download running now; it ends with `CoreError::Network` and keeps what arrived, so the next
+    /// `update_model` goes on from there. The app calls it when the phone leaves Wi-Fi during an automatic update (or
+    /// Low Power or Low Data Mode comes on). A downloaded model already being checked is not stopped.
+    pub async fn pause_model_download(&self) {
+        let runtime = Arc::clone(&self.runtime);
+        let engine = runtime.engine();
+        rt::run(async move { engine.pause_model_download() }).await;
+    }
+
+    /// An automatic update has something to do (asks nobody): the app then waits for Wi-Fi to call `update_model`.
+    pub async fn model_update_pending(&self) -> bool {
+        let runtime = Arc::clone(&self.runtime);
+        let engine = runtime.engine();
+        rt::run(async move { engine.model_update_pending() }).await
+    }
+
+    /// "Update automatically" (on by default).
+    pub async fn set_autopilot_auto_update(&self, on: bool) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.set_autopilot_auto_update(on) }).await;
             runtime.finish(&engine, result)
         })
         .await

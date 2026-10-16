@@ -43,10 +43,17 @@ final class AutopilotModel {
         return app?.autopilot
     }
 
-    /// The model as last read, with the download's own bytes while it runs (the core is not asked for them).
+    /// The model as last read, with the download's own bytes while it runs (the core is not asked for them); an update
+    /// coming down shows the same way, the older model still in use.
     var model: ModelStatus? {
         guard var m = settings?.model else { return nil }
-        if let downloads = app?.modelDownloads, downloads.job == .running {
+        if let updates = app?.modelAutoUpdate, updates.running, updates.total > 0, m.state == .installed || m.state == .downloading {
+            m.state = .downloading
+            m.update = true
+            m.error = nil
+            m.downloadedBytes = updates.downloaded
+            m.sizeBytes = updates.total
+        } else if let downloads = app?.modelDownloads, downloads.job == .running {
             m.state = .downloading
             m.error = nil
             m.downloadedBytes = downloads.downloaded
@@ -61,9 +68,6 @@ final class AutopilotModel {
 
     /// Installed, or an older model still scoring while its update downloads.
     var modelReady: Bool { AutopilotText.modelUsable(model) }
-
-    /// An older model is installed and a newer one can be downloaded ("Update" on the model's row).
-    var modelUpdatable: Bool { AutopilotText.modelUpdatable(model) }
 
     var downloadJob: DownloadJob {
         _ = bound
@@ -311,6 +315,40 @@ final class AutopilotModel {
             try await app.core.setAutopilotWifiOnly(wifiOnly: on)
             await app.refreshAutopilot()
         }
+    }
+
+    /// "Update automatically": a newer model comes down by itself on Wi-Fi. Turned on, a due update goes now (or waits
+    /// for Wi-Fi).
+    func setAutoUpdate(_ on: Bool) async {
+        guard let app else { return }
+        app.feedback.play(.toggle(on))
+        app.patchAutopilot { $0.autoUpdate = on }
+        let done = await run {
+            try await app.core.setAutopilotAutoUpdate(on: on)
+            await app.refreshAutopilot()
+        }
+        if done, on { Task { await app.modelAutoUpdate.check(.switchedOn) } }
+    }
+
+    /// "Check now" runs (an update it found included); waiting for Wi-Fi does not count.
+    var checkingModel: Bool {
+        _ = bound
+        guard let updates = app?.modelAutoUpdate else { return false }
+        return updates.checking || updates.running
+    }
+
+    /// What the last "Check now" came to; nil before it ran and while it runs.
+    var modelCheckResult: ModelCheckResult? {
+        _ = bound
+        guard let updates = app?.modelAutoUpdate, !updates.checking else { return nil }
+        return updates.checkResult
+    }
+
+    /// The user's "Check now": the update, if there is one, comes down now (on mobile data only with Wi-Fi only off).
+    func checkModelNow() async {
+        guard let app else { return }
+        error = nil
+        await app.modelAutoUpdate.checkNow()
     }
 
     // MARK: Profiles

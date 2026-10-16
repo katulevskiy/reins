@@ -314,15 +314,45 @@ class AutopilotTextTest {
     }
 
     @Test
-    fun `an older model offers an update and still scores while it comes`() {
-        assertTrue(AutopilotText.modelUpdatable(TestData.modelStatus(ModelState.INSTALLED, update = true)))
-        assertFalse(AutopilotText.modelUpdatable(TestData.modelStatus(ModelState.INSTALLED)))
-        assertFalse(AutopilotText.modelUpdatable(TestData.modelStatus(ModelState.DOWNLOADING, update = true)))
+    fun `an older model still scores while its update comes`() {
         assertTrue(AutopilotText.modelUsable(TestData.modelStatus(ModelState.INSTALLED, update = true)))
         assertTrue("the older model scores until the newer one is in", AutopilotText.modelUsable(TestData.modelStatus(ModelState.DOWNLOADING, update = true)))
         assertFalse("a first download has nothing to score with yet", AutopilotText.modelUsable(TestData.modelStatus(ModelState.DOWNLOADING)))
         assertFalse(AutopilotText.modelUsable(null))
-        assertTrue(AutopilotText.MODEL_UPDATE_LINE.contains("Overnight"))
+    }
+
+    private val zone = java.time.ZoneId.of("America/Los_Angeles")
+
+    /** Unix seconds of a local time in [zone]. */
+    private fun at(y: Int, m: Int, d: Int, h: Int = 12, min: Int = 0): Long =
+        java.time.LocalDateTime.of(y, m, d, h, min).atZone(zone).toEpochSecond()
+
+    @Test
+    fun `when the model was updated reads in calendar days of the phone's zone`() {
+        val now = at(2026, 10, 15, 9)
+        assertNull(AutopilotText.updatedAgo(null, now, zone))
+        assertEquals("Updated today", AutopilotText.updatedAgo(at(2026, 10, 15, 0, 5), now, zone))
+        assertEquals("a clock a little ahead is still today", "Updated today", AutopilotText.updatedAgo(now + 3_600, now, zone))
+        assertEquals("late last night is yesterday, not today", "Updated yesterday", AutopilotText.updatedAgo(at(2026, 10, 14, 23, 50), now, zone))
+        assertEquals("Updated 2 days ago", AutopilotText.updatedAgo(at(2026, 10, 13, 10), now, zone))
+        assertEquals("Updated 6 days ago", AutopilotText.updatedAgo(at(2026, 10, 9, 10), now, zone))
+        assertEquals("Updated Oct 8", AutopilotText.updatedAgo(at(2026, 10, 8, 10), now, zone))
+        assertEquals("Updated Mar 4", AutopilotText.updatedAgo(at(2026, 3, 4), now, zone))
+        assertEquals("Updated Dec 30, 2025", AutopilotText.updatedAgo(at(2025, 12, 30), now, zone))
+        // The same instant is a different day elsewhere.
+        val utcLate = java.time.LocalDateTime.of(2026, 10, 15, 2, 0).atZone(java.time.ZoneOffset.UTC).toEpochSecond()
+        assertEquals("Updated yesterday", AutopilotText.updatedAgo(utcLate, now, zone))
+        assertEquals("Updated today", AutopilotText.updatedAgo(utcLate, now, java.time.ZoneOffset.UTC))
+    }
+
+    @Test
+    fun `the installed model's row says its version, and when it was updated on its second line`() {
+        val now = at(2026, 10, 15, 9)
+        val model = TestData.modelStatus(ModelState.INSTALLED, updatedAt = at(2026, 10, 15, 8))
+        assertEquals("v1", AutopilotText.modelVersion(model))
+        assertEquals("v2", AutopilotText.modelVersion(model.copy(version = "v2")))
+        assertEquals("Updated today", AutopilotText.updatedAgo(model.updatedAt, now, zone))
+        assertNull("not known: no second line", AutopilotText.updatedAgo(null, now, zone))
     }
 
     @Test

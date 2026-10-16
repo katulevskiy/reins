@@ -232,6 +232,11 @@ thread.
   (also `temperature[0]`) = 4.29. Options come back in the order approve, deny, ask. A large T is expected: it is the
   safety calibration, not a bug.
 - Run `S_facts` and `S_full` as one batch of 2; `pooled` of `S_full` is the kNN embedding (L2-normalise it; D = 768).
-- Pin the three SHA-256s from `SHA256SUMS` in `autopilot::model::KNOWN_MODELS`.
+- Pin the three SHA-256s from `SHA256SUMS` in `autopilot::model::KNOWN_MODELS`, first in the list, with a higher
+  `version` than the one before it.
+- Upload the package with its `SHA256SUMS` to `/srv/reins-models/<id>/` (served at `<site>/models/<id>/`). Phones with
+  the older model update by themselves on Wi-Fi once their app pins the new one: they read `SHA256SUMS` to see that it
+  is published (it is not trusted: every file is still checked against the pins), download it, run it once and only
+  then switch to it. Without `SHA256SUMS` they wait.
 - Thresholds 0.95 / 0.90 are what the evaluation used; Cautious / Relaxed presets change coverage, and the Relaxed
   0.90 approve threshold has **not** been validated for safety with this temperature.

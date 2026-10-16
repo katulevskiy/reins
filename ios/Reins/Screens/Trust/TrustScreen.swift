@@ -220,7 +220,7 @@ struct TrustScreen: View {
     @ViewBuilder
     private func modelAndProfiles(_ s: AutopilotSettings) -> some View {
         AutopilotGroup(header: nil) {
-            ModelRow(ap: ap, onUpdate: download) { modelOpen = true }
+            ModelRow(ap: ap) { modelOpen = true }
             RowDivider(inset: 60)
             AutopilotLinkRow(title: "Try it", symbol: "flask.fill", tint: Palette.kindPush, identifier: "openTryIt") {
                 if !ap.modelReady {

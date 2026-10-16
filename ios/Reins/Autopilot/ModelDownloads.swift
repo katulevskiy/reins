@@ -18,6 +18,8 @@ struct NetworkState: Equatable {
     var online: Bool
     /// Mobile data or a personal hotspot (iOS's "expensive"); Wi-Fi and Ethernet are not.
     var metered: Bool
+    /// Low Data Mode (iOS's "constrained"): an automatic model update waits it out.
+    var constrained = false
 
     static let unmetered = NetworkState(online: true, metered: false)
     static let cellular = NetworkState(online: true, metered: true)
@@ -203,7 +205,7 @@ final class ModelDownloads {
 }
 
 /// The core's progress callback, from its own threads.
-private final class ProgressRelay: DownloadProgress, @unchecked Sendable {
+final class ProgressRelay: DownloadProgress, @unchecked Sendable {
     private let handler: @Sendable (UInt64, UInt64) -> Void
 
     init(_ handler: @escaping @Sendable (UInt64, UInt64) -> Void) { self.handler = handler }
@@ -234,7 +236,7 @@ final class PathNetwork: NetworkWatching {
     }
 
     nonisolated private static func state(_ path: NWPath) -> NetworkState {
-        NetworkState(online: path.status == .satisfied, metered: path.isExpensive)
+        NetworkState(online: path.status == .satisfied, metered: path.isExpensive, constrained: path.isConstrained)
     }
 }
 

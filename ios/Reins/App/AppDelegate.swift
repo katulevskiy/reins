@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         NotificationRouter.shared.install(host: host)
         #endif
         BackgroundRefresh.register(host: host)
+        BackgroundModelUpdate.register(host: host)
         application.registerForRemoteNotifications()
         #if DEBUG
         NotificationSamples.launch(host: host)

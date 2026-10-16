@@ -93,6 +93,8 @@ final class AppHost {
         guard let model else { return }
         Task {
             await model.refreshSession()
+            // A newer model on Wi-Fi, by itself (it waits for Wi-Fi otherwise); nothing below waits for it.
+            Task { await model.modelAutoUpdate.check(.launch) }
             // `-open reins://...`: open a link at launch (simctl openurl stops at a confirmation prompt).
             let args = ProcessInfo.processInfo.arguments
             if let i = args.firstIndex(of: "-open"), i + 1 < args.count, let url = URL(string: args[i + 1]),

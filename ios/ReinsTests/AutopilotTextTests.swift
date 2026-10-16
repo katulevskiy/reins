@@ -246,15 +246,54 @@ final class AutopilotTextTests: XCTestCase {
         XCTAssertNil(AutopilotText.fraction(downloaded: 5, total: 0))
     }
 
-    func testAnOlderModelOffersAnUpdateAndStillScoresWhileItComes() {
-        XCTAssertTrue(AutopilotText.modelUpdatable(model(.installed, update: true)))
-        XCTAssertFalse(AutopilotText.modelUpdatable(model(.installed)))
-        XCTAssertFalse(AutopilotText.modelUpdatable(model(.downloading, update: true)))
+    func testAnOlderModelStillScoresWhileItsUpdateComes() {
         XCTAssertTrue(AutopilotText.modelUsable(model(.installed, update: true)))
         XCTAssertTrue(AutopilotText.modelUsable(model(.downloading, update: true)), "the older model scores until the newer one is in")
         XCTAssertFalse(AutopilotText.modelUsable(model(.downloading)), "a first download has nothing to score with yet")
         XCTAssertFalse(AutopilotText.modelUsable(nil))
-        XCTAssertTrue(AutopilotText.modelUpdateLine.contains("Overnight"))
+    }
+
+    /// A Gregorian calendar in UTC, so the days do not depend on where the tests run.
+    private var utc: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }
+
+    private func at(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 12) -> Date {
+        utc.date(from: DateComponents(year: year, month: month, day: day, hour: hour))!
+    }
+
+    private func secs(_ date: Date) -> Int64 { Int64(date.timeIntervalSince1970) }
+
+    func testWhenTheModelWasUpdatedCountsCalendarDays() {
+        let now = at(2026, 10, 15, 14)
+        func ago(_ date: Date) -> String? { AutopilotText.updatedAgo(secs(date), now: now, calendar: utc) }
+        XCTAssertNil(AutopilotText.updatedAgo(nil, now: now, calendar: utc))
+        XCTAssertEqual(ago(at(2026, 10, 15, 0)), "Updated today")
+        XCTAssertEqual(ago(at(2026, 10, 15, 23)), "Updated today", "later today (a clock set back) is still today")
+        XCTAssertEqual(ago(at(2026, 10, 14, 23)), "Updated yesterday", "15 hours ago, but yesterday")
+        XCTAssertEqual(ago(at(2026, 10, 14, 0)), "Updated yesterday")
+        XCTAssertEqual(ago(at(2026, 10, 13, 23)), "Updated 2 days ago")
+        XCTAssertEqual(ago(at(2026, 10, 9)), "Updated 6 days ago")
+        XCTAssertEqual(ago(at(2026, 10, 8)), "Updated Oct 8")
+        XCTAssertEqual(ago(at(2026, 1, 3)), "Updated Jan 3")
+        XCTAssertEqual(ago(at(2025, 12, 30)), "Updated Dec 30, 2025", "another year says which")
+        XCTAssertEqual(ago(at(2026, 10, 20)), "Updated today", "a date ahead of the clock")
+    }
+
+    func testTheModelsRowShowsItsVersionAndWhenItWasUpdated() {
+        let now = at(2026, 10, 15, 14)
+        var m = model(.installed)
+        m.version = "2"
+        // The value on the right stays short; when it was updated is the row's second line.
+        XCTAssertEqual(AutopilotText.modelVersion(m), "v2")
+        XCTAssertEqual(AutopilotText.modelVersionSpoken(m), "Ready, version 2")
+        XCTAssertNil(AutopilotText.updatedAgo(m.updatedAt, now: now, calendar: utc), "when it was put in use is not known: no line")
+        m.updatedAt = secs(at(2026, 10, 15, 9))
+        XCTAssertEqual(AutopilotText.updatedAgo(m.updatedAt, now: now, calendar: utc), "Updated today")
+        m.updatedAt = secs(at(2026, 10, 12))
+        XCTAssertEqual(AutopilotText.updatedAgo(m.updatedAt, now: now, calendar: utc), "Updated 3 days ago")
     }
 
     func testTheExamplesUseTheSituationFormat() {

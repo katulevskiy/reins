@@ -414,6 +414,15 @@ class MainSafeCore(
 
     override suspend fun downloadModel(progress: DownloadProgress): ModelStatus = io { downloadModel(progress) }
 
+    override suspend fun updateModel(automatic: Boolean, progress: DownloadProgress): dev.reins.core.ModelUpdateOutcome =
+        io { updateModel(automatic, progress) }
+
+    override suspend fun modelUpdatePending(): Boolean = io { modelUpdatePending() }
+
+    override suspend fun pauseModelDownload() = io { pauseModelDownload() }
+
+    override suspend fun setAutopilotAutoUpdate(on: Boolean) = io { setAutopilotAutoUpdate(on) }
+
     override suspend fun deleteModel() = io { deleteModel() }
 
     override suspend fun autopilotEvaluate(profileId: String?, situation: String): SuggestionView = io { autopilotEvaluate(profileId, situation) }

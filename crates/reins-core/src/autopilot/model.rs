@@ -3,8 +3,16 @@
 //!
 //! A package is `model.onnx`, `tokenizer.json` and `laya_config.json` under `<data_dir>/models/<id>/`, downloaded from
 //! `<base>/<id>/<file>` and checked against the SHA-256 pinned here. A file that does not match is deleted with the
-//! rest of the package and never loaded. `installed.json` is written last, once every file matched; the two small
-//! files are hashed again whenever the package is opened, the model by its size.
+//! rest of the package and never loaded. Once every file matched, `staged.json` is written; the engine then loads the
+//! package and runs it once (its self-check) and only then renames that to `installed.json`, the one step that puts it
+//! in use. The two small files are hashed again whenever the package is opened, the model by its size.
+//!
+//! A download cut off by the network keeps what it has (`<file>.part`) and goes on from there with a range request
+//! next time; the whole file is still hashed against its pin before it is kept.
+//!
+//! The host also lists each package's hashes in `<base>/<id>/SHA256SUMS`. That list is not trusted (it is not signed):
+//! it only tells the automatic update whether the package this build pins is published yet, so that it does not
+//! fetch a few hundred megabytes that would fail their check.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -28,6 +36,13 @@ pub const MODEL_FILE: &str = "model.onnx";
 pub const TOKENIZER_FILE: &str = "tokenizer.json";
 pub const CONFIG_FILE: &str = "laya_config.json";
 const MARKER_FILE: &str = "installed.json";
+/// Every file matched its pin; not in use until the self-check passed and it is renamed to [`MARKER_FILE`].
+const STAGED_FILE: &str = "staged.json";
+/// The host's (unsigned) list of a package's hashes, in `sha256sum` format.
+pub const SUMS_FILE: &str = "SHA256SUMS";
+/// The largest `SHA256SUMS` read.
+const MAX_SUMS_BYTES: usize = 16 * 1024;
+const SUMS_TIMEOUT: Duration = Duration::from_secs(30);
 /// Where packages are downloaded from (`<base>/<id>/<file>`), under the official site (`reins_proto::official_site!`);
 /// `CoreConfig::models_base` overrides it in tests.
 pub const DEFAULT_MODELS_BASE: &str = concat!(reins_proto::official_site!(), "/models");
@@ -64,6 +79,100 @@ impl KnownModel {
     fn file(&self, name: &str) -> Option<&KnownFile> {
         self.files.iter().find(|f| f.name == name)
     }
+
+    /// This model's version is newer than `other`'s ([`compare_versions`]); versions that cannot be compared are not.
+    pub fn newer_than(&self, other: &Self) -> bool {
+        compare_versions(&self.version, &other.version) == Some(std::cmp::Ordering::Greater)
+    }
+}
+
+/// Compares two model versions made of dot-separated numbers ("2", "2.1", "10" > "9"; "2" = "2.0"). `None` when either
+/// is not such a version.
+pub fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    fn parts(v: &str) -> Option<Vec<u64>> {
+        let v = v.trim();
+        if v.is_empty() {
+            return None;
+        }
+        v.split('.')
+            .map(|p| (!p.is_empty() && p.bytes().all(|c| c.is_ascii_digit())).then(|| p.parse().ok()).flatten())
+            .collect()
+    }
+    let (mut a, mut b) = (parts(a)?, parts(b)?);
+    let len = a.len().max(b.len());
+    a.resize(len, 0);
+    b.resize(len, 0);
+    Some(a.cmp(&b))
+}
+
+/// Reads a `SHA256SUMS` file (`<hex>  <name>` per line, `sha256sum`'s format, binary-mode `*name` too): name → lowercase
+/// hash. Anything else in it, or a name twice, makes the whole list unreadable.
+pub fn parse_sums(text: &str) -> Result<BTreeMap<String, String>, CoreError> {
+    let bad = || CoreError::service("the model server's list of files cannot be read");
+    let mut sums = BTreeMap::new();
+    for line in text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()) {
+        let (hash, rest) = line.split_once(' ').ok_or_else(bad)?;
+        let name = rest.strip_prefix(' ').or_else(|| rest.strip_prefix('*')).ok_or_else(bad)?;
+        let name = name.strip_prefix('*').unwrap_or(name);
+        if hash.len() != 64 || !hash.bytes().all(|c| c.is_ascii_hexdigit()) || !safe_name(name) {
+            return Err(bad());
+        }
+        if sums.insert(name.to_owned(), hash.to_ascii_lowercase()).is_some() {
+            return Err(bad());
+        }
+    }
+    if sums.is_empty() {
+        return Err(bad());
+    }
+    Ok(sums)
+}
+
+/// Whether the host has the package this build pins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Published {
+    /// Its `SHA256SUMS` lists every pinned file with the pinned hash.
+    Yes,
+    /// Not there yet (no `SHA256SUMS`).
+    No,
+    /// There, but not the package this build trusts: downloading it would only fail its check.
+    Different,
+}
+
+/// Every pinned file is listed with its pinned hash (other files listed are ignored).
+pub fn sums_match(known: &KnownModel, sums: &BTreeMap<String, String>) -> bool {
+    known.files.iter().all(|pin| {
+        pin.sha256 != PLACEHOLDER_SHA256
+            && sums.get(pin.name.as_ref()).is_some_and(|h| pin.sha256.eq_ignore_ascii_case(h))
+    })
+}
+
+/// Asks the host whether it has `known` (`<base>/<id>/SHA256SUMS`). Only a hint: whatever it says, every file is
+/// still checked against its pin when it is downloaded.
+pub async fn published(http: &reqwest::Client, base: &str, known: &KnownModel) -> Result<Published, CoreError> {
+    if !safe_name(&known.id) {
+        return Err(CoreError::invalid("not a model id"));
+    }
+    let url = format!("{}/{}/{SUMS_FILE}", base.trim_end_matches('/'), known.id);
+    let resp = http.get(&url).timeout(SUMS_TIMEOUT).send().await?;
+    match resp.status().as_u16() {
+        404 | 410 => return Ok(Published::No),
+        s if !(200..300).contains(&s) => return Err(refused(s)),
+        _ => {}
+    }
+    if resp.content_length().is_some_and(|n| n > MAX_SUMS_BYTES as u64) {
+        return Err(CoreError::service("the model server's list of files is too long"));
+    }
+    let body = resp.bytes().await?;
+    if body.len() > MAX_SUMS_BYTES {
+        return Err(CoreError::service("the model server's list of files is too long"));
+    }
+    let text = std::str::from_utf8(&body)
+        .map_err(|_| CoreError::service("the model server's list of files cannot be read"))?;
+    Ok(if sums_match(known, &parse_sums(text)?) {
+        Published::Yes
+    } else {
+        Published::Different
+    })
 }
 
 /// PLACEHOLDER — the real hashes and sizes are filled in when the ML tooling (`tools/laya/export_onnx.py`) publishes
@@ -198,6 +307,9 @@ struct Marker {
     id: String,
     version: String,
     files: Vec<MarkerFile>,
+    /// When it was put in use (Unix seconds); absent in packages installed before this was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    installed_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,18 +340,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// SHA-256 (lowercase hex) and size of a file.
 fn hash_file(path: &Path) -> Result<(String, u64), CoreError> {
-    let mut file = fs::File::open(path).map_err(|e| CoreError::storage(format!("cannot read the model: {e}")))?;
-    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
-    let mut buf = vec![0_u8; 64 * 1024];
-    let mut size = 0_u64;
-    loop {
-        let n = file.read(&mut buf).map_err(|e| CoreError::storage(format!("cannot read the model: {e}")))?;
-        if n == 0 {
-            break;
-        }
-        ctx.update(&buf[..n]);
-        size += n as u64;
-    }
+    let (ctx, size) = hash_prefix(path)?;
     Ok((hex(ctx.finish().as_ref()), size))
 }
 
@@ -247,21 +348,55 @@ fn matches_pin(pin: &KnownFile, sha256: &str, size: u64) -> bool {
     pin.sha256 != PLACEHOLDER_SHA256 && pin.sha256.eq_ignore_ascii_case(sha256) && (pin.size == 0 || pin.size == size)
 }
 
-/// Whether `known` is installed completely (marker written, files present with their sizes).
-pub fn installed(data_dir: &Path, known: &KnownModel) -> bool {
-    let Ok(dir) = model_dir(data_dir, &known.id) else {
-        return false;
-    };
-    let Some(marker) = fs::read(dir.join(MARKER_FILE)).ok().and_then(|b| serde_json::from_slice::<Marker>(&b).ok())
-    else {
-        return false;
-    };
-    marker.id == known.id
+/// A marker (`installed.json` or `staged.json`) of `known` that matches its pins, with every file present at its size.
+fn marker(data_dir: &Path, known: &KnownModel, file: &str) -> Option<Marker> {
+    let dir = model_dir(data_dir, &known.id).ok()?;
+    let marker = fs::read(dir.join(file)).ok().and_then(|b| serde_json::from_slice::<Marker>(&b).ok())?;
+    let complete = marker.id == known.id
         && known.files.len() == marker.files.len()
         && marker.files.iter().all(|m| {
             known.file(&m.name).is_some_and(|pin| matches_pin(pin, &m.sha256, m.size))
                 && fs::metadata(dir.join(&m.name)).is_ok_and(|md| md.len() == m.size)
-        })
+        });
+    complete.then_some(marker)
+}
+
+/// Whether `known` is installed completely (marker written, files present with their sizes).
+pub fn installed(data_dir: &Path, known: &KnownModel) -> bool {
+    marker(data_dir, known, MARKER_FILE).is_some()
+}
+
+/// Whether `known` is downloaded and verified but not in use yet (its self-check has not passed).
+pub fn staged(data_dir: &Path, known: &KnownModel) -> bool {
+    marker(data_dir, known, STAGED_FILE).is_some()
+}
+
+/// When the installed `known` was put in use (Unix seconds): as recorded, else when its marker was written.
+pub fn installed_at(data_dir: &Path, known: &KnownModel) -> Option<i64> {
+    let m = marker(data_dir, known, MARKER_FILE)?;
+    m.installed_at.or_else(|| {
+        let path = model_dir(data_dir, &known.id).ok()?.join(MARKER_FILE);
+        let modified = fs::metadata(path).ok()?.modified().ok()?;
+        i64::try_from(modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs()).ok()
+    })
+}
+
+/// Puts a staged package in use: `installed.json` takes the place of `staged.json` in one rename, so the package is
+/// either in use or not, never half.
+pub fn commit(data_dir: &Path, known: &KnownModel, now: i64) -> Result<(), CoreError> {
+    let mut m = marker(data_dir, known, STAGED_FILE).ok_or_else(|| CoreError::service("the new model is not ready"))?;
+    m.installed_at = Some(now);
+    let dir = model_dir(data_dir, &known.id)?;
+    write_marker(&dir, &m, MARKER_FILE)?;
+    fs::remove_file(dir.join(STAGED_FILE)).ok();
+    Ok(())
+}
+
+fn write_marker(dir: &Path, marker: &Marker, name: &str) -> Result<(), CoreError> {
+    let bytes = serde_json::to_vec(marker).map_err(|e| CoreError::storage(e.to_string()))?;
+    let tmp = dir.join(format!("{name}.part"));
+    fs::write(&tmp, bytes).map_err(|e| io(&e))?;
+    fs::rename(&tmp, dir.join(name)).map_err(|e| io(&e))
 }
 
 /// Whether the installed package declares the risk output (read from its configuration, without opening it).
@@ -290,9 +425,42 @@ pub struct DownloadState {
     pub done: AtomicU64,
     pub total: AtomicU64,
     pub error: Mutex<Option<String>>,
+    /// The app asked the download running now to stop (the phone left Wi-Fi): it ends as a dropped connection would.
+    paused: AtomicBool,
+    wake: tokio::sync::Notify,
+}
+
+/// What a paused download ends with: a network error, so that what arrived is kept and the next attempt goes on.
+fn paused_error() -> CoreError {
+    CoreError::Network {
+        reason: "the download was paused; it goes on from here next time".to_owned(),
+    }
 }
 
 impl DownloadState {
+    /// Stops the download running now (if any) at its next step; what arrived is kept.
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+        self.wake.notify_waiters();
+    }
+
+    /// A new download starts: an earlier pause no longer applies.
+    pub fn unpause(&self) {
+        self.paused.store(false, Ordering::SeqCst);
+    }
+
+    async fn until_paused(&self) {
+        loop {
+            let woken = self.wake.notified();
+            tokio::pin!(woken);
+            woken.as_mut().enable();
+            if self.paused.load(Ordering::SeqCst) {
+                return;
+            }
+            woken.await;
+        }
+    }
+
     pub fn status(&self, known: &KnownModel, installed: bool, runtime_ready: bool) -> ModelStatus {
         let error = self.error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         let state = if self.running.load(Ordering::SeqCst) {
@@ -323,6 +491,7 @@ impl DownloadState {
             },
             runtime_ready,
             risk: false,
+            updated_at: None,
         }
     }
 }
@@ -331,7 +500,9 @@ fn io(e: &std::io::Error) -> CoreError {
     CoreError::storage(format!("cannot save the model: {e}"))
 }
 
-/// Downloads every file of `known` into its directory, verifying each; on any failure nothing is kept.
+/// Downloads every file of `known` into its directory, verifying each against its pin, and stages the package
+/// ([`staged`]; [`commit`] puts it in use). A download the network cut off keeps its partial files and continues from
+/// them next time; on any other failure (a file that does not match, a server that refuses) nothing is kept.
 pub async fn download(
     http: &reqwest::Client,
     base: &str,
@@ -341,11 +512,78 @@ pub async fn download(
     state: &DownloadState,
 ) -> Result<(), CoreError> {
     let dir = model_dir(data_dir, &known.id)?;
-    let result = fetch_all(http, base, &dir, known, progress, state).await;
-    if result.is_err() {
-        remove(data_dir, &known.id).ok();
+    // A pause drops the download between two writes: every chunk written is whole, and the part file goes on from there.
+    let result = tokio::select! {
+        r = fetch_all(http, base, &dir, known, progress, state) => r,
+        () = state.until_paused() => Err(paused_error()),
+    };
+    match &result {
+        // the connection or the server, not the files: what arrived is kept for next time
+        Ok(())
+        | Err(
+            CoreError::Network {
+                ..
+            }
+            | CoreError::Server {
+                ..
+            },
+        ) => {}
+        Err(_) => {
+            remove(data_dir, &known.id).ok();
+        }
     }
     result
+}
+
+const MISMATCH: &str = "the downloaded model did not match the one this app trusts; it was deleted";
+const TOO_LARGE: &str = "the model file is larger than expected; it was not kept";
+
+/// The download failed its check (a file that does not match its pin): it is not worth fetching again by itself.
+pub fn failed_check(e: &CoreError) -> bool {
+    matches!(e, CoreError::Service { reason } if reason == MISMATCH || reason == TOO_LARGE)
+}
+
+fn refused(status: u16) -> CoreError {
+    CoreError::Server {
+        status,
+        reason: format!("the model server answered {status}"),
+    }
+}
+
+fn read_err(e: &std::io::Error) -> CoreError {
+    CoreError::storage(format!("cannot read the model: {e}"))
+}
+
+fn too_large() -> CoreError {
+    CoreError::service(TOO_LARGE)
+}
+
+/// SHA-256 of a file's first bytes as a running digest, for a download that goes on after them.
+fn hash_prefix(path: &Path) -> Result<(ring::digest::Context, u64), CoreError> {
+    let mut file = fs::File::open(path).map_err(|e| read_err(&e))?;
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buf = vec![0_u8; 64 * 1024];
+    let mut size = 0_u64;
+    loop {
+        let n = file.read(&mut buf).map_err(|e| read_err(&e))?;
+        if n == 0 {
+            break;
+        }
+        ctx.update(&buf[..n]);
+        size += n as u64;
+    }
+    Ok((ctx, size))
+}
+
+/// `Content-Range: bytes <start>-<end>/<total>` starts at `from`.
+fn range_starts_at(resp: &reqwest::Response, from: u64) -> bool {
+    resp.headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("bytes "))
+        .and_then(|v| v.split_once('-'))
+        .and_then(|(start, _)| start.trim().parse::<u64>().ok())
+        == Some(from)
 }
 
 async fn fetch_all(
@@ -359,8 +597,12 @@ async fn fetch_all(
     if known.files.iter().any(|f| !safe_name(&f.name)) {
         return Err(CoreError::invalid("not a model file name"));
     }
-    if dir.exists() {
-        fs::remove_dir_all(dir).map_err(|e| io(&e))?;
+    // Whatever marker there was is written again only once every file matched.
+    for marker in [MARKER_FILE, STAGED_FILE] {
+        match fs::remove_file(dir.join(marker)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(io(&e)),
+            _ => {}
+        }
     }
     fs::create_dir_all(dir).map_err(|e| io(&e))?;
     let total = known.size();
@@ -368,48 +610,91 @@ async fn fetch_all(
     let mut done = 0_u64;
     let mut files = Vec::new();
     for pin in known.files.iter() {
-        let url = format!("{}/{}/{}", base.trim_end_matches('/'), known.id, pin.name);
-        let mut resp = http.get(&url).timeout(DOWNLOAD_TIMEOUT).send().await?;
-        if !resp.status().is_success() {
-            return Err(CoreError::service(format!("the model server answered {}", resp.status().as_u16())));
-        }
         let limit = if pin.size == 0 {
             MAX_FILE_BYTES
         } else {
             pin.size
         };
-        if resp.content_length().is_some_and(|n| n > limit) {
-            return Err(CoreError::service("the model file is larger than expected; it was not kept"));
+        let path = dir.join(pin.name.as_ref());
+        // Finished in an earlier attempt: kept if it still matches.
+        if path.exists() {
+            let (sha, size) = hash_file(&path)?;
+            if matches_pin(pin, &sha, size) {
+                done += size;
+                state.done.store(done, Ordering::SeqCst);
+                files.push(MarkerFile {
+                    name: pin.name.to_string(),
+                    sha256: sha,
+                    size,
+                });
+                continue;
+            }
+            fs::remove_file(&path).map_err(|e| io(&e))?;
         }
         let part = dir.join(format!("{}.part", pin.name));
-        let mut out = fs::File::create(&part).map_err(|e| io(&e))?;
-        let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
-        let mut size = 0_u64;
-        let mut reported = 0_u64;
-        while let Some(chunk) = resp.chunk().await? {
-            size += chunk.len() as u64;
-            if size > limit {
-                return Err(CoreError::service("the model file is larger than expected; it was not kept"));
+        // What an earlier attempt left; its bytes are checked with the rest once the file is whole.
+        let mut size = match fs::metadata(&part) {
+            Ok(md) if md.len() <= limit => md.len(),
+            _ => 0,
+        };
+        if size == 0 || size < limit {
+            let url = format!("{}/{}/{}", base.trim_end_matches('/'), known.id, pin.name);
+            let mut req = http.get(&url).timeout(DOWNLOAD_TIMEOUT);
+            if size > 0 {
+                req = req.header(reqwest::header::RANGE, format!("bytes={size}-"));
             }
-            ctx.update(&chunk);
-            out.write_all(&chunk).map_err(|e| io(&e))?;
-            done += chunk.len() as u64;
-            state.done.store(done, Ordering::SeqCst);
-            if done - reported >= PROGRESS_STEP {
-                reported = done;
-                progress.progress(done, total);
+            let mut resp = req.send().await?;
+            let status = resp.status().as_u16();
+            let append = size > 0 && status == 206 && range_starts_at(&resp, size);
+            if !append {
+                if !resp.status().is_success() || status == 206 {
+                    return Err(refused(status));
+                }
+                // The server sent the whole file: start it again.
+                size = 0;
             }
+            if resp.content_length().is_some_and(|n| size + n > limit) {
+                return Err(too_large());
+            }
+            let mut out = if append {
+                fs::OpenOptions::new().append(true).open(&part)
+            } else {
+                fs::File::create(&part)
+            }
+            .map_err(|e| io(&e))?;
+            let mut reported = done + size;
+            state.done.store(done + size, Ordering::SeqCst);
+            // Written as it comes, so that a dropped connection keeps what arrived.
+            loop {
+                let chunk = match resp.chunk().await {
+                    Ok(Some(chunk)) => chunk,
+                    Ok(None) => break,
+                    Err(e) => {
+                        out.sync_all().ok();
+                        return Err(e.into());
+                    }
+                };
+                size += chunk.len() as u64;
+                if size > limit {
+                    return Err(too_large());
+                }
+                out.write_all(&chunk).map_err(|e| io(&e))?;
+                state.done.store(done + size, Ordering::SeqCst);
+                if done + size - reported >= PROGRESS_STEP {
+                    reported = done + size;
+                    progress.progress(done + size, total);
+                }
+            }
+            out.sync_all().map_err(|e| io(&e))?;
         }
-        out.sync_all().map_err(|e| io(&e))?;
-        drop(out);
-        let sha = hex(ctx.finish().as_ref());
+        // The whole file as it is on disk (what an earlier attempt left included), not what this attempt saw.
+        let (sha, size) = hash_file(&part)?;
         if !matches_pin(pin, &sha, size) {
             log::warn!("a downloaded model file did not match its pinned hash; the package was deleted");
-            return Err(CoreError::service(
-                "the downloaded model did not match the one this app trusts; it was deleted",
-            ));
+            return Err(CoreError::service(MISMATCH));
         }
-        fs::rename(&part, dir.join(pin.name.as_ref())).map_err(|e| io(&e))?;
+        fs::rename(&part, &path).map_err(|e| io(&e))?;
+        done += size;
         files.push(MarkerFile {
             name: pin.name.to_string(),
             sha256: sha,
@@ -420,11 +705,9 @@ async fn fetch_all(
         id: known.id.to_string(),
         version: known.version.to_string(),
         files,
+        installed_at: None,
     };
-    let bytes = serde_json::to_vec(&marker).map_err(|e| CoreError::storage(e.to_string()))?;
-    let tmp = dir.join(format!("{MARKER_FILE}.part"));
-    fs::write(&tmp, bytes).map_err(|e| io(&e))?;
-    fs::rename(&tmp, dir.join(MARKER_FILE)).map_err(|e| io(&e))?;
+    write_marker(dir, &marker, STAGED_FILE)?;
     progress.progress(done, total.max(done));
     Ok(())
 }
@@ -438,6 +721,7 @@ pub(crate) fn install_files(data_dir: &Path, known: &KnownModel, files: &[(Strin
         id: known.id.to_string(),
         version: known.version.to_string(),
         files: Vec::new(),
+        installed_at: None,
     };
     for (name, bytes) in files {
         fs::write(dir.join(name), bytes).map_err(|e| io(&e))?;
@@ -467,6 +751,29 @@ impl Laya {
         if !installed(data_dir, known) {
             return Err(CoreError::service("no model is installed"));
         }
+        Self::open_verified(data_dir, known)
+    }
+
+    /// Opens a staged package (downloaded and verified, not in use yet) for its self-check, just before it is loaded and
+    /// committed: every file, the model too, is hashed again from disk, so that nothing changed since the download is
+    /// loaded or put in use. A package that does not match is deleted.
+    pub fn open_staged(data_dir: &Path, known: &KnownModel) -> Result<Self, CoreError> {
+        if !staged(data_dir, known) {
+            return Err(CoreError::service("the new model is not ready"));
+        }
+        let dir = model_dir(data_dir, &known.id)?;
+        for pin in known.files.iter() {
+            let (sha, size) = hash_file(&dir.join(pin.name.as_ref()))?;
+            if !matches_pin(pin, &sha, size) {
+                log::warn!("a downloaded model file changed before it was put in use; the package was deleted");
+                remove(data_dir, &known.id).ok();
+                return Err(CoreError::service(MISMATCH));
+            }
+        }
+        Self::from_dir(&dir, &known.id)
+    }
+
+    fn open_verified(data_dir: &Path, known: &KnownModel) -> Result<Self, CoreError> {
         let dir = model_dir(data_dir, &known.id)?;
         for name in [TOKENIZER_FILE, CONFIG_FILE] {
             let (sha, size) = hash_file(&dir.join(name))?;
@@ -611,6 +918,112 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         assert!(!installed(dir.path(), known));
+    }
+
+    #[test]
+    fn versions_compare_as_numbers() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        for (a, b, want) in [
+            ("2", "1", Some(Greater)),
+            ("1", "2", Some(Less)),
+            ("10", "9", Some(Greater)),
+            ("2", "2.0", Some(Equal)),
+            ("2.1", "2", Some(Greater)),
+            ("2.0.1", "2.1", Some(Less)),
+            (" 3 ", "3", Some(Equal)),
+            ("test", "1", None),
+            ("", "1", None),
+            ("1..2", "1", None),
+            ("1.", "1", None),
+            ("-1", "1", None),
+            ("1e3", "1", None),
+            ("99999999999999999999999", "1", None),
+        ] {
+            assert_eq!(compare_versions(a, b), want, "{a} vs {b}");
+        }
+        // Each model this build trusts is newer than the ones after it: the first is what an update installs.
+        for pair in KNOWN_MODELS.windows(2) {
+            assert!(pair[0].newer_than(&pair[1]), "{} is newer than {}", pair[0].id, pair[1].id);
+        }
+        assert!(!KNOWN_MODELS[1].newer_than(&KNOWN_MODELS[0]));
+    }
+
+    const A: &str = "f84efce3db931f136562dc57060f2bd7154a471ba1415974ff6e4ed1c318afad";
+    const B: &str = "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f";
+
+    #[test]
+    fn the_hosts_list_of_hashes_is_read_strictly() {
+        let sums = parse_sums(&format!("{A}  model.onnx\n{}  *tokenizer.json\n\n", B.to_uppercase())).unwrap();
+        assert_eq!(sums.get("model.onnx").map(String::as_str), Some(A));
+        assert_eq!(sums.get("tokenizer.json").map(String::as_str), Some(B), "lower case, binary mode read");
+        for bad in [
+            String::new(),
+            "\n\n".to_owned(),
+            format!("{A} model.onnx"),
+            format!("{}  model.onnx", &A[..63]),
+            format!("{}g  model.onnx", &A[..63]),
+            format!("{A}  ../model.onnx"),
+            format!("{A}  dir/model.onnx"),
+            format!("{A}  model.onnx\n{B}  model.onnx"),
+            format!("{A}\tmodel.onnx"),
+            format!("{A}  "),
+        ] {
+            assert!(parse_sums(&bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn the_list_says_published_only_with_every_pinned_hash() {
+        let v2 = &KNOWN_MODELS[0];
+        let all = v2.files.iter().map(|f| format!("{}  {}", f.sha256, f.name)).collect::<Vec<_>>().join("\n");
+        assert!(sums_match(v2, &parse_sums(&all).unwrap()));
+        // What the server serves today (/srv/reins-models/laya-approvals-ml-v2/SHA256SUMS).
+        let served = "f84efce3db931f136562dc57060f2bd7154a471ba1415974ff6e4ed1c318afad  model.onnx\n\
+                      609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f  tokenizer.json\n\
+                      f13633d037e29b3e4a6cf31580211e23ab46605f264e16a46922539c43908fbd  laya_config.json\n";
+        assert!(sums_match(v2, &parse_sums(served).unwrap()));
+        assert!(!sums_match(&KNOWN_MODELS[1], &parse_sums(served).unwrap()), "v1 pins another model file");
+        let extra = format!("{all}\n{A}  README.md\n");
+        assert!(sums_match(v2, &parse_sums(&extra).unwrap()), "files besides the pinned ones are ignored");
+        let missing = all.lines().skip(1).collect::<Vec<_>>().join("\n");
+        assert!(!sums_match(v2, &parse_sums(&missing).unwrap()));
+        let other = all.replacen(&v2.files[0].sha256.to_string(), B, 1);
+        assert!(!sums_match(v2, &parse_sums(&other).unwrap()));
+        // A placeholder pin matches no list, even one that names it.
+        let mut placeholder = v2.clone();
+        placeholder.files.to_mut()[0].sha256 = Cow::Borrowed(PLACEHOLDER_SHA256);
+        let zeros = all.replacen(&v2.files[0].sha256.to_string(), PLACEHOLDER_SHA256, 1);
+        assert!(!sums_match(&placeholder, &parse_sums(&zeros).unwrap()));
+    }
+
+    #[test]
+    fn a_staged_package_is_in_use_only_once_committed() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = vec![(MODEL_FILE.to_owned(), b"m".to_vec()), (CONFIG_FILE.to_owned(), b"{}".to_vec())];
+        let known = KnownModel {
+            id: Cow::Borrowed("staged-1"),
+            label: Cow::Borrowed("x"),
+            version: Cow::Borrowed("1"),
+            files: Cow::Owned(
+                files
+                    .iter()
+                    .map(|(name, bytes)| KnownFile {
+                        name: Cow::Owned(name.clone()),
+                        sha256: Cow::Owned(hex(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())),
+                        size: bytes.len() as u64,
+                    })
+                    .collect(),
+            ),
+        };
+        install_files(dir.path(), &known, &files).unwrap();
+        let pkg = model_dir(dir.path(), "staged-1").unwrap();
+        fs::rename(pkg.join(MARKER_FILE), pkg.join(STAGED_FILE)).unwrap();
+        assert!(staged(dir.path(), &known) && !installed(dir.path(), &known));
+        assert_eq!(installed_at(dir.path(), &known), None);
+        commit(dir.path(), &known, 1_800_000_000).unwrap();
+        assert!(installed(dir.path(), &known) && !staged(dir.path(), &known));
+        assert_eq!(installed_at(dir.path(), &known), Some(1_800_000_000));
+        assert!(commit(dir.path(), &known, 1).is_err(), "nothing staged any more");
     }
 
     #[test]

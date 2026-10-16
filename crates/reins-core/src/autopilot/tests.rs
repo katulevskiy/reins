@@ -2,7 +2,7 @@
 //! the deterministic fake model of [`super::testing`].
 
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use reins_proto::relay::RelayRequest;
@@ -11,6 +11,7 @@ use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use super::memory::Source;
+use super::model::KnownModel;
 use super::testing::{self, FakeRuntime, logits};
 use super::types::{
     AutoDecisionView, AutopilotEvent, AutopilotMode, ModelState, OvernightRisky, Preset, RiskLevel, SuggestionView,
@@ -38,16 +39,61 @@ impl GoogleTokenProvider for Google {
     }
 }
 
+/// Keeps a decision inside its pass until [`PendingHold::release`]: the swap waits on that pass.
+struct PendingHold {
+    release: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl PendingHold {
+    fn new() -> Self {
+        Self {
+            release: Mutex::new(false),
+            cv: Condvar::new(),
+        }
+    }
+
+    fn wait(&self) {
+        let mut release = self.release.lock().unwrap();
+        while !*release {
+            release = self.cv.wait(release).unwrap();
+        }
+    }
+
+    fn release(&self) {
+        *self.release.lock().unwrap() = true;
+        self.cv.notify_all();
+    }
+}
+
+/// Releases the hold when dropped, including when an assertion fails first.
+struct ReleaseHold(Arc<PendingHold>);
+
+impl Drop for ReleaseHold {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
 #[derive(Default)]
 struct Notes {
     pending: Mutex<Vec<PendingItem>>,
     decided: Mutex<Vec<AutoDecisionView>>,
     events: Mutex<Vec<AutopilotEvent>>,
+    /// When set, `item_pending` does not return until it is released. The pass (and its lock) stays held, so a test
+    /// can watch a download finish while a decision is still in progress.
+    hold_pending: Mutex<Option<Arc<PendingHold>>>,
 }
 
 impl Notifier for Notes {
     fn item_pending(&self, item: PendingItem) {
         self.pending.lock().unwrap().push(item);
+        let hold = self.hold_pending.lock().unwrap().as_ref().map(Arc::clone);
+        if let Some(hold) = hold {
+            // The decision that arms this runs on its own thread. Waiting here keeps the pass lock and leaves the
+            // test runtime free to watch the download and release the hold.
+            hold.wait();
+        }
     }
 
     fn item_resolved(&self, _id: String) {}
@@ -93,6 +139,17 @@ async fn env_risk() -> Env {
 }
 
 async fn env_with(with_model: bool, files: Vec<(String, Vec<u8>)>, github_base: Option<String>) -> Env {
+    let known = testing::known_model("fake-laya-1", &files);
+    env_models(with_model.then(|| known.clone()), files, vec![known], github_base).await
+}
+
+/// The same with these trusted models (the newest first), `install` installed.
+async fn env_models(
+    install: Option<KnownModel>,
+    files: Vec<(String, Vec<u8>)>,
+    models: Vec<KnownModel>,
+    github_base: Option<String>,
+) -> Env {
     let server = MockServer::start().await;
     let gmail = MockServer::start().await;
     mount(&server, "POST", "/identity/accounts/prelogin", 200, json!({"kdf": 0, "kdfIterations": 5000})).await;
@@ -142,13 +199,12 @@ async fn env_with(with_model: bool, files: Vec<(String, Vec<u8>)>, github_base: 
     mount(&gmail, "POST", "/users/me/messages/send", 200, json!({"id": "sent-1", "threadId": "t"})).await;
 
     let dir = tempfile::tempdir().unwrap();
-    let known = testing::known_model("fake-laya-1", &files);
     let cfg = CoreConfig {
         gmail_base: gmail.uri(),
         github_base: github_base.unwrap_or_else(|| crate::connector::github::GITHUB_BASE.to_owned()),
         backoff_base: Duration::from_millis(1),
         models_base: format!("{}/models", server.uri()),
-        models: vec![known.clone()],
+        models,
         ..CoreConfig::default()
     };
     let notes = Arc::new(Notes::default());
@@ -158,7 +214,7 @@ async fn env_with(with_model: bool, files: Vec<(String, Vec<u8>)>, github_base: 
             .unwrap();
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     core.add_account(GMAIL.to_owned()).await.unwrap();
-    if with_model {
+    if let Some(known) = install {
         testing::install(dir.path(), &known, &files);
     }
     let model = Arc::new(FakeRuntime::default());
@@ -2810,33 +2866,477 @@ async fn a_damaged_installed_model_is_deleted_and_never_loaded() {
 /// downloaded, which then replaces it.
 #[tokio::test]
 async fn an_older_installed_model_keeps_working_until_the_newer_is_downloaded() {
-    let env = env(true).await;
-    let cfg = CoreConfig {
-        gmail_base: env.gmail.uri(),
-        backoff_base: Duration::from_millis(1),
-        models_base: format!("{}/models", env.server.uri()),
-        models: vec![testing::known_model("fake-laya-2", &env.files), testing::known_model("fake-laya-1", &env.files)],
-        ..CoreConfig::default()
-    };
-    let notifier: Arc<dyn Notifier> = Arc::<Notes>::clone(&env.notes);
-    let core =
-        ReinsCore::with_config(env.dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
-            .unwrap();
-    let runtime: Arc<dyn ModelRuntime> = Arc::<FakeRuntime>::clone(&env.model);
-    core.set_model_runtime(runtime);
-    let status = core.model_status().await;
+    let env = update_env().await;
+    let status = env.core.model_status().await;
     assert_eq!((status.state, status.id.as_str(), status.update), (ModelState::Installed, "fake-laya-1", true));
-    for (name, bytes) in &env.files {
+    serve(&env.server, "fake-laya-2", &package_v2()).await;
+    let status = env.core.download_model(progress()).await.unwrap();
+    assert_eq!((status.state, status.id.as_str(), status.update), (ModelState::Installed, "fake-laya-2", false));
+    assert!(!env.dir.path().join("models/fake-laya-1").exists(), "the older one made room");
+}
+
+// ---- updating the model by itself -----------------------------------------------------------------------------------
+
+/// A second version of the fake package (another model file).
+fn package_v2() -> Vec<(String, Vec<u8>)> {
+    let mut files = testing::package();
+    files[0].1 = b"not really an onnx model either, version 2".to_vec();
+    files
+}
+
+/// "fake-laya-1" version 1 installed and in use; this build also trusts "fake-laya-2", version 2.
+async fn update_env() -> Env {
+    let (v1, v2) = (testing::package(), package_v2());
+    let old = testing::known_model_version("fake-laya-1", "1", &v1);
+    let new = testing::known_model_version("fake-laya-2", "2", &v2);
+    env_models(Some(old.clone()), v1, vec![new, old], None).await
+}
+
+/// The model host publishes a package: its files and its `SHA256SUMS`.
+async fn serve(server: &MockServer, id: &str, files: &[(String, Vec<u8>)]) {
+    for (name, bytes) in files {
+        Mock::given(method("GET"))
+            .and(path(format!("/models/{id}/{name}")))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes.clone()))
+            .mount(server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("/models/{id}/SHA256SUMS")))
+        .respond_with(ResponseTemplate::new(200).set_body_string(testing::sums(files)))
+        .mount(server)
+        .await;
+}
+
+fn progress() -> Arc<dyn super::DownloadProgress> {
+    Arc::new(testing::Progress::default())
+}
+
+fn model_dir(env: &Env, id: &str) -> std::path::PathBuf {
+    env.dir.path().join("models").join(id)
+}
+
+/// The model in use answers a request (loading it if needed) and is the one at `id`.
+async fn judges_with(env: &Env, request_id: &str, id: &str) {
+    env.relay(request_id, OLD, email("friend@x.com", "hi")).await;
+    assert!(env.suggestion(request_id).await.judged, "judged");
+    let loaded = env.model.loaded.lock().unwrap().clone();
+    assert!(loaded.as_deref().is_some_and(|p| p.ends_with(&format!("models/{id}/model.onnx"))), "{loaded:?}");
+}
+
+#[tokio::test]
+async fn an_update_is_checked_and_put_in_use_without_touching_modes_or_rules() {
+    let env = update_env().await;
+    // The user's choices: a mode, a profile's thresholds, a class unlocked.
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("gmail/send").await;
+    let profile = env.profile_id().await;
+    env.core.set_thresholds(profile.clone(), 0.91, 0.93).await.unwrap();
+    judges_with(&env, "r1", "fake-laya-1").await;
+    let before = (env.core.autopilot_settings().await.unwrap(), env.core.autopilot_profiles().await.unwrap());
+    assert!(env.core.model_update_pending().await, "a newer version is trusted");
+
+    serve(&env.server, "fake-laya-2", &package_v2()).await;
+    let outcome = env.core.update_model(true, progress()).await.unwrap();
+    assert_eq!(outcome, super::ModelUpdateOutcome::Updated);
+    let status = env.core.model_status().await;
+    assert_eq!(
+        (status.state, status.id.as_str(), status.version.as_str()),
+        (ModelState::Installed, "fake-laya-2", "2")
+    );
+    assert!(!status.update && status.updated_at.is_some_and(|t| (t - unix_now()).abs() < 60), "{status:?}");
+    assert!(!model_dir(&env, "fake-laya-1").exists(), "the older one made room");
+    assert!(!model_dir(&env, "fake-laya-2").join("staged.json").exists());
+    // It was loaded and run once (its self-check) before it was put in use, and stays loaded.
+    assert!(env.model.seen.lock().unwrap().last().is_some_and(|s| s.contains("someone@example.com")));
+    let loads = env.model.loads.load(Ordering::SeqCst);
+    judges_with(&env, "r2", "fake-laya-2").await;
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), loads, "not loaded again");
+
+    let after = (env.core.autopilot_settings().await.unwrap(), env.core.autopilot_profiles().await.unwrap());
+    let modes =
+        |s: &super::types::AutopilotSettings| (s.mode, s.base_mode, s.default_profile_id.clone(), s.auto_update);
+    assert_eq!(modes(&after.0), modes(&before.0), "the mode is the user's");
+    assert_eq!(after.0.connections, before.0.connections);
+    let rules = |p: &[super::types::ProfileView]| {
+        p.iter()
+            .map(|p| {
+                let locks: Vec<_> = p.classes.iter().map(|c| (c.class_key.clone(), c.manual)).collect();
+                (p.id.clone(), p.preset, p.approve_at.to_bits(), p.deny_at.to_bits(), locks)
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rules(&after.1), rules(&before.1), "the rules are the user's");
+    assert!(!env.core.model_update_pending().await);
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::UpToDate);
+}
+
+#[tokio::test]
+async fn an_update_that_fails_verification_keeps_the_old_model() {
+    let env = update_env().await;
+    let files = package_v2();
+    // The list says the right hashes; the tokenizer served is another (same size, one byte off).
+    let mut served = files.clone();
+    let last = served[1].1.len() - 2;
+    served[1].1[last] = b' ';
+    serve(&env.server, "fake-laya-2", &served).await;
+    Mock::given(method("GET"))
+        .and(path("/models/fake-laya-2/SHA256SUMS"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(testing::sums(&files)))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+
+    let r = env.core.update_model(true, progress()).await;
+    assert!(matches!(&r, Err(CoreError::Service { reason }) if reason.contains("did not match")), "{r:?}");
+    let status = env.core.model_status().await;
+    assert_eq!((status.state, status.id.as_str(), status.update), (ModelState::Installed, "fake-laya-1", true));
+    assert!(!model_dir(&env, "fake-laya-2").exists(), "nothing of it is kept");
+    assert!(model_dir(&env, "fake-laya-1").join("installed.json").exists());
+    judges_with(&env, "r1", "fake-laya-1").await;
+    // Automatic checks leave it alone; "Check now" tries again.
+    assert!(!env.core.model_update_pending().await);
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Rejected);
+    env.server.reset().await;
+    serve(&env.server, "fake-laya-2", &files).await;
+    assert_eq!(env.core.update_model(false, progress()).await.unwrap(), super::ModelUpdateOutcome::Updated);
+    assert_eq!(env.core.model_status().await.id, "fake-laya-2");
+}
+
+#[tokio::test]
+async fn a_new_model_that_fails_its_self_check_is_rolled_back() {
+    let env = update_env().await;
+    judges_with(&env, "r1", "fake-laya-1").await;
+    serve(&env.server, "fake-laya-2", &package_v2()).await;
+
+    // It loads but its run fails: the old model is loaded back before the update returns.
+    env.model.panic.store(true, Ordering::SeqCst);
+    let r = env.core.update_model(true, progress()).await;
+    env.model.panic.store(false, Ordering::SeqCst);
+    assert!(matches!(&r, Err(CoreError::Service { reason }) if reason.contains("did not pass")), "{r:?}");
+    let status = env.core.model_status().await;
+    assert_eq!((status.state, status.id.as_str()), (ModelState::Installed, "fake-laya-1"));
+    assert!(!model_dir(&env, "fake-laya-2").exists());
+    let loaded = env.model.loaded.lock().unwrap().clone();
+    assert!(loaded.as_deref().is_some_and(|p| p.ends_with("models/fake-laya-1/model.onnx")), "{loaded:?}");
+    let loads = env.model.loads.load(Ordering::SeqCst);
+    judges_with(&env, "r2", "fake-laya-1").await;
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), loads, "already loaded");
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Rejected);
+
+    // It does not even load.
+    env.model.fail.store(true, Ordering::SeqCst);
+    let r = env.core.update_model(false, progress()).await;
+    env.model.fail.store(false, Ordering::SeqCst);
+    assert!(r.is_err());
+    judges_with(&env, "r3", "fake-laya-1").await;
+}
+
+/// A self-check that takes too long fails; its load and run are waited for, and the old model is loaded back before
+/// the update returns, so the next decision is judged at once with the old model.
+#[tokio::test]
+async fn a_self_check_that_times_out_leaves_the_old_model_loaded() {
+    let env = update_env().await;
+    judges_with(&env, "r1", "fake-laya-1").await;
+    serve(&env.server, "fake-laya-2", &package_v2()).await;
+    env.model.stall_ms.store(1_500, Ordering::SeqCst);
+    let r = env.core.update_model(true, progress()).await;
+    env.model.stall_ms.store(0, Ordering::SeqCst);
+    assert!(matches!(&r, Err(CoreError::Service { reason }) if reason.contains("did not pass")), "{r:?}");
+    assert!(!model_dir(&env, "fake-laya-2").exists());
+    let loaded = env.model.loaded.lock().unwrap().clone();
+    assert!(loaded.as_deref().is_some_and(|p| p.ends_with("models/fake-laya-1/model.onnx")), "{loaded:?}");
+    let (loads, runs) = (env.model.loads.load(Ordering::SeqCst), env.model.runs.load(Ordering::SeqCst));
+    assert!(runs >= 2, "the slow self-check ran to its end before the old model came back");
+    judges_with(&env, "r2", "fake-laya-1").await;
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), loads, "judged without loading again");
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Rejected);
+}
+
+/// The app pauses an automatic download (the phone left Wi-Fi): it ends as a dropped connection, the old model stays,
+/// and the update is still to do; the next attempt finishes it.
+#[tokio::test]
+async fn a_paused_update_stays_to_do_and_goes_on_later() {
+    let env = update_env().await;
+    let files = package_v2();
+    serve(&env.server, "fake-laya-2", &files).await;
+    // Long enough that the body cannot arrive before the pause once this request is in flight. The pause is sent
+    // only then: a fixed wait can fire before the download starts, and the download then clears that pause.
+    Mock::given(method("GET"))
+        .and(path("/models/fake-laya-2/model.onnx"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(files[0].1.clone()).set_delay(Duration::from_secs(60)))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .mount(&env.server)
+        .await;
+    let core = Arc::clone(&env.core);
+    let update = tokio::spawn(async move { core.update_model(true, progress()).await });
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let asked = env.server.received_requests().await.unwrap().iter().any(|r| r.url.path().ends_with("/model.onnx"));
+        if asked {
+            break;
+        }
+        assert!(!update.is_finished(), "the download ended before the model file was asked for");
+        assert!(std::time::Instant::now() < deadline, "the model file was not asked for within 30s");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    env.core.pause_model_download().await;
+    // The body is still held. Returning while it has not arrived is the pause; waiting the delay out would finish
+    // the file.
+    let r = tokio::time::timeout(Duration::from_secs(30), update).await.expect("pause stops the download").unwrap();
+    assert!(matches!(&r, Err(CoreError::Network { reason }) if reason.contains("paused")), "{r:?}");
+    assert!(!model_dir(&env, "fake-laya-2").join("model.onnx").exists(), "the slow file was not waited for");
+    let status = env.core.model_status().await;
+    assert_eq!((status.state, status.id.as_str()), (ModelState::Installed, "fake-laya-1"));
+    assert!(env.core.model_update_pending().await, "not rejected: still to do");
+    // A pause before a download does not stop the next one.
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Updated);
+    assert_eq!(env.core.model_status().await.id, "fake-laya-2");
+}
+
+/// A pause keeps what arrived, and the next download goes on from it.
+#[tokio::test]
+async fn a_paused_download_keeps_what_arrived() {
+    use super::model::{self, DownloadState};
+    let files = package_v2();
+    let known = testing::known_model_version("fake-laya-2", "2", &files);
+    let dir = tempfile::tempdir().unwrap();
+    let http = crate::http::client().unwrap();
+    let state = Arc::new(DownloadState::default());
+    let whole = files[0].1.clone();
+    let half = whole.len() / 2;
+    // A server that sends half of the file and then nothing (the connection stays open).
+    let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = tcp.local_addr().unwrap();
+    let (first, len) = (whole[..half].to_vec(), whole.len());
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        while let Ok((mut sock, _)) = tcp.accept().await {
+            let mut buf = vec![0_u8; 4096];
+            if sock.read(&mut buf).await.unwrap_or(0) == 0 {
+                continue;
+            }
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n\r\n");
+            sock.write_all(head.as_bytes()).await.ok();
+            sock.write_all(&first).await.ok();
+            sock.flush().await.ok();
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
+    let part = dir.path().join("models/fake-laya-2/model.onnx.part");
+    let (data_dir, pinned, shared) = (dir.path().to_owned(), known.clone(), Arc::clone(&state));
+    let download = tokio::spawn(async move {
+        let listener = testing::Progress::default();
+        model::download(&http, &format!("http://{addr}/models"), &data_dir, &pinned, &listener, &shared).await
+    });
+    for _ in 0..200 {
+        if std::fs::metadata(&part).is_ok_and(|m| m.len() == half as u64) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    state.pause();
+    let r = tokio::time::timeout(Duration::from_secs(2), download).await.expect("stopped at once").unwrap();
+    assert!(matches!(&r, Err(CoreError::Network { reason }) if reason.contains("paused")), "{r:?}");
+    assert_eq!(std::fs::read(&part).unwrap(), whole[..half], "what arrived is kept");
+}
+
+/// A staged model file that changed after its download (same size) is caught when it is opened for its self-check,
+/// before it is loaded or put in use.
+#[tokio::test]
+async fn a_staged_model_is_hashed_again_before_it_is_loaded() {
+    let env = update_env().await;
+    let files = package_v2();
+    serve(&env.server, "fake-laya-2", &files).await;
+    // Downloaded and staged as an interrupted update would leave it.
+    let known = testing::known_model_version("fake-laya-2", "2", &files);
+    let state = super::model::DownloadState::default();
+    let listener = testing::Progress::default();
+    let base = format!("{}/models", env.server.uri());
+    let http = crate::http::client().unwrap();
+    super::model::download(&http, &base, env.dir.path(), &known, &listener, &state).await.unwrap();
+    let onnx = model_dir(&env, "fake-laya-2").join("model.onnx");
+    let tamper = || {
+        let mut bytes = std::fs::read(&onnx).unwrap();
+        bytes[0] ^= 1;
+        std::fs::write(&onnx, bytes).unwrap();
+    };
+    tamper();
+    // Opened for its self-check: refused and deleted, never handed to the runtime.
+    let r = super::model::Laya::open_staged(env.dir.path(), &known);
+    assert!(r.as_ref().is_err_and(super::model::failed_check), "the model file is hashed, not only sized");
+    assert!(!model_dir(&env, "fake-laya-2").exists());
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), 0);
+
+    // Changed before the next attempt: that file is fetched again, and the update goes through with the real one.
+    super::model::download(&http, &base, env.dir.path(), &known, &listener, &state).await.unwrap();
+    tamper();
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Updated);
+    assert_eq!(std::fs::read(&onnx).unwrap(), files[0].1);
+}
+
+#[tokio::test]
+async fn an_update_waits_until_the_host_has_it() {
+    let env = update_env().await;
+    // Not published yet: nothing is downloaded.
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Unavailable);
+    // Published under the same name with other files: not fetched either (they would fail their check).
+    let mut other = package_v2();
+    other[0].1 = b"a model this build does not trust".to_vec();
+    serve(&env.server, "fake-laya-2", &other).await;
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Unavailable);
+    let fetched = env.server.received_requests().await.unwrap();
+    assert!(fetched.iter().all(|r| !r.url.path().ends_with("model.onnx")), "only the list was read");
+    assert!(env.core.model_update_pending().await, "still to do");
+    assert_eq!(env.core.model_status().await.id, "fake-laya-1");
+}
+
+#[tokio::test]
+async fn automatic_updates_follow_the_switch_and_never_go_back() {
+    let env = update_env().await;
+    assert!(env.core.autopilot_settings().await.unwrap().auto_update, "on by default");
+    env.core.set_autopilot_auto_update(false).await.unwrap();
+    assert!(!env.core.autopilot_settings().await.unwrap().auto_update);
+    assert!(!env.core.model_update_pending().await);
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Off);
+    // "Check now" still works.
+    serve(&env.server, "fake-laya-2", &package_v2()).await;
+    assert_eq!(env.core.update_model(false, progress()).await.unwrap(), super::ModelUpdateOutcome::Updated);
+
+    // No model yet: the first download is the user's.
+    let fresh = self::env(false).await;
+    assert_eq!(fresh.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::NotInstalled);
+    assert!(!fresh.core.model_update_pending().await);
+
+    // A build whose newest model is an older version than the one installed does not go back to it.
+    let (v1, v2) = (testing::package(), package_v2());
+    let installed = testing::known_model_version("fake-laya-1", "3", &v1);
+    let older = testing::known_model_version("fake-laya-2", "2", &v2);
+    let env = env_models(Some(installed.clone()), v1, vec![older, installed], None).await;
+    assert!(!env.core.model_status().await.update);
+    assert_eq!(env.core.update_model(false, progress()).await.unwrap(), super::ModelUpdateOutcome::UpToDate);
+}
+
+/// The new model is put in use only between decisions: a decision running the old one finishes first.
+#[tokio::test]
+async fn the_new_model_waits_for_the_decision_in_progress() {
+    let env = update_env().await;
+    serve(&env.server, "fake-laya-2", &package_v2()).await;
+    // The pass holds its lock until `item_pending` returns. Holding that keeps the decision in progress after the
+    // old model has run, for as long as the download takes, and the swap cannot land in the middle of it. The test
+    // runtime is single-threaded, so the decision runs on its own thread: waiting in `item_pending` must not stall
+    // the loop that watches the download.
+    let hold = Arc::new(PendingHold::new());
+    *env.notes.hold_pending.lock().unwrap() = Some(Arc::clone(&hold));
+    let _release = ReleaseHold(Arc::clone(&hold));
+    let core = Arc::clone(&env.core);
+    let decision = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(core.engine().process_relayed(request("r1", OLD, email("friend@x.com", "hi")))).unwrap();
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while env.model.loads.load(Ordering::SeqCst) == 0 {
+        assert!(!decision.is_finished(), "the decision ended before it loaded the model");
+        assert!(std::time::Instant::now() < deadline, "the decision did not load the model within 30s");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let core = Arc::clone(&env.core);
+    let update = tokio::spawn(async move { core.update_model(true, progress()).await });
+    let staged = model_dir(&env, "fake-laya-2").join("staged.json");
+    let installed_new = model_dir(&env, "fake-laya-2").join("installed.json");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !staged.exists() {
+        assert!(!decision.is_finished(), "the decision ended before the new model was downloaded");
+        assert!(!update.is_finished(), "waits for the decision");
+        assert!(!installed_new.exists(), "not swapped mid-decision");
+        assert!(std::time::Instant::now() < deadline, "downloaded and verified");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!update.is_finished(), "waits for the decision");
+    assert!(staged.exists(), "downloaded and verified");
+    assert!(!installed_new.exists(), "not in use yet");
+    assert!(model_dir(&env, "fake-laya-1").join("installed.json").exists());
+    hold.release();
+    decision.join().unwrap();
+    assert_eq!(update.await.unwrap().unwrap(), super::ModelUpdateOutcome::Updated);
+    assert!(env.suggestion("r1").await.judged, "the decision finished with the old model");
+    let seen = env.model.seen.lock().unwrap().clone();
+    let check = seen.iter().position(|s| s.contains("someone@example.com")).unwrap();
+    let decided = seen.iter().position(|s| s.contains("friend@x.com")).unwrap();
+    assert!(decided < check, "{seen:?}");
+}
+
+/// A download the network cut off keeps what arrived and asks only for the rest next time.
+#[tokio::test]
+async fn an_interrupted_download_goes_on_where_it_stopped() {
+    use super::model::{self, DownloadState};
+    let files = package_v2();
+    let known = testing::known_model_version("fake-laya-2", "2", &files);
+    let dir = tempfile::tempdir().unwrap();
+    let http = crate::http::client().unwrap();
+    let state = DownloadState::default();
+    let listener = testing::Progress::default();
+    let whole = files[0].1.clone();
+    let half = whole.len() / 2;
+
+    // A server that sends half of the file and hangs up.
+    let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = tcp.local_addr().unwrap();
+    let first = whole[..half].to_vec();
+    let len = whole.len();
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        while let Ok((mut sock, _)) = tcp.accept().await {
+            // the request (small: one read takes it)
+            let mut buf = vec![0_u8; 4096];
+            if sock.read(&mut buf).await.unwrap_or(0) == 0 {
+                continue;
+            }
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n");
+            sock.write_all(head.as_bytes()).await.ok();
+            sock.write_all(&first).await.ok();
+            sock.flush().await.ok();
+        }
+    });
+    let r = model::download(&http, &format!("http://{addr}/models"), dir.path(), &known, &listener, &state).await;
+    assert!(matches!(r, Err(CoreError::Network { .. })), "{r:?}");
+    let part = dir.path().join("models/fake-laya-2/model.onnx.part");
+    assert_eq!(std::fs::read(&part).unwrap(), whole[..half], "what arrived is kept");
+
+    // Next time only the rest is asked for (the file is served to a range request only).
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models/fake-laya-2/model.onnx"))
+        .and(wiremock::matchers::header("range", format!("bytes={half}-").as_str()))
+        .respond_with(
+            ResponseTemplate::new(206)
+                .insert_header("content-range", format!("bytes {half}-{}/{len}", len - 1).as_str())
+                .set_body_bytes(whole[half..].to_vec()),
+        )
+        .mount(&server)
+        .await;
+    for (name, bytes) in &files[1..] {
         Mock::given(method("GET"))
             .and(path(format!("/models/fake-laya-2/{name}")))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes.clone()))
-            .mount(&env.server)
+            .mount(&server)
             .await;
     }
-    let progress: Arc<dyn super::DownloadProgress> = Arc::new(testing::Progress::default());
-    let status = core.download_model(progress).await.unwrap();
-    assert_eq!((status.state, status.id.as_str(), status.update), (ModelState::Installed, "fake-laya-2", false));
-    assert!(!env.dir.path().join("models/fake-laya-1").exists(), "the older one made room");
+    let base = format!("{}/models", server.uri());
+    model::download(&http, &base, dir.path(), &known, &listener, &state).await.unwrap();
+    assert!(model::staged(dir.path(), &known), "verified, waiting for its self-check");
+    assert!(!model::installed(dir.path(), &known), "not in use before it");
+    assert_eq!(listener.0.lock().unwrap().last().copied().map(|(d, _)| d), Some(known.size()));
+
+    // A partial file that is not the start of the real one fails the check as a whole, and nothing is kept.
+    let dir = tempfile::tempdir().unwrap();
+    let part = dir.path().join("models/fake-laya-2/model.onnx.part");
+    std::fs::create_dir_all(part.parent().unwrap()).unwrap();
+    std::fs::write(&part, vec![b'x'; half]).unwrap();
+    let r = model::download(&http, &base, dir.path(), &known, &listener, &state).await;
+    assert!(r.as_ref().is_err_and(model::failed_check), "{r:?}");
+    assert!(!dir.path().join("models/fake-laya-2").exists());
 }
 
 // ---- a store sealed by an older version ---------------------------------------------------------------------------------
