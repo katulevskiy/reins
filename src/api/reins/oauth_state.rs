@@ -231,6 +231,8 @@ pub struct StartedPairing {
     pub code: u8,
     /// `None` for decoys (unknown email): nobody can ever approve them.
     pub user_uuid: Option<String>,
+    /// The cap refused another pairing. The browser still sees the wait page; nothing is delivered to a phone.
+    pub display_only: bool,
 }
 
 /// One authorization attempt in a browser.
@@ -490,6 +492,7 @@ mod tests {
             id: "p1".into(),
             code,
             user_uuid: Some("u1".into()),
+            display_only: false,
         }
     }
 

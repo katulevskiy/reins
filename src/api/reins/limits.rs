@@ -8,13 +8,14 @@
 //! - an AI connection: requests to `/mcp` and the desktop API per minute, calls waiting for the phone at once;
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
 //!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
-//!   phone (at most [`super::pairing::MAX_PER_PARTY`] open per account), wrong proofs sent to take its approval role;
+//!   phone (at most [`super::pairing::MAX_PER_PARTY`] open per email, shared with decoys for that email, and the same
+//!   number per client network), wrong proofs sent to take its approval role;
 //! - a device: concurrent `GET /pending` and `GET /sync` long-polls;
 //! - a phone of an account with phone roles (key: account and device): op uploads per minute, proposals per hour;
 //! - an account with phone roles: roster changes per hour, ops and bytes its log holds (`REINS_ACCOUNT_LOG_*`);
 //! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer, at most
 //!   [`super::device_flow::MAX_PER_ADDRESS`] open), "add another phone" join requests (with at most
-//!   [`super::join::MAX_PER_USER`] open per account). Unknown-email pairing decoys are capped per address too
+//!   [`super::join::MAX_PER_USER`] open per account). Pairing decoys share the email's cap and the per-network cap
 //!   ([`super::pairing::MAX_PER_PARTY`]). The address is [`client_network`].
 
 use std::{
