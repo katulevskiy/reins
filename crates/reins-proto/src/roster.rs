@@ -105,8 +105,9 @@ pub enum Role {
 ///
 /// Signed message ([`crate::canon`], context `reins/roster-entry/v1`): `v` (u32), `account` (string), `epoch`
 /// (u64), `prev_hash` (optional 32 bytes), `reason` (string), `primary` (member), `viewers` (list of members),
-/// `owner_pub` (32 bytes), `credential_pub` (32 bytes), `recovery_wrap_hash` (32 bytes), `at` (i64). A member is `device_id` (string), `name`
-/// (string), `sign_pub` (32 bytes), `box_pub` (32 bytes).
+/// `owner_pub` (32 bytes), `credential_pub` (32 bytes), `recovery_wrap_hash` (32 bytes), `at` (i64), `primary_counter`
+/// (optional u64: `0x00`, or `0x01` and the u64). A member is `device_id` (string), `name` (string), `sign_pub` (32
+/// bytes), `box_pub` (32 bytes).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RosterEntry {
     pub v: u32,
@@ -127,6 +128,12 @@ pub struct RosterEntry {
     pub recovery_wrap_hash: String,
     /// Unix seconds, as the signing phone saw them (shown, never compared).
     pub at: i64,
+    /// `handover` and `recovery` only (else absent): the last counter of the outgoing primary's ops that the roster
+    /// takes as history. Its ops up to it still apply on a phone that sees them late; any later op of its counts only
+    /// as the brake (a restrictive op). Absent there: every op of the outgoing primary signed before this epoch counts
+    /// only as the brake once a phone verified this entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_counter: Option<u64>,
     /// Ed25519 signature by the owner key in force ([`RosterEntry::signer_pub`]), base64url.
     pub sig: String,
 }
@@ -222,6 +229,9 @@ impl RosterEntry {
                 parse_hex32(h).ok_or_else(|| invalid("prev_hash", "must be 64 lowercase hex digits"))?;
             }
         }
+        if self.epoch == 1 && self.primary_counter.is_some() {
+            return Err(invalid("primary_counter", "a new roster has no outgoing primary"));
+        }
         if (self.epoch == 1) != (self.reason == RosterReason::Create) {
             return Err(invalid("reason", "`create` is epoch 1, and epoch 1 is `create`"));
         }
@@ -264,6 +274,10 @@ impl RosterEntry {
             .key(&key32("credential_pub", &self.credential_pub)?)
             .key(&wrap)
             .i64(self.at);
+        match self.primary_counter {
+            None => c.bool(false),
+            Some(n) => c.bool(true).u64(n),
+        };
         Ok(c.finish())
     }
 
@@ -343,6 +357,9 @@ pub fn check_successor(prev: Option<&RosterEntry>, next: &RosterEntry) -> Result
         return Err(RosterError::Reason(
             "a recovery, rewrap, removal or handover brings a new recovery wrap, nothing else does",
         ));
+    }
+    if next.primary_counter.is_some() && !matches!(next.reason, RosterReason::Handover | RosterReason::Recovery) {
+        return Err(RosterError::Reason("only a handover or a recovery names the outgoing primary's last counter"));
     }
     let had = |m: &Member| prev.viewers.iter().any(|p| p.same_keys(m));
     match next.reason {
@@ -660,6 +677,7 @@ impl RosterEntry {
             credential_pub,
             recovery_wrap_hash,
             at,
+            primary_counter: None,
             sig: String::new(),
         }
     }
@@ -685,6 +703,7 @@ impl RosterEntry {
             credential_pub: self.credential_pub.clone(),
             recovery_wrap_hash: self.recovery_wrap_hash.clone(),
             at,
+            primary_counter: None,
             sig: String::new(),
         })
     }
@@ -834,6 +853,13 @@ pub(crate) mod tests {
         sneaks_wrap.recovery_wrap_hash = hex32(&[9; 32]);
         refused(signed(sneaks_wrap, 50), &e2);
         refused(next(&e2, RosterReason::Rewrap, member("p", 1), vec![], 50), &e2);
+        // Only a handover or a recovery names the outgoing primary's last counter.
+        let mut counted = next(&e2, RosterReason::Enroll, member("p", 1), vec![member("v", 2), member("w", 3)], 50);
+        counted.primary_counter = Some(4);
+        refused(signed(counted, 50), &e2);
+        let mut handed = next(&e2, RosterReason::Handover, member("v", 2), vec![member("p", 1)], 50);
+        handed.primary_counter = Some(4);
+        check_successor(Some(&e2), &signed(handed, 50)).unwrap();
         // A removal or a handover that keeps the old wrap: refused (the old wrap would still fit after it).
         for (reason, primary, viewers) in [
             (RosterReason::Remove, member("p", 1), vec![]),
@@ -897,7 +923,7 @@ pub(crate) mod tests {
         let mut changed = e.clone();
         changed.sig = crate::canon::encode_sig(&[9; 64]);
         assert_eq!(changed.signing_bytes().unwrap(), base);
-        let edits: [fn(&mut RosterEntry); 11] = [
+        let edits: [fn(&mut RosterEntry); 12] = [
             |e| e.account.push('x'),
             |e| e.epoch += 1,
             |e| e.reason = RosterReason::Enroll,
@@ -909,6 +935,7 @@ pub(crate) mod tests {
             |e| e.recovery_wrap_hash = hex32(&[2; 32]),
             |e| e.at += 1,
             |e| e.prev_hash = Some(hex32(&[1; 32])),
+            |e| e.primary_counter = Some(0),
         ];
         for edit in edits {
             let mut e2 = e.clone();
@@ -919,7 +946,7 @@ pub(crate) mod tests {
         assert_eq!(hex32(&e.hash().unwrap()), GENESIS_HASH);
     }
 
-    const GENESIS_HASH: &str = "b6cb47ee595ad1ee32338e33f46053dce249e14f42697e9fa7c1688bc497a198";
+    const GENESIS_HASH: &str = "dd08057fd313f4ba41336bd004caec9a98b2d91cbd90187fbd71e959e98596a0";
 
     #[test]
     fn real_ed25519_signatures_verify_through_the_closure() {

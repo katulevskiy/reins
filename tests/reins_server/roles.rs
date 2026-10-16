@@ -322,6 +322,15 @@ async fn roster_create_enroll_handover_and_recovery() {
     assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "a handover carries the bundle");
     let (status, body) = acct.primary.post("/roster", &json!({"entry": e3, "bundle": "QlVORExF"})).await;
     assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "and its new recovery wrap");
+    // Naming ops of the outgoing primary the server never stored (a modified primary vouching for ops to come): refused.
+    let mut overcounted = e3.clone();
+    overcounted.primary_counter = Some(u64::MAX);
+    let overcounted = signed(overcounted, &acct.owner);
+    let (status, body) = acct
+        .primary
+        .post("/roster", &json!({"entry": overcounted, "bundle": "QlVORExF", "recovery_wrap": HANDOVER_WRAP}))
+        .await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "{body}");
     let with_both = json!({"entry": e3, "bundle": "QlVORExF", "recovery_wrap": HANDOVER_WRAP});
     let (status, body) = acct.primary.post("/roster", &with_both).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -353,6 +362,8 @@ async fn roster_create_enroll_handover_and_recovery() {
         .expect("next");
     e4.owner_pub = public(&new_owner);
     e4.recovery_wrap_hash = wrap_hash(NEW_WRAP);
+    // b stored no op: the entry may name none past 0.
+    e4.primary_counter = Some(0);
     let e4 = signed(e4, &acct.owner);
     let (status, body) = c.post("/roster", &json!({"entry": e4})).await;
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "proof_required"));
@@ -366,6 +377,12 @@ async fn roster_create_enroll_handover_and_recovery() {
     let with_old = json!({"entry": e4, "master_password_hash": PASSWORD_HASH, "recovery_wrap": WRAP});
     let (status, body) = c.post("/roster", &with_old).await;
     assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "not the wrap the entry names");
+    let mut overcounted = e4.clone();
+    overcounted.primary_counter = Some(1);
+    let overcounted = signed(overcounted, &acct.owner);
+    let over = json!({"entry": overcounted, "master_password_hash": PASSWORD_HASH, "recovery_wrap": NEW_WRAP});
+    let (status, body) = c.post("/roster", &over).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "b stored no op: {body}");
     let recovery = json!({"entry": e4, "master_password_hash": PASSWORD_HASH, "recovery_wrap": NEW_WRAP});
     let (status, body) = c.post("/roster", &recovery).await;
     assert_eq!(status, StatusCode::OK, "{body}");

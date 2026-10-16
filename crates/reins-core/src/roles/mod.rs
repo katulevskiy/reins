@@ -516,7 +516,7 @@ impl Engine {
             return Ok(None);
         };
         let fetched = api_call!(session, |api| api.roster()).map_err(ApiFailure::into_core)?;
-        let updated = local.updated(&fetched.entries)?;
+        let updated = local.updated_seen(&fetched.entries, |m| self.seen_counter(m))?;
         if updated != local {
             self.save_roster(&account.slot, &updated)?;
         }
@@ -760,6 +760,18 @@ impl Engine {
     }
 
     /// Seals a new recovery wrap for `entry` (unsigned yet), at its place in the chain, and names it in the entry.
+    /// The last op of the outgoing `primary` this phone took, for the handover or recovery entry to name: its ops up to
+    /// there stay its history; any later one is a replaced primary's (the brake only).
+    fn last_counter(&self, primary: &Member) -> Result<u64, CoreError> {
+        self.store.oplog(|c| crate::store::oplog::last_counter(c, primary))?
+    }
+
+    /// The highest counter of `member`'s ops this phone took or holds (0 when it cannot tell): a roster entry may name
+    /// no more of them ([`LocalRoster::updated_seen`]).
+    fn seen_counter(&self, member: &Member) -> u64 {
+        self.store.oplog(|c| crate::store::oplog::seen_counter(c, member)).ok().and_then(Result::ok).unwrap_or(0)
+    }
+
     fn rewrap_entry(
         account: &Account,
         entry: &mut RosterEntry,
@@ -958,7 +970,7 @@ impl Engine {
         verify_chain(&fetched, None, ed25519_verify)
             .map_err(|e| CoreError::invalid(format!("The account's roster does not verify: {e}")))?;
         let base = match self.local_roster(&account.slot)? {
-            Some(local) => local.updated(&fetched)?,
+            Some(local) => local.updated_seen(&fetched, |m| self.seen_counter(m))?,
             None => LocalRoster::anchored(
                 fetched.last().cloned().ok_or_else(|| CoreError::invalid("This account has no phone roles."))?,
             )?,
@@ -1069,6 +1081,7 @@ impl Engine {
         let mut entry = latest
             .successor(RosterReason::Recovery, me, viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
+        entry.primary_counter = Some(self.last_counter(&latest.primary)?);
         entry.owner_pub = seed.owner_key()?.public_b64();
         entry.credential_pub = seed.credential_key().public_b64();
         let new_wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ring)?;
@@ -1226,14 +1239,9 @@ impl Engine {
         self.keep_owner_seed(&account.slot, &seed)?;
         self.keep_wrap_key(&account.slot, &wrap_key)?;
         self.save_keyring(&account.slot, &ring)?;
-        // The view keys the old primary brought were granted by it: this phone owes grants only for its own.
-        let made: BTreeSet<u64> = roster
-            .entries
-            .iter()
-            .filter(|e| matches!(e.reason, RosterReason::Create | RosterReason::Remove | RosterReason::Recovery))
-            .map(|e| e.epoch)
-            .collect();
-        self.save(GRANTS_MADE, &account.slot, &made)?;
+        // Only the current primary's grants open on the viewers, so the old primary's undelivered ones no longer do:
+        // this phone grants every view key again (a key a viewer already holds is kept as it is).
+        self.save(GRANTS_MADE, &account.slot, &BTreeSet::<u64>::new())?;
         for carried in &payload.device_secrets {
             if MOVING_SECRETS.contains(&carried.service.as_str()) {
                 let value = Zeroizing::new(
@@ -1337,6 +1345,7 @@ impl Engine {
         let mut entry = current
             .successor(RosterReason::Handover, new_primary, viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
+        entry.primary_counter = Some(self.last_counter(&current.primary)?);
         // A new wrap, so the one from before the handover opens for no roster after it.
         let wrap_key = self.wrap_key(&account.slot)?;
         let ring = self.keyring(&account.slot)?;

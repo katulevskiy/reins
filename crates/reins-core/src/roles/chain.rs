@@ -87,13 +87,14 @@ impl LocalRoster {
         self.at(epoch).and_then(|e| e.primary.sign_key().ok())
     }
 
-    /// The key that may sign a view-key grant of key id `kid`: the primary of the entry at that epoch, and only when
-    /// that entry brought a view key (`create`, `remove`, `recovery`). Any other signer, or a key id no such entry
-    /// names, is refused ([`super::sealed::open_view_grant`]).
+    /// The key that may sign a view-key grant of key id `kid`: the current primary's (of the newest entry this phone
+    /// verified), and only for a key id an entry that brought a view key names (`create`, `remove`, `recovery`). A
+    /// replaced primary grants nothing, and no one grants a key id no such entry names
+    /// ([`super::sealed::open_view_grant`]).
     pub fn view_key_signer(&self, kid: u64) -> Option<[u8; 32]> {
         let entry = self.at(kid)?;
         matches!(entry.reason, RosterReason::Create | RosterReason::Remove | RosterReason::Recovery)
-            .then(|| entry.primary.sign_key().ok())
+            .then(|| self.current().primary.sign_key().ok())
             .flatten()
     }
 
@@ -131,6 +132,22 @@ impl LocalRoster {
         let mut next = self.clone();
         for entry in &tail[self.entries.len()..] {
             next.push(entry.clone())?;
+        }
+        Ok(next)
+    }
+
+    /// Like [`Self::updated`], but a newer entry that names more of the outgoing primary's ops (`primary_counter`)
+    /// than this phone has seen of it (`seen`: the highest counter of that member's ops it took or holds) is not taken
+    /// yet, nor any entry after it: the outgoing primary's ops up to there count as its history on every phone, so no
+    /// entry may vouch for ops this phone never saw. It comes in once this phone has caught up with the log; one that
+    /// names ops that never were (a modified primary's `u64::MAX`) never does.
+    pub fn updated_seen(&self, fetched: &[RosterEntry], seen: impl Fn(&Member) -> u64) -> Result<Self, CoreError> {
+        let mut next = self.updated(fetched)?;
+        let known = self.entries.len();
+        if let Some(i) = (known..next.entries.len())
+            .find(|&i| next.entries[i].primary_counter.is_some_and(|named| named > seen(&next.entries[i - 1].primary)))
+        {
+            next.entries.truncate(i);
         }
         Ok(next)
     }
@@ -225,6 +242,38 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_entry_vouching_for_ops_this_phone_never_saw_waits() {
+        let owner = OwnerSeed::generate().unwrap();
+        let g = genesis(&owner);
+        let e2 = next(&g, RosterReason::Enroll, member("p", 1), vec![member("v", 2)], &owner);
+        let mut e3 = e2.successor(RosterReason::Handover, member("v", 2), vec![member("p", 1)], 20).unwrap();
+        e3.recovery_wrap_hash = hex32(&[3; 32]);
+        e3.primary_counter = Some(5);
+        let e3 = sign(e3, &owner);
+        let e4 = next(&e3, RosterReason::Enroll, member("v", 2), vec![member("p", 1), member("w", 3)], &owner);
+        let chain = [g.clone(), e2, e3, e4];
+        let local = LocalRoster::created(g).unwrap();
+        // p's 5th op not seen yet (or never written): the handover, and what follows it, wait.
+        let seen = |n: u64| {
+            move |m: &Member| {
+                if m.device_id == "p" {
+                    n
+                } else {
+                    0
+                }
+            }
+        };
+        assert_eq!(local.updated_seen(&chain, seen(4)).unwrap().epoch(), 2);
+        assert_eq!(local.updated_seen(&chain, seen(0)).unwrap().epoch(), 2);
+        // Seen it: all of it comes in.
+        assert_eq!(local.updated_seen(&chain, seen(5)).unwrap().epoch(), 4);
+        assert_eq!(local.updated_seen(&chain, seen(9)).unwrap(), local.updated(&chain).unwrap());
+        // An entry this phone took already is never checked again.
+        let taken = local.updated(&chain).unwrap();
+        assert_eq!(taken.updated_seen(&chain, seen(0)).unwrap().epoch(), 4);
+    }
+
+    #[test]
     fn a_chain_verifies_from_the_anchor_and_names_each_phones_standing() {
         let owner = OwnerSeed::generate().unwrap();
         let g = genesis(&owner);
@@ -239,8 +288,10 @@ pub(crate) mod tests {
         assert_eq!(local.standing("p", &member("x", 9).sign_pub), Standing::Removed, "another key");
         assert_eq!(local.primary_key_at(2), Some(member("p", 1).sign_key().unwrap()));
         assert_eq!(local.primary_key_at(9), None);
-        // Only an entry that brought a view key names who may grant it: genesis yes, an enrollment or handover no.
-        assert_eq!(local.view_key_signer(1), Some(member("p", 1).sign_key().unwrap()));
+        // Only the current primary grants, and only key ids an entry that brought a view key names: genesis yes, an
+        // enrollment or handover no. The replaced primary grants nothing, not even the key its own entry brought.
+        assert_eq!(local.view_key_signer(1), Some(member("v", 2).sign_key().unwrap()));
+        assert_ne!(local.view_key_signer(1), Some(member("p", 1).sign_key().unwrap()));
         assert_eq!(local.view_key_signer(2), None);
         assert_eq!(local.view_key_signer(3), None);
         assert_eq!(local.view_key_signer(9), None);

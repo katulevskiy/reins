@@ -309,6 +309,19 @@ async fn post_roster(
 
     // Bind each member to a device key. A new viewer spends the enrollment it went through.
     let members = ReinsMember::all(&user, &conn).await.map_err(|e| internal(&e))?;
+    // A handover or recovery names the outgoing primary's last op; the phones take its ops up to there as its history,
+    // so it may name none past what this server stored of it.
+    if let (Some(named), Some(prev)) = (entry.primary_counter, prev) {
+        let stored = members
+            .iter()
+            .find(|m| m.device_uuid == prev.primary.device_id && m.sign_pub == prev.primary.sign_pub)
+            .map_or(0, |m| m.last_counter);
+        if i64::try_from(named).map_or(true, |n| n > stored) {
+            return Err(bad_roster(format!(
+                "The entry names op {named} of the outgoing primary; the server stored up to {stored}"
+            )));
+        }
+    }
     let now = now_unix();
     let mut listed = Vec::new();
     let mut spent: Vec<String> = Vec::new();
