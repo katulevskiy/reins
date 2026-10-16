@@ -32,9 +32,11 @@ final class TrustFold {
     }
 
     /// The offset worth keeping: none above the top (pulling to refresh keeps it open), and nothing past the fold,
-    /// so scrolling on through the page does not redraw the field. Whole points, to skip sub-point updates.
+    /// so scrolling on through the page does not redraw the field. Whole points, to skip sub-point updates; past the
+    /// fold, exactly its range, so a fractional range (measured heights) still reaches compact.
     nonisolated static func held(_ y: CGFloat, range: CGFloat) -> CGFloat {
         let top = max(y, 0)
+        if range > 0 && top >= range { return range }
         return (range > 0 ? min(top, range) : min(top, 1_000)).rounded()
     }
 

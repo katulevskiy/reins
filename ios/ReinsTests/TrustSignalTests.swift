@@ -164,4 +164,13 @@ final class TrustSignalTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(g.button.minY, g.label.maxY, "under the label")
         XCTAssertEqual(g.button.height, 44)
     }
+
+    /// Measured heights make the fold's range fractional: scrolled past it, the field is fully compact, not 0.997.
+    @MainActor
+    func testAFractionalFoldStillReachesCompact() {
+        XCTAssertEqual(TrustFold.held(500, range: 120.4), 120.4)
+        XCTAssertEqual(TrustFold.progress(scrolled: TrustFold.held(500, range: 120.4), range: 120.4, reduceMotion: false), 1)
+        XCTAssertEqual(TrustFold.stateValue(TrustFold.progress(scrolled: TrustFold.held(121, range: 120.4), range: 120.4, reduceMotion: false)), "compact")
+        XCTAssertEqual(TrustFold.held(60.4, range: 120.4), 60, "whole points before the end")
+    }
 }
