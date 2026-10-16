@@ -40,6 +40,7 @@ jobs:
       rust: ${{ steps.paths.outputs.rust }}
       android: ${{ steps.paths.outputs.android }}
       docker: ${{ steps.paths.outputs.docker }}
+      ios: ${{ steps.paths.outputs.ios }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -51,19 +52,23 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          rust=false android=false docker=false
+          rust=false android=false docker=false ios=false
           if [[ "$EVENT" == workflow_dispatch || "$EVENT" == schedule || -z "$BASE_SHA" ||
                 "$BASE_SHA" == 0000000000000000000000000000000000000000 ]] ||
              ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            rust=true android=true docker=true
+            rust=true android=true docker=true ios=true
           else
             while IFS= read -r -d '' path; do
               case "$path" in
-                .github/workflows/ci.yml) rust=true android=true docker=true ;;
+                .github/workflows/ci.yml) rust=true android=true docker=true ios=true ;;
                 # The release's workflow and actions, CODEOWNERS, templates: the checks job (always run) lints them.
                 .github/*) ;;
-                Cargo.*|rust-toolchain.toml|crates/reins-core/*|crates/reins-proto/*|crates/reins-policy/*)
-                  rust=true android=true ;;
+                # Cargo.lock and the toolchain change the core the iOS jobs link. Cargo.toml alone does not.
+                Cargo.lock|rust-toolchain.toml) rust=true android=true ios=true ;;
+                crates/reins-core/*|crates/reins-proto/*|crates/reins-policy/*)
+                  rust=true android=true ios=true ;;
+                Cargo.*) rust=true android=true ;;
+                ios/*) ios=true ;;
                 rustfmt.toml|build.rs|src/*|macros/*|crates/*|migrations/*|tests/*) rust=true ;;
                 android/*) android=true ;;
                 scripts/*) rust=true android=true ;;
@@ -71,7 +76,7 @@ jobs:
               esac
             done < <(git diff --name-only -z "$BASE_SHA" HEAD)
           fi
-          { echo "rust=$rust"; echo "android=$android"; echo "docker=$docker"; } >> "$GITHUB_OUTPUT"
+          { echo "rust=$rust"; echo "android=$android"; echo "docker=$docker"; echo "ios=$ios"; } >> "$GITHUB_OUTPUT"
 
   checks:
     name: Format, docs, scripts and workflow checks
@@ -86,7 +91,8 @@ jobs:
         run: rustup toolchain install
       - run: cargo fmt --all -- --check
       - run: python3 scripts/check-branding.py
-      # CI builds no iOS: two branches that each add a type of one name only break together on a Mac.
+      # The iOS lane is path-filtered, so two branches that each add a type of one name still meet only
+      # when both are merged. This check catches that without a Mac.
       - run: python3 scripts/check-swift-duplicates.py
       - run: python3 scripts/test-android-release.py
       - run: python3 scripts/test-play-upload.py
@@ -100,7 +106,7 @@ jobs:
           status=0
           git grep -n -I -E '^(<<<<<<<|>>>>>>>)( |$)|^=======$' -- . ':(exclude)*.patch' ':(exclude)*.diff' || status=$?
           [[ "$status" == 1 ]] || { echo "::error::Conflict marker check failed"; exit 1; }
-          while IFS= read -r -d '' script; do bash -n "$script"; done < <(git ls-files -z 'scripts/*.sh' 'scripts/package/*.sh')
+          while IFS= read -r -d '' script; do bash -n "$script"; done < <(git ls-files -z 'scripts/*.sh' 'scripts/package/*.sh' 'ios/scripts/*.sh')
           scripts/test-next-version.sh
       - name: Parse PowerShell installer
         shell: pwsh
@@ -481,3 +487,286 @@ jobs:
           name: android-test-reports-${{ matrix.id }}
           path: android/app/build/reports/tests/
           if-no-files-found: ignore
+
+  # Simulator tests for pull requests. Same GitHub-hosted runner and Xcode as release.yml's ios-testflight
+  # (`xcode-27`, Xcode 27.0). That label is in the GitHub Actions runner group, not a self-hosted Mac, so a
+  # pull request from a branch of this repo can use it. macos-15 is not a fallback: the release workflow records
+  # that macos-26 stops at Xcode 26.6, and this project is generated for the 27.0 SDK (deployment target iOS 26).
+  #
+  # No `environment:` and no secrets. These jobs cannot read the testflight or production environments.
+  # Simulator only (CODE_SIGNING_ALLOWED=NO). The core is arm64: build-core.sh builds aarch64-apple-ios-sim,
+  # and the Xcode project excludes x86_64 from the simulator. That is the runner's own simulator slice.
+  #
+  # Caches are written from main only, same as the other lanes. The built core is also uploaded so the test
+  # jobs do not build it again. No test retries: sim.sh, live-smoke.sh and live-onboarding.sh do not pass
+  # -retry-tests-on-failure or -test-iterations.
+  ios-core:
+    name: iOS Rust core
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      XCODE_VERSION: "27.0"
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Select Xcode 27.0
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcode="$(xcodebuild -version | sed -n 's/^Xcode //p')"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          arch="$(uname -m)"
+          [[ "$xcode" == "$XCODE_VERSION" && "$sdk" == "$XCODE_VERSION" ]] || {
+            echo "::error::iOS CI needs Xcode $XCODE_VERSION (simulator SDK $XCODE_VERSION) at $DEVELOPER_DIR; found Xcode $xcode, SDK $sdk"
+            exit 1
+          }
+          # build-core.sh strips DEVELOPER_DIR when it runs cargo. xcode-select is what that cargo still sees.
+          [[ "$arch" == arm64 ]] || {
+            echo "::error::The simulator core is arm64-only; this runner is $arch"
+            exit 1
+          }
+      # The library and the bindings for exactly these sources. No prefix fallback: a partial match would link
+      # a core that was not built from this tree.
+      - uses: actions/cache/restore@v5
+        id: core
+        with:
+          path: target/ios-core/iphonesimulator
+          key: ios-sim-core-v1-${{ runner.os }}-${{ hashFiles('crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'Cargo.lock', 'rust-toolchain.toml', 'ios/scripts/build-core.sh') }}
+      - name: Install Rust toolchain
+        if: steps.core.outputs.cache-hit != 'true'
+        run: rustup toolchain install && rustup target add aarch64-apple-ios-sim && rustc -vV
+      - uses: Swatinem/rust-cache@v2
+        if: steps.core.outputs.cache-hit != 'true'
+        with:
+          shared-key: macos-ios-sim-core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the simulator core and check the committed bindings
+        id: build
+        env:
+          CACHE_HIT: ${{ steps.core.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          lib="target/ios-core/iphonesimulator"
+          if [[ "$CACHE_HIT" == true && -s "$lib/libreins_core.a" && -s "$lib/include/module.modulemap" &&
+                -s "$lib/include/reins_coreFFI.h" && -s "$lib/reins_core.swift" ]]; then
+            if ! cmp -s "$lib/reins_core.swift" ios/Core/Generated/reins_core.swift; then
+              git diff --no-index -- "$lib/reins_core.swift" ios/Core/Generated/reins_core.swift || true
+              echo "::error::ios/Core/Generated/reins_core.swift does not match the UniFFI bindings for these sources."
+              exit 1
+            fi
+            echo "Reused the cached simulator core"
+          else
+            # Debug is what the test scheme builds. build-core.sh then uses release-low, as a local simulator
+            # build does. The TestFlight archive sets CONFIGURATION=Release, which selects the release profile.
+            CONFIGURATION=Debug ios/scripts/build-core.sh iphonesimulator
+            test -s "$lib/libreins_core.a"
+            test -s "$lib/include/module.modulemap"
+            test -s "$lib/include/reins_coreFFI.h"
+            if ! git diff --exit-code -- ios/Core/Generated/reins_core.swift; then
+              echo "::error::ios/Core/Generated/reins_core.swift does not match the UniFFI bindings just generated. Commit the output of ios/scripts/build-core.sh."
+              exit 1
+            fi
+            cp ios/Core/Generated/reins_core.swift "$lib/reins_core.swift"
+          fi
+          lipo -info "$lib/libreins_core.a" | grep -q arm64
+          find "$lib" -type f
+      - uses: actions/cache/save@v5
+        if: steps.core.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        with:
+          path: target/ios-core/iphonesimulator
+          key: ${{ steps.core.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-simulator-core
+          path: target/ios-core/iphonesimulator/
+          if-no-files-found: error
+          retention-days: 1
+
+  ios-unit:
+    name: iOS unit tests
+    needs: [changes, ios-core]
+    if: needs.changes.outputs.ios == 'true' && needs.ios-core.result == 'success'
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      XCODE_VERSION: "27.0"
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Select Xcode 27.0
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcode="$(xcodebuild -version | sed -n 's/^Xcode //p')"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          [[ "$xcode" == "$XCODE_VERSION" && "$sdk" == "$XCODE_VERSION" ]] || {
+            echo "::error::iOS CI needs Xcode $XCODE_VERSION (simulator SDK $XCODE_VERSION) at $DEVELOPER_DIR; found Xcode $xcode, SDK $sdk"
+            exit 1
+          }
+      - uses: actions/download-artifact@v8
+        with:
+          name: ios-simulator-core
+          path: target/ios-core/iphonesimulator
+      - name: Require the simulator core
+        run: |
+          set -euo pipefail
+          if [[ ! -s target/ios-core/iphonesimulator/libreins_core.a ||
+                ! -s target/ios-core/iphonesimulator/include/module.modulemap ]]; then
+            echo "::error::The simulator core artifact is not at target/ios-core/iphonesimulator"
+            find target -type f | head -50
+            exit 1
+          fi
+      # Swift packages only (ONNX Runtime). DerivedData is left uncached: it stores absolute paths and the
+      # simulator id, so a restore onto another runner is not a safe hit.
+      - uses: actions/cache/restore@v5
+        id: spm
+        with:
+          path: spm
+          key: ios-spm-v1-${{ runner.os }}-${{ hashFiles('ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+      - name: ReinsTests
+        env:
+          ONLY: ReinsTests
+          SKIP: ""
+        run: |
+          set -euo pipefail
+          bash ios/scripts/ci-xcode-test.sh
+      - uses: actions/cache/save@v5
+        if: steps.spm.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        with:
+          path: spm
+          key: ${{ steps.spm.outputs.cache-primary-key }}
+      - name: Upload the test result
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-unit-xcresult
+          path: results.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  ios-ui:
+    name: iOS UI (${{ matrix.shard }})
+    needs: [changes, ios-core]
+    if: needs.changes.outputs.ios == 'true' && needs.ios-core.result == 'success'
+    runs-on: xcode-27
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: activity
+            only: ReinsUITests/ActivityFlowTests
+            skip: ""
+          - shard: autopilot
+            only: ReinsUITests/AutopilotUITests
+            skip: ""
+          - shard: onboarding
+            only: ReinsUITests/OnboardingUITests
+            skip: ""
+          # testPermissionThenBackgroundNotifications fails on main. XCTSkip is only how the live harnesses
+          # opt out; there is no expected-failure list, so this shard stays a real failure until the test is fixed.
+          - shard: notifications
+            only: ReinsUITests/NotificationsUITests
+            skip: ""
+          # Everything else, including classes added later. LiveServerUITests and LiveOnboardingUITests skip
+          # themselves unless their harness is running. GrantsSettingsUITests is the long class in this shard.
+          - shard: rest
+            only: ReinsUITests
+            skip: ReinsUITests/ActivityFlowTests,ReinsUITests/AutopilotUITests,ReinsUITests/OnboardingUITests,ReinsUITests/NotificationsUITests
+    env:
+      XCODE_VERSION: "27.0"
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Select Xcode 27.0
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcode="$(xcodebuild -version | sed -n 's/^Xcode //p')"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          [[ "$xcode" == "$XCODE_VERSION" && "$sdk" == "$XCODE_VERSION" ]] || {
+            echo "::error::iOS CI needs Xcode $XCODE_VERSION (simulator SDK $XCODE_VERSION) at $DEVELOPER_DIR; found Xcode $xcode, SDK $sdk"
+            exit 1
+          }
+      - uses: actions/download-artifact@v8
+        with:
+          name: ios-simulator-core
+          path: target/ios-core/iphonesimulator
+      - name: Require the simulator core
+        run: |
+          set -euo pipefail
+          if [[ ! -s target/ios-core/iphonesimulator/libreins_core.a ||
+                ! -s target/ios-core/iphonesimulator/include/module.modulemap ]]; then
+            echo "::error::The simulator core artifact is not at target/ios-core/iphonesimulator"
+            find target -type f | head -50
+            exit 1
+          fi
+      - uses: actions/cache/restore@v5
+        id: spm
+        with:
+          path: spm
+          key: ios-spm-v1-${{ runner.os }}-${{ hashFiles('ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+      - name: ReinsUITests (${{ matrix.shard }})
+        env:
+          ONLY: ${{ matrix.only }}
+          SKIP: ${{ matrix.skip }}
+        run: |
+          set -euo pipefail
+          bash ios/scripts/ci-xcode-test.sh
+      - name: Upload the test result
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-ui-${{ matrix.shard }}-xcresult
+          path: results.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The check to require. The shards are skipped when the ios lane is off, which would leave a required
+  # shard pending; this job passes in that case and fails when a shard, the core build, or the lane selector did.
+  ios:
+    name: iOS
+    needs: [changes, ios-core, ios-unit, ios-ui]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Result
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          LANE: ${{ needs.changes.outputs.ios }}
+          CORE: ${{ needs.ios-core.result }}
+          UNIT: ${{ needs.ios-unit.result }}
+          UI: ${{ needs.ios-ui.result }}
+        run: |
+          set -euo pipefail
+          echo "changes=$CHANGES lane=$LANE core=$CORE unit=$UNIT ui=$UI"
+          if [[ "$CHANGES" != success ]]; then
+            echo "::error::The changes job did not succeed ($CHANGES)"
+            exit 1
+          fi
+          if [[ "$LANE" != true ]]; then
+            for result in "$CORE" "$UNIT" "$UI"; do
+              [[ "$result" == skipped || "$result" == success ]] || {
+                echo "::error::iOS lane was off but a job ended $result"
+                exit 1
+              }
+            done
+            echo "iOS skipped: no iOS, core, lockfile, toolchain, or workflow changes"
+            exit 0
+          fi
+          status=0
+          [[ "$CORE" == success ]] || { echo "::error::ios-core $CORE"; status=1; }
+          [[ "$UNIT" == success ]] || { echo "::error::ios-unit $UNIT"; status=1; }
+          [[ "$UI" == success ]] || { echo "::error::ios-ui $UI"; status=1; }
+          [[ "$status" == 0 ]] && echo "iOS passed"
+          exit "$status"

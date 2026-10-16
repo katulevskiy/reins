@@ -21,19 +21,25 @@ for line in selector_lines:
 selector = textwrap.dedent("\n".join(body))
 
 cases = [
-    ("docs/example.md", (False, False, False)),
-    ("README.md", (False, False, False)),
-    ("src/config.rs", (True, False, False)),
-    ("crates/reins-core/src/sso.rs", (True, True, False)),
-    ("crates/reins-desktop/src/lib.rs", (True, False, False)),
-    ("Cargo.lock", (True, True, False)),
-    ("android/app/build.gradle.kts", (False, True, False)),
-    (".github/workflows/ci.yml", (True, True, True)),
+    ("docs/example.md", (False, False, False, False)),
+    ("README.md", (False, False, False, False)),
+    ("src/config.rs", (True, False, False, False)),
+    ("crates/reins-core/src/sso.rs", (True, True, False, True)),
+    ("crates/reins-proto/src/lib.rs", (True, True, False, True)),
+    ("crates/reins-policy/src/lib.rs", (True, True, False, True)),
+    ("crates/reins-desktop/src/lib.rs", (True, False, False, False)),
+    ("Cargo.lock", (True, True, False, True)),
+    ("Cargo.toml", (True, True, False, False)),
+    ("rust-toolchain.toml", (True, True, False, True)),
+    ("ios/README.md", (False, False, False, True)),
+    ("ios/scripts/build-core.sh", (False, False, False, True)),
+    ("android/app/build.gradle.kts", (False, True, False, False)),
+    (".github/workflows/ci.yml", (True, True, True, True)),
     # The release's workflow and actions do not run in CI's lanes; the checks job lints them.
-    (".github/workflows/release.yml", (False, False, False)),
-    (".github/actions/signing/action.yml", (False, False, False)),
-    ("docker/Dockerfile.debian", (False, False, True)),
-    ("scripts/release-android.sh", (True, True, False)),
+    (".github/workflows/release.yml", (False, False, False, False)),
+    (".github/actions/signing/action.yml", (False, False, False, False)),
+    ("docker/Dockerfile.debian", (False, False, True, False)),
+    ("scripts/release-android.sh", (True, True, False, False)),
 ]
 
 with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
@@ -55,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
             ["bash", "-e", "-o", "pipefail", "-c", selector], cwd=root, env=environment, check=True
         )
         values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-        return tuple(values[key] == "true" for key in ("rust", "android", "docker"))
+        return tuple(values[key] == "true" for key in ("rust", "android", "docker", "ios"))
 
     git("init", "-q")
     (root / "baseline").write_text("base")
@@ -77,6 +83,6 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
     # The weekly run on main selects every lane, so it refreshes every cache.
     for event, base in [("push", "f" * 40), ("push", "0" * 40), ("push", ""), ("workflow_dispatch", baseline),
                         ("schedule", baseline), ("schedule", "")]:
-        assert select(event, base) == (True, True, True), (event, base)
+        assert select(event, base) == (True, True, True, True), (event, base)
 
 print(f"{len(cases) + 6} CI component-routing checks passed")
