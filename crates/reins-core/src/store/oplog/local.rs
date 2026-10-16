@@ -193,6 +193,19 @@ pub(crate) fn mark(conn: &Connection, key: &str) -> Result<Option<String>, CoreE
     Ok(conn.query_row("SELECT value FROM oplog_local WHERE key = ?1", [key], |r| r.get(0)).optional()?)
 }
 
+pub(crate) fn clear_mark(conn: &Connection, key: &str) -> Result<(), CoreError> {
+    conn.execute("DELETE FROM oplog_local WHERE key = ?1", [key])?;
+    Ok(())
+}
+
+/// The marks whose key starts with `prefix`.
+pub(crate) fn marks(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreError> {
+    let mut stmt =
+        conn.prepare("SELECT key, value FROM oplog_local WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key")?;
+    let rows = stmt.query_map([prefix], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 pub(crate) fn set_mark(conn: &Connection, key: &str, value: &str) -> Result<(), CoreError> {
     conn.execute(
         "INSERT INTO oplog_local (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2",

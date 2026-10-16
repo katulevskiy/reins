@@ -69,6 +69,13 @@ const CHECKPOINT_EPOCH: &str = "checkpoint-epoch";
 const EPOCH_KEY: &str = "~reins.epoch";
 /// The record key prefix of a view-key grant (`~reins.view-grant/<device>/<kid>`, a `meta` record).
 const GRANT_PREFIX: &str = "~reins.view-grant/";
+/// Marks: rows kept here because no op could carry them; records that failed to write here, and how often; a start
+/// this phone could not verify.
+const UNPUBLISHED: &str = "unpublished\u{1f}";
+const FAILED: &str = "failed\u{1f}";
+const UNTRUSTED_START: &str = "untrusted-start";
+/// How often a record that does not write is tried again before it waits for a newer version of it.
+const MAX_WRITE_TRIES: u32 = 3;
 /// How long a refused (or too large) checkpoint waits before the next try.
 const CHECKPOINT_BACKOFF_SECS: i64 = 3_600;
 /// The tables a viewer keeps only as the log has them (its own leftovers deleted): what decides or connects.
@@ -253,6 +260,7 @@ impl Engine {
                     notice = first.notice.or(Some("The account's log is not all here yet.".to_owned()));
                 } else {
                     self.materialize(account)?;
+                    self.tighten_untrusted_start()?;
                 }
             }
             self.deliver_grants(account, &keys)?;
@@ -267,6 +275,7 @@ impl Engine {
         let pulled = self.pull_and_apply(session, account, wait).await?;
         notice = notice.or(pulled.notice);
         let failed = self.materialize(account)?;
+        self.tighten_untrusted_start()?;
         if failed > 0 {
             notice = notice.or(Some(format!(
                 "{failed} changes from the account's log could not be written on this phone; the next sync tries again."
@@ -276,6 +285,8 @@ impl Engine {
         if let Some(response) = &pulled.response {
             let known = self.local_roster(&account.slot)?.map_or(0, |r| r.epoch());
             if response.epoch != known {
+                // What was verified against the old roster says nothing about the new one.
+                *self.live().verified.lock().unwrap_or_else(PoisonError::into_inner) = None;
                 match self.refresh_roster(session, account).await {
                     Ok(_) => {}
                     Err(e) => notice = notice.or(Some(format!("The phones of this account could not be checked: {e}"))),
@@ -329,8 +340,7 @@ impl Engine {
         let of_primary = verified.filter(|(check, _, _)| {
             matches!(check, HeartbeatCheck::Matches | HeartbeatCheck::Behind | HeartbeatCheck::Unknown)
         });
-        let fresh =
-            of_primary.is_some_and(|(check, t, _)| check == HeartbeatCheck::Matches && unix_now() - t < LIVE_SECS);
+        let fresh = of_primary.is_some_and(|(check, t, _)| is_live(check, t, unix_now()));
         // Shown until the user's own sync showed them (a background cycle never takes them).
         let refused = self.live().refused.lock().unwrap_or_else(PoisonError::into_inner).clone();
         let notice = if refused.is_empty() {
@@ -368,18 +378,39 @@ impl Engine {
         change: Change,
         covers: (&str, &str),
     ) -> Result<Version, CoreError> {
-        let notify = match &change {
-            Change::Put {
-                table,
-                ..
-            } => notifies(*table),
-            Change::Restrict(Restriction::Lockdown | Restriction::StopBypass) => true,
-            _ => false,
-        };
+        let key = covers.1.to_owned();
+        self.enqueue_with(account, keys, ring, class, covers.0, |_| (change, key))
+    }
+
+    /// [`Self::enqueue`] for a change that depends on its own version (an Activity entry is keyed by it): `build`
+    /// gets the version the op will have and returns the change and the key it covers.
+    fn enqueue_with(
+        &self,
+        account: &Account,
+        keys: &Keys,
+        ring: &ViewKeyring,
+        class: OpClass,
+        table: &str,
+        build: impl FnOnce(&Version) -> (Change, String),
+    ) -> Result<Version, CoreError> {
         let sign_pub = keys.signer.public_b64();
         self.store.oplog(|c| -> Result<Version, CoreError> {
             let counter =
                 oplog::author_last_counter(c, &keys.me, &sign_pub)?.max(local::outbox_head(c)?).saturating_add(1);
+            let version = Version {
+                epoch: keys.roster.epoch(),
+                author: keys.me.clone(),
+                counter,
+            };
+            let (change, covers) = build(&version);
+            let notify = match &change {
+                Change::Put {
+                    table,
+                    ..
+                } => notifies(*table),
+                Change::Restrict(Restriction::Lockdown | Restriction::StopBypass) => true,
+                _ => false,
+            };
             let body = OpBody {
                 v: reins_proto::PROTOCOL_VERSION,
                 change,
@@ -396,7 +427,7 @@ impl Engine {
                 &body,
             )?;
             op.validate().map_err(invalid)?;
-            local::queue(c, &op, covers.0, covers.1)?;
+            local::queue(c, &op, table, &covers)?;
             Ok(Version::of(&op))
         })?
     }
@@ -409,12 +440,7 @@ impl Engine {
             return Ok(());
         }
         for grant in &owed {
-            let mut older = ViewKeyring::default();
-            for kid in keys.ring.kids().into_iter().filter(|k| *k < grant.kid) {
-                if let Some(key) = keys.ring.get(kid) {
-                    older.insert(key.clone());
-                }
-            }
+            let older = older_ring(&keys.ring, grant.kid);
             if older.is_empty() {
                 log::warn!("a view-key grant has no older key to travel under; the member is enrolled again instead");
                 continue;
@@ -465,11 +491,17 @@ impl Engine {
                 })
                 .map_err(invalid)?,
             };
+            let unpublished = unpublished_mark(&tbl, &row.key);
             let version = match self.enqueue(account, keys, &keys.ring, OpClass::Primary, change, (&tbl, &row.key)) {
-                Ok(v) => Some(v),
+                Ok(v) => {
+                    self.store.oplog(|c| local::clear_mark(c, &unpublished))??;
+                    Some(v)
+                }
                 Err(e) => {
-                    // Too large for an op (a big icon), or the like: kept here, not retried every cycle.
+                    // Too large for an op (a big icon), or the like: kept here (noted, so that a handover waits for it
+                    // and a demotion never deletes it), not retried every cycle.
                     log::warn!("a {tbl} record is not synced: {e}");
+                    self.store.oplog(|c| local::set_mark(c, &unpublished, &digest))??;
                     prev
                 }
             };
@@ -534,26 +566,14 @@ impl Engine {
             if brought.contains(&seq) {
                 continue;
             }
-            let counter_key = self.store.oplog(|c| -> Result<u64, CoreError> {
-                Ok(oplog::author_last_counter(c, &keys.me, &keys.signer.public_b64())?.max(local::outbox_head(c)?) + 1)
-            })??;
-            let key = activity_key(&Version {
-                epoch: keys.roster.epoch(),
-                author: keys.me.clone(),
-                counter: counter_key,
-            });
             let digest = records::digest(&value);
-            let change = Change::Put {
-                table: Table::Audit,
-                key: key.clone(),
-                value: serde_json::to_value(RecordPut {
-                    prev: None,
-                    row: value,
-                })
-                .map_err(invalid)?,
-            };
-            match self.enqueue(account, keys, &keys.ring, OpClass::Primary, change, (&audit, &key)) {
-                Ok(version) => {
+            let put = serde_json::to_value(RecordPut {
+                prev: None,
+                row: value,
+            })
+            .map_err(invalid)?;
+            match self.enqueue_activity(account, keys, &keys.ring, OpClass::Primary, put) {
+                Ok((version, key)) => {
                     self.set_mirror(&audit, &key, Some(version), digest, Some(json!([seq]).to_string()))?;
                 }
                 Err(e) => log::warn!("an Activity entry is not synced: {e}"),
@@ -587,6 +607,40 @@ impl Engine {
         };
         self.enqueue(account, keys, &keys.ring, OpClass::Primary, change, (&table_name(Table::Meta), EPOCH_KEY))?;
         Ok(())
+    }
+
+    /// An Activity entry (`put`, a [`RecordPut`]) under its own op's key.
+    fn enqueue_activity(
+        &self,
+        account: &Account,
+        keys: &Keys,
+        ring: &ViewKeyring,
+        class: OpClass,
+        put: Json,
+    ) -> Result<(Version, String), CoreError> {
+        let mut keyed = String::new();
+        let version = self.enqueue_with(account, keys, ring, class, &table_name(Table::Audit), |v| {
+            keyed = activity_key(v);
+            (
+                Change::Put {
+                    table: Table::Audit,
+                    key: keyed.clone(),
+                    value: put,
+                },
+                keyed.clone(),
+            )
+        })?;
+        Ok((version, keyed))
+    }
+
+    /// The rows kept on this phone only because no op could carry them (too large): a handover waits for them.
+    pub(crate) fn unpublished_rows(&self) -> Result<Vec<String>, CoreError> {
+        Ok(self
+            .store
+            .oplog(|c| local::marks(c, UNPUBLISHED))??
+            .into_iter()
+            .map(|(k, _)| k.trim_start_matches(UNPUBLISHED).replace('\u{1f}', " "))
+            .collect())
     }
 
     fn set_mirror(
@@ -701,20 +755,73 @@ impl Engine {
             return Ok(());
         }
         self.store.oplog(|c| local::forget_queued(c, &ops))??;
+        let mirror = self.store.oplog(|c| local::mirror(c))??;
+        let audit = table_name(Table::Audit);
         for q in ops {
             let body = (q.op.class != OpClass::Primary || keys.standing == Standing::Primary)
                 .then(|| open_body(&keys.ring, &q.op))
                 .flatten();
-            match body {
-                Some(body) => {
-                    self.enqueue(account, keys, &keys.ring, q.op.class, body.change, (&q.table, &q.key))?;
+            // Sealed again under the very key it was sealed with: a view-key grant stays under the key its viewer
+            // holds, and nothing queued before a grant moves to the key the grant brings (its viewer would wait at it).
+            let ring = sealed_kid_of(&q.op).map_or_else(|| keys.ring.clone(), |kid| older_ring(&keys.ring, kid + 1));
+            let requeued = match body.map(|b| b.change) {
+                // An Activity entry is keyed by its op: under its new number, its key is new too.
+                Some(Change::Put {
+                    table: Table::Audit,
+                    value,
+                    ..
+                }) => {
+                    self.enqueue_activity(account, keys, &ring, q.op.class, value.clone()).and_then(|(version, key)| {
+                        let seen = mirror.get(&(audit.clone(), q.key.clone()));
+                        let digest = value.get("row").map(records::digest).unwrap_or_default();
+                        self.store.oplog(|c| local::forget_mirror(c, &audit, &q.key))??;
+                        self.set_mirror(&audit, &key, Some(version), digest, seen.and_then(|m| m.local.clone()))
+                    })
                 }
-                None => {
-                    self.store.oplog(|c| local::forget_mirror(c, &q.table, &q.key))??;
+                Some(change) => self.enqueue(account, keys, &ring, q.op.class, change, (&q.table, &q.key)).map(drop),
+                None => Err(CoreError::invalid("this phone can no longer send it")),
+            };
+            if let Err(e) = requeued {
+                // Not sent, and not taken for sent either: its record is compared afresh by the next publish (a brake
+                // or proposal is told).
+                log::warn!("a queued change of this phone could not be renumbered: {e}");
+                self.store.oplog(|c| local::forget_mirror(c, &q.table, &q.key))??;
+                if q.op.class != OpClass::Primary {
+                    self.live()
+                        .refused
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(format!("A change from this phone could not be sent again: {e}"));
                 }
             }
         }
         Ok(())
+    }
+
+    /// After a start from a checkpoint this phone could not verify as its own (a fresh phone that recovered): every grant
+    /// revoked, every mode at the tightest, no bypass, before anything is published from it. The user approves again.
+    fn tighten_untrusted_start(&self) -> Result<(), CoreError> {
+        if self.store.oplog(|c| local::mark(c, UNTRUSTED_START))??.is_none() {
+            return Ok(());
+        }
+        self.store.tighten_untrusted()?;
+        self.store.oplog(|c| local::clear_mark(c, UNTRUSTED_START))?
+    }
+
+    /// Writes a record into this phone's store as a sign-in or a setting would (tests: a row too large for an op).
+    #[doc(hidden)]
+    pub fn keep_sync_row(&self, table: &str, value: &str) -> Result<(), CoreError> {
+        let table = serde_json::from_value::<Table>(Json::String(table.to_owned())).map_err(invalid)?;
+        let value: Json = serde_json::from_str(value).map_err(invalid)?;
+        let key = records::key_of_row(table, &value).unwrap_or_default();
+        self.store.write_sync_row(table, &key, None, Some(&value)).map(drop)
+    }
+
+    /// Whether this phone's store has the record `key` of `table` (tests).
+    #[doc(hidden)]
+    pub fn has_sync_row(&self, table: &str, key: &str) -> Result<bool, CoreError> {
+        let table = serde_json::from_value::<Table>(Json::String(table.to_owned())).map_err(invalid)?;
+        Ok(self.store.sync_rows()?.iter().any(|r| r.table == table && r.key == key))
     }
 
     /// Whether this phone keeps a token for `service`/`account` (tests: a viewer never does).
@@ -878,6 +985,8 @@ impl Engine {
                             && let Some(Ok(_)) =
                                 self.with_context(account, |c, ctx| checkpoint::load_bootstrap(c, ctx, &cp))?
                         {
+                            // Untrusted: once in the store, everything it loosens is tightened (see `tighten`).
+                            self.store.oplog(|c| local::set_mark(c, UNTRUSTED_START, "1"))??;
                             continue;
                         }
                         return Ok(Pulled {
@@ -934,6 +1043,66 @@ impl Engine {
                 }
             }
         }
+    }
+
+    /// Before a recovery is signed: applies the account's log under `roster` (the roster before the recovery) with
+    /// `ring` (every view key of the outgoing owner): the outgoing primary's checkpoint, loaded only when it verifies
+    /// as the current primary's at that roster's epoch, then the signed ops after it. A phone that is no member yet
+    /// reads it with its recovery proof. Fails rather than leave the history half verified.
+    pub(crate) async fn recovery_catch_up(
+        &self,
+        session: &Session,
+        account: &Account,
+        roster: &LocalRoster,
+        ring: &ViewKeyring,
+        proof: &str,
+    ) -> Result<(), CoreError> {
+        let mut tried_checkpoint = false;
+        for _ in 0..200 {
+            let s = self.store.oplog(|c| oplog::state(c))??;
+            if let Some(why) = s.forked {
+                return Err(CoreError::invalid(format!("This phone's copy of the account's history forked: {why}")));
+            }
+            let request = reins_proto::oplog::RecoveryLogRequest {
+                master_password_hash: proof.to_owned(),
+                after: s.seq,
+            };
+            let log = api_call!(session, |api| api.recovery_log(&request)).map_err(ApiFailure::into_core)?;
+            let ctx = Context {
+                account: &account.id,
+                roster,
+                keyring: ring,
+                now: unix_now(),
+            };
+            let starts_past = s.seq < log.floor_seq || log.ops.first().is_some_and(|o| o.seq > s.seq + 1);
+            if starts_past {
+                let cp = log.checkpoint.as_ref().filter(|cp| cp.seq > s.seq).ok_or_else(|| {
+                    CoreError::invalid("The server holds no checkpoint for the history it dropped; nothing was signed.")
+                })?;
+                if tried_checkpoint {
+                    return Err(CoreError::invalid("The account's history does not continue its checkpoint."));
+                }
+                tried_checkpoint = true;
+                self.store
+                    .oplog(|c| checkpoint::load(c, &ctx, cp))?
+                    .map_err(|e| CoreError::invalid(format!("The account's checkpoint does not verify: {e}")))?;
+                continue;
+            }
+            if log.ops.is_empty() {
+                return Ok(());
+            }
+            let (_, halt) = self.store.oplog(|c| oplog::apply_all(c, &ctx, &log.ops))?;
+            match halt {
+                None if log.more => {}
+                None => return Ok(()),
+                Some(halt) => {
+                    return Err(CoreError::invalid(format!(
+                        "The account's history could not be verified ({halt}); nothing was signed."
+                    )));
+                }
+            }
+        }
+        Err(CoreError::invalid("The account's history is too long to verify now; nothing was signed."))
     }
 
     /// Applies what the log holds, up to the first op this phone cannot take yet (no roster fetch, no store writes;
@@ -1109,13 +1278,24 @@ impl Engine {
                 self.set_mirror(&tbl, &record.key, Some(record.version.clone()), digest, local_key)?;
                 continue;
             }
+            let failing = failed_mark(&tbl, &record.key);
+            let this_version = format!("{}.{}.{}", record.version.epoch, record.version.author, record.version.counter);
+            let tries = write_tries(self.store.oplog(|c| local::mark(c, &failing))??.as_deref(), &this_version);
+            if tries >= MAX_WRITE_TRIES {
+                // Tried enough for this version: waits for the record to change (still counted, so it is shown).
+                failed += 1;
+                continue;
+            }
             match self.store.write_sync_row(record.table, &record.key, local_key.as_deref(), plain.as_ref()) {
                 Ok(found) => {
+                    self.store.oplog(|c| local::clear_mark(c, &failing))??;
                     self.set_mirror(&tbl, &record.key, Some(record.version.clone()), digest, found.or(local_key))?;
                 }
                 Err(e) => {
-                    // Not marked seen: the next sync tries again (a brake that does not land is an error, not a note).
+                    // Not marked seen: the next syncs try again, a few times (a brake that does not land is an error,
+                    // not a note).
                     log::warn!("a {tbl} record from the log is not written here: {e}");
+                    self.store.oplog(|c| local::set_mark(c, &failing, &format!("{this_version}|{}", tries + 1)))??;
                     failed += 1;
                 }
             }
@@ -1137,8 +1317,14 @@ impl Engine {
         pending: &HashSet<(String, String)>,
     ) -> Result<usize, CoreError> {
         let mut failed = 0;
+        let kept: HashSet<String> =
+            self.store.oplog(|c| local::marks(c, UNPUBLISHED))??.into_iter().map(|(k, _)| k).collect();
         for row in self.store.sync_rows()? {
             if !LOG_ONLY.contains(&row.table) || live.contains(&(row.table, row.key.clone())) {
+                continue;
+            }
+            // A row this phone kept because no op could carry it is its own, never a leftover.
+            if kept.contains(&unpublished_mark(&table_name(row.table), &row.key)) {
                 continue;
             }
             let tbl = table_name(row.table);
@@ -1166,13 +1352,11 @@ impl Engine {
         let mut landed = Vec::new();
         let mut lost = Vec::new();
         for q in stale {
-            let version = Version::of(&q.op);
-            let record = table_of(&q.table)
-                .map(|t| self.store.oplog(|c| oplog::record(c, t, &q.key)))
-                .transpose()?
-                .transpose()?
-                .flatten();
-            if record.is_some_and(|r| r.version == version) {
+            // Landed only if the log holds this very op (a brake on a whole table, or a record another op wrote
+            // since, says nothing of it).
+            let applied =
+                q.op.hash().ok().map(|h| self.store.oplog(|c| oplog::holds_op(c, &h))).transpose()?.transpose()?;
+            if applied == Some(true) {
                 landed.push(q);
             } else {
                 lost.push(q);
@@ -1202,7 +1386,8 @@ impl Engine {
         let mut verified = self.live().verified.lock().unwrap_or_else(PoisonError::into_inner);
         match checked {
             Some(Ok(check)) => {
-                *verified = Some((check, hb.t, hb.head_seq));
+                // A heartbeat dated ahead of this phone's clock does not stretch "Live".
+                *verified = Some((check, seen_at(hb.t, unix_now()), hb.head_seq));
                 let mut disagrees = self.live().disagrees.lock().unwrap_or_else(PoisonError::into_inner);
                 match check {
                     HeartbeatCheck::Disagrees => *disagrees = true,
@@ -1315,14 +1500,54 @@ impl Engine {
     }
 }
 
+/// When a heartbeat signed at `t` counts as seen, checked at `now`: never later than now (a heartbeat dated ahead of
+/// this phone's clock does not stretch "Live").
+const fn seen_at(t: i64, now: i64) -> i64 {
+    if t < now {
+        t
+    } else {
+        now
+    }
+}
+
+/// Whether a heartbeat that verified as `check`, seen at `t`, makes the primary live at `now`.
+fn is_live(check: HeartbeatCheck, t: i64, now: i64) -> bool {
+    check == HeartbeatCheck::Matches && now - t < LIVE_SECS
+}
+
+/// How often a record of version `version` failed to write here (the mark is `<version>|<tries>`; another version
+/// starts again at 0).
+fn write_tries(mark: Option<&str>, version: &str) -> u32 {
+    mark.and_then(|m| m.strip_prefix(version)?.strip_prefix('|')?.parse().ok()).unwrap_or(0)
+}
+
+/// The ring a view-key grant of `kid` travels under: the keys older than it (the ones its viewer holds).
+fn older_ring(ring: &ViewKeyring, kid: u64) -> ViewKeyring {
+    let mut older = ViewKeyring::default();
+    for k in ring.kids().into_iter().filter(|k| *k < kid) {
+        if let Some(key) = ring.get(k) {
+            older.insert(key.clone());
+        }
+    }
+    older
+}
+
+/// The key id an op's body is sealed under.
+fn sealed_kid_of(op: &reins_proto::oplog::Op) -> Option<u64> {
+    crate::roles::keys::sealed_kid(&decode_payload(&op.body)?)
+}
+
+fn unpublished_mark(table: &str, key: &str) -> String {
+    format!("{UNPUBLISHED}{table}\u{1f}{key}")
+}
+
+fn failed_mark(table: &str, key: &str) -> String {
+    format!("{FAILED}{table}\u{1f}{key}")
+}
+
 /// The op index a refusal of `POST /ops` names ("op 3: …").
 fn refused_index(message: &str) -> Option<usize> {
     message.strip_prefix("op ")?.split(':').next()?.trim().parse().ok()
-}
-
-/// The table an outbox row names.
-fn table_of(name: &str) -> Option<Table> {
-    serde_json::from_value(Json::String(name.to_owned())).ok()
 }
 
 /// An op's body, opened with this phone's keys.
@@ -1330,4 +1555,53 @@ fn open_body(ring: &ViewKeyring, op: &reins_proto::oplog::Op) -> Option<OpBody> 
     let sealed = decode_payload(&op.body)?;
     let plain = ring.open(&body_associated_data(op), &sealed).ok()?;
     serde_json::from_slice(&plain).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_heartbeat_dated_ahead_never_stretches_live() {
+        let now = 1_000_000;
+        // Dated an hour ahead: seen as now, and live only for the usual two minutes from now.
+        let t = seen_at(now + 3_600, now);
+        assert_eq!(t, now);
+        assert!(is_live(HeartbeatCheck::Matches, t, now + LIVE_SECS - 1));
+        assert!(!is_live(HeartbeatCheck::Matches, t, now + LIVE_SECS));
+        // Only a heartbeat that matched counts.
+        for other in [HeartbeatCheck::Behind, HeartbeatCheck::Unknown, HeartbeatCheck::Stale, HeartbeatCheck::Disagrees]
+        {
+            assert!(!is_live(other, now, now));
+        }
+    }
+
+    #[test]
+    fn a_record_that_does_not_write_is_tried_a_few_times_per_version() {
+        assert_eq!(write_tries(None, "3.p.7"), 0);
+        assert_eq!(write_tries(Some("3.p.7|2"), "3.p.7"), 2);
+        // A newer version of the record starts again.
+        assert_eq!(write_tries(Some("3.p.7|3"), "3.p.8"), 0);
+        assert!(write_tries(Some("3.p.7|3"), "3.p.7") >= MAX_WRITE_TRIES);
+    }
+
+    #[test]
+    fn a_grant_and_a_renumbered_op_travel_under_the_key_they_were_sealed_with() {
+        let owner = crate::roles::keys::OwnerSeed::generate().unwrap();
+        let mut ring = ViewKeyring::default();
+        for kid in [1, 4, 6] {
+            ring.insert(owner.view_key("acct", kid));
+        }
+        assert_eq!(older_ring(&ring, 6).kids(), [1, 4]);
+        // An op renumbered goes under the key it was sealed with, not the newest.
+        let body = OpBody {
+            v: reins_proto::PROTOCOL_VERSION,
+            change: Change::Restrict(Restriction::Lockdown),
+        };
+        let signer = SigningKey::from_seed(&[1; 32]).unwrap();
+        let op = oplog::seal_op("acct", &older_ring(&ring, 5), &signer, "p", 4, 1, OpClass::Restrictive, false, &body)
+            .unwrap();
+        assert_eq!(sealed_kid_of(&op), Some(4));
+        assert_eq!(older_ring(&ring, sealed_kid_of(&op).unwrap() + 1).current().map(|k| k.kid), Some(4));
+    }
 }

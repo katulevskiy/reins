@@ -117,6 +117,8 @@ struct State {
     serve_up_to: Option<(String, u64)>,
     /// Serve the heartbeat with its applied hash changed (its signature no longer verifies).
     forge_heartbeat: bool,
+    /// Claim, with the recovery wrap, that the primary wrote this many ops (more than the log holds).
+    inflate_counter: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -346,10 +348,26 @@ impl State {
                     });
                 }
                 let primary = &self.roster.last().unwrap().primary;
+                let stored = self.counters.get(&(primary.device_id.clone(), primary.sign_pub.clone())).copied();
                 ok(RecoveryWrap {
                     epoch: self.roster.last().unwrap().epoch,
                     recovery_wrap: self.stale_wrap.clone().or_else(|| self.wrap.clone()).unwrap(),
-                    primary_counter: self.counters.get(&(primary.device_id.clone(), primary.sign_pub.clone())).copied(),
+                    primary_counter: self.inflate_counter.or(stored),
+                })
+            }
+            ("POST", ["roster", "recovery-log"]) => {
+                let r: reins_proto::oplog::RecoveryLogRequest = req.body_json().unwrap();
+                if r.master_password_hash != self.password {
+                    return err(403, "wrong_proof");
+                }
+                let from = r.after.max(self.floor);
+                let ops: Vec<SyncedOp> = self.ops.iter().filter(|o| o.seq > from).take(500).cloned().collect();
+                ok(reins_proto::oplog::RecoveryLog {
+                    checkpoint: self.checkpoint.clone(),
+                    floor_seq: self.floor,
+                    head_seq: self.head(),
+                    more: self.ops.iter().filter(|o| o.seq > from).count() > ops.len(),
+                    ops,
                 })
             }
             ("PUT", ["services" | "member"]) | ("POST", ["ack"]) => ResponseTemplate::new(204),
@@ -1612,4 +1630,108 @@ async fn a_viewers_leftover_rows_go_once_it_takes_the_log() {
     b.live_sync(0).await.unwrap();
     a.live_sync(0).await.unwrap();
     assert!(!a.accounts().await.unwrap().iter().any(|v| v.service == "payments"));
+}
+
+// ---- the live sync, security review round 2 ------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_recovery_names_only_what_it_verified_and_refuses_a_server_that_claims_more() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    let a_id = device_of(&a).await;
+    let stored = stored_ops(&w, &a_id).iter().map(|(_, counter)| *counter).max().unwrap();
+    // The server claims the lost primary wrote more than it serves: nothing is signed.
+    w.state().inflate_counter = Some(stored + 50);
+    let c = w.phone().await;
+    let epoch = w.state().roster.last().unwrap().epoch;
+    let refused = recover(&c, PASSWORD, "New iPhone").await.unwrap_err();
+    assert!(refused.to_string().contains("shows"), "{refused}");
+    assert_eq!(w.state().roster.last().unwrap().epoch, epoch, "nothing signed");
+    // Honest: the fresh phone reads the log with its proof, verifies it, and names exactly what it verified.
+    w.state().inflate_counter = None;
+    recover(&c, PASSWORD, "New iPhone").await.unwrap();
+    let entry = w.state().roster.last().unwrap().clone();
+    assert_eq!((entry.reason, entry.primary_counter), (RosterReason::Recovery, Some(stored)));
+    // The viewer takes the recovery (nothing it has not seen is vouched for).
+    let state = b.live_sync(0).await.unwrap();
+    assert_eq!((state.epoch, state.forked.is_none()), (entry.epoch, true), "{state:?}");
+}
+
+#[tokio::test]
+async fn renumbered_activity_and_view_key_grants_still_reach_the_viewer() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    let c = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    enroll(&a, &c, "Tablet").await;
+    a.live_sync(0).await.unwrap();
+    b.live_sync(0).await.unwrap();
+    // Offline: a change, then C removed (the view key rotates: a grant for B is queued), then a decision (an
+    // Activity entry).
+    w.state().ops_down = true;
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    a.roster_remove_member(device_of(&c).await).await.unwrap();
+    let request = json!({"v": 1, "id": "r1", "connection_id": "c1", "connection_label": "Claude", "created_at": 100,
+        "call": {"tool": "gmail_search", "query": "from:bank", "max_results": 1}});
+    w.state().requests.push(request);
+    // The running bypass decides it: an Activity entry.
+    a.sync(0).await.unwrap();
+    let decided = a.activity(50).await.unwrap();
+    assert!(!decided.is_empty());
+    a.live_sync(0).await.unwrap();
+    // Back online, the first queued op is refused: everything after it is renumbered.
+    {
+        let mut st = w.state();
+        st.refuse_ops_once = Some((403, "op 0: not allowed".to_owned()));
+        st.ops_down = false;
+    }
+    for _ in 0..4 {
+        if a.live_sync(0).await.unwrap().queued == 0 {
+            break;
+        }
+    }
+    // B opens its grant (it went under the key B holds) and gets the Activity entry under its new key.
+    let state = b.live_sync(0).await.unwrap();
+    assert!(!state.waiting_for_key && state.forked.is_none(), "{state:?}");
+    let seen = b.activity(50).await.unwrap();
+    for entry in &decided {
+        assert!(
+            seen.iter().any(|e| e.action == entry.action && e.outcome == entry.outcome && e.at == entry.at),
+            "{entry:?} not in {seen:?}"
+        );
+    }
+    assert!(b.autopilot_settings().await.unwrap().bypass_until.is_some());
+}
+
+#[tokio::test]
+async fn a_handover_waits_for_rows_too_large_to_send_and_a_demoted_phone_keeps_them() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    // An MCP server whose tool list is too large for any op: it stays on the primary only.
+    let tools = json!([{"name": "x".repeat(80 * 1024)}]).to_string();
+    let server = json!({"id": "m-big", "name": "Big", "url": "https://big.example", "auth": "none", "tools": tools,
+        "heavy": "[]", "status": "ok", "added_at": 1});
+    a.engine().keep_sync_row("mcp_servers", &server.to_string()).unwrap();
+    a.live_sync(0).await.unwrap();
+    // The handover would leave it behind: refused, and said why.
+    let id = b.handover_request().await.unwrap();
+    a.sync(0).await.unwrap();
+    let refused = a.handover_approve(id, device_of(&b).await).await.unwrap_err();
+    assert!(refused.to_string().contains("too large"), "{refused}");
+    // B recovers instead (A is demoted without a say): A keeps the row, never deleted as a leftover.
+    recover(&b, PASSWORD, "Pixel").await.unwrap();
+    let state = a.live_sync(0).await.unwrap();
+    assert_eq!(state.role, PhoneRole::Removed);
+    assert!(a.engine().has_sync_row("mcp_servers", "m-big").unwrap());
 }

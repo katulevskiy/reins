@@ -504,10 +504,12 @@ Details: [autopilot.md](autopilot.md).
     Reins, of payments or of this installation, a grant, a mode, a paired computer or a setting.
   - **A viewer cannot stop the log.** An op sealed under a key id no roster entry brought is refused, not waited for;
     an op signed before a phone's anchor is skipped once the phone has a state.
-  - **A fresh phone that recovers** names, as the old primary's last op, the counter the server says it stored (it
-    could not read the log before it was a member), so every phone keeps the same history of the old primary. A
-    server that lies low can only deny service, which it could anyway; one that lies high needs the old primary's
-    key as well to have anything accepted.
+  - **A phone that recovers verifies before it signs.** It reads the log with its recovery proof (it is no member
+    yet), applies it under the roster before the recovery (the outgoing primary's checkpoint, then the signed ops),
+    and names as the old primary's last op only what it verified; a server that claims the old primary wrote more
+    than it serves is refused, and nothing is signed. A fresh phone that still has no state starts only from the
+    checkpoint of the primary it replaced, at the epoch right before its recovery, and treats it as untrusted: every
+    grant revoked and every mode Manual (Lockdown stays) until the user approves again.
   - **A replaced primary cannot stop the others.** Only the current primary's heartbeat at the current epoch can show a
     fork (and stop applying for good); one from a replaced primary or an older epoch that disagrees is a warning ("Your
     devices may disagree"), never kept.

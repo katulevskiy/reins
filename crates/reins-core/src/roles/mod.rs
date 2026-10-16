@@ -1117,9 +1117,18 @@ impl Engine {
         let mut entry = latest
             .successor(RosterReason::Recovery, me, viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
-        // What this phone saw of the outgoing primary, or what the server stored of it if more (a phone that never read
-        // the log): the other phones applied those ops already, so the new primary keeps the same history.
-        entry.primary_counter = Some(self.last_counter(&latest.primary)?.max(reported_counter));
+        // The log first, verified under the roster before this recovery (the outgoing primary's checkpoint and the
+        // signed ops after it): the entry names only the outgoing primary's ops this phone verified. A server that
+        // claims to hold more of them than it serves is refused: nothing is signed.
+        self.recovery_catch_up(&session, &account, &base, &ring, master.hash.as_ref()).await?;
+        let verified = self.seen_counter(&latest.primary);
+        if reported_counter > verified {
+            return Err(CoreError::invalid(format!(
+                "The server says the lost primary wrote {reported_counter} changes but shows {verified} of them. Nothing \
+                 was signed: try again later."
+            )));
+        }
+        entry.primary_counter = Some(verified);
         entry.owner_pub = seed.owner_key()?.public_b64();
         entry.credential_pub = seed.credential_key().public_b64();
         let new_wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ring)?;
@@ -1370,6 +1379,15 @@ impl Engine {
             return Err(CoreError::invalid(
                 "This phone's last changes have not reached the server yet. Try the handover again once online.",
             ));
+        }
+        // What no op could carry (too large) lives only here: the new primary would never have it.
+        let kept = self.unpublished_rows()?;
+        if !kept.is_empty() {
+            return Err(CoreError::invalid(format!(
+                "Some of this phone's data is too large to reach the other phones ({}). Remove or shrink it, then hand \
+                 over.",
+                kept.join(", ")
+            )));
         }
         let _one = self.roles.changing.lock().await;
         let account = self.roles_account(&session).await?;

@@ -381,13 +381,67 @@ impl Store {
         local: Option<&str>,
         value: Option<&Json>,
     ) -> Result<Option<String>, CoreError> {
+        let conn = self.lock()?;
+        self.write_row_in(&conn, table, key, local, value, false)
+    }
+
+    /// Adds `rows` (new rows only: one whose key exists refuses all), all of them or none.
+    pub(crate) fn insert_sync_rows(&self, rows: &[(Table, Json)]) -> Result<(), CoreError> {
+        let conn = self.lock()?;
+        conn.execute_batch("SAVEPOINT sync_rows")?;
+        let written = rows.iter().try_for_each(|(table, value)| {
+            let key = key_of_row(*table, value).ok_or_else(|| bad("a row without its key"))?;
+            self.write_row_in(&conn, *table, &key, None, Some(value), true).map(drop)
+        });
+        match written {
+            Ok(()) => conn.execute_batch("RELEASE sync_rows")?,
+            Err(e) => {
+                conn.execute_batch("ROLLBACK TO sync_rows; RELEASE sync_rows")?;
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
+    /// After a start this phone could not verify (a fresh primary that loaded its predecessor's checkpoint): every
+    /// grant revoked, every mode at the tightest (Lockdown stays Lockdown, anything else Manual), no bypass. Nothing
+    /// of that state loosens anything until the user approves it again.
+    pub(crate) fn tighten_untrusted(&self) -> Result<(), CoreError> {
+        let conn = self.lock()?;
+        let grants: Vec<(String, String)> = conn
+            .prepare("SELECT id, grant_json FROM grants")?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        for (id, raw) in grants {
+            let mut grant: Json = serde_json::from_str(&raw).map_err(|_| bad("a grant"))?;
+            if let Some(obj) = grant.as_object_mut() {
+                obj.insert("revoked".to_owned(), Json::Bool(true));
+            }
+            conn.execute("UPDATE grants SET grant_json = ?1 WHERE id = ?2", rusqlite::params![grant.to_string(), id])?;
+        }
+        conn.execute(
+            "UPDATE autopilot_settings SET bypass_until = NULL,
+                 mode = CASE WHEN mode IS NULL OR mode = 'lockdown' THEN mode ELSE 'manual' END",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn write_row_in(
+        &self,
+        conn: &Connection,
+        table: Table,
+        key: &str,
+        local: Option<&str>,
+        value: Option<&Json>,
+        insert_only: bool,
+    ) -> Result<Option<String>, CoreError> {
         let name = sql_table(table).ok_or_else(|| bad("a table the sync does not carry"))?;
         if key.starts_with(RESERVED_PREFIX) {
             return Err(bad("a reserved key"));
         }
-        let conn = self.lock()?;
         if table == Table::Meta {
-            return self.write_meta(&conn, key, value);
+            return self.write_meta(conn, key, value);
         }
         let Some(value) = value else {
             let Some(local) = local else {
@@ -480,17 +534,16 @@ impl Store {
             .filter(|c| !keys.contains(&c.as_str()))
             .map(|c| format!("{c} = excluded.{c}"))
             .collect::<Vec<_>>();
-        let conflict = if updates.is_empty() {
-            "DO NOTHING".to_owned()
+        let conflict = if insert_only {
+            // A row that exists already refuses the write (the key's uniqueness fails it).
+            String::new()
+        } else if updates.is_empty() {
+            format!("ON CONFLICT ({}) DO NOTHING", keys.join(","))
         } else {
-            format!("DO UPDATE SET {}", updates.join(","))
+            format!("ON CONFLICT ({}) DO UPDATE SET {}", keys.join(","), updates.join(","))
         };
         conn.execute(
-            &format!(
-                "INSERT INTO {name} ({}) VALUES ({placeholders}) ON CONFLICT ({}) {conflict}",
-                columns.join(","),
-                keys.join(",")
-            ),
+            &format!("INSERT INTO {name} ({}) VALUES ({placeholders}) {conflict}", columns.join(",")),
             params_from_iter(cells),
         )?;
         let local: Vec<Json> = keys.iter().map(|k| row.get(*k).cloned().unwrap_or(Json::Null)).collect();

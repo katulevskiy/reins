@@ -149,3 +149,39 @@ fn digests_ignore_entry_order() {
     assert_eq!(digest(&json!({"a": 1, "b": {"x": 1, "y": 2}})), digest(&json!({"b": {"y": 2, "x": 1}, "a": 1})));
     assert_ne!(digest(&json!({"a": 1})), digest(&json!({"a": 2})));
 }
+
+#[test]
+fn proposal_rows_are_written_all_or_none_and_never_over_a_row_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let account = json!({"service": "github", "account": "octo", "added_at": 1});
+    let bad = json!({"service": "github", "account": "octo2", "added_at": "not a number", "extra": 1});
+    // A bad second row: the first is not left behind.
+    assert!(store.insert_sync_rows(&[(Table::Accounts, account.clone()), (Table::Accounts, bad)]).is_err());
+    assert!(store.sync_rows().unwrap().iter().all(|r| r.table != Table::Accounts));
+    store.insert_sync_rows(&[(Table::Accounts, account)]).unwrap();
+    // The same key again: refused, nothing replaced.
+    let replaced = json!({"service": "github", "account": "octo", "added_at": 99});
+    assert!(store.insert_sync_rows(&[(Table::Accounts, replaced)]).is_err());
+    let rows = store.sync_rows().unwrap();
+    assert_eq!(rows.iter().find(|r| r.table == Table::Accounts).unwrap().value["added_at"], 1);
+}
+
+#[test]
+fn an_untrusted_start_revokes_every_grant_and_tightens_every_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = filled(dir.path());
+    store
+        .lock()
+        .unwrap()
+        .execute("INSERT INTO autopilot_settings (scope, mode, updated_at) VALUES ('c2', 'lockdown', 1)", [])
+        .unwrap();
+    store.tighten_untrusted().unwrap();
+    let rows = store.sync_rows().unwrap();
+    let get = |t: Table, k: &str| rows.iter().find(|r| r.table == t && r.key == k).unwrap().value.clone();
+    assert_eq!(get(Table::Grants, "g1")["grant"]["revoked"], true);
+    let global = get(Table::AutopilotSettings, "*");
+    assert_eq!((global["mode"].clone(), global["bypass_until"].clone()), (json!("manual"), Json::Null));
+    assert_eq!(get(Table::AutopilotSettings, "c2")["mode"], "lockdown", "Lockdown stays Lockdown");
+    assert_eq!(get(Table::AutopilotSettings, "c1")["mode"], Json::Null, "inherits the global, now Manual");
+}

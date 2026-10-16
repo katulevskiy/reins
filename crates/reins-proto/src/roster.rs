@@ -535,9 +535,9 @@ impl std::fmt::Debug for RecoveryWrapRequest {
 pub struct RecoveryWrap {
     pub epoch: u64,
     pub recovery_wrap: String,
-    /// The last op counter the server stored of the primary the recovery replaces: a phone that has not read the log
-    /// (it is not a member yet) names it as the entry's `primary_counter`, so that every phone keeps the same history
-    /// of the outgoing primary. The server refuses an entry naming more.
+    /// The last op counter the server stored of the primary the recovery replaces. Never what a recovery names (that
+    /// is what the phone itself verified of the log): a cross-check only, a phone refuses to sign when the server
+    /// claims more than it serves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_counter: Option<u64>,
 }

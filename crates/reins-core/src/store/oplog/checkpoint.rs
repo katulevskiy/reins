@@ -220,6 +220,18 @@ fn current_primary_key(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Op
         .flatten())
 }
 
+/// The key of the primary this phone's recovery replaced, when `author` at `epoch` is it at the epoch right before
+/// that recovery entry (the only checkpoint a fresh recovered phone may start from, as untrusted).
+fn predecessor_key(ctx: &Context<'_>, epoch: u64, author: &str) -> Option<[u8; 32]> {
+    let entries = &ctx.roster.entries;
+    let current = ctx.roster.current();
+    let i = entries.iter().rposition(|e| {
+        e.reason == reins_proto::roster::RosterReason::Recovery && e.primary.same_keys(&current.primary)
+    })?;
+    let before = entries.get(i.checked_sub(1)?)?;
+    (before.epoch == epoch && before.primary.device_id == author).then(|| before.primary.sign_key().ok()).flatten()
+}
+
 /// The signing key of the primary at `epoch` (any epoch this phone verified), for a heartbeat's fork evidence.
 fn primary_key_at(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Option<[u8; 32]>, Halt> {
     if epoch > ctx.roster.epoch() {
@@ -255,12 +267,14 @@ fn load_from(
     if cp.account != ctx.account {
         return Err(bad("it is another account's"));
     }
-    let fresh = state(conn)?.seq == 0;
+    let s0 = state(conn)?;
+    let fresh = s0.seq == 0
+        && s0.forked.is_none()
+        && conn.query_row("SELECT count(*) FROM oplog_records", [], |r| r.get::<_, i64>(0))? == 0;
     let key = match current_primary_key(ctx, cp.epoch, &cp.author)? {
         Some(key) => key,
-        None if bootstrap && fresh => {
-            primary_key_at(ctx, cp.epoch, &cp.author)?.ok_or_else(|| bad("its author was not the primary"))?
-        }
+        None if bootstrap && fresh => predecessor_key(ctx, cp.epoch, &cp.author)
+            .ok_or_else(|| bad("it is not the replaced primary's own, at the epoch right before the recovery"))?,
         None => return Err(bad("it is not from the current primary at the current epoch")),
     };
     let message = cp.signing_bytes().map_err(|e| bad(&e.to_string()))?;

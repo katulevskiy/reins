@@ -387,7 +387,11 @@ async fn roster_create_enroll_handover_and_recovery() {
     let (status, body) = c.post("/roster", &recovery).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (_, wrap) = c.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
-    assert_eq!(wrap, json!({"epoch": 4, "recovery_wrap": NEW_WRAP, "primary_counter": 0}), "the recovery replaced the wrap");
+    assert_eq!(
+        wrap,
+        json!({"epoch": 4, "recovery_wrap": NEW_WRAP, "primary_counter": 0}),
+        "the recovery replaced the wrap"
+    );
     acct.chain.push(e4);
     assert_eq!(c.get("/pending?wait=0").await.0, StatusCode::OK);
     assert_eq!(error(&b.get("/pending?wait=0").await.1), "not_approval_device");
@@ -1040,4 +1044,33 @@ async fn a_removed_viewer_stops_syncing_at_once() {
     assert_eq!(removed, StatusCode::OK);
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_a_member"));
     assert!(start.elapsed() < Duration::from_secs(10), "at once, not at the end of the wait");
+}
+
+#[tokio::test]
+async fn the_log_is_read_before_a_recovery_only_with_the_proof() {
+    let server = Server::start().await;
+    let a = server.phone("rosa@example.com").await;
+    a.register_device().await;
+    let acct = Account::with_roster(server, a).await;
+    let ops =
+        [acct.op(&acct.primary, &acct.pk, 1, OpClass::Primary), acct.op(&acct.primary, &acct.pk, 2, OpClass::Primary)];
+    assert_eq!(post_ops(&acct.primary, &ops).await.0, StatusCode::OK);
+    // A phone of the account that is no member reads it only with the master password hash.
+    let fresh = acct.server.second_device("rosa@example.com").await;
+    let (status, body) =
+        fresh.post("/roster/recovery-log", &json!({"master_password_hash": "wrong", "after": 0})).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "wrong_proof"));
+    let (status, _) = fresh.post("/roster/recovery-log", &json!({"after": 0})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "no proof, no log");
+    let (status, log) =
+        fresh.post("/roster/recovery-log", &json!({"master_password_hash": PASSWORD_HASH, "after": 0})).await;
+    assert_eq!(status, StatusCode::OK, "{log}");
+    assert_eq!(log["ops"].as_array().map(Vec::len), Some(2));
+    assert_eq!(log["head_seq"], 2);
+    let (_, after) =
+        fresh.post("/roster/recovery-log", &json!({"master_password_hash": PASSWORD_HASH, "after": 1})).await;
+    assert_eq!(after["ops"].as_array().map(Vec::len), Some(1));
+    // The wrap's count of the primary's ops is what the server stored (a cross-check for the phone, never named).
+    let (_, wrap) = fresh.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
+    assert_eq!(wrap["primary_counter"], 2);
 }

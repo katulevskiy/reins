@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use reins_proto::oplog::{Ack, Checkpoint, Heartbeat, Op, OpBatch, OpsAppended, SyncResponse};
+use reins_proto::oplog::{
+    Ack, Checkpoint, Heartbeat, Op, OpBatch, OpsAppended, RecoveryLog, RecoveryLogRequest, SyncResponse,
+};
 use reqwest::Method;
 
 use crate::phone_api::{ApiFailure, PhoneApi};
@@ -54,6 +56,12 @@ impl PhoneApi<'_> {
         Self::send(self.request(Method::PUT, "/checkpoint").json(checkpoint).timeout(Duration::from_secs(120)))
             .await
             .map(drop)
+    }
+
+    /// `POST /roster/recovery-log`: the log for a phone about to recover, with its proof.
+    pub(crate) async fn recovery_log(&self, request: &RecoveryLogRequest) -> Result<RecoveryLog, ApiFailure> {
+        Self::json(self.request(Method::POST, "/roster/recovery-log").json(request).timeout(Duration::from_secs(120)))
+            .await
     }
 
     /// `POST /heartbeat` (the primary).

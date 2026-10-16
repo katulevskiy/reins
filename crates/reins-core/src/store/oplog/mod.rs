@@ -387,6 +387,14 @@ pub fn all_records(conn: &Connection) -> Result<Vec<Record>, CoreError> {
     raws.into_iter().map(record_of).collect()
 }
 
+/// Whether the log this phone applied (its last [`KEPT_SEQS`]) holds the op of hash `op_hash`.
+pub fn holds_op(conn: &Connection, op_hash: &[u8; 32]) -> Result<bool, CoreError> {
+    Ok(conn
+        .query_row("SELECT 1 FROM oplog_seqs WHERE op_hash = ?1", [hex32(op_hash)], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
 /// The last counter this phone took of the ops `author` signed with `sign_pub` (0: none).
 pub fn author_last_counter(conn: &Connection, author: &str, sign_pub: &str) -> Result<u64, CoreError> {
     author_counter(conn, author, sign_pub)
@@ -447,7 +455,16 @@ fn signer_of<'a>(op: &Op, ctx: &'a Context<'_>, started: bool) -> Result<Result<
     }
     if op.epoch < first {
         if started {
-            return Ok(Err(Refusal::NotAuthorized(OpRefusal::UnknownEpoch)));
+            // Signed before the first entry this phone verified: checked against the key its author has there (a
+            // member keeps its key), so that its counter moves as on every phone; its role cannot be judged here, so
+            // it is refused when its turn comes.
+            return Ok(ctx
+                .roster
+                .entries
+                .first()
+                .and_then(|e| e.role_of(&op.author))
+                .map(|(_, m)| m)
+                .ok_or(Refusal::NotAuthorized(OpRefusal::UnknownEpoch)));
         }
         return Err(Halt::Unverifiable(op.epoch));
     }

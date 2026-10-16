@@ -88,7 +88,9 @@ fn allowed_columns(table: Table) -> &'static [&'static str] {
     match table {
         Table::Accounts => &["service", "account"],
         Table::Secrets => &["service", "account", "value"],
-        Table::McpServers => &["id", "name", "url", "auth", "client"],
+        // Never `client`: how the primary signs in to the server (its OAuth registration) is the primary's own, or an
+        // attacker's token endpoint would receive the authorization code.
+        Table::McpServers => &["id", "name", "url", "auth"],
         Table::ConnectionPrefs => &["connection_id", "icon"],
         _ => &[],
     }
@@ -109,11 +111,9 @@ fn sanitized(rows: &[ProposedRow], now: i64) -> Result<Vec<ProposedRow>, String>
             }
             let mut value: Map<String, Json> = source.clone();
             for column in allowed {
-                if r.table != Table::McpServers || *column != "client" {
-                    match value.get(*column) {
-                        Some(v) if v.is_string() || (r.table == Table::Secrets && *column == "value") => {}
-                        _ => return Err(format!("a proposal's row lacks {column}")),
-                    }
+                match value.get(*column) {
+                    Some(v) if v.is_string() || (r.table == Table::Secrets && *column == "value") => {}
+                    _ => return Err(format!("a proposal's row lacks {column}")),
                 }
             }
             match r.table {
@@ -130,8 +130,14 @@ fn sanitized(rows: &[ProposedRow], now: i64) -> Result<Vec<ProposedRow>, String>
                     }
                     value.insert("listed_at".to_owned(), Json::Null);
                     value.insert("added_at".to_owned(), Json::from(now));
-                    if !text(&r.value, "url").starts_with("https://") {
+                    // The primary finds and registers how to sign in itself.
+                    value.insert("client".to_owned(), Json::Null);
+                    let url = crate::mcp::checked_url(text(&r.value, "url")).map_err(|e| e.to_string())?;
+                    if url.scheme() != "https" {
                         return Err("an MCP server is reached over https only".to_owned());
+                    }
+                    if !matches!(text(&r.value, "auth"), "none" | "token") {
+                        return Err("an MCP server signs in with no key or a token only".to_owned());
                     }
                 }
                 _ => {}
@@ -189,6 +195,13 @@ fn check_kind(kind: &str, rows: &[ProposedRow]) -> Result<(), String> {
         other => return Err(format!("a proposal cannot add {other}")),
     }
     Ok(())
+}
+
+/// What Keep / Discard was shown: the kind and title as they were, and the payload's exact bytes.
+fn proposal_digest(kind: &str, title: &str, plain: &[u8]) -> String {
+    let mut c = reins_proto::canon::Canon::new("reins/proposal-preview/v1");
+    c.str(kind).str(title).key(&sha256(plain));
+    hex32(&sha256(&c.finish()))
 }
 
 impl Engine {
@@ -284,7 +297,9 @@ impl Engine {
         let plain = seed.credential_key().open(&raw).map_err(|_| CoreError::invalid("The proposal does not open."))?;
         let rows: Vec<ProposedRow> =
             serde_json::from_slice(&plain).map_err(|_| CoreError::invalid("The proposal is malformed."))?;
-        Ok((proposal, rows, hex32(&sha256(&plain))))
+        let field = |name: &str| proposal.value.get(name).and_then(Json::as_str).unwrap_or_default().to_owned();
+        let digest = proposal_digest(&field("kind"), &field("title"), &plain);
+        Ok((proposal, rows, digest))
     }
 
     /// Why Keep would refuse these rows: a table or column a proposal may not set, rows that are not what the kind
@@ -364,10 +379,10 @@ impl Engine {
         if let Some(why) = Self::keep_refusal(&kind, &rows, &exists) {
             return Err(CoreError::invalid(why));
         }
+        // Every row checked before any is written, and all written in one go (a bad one leaves none behind).
         let rows = sanitized(&rows, unix_now()).map_err(CoreError::invalid)?;
-        for row in &rows {
-            self.store.write_sync_row(row.table, "proposal", None, Some(&row.value))?;
-        }
+        let rows: Vec<(Table, Json)> = rows.into_iter().map(|r| (r.table, r.value)).collect();
+        self.store.insert_sync_rows(&rows)?;
         self.resolve(&session, &account, &keys, id, OpClass::Primary).await?;
         self.live_sync_now().await
     }
@@ -407,5 +422,51 @@ impl Engine {
             log::warn!("resolving the proposal waits to reach the server: {e}");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn row(table: Table, value: Json) -> ProposedRow {
+        ProposedRow {
+            table,
+            value,
+        }
+    }
+
+    #[test]
+    fn what_keep_shows_is_bound_to_the_kind_the_title_and_the_payload() {
+        let base = proposal_digest("github", "GitHub · octo", b"rows");
+        assert_ne!(base, proposal_digest("gitlab", "GitHub · octo", b"rows"));
+        assert_ne!(base, proposal_digest("github", "GitHub · octo2", b"rows"));
+        assert_ne!(base, proposal_digest("github", "GitHub · octo", b"rows2"));
+        assert_eq!(base, proposal_digest("github", "GitHub · octo", b"rows"));
+    }
+
+    #[test]
+    fn an_mcp_server_proposal_sets_no_client_and_signs_in_only_as_the_primary_decides() {
+        let server = |extra: Json| {
+            let mut v = json!({"id": "m1", "name": "N", "url": "https://notes.example/mcp", "auth": "token"});
+            for (k, x) in extra.as_object().unwrap() {
+                v[k] = x.clone();
+            }
+            vec![row(Table::McpServers, v)]
+        };
+        let kept = sanitized(&server(json!({})), 7).unwrap();
+        assert_eq!(kept[0].value["client"], Json::Null);
+        assert_eq!(kept[0].value["tools"], json!("[]"));
+        for (bad, why) in [
+            (json!({"client": "{\"token_endpoint\":\"https://evil.example/token\"}"}), "a client"),
+            (json!({"auth": "oauth"}), "OAuth"),
+            (json!({"url": "https://real.example@evil.example/"}), "a user name in the URL"),
+            (json!({"url": "http://notes.example/"}), "plain http"),
+            (json!({"url": "https://notes.example/#frag"}), "a fragment"),
+        ] {
+            assert!(sanitized(&server(bad), 7).is_err(), "{why}");
+        }
     }
 }

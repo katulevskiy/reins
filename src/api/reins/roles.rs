@@ -23,6 +23,7 @@ use reins_proto::{
     PROTOCOL_VERSION,
     answer::{AnswerKind, SignedAnswer, answer_message},
     device::codes,
+    oplog::{Checkpoint, MAX_SYNC_OPS, RecoveryLog, RecoveryLogRequest, SyncedOp},
     pairing::{PushKind, PushMessage},
     roster::{
         HANDOVER_REQUEST_SKEW_SECS, HandoverAnswer, HandoverBundle, HandoverCreated, HandoverRequest,
@@ -47,7 +48,8 @@ use crate::{
     db::{
         DbConn, DbPool,
         models::{
-            Listed, ROLE_PRIMARY, ROLE_VIEWER, ReinsDevice, ReinsMember, ReinsRoster, ReinsRosterRow, WriteError,
+            Listed, ROLE_PRIMARY, ROLE_VIEWER, ReinsDevice, ReinsMember, ReinsOps, ReinsRoster, ReinsRosterRow,
+            WriteError,
         },
     },
     util::get_uuid,
@@ -58,6 +60,7 @@ pub fn routes() -> Vec<Route> {
         get_roster,
         post_roster,
         post_recovery_wrap,
+        post_recovery_log,
         put_member,
         post_handover,
         get_handover,
@@ -510,6 +513,43 @@ async fn post_recovery_wrap(data: Data<'_>, headers: Headers, conn: DbConn) -> P
         epoch: u64::try_from(latest.epoch).unwrap_or(0),
         recovery_wrap,
         primary_counter,
+    }))
+}
+
+/// The log, for a phone about to recover (no member yet): it applies it under the roster before its recovery, so that
+/// the entry it signs names only the outgoing primary's ops it verified. Only with the recovery proof, like the wrap.
+#[post("/reins/api/roster/recovery-log", data = "<data>")]
+async fn post_recovery_log(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<RecoveryLog>> {
+    let request: RecoveryLogRequest = serde_json::from_slice(&read_body_limited(data, 4096).await?)
+        .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    let user = user_key(&headers);
+    ReinsRoster::latest(&user, &conn).await.map_err(|e| internal(&e))?.ok_or_else(no_roster)?;
+    check_recovery_proof(&headers, Some(&request.master_password_hash))?;
+    let state = ReinsOps::state(&user, &conn).await.map_err(|e| internal(&e))?;
+    let from = i64::try_from(request.after).unwrap_or(i64::MAX).max(state.floor);
+    let limit = i64::try_from(MAX_SYNC_OPS).unwrap_or(500);
+    let rows = ReinsOps::after(&user, from, limit + 1, &conn).await.map_err(|e| internal(&e))?;
+    let more = rows.len() > MAX_SYNC_OPS;
+    let ops = rows
+        .iter()
+        .take(MAX_SYNC_OPS)
+        .filter_map(|row| {
+            Some(SyncedOp {
+                seq: u64::try_from(row.seq).ok()?,
+                op: serde_json::from_str(&row.op).ok()?,
+            })
+        })
+        .collect();
+    let checkpoint = ReinsOps::latest_checkpoint(&user, &conn)
+        .await
+        .map_err(|e| internal(&e))?
+        .and_then(|row| serde_json::from_str::<Checkpoint>(&row.checkpoint).ok());
+    Ok(Json(RecoveryLog {
+        checkpoint,
+        floor_seq: u64::try_from(state.floor).unwrap_or(0),
+        head_seq: u64::try_from(state.head).unwrap_or(0),
+        ops,
+        more,
     }))
 }
 

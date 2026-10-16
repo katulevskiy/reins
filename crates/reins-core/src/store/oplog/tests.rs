@@ -425,31 +425,43 @@ fn an_op_from_before_a_phones_anchor_stops_only_a_phone_with_nothing_applied() {
     let first = w.op("p", 3, OpClass::Primary, put(Table::Meta, "first", None, json!(1)));
     let late_old = w.op("v", 1, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
     let after = w.op("p", 3, OpClass::Primary, put(Table::Meta, "after", None, json!(1)));
+    // The refused op takes its author's counter all the same: v's next op is not held behind it.
+    let v_next = w.op("v", 3, OpClass::Proposal, put(Table::Proposals, "v/1", None, json!({})));
     assert_eq!(
-        run(&mut conn, &anchored, 1, &[first, late_old, after]),
-        [Outcome::Applied, Outcome::Refused(Refusal::NotAuthorized(OpRefusal::UnknownEpoch)), Outcome::Applied]
+        run(&mut conn, &anchored, 1, &[first, late_old, after, v_next]),
+        [
+            Outcome::Applied,
+            Outcome::Refused(Refusal::NotAuthorized(OpRefusal::UnknownEpoch)),
+            Outcome::Applied,
+            Outcome::Applied
+        ]
     );
 }
 
 #[test]
-fn a_fresh_primary_may_start_from_its_predecessors_checkpoint_and_no_one_else() {
-    let mut w = World::new(true);
-    let mut old_primary = store();
-    let ops = [w.op("p", 3, OpClass::Primary, put(Table::Meta, "a", None, json!(1)))];
-    run(&mut old_primary, &w, 1, &ops);
-    let cp = checkpoint::produce(&old_primary, &w.ctx(), &key_of("p"), "p", 3).unwrap();
-    // The ordinary load refuses a replaced primary's checkpoint; a primary with nothing at all may start from it.
-    assert!(checkpoint::load(&mut store(), &w.ctx(), &cp).is_err());
-    let mut fresh = store();
-    assert_eq!(checkpoint::load_bootstrap(&mut fresh, &w.ctx(), &cp).unwrap(), CheckpointCheck::Loaded);
-    assert_eq!(value(&fresh, Table::Meta, "a"), Some(json!(1)));
-    // A phone that has a state never takes it that way.
-    let mut started = store();
-    run(&mut started, &w, 1, &ops);
-    let more = w.op("v", 4, OpClass::Primary, put(Table::Meta, "b", None, json!(2)));
-    run(&mut started, &w, 2, &[more]);
-    let older = checkpoint::produce(&old_primary, &w.ctx(), &key_of("p"), "p", 3).unwrap();
-    assert!(checkpoint::load_bootstrap(&mut started, &w.ctx(), &older).is_err());
+fn a_fresh_recovered_primary_may_start_only_from_the_checkpoint_right_before_its_recovery() {
+    // p primary until epoch 3; v recovers at epoch 4.
+    let mut w = World::new(false);
+    let mut e4 =
+        w.roster.current().successor(RosterReason::Recovery, member("v", 2), vec![member("w", 3)], 20).unwrap();
+    e4.recovery_wrap_hash = hex32(&[4; 32]);
+    let new_owner = OwnerSeed::generate().unwrap();
+    e4.owner_pub = new_owner.owner_key().unwrap().public_b64();
+    e4.credential_pub = new_owner.credential_key().public_b64();
+    let e4 = sign(e4, &w.owner);
+    let mut chain = w.roster.entries.clone();
+    chain.push(e4);
+    w.roster = w.roster.updated(&chain).unwrap();
+    let mut old = store();
+    let first_op = w.op("p", 3, OpClass::Primary, put(Table::Meta, "a", None, json!(1)));
+    run(&mut old, &w, 1, &[first_op]);
+    let right_before = checkpoint::produce(&old, &w.ctx(), &key_of("p"), "p", 3).unwrap();
+    let older_epoch = checkpoint::produce(&old, &w.ctx(), &key_of("p"), "p", 2).unwrap();
+    let by_viewer = checkpoint::produce(&old, &w.ctx(), &key_of("w"), "w", 3).unwrap();
+    for refused in [&older_epoch, &by_viewer] {
+        assert!(checkpoint::load_bootstrap(&mut store(), &w.ctx(), refused).is_err());
+    }
+    assert_eq!(checkpoint::load_bootstrap(&mut store(), &w.ctx(), &right_before).unwrap(), CheckpointCheck::Loaded);
 }
 
 #[test]
@@ -1039,4 +1051,26 @@ fn the_store_keeps_the_log_in_its_sealed_database() {
     // The op log is this phone's own bookkeeping: never in a portable snapshot.
     let exported = String::from_utf8(store.export_account().unwrap().to_vec()).unwrap();
     assert!(!exported.contains("oplog"));
+}
+
+#[test]
+fn the_log_knows_its_own_ops_by_identity() {
+    let mut w = World::new(false);
+    let mut conn = store();
+    let brake = w.op("v", 3, OpClass::Restrictive, Change::Restrict(Restriction::StopBypass));
+    let other = w.op("v", 3, OpClass::Restrictive, Change::Restrict(Restriction::StopBypass));
+    run(&mut conn, &w, 1, std::slice::from_ref(&brake));
+    assert!(holds_op(&conn, &brake.hash().unwrap()).unwrap());
+    assert!(!holds_op(&conn, &other.hash().unwrap()).unwrap(), "the same change, another op");
+}
+
+#[test]
+fn a_lockdown_on_no_setting_makes_a_row_and_names_no_profile() {
+    let mut w = World::new(false);
+    let mut conn = store();
+    let lock = w.op("v", 3, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    run(&mut conn, &w, 1, &[lock]);
+    let row = value(&conn, Table::AutopilotSettings, "*").unwrap();
+    assert_eq!((row["scope"].clone(), row["mode"].clone()), (json!(""), json!("lockdown")));
+    assert!(row.get("profile_id").is_none(), "a profile only the store knows is left as it is: {row}");
 }

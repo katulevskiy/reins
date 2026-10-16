@@ -555,6 +555,34 @@ pub struct SyncResponse {
     pub cursor: String,
 }
 
+/// `POST /reins/api/roster/recovery-log`: a phone about to recover (no member yet) reads the log it will vouch for,
+/// with the same proof as the recovery wrap.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryLogRequest {
+    pub master_password_hash: String,
+    /// Ops after this `seq`.
+    #[serde(default)]
+    pub after: u64,
+}
+
+impl std::fmt::Debug for RecoveryLogRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecoveryLogRequest").field("after", &self.after).finish_non_exhaustive()
+    }
+}
+
+/// What `POST /reins/api/roster/recovery-log` answers: the latest checkpoint and the ops after `after` (from the
+/// floor on), at most [`MAX_SYNC_OPS`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryLog {
+    #[serde(default)]
+    pub checkpoint: Option<Checkpoint>,
+    pub floor_seq: u64,
+    pub head_seq: u64,
+    pub ops: Vec<SyncedOp>,
+    pub more: bool,
+}
+
 /// `POST /reins/api/ack`: this device applied everything up to `seq`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ack {
