@@ -2,10 +2,70 @@ use diesel::prelude::*;
 
 use crate::{
     api::EmptyResult,
-    db::{DbConn, DbConnInner, schema::reins_clients},
+    auth::reins::hash_token,
+    db::{
+        DbConn, DbConnInner,
+        schema::{reins_clients, reins_connections, reins_jwt_clients, reins_refresh_tokens},
+    },
     error::MapResult,
     util::get_uuid,
 };
+
+/// Clients (metadata-document URLs) ever seen authenticating with `private_key_jwt`: in their metadata document
+/// (recorded here, by SHA-256) or in a stored grant. Reins never accepts such a client without a valid assertion
+/// again, whatever an older grant or a later document says.
+pub struct ReinsJwtClient;
+
+impl ReinsJwtClient {
+    /// Whether `client_id` has been seen with `private_key_jwt`.
+    pub async fn seen(client_id: &str, conn: &DbConn) -> Result<bool, crate::Error> {
+        conn.run(move |c| q_seen(c, client_id)).await.map_res("Error reading Reins client authentication")
+    }
+
+    /// Records that `client_id` has been seen with `private_key_jwt` (idempotent).
+    pub async fn mark(client_id: &str, now: i64, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| q_mark(c, client_id, now)).await.map_res("Error saving Reins client authentication")
+    }
+}
+
+fn q_seen(c: &mut DbConnInner, client_id: &str) -> QueryResult<bool> {
+    let marked = reins_jwt_clients::table
+        .filter(reins_jwt_clients::client_hash.eq(hash_token(client_id)))
+        .count()
+        .get_result::<i64>(c)?;
+    if marked > 0 {
+        return Ok(true);
+    }
+    let connections =
+        reins_connections::table.filter(reins_connections::client_id.eq(client_id)).select(reins_connections::uuid);
+    let keyed_grants = reins_refresh_tokens::table
+        .filter(reins_refresh_tokens::client_auth.ne("none"))
+        .filter(reins_refresh_tokens::connection_uuid.eq_any(connections))
+        .count()
+        .get_result::<i64>(c)?;
+    Ok(keyed_grants > 0)
+}
+
+fn q_mark(c: &mut DbConnInner, client_id: &str, now: i64) -> QueryResult<()> {
+    let hash = hash_token(client_id);
+    let known = |c: &mut DbConnInner| {
+        reins_jwt_clients::table.filter(reins_jwt_clients::client_hash.eq(&hash)).count().get_result::<i64>(c)
+    };
+    if known(c)? > 0 {
+        return Ok(());
+    }
+    let inserted = diesel::insert_into(reins_jwt_clients::table)
+        .values((reins_jwt_clients::client_hash.eq(&hash), reins_jwt_clients::first_seen_at.eq(now)))
+        .execute(c);
+    match inserted {
+        Ok(_) => Ok(()),
+        // Two requests raced to mark the same client: the other one's row is just as good.
+        Err(e) => match known(c) {
+            Ok(n) if n > 0 => Ok(()),
+            _ => Err(e),
+        },
+    }
+}
 
 /// An MCP client registered through Dynamic Client Registration (public client).
 #[derive(Clone, Debug, Identifiable, Queryable, Insertable)]
@@ -68,6 +128,42 @@ mod tests {
         assert_eq!(found.client_name, "Claude");
         assert_eq!(found.redirect_uri_list(), uris);
         assert!(q_find(&mut c, "nope").is_none());
+    }
+
+    #[test]
+    fn a_client_is_seen_with_keys_once_marked_or_once_a_keyed_grant_exists() {
+        use super::super::{ReinsConnection, ReinsRefreshToken, UserId};
+        let mut c = test_db();
+        let chatgpt = "https://chatgpt.com/oauth/client.json";
+        assert!(!q_seen(&mut c, chatgpt).unwrap());
+        q_mark(&mut c, chatgpt, 1).unwrap();
+        q_mark(&mut c, chatgpt, 2).unwrap();
+        assert!(q_seen(&mut c, chatgpt).unwrap(), "marked (twice is fine)");
+        assert!(!q_seen(&mut c, "https://other.example/client.json").unwrap());
+        // A stored grant that says private_key_jwt marks its client too; one that says none does not.
+        let other = "https://other.example/client.json";
+        let connection = ReinsConnection::new(
+            UserId::from("u1".to_owned()),
+            other.to_owned(),
+            "Other".to_owned(),
+            "other.example".to_owned(),
+            "Other".to_owned(),
+            1,
+        );
+        diesel::insert_into(reins_connections::table).values(&connection).execute(&mut c).unwrap();
+        let grant = |hash: &str, auth: &str| ReinsRefreshToken {
+            token_hash: hash.to_owned(),
+            connection_uuid: connection.uuid.clone(),
+            expires_at: 99,
+            client_auth: auth.to_owned(),
+        };
+        diesel::insert_into(reins_refresh_tokens::table).values(&grant("h1", "none")).execute(&mut c).unwrap();
+        assert!(!q_seen(&mut c, other).unwrap());
+        diesel::insert_into(reins_refresh_tokens::table)
+            .values(&grant("h2", "private_key_jwt"))
+            .execute(&mut c)
+            .unwrap();
+        assert!(q_seen(&mut c, other).unwrap());
     }
 
     #[test]
