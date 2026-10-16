@@ -199,10 +199,11 @@ class SignInViewModel(private val container: AppContainer) : ViewModel() {
     private suspend fun signedInDespite(e: Exception): Boolean {
         if (e !is CoreException.ServiceNeedsAttention) return false
         val info = try {
-            container.core.session()
+            container.readSession()
         } catch (c: CancellationException) {
             throw c
         } catch (_: Exception) {
+            // A failed read is not "signed out", and not proof the account opened.
             null
         } ?: return false
         val keys = try {

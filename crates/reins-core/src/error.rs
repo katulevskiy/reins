@@ -52,6 +52,10 @@ pub enum CoreError {
     /// master password) with `unlock_account`; then `register_device` again.
     #[error("{}", reins_proto::device::TAKEOVER_REFUSED)]
     OtherApprovalDevice,
+    /// This phone only views the account (phone roles): the change is the primary's to make. Lockdown, stopping a
+    /// bypass and revoking a grant (the brake) stay open to it.
+    #[error("This phone views the account; decisions are made on the primary phone.")]
+    ViewerOnly,
 }
 
 impl CoreError {

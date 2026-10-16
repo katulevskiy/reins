@@ -55,12 +55,51 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     /// What the core says about the pushed item; nil for the generic text.
+    ///
+    /// The store is shared with the app, under a file lock this process holds only with an expiring activity (iOS ends a
+    /// process suspended with it held). The lock is not waited on for long: when the app holds it, this tries once more
+    /// after a pause, then leaves the item to the app (the push wakes it too) and shows the generic text.
     private static func rich(payload: PushPayload, original: UNNotificationContent, settings: FeedbackSettings) async -> UNNotificationContent? {
         McpNames.loadSaved()
+        StoreLocking.install(ExpiringActivityKeepAwake(), waitMillis: CoreFactory.extensionLockWaitMillis)
+        for attempt in 0..<2 {
+            switch await richOnce(payload: payload, original: original, settings: settings) {
+            case let .done(content):
+                return content
+            case .busy where attempt == 0 && !Task.isCancelled:
+                try? await Task.sleep(for: .seconds(1))
+            case .busy, .failed:
+                return nil
+            }
+        }
+        return nil
+    }
+
+    private enum Attempt {
+        case done(UNNotificationContent)
+        /// The store could not be had now (the app holds it): worth one more try.
+        case busy
+        case failed
+    }
+
+    private static func richOnce(payload: PushPayload, original: UNNotificationContent, settings: FeedbackSettings) async -> Attempt {
         let capture = CapturingNotifier()
         // `mayReset: false`: whatever goes wrong with the keychain here, the core never starts over from this process.
-        guard let core = try? CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false)) else { return nil }
-        guard await core.session() != nil else { return nil }
+        let core: ReinsCore
+        do {
+            core = try CoreFactory.make(notifier: capture, keys: KeychainKeyWrapper(mayReset: false))
+        } catch CoreError.Storage {
+            return .busy
+        } catch {
+            return .failed
+        }
+        let session: SessionInfo?
+        do {
+            session = try await core.session()
+        } catch {
+            return .busy
+        }
+        guard session != nil else { return .failed }
         // Manual and Auto judge with the model, which only the app runs: park the item unjudged (handling it fully here
         // would settle it as "could not judge" for good) and leave the judging to the app's next pass. Bypass and
         // Lockdown decide either way: the deferring call still runs them.
@@ -71,8 +110,11 @@ final class NotificationService: UNNotificationServiceExtension {
             } else {
                 try await core.handlePush(kind: payload.kind, id: payload.id)
             }
+        } catch CoreError.Storage {
+            // Nothing is half done: what was fetched and parked is known, and the next try skips it.
+            return .busy
         } catch {
-            return nil
+            return .failed
         }
         var item = capture.item(payload.id)
         if item == nil { item = (try? await core.pending())?.first { $0.id == payload.id } }
@@ -87,7 +129,7 @@ final class NotificationService: UNNotificationServiceExtension {
         }
         // Widgets show the new item too; this process may be suspended as soon as the content is handed over.
         if !Task.isCancelled { await SnapshotWriter.update(from: core) }
-        return content
+        return .done(content)
     }
 }
 

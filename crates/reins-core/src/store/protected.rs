@@ -1,7 +1,7 @@
 //! Account stores live only in memory while unlocked. Disk contains authenticated ciphertext, including metadata.
-use super::{Store, prepare, snapshot, write_atomically};
+use super::{Store, prepare, replace_file, snapshot, sync_parent, write_atomically};
 use crate::{
-    CoreError,
+    CoreError, StoreLockGuard,
     crypto::{Dek, VaultKey},
 };
 use ring::{digest, hmac};
@@ -11,12 +11,49 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, MutexGuard, PoisonError,
+        Arc, Mutex, MutexGuard, PoisonError, RwLock,
         atomic::{AtomicU64, Ordering},
     },
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime},
 };
 use zeroize::Zeroizing;
+
+/// How long taking the cross-process lock waits for another process before the call fails as busy, unless the
+/// platform chose its own wait (`install_store_lock_guard`). Another process holds it for milliseconds at a time; one
+/// that holds it longer is stuck (suspended, say), and waiting on it forever would stall this process as well.
+const DEFAULT_LOCK_WAIT: Duration = Duration::from_secs(10);
+/// What a call fails with when the lock stays taken for the whole wait. Transient: the same call succeeds later.
+pub(crate) const STORE_BUSY: &str = "account data is busy in another part of the app; try again";
+/// What a call fails with when the platform's guard refuses the lock (the process is being suspended).
+pub(crate) const STORE_SUSPENDING: &str = "the app is being suspended; try again";
+
+/// The platform's guard over the cross-process lock and the wait, for the stores this process opens from now on.
+static LOCK_GUARD: RwLock<Option<(Arc<dyn StoreLockGuard>, Duration)>> = RwLock::new(None);
+
+/// Installs `guard` for every store opened after this (call it before the first `ReinsCore`).
+pub(crate) fn install_lock_guard(guard: Arc<dyn StoreLockGuard>, wait: Duration) {
+    *LOCK_GUARD.write().unwrap_or_else(PoisonError::into_inner) = Some((guard, wait));
+}
+
+/// Takes the exclusive lock on `file`, waiting at most `wait` for another process to give it back. Never blocks
+/// without a bound, so that a process suspended with the lock held cannot stall this one.
+fn lock_within(file: &fs::File, wait: Duration) -> Result<(), CoreError> {
+    let started = Instant::now();
+    let mut pause = Duration::from_millis(1);
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(fs::TryLockError::WouldBlock) => {}
+            Err(fs::TryLockError::Error(_)) => return Err(CoreError::storage("cannot lock account data")),
+        }
+        let waited = started.elapsed();
+        if waited >= wait {
+            return Err(CoreError::storage(STORE_BUSY));
+        }
+        std::thread::sleep(pause.min(wait.saturating_sub(waited)));
+        pause = (pause * 2).min(Duration::from_millis(25));
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Owner {
@@ -45,6 +82,10 @@ pub(super) struct Persistence {
     /// The sequence number on disk. Held while sealing and writing, so writes reach the disk in order.
     written: Mutex<u64>,
     sequence: AtomicU64,
+    /// The platform's guard, told when the lock is taken and given back (iOS keeps the process from being suspended
+    /// in between), and how long taking it may wait.
+    guard: Option<Arc<dyn StoreLockGuard>>,
+    wait: Duration,
 }
 #[derive(Default)]
 struct Held {
@@ -53,6 +94,11 @@ struct Held {
 }
 impl Persistence {
     pub fn new(path: PathBuf, aad: String) -> Self {
+        let (guard, wait) = LOCK_GUARD
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map_or((None, DEFAULT_LOCK_WAIT), |(g, w)| (Some(Arc::clone(g)), *w));
         Self {
             path,
             aad,
@@ -62,38 +108,70 @@ impl Persistence {
             pending: Mutex::new(None),
             written: Mutex::new(0),
             sequence: AtomicU64::new(0),
+            guard,
+            wait,
         }
     }
     /// Joins the users of the cross-process lock, taking it when nobody here holds it. True for the first user,
     /// who must check whether another process changed the file meanwhile.
+    ///
+    /// Taking it may wait [`Self::wait`] for another process, then fails as busy ([`STORE_BUSY`]); the guard may
+    /// refuse it ([`STORE_SUSPENDING`]). Either way nothing is held and the caller fails without changing anything.
     fn acquire(&self) -> Result<bool, CoreError> {
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
         if held.users > 0 {
             held.users += 1;
             return Ok(false);
         }
-        if held.file.is_none() {
-            held.file = Some(
-                fs::OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(self.path.with_extension("lock"))
-                    .map_err(|_| CoreError::storage("cannot lock account data"))?,
-            );
-        }
-        held.file.as_ref().expect("lock file").lock().map_err(|_| CoreError::storage("cannot lock account data"))?;
+        let file = match held.file.take() {
+            Some(file) => file,
+            None => fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(self.path.with_extension("lock"))
+                .map_err(|_| CoreError::storage("cannot lock account data"))?,
+        };
+        let locked = self.lock_guarded(&file);
+        held.file = Some(file);
+        locked?;
         held.users = 1;
         Ok(true)
     }
+    #[cfg(test)]
+    fn guarded(&mut self, guard: Arc<dyn StoreLockGuard>, wait: Duration) {
+        self.guard = Some(guard);
+        self.wait = wait;
+    }
+    /// Takes the file lock with the guard's promise around it.
+    fn lock_guarded(&self, file: &fs::File) -> Result<(), CoreError> {
+        if let Some(guard) = &self.guard
+            && !guard.locking()
+        {
+            return Err(CoreError::storage(STORE_SUSPENDING));
+        }
+        let locked = lock_within(file, self.wait);
+        if locked.is_err()
+            && let Some(guard) = &self.guard
+        {
+            guard.unlocked();
+        }
+        locked
+    }
     fn release(&self) {
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-        held.users -= 1;
-        if held.users == 0
+        let Some(users) = held.users.checked_sub(1) else {
+            return;
+        };
+        held.users = users;
+        if users == 0
             && let Some(f) = &held.file
         {
             drop(f.unlock());
+            if let Some(guard) = &self.guard {
+                guard.unlocked();
+            }
         }
     }
     fn fail(&self, e: &CoreError) {
@@ -106,7 +184,12 @@ pub(crate) struct StoreLock<'a> {
     /// Taken back on drop before a write is sealed, so reads wait for the snapshot only, not for the disk.
     conn: Option<MutexGuard<'a, Option<Connection>>>,
     changes: u64,
+    /// Whether this holds a share of the cross-process lock (`Store::lock`); a read (`Store::read`) gave it back once
+    /// it had checked for another process's copy.
+    shared: bool,
 }
+// The `expect`s below cannot fail: `Store::lock` hands out a `StoreLock` only for an open connection (and a reload
+// only ever replaces it with another), and the guard is taken out of `conn` only in `drop`, after the last use.
 impl Deref for StoreLock<'_> {
     type Target = Connection;
     fn deref(&self) -> &Connection {
@@ -135,19 +218,59 @@ impl Drop for StoreLock<'_> {
         let Some(p) = &self.store.persistence else {
             return;
         };
-        // The copy is taken under the connection; sealing and the two fsyncs happen after letting it go. The call
-        // still returns only once its write is on disk (or a later write that includes it is).
+        if changed && !self.shared {
+            // A read (`Store::read`) that wrote: a mistake in the caller. What it wrote is kept, under the lock taken
+            // now; another process may have written in between.
+            debug_assert!(false, "a write through Store::read");
+            log::error!("a write through a store read; writing it under the lock now");
+            if let Err(e) = p.acquire() {
+                drop(self.conn.take());
+                p.fail(&e);
+                return;
+            }
+            self.shared = true;
+        }
+        // The copy is taken under the connection; sealing and the fsyncs happen after letting it go, and the
+        // directory's fsync after giving back the cross-process lock too, which other processes wait on (iOS: a
+        // process must not be suspended holding it). The call still returns only once its write is on disk (or a
+        // later write that includes it is).
         let taken = if changed {
             snapshot(self, p).map(Some)
         } else {
             Ok(None)
         };
         drop(self.conn.take());
-        match taken.and_then(|seq| seq.map_or(Ok(()), |seq| write_through(self.store, p, seq))) {
-            Ok(()) => {}
-            Err(e) => p.fail(&e),
+        let written = taken.and_then(|seq| seq.map_or(Ok(None), |seq| write_through(self.store, p, seq)));
+        if self.shared {
+            p.release();
         }
-        p.release();
+        if let Err(e) = written.and_then(|unsynced| unsynced.map_or(Ok(()), Unsynced::sync)) {
+            p.fail(&e);
+        }
+    }
+}
+/// Another process's sealed file, read under the cross-process lock.
+struct SealedCopy {
+    sealed: Vec<u8>,
+    stamp: Option<(SystemTime, u64)>,
+}
+/// The platform guard held for a window that holds other locks in the shared container, without the store's own: the
+/// legacy SQLite file, whose connection keeps SQLite's file locks while it is open. Given back on drop.
+pub(super) struct Awake(Option<Arc<dyn StoreLockGuard>>);
+pub(super) fn stay_awake() -> Result<Awake, CoreError> {
+    let guard = LOCK_GUARD.read().unwrap_or_else(PoisonError::into_inner).as_ref().map(|(g, _)| Arc::clone(g));
+    if let Some(g) = &guard
+        && !g.locking()
+    {
+        return Err(CoreError::storage(STORE_SUSPENDING));
+    }
+    Ok(Awake(guard))
+}
+impl Drop for Awake {
+    fn drop(&mut self) {
+        if let Some(g) = &self.0 {
+            g.unlocked();
+        }
     }
 }
 fn stamp(path: &Path) -> Option<(SystemTime, u64)> {
@@ -163,22 +286,41 @@ fn snapshot(conn: &Connection, p: &Persistence) -> Result<u64, CoreError> {
     }
     Ok(seq)
 }
-/// Makes sure snapshot `seq` (or a newer one) is on disk. Writes that queue while another is being written share
+/// Makes sure snapshot `seq` (or a newer one) is in place. Writes that queue while another is being written share
 /// the next write: the newest snapshot is the only one that still needs to reach the disk. Call holding the
 /// cross-process lock.
-fn write_through(store: &Store, p: &Persistence, seq: u64) -> Result<(), CoreError> {
+///
+/// When this call wrote the file it returns the write's turn (`Some`): give back the cross-process lock, then
+/// [`Unsynced::sync`]. Other processes read the new file as soon as it is renamed into place; only the rename's
+/// durability (the directory's fsync) is left, and it no longer keeps them waiting. Writes in this process wait for
+/// it, so none returns before what it wrote is on disk.
+fn write_through<'p>(store: &Store, p: &'p Persistence, seq: u64) -> Result<Option<Unsynced<'p>>, CoreError> {
     let mut written = p.written.lock().unwrap_or_else(PoisonError::into_inner);
     if *written >= seq {
-        return Ok(());
+        return Ok(None);
     }
     let Some((newest, plain)) = p.pending.lock().unwrap_or_else(PoisonError::into_inner).take() else {
-        return Ok(());
+        return Ok(None);
     };
     let sealed = store.seal(&p.aad, &plain)?;
-    write_atomically(&p.path, &sealed)?;
+    replace_file(&p.path, &sealed)?;
     *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = stamp(&p.path);
     *written = newest;
-    Ok(())
+    Ok(Some(Unsynced {
+        path: &p.path,
+        _turn: written,
+    }))
+}
+/// A write renamed into place whose directory is not synced yet; holds the write turn until it is.
+#[must_use]
+struct Unsynced<'p> {
+    path: &'p Path,
+    _turn: MutexGuard<'p, u64>,
+}
+impl Unsynced<'_> {
+    fn sync(self) -> Result<(), CoreError> {
+        sync_parent(self.path)
+    }
 }
 pub(super) fn memory() -> Result<Connection, CoreError> {
     let conn = Connection::open_in_memory()?;
@@ -186,7 +328,19 @@ pub(super) fn memory() -> Result<Connection, CoreError> {
     Ok(conn)
 }
 impl Store {
+    /// The store's connection, holding the cross-process lock until the guard drops (and what it wrote is on disk): for
+    /// anything that may write. Another process's newer copy, if any, is loaded first.
     pub(crate) fn lock(&self) -> Result<StoreLock<'_>, CoreError> {
+        self.open_lock(true)
+    }
+    /// The store's connection for reading only (or writing the `temp` schema, which is never saved). The
+    /// cross-process lock is held just long enough to check for another process's newer copy and read its bytes;
+    /// opening and loading that copy, and the reads, need only this process's lock. A shorter hold: iOS ends a process
+    /// suspended while it holds the lock.
+    pub(crate) fn read(&self) -> Result<StoreLock<'_>, CoreError> {
+        self.open_lock(false)
+    }
+    fn open_lock(&self, write: bool) -> Result<StoreLock<'_>, CoreError> {
         self.check_owner()?;
         let mut conn = self.conn.lock().unwrap_or_else(PoisonError::into_inner);
         self.check_owner()?;
@@ -197,41 +351,63 @@ impl Store {
             if p.failure.lock().unwrap_or_else(PoisonError::into_inner).is_some() {
                 return Err(CoreError::storage("encrypted account data could not be saved"));
             }
-            if p.acquire()?
-                && let Err(e) = self.reload_if_changed(&mut conn, p)
-            {
+            // Only the first user here checks: while this process holds the lock, nobody else writes the file.
+            let changed = if p.acquire()? {
+                Self::read_if_changed(p)
+            } else {
+                Ok(None)
+            };
+            if !write {
                 p.release();
+            }
+            let loaded = changed.and_then(|copy| copy.map_or(Ok(()), |copy| self.load_copy(&mut conn, p, &copy)));
+            if let Err(e) = loaded {
+                if write {
+                    p.release();
+                }
                 return Err(e);
             }
         }
-        let changes = conn.as_ref().expect("open").total_changes();
+        // Open: checked above, and a reload only ever puts a connection in its place.
+        let changes = conn.as_ref().map_or(0, Connection::total_changes);
         Ok(StoreLock {
             store: self,
             conn: Some(conn),
             changes,
+            shared: write && self.persistence.is_some(),
         })
     }
-    /// Another process wrote the file since this one last read or wrote it: its copy replaces the one in memory.
-    fn reload_if_changed(&self, conn: &mut Option<Connection>, p: &Persistence) -> Result<(), CoreError> {
+    /// The file's bytes and stamp, when another process wrote it since this one last read or wrote it. Call holding
+    /// the cross-process lock: only the `stat` and the read happen under it.
+    fn read_if_changed(p: &Persistence) -> Result<Option<SealedCopy>, CoreError> {
         let current = stamp(&p.path);
-        if current.is_some() && current != *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) {
-            let bytes = fs::read(&p.path).map_err(|_| CoreError::storage("cannot read account data"))?;
-            let plain = Zeroizing::new(self.unseal(&p.aad, &bytes)?);
-            let mut loaded = Connection::open_in_memory()?;
-            // The copy replaces the whole database, schema included: it has the tables of whoever sealed it.
-            loaded.deserialize_read_exact("main", std::io::Cursor::new(plain.as_slice()), plain.len(), false)?;
-            // Sealed by an older version: what it exported then, to tell whether it was in sync before migrating.
-            let before_migrating = (self.owner.is_some() && super::schema_version(&loaded)? < super::SCHEMA_VERSION)
-                .then(|| snapshot::export_present(&loaded).ok())
-                .flatten();
-            prepare(&loaded)?;
-            if let Some(pre) = before_migrating {
-                super::sync::rebaseline(&loaded, &pre)?;
-            }
-            *conn = Some(loaded);
-            *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = current;
-            self.writes.fetch_add(1, Ordering::AcqRel);
+        if current.is_none() || current == *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) {
+            return Ok(None);
         }
+        let sealed = fs::read(&p.path).map_err(|_| CoreError::storage("cannot read account data"))?;
+        Ok(Some(SealedCopy {
+            sealed,
+            stamp: current,
+        }))
+    }
+    /// Another process's copy replaces the one in memory. Needs only this process's lock (`conn`): the bytes were
+    /// read under the cross-process one, and a newer file since has another stamp, which the next lock loads.
+    fn load_copy(&self, conn: &mut Option<Connection>, p: &Persistence, copy: &SealedCopy) -> Result<(), CoreError> {
+        let plain = Zeroizing::new(self.unseal(&p.aad, &copy.sealed)?);
+        let mut loaded = Connection::open_in_memory()?;
+        // The copy replaces the whole database, schema included: it has the tables of whoever sealed it.
+        loaded.deserialize_read_exact("main", std::io::Cursor::new(plain.as_slice()), plain.len(), false)?;
+        // Sealed by an older version: what it exported then, to tell whether it was in sync before migrating.
+        let before_migrating = (self.owner.is_some() && super::schema_version(&loaded)? < super::SCHEMA_VERSION)
+            .then(|| snapshot::export_present(&loaded).ok())
+            .flatten();
+        prepare(&loaded)?;
+        if let Some(pre) = before_migrating {
+            super::sync::rebaseline(&loaded, &pre)?;
+        }
+        *conn = Some(loaded);
+        *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = copy.stamp;
+        self.writes.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
     /// How many times the data has changed so far; equal counts mean equal data.
@@ -256,7 +432,7 @@ impl Store {
             let written = p.acquire().and_then(|_| {
                 let result = write_through(self, p, latest);
                 p.release();
-                result
+                result.and_then(|unsynced| unsynced.map_or(Ok(()), Unsynced::sync))
             });
             if let Err(e) = written {
                 p.fail(&e);
@@ -357,11 +533,13 @@ impl Store {
 }
 
 pub(super) fn protect(store: &Store, directory: &Path) -> Result<(), CoreError> {
-    let p = store.persistence.as_ref().expect("protected store");
+    let p = store.persistence.as_ref().ok_or_else(|| CoreError::storage("cannot protect an unsaved store"))?;
     let guard = store.lock()?;
     let written = snapshot(&guard, p).and_then(|seq| write_through(store, p, seq));
     drop(guard);
-    written?;
+    if let Some(unsynced) = written? {
+        unsynced.sync()?;
+    }
     // Legacy SQLite and its WAL are removed only after the complete encrypted snapshot is durable.
     for name in ["reins.db", "reins.db-wal", "reins.db-shm"] {
         let path = directory.join(name);
@@ -638,6 +816,124 @@ mod tests {
         let seq = store.append_audit(&approved_entry()).expect("a lost snapshot never fails the approval");
         assert_eq!(store.audit_entry(seq).unwrap().unwrap().detail, "approved: 1 message");
         assert!(store.audit_snapshot(seq).unwrap().is_none(), "the entry opens without its approval");
+    }
+
+    /// A platform guard that records what it is told, and whether the file was free at that moment (tried from
+    /// another open file, as another process would).
+    #[derive(Default)]
+    struct Recorder {
+        refuse: std::sync::atomic::AtomicBool,
+        lock_file: Mutex<Option<PathBuf>>,
+        calls: Mutex<Vec<(&'static str, bool)>>,
+    }
+    impl Recorder {
+        fn free(&self) -> bool {
+            let path = self.lock_file.lock().unwrap().clone().unwrap();
+            let other = fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
+            match other.try_lock() {
+                Ok(()) => {
+                    other.unlock().unwrap();
+                    true
+                }
+                Err(fs::TryLockError::WouldBlock) => false,
+                Err(fs::TryLockError::Error(e)) => panic!("{e}"),
+            }
+        }
+        fn calls(&self) -> Vec<(&'static str, bool)> {
+            std::mem::take(&mut *self.calls.lock().unwrap())
+        }
+    }
+    impl StoreLockGuard for Recorder {
+        fn locking(&self) -> bool {
+            let free = self.free();
+            self.calls.lock().unwrap().push(("locking", free));
+            !self.refuse.load(Ordering::SeqCst)
+        }
+        fn unlocked(&self) {
+            let free = self.free();
+            self.calls.lock().unwrap().push(("unlocked", free));
+        }
+    }
+    /// An account store whose lock is watched by a [`Recorder`], with `wait` to take it.
+    fn guarded_account(dir: &Path, wait: Duration) -> (Arc<Store>, Store, Arc<Recorder>, PathBuf) {
+        let root = Arc::new(Store::open(dir, &FakeKeys::default()).unwrap());
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let mut store = open_account(&root, dir, owner("a"), &key);
+        let recorder = Arc::new(Recorder::default());
+        let p = store.persistence.as_mut().unwrap();
+        let lock_file = p.path.with_extension("lock");
+        *recorder.lock_file.lock().unwrap() = Some(lock_file.clone());
+        p.guarded(Arc::<Recorder>::clone(&recorder), wait);
+        (root, store, recorder, lock_file)
+    }
+
+    #[test]
+    fn the_file_lock_is_held_only_between_the_guards_locking_and_unlocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_root, store, recorder, _) = guarded_account(dir.path(), DEFAULT_LOCK_WAIT);
+        store.meta_set("k", "v").unwrap();
+        assert_eq!(store.meta_get("k").unwrap().as_deref(), Some("v"));
+        // Free when told it is about to be taken, and when told it was given back (a write, then a read).
+        assert_eq!(recorder.calls(), [("locking", true), ("unlocked", true), ("locking", true), ("unlocked", true)]);
+        let held = store.lock().unwrap();
+        assert!(!recorder.free(), "held in between");
+        drop(held);
+        assert!(recorder.free());
+        assert_eq!(recorder.calls(), [("locking", true), ("unlocked", true)]);
+    }
+
+    #[test]
+    fn a_read_gives_the_file_lock_back_once_it_has_checked_for_another_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, store, recorder, _) = guarded_account(dir.path(), DEFAULT_LOCK_WAIT);
+        store.meta_set("k", "v").unwrap();
+        // Another process (the extension) writes the file: the read loads its copy, the file lock already given back.
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let other = Store::account(Arc::clone(&root), dir.path(), owner("a"), &key).unwrap();
+        other.meta_set("k", "from the extension").unwrap();
+        drop(recorder.calls());
+        let reading = store.read().unwrap();
+        assert!(recorder.free(), "a read holds only this process's lock");
+        assert_eq!(recorder.calls(), [("locking", true), ("unlocked", true)]);
+        drop(reading);
+        assert_eq!(store.meta_get("k").unwrap().as_deref(), Some("from the extension"));
+        // A write keeps it until what it wrote is in place.
+        let writing = store.lock().unwrap();
+        assert!(!recorder.free());
+        drop(writing);
+        assert!(recorder.free());
+    }
+
+    #[test]
+    fn a_refused_lock_fails_the_call_and_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_root, store, recorder, _) = guarded_account(dir.path(), DEFAULT_LOCK_WAIT);
+        recorder.refuse.store(true, Ordering::SeqCst);
+        assert_eq!(store.meta_set("k", "v").unwrap_err(), CoreError::storage(STORE_SUSPENDING));
+        assert_eq!(recorder.calls(), [("locking", true)], "never taken, so never given back");
+        recorder.refuse.store(false, Ordering::SeqCst);
+        assert_eq!(store.meta_get("k").unwrap(), None);
+        store.meta_set("k", "v").unwrap();
+        assert_eq!(store.meta_get("k").unwrap().as_deref(), Some("v"), "and the store works on");
+    }
+
+    #[test]
+    fn a_lock_another_process_keeps_fails_as_busy_after_the_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let wait = Duration::from_millis(150);
+        let (_root, store, recorder, lock_file) = guarded_account(dir.path(), wait);
+        store.meta_set("k", "v").unwrap();
+        drop(recorder.calls());
+        // Another process (a notification extension suspended mid-write, say) holds the lock and does not let go.
+        let other = fs::OpenOptions::new().read(true).write(true).open(&lock_file).unwrap();
+        other.lock().unwrap();
+        let started = Instant::now();
+        assert_eq!(store.meta_get("k").unwrap_err(), CoreError::storage(STORE_BUSY));
+        let waited = started.elapsed();
+        assert!(waited >= wait && waited < wait * 10, "{waited:?}");
+        assert_eq!(recorder.calls(), [("locking", false), ("unlocked", false)], "the guard is let go too");
+        other.unlock().unwrap();
+        assert_eq!(store.meta_get("k").unwrap().as_deref(), Some("v"), "the same call works once it is free");
     }
 
     #[test]

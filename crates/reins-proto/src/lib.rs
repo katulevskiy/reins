@@ -3,6 +3,7 @@
 //! Pure data and validation: no IO, no async.
 
 pub mod answer;
+pub mod attention;
 pub mod blob;
 pub mod canon;
 pub mod computer;

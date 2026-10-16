@@ -19,7 +19,7 @@
 //!   ([`super::pairing::MAX_PER_PARTY`]). The address is [`client_network`].
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
     net::IpAddr,
     num::NonZeroU32,
@@ -277,6 +277,19 @@ pub static DEVICE_PROOFS: LazyLock<FailureLimit<String>> = LazyLock::new(|| {
         Duration::from_secs(CONFIG.reins_device_proof_window_seconds()),
     )
 });
+
+/// Wrong recovery proofs (the recovery wrap, a recovery) from one device (key: `<user id>/<device id>`). Each also counts
+/// against [`DEVICE_PROOFS`], the account's limit.
+pub static DEVICE_PROOFS_PER_DEVICE: LazyLock<FailureLimit<String>> = LazyLock::new(|| {
+    FailureLimit::new(
+        CONFIG.reins_device_proof_max_failures_per_device(),
+        Duration::from_secs(CONFIG.reins_device_proof_window_seconds()),
+    )
+});
+
+/// Devices (`<user id>/<device id>`) that sent a right recovery proof before: they keep their own tries when other
+/// devices used up the account's limit, so a flood from new device ids never locks the owner out.
+pub static PROVEN_DEVICES: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Mutex::default);
 
 /// Outbound requests (file sends and fetches, proxied MCP calls) made for one account (key: user id).
 pub static OUTBOUND_REQUESTS: LazyLock<RateLimit<String>> =

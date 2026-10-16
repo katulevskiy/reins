@@ -121,6 +121,8 @@ pub struct Engine {
     pub(crate) data_dir: std::path::PathBuf,
     /// Autopilot: the model runtime, the opened package, downloads.
     pub(crate) autopilot: crate::autopilot::State,
+    /// Phone roles: roster changes one at a time, the handover requests seen.
+    pub(crate) roles: crate::roles::State,
 }
 
 impl Engine {
@@ -262,6 +264,7 @@ impl Engine {
             inflight: Arc::new(Mutex::new(HashSet::new())),
             data_dir: data_dir.to_path_buf(),
             autopilot: crate::autopilot::State::default(),
+            roles: crate::roles::State::default(),
         }))
     }
 
@@ -559,6 +562,17 @@ impl Engine {
     /// signed in or unlocked with. Without one: [`CoreError::OtherApprovalDevice`], and the app offers those two ways.
     pub async fn register_device(&self, fcm_token: Option<String>) -> Result<(), CoreError> {
         let session = self.session()?;
+        // A viewer of a roster registers its push token as a member: the approval role is the primary's.
+        let account = self.roles_account(&session).await?;
+        if let Some(roster) = self.local_roster(&account.slot)?
+            && roster.standing(&self.store.device_id()?, &self.sign_key()?.public_b64())
+                == crate::roles::Standing::Viewer
+        {
+            let member = reins_proto::roster::MemberRegistration {
+                fcm_token,
+            };
+            return api_call!(&session, |api| api.put_member(&member)).map_err(ApiFailure::into_core);
+        }
         let mut registration = DeviceRegistration {
             fcm_token,
             master_password_hash: None,
@@ -756,6 +770,7 @@ impl Engine {
                 log::warn!("could not park a pairing: {e}");
             }
         }
+        self.roles.note_handovers(pending.handovers);
         for join in pending.joins {
             let Some(_guard) = self.begin(&join.id)? else {
                 continue;

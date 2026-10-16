@@ -171,6 +171,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
             default: break
             }
+            // `-demoRunningEntries N`: N requests that mode decided, one every few seconds of its 12 minutes.
+            if let j = args.firstIndex(of: "-demoRunningEntries"), j + 1 < args.count, let n = Int(args[j + 1]) {
+                let decidedBy = args[i + 1]
+                let firstId = (s.activity.map(\.id).max() ?? 0) + 1
+                let decided = (0..<n).map { k in
+                    DemoData.entry(
+                        firstId + Int64(k), at: now - 700 + Int64(k * 600 / max(n, 1)), action: "read",
+                        outcome: decidedBy == "lockdown" ? "denied" : "released", detail: "Request \(k + 1)", decidedBy: decidedBy
+                    )
+                }
+                s.activity = decided.reversed() + s.activity
+            }
         }
         if args.contains("-demoSyncedPush") || args.contains("-demoSyncedPushFails"), let push = s.views["req20"], let git = push.git,
            let i = s.activity.firstIndex(where: { $0.id == 14 }) {
@@ -436,6 +448,37 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     }
 
     func joinCancel() async throws { locked { $0.joinPolls = nil } }
+
+    // Phone roles: the demo account has none (legacy), so the role calls report that and the changes refuse.
+    func phoneRole() async throws -> PhoneRole { .legacy }
+    func rosterSummary(refresh: Bool) async throws -> RosterSummary? { nil }
+    func rosterCreate(deviceName: String, codeOrPassword: String?) async throws -> RosterSummary {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func enrollBegin(deviceName: String) async throws -> EnrollStart {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func enrollPoll() async throws -> EnrollProgress { throw CoreError.NotFound }
+    func enrollCancel() async throws {}
+    func enrollView(id: String) async throws -> EnrollView { throw CoreError.NotFound }
+    func enrollConfirm(id: String, approve: Bool) async throws { throw CoreError.NotFound }
+    func handoverRequest() async throws -> String {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func handoverPoll() async throws -> HandoverProgress { throw CoreError.NotFound }
+    func handoverRequests() async throws -> [HandoverView] { [] }
+    func handoverApprove(id: String, deviceId: String) async throws { throw CoreError.NotFound }
+    func handoverDeny(id: String) async throws { throw CoreError.NotFound }
+    func rosterRecoverPreview(codeOrPassword: String) async throws -> RecoveryPreview {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String) async throws -> RosterSummary {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func rosterRemoveMember(deviceId: String) async throws { throw CoreError.NotFound }
+    func rosterRewrap(newPassword: String) async throws {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
 
     func joinView(id: String) async throws -> JoinView {
         try locked { s in
@@ -1353,6 +1396,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     }
 
     func setModelRuntime(runtime: ModelRuntime) {}
+
+    func setBackground(background: Bool) {}
 
     func autopilotSettings() async throws -> AutopilotSettings {
         locked { s in

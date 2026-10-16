@@ -1,5 +1,5 @@
 #!/bin/bash
-# One iOS test slice on a fresh simulator. Used by the iOS jobs in .github/workflows/ci.yml.
+# One iOS test slice on a fresh simulator. Used by the iOS jobs in .github/workflows/ios.yml.
 #
 #   ONLY   comma-separated -only-testing identifiers (required), e.g. ReinsTests or ReinsUITests/ActivityFlowTests
 #   SKIP   comma-separated -skip-testing identifiers (optional)
@@ -75,13 +75,21 @@ if [[ -z "${ONLY:-}" ]]; then
   exit 1
 fi
 args=()
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
 IFS=',' read -ra only_items <<< "$ONLY"
 for item in "${only_items[@]}"; do
+  item="$(trim "$item")"
   [[ -n "$item" ]] && args+=(-only-testing:"$item")
 done
 if [[ -n "${SKIP:-}" ]]; then
   IFS=',' read -ra skip_items <<< "$SKIP"
   for item in "${skip_items[@]}"; do
+    item="$(trim "$item")"
     [[ -n "$item" ]] && args+=(-skip-testing:"$item")
   done
 fi

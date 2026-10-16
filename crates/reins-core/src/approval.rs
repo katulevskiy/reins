@@ -194,7 +194,10 @@ impl Engine {
 
     /// Approves a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn approve_claimed(&self, request_id: &str, choice: ApprovalChoice) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say), and it checks with
+        // the server that it still is the primary before the action runs: an email sent is not taken back.
         let session = self.session()?;
+        self.require_decider_fresh(&session).await?;
         let (_, mut parked) = self.parked(request_id)?;
         let now = unix_now();
         if matches!(parked.request.call, ToolCall::Mcp(_)) {
@@ -353,6 +356,8 @@ impl Engine {
 
     /// Denies a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn deny_claimed(&self, request_id: &str) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
+        self.require_decider()?;
         let session = self.session()?;
         let (_, parked) = self.parked(request_id)?;
         let now = unix_now();
@@ -601,6 +606,12 @@ impl Engine {
         label: Option<String>,
     ) -> Result<(), CoreError> {
         let session = self.session()?;
+        if approve {
+            // A connection approved is a new asker: only while this phone is still the primary.
+            self.require_decider_fresh(&session).await?;
+        } else {
+            self.require_decider()?;
+        }
         let Some(_claim) = self.claim(id) else {
             return Err(CoreError::NotFound);
         };
@@ -624,7 +635,14 @@ impl Engine {
             label: label.map(|l| text::truncate_chars(&text::one_line(&l), 64)).filter(|l| !l.is_empty()),
         };
         let now = unix_now();
-        let result = api_call!(&session, |api| api.answer_pairing(id, &response));
+        // With a roster, the primary signs the answer (the server checks it); without one it goes as it is.
+        let bytes = serde_json::to_vec(&response).map_err(|e| CoreError::storage(e.to_string()))?;
+        let signed = self.signed_answer(&session, reins_proto::answer::AnswerKind::Pairing, id, &bytes).await?;
+        let result = if let Some(signed) = &signed {
+            api_call!(&session, |api| api.answer_pairing_body(id, signed))
+        } else {
+            api_call!(&session, |api| api.answer_pairing(id, &response))
+        };
         let (outcome, detail) = match &result {
             Ok(r) if approve && r.connection_id.is_some() => ("released", format!("connected {}", pairing.client_name)),
             Ok(_) => ("denied", format!("refused {}", pairing.client_name)),
