@@ -216,8 +216,12 @@ pub struct Model {
     /// This computer's friendly name, and the vault project of its own credentials (`machine-<name>-<key hash>`).
     pub computer: String,
     pub machine: String,
-    /// The name the phone shows for this computer (`reins_desktop::computer::name`: "M2A").
+    /// This computer's own name, which the phone shows when the user gave it none (`reins_desktop::computer::name`:
+    /// "M2A").
     pub shown_as: String,
+    /// The name the user gave this computer on the phone ("Work Mac"), opened from the copy sealed to this app's key
+    /// (`reins_desktop::computer::phone_name`); `None`: none, or not known yet. `--demo`: `REINS_DEMO_NAME`.
+    pub phone_name: Option<String>,
     /// `--demo`: the pretend pairing went through.
     demo_paired: bool,
     /// `--demo`: the made-up activity and connections.
@@ -364,6 +368,11 @@ impl Model {
                 } else {
                     reins_desktop::computer::name()
                 },
+                phone_name: if args_demo {
+                    std::env::var("REINS_DEMO_NAME").ok().filter(|n| !n.trim().is_empty())
+                } else {
+                    None
+                },
                 demo_paired,
                 demo,
                 notified: std::collections::HashSet::new(),
@@ -380,6 +389,7 @@ impl Model {
             };
             model.start_tray(cx);
             model.start_loops(cx);
+            model.refresh_phone_name(cx);
             match screen {
                 Screen::Welcome(Stage::Pair) => model.start_pairing(cx),
                 Screen::Welcome(stage) => {
@@ -1323,6 +1333,7 @@ impl Model {
     /// Ctrl/Cmd+R: reads the status again and runs the checks.
     pub fn refresh_all(&mut self, cx: &mut Context<'_, Self>) {
         self.refresh_now(cx);
+        self.refresh_phone_name(cx);
         if self.screen == Screen::Status {
             self.run_checks(cx);
         }
@@ -1411,8 +1422,34 @@ impl Model {
         if self.section != section {
             self.section = section;
             self.show_phone_qr = false;
+            if section == Section::Settings {
+                self.refresh_phone_name(cx);
+            }
             cx.notify();
         }
+    }
+
+    /// Asks the server for the name the user gave this computer on the phone (sealed to this app's key). Kept as it
+    /// was when the server cannot say (offline, an older server).
+    fn refresh_phone_name(&mut self, cx: &mut Context<'_, Self>) {
+        if self.args.demo || self.backend.paired_server().is_none() {
+            return;
+        }
+        let backend = Arc::clone(&self.backend);
+        cx.spawn(async move |this, cx| {
+            match Tokio::spawn(cx, async move { backend.phone_name().await }).await.map_err(|e| e.to_string()) {
+                Ok(Ok(name)) => {
+                    let _gone = this.update(cx, |m, cx| {
+                        if m.phone_name != name {
+                            m.phone_name = name;
+                            cx.notify();
+                        }
+                    });
+                }
+                Ok(Err(e)) | Err(e) => log::info!("the name the phone gave this computer is not known: {e}"),
+            }
+        })
+        .detach();
     }
 
     // The status window's actions.

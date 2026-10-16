@@ -51,6 +51,16 @@ pub fn appearance_line(a: Appearance) -> &'static str {
     }
 }
 
+/// The Name row's lines: the name the phone shows for this computer (the one the user gave it there, else its own),
+/// and, when the user gave it one, what it calls itself, so that a name never hides which computer this is.
+#[must_use]
+pub fn name_lines(own: &str, given: Option<&str>) -> (String, Option<String>) {
+    match given.filter(|g| *g != own) {
+        Some(g) => (g.to_owned(), Some(format!("Calls itself {own}"))),
+        None => (own.to_owned(), None),
+    }
+}
+
 /// "This Mac", "This computer": the section's label.
 fn this_computer_label() -> &'static str {
     if cfg!(target_os = "macos") {
@@ -94,9 +104,71 @@ impl Root {
         } else {
             "The shield in the tray shows Reins is on"
         };
-        let mut computer = div()
+        let (name, itself) = name_lines(&d.shown_as, d.phone_name.as_deref());
+        let name_meta = div()
             .flex()
-            .flex_col()
+            .gap(px(6.0))
+            .min_w(px(0.0))
+            .child(div().truncate().child(name.clone()))
+            .when_some(itself, |m, i| m.child(div().text_color(pal.ink_faint()).truncate().child(i)));
+        let mut computer = div().flex().flex_col().child(
+            list_row(pal, self.name_open)
+                .id("name")
+                .cursor_pointer()
+                .child(tile(Glyph::Laptop))
+                .child(title_meta("Name", Some(name_meta.into_any_element()), pal))
+                .child(glyph(
+                    if self.name_open {
+                        Glyph::ChevronUp
+                    } else {
+                        Glyph::ChevronDown
+                    },
+                    14.0,
+                    pal.ink_faint(),
+                ))
+                .on_click(Self::on_view(cx, |this, _| this.name_open = !this.name_open)),
+        );
+        if self.name_open {
+            // The phone keeps the name (synced to the user's phones, sealed); a name typed here could be anyone's on
+            // this computer, so the field shows it and points to the phone.
+            computer = computer.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .pl(px(44.0))
+                    .pb(px(12.0))
+                    .border_b_1()
+                    .border_color(pal.rule())
+                    .child(
+                        div()
+                            .id("name-field")
+                            .h(px(36.0))
+                            .px(px(12.0))
+                            .flex()
+                            .items_center()
+                            .rounded(px(10.0))
+                            .border_1()
+                            .border_color(pal.rule())
+                            .bg(pal.paper_sunken())
+                            .text_size(px(14.0))
+                            .text_color(pal.ink())
+                            .truncate()
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .text_size(px(12.5))
+                            .text_color(pal.ink_meta())
+                            .child(glyph(Glyph::Phone, 13.0, pal.ink_meta()))
+                            .child(format!("Rename on {}", d.phone())),
+                    ),
+            );
+        }
+        computer = computer
             .child(
                 list_row(pal, false)
                     .child(tile(Glyph::Power))
@@ -366,7 +438,7 @@ impl Root {
         let account = d.saved.account.clone().unwrap_or_else(|| host(&d.server));
         // The name the phone knows this computer by and the server; under them, on a line of its own that is never
         // cut, the key compared when pairing.
-        let line = format!("{} · {}", d.shown_as, host(&d.server));
+        let line = format!("{} · {}", name_lines(&d.shown_as, d.phone_name.as_deref()).0, host(&d.server));
         let key = d.fingerprint.as_ref().map(|fp| format!("key {fp}"));
         let service = match d.snapshot.as_ref().map(|s| &s.daemon) {
             Some(DaemonState::Running {
@@ -443,6 +515,13 @@ fn fingerprint_line(key: String, pal: Palette) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_name_is_the_phones_and_what_it_calls_itself_stays_in_sight() {
+        assert_eq!(name_lines("M2A", None), ("M2A".to_owned(), None));
+        assert_eq!(name_lines("M2A", Some("M2A")), ("M2A".to_owned(), None));
+        assert_eq!(name_lines("M2A", Some("Work Mac")), ("Work Mac".to_owned(), Some("Calls itself M2A".to_owned())));
+    }
 
     #[test]
     fn the_keyboard_card_folds_the_sections_into_one_line() {

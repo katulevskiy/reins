@@ -159,6 +159,48 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
     let doctor = reins_desktop::doctor::phone_check(seen.last_seen, seen.server_time);
     assert_eq!(doctor.level, reins_desktop::doctor::Level::Ok, "{doctor:?}");
 
+    // ---- the name the user gave it on the phone, which only this app can read, from the phone's key only ----
+    let sealed = seen.sealed_name.clone().expect("the phone left the computer its name");
+    assert!(!sealed.contains("Laptop"));
+    assert_eq!(
+        reins_desktop::computer::phone_name(&paths, &identity).await.unwrap(),
+        None,
+        "not before this app pinned the phone's key"
+    );
+    let key_config = Config {
+        mode: Mode::Reins,
+        approval_timeout_secs: 60,
+        ..Config::default()
+    };
+    let digits = phone.core.phone_key_fingerprint().await.unwrap();
+    let writer = reins_desktop::secrets_client::PhoneVaultWriter::new(&paths, &key_config, Some(digits));
+    let user = async {
+        let item = next_item(&phone).await;
+        phone
+            .core
+            .approve(
+                item.id,
+                ApprovalChoice {
+                    selected_message_ids: vec![],
+                    standing: None,
+                },
+            )
+            .await
+            .unwrap();
+    };
+    let (pinned, ()) = tokio::join!(writer.check_phone_key(), user);
+    pinned.expect("the phone's key is pinned");
+    assert_eq!(reins_desktop::computer::phone_name(&paths, &identity).await.unwrap().as_deref(), Some("Laptop"));
+    let computer = phone.core.connections().await.unwrap().remove(0);
+    assert_eq!((computer.label.as_str(), computer.name.as_deref()), ("Laptop", Some("Laptop")));
+    phone.core.rename_connection(computer.id.clone(), Some("Work Mac".to_owned())).await.unwrap();
+    assert_eq!(reins_desktop::computer::phone_name(&paths, &identity).await.unwrap().as_deref(), Some("Work Mac"));
+    let resealed = reins_desktop::server::client::DesktopClient::new(&paths).unwrap().phone().await.unwrap();
+    assert_eq!(resealed.sealed_name.map(|s| s.len()), Some(sealed.len()), "every sealed name is the same length");
+    phone.core.rename_connection(computer.id.clone(), None).await.unwrap();
+    assert_eq!(reins_desktop::computer::phone_name(&paths, &identity).await.unwrap(), None, "cleared: its own");
+    phone.core.rename_connection(computer.id, Some("Laptop".to_owned())).await.unwrap();
+
     // ---- the daemon, deciding with the phone ----
     let mut config = Config {
         listen: "127.0.0.1:0".parse().unwrap(),

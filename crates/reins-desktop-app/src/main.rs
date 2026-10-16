@@ -72,7 +72,8 @@ pub struct Args {
     /// seconds), `REINS_DEMO_CALM=1` leaves out the request waiting on the phone (`REINS_DEMO_WAITING=push`: a push waits instead of a command), `REINS_DEMO_PAUSED=1` (or `manual`)
     /// starts with git paused. For screenshots of what opens with a click: `REINS_DEMO_PAUSE=1` (or `manual`, or
     /// `hold`: held from the start) opens the "Pause git" sheet, `REINS_DEMO_FILTER=1` Activity's filters,
-    /// `REINS_DEMO_HEALTH=1` Home's health checks, `REINS_DEMO_HELP=<id>` a (?).
+    /// `REINS_DEMO_HEALTH=1` Home's health checks, `REINS_DEMO_HELP=<id>` a (?). `REINS_DEMO_NAME=<name>`: the name the
+    /// pretend phone gave this computer (`REINS_DEMO_NAME_OPEN=1` opens Settings' Name row).
     pub demo: bool,
 }
 
