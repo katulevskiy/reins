@@ -6,6 +6,12 @@ enum CoreFactory {
     /// `<App Group>/Library/Application Support/core`.
     static var dataDir: URL { AppGroup.directory("core") }
 
+    /// How long a store lock waits for the other process (the extension, or the app) before the call fails as busy.
+    /// The other holds it for milliseconds at a time; longer means it is stuck. The extension, with its few seconds,
+    /// gives up sooner and leaves the push to the app.
+    static let appLockWaitMillis: UInt32 = 3_000
+    static let extensionLockWaitMillis: UInt32 = 1_500
+
     /// Whether the app ever opened the store here (the notification extension never creates one).
     static var storeExists: Bool { FileManager.default.fileExists(atPath: dataDir.appendingPathComponent("dek.bin").path) }
 

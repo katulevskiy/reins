@@ -17,7 +17,7 @@ mod merge;
 mod pending;
 mod protected;
 mod snapshot;
-pub(crate) use protected::Owner;
+pub(crate) use protected::{Owner, STORE_BUSY, STORE_SUSPENDING, install_lock_guard};
 mod secrets;
 mod sync;
 pub(crate) use sync::Pulled;
@@ -710,6 +710,13 @@ fn create_dek(dek_path: &Path, keys: &dyn KeyWrapper) -> Result<Dek, CoreError> 
 }
 
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
+    replace_file(path, bytes)?;
+    sync_parent(path)
+}
+
+/// Writes `bytes` to a temporary file, flushes it to disk and renames it over `path`: readers see the old file or the
+/// new one, never part of either. The rename reaches the disk with [`sync_parent`].
+fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
     let tmp: PathBuf = path.with_extension("tmp");
     let fail = |e: std::io::Error| CoreError::storage(format!("cannot write the data key: {e}"));
     let mut options = fs::OpenOptions::new();
@@ -723,8 +730,15 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
     file.write_all(bytes).map_err(fail)?;
     file.sync_all().map_err(fail)?;
     fs::rename(&tmp, path).map_err(fail)?;
+    Ok(())
+}
+
+/// Makes a rename into `path`'s directory durable.
+fn sync_parent(path: &Path) -> Result<(), CoreError> {
     if let Some(parent) = path.parent() {
-        fs::File::open(parent).and_then(|f| f.sync_all()).map_err(fail)?;
+        fs::File::open(parent)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| CoreError::storage(format!("cannot write the data key: {e}")))?;
     }
     Ok(())
 }

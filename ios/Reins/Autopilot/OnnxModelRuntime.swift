@@ -24,6 +24,7 @@ final class OnnxModelRuntime: ModelRuntime, @unchecked Sendable {
     // Guarded by `lock`.
     private var session: InferenceSession?
     private var path: String?
+    private var background = false
     private var memoryObserver: NSObjectProtocol?
 
     init(engine: InferenceEngine = OrtEngine()) {
@@ -53,6 +54,13 @@ final class OnnxModelRuntime: ModelRuntime, @unchecked Sendable {
     /// The session is open now (not closed by a memory warning).
     var isOpen: Bool { lock.read { session != nil } }
 
+    /// The app went to the background or came back. In the background a session a memory warning closed is not opened
+    /// again (hundreds of megabytes, right after iOS asked for memory back, in a process it may end for it): the run
+    /// fails, and the request waits for the user.
+    func setBackground(_ inBackground: Bool) {
+        lock.write { background = inBackground }
+    }
+
     func load(path: String) throws {
         try lock.write {
             if path == self.path, session != nil { return }
@@ -70,6 +78,9 @@ final class OnnxModelRuntime: ModelRuntime, @unchecked Sendable {
         // Closed by a memory warning since the core loaded it: open the same file again.
         return try lock.write {
             guard let path else { throw ForeignError.Failed(reason: "no model is loaded") }
+            if session == nil, background {
+                throw ForeignError.Failed(reason: "the model was freed for memory while the app is in the background")
+            }
             if session == nil {
                 session = try failing("could not load the model") { try engine.open(path) }
             }

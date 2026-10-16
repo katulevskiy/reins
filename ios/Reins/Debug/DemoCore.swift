@@ -1354,6 +1354,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func setModelRuntime(runtime: ModelRuntime) {}
 
+    func setBackground(background: Bool) {}
+
     func autopilotSettings() async throws -> AutopilotSettings {
         locked { s in
             let now = Self.now()

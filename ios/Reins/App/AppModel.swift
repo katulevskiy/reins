@@ -195,6 +195,9 @@ final class AppModel {
 
     /// The scene is active (in front and focused).
     private(set) var isActive = false
+    /// The app is in the background (a push or a background refresh woke it, or it was just left): iOS gives it
+    /// seconds, so `refreshPending` reads only what waits, and Autopilot does not load its model. Set by `AppHost`.
+    private(set) var inBackground = false
     /// New requests pop up by themselves while the app is in front. Tests and screenshots turn this off.
     var autoPopup = true
     private var syncTask: Task<Void, Never>?
@@ -229,9 +232,23 @@ final class AppModel {
 
     // MARK: Session
 
+    /// The core's session. A read that fails (the store busy in the notification extension, a failure in the core)
+    /// says nothing about the session: it is tried again a few times, then counts as signed out, as before reads
+    /// could fail.
+    private func readSession() async -> SessionInfo? {
+        for attempt in 0..<3 {
+            do {
+                return try await core.session()
+            } catch {
+                if attempt < 2 { try? await Task.sleep(for: .milliseconds(400 << attempt)) }
+            }
+        }
+        return nil
+    }
+
     func refreshSession() async {
         let epoch = accountEpoch
-        let info = await core.session()
+        let info = await readSession()
         guard epoch == accountEpoch else { return }
         var keys: AccountKeys?
         if info != nil && !demo { keys = try? await core.accountKeys() }
@@ -247,7 +264,7 @@ final class AppModel {
         if let info, let code, !passkeyDeclined, !RecoveryRecord.confirmed(server: info.serverUrl, code: code) {
             offerPasskey = await hasNoVaultPasskey()
         }
-        let current = await core.session()
+        let current = await readSession()
         guard epoch == accountEpoch, current == info else { return }
         if let info, !demo, KeysLock.matches(info) || keys != .unlocked {
             setSession(.keysLocked(info))
@@ -265,7 +282,7 @@ final class AppModel {
             recoveryLoadError = recoveryFailure
             // Against the epoch of the session just set: signing in bumps it, so the one from before never matches.
             let signedIn = accountEpoch
-            if let notice = await core.accountSyncNotice(), signedIn == accountEpoch { syncNotice = notice }
+            if let notice = try? await core.accountSyncNotice(), signedIn == accountEpoch { syncNotice = notice }
             onSignedIn?()
             await refreshPending()
             await refreshConnections()
@@ -363,7 +380,7 @@ final class AppModel {
     /// the sync banner. Never an error on the welcome screen whose Continue only repeats it. False: not that case.
     func finishSignedInDespite(_ error: Error) async -> Bool {
         guard let failure = error as? CoreError, case .ServiceNeedsAttention = failure,
-              let info = await core.session() else { return false }
+              let info = try? await core.session() else { return false }
         let keys = (try? await core.accountKeys()) ?? .unlocked
         await finishSso(SsoOutcome(session: info, keys: keys))
         syncNotice = error.userMessage
@@ -487,7 +504,11 @@ final class AppModel {
             guard let self else { return }
             repeat {
                 self.refreshAgain = false
-                await self.readPending()
+                if self.inBackground {
+                    await self.readWaiting()
+                } else {
+                    await self.readPending()
+                }
             } while self.refreshAgain
             self.refreshing = nil
         }
@@ -542,6 +563,37 @@ final class AppModel {
         onPendingChanged?(pending)
         maybePresent()
         publish()
+    }
+
+    /// In the background: only what waits, for the notifications and the widgets. Everything else is read when the app
+    /// comes to the front (`setActive`); a background wake has seconds, and the full read is a dozen calls.
+    private func readWaiting() async {
+        let epoch = accountEpoch
+        let edits = listEdits
+        do {
+            let newPending = try await core.pending()
+            guard epoch == accountEpoch else { return }
+            guard edits == listEdits else {
+                refreshAgain = true
+                return
+            }
+            if pending != newPending { pending = newPending }
+        } catch CoreError.NotLoggedIn {
+            if epoch == accountEpoch { sessionEnded() }
+        } catch {
+            // Busy or offline: the next wake or the front reads it.
+        }
+        guard epoch == accountEpoch else { return }
+        deviceReplaced = DeviceStatus.replaced
+        onPendingChanged?(pending)
+        publish()
+    }
+
+    /// The app went to the background or came back (`AppHost`): what a refresh reads, and whether Autopilot may load
+    /// its model.
+    func setInBackground(_ background: Bool) {
+        inBackground = background
+        core.setBackground(background: background)
     }
 
     /// Re-reads Autopilot (modes, bypasses, model) and keeps what shows it in step.

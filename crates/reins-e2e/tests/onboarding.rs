@@ -51,7 +51,7 @@ async fn sync_as_a_bitwarden_client(server: &Server) -> (reqwest::Client, String
 async fn the_phone_creates_the_account_and_its_vault_works_like_a_bitwarden_vault() {
     let server = Server::start(20, 10).await;
     let phone = Phone::create_account(&server.base, EMAIL).await;
-    assert_eq!(phone.core.session().await.unwrap().email, EMAIL);
+    assert_eq!(phone.core.session().await.unwrap().unwrap().email, EMAIL);
 
     // The keys on the server open with the master password, as in any Bitwarden client.
     let (http, token, sync) = sync_as_a_bitwarden_client(&server).await;

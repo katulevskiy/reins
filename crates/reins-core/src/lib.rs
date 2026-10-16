@@ -58,7 +58,7 @@ pub use connector::device::{DeviceBridge, DeviceContact, DeviceEvent, NewDeviceE
 pub use engine::{CoreConfig, Engine};
 pub use error::{CoreError, ForeignError};
 pub use mcp::{McpAddStep, McpCallView, McpServerView, McpToolView};
-pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck};
+pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck, StoreLockGuard};
 pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, ServerInfo, SsoOutcome, SsoStart};
 pub use types::{
     AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ActivityPush, ActivityRequest, ApprovalChoice,
