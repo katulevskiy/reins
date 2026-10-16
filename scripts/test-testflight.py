@@ -389,27 +389,59 @@ with tempfile.TemporaryDirectory(prefix="reins-testflight-") as directory:
     check(all(re.fullmatch(r"[0-9a-f]{40}", p["state"].get("revision", "")) for p in real_pins),
           "the app's packages are pinned to revisions")
 
-# The workflow: the TestFlight job runs after publication, never holds it back, and uploads one at a time.
+# The workflow: ios-build starts with the other builds; only ios-testflight, which uploads, waits for publication. It
+# never holds publication back, and uploads one release at a time.
 workflow = (ROOT / ".github/workflows/release.yml").read_text()
+build = workflow.split("\n  ios-build:\n", 1)[1].split("\n\n  ios-testflight:\n", 1)[0]
 job = workflow.split("\n  ios-testflight:\n", 1)[1].split("\n\n  # ", 1)[0]
 publisher = workflow.split("\n  publish:\n", 1)[1].split("\n    steps:\n", 1)[0]
-check("ios-testflight" not in publisher, "publish must not wait for TestFlight")
-check("needs: [plan, publish]" in job and "needs.publish.result == 'success'" in job, "after publication")
-check("group: release-testflight" in job and "cancel-in-progress: false" in job, "one upload at a time")
-check("runs-on: xcode-27" in job and "Xcode_27.0.app" in job, "a released Xcode")
-check("scripts/testflight.py prepare" in job and "scripts/testflight.py finish" in job, "the script")
-check(job.count("if: always()") >= 1 and "delete-keychain" in job, "the keychain is removed")
-# Trust: main only, in its environment; the build runs before any secret exists; secrets stay in files.
-check("github.ref == 'refs/heads/main'" in job and "environment: testflight" in job, "main, in its environment")
+check("ios-testflight" not in publisher and "ios-build" not in publisher, "publish must not wait for TestFlight")
+check("    needs: plan\n" in build and "publish" not in build.split("\n    steps:\n", 1)[0], "the build starts at once")
+check("needs: [plan, publish, ios-build]" in job and "needs.publish.result == 'success'" in job
+      and "needs.ios-build.result == 'success'" in job and "inputs.verify_only != true" in job, "after publication")
+check("altool" not in build and "-authenticationKey" not in build and '"destination": "export"' in build
+      and '"destination": "upload"' not in build, "the build sends Apple nothing")
+check("group: ${{ inputs.testflight_tag && format('release-testflight-{0}', github.run_id) || 'release-testflight' }}"
+      in job and "cancel-in-progress: true" in job, "one upload at a time, the newest release's")
+check("concurrency:" not in build, "builds run side by side")
+check("timeout-minutes: 30 " in job and "--timeout 1200" in job, "a stuck upload does not hold the next one long")
+for section in (build, job):
+    check("runs-on: xcode-27" in section and "Xcode_27.0.app" in section, "a released Xcode")
+    # Trust: main only, in its environment; secrets stay in files.
+    check("github.ref == 'refs/heads/main'" in section and "environment: testflight" in section, "main, environment")
+    check('git merge-base --is-ancestor "$SHA" origin/main' in section and "compare/$sha...main" in section, "on main")
+    check("releases/tags/$tag" in section, "a published release")
+    check("GITHUB_ENV" not in section, "nothing exported to the job")
+    check("--key-id" not in section and "--issuer-id" not in section, "the key ids reach the script by environment")
+    check("Infisical" not in section.replace("(copies of Infisical", "") and "release-secrets" not in section
+          and "id-token" not in section and "INFISICAL_" not in section, "no Infisical in the job")
+    permissions = section.split("    permissions:\n", 1)[1].split("\n    outputs:", 1)[0].split("\n    env:", 1)[0]
+    check(permissions.split("#", 1)[0].split() == ["contents:", "read"], "least permissions")
+    for line in section.splitlines():
+        if "uses: " in line and "uses: ./" not in line:
+            check(re.search(r"@[0-9a-f]{40} # v", line), f"pinned to a commit: {line.strip()}")
+    removal = section.rsplit("\n      - name: Remove signing material\n", 1)[1]
+    check(removal.startswith("        if: always()") and '"$RUNNER_TEMP/ios-signing"' in removal
+          and '"$RUNNER_TEMP/ipa"' in removal, "signing material and the .ipa removed")
+check("scripts/testflight.py prepare" in build and "scripts/testflight.py finish" in job, "the script")
+check("scripts/testflight.py prepare" in job and "uploaded=true" in job, "a rerun does not upload again")
+check('[[ "$object" == "$sha" ]]' in job and '"$sha" == "$PLAN_SHA"' in job, "the tag names the commit built")
+check("delete-keychain" in build, "the keychain is removed")
 check("pull_request" not in workflow.split("\njobs:\n", 1)[0], "no pull request trigger")
-check('git merge-base --is-ancestor "$SHA" origin/main' in job and "compare/$sha...main" in job, "on main")
-check("releases/tags/$tag" in job, "a published release")
-steps = {s.split("\n", 1)[0].removeprefix("name: ").strip(): s for s in job.split("\n      - ")[1:]}
-order = [s.split("\n", 1)[0] for s in job.split("\n      - ")[1:]]
 
 
-def at(name):
-    return next(i for i, step in enumerate(order) if name in step)
+def parse(section):
+    parts = section.split("\n      - ")[1:]
+    return ({part.split("\n", 1)[0].removeprefix("name: ").strip(): part for part in parts},
+            [part.split("\n", 1)[0] for part in parts])
+
+
+steps, order = parse(build)
+upload_steps, upload_order = parse(job)
+
+
+def at(name, within=None):
+    return next(i for i, step in enumerate(within or order) if name in step)
 
 
 # The signing material comes only from the testflight environment's secrets, each mapped only into the steps that need
@@ -422,26 +454,31 @@ allowed = {
     "Signing identity": {"IOS_DIST_CERT_P12", "IOS_DIST_CERT_PASSWORD", "APPLE_TEAM_ID"},
     "Provisioning profiles": {"IOS_PROFILE_APP", "IOS_PROFILE_WIDGETS", "IOS_PROFILE_NOTIFICATIONS", "APPLE_TEAM_ID"},
     "App settings": {"TELEGRAM_API_ID", "TELEGRAM_API_HASH"},
-    "App Store Connect key": {"AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID", "APPLE_TEAM_ID"},
 }
 for name, step in steps.items():
     used = set(re.findall(r"\$\{\{ secrets\.([A-Z0-9_]+) \}\}", step))
     check(used <= allowed.get(name, set()), f"{name} maps {sorted(used)}")
 check(set().union(*allowed.values()) - {"TELEGRAM_API_ID", "TELEGRAM_API_HASH"}
-      == set(re.findall(r"secrets\.((?:AC|IOS|APPLE)_[A-Z0-9_]+)", job)), "all nine, and only those")
-check("Infisical" not in job.replace("(copies of Infisical", "") and "release-secrets" not in job
-      and "id-token" not in job and "INFISICAL_" not in job, "no Infisical in the job")
-check("GITHUB_ENV" not in job, "nothing exported to the job")
-check('-P "$IOS_DIST_CERT_PASSWORD"' not in job and '-passin "file:' in job, "the password never on a command line")
-check("--key-id" not in job and "--issuer-id" not in job, "the key ids reach the script by environment")
-check("scripts/testflight.py secrets" in job, "masked and written by the script")
-# The archive sees no certificate file and no API key: the key is removed after the build number and written again
-# after the archive; a step checks the folder first.
+      == set(re.findall(r"secrets\.((?:AC|IOS|APPLE)_[A-Z0-9_]+)", build)), "all nine, and only those")
+# The upload holds the API key only, written by the script after the checks and the download.
+asc = {"AC_API_KEY_P8", "AC_API_KEY_ID", "AC_API_ISSUER_ID", "APPLE_TEAM_ID"}
+for name, step in upload_steps.items():
+    used = set(re.findall(r"\$\{\{ secrets\.([A-Z0-9_]+) \}\}", step))
+    check(used <= (asc if name == "App Store Connect key" else set()), f"{name} maps {sorted(used)}")
+check(set(re.findall(r"secrets\.([A-Z0-9_]+)", job)) == asc, "the API key, and only that")
+check("--need asc " in upload_steps["App Store Connect key"], "written by the script")
+check(at("The release to upload", upload_order) < at("download-artifact@", upload_order)
+      < at("App Store Connect key", upload_order) < at("Upload to App Store Connect", upload_order)
+      < at("name: TestFlight\n", [step + "\n" for step in upload_order]), upload_order)
+check('-P "$IOS_DIST_CERT_PASSWORD"' not in build and '-passin "file:' in build, "the password never on a command line")
+check("scripts/testflight.py secrets" in build, "masked and written by the script")
+# The archive sees no certificate file and no API key: the key is removed after the build number; a step checks the
+# folder first. The export signs; the keychain is locked after it.
 check('trap \'rm -f "$dir/AuthKey.p8" "$dir/asc.env"\' EXIT' in steps["Build number"], "the key removed")
 check(at("Build number") < at("Signing identity") < at("Only the keychain") < at("Archive")
-      < at("App Store Connect key") < at("Upload to App Store Connect") < at("Lock the keychain"), order)
-check("--need asc " in steps["App Store Connect key"] and "--need cert " in steps["Signing identity"]
-      and "--need profiles " in steps["Provisioning profiles"], "each step writes only its own secrets")
+      < at("Export the app") < at("Lock the keychain") < at("upload-artifact"), order)
+check("--need cert " in steps["Signing identity"] and "--need profiles " in steps["Provisioning profiles"],
+      "each step writes only its own secrets")
 identity_step = steps["Signing identity"]
 check("-x -P" in identity_step and "-T /usr/bin/codesign\n" in identity_step
       and "-T /usr/bin/security" not in identity_step,
@@ -449,21 +486,26 @@ check("-x -P" in identity_step and "-T /usr/bin/codesign\n" in identity_step
 check("-S apple-tool:,apple: -s" in identity_step and "security export" in identity_step, "partition list, checked")
 check('rm -f "$dir/dist.p12" "$dir/dist.pass"' in identity_step and 'rm -f "$dir/import.p12"' in identity_step,
       "certificate files removed at once")
-check("security lock-keychain" in steps["Lock the keychain"], "locked after the upload")
+check("security lock-keychain" in steps["Lock the keychain"], "locked after the export")
+check("retention-days: 1\n" in build.split("upload-artifact", 1)[1], "the .ipa is kept a day")
 # Swift packages: only as resolved, checked, never with plugin or macro validation skipped.
-calls = re.findall(r"xcodebuild (?:archive|-resolvePackageDependencies)(?:[^\n]*\\\n)*[^\n]*", job)
+calls = re.findall(r"xcodebuild (?:archive|-resolvePackageDependencies)(?:[^\n]*\\\n)*[^\n]*", build)
 check(len(calls) == 2, calls)
 for call in calls:
     check("-onlyUsePackageVersionsFromResolvedFile" in call and "-disableAutomaticPackageResolution" in call, call)
-check("skipPackagePluginValidation" not in job and "skipMacroValidation" not in job, "validation kept")
+check("xcodebuild" not in job.replace("xcodebuild -version", ""), "the upload builds nothing")
+check("skipPackagePluginValidation" not in build and "skipMacroValidation" not in build, "validation kept")
 check("scripts/testflight.py packages" in steps["Resolve and check the Swift packages"], "packages checked")
-check('cache-bin: "false"' in job and 'REINS_SKIP_CORE: "1"' in steps["Archive"], "no cached binaries, no cargo")
+check('cache-bin: "false"' in build and 'REINS_SKIP_CORE: "1"' in steps["Archive"], "no cached binaries, no cargo")
 build_core = (ROOT / "ios/scripts/build-core.sh").read_text()
 check(build_core.index('REINS_SKIP_CORE:-}" == "1"') < build_core.index("rustup target add")
       < build_core.index("run_cargo rustc"), "build-core.sh stops before rustup and cargo when skipping")
-check(job.split("permissions:\n", 1)[1].split("\n    env:", 1)[0].split("#", 1)[0].split() == ["contents:", "read"],
-      "least permissions")
-for line in job.splitlines():
-    if "uses: " in line and "uses: ./" not in line:
-        check(re.search(r"@[0-9a-f]{40} # v", line), f"pinned to a commit: {line.strip()}")
+# The built core is kept by its sources, with the bindings it was generated with, and only main writes it.
+saved = build.split("uses: actions/cache/save@", 1)[1].split("\n      - ", 1)[0]
+check("github.ref == 'refs/heads/main'" in saved and "ios/Core/Generated/reins_core.swift" in saved
+      and "crates/reins-core/**" in steps["uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0"],
+      "the core's own cache")
+check(at("cache/save@") < first_secret, "the core is saved before any secret is in the job")
+check("--profile host-tool" in build_core and "target/host-tool/uniffi-bindgen" in build_core,
+      "uniffi-bindgen is a cheap host build")
 print(f"{checks} TestFlight checks passed")
