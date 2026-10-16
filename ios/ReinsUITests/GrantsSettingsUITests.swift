@@ -78,7 +78,8 @@ final class GrantsSettingsUITests: XCTestCase {
 
     // MARK: Screenshots
 
-    func testScreenshots() {
+    func testScreenshots() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Quarantined on CI: expiredHeader times out in the new build-once CI setup (runs 38955143264, 38960576590).")
         launch()
         section("trust")
         wait("grant:g1")
