@@ -1059,3 +1059,16 @@ async fn a_viewer_changes_nothing_but_may_pull_the_brake() {
     b.roster_summary(true).await.unwrap();
     assert_eq!(b.start_bypass(None, Some(30)).await, Err(CoreError::ViewerOnly));
 }
+
+/// Naming a connection is the primary's, like any other change to it: a viewer is refused before anything is kept.
+#[tokio::test]
+async fn only_the_primary_renames_a_connection() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    assert_eq!(b.rename_connection("c1".to_owned(), Some("Work".to_owned())).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.rename_connection("c1".to_owned(), None).await, Err(CoreError::ViewerOnly), "nor take a name away");
+    assert_eq!(a.rename_connection("c1".to_owned(), Some("Work".to_owned())).await, Ok(Some("Work".to_owned())));
+}

@@ -142,9 +142,14 @@ command in that folder, so a learnt answer never covers another command). There 
   eases in a straight line from 10 to 20 agreeing decisions, never below 50% benign. Only your decisions on requests
   clear of risk, with the model in use, count as agreement: approving requests it held for their risk never releases
   that hold. Without a model that rates risk, a kind asks until then.
-- **Pushes to the default branch** (or `main`, `master`, `trunk`, `develop`, `production`, `prod`, `release…` when the
-  default is not known) always ask in Auto, whatever the model says; force pushes and branch deletes are on the hard
-  floor. Overnight keeps its own rules for these, and outside the floor it weighs it applies Auto's risk checks too.
+- **Pushes to the default branch** always ask in Auto and in Overnight, whatever the model says: the repository's own
+  default, and `main`, `master`, `trunk`, `develop`, `dev`, `production`, `prod`, `staging`, `stable`, `gh-pages` and
+  `release…` whatever the case. This covers a push from the desktop app and a `git push` a harness hook asks about
+  (every refspec read as git resolves it, `HEAD:main`, `heads/main` and `refs//heads/main` included); `--all`,
+  `--mirror`, a push that names no destination (the current branch, whichever it is) and one to anything that is not
+  clearly a branch or a tag ask too. A git command hidden behind an alias, or one that redefines an alias or where a
+  remote pushes (`-c alias.…`, `-c remote.….push`), is held as not read with certainty. Force pushes and branch deletes are on the hard floor. Outside the floor it weighs,
+  Overnight applies Auto's risk checks too.
 - **Paused:** when you say an automatic approval was wrong (Auto's or Overnight's), or deny something Autopilot would
   have approved, auto-approve pauses for that kind, and a trust you gave it by hand is taken back. It resumes once the
   wrong one is out of your last 20 answers there and Autopilot again agrees with at least 95% of what you decided.

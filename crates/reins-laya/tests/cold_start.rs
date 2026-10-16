@@ -7,8 +7,8 @@
 //!
 //! Each case is rebuilt as the approval view the phone would show, from what the golden set keeps of it (the desktop
 //! question, the push, the MCP call, the command secrets go to, the service and the action), and the engine's own
-//! reading decides what it would: [`gates::request_floor`] (asked before the model) and [`risk::refine`]'s outcome (a
-//! tripwire or an uncertain reading is never approved). What the golden set does not keep (whether a catalog operation
+//! reading decides what it would: [`gates::request_floor`] and a push to the default branch (both asked before the
+//! model) and [`risk::refine`]'s outcome (a tripwire or an uncertain reading is never approved). What the golden set does not keep (whether a catalog operation
 //! is asked every time, the destructive mark an MCP server gives a tool) is left out, so a floor the phone would apply
 //! may be missing here: the counts of what Auto approves are then the stricter test.
 //!
@@ -217,15 +217,18 @@ fn judge_case(judge: &Judge, c: &Value) -> Case {
         });
     let severity = [c["risk_facts"].as_u64(), c["risk_full"].as_u64()].into_iter().flatten().max().unwrap_or(3);
     let view = view_of(c);
-    let outcome = risk::refine(&mut situation::describe_request(&view), &view).outcome();
+    let reading = risk::refine(&mut situation::describe_request(&view), &view);
+    // as the engine asks before the model: the hard floor, then a push to the default branch (Auto and Overnight)
+    let floor = gates::request_floor(&view)
+        .or_else(|| reading.pushes_default_branch().then_some("a push to the default branch is always asked"));
     Case {
         id: s("id"),
         severity: usize::try_from(severity).unwrap_or(3),
         probs,
         escalate: passes[0].escalate.max(passes[1].escalate),
         risk: risk.filter(|r| risk::readable(*r)),
-        floor: gates::request_floor(&view),
-        certain: matches!(outcome, risk::Outcome::Read),
+        floor,
+        certain: matches!(reading.outcome(), risk::Outcome::Read),
     }
 }
 
