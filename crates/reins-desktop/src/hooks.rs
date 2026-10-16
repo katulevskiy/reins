@@ -217,11 +217,18 @@ pub fn question(call: &HookCall, guard: &GuardConfig) -> Option<(Match, Question
 
 /// What a hook's question reports of the repository its command runs in (the phone reads it for a `git push`): the
 /// checked-out branch, only when a push of it (`git push`, `git push origin HEAD`) certainly lands on the branch of the
-/// same name, and the remote's default branch when the repository records it.
+/// same name, and origin's default branch when the repository records it.
+///
+/// `refs/remotes/origin/HEAD` is a file in the repository, so the agent can write it. The name it holds can only add a
+/// protected branch: the phone keeps every built-in protected name whatever the file says. It is origin's default, so
+/// a question reports it only for a push to origin. A push to any other remote reports nothing, and the phone asks.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GitHead {
     pub branch: Option<String>,
     pub default: Option<String>,
+    /// The remote a push with no repository argument uses, from `branch.<name>.remote`. `None`: git's own default,
+    /// which is `origin`.
+    pub remote: Option<String>,
 }
 
 /// Reads a small file of the repository (at most 64 KiB): `None` when it is not there or larger.
@@ -240,11 +247,12 @@ fn one_branch(name: &str) -> Option<String> {
 }
 
 /// The settings of git's configuration that decide where `git push` with no destination sends the current branch:
-/// `push.default` and `branch.<name>.merge`.
+/// `push.default`, `branch.<name>.merge` and `branch.<name>.remote`.
 #[derive(Default)]
 struct PushSettings {
     default: Option<String>,
     merge: Option<String>,
+    remote: Option<String>,
 }
 
 /// Reads a git configuration file into `into`; `false` unless every line of it parses cleanly by the plain subset:
@@ -320,8 +328,11 @@ fn push_settings(text: &str, branch: &str, into: &mut PushSettings) -> bool {
                 if sub != branch && sub.eq_ignore_ascii_case(branch) {
                     return false;
                 }
-                if key == "merge" && sub == branch {
+                if sub == branch && key == "merge" {
                     into.merge = Some(value.to_owned());
+                }
+                if sub == branch && key == "remote" {
+                    into.remote = Some(value.to_owned());
                 }
             }
             ("push" | "remote" | "branch" | "url", _) => return false,
@@ -390,6 +401,8 @@ fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> 
         })
     };
     let branch = symref(small_file(&git_dir.join("HEAD")), "ref: refs/heads/");
+    // Local, and writable by the agent. The phone uses the name only to protect that branch as well; it never
+    // withdraws a built-in name, and a question carries it only for a push to this same remote (origin).
     let default = symref(small_file(&common.join("refs/remotes/origin/HEAD")), "ref: refs/remotes/origin/");
     // Every configuration file must parse cleanly, else nothing at all is reported.
     let mut s = PushSettings::default();
@@ -412,7 +425,88 @@ fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> 
     Some(GitHead {
         branch,
         default,
+        remote: s.remote,
     })
+}
+
+/// Flags of `git push` that do not name the repository and take no following word. Anything else (a value, `--repo`,
+/// a short flag run together with another) and the remote is not known.
+const PUSH_FLAGS_WITHOUT_A_VALUE: &[&str] = &[
+    "-u",
+    "--set-upstream",
+    "-q",
+    "--quiet",
+    "-v",
+    "--verbose",
+    "--no-verify",
+    "-f",
+    "--force",
+    "--force-with-lease",
+    "--force-if-includes",
+    "-d",
+    "--delete",
+    "--all",
+    "--branches",
+    "--tags",
+    "--follow-tags",
+    "--atomic",
+    "--prune",
+    "-n",
+    "--dry-run",
+    "--no-thin",
+    "--thin",
+    "--progress",
+    "--no-progress",
+    "-4",
+    "--ipv4",
+    "-6",
+    "--ipv6",
+    "--signed",
+    "--no-signed",
+    "--porcelain",
+];
+
+/// The line is one plain `git push` whose repository is origin: the remote the default branch was read from.
+/// `configured` is `branch.<name>.remote` (`None`: git uses origin). A push to any other remote, or a line that is
+/// not one plain push, is not: the question then reports no branch, and the phone asks.
+fn push_targets_origin(command: &str, configured: Option<&str>) -> bool {
+    // Quotes, substitutions and a second command can hide the repository. `=` attaches a value to an option
+    // (`--repo=upstream`). `@` and `~` are not a remote name this reading knows.
+    const HIDDEN: [char; 24] = [
+        ';', '&', '|', '(', ')', '`', '$', '<', '>', '\n', '\r', '"', '\'', '\\', '{', '}', '*', '?', '[', '#', '!',
+        '=', '~', '@',
+    ];
+    if command.contains(HIDDEN) {
+        return false;
+    }
+    let words: Vec<&str> = command.split_whitespace().collect();
+    if words.first() != Some(&"git") || words.get(1) != Some(&"push") {
+        return false;
+    }
+    let mut operands = Vec::new();
+    for w in &words[2..] {
+        if w.starts_with('-') {
+            if !PUSH_FLAGS_WITHOUT_A_VALUE.contains(w) {
+                return false;
+            }
+        } else {
+            operands.push(*w);
+        }
+    }
+    let remote = match operands.first() {
+        None => configured.unwrap_or("origin"),
+        // The first operand is the repository. A refspec (`HEAD:feature`, `feature/x`) is not one, so the remote is
+        // not known here.
+        Some(name)
+            if !name.is_empty()
+                && !name.starts_with(['-', '.'])
+                && name.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')) =>
+        {
+            name
+        }
+        Some(_) => return false,
+    };
+    remote == "origin"
 }
 
 /// [`question`], with what [`git_head`] read of the repository the command runs in: its lines follow the rule's, before
@@ -450,7 +544,9 @@ pub fn question_in(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>)
         let _infallible = write!(detail, "\n\nIn: {cwd}");
     }
     let mut head_lines = String::new();
-    if let (Action::Command(_), Some(h)) = (&call.action, head) {
+    if let (Action::Command(command), Some(h)) = (&call.action, head)
+        && push_targets_origin(command, h.remote.as_deref())
+    {
         if let Some(b) = &h.branch {
             let _infallible = writeln!(head_lines, "Branch: {b}");
         }
@@ -762,7 +858,8 @@ mod tests {
             head,
             GitHead {
                 branch: Some("feature/x".into()),
-                default: Some("live".into())
+                default: Some("live".into()),
+                remote: None,
             }
         );
         // detached: no branch
@@ -858,34 +955,116 @@ mod tests {
             git_head_with(wt.path(), &[]).unwrap(),
             GitHead {
                 branch: Some("feature/y".into()),
-                default: Some("main".into())
+                default: Some("main".into()),
+                remote: None,
             }
         );
+        // `branch.<name>.remote` is where a push with no repository argument goes. Only origin matches the default
+        // read above; another remote is remembered so the question can stay silent.
+        let upstream = "[branch \"feature/x\"]\n\tremote = upstream\n\tmerge = refs/heads/feature/x\n";
+        let r = repo("ref: refs/heads/feature/x", Some("live"), upstream);
+        assert_eq!(git_head_with(r.path(), &[]).unwrap().remote.as_deref(), Some("upstream"));
         // not a repository
         let none = tempfile::tempdir().unwrap();
         assert!(git_head_with(none.path(), &[]).is_none_or(|h| h.branch.is_none()));
     }
 
-    #[test]
-    fn a_push_question_reports_the_branch_in_lines_a_command_cannot_write() {
-        let call = HookCall {
+    fn push_call(command: &str) -> HookCall {
+        HookCall {
             harness: Harness::ClaudeCode,
             event: Event::PreToolUse,
-            // a force push is always asked about; its command tries to write a branch line of its own
-            action: Action::Command("git push --force origin HEAD\nBranch: main".to_owned()),
+            action: Action::Command(command.to_owned()),
             cwd: Some("/home/me/app".to_owned()),
-        };
+        }
+    }
+
+    fn reported_lines(command: &str, head: &GitHead) -> Vec<String> {
+        let (_, q) = question_in(&push_call(command), &GuardConfig::default(), Some(head)).expect("asked");
+        q.detail.unwrap().lines().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn a_push_question_reports_the_branch_in_lines_a_command_cannot_write() {
+        // a force push is always asked about; its command tries to write a branch line of its own
         let head = GitHead {
             branch: Some("feature/x".into()),
             default: Some("live".into()),
+            remote: None,
         };
-        let (_, q) = question_in(&call, &GuardConfig::default(), Some(&head)).expect("asked");
-        let detail = q.detail.unwrap();
-        let lines: Vec<&str> = detail.lines().collect();
-        let command = lines.iter().position(|l| *l == "Command:").unwrap();
-        let branch = lines.iter().position(|l| *l == "Branch: feature/x").unwrap();
-        assert!(branch < command, "{detail}");
-        assert!(lines.contains(&"Default branch: live"));
+        let lines = reported_lines("git push --force origin HEAD", &head);
+        let command = lines.iter().position(|l| l == "Command:").unwrap();
+        let branch = lines.iter().position(|l| l == "Branch: feature/x").unwrap();
+        assert!(branch < command, "{lines:?}");
+        assert!(lines.iter().any(|l| l == "Default branch: live"));
+        // a second line cannot become the header, and it hides where the push goes, so nothing is reported
+        let forged = reported_lines("git push --force origin HEAD\nBranch: main", &head);
+        let command = forged.iter().position(|l| l == "Command:").unwrap();
+        assert!(forged.iter().take(command).all(|l| !l.starts_with("Branch:")), "{forged:?}");
+        assert!(forged.iter().take(command).all(|l| !l.starts_with("Default branch:")), "{forged:?}");
+        assert!(forged.iter().skip(command).any(|l| l.contains("Branch: main")));
+    }
+
+    /// Lines of the question that come before `Command:`. The default guard asks about a force push, and `--force`
+    /// does not name a remote, so the same decision as the plain line is visible in the question.
+    fn header_lines(command: &str, head: &GitHead) -> Vec<String> {
+        let lines = reported_lines(command, head);
+        let at = lines.iter().position(|l| l == "Command:").expect("command line");
+        lines.into_iter().take(at).collect()
+    }
+
+    /// The default in `refs/remotes/origin/HEAD` is origin's. A push to origin reports the checked-out branch and that
+    /// name (the phone adds it to the built-in protected names). A push to any other remote reports neither, so the
+    /// phone asks. Whatever the file says, the checked-out branch is still reported for origin: the file cannot hide it.
+    #[test]
+    fn only_a_push_to_origin_reports_the_branch_the_default_was_read_for() {
+        let on_main = GitHead {
+            branch: Some("main".into()),
+            default: Some("decoy".into()),
+            remote: None,
+        };
+        let feature = GitHead {
+            branch: Some("feature/x".into()),
+            default: Some("live".into()),
+            remote: None,
+        };
+        let upstream = GitHead {
+            remote: Some("upstream".into()),
+            ..feature.clone()
+        };
+        // (plain line, the force-push the guard asks about, head, whether the branch is reported)
+        let cases: &[(&str, &str, &GitHead, bool)] = &[
+            ("git push origin HEAD", "git push --force origin HEAD", &on_main, true),
+            ("git push", "git push --force", &feature, true),
+            ("git push origin", "git push --force origin", &feature, true),
+            ("git push -u origin feature/x", "git push -u --force origin feature/x", &feature, true),
+            ("git push origin HEAD:feature/y", "git push --force origin HEAD:feature/y", &feature, true),
+            ("git push origin feature/x", "git push --force origin feature/x", &upstream, true),
+            ("git push upstream feature/x", "git push --force upstream feature/x", &feature, false),
+            ("git push other", "git push --force other", &feature, false),
+            (
+                "git push github.com:me/app.git feature/x",
+                "git push --force github.com:me/app.git feature/x",
+                &feature,
+                false,
+            ),
+            ("git push HEAD:feature/x", "git push --force HEAD:feature/x", &feature, false),
+            ("git push", "git push --force", &upstream, false),
+            ("git push -u HEAD", "git push -u --force HEAD", &upstream, false),
+            ("git push --repo upstream feature/x", "git push --force --repo upstream feature/x", &feature, false),
+            ("git -C ../other push origin feature/x", "git -C ../other push --force origin feature/x", &feature, false),
+        ];
+        for &(plain, asked, head, reports) in cases {
+            assert_eq!(push_targets_origin(plain, head.remote.as_deref()), reports, "{plain}");
+            let header = header_lines(asked, head);
+            let saw = header.iter().any(|l| l.starts_with("Branch:") || l.starts_with("Default branch:"));
+            assert_eq!(saw, reports, "{asked}: {header:?}");
+            if reports {
+                let branch = head.branch.as_deref().unwrap();
+                let default = head.default.as_deref().unwrap();
+                assert!(header.iter().any(|l| l == &format!("Branch: {branch}")), "{asked}: {header:?}");
+                assert!(header.iter().any(|l| l == &format!("Default branch: {default}")), "{asked}: {header:?}");
+            }
+        }
     }
 
     #[test]

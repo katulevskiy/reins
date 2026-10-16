@@ -2306,10 +2306,13 @@ fn plain_branch(name: &str) -> bool {
 }
 
 /// The one shape of push Autopilot may decide on its own: the whole line is `git push`, with only `-u`,
-/// `--set-upstream`, `-q`, `--quiet`, `-v`, `--verbose`, `--no-verify`, then at most a plain remote name and plain
+/// `--set-upstream`, `-q`, `--quiet`, `-v`, `--verbose`, `--no-verify`, then at most the remote `origin` and plain
 /// refspecs (`branch`, `src:branch`, `HEAD`). Every destination must be a known branch that is neither protected nor
 /// the repository's default, as the desktop app reported it (`head`): without its report nothing passes, and `git
 /// push`, `git push origin` and `HEAD` are the branch it reported checked out.
+///
+/// The report's default was read from origin. A named remote other than origin is not that remote, so it asks. The
+/// reported name only adds a protected branch ([`branch_kind`]): a long-lived name stays protected whatever it says.
 pub fn plain_push(command: &str, head: Option<&GitHead>) -> bool {
     let Some(head) = head.filter(|h| h.default.is_some()) else {
         return false;
@@ -2337,9 +2340,7 @@ pub fn plain_push(command: &str, head: Option<&GitHead>) -> bool {
     let Some((remote, refs)) = operands.split_first() else {
         return current;
     };
-    if !remote.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
-        || remote.starts_with(['-', '.'])
-    {
+    if *remote != "origin" {
         return false;
     }
     if refs.is_empty() {
@@ -2994,11 +2995,29 @@ mod tests {
             "git push origin feature/x:feature/y",
             "git push -q origin feature/x fix-1.2",
             "git push --no-verify -v origin feature/x",
-            "git push upstream feature/x",
         ] {
             assert!(may_decide(c, Some(&feature)), "{c}");
             assert!(plain_push(c, Some(&feature)), "{c}");
         }
+    }
+
+    /// The default the desktop app read is one more protected name. It cannot unprotect a long-lived name, and it does
+    /// not apply to a push whose remote is not origin (that is the remote the name was read from).
+    #[test]
+    fn a_reported_default_adds_a_branch_and_never_unprotects_a_long_lived_name() {
+        let forged = head(Some("main"), Some("decoy"));
+        assert!(!may_decide("git push", Some(&forged)), "main stays protected whatever the file says");
+        assert!(!may_decide("git push origin HEAD", Some(&forged)));
+        assert!(!may_decide("git push origin main", Some(&head(Some("feature/x"), Some("decoy")))));
+        assert!(!may_decide("git push origin develop", Some(&head(Some("feature/x"), Some("decoy")))));
+        assert!(!may_decide("git push origin release/1", Some(&head(Some("feature/x"), Some("decoy")))));
+        assert!(
+            !may_decide("git push origin decoy", Some(&head(Some("feature/x"), Some("decoy")))),
+            "the name the file adds is protected too"
+        );
+        assert!(may_decide("git push origin feature/x", Some(&head(Some("feature/x"), Some("decoy")))));
+        assert!(!may_decide("git push upstream feature/x", Some(&head(Some("feature/x"), Some("main")))));
+        assert!(!may_decide("git push upstream", Some(&head(Some("feature/x"), Some("main")))));
     }
 
     /// The allowlist's negative side: every other line that mentions a push asks, each bypass found in review kept here.
@@ -3012,6 +3031,8 @@ mod tests {
             "git push origin release/1.0",
             "git push origin gh-pages",
             "git push origin feature/x main",
+            "git push upstream feature/x",
+            "git push other feature/x",
             "git push origin @",
             "git push origin HEAD:main",
             "git push origin feature/x:HEAD",
