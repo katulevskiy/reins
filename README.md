@@ -13,7 +13,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.webp">
-    <img src="docs/assets/readme/hero-light.webp" width="860" alt="The Reins desktop app shows Claude Code's force-push to main waiting for the phone. Beside it, an iPhone shows a force-push with Deny and Hold to approve.">
+    <img src="docs/assets/readme/hero-light.webp" width="860" alt="The Reins desktop app: Claude Code wants to run git push --force origin main in acme-web, waiting on the phone. Beside it, the phone asks about the same command, with No and Hold to yes.">
   </picture>
 </p>
 
