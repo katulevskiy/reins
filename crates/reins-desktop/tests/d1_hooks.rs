@@ -1,7 +1,6 @@
 //! `reins hook <harness>`: each harness's hook input (fixtures in its documented format), the question the phone
 //! gets, and the answer in that harness's exact output format.
 
-mod common;
 mod d1_mock;
 
 use std::io::Write as _;
@@ -254,7 +253,7 @@ async fn gemini_before_tool() {
 fn the_command_line_reads_stdin_and_answers() {
     let dir = tempfile::tempdir().unwrap();
     let run = |harness: &str, input: &str| {
-        let mut child = std::process::Command::new(common::reins_exe())
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(["hook", harness])
             .envs(reins_desktop::config::home_env(dir.path()))
             .env("REINS_CONFIG_DIR", dir.path().join("config"))

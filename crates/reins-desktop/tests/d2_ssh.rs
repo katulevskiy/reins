@@ -3,7 +3,6 @@
 //! `ssh` login to a throwaway `sshd` is signed on the phone with the server named (session-bind + known_hosts), and
 //! refusals fail the client. Also `reins ssh setup|unsetup` on a temporary HOME. Skips what needs a missing tool.
 
-mod common;
 mod d2_support;
 
 use std::path::{Path, PathBuf};
@@ -362,7 +361,7 @@ fn ssh_setup_and_unsetup_edit_only_the_given_home() {
     std::fs::write(home.join(".ssh/config"), user_config).unwrap();
     let state = dir.path().join("state");
     let run = |args: &[&str]| {
-        let out = std::process::Command::new(common::reins_exe())
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
             .envs(reins_desktop::config::home_env(&home))
             .env("REINS_CONFIG_DIR", dir.path().join("config"))

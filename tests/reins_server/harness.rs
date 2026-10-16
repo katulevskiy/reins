@@ -12,15 +12,6 @@ use serde_json::{Value, json};
 /// Any string works: the server stores a salted PBKDF2 of whatever the client sends.
 pub const PASSWORD_HASH: &str = "reins-test-master-password-hash";
 
-/// The server binary. Nextest sets `NEXTEST_BIN_EXE_vaultwarden` when a run is restored from an
-/// archive; `cargo test` sets `CARGO_BIN_EXE_vaultwarden`.
-pub(crate) fn server_binary() -> PathBuf {
-    std::env::var_os("NEXTEST_BIN_EXE_vaultwarden")
-        .or_else(|| std::env::var_os("CARGO_BIN_EXE_vaultwarden"))
-        .map(PathBuf::from)
-        .expect("vaultwarden binary")
-}
-
 #[derive(Clone)]
 pub struct Options {
     pub relay_wait_secs: u64,
@@ -111,7 +102,7 @@ impl Server {
     fn spawn(dir: &std::path::Path, port: u16, options: &Options) -> Child {
         let log = File::create(dir.join("server.log")).expect("log file");
         let base = format!("http://127.0.0.1:{port}");
-        let mut command = Command::new(server_binary());
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vaultwarden"));
         command
             .current_dir(dir)
             .env_clear()

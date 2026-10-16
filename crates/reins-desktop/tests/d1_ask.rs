@@ -1,7 +1,6 @@
 //! `reins ask` with the phone: the question goes out as `desktop_ask`, and only a decision sealed to this app's key
 //! that echoes the question's nonce counts.
 
-mod common;
 mod d1_mock;
 
 use std::time::Duration;
@@ -125,7 +124,7 @@ async fn the_command_line_exits_0_1_or_2() {
     let paths = app.paths.clone();
     let home = app.dir.path().to_path_buf();
     let run = move |args: &[&str]| {
-        let out = std::process::Command::new(common::reins_exe())
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .arg("ask")
             .args(args)
             .envs(reins_desktop::config::home_env(&home))

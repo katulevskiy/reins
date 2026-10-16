@@ -1,8 +1,6 @@
 //! The `reins` command line: git setup on a temporary `HOME`, and status / pending / approve against a daemon
 //! started by the binary itself.
 
-mod common;
-
 use std::path::Path;
 use std::process::{Command, Output};
 use std::time::Duration;
@@ -29,7 +27,7 @@ impl Env {
     fn command(&self, args: &[&str]) -> Command {
         let home = self.dir.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
-        let mut c = Command::new(common::reins_exe());
+        let mut c = Command::new(env!("CARGO_BIN_EXE_reins"));
         c.args(args)
             .envs(reins_desktop::config::home_env(&home))
             .env("REINS_CONFIG_DIR", self.dir.path().join("config"))

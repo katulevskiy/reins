@@ -2,8 +2,6 @@
 //! what `--help` shows, `reins doctor` on a computer that is not set up, work sessions without one running, `reins
 //! test` and `reins vault` without a phone, and `reins uninstall`. None of them may wait for a phone or a prompt.
 
-mod common;
-
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
@@ -27,7 +25,7 @@ impl Env {
         let home = self.dir.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
         let started = Instant::now();
-        let out = Command::new(common::reins_exe())
+        let out = Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
             .current_dir(&home)
             .envs(reins_desktop::config::home_env(&home))

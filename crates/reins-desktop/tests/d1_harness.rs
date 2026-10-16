@@ -1,8 +1,6 @@
 //! `reins harness add|remove|list` on temporary home directories: what `add` writes in each harness's format, and
 //! that `remove` gives back every file that existed byte for byte and deletes the ones `add` created.
 
-mod common;
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -322,7 +320,7 @@ fn a_symlinked_settings_file_is_edited_where_it_lives() {
 fn the_command_line_uses_home_and_this_program() {
     let env = Env::new();
     let run = |args: &[&str]| {
-        let out = std::process::Command::new(common::reins_exe())
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
             .envs(reins_desktop::config::home_env(env.home.path()))
             .env("REINS_CONFIG_DIR", env.state.path().join("config"))
@@ -334,7 +332,7 @@ fn the_command_line_uses_home_and_this_program() {
     };
     let said = run(&["harness", "add", "cursor"]);
     assert!(said.contains("~/.cursor/mcp.json") && said.contains("Restart Cursor"), "{said}");
-    let exe = reins_desktop::win::strip_verbatim(&std::fs::canonicalize(common::reins_exe()).unwrap());
+    let exe = reins_desktop::win::strip_verbatim(&std::fs::canonicalize(env!("CARGO_BIN_EXE_reins")).unwrap());
     assert_eq!(env.json(".cursor/mcp.json")["mcpServers"]["reins"]["command"], exe.display().to_string());
     // All harnesses: one line each; one harness: its parts and files.
     let listed = run(&["harness", "list"]);
@@ -353,7 +351,7 @@ fn the_command_line_uses_home_and_this_program() {
 fn uninstall_undoes_the_harnesses_and_git_and_says_each_step() {
     let env = Env::new();
     let run = |args: &[&str]| {
-        std::process::Command::new(common::reins_exe())
+        std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(args)
             .envs(reins_desktop::config::home_env(env.home.path()))
             .env("REINS_CONFIG_DIR", env.state.path().join("config"))

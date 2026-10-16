@@ -420,7 +420,7 @@ async fn bad_limit_settings_stop_the_server() {
     use std::process::Command;
     let dir = std::env::temp_dir().join(format!("reins-bad-limits-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let output = Command::new(crate::harness::server_binary())
+    let output = Command::new(env!("CARGO_BIN_EXE_vaultwarden"))
         .current_dir(&dir)
         .env_clear()
         .env("DATA_FOLDER", &dir)
