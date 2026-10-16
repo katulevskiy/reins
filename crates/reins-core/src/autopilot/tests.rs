@@ -458,7 +458,10 @@ async fn bypass_approves_everything_and_ends_by_itself() {
     let grants = env.store().grants().unwrap();
     assert_eq!(grants.len(), 1);
     let expires = grants[0].grant.expires_at.unwrap();
-    assert!(expires <= settings.bypass_until.unwrap() && expires > unix_now() + 29 * 60, "{expires}");
+    // Its length is set from the bypass's end when the cap is read and stamped a moment later, so the expiry can
+    // land a second or two past the end; the bypass's own expiry takes such permissions back (`ap_expire_bypasses`).
+    let end = settings.bypass_until.unwrap();
+    assert!(expires <= end + 5 && expires > unix_now() + 29 * 60, "{expires} vs {end}");
     let entry = env.core.activity(5).await.unwrap().into_iter().find(|e| e.outcome == "sent").unwrap();
     assert_eq!(entry.decided_by, "bypass");
 
