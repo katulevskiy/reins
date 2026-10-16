@@ -63,19 +63,23 @@ PY
 source "$RUNNER_TEMP/sim-choice.env"
 rm -f "$RUNNER_TEMP/sim-choice.env"
 
-# macOS ships bash 3.2, where `read -a` leaves the array unset on an empty string and `set -u` then
-# rejects "${array[@]}". Declare both first, and only read when there is something to split.
+# macOS ships bash 3.2. Under set -u, "${array[@]}" is an unbound variable when the array is empty,
+# even after array=(). Shards with no -skip-testing never expand that list.
+if [[ -z "${ONLY:-}" ]]; then
+  echo "ONLY is required" >&2
+  exit 1
+fi
 args=()
-only_items=()
-skip_items=()
-[[ -n "${ONLY:-}" ]] && IFS=',' read -ra only_items <<< "$ONLY"
-[[ -n "${SKIP:-}" ]] && IFS=',' read -ra skip_items <<< "$SKIP"
+IFS=',' read -ra only_items <<< "$ONLY"
 for item in "${only_items[@]}"; do
   [[ -n "$item" ]] && args+=(-only-testing:"$item")
 done
-for item in "${skip_items[@]}"; do
-  [[ -n "$item" ]] && args+=(-skip-testing:"$item")
-done
+if [[ -n "${SKIP:-}" ]]; then
+  IFS=',' read -ra skip_items <<< "$SKIP"
+  for item in "${skip_items[@]}"; do
+    [[ -n "$item" ]] && args+=(-skip-testing:"$item")
+  done
+fi
 echo "xcodebuild ${args[*]}"
 
 UDID="$(xcrun simctl create "Reins CI" "$DEVTYPE" "$RUNTIME")"
