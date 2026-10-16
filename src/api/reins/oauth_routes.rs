@@ -65,6 +65,15 @@ const MAX_CONCURRENT_FETCHES: usize = 32;
 /// How long a request queues for its turns (site and global together) before it is refused, alone; nothing is
 /// remembered, it can try again. Queued requests hold no database connection.
 const FETCH_QUEUE_WAIT: Duration = Duration::from_secs(2);
+/// Fetches at once that refresh documents the server already holds (known clients), in a pool of their own: other
+/// fetches, however many, never take these turns. Fair (first come, first served), so a refresh always gets a turn.
+const MAX_CONCURRENT_REFRESHES: usize = 4;
+/// How long a background refresh waits for a refresh turn (nobody waits on it but the refresh itself).
+const REFRESH_QUEUE_WAIT: Duration = Duration::from_secs(10);
+/// Of the reserved refresh turns, how many one site may hold at once.
+const REFRESHES_PER_SITE: usize = 1;
+/// Keys a turn map holds at once; beyond it, idle ones are dropped first (a map never refuses).
+const MAX_FETCH_SITES: usize = 4096;
 const MAX_EMAIL_BYTES: usize = 254;
 /// Authorize parameter carrying the desktop app's public key (spec: desktop git proxy, keys and pairing).
 pub const CLIENT_KEY_PARAM: &str = "reins_client_key";
@@ -191,31 +200,75 @@ impl FetchError {
 
 /// The global bound on fetches at once.
 static FETCH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_CONCURRENT_FETCHES);
+/// The reserved pool for refreshes of known clients (see [`MAX_CONCURRENT_REFRESHES`]).
+static REFRESH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_CONCURRENT_REFRESHES);
 /// One fetch per URL at a time: concurrent requests for the same document wait for that fetch and use its result.
 static FETCHES_IN_FLIGHT: LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(Default::default);
-/// Fetch turns per site, so one site's slowness, or an attacker's many names under one domain, holds only its own.
-static SITE_TURNS: LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>> =
-    LazyLock::new(Default::default);
+type TurnMap = LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>>;
 
-/// The site a URL belongs to, for [`FETCHES_PER_SITE`]: the last two labels of its host name (three when the second
-/// to last is a short public-suffix-like label, as in `example.co.uk`), or the address itself. Many subdomains of
-/// one domain are one site. An approximation of the registrable domain: it may group more than one owner together
-/// (only stricter for them), never split one owner's subdomains apart.
+/// Request fetch turns per site, so one site's slowness, or an attacker's many names under one domain, holds only its
+/// own ([`FETCHES_PER_SITE`]).
+static SITE_TURNS: TurnMap = LazyLock::new(Default::default);
+/// Refresh turns per site, inside the reserved refresh pool ([`REFRESHES_PER_SITE`]).
+static REFRESH_SITE_TURNS: TurnMap = LazyLock::new(Default::default);
+
+/// The ICANN public suffix of `host` by the Public Suffix List (compiled into the `psl` crate). Private-section
+/// suffixes (`github.io`, `s3.amazonaws.com`) are looked through: they are run by one company, so their tenants are
+/// counted as that company's site, and many free subdomains of one platform never multiply anyone's turns.
+fn icann_suffix(host: &str) -> &str {
+    let mut candidate = host;
+    loop {
+        let Some(found) = psl::suffix(candidate.as_bytes()) else {
+            return candidate.rsplit('.').next().unwrap_or(candidate);
+        };
+        let found_len = found.trim().as_bytes().len();
+        let suffix = &candidate[candidate.len().saturating_sub(found_len)..];
+        match (found.typ(), suffix.split_once('.')) {
+            (Some(psl::Type::Private), Some((_, parent))) => candidate = parent,
+            _ => return suffix,
+        }
+    }
+}
+
+/// The network an address is grouped by: IPv4 by /24, IPv6 by /48.
+fn address_network(address: IpAddr) -> String {
+    match address.to_canonical() {
+        IpAddr::V4(v4) => {
+            let [a, b, c, _] = v4.octets();
+            format!("{a}.{b}.{c}.0/24")
+        }
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[6..].fill(0);
+            format!("{}/48", std::net::Ipv6Addr::from(octets))
+        }
+    }
+}
+
+/// The site a URL's fetches count against, [`FETCHES_PER_SITE`] at once: its registrable domain under the ICANN
+/// section of the Public Suffix List, or the full host when it has none (a bare suffix). There is no cap per public
+/// suffix: sites under a busy suffix such as `com` never share turns, so an attacker's `.com` sites cannot starve
+/// anyone else's; the per-address budget and the global bound limit how many sites one party can keep busy.
 fn fetch_site(url: &str) -> String {
     let Some(host) = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)) else {
         return String::new();
     };
     let host = host.trim_end_matches('.');
-    if host.parse::<IpAddr>().is_ok() || host.starts_with('[') {
-        return host.to_owned();
+    let address = host.trim_start_matches('[').trim_end_matches(']').parse::<IpAddr>();
+    if let Ok(address) = address {
+        // Addresses only reach a fetch in the test mode (documents must be named by a domain); grouped by network
+        // anyway, so rotating through one network's addresses never counts as many sites.
+        return address_network(address);
     }
-    let labels: Vec<&str> = host.split('.').collect();
-    let keep = match labels.as_slice() {
-        [.., second, top] if top.len() == 2 && second.len() <= 3 && labels.len() >= 3 => 3,
-        _ => 2,
-    };
-    labels[labels.len().saturating_sub(keep)..].join(".")
+    let suffix = icann_suffix(host);
+    match host.strip_suffix(suffix).and_then(|rest| rest.strip_suffix('.')) {
+        Some(rest) if !rest.is_empty() => {
+            let label = rest.rsplit('.').next().unwrap_or(rest);
+            format!("{label}.{suffix}")
+        }
+        _ => host.to_owned(),
+    }
 }
 
 /// The turn to fetch one URL; dropping it lets the next request for that URL go (and forgets the URL when nobody
@@ -258,20 +311,74 @@ fn try_fetch_turn(url: &str) -> Option<FetchTurn> {
     })
 }
 
-/// A turn among its site's [`FETCHES_PER_SITE`]; the site is forgotten once nobody holds or waits for a turn.
-struct SiteTurn {
-    site: String,
+/// One turn in a per-key turn map (per site, per suffix). It holds its own reference to the key's turns from the start,
+/// so whatever way it ends (done, timed out, or the request gone mid-wait), dropping it drops that reference and then
+/// forgets the key if nobody else holds or waits for a turn there.
+struct Turn {
+    map: &'static TurnMap,
+    key: String,
+    turns: Option<Arc<tokio::sync::Semaphore>>,
     permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
-impl Drop for SiteTurn {
-    fn drop(&mut self) {
-        drop(self.permit.take());
-        let mut sites = SITE_TURNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if sites.get(&self.site).is_some_and(|turns| Arc::strong_count(turns) == 1) {
-            sites.remove(&self.site);
+impl Turn {
+    fn new(map: &'static TurnMap, key: String, per_key: usize) -> Self {
+        let turns = {
+            let mut keys = map.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if keys.len() >= MAX_FETCH_SITES && !keys.contains_key(&key) {
+                forget_idle_keys(&mut keys);
+            }
+            Arc::clone(keys.entry(key.clone()).or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(per_key))))
+        };
+        Self {
+            map,
+            key,
+            turns: Some(turns),
+            permit: None,
         }
     }
+
+    /// Waits until `deadline` for a turn; `false` if none came.
+    async fn acquire(&mut self, deadline: tokio::time::Instant) -> bool {
+        let Some(turns) = &self.turns else {
+            return false;
+        };
+        self.permit =
+            tokio::time::timeout_at(deadline, Arc::clone(turns).acquire_owned()).await.ok().and_then(Result::ok);
+        self.permit.is_some()
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        drop(self.turns.take());
+        let mut keys = self.map.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if keys.get(&self.key).is_some_and(|turns| Arc::strong_count(turns) == 1) {
+            keys.remove(&self.key);
+        }
+    }
+}
+
+/// Drops keys nobody holds or waits for a turn at (only the map refers to them).
+fn forget_idle_keys(keys: &mut HashMap<String, Arc<tokio::sync::Semaphore>>) {
+    keys.retain(|_, turns| Arc::strong_count(turns) > 1);
+}
+
+/// Housekeeping: forgets idle sites and suffixes, whatever left them behind.
+pub fn purge_fetch_sites() {
+    for map in [&SITE_TURNS, &REFRESH_SITE_TURNS] {
+        forget_idle_keys(&mut map.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    }
+}
+
+/// Which turns a fetch takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FetchPool {
+    /// A request's own fetch: its site's turns and the global ones, queueing at most [`FETCH_QUEUE_WAIT`].
+    Request,
+    /// A background refresh of a document the server holds: the reserved refresh turns only.
+    Refresh,
 }
 
 /// Fetches a small JSON document a client names (its Client ID Metadata Document, Decision 25, or its `jwks_uri`):
@@ -280,25 +387,33 @@ impl Drop for SiteTurn {
 /// ([`FETCHES_PER_SITE`]) and of all sites ([`MAX_CONCURRENT_FETCHES`]). Anyone may name any URL here, so it is the
 /// same guard as for the phone's requests, independent of `HTTP_REQUEST_BLOCK_NON_GLOBAL_IPS`. Callers hold no
 /// database connection while this runs.
-async fn fetch_document(url: &str, limit: usize, what: &str) -> Result<Vec<u8>, FetchError> {
+async fn fetch_document(url: &str, limit: usize, what: &str, pool: FetchPool) -> Result<Vec<u8>, FetchError> {
     let busy =
         || FetchError::Transient("the server is busy fetching client documents; try again in a moment".to_owned());
-    let deadline = tokio::time::Instant::now() + FETCH_QUEUE_WAIT;
     let site = fetch_site(url);
-    let turns = {
-        let mut sites = SITE_TURNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        Arc::clone(sites.entry(site.clone()).or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(FETCHES_PER_SITE))))
-    };
-    let permit = tokio::time::timeout_at(deadline, turns.acquire_owned()).await;
-    let site_turn = SiteTurn {
-        site,
-        permit: permit.ok().and_then(Result::ok),
-    };
-    if site_turn.permit.is_none() {
-        return Err(busy());
-    }
-    let Ok(Ok(_slot)) = tokio::time::timeout_at(deadline, FETCH_SLOTS.acquire()).await else {
-        return Err(busy());
+    let (_turn, _slot) = match pool {
+        FetchPool::Request => {
+            let deadline = tokio::time::Instant::now() + FETCH_QUEUE_WAIT;
+            let mut site_turn = Turn::new(&SITE_TURNS, site, FETCHES_PER_SITE);
+            if !site_turn.acquire(deadline).await {
+                return Err(busy());
+            }
+            let Ok(Ok(slot)) = tokio::time::timeout_at(deadline, FETCH_SLOTS.acquire()).await else {
+                return Err(busy());
+            };
+            (site_turn, slot)
+        }
+        FetchPool::Refresh => {
+            let deadline = tokio::time::Instant::now() + REFRESH_QUEUE_WAIT;
+            let mut site_turn = Turn::new(&REFRESH_SITE_TURNS, site, REFRESHES_PER_SITE);
+            if !site_turn.acquire(deadline).await {
+                return Err(busy());
+            }
+            let Ok(Ok(slot)) = tokio::time::timeout_at(deadline, REFRESH_SLOTS.acquire()).await else {
+                return Err(busy());
+            };
+            (site_turn, slot)
+        }
     };
     let definitive = |why: String| FetchError::Definitive(why);
     let transient = |why: String| FetchError::Transient(why);
@@ -360,8 +475,8 @@ fn charge_fetch(ip: IpAddr) -> Result<(), FetchError> {
 
 /// Fetches and parses a metadata document now, and caches it (and its client's `private_key_jwt`, for good). A
 /// definitive failure is remembered for this exact URL as a metadata document.
-async fn fetch_metadata_now(client_id: &str, pool: &DbPool) -> Result<ClientInfo, FetchError> {
-    let fetched = fetch_document(client_id, oauth::MAX_CLIENT_METADATA_BYTES, "client metadata document")
+async fn fetch_metadata_now(client_id: &str, pool: &DbPool, turns: FetchPool) -> Result<ClientInfo, FetchError> {
+    let fetched = fetch_document(client_id, oauth::MAX_CLIENT_METADATA_BYTES, "client metadata document", turns)
         .await
         .and_then(|body| parse_client_metadata(client_id, &body).map_err(FetchError::Definitive));
     let client = match fetched {
@@ -380,10 +495,23 @@ async fn fetch_metadata_now(client_id: &str, pool: &DbPool) -> Result<ClientInfo
     Ok(client)
 }
 
-/// Starts a background refresh of a known client's metadata document, unless one is running or failed within 30 s.
-/// Not charged to anyone: only documents the server already holds are refreshed, at most once per URL at a time.
-fn refresh_metadata_in_background(client_id: &str, pool: &DbPool) {
-    if OAUTH.failed_fetch(FetchKind::Metadata, client_id).is_some() {
+/// Whether the requesting address may start one more background refresh ([`limits::CLIENT_DOCUMENT_REFRESHES`]).
+/// Over it, nothing is refused: the request is served from what the server holds, without a refresh.
+fn may_trigger_refresh(ip: IpAddr) -> bool {
+    limits::CLIENT_DOCUMENT_REFRESHES.check(&fetch_payer(ip)).is_ok()
+}
+
+/// Starts a background refresh of a known client's metadata document: in the reserved refresh pool (one turn per
+/// site), uncharged to the fetch budget, at most one per URL at a time, spaced per URL with back-off after failures,
+/// and limited per requesting address. A failed refresh changes nothing else: the last good copy goes on standing in
+/// until its grace ends (a hard limit, never extended), and only a definitive failure is remembered, as for any fetch.
+fn refresh_metadata_in_background(client_id: &str, pool: &DbPool, ip: IpAddr) {
+    // Due first (no mark), then the requester's limit, then the mark: a requester over its limit leaves no mark that
+    // would hold back the next requester's refresh.
+    if !OAUTH.refresh_due(FetchKind::Metadata, client_id)
+        || !may_trigger_refresh(ip)
+        || !OAUTH.may_refresh(FetchKind::Metadata, client_id)
+    {
         return;
     }
     let Some(turn) = try_fetch_turn(client_id) else {
@@ -392,10 +520,12 @@ fn refresh_metadata_in_background(client_id: &str, pool: &DbPool) {
     let (client_id, pool) = (client_id.to_owned(), pool.clone());
     tokio::spawn(async move {
         let _turn = turn;
-        if let Err(error) = fetch_metadata_now(&client_id, &pool).await {
-            // Within its grace the last good copy goes on standing in; not asked again for 30 s.
-            OAUTH.remember_failed_fetch(FetchKind::Metadata, &client_id, error.why());
-            warn!("Could not refresh a client metadata document: {}", error.why());
+        match fetch_metadata_now(&client_id, &pool, FetchPool::Refresh).await {
+            Ok(_) => OAUTH.refresh_succeeded(FetchKind::Metadata, &client_id),
+            Err(error) => {
+                OAUTH.refresh_failed(FetchKind::Metadata, &client_id);
+                warn!("Could not refresh a client metadata document: {}", error.why());
+            }
         }
     });
 }
@@ -413,7 +543,7 @@ async fn client_metadata(client_id: &str, pool: &DbPool, ip: IpAddr) -> Result<C
     };
     if let Some((client, fresh)) = held() {
         if !fresh {
-            refresh_metadata_in_background(client_id, pool);
+            refresh_metadata_in_background(client_id, pool, ip);
         }
         return Ok(client);
     }
@@ -430,13 +560,13 @@ async fn client_metadata(client_id: &str, pool: &DbPool, ip: IpAddr) -> Result<C
         return Err(failed.why);
     }
     charge_fetch(ip).map_err(|e| e.why().to_owned())?;
-    fetch_metadata_now(client_id, pool).await.map_err(|e| e.why().to_owned())
+    fetch_metadata_now(client_id, pool, FetchPool::Request).await.map_err(|e| e.why().to_owned())
 }
 
 /// Fetches and parses a key set now, and caches it (replacing the last good copy, so a key it no longer lists is
 /// gone at once). A definitive failure is remembered for this exact URL as a key set.
-async fn fetch_jwks_now(jwks_uri: &str) -> Result<jsonwebtoken::jwk::JwkSet, FetchError> {
-    let fetched = fetch_document(jwks_uri, oauth::MAX_JWKS_BYTES, "client's JWKS")
+async fn fetch_jwks_now(jwks_uri: &str, turns: FetchPool) -> Result<jsonwebtoken::jwk::JwkSet, FetchError> {
+    let fetched = fetch_document(jwks_uri, oauth::MAX_JWKS_BYTES, "client's JWKS", turns)
         .await
         .and_then(|body| parse_jwks(&body).map_err(FetchError::Definitive));
     match fetched {
@@ -453,8 +583,12 @@ async fn fetch_jwks_now(jwks_uri: &str) -> Result<jsonwebtoken::jwk::JwkSet, Fet
     }
 }
 
-fn refresh_jwks_in_background(jwks_uri: &str) {
-    if OAUTH.failed_fetch(FetchKind::KeySet, jwks_uri).is_some() {
+/// Starts a background refresh of a key set the server holds, like [`refresh_metadata_in_background`].
+fn refresh_jwks_in_background(jwks_uri: &str, ip: IpAddr) {
+    if !OAUTH.refresh_due(FetchKind::KeySet, jwks_uri)
+        || !may_trigger_refresh(ip)
+        || !OAUTH.may_refresh(FetchKind::KeySet, jwks_uri)
+    {
         return;
     }
     let Some(turn) = try_fetch_turn(jwks_uri) else {
@@ -463,9 +597,12 @@ fn refresh_jwks_in_background(jwks_uri: &str) {
     let jwks_uri = jwks_uri.to_owned();
     tokio::spawn(async move {
         let _turn = turn;
-        if let Err(error) = fetch_jwks_now(&jwks_uri).await {
-            OAUTH.remember_failed_fetch(FetchKind::KeySet, &jwks_uri, error.why());
-            warn!("Could not refresh a client's JWKS: {}", error.why());
+        match fetch_jwks_now(&jwks_uri, FetchPool::Refresh).await {
+            Ok(_) => OAUTH.refresh_succeeded(FetchKind::KeySet, &jwks_uri),
+            Err(error) => {
+                OAUTH.refresh_failed(FetchKind::KeySet, &jwks_uri);
+                warn!("Could not refresh a client's JWKS: {}", error.why());
+            }
         }
     });
 }
@@ -489,7 +626,7 @@ async fn client_jwks(jwks_uri: &str, force: bool, ip: IpAddr) -> Result<jsonwebt
     };
     if !force && let Some((set, fresh)) = held() {
         if !fresh {
-            refresh_jwks_in_background(jwks_uri);
+            refresh_jwks_in_background(jwks_uri, ip);
         }
         return Ok(set);
     }
@@ -504,7 +641,7 @@ async fn client_jwks(jwks_uri: &str, force: bool, ip: IpAddr) -> Result<jsonwebt
         return Ok(set);
     }
     charge_fetch(ip).map_err(|e| jwks_error(&e))?;
-    fetch_jwks_now(jwks_uri).await.map_err(|e| jwks_error(&e))
+    fetch_jwks_now(jwks_uri, FetchPool::Request).await.map_err(|e| jwks_error(&e))
 }
 
 /// A `client_id` that names a metadata document (in the test mode also `http://` on loopback, for mock servers).
@@ -521,6 +658,11 @@ async fn db(pool: &DbPool) -> Result<DbConn, OAuthError> {
 }
 
 async fn resolve_client(client_id: &str, pool: &DbPool, ip: IpAddr) -> Result<ClientInfo, String> {
+    if oauth::is_ip_literal_https_url(client_id) {
+        return Err(
+            "a client metadata document at an IP address is not allowed; it must be named by a domain".to_owned()
+        );
+    }
     if is_metadata_client_id(client_id) {
         return client_metadata(client_id, pool, ip).await;
     }
@@ -1285,14 +1427,150 @@ mod tests {
     }
 
     #[test]
-    fn fetch_sites_group_subdomains() {
-        assert_eq!(fetch_site("https://chatgpt.com/oauth/client.json"), "chatgpt.com");
-        assert_eq!(fetch_site("https://a.b.evil.example/x"), "evil.example");
-        assert_eq!(fetch_site("https://x.evil.EXAMPLE./x"), "evil.example");
-        assert_eq!(fetch_site("https://login.example.co.uk/x"), "example.co.uk");
-        assert_eq!(fetch_site("https://203.0.113.7/x"), "203.0.113.7");
-        assert_eq!(fetch_site("https://[2001:db8::1]/x"), "[2001:db8::1]");
-        assert_ne!(fetch_site("https://chatgpt.com/x"), fetch_site("https://chatgpt.com.evil.example/x"));
+    fn fetch_sites_are_icann_registrable_domains() {
+        let site = fetch_site;
+        assert_eq!(site("https://chatgpt.com/oauth/client.json"), "chatgpt.com");
+        assert_eq!(site("https://a.b.c.chatgpt.com/x"), "chatgpt.com", "subdomains are one site");
+        assert_eq!(site("https://x.evil.COM./x"), "evil.com");
+        assert_eq!(site("https://login.example.co.uk/x"), "example.co.uk");
+        assert_eq!(icann_suffix("login.example.co.uk"), "co.uk");
+        assert_eq!(site("https://a.b.example.com.au/x"), "example.com.au");
+        // The old two-letter heuristic split `abc.de` into one site per subdomain.
+        assert_eq!(site("https://one.abc.de/x"), "abc.de");
+        assert_eq!(site("https://two.abc.de/x"), "abc.de");
+        // Private-section suffixes are looked through: all of a platform's tenants are the platform's one site, so
+        // free subdomains never multiply an attacker's turns.
+        assert_eq!(site("https://alice.github.io/x"), "github.io");
+        assert_eq!(site("https://alice.github.io/x"), site("https://bob.github.io/x"));
+        assert_eq!(site("https://bucket.s3.amazonaws.com/x"), "amazonaws.com");
+        assert_eq!(icann_suffix("alice.github.io"), "io");
+        // No cap per suffix: two .com sites never share turns.
+        assert_ne!(site("https://chatgpt.com/x"), site("https://evil.com/x"));
+        // Names the list does not know count under their last label; no registrable domain: the full host.
+        assert_eq!(site("https://a.b.evil.example/x"), "evil.example");
+        assert_eq!(site("https://co.uk/x"), "co.uk");
+        // Addresses (test mode only; documents must be named by a domain) are grouped by network.
+        assert_eq!(site("https://203.0.113.7/x"), "203.0.113.0/24");
+        assert_eq!(site("https://203.0.113.200/x"), site("https://203.0.113.7/x"));
+        assert_ne!(site("https://203.0.114.7/x"), site("https://203.0.113.7/x"));
+        assert_eq!(site("https://[2001:db8:1:2::1]/x"), "2001:db8:1::/48");
+        assert_eq!(site("https://[2001:db8:1:ffff::9]/x"), site("https://[2001:db8:1:2::1]/x"));
+        assert_ne!(site("https://chatgpt.com/x"), site("https://chatgpt.com.evil.com/x"));
+    }
+
+    fn known(map: &'static TurnMap, key: &str) -> bool {
+        map.lock().unwrap().contains_key(key)
+    }
+
+    /// A key's entry goes once nobody holds or waits for its turns, whether the turns were used, timed out, or the
+    /// request went away mid-wait.
+    #[tokio::test]
+    async fn turns_are_forgotten_however_they_end() {
+        let soon = || tokio::time::Instant::now() + Duration::from_millis(50);
+        let site = "turns-end.example";
+        let turn = || Turn::new(&SITE_TURNS, site.to_owned(), FETCHES_PER_SITE);
+        {
+            let mut used = turn();
+            assert!(used.acquire(soon()).await);
+            assert!(known(&SITE_TURNS, site));
+        }
+        assert!(!known(&SITE_TURNS, site), "used");
+
+        let (mut a, mut b) = (turn(), turn());
+        assert!(a.acquire(soon()).await && b.acquire(soon()).await);
+        let mut third = turn();
+        assert!(!third.acquire(soon()).await, "two turns per site");
+        drop(third);
+        assert!(known(&SITE_TURNS, site), "still held");
+        // A request that goes away while it waits.
+        let waiting = async {
+            let mut waiter = turn();
+            waiter.acquire(tokio::time::Instant::now() + Duration::from_secs(30)).await
+        };
+        assert!(tokio::time::timeout(Duration::from_millis(50), waiting).await.is_err());
+        drop((a, b));
+        assert!(!known(&SITE_TURNS, site), "timed out and abandoned waiters leave nothing behind");
+    }
+
+    #[test]
+    fn idle_keys_are_purged_and_the_maps_are_capped() {
+        {
+            let mut sites = SITE_TURNS.lock().unwrap();
+            for i in 0..MAX_FETCH_SITES {
+                sites.insert(format!("idle-{i}.example"), Arc::new(tokio::sync::Semaphore::new(FETCHES_PER_SITE)));
+            }
+        }
+        let turn = Turn::new(&SITE_TURNS, "newcomer.example".to_owned(), FETCHES_PER_SITE);
+        assert!(!known(&SITE_TURNS, "idle-0.example"), "a full map drops idle keys to make room");
+        assert!(known(&SITE_TURNS, "newcomer.example"));
+        drop(turn);
+        for map in [&SITE_TURNS, &REFRESH_SITE_TURNS] {
+            map.lock().unwrap().insert("left-behind".to_owned(), Arc::new(tokio::sync::Semaphore::new(1)));
+        }
+        purge_fetch_sites();
+        for map in [&SITE_TURNS, &REFRESH_SITE_TURNS] {
+            assert!(!known(map, "left-behind"));
+        }
+    }
+
+    /// Refreshes of known clients have turns of their own: all request turns taken does not stop them, and within
+    /// the refresh pool one site holds one turn, so one site's refreshes cannot take the pool either.
+    #[tokio::test]
+    async fn refreshes_have_a_reserved_pool_shared_per_site() {
+        let soon = || tokio::time::Instant::now() + Duration::from_millis(50);
+        let all = FETCH_SLOTS.acquire_many(u32::try_from(MAX_CONCURRENT_FETCHES).unwrap()).await.unwrap();
+        assert!(FETCH_SLOTS.try_acquire().is_err());
+        let refresh = REFRESH_SLOTS.try_acquire();
+        assert!(refresh.is_ok());
+        drop((all, refresh));
+        let mut first = Turn::new(&REFRESH_SITE_TURNS, "slow.example".to_owned(), REFRESHES_PER_SITE);
+        assert!(first.acquire(soon()).await);
+        let mut second = Turn::new(&REFRESH_SITE_TURNS, "slow.example".to_owned(), REFRESHES_PER_SITE);
+        assert!(!second.acquire(soon()).await, "one refresh turn per site");
+        let mut chatgpt = Turn::new(&REFRESH_SITE_TURNS, "chatgpt.com".to_owned(), REFRESHES_PER_SITE);
+        assert!(chatgpt.acquire(soon()).await);
+    }
+
+    /// A background refresh that fails records no failure (the last good copy keeps standing in for the rest of its
+    /// grace) and only backs the next attempt off, briefly.
+    #[tokio::test]
+    async fn a_failed_background_refresh_records_no_failure() {
+        let url = "https://does-not-exist.invalid/oauth/jwks.json";
+        let ip: IpAddr = "192.0.2.10".parse().unwrap();
+        refresh_jwks_in_background(url, ip);
+        assert!(!OAUTH.may_refresh(FetchKind::KeySet, url), "attempts are spaced");
+        for _ in 0..200 {
+            if !FETCHES_IN_FLIGHT.lock().unwrap().contains_key(url) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!FETCHES_IN_FLIGHT.lock().unwrap().contains_key(url), "the refresh ended");
+        assert!(OAUTH.failed_fetch(FetchKind::KeySet, url).is_none());
+        assert!(
+            OAUTH.cached_jwks(url).is_none() && OAUTH.last_good_jwks(url).is_none(),
+            "nothing stretched or made up"
+        );
+    }
+
+    #[test]
+    fn refresh_starts_are_limited_per_requesting_address() {
+        let ip: IpAddr = "192.0.2.77".parse().unwrap();
+        let started = (0..50).filter(|_| may_trigger_refresh(ip)).count();
+        assert!((10..=11).contains(&started), "{started}");
+        assert!(may_trigger_refresh("192.0.2.78".parse().unwrap()), "another address has its own");
+    }
+
+    /// An address over its refresh limit that names someone else's client starts nothing and marks nothing: the
+    /// client's own next request still refreshes at once.
+    #[test]
+    fn a_requester_over_its_limit_cannot_hold_back_anothers_refresh() {
+        let attacker: IpAddr = "192.0.2.99".parse().unwrap();
+        while may_trigger_refresh(attacker) {}
+        let url = "https://refresh-order.example/jwks.json";
+        refresh_jwks_in_background(url, attacker);
+        assert!(OAUTH.refresh_due(FetchKind::KeySet, url), "no mark left behind");
+        assert!(!FETCHES_IN_FLIGHT.lock().unwrap().contains_key(url), "nothing started");
     }
 
     #[test]

@@ -411,6 +411,7 @@ pub async fn purge(pool: crate::db::DbPool) {
     debug!("Purging Reins state");
     HUB.purge();
     oauth_state::OAUTH.purge();
+    oauth_routes::purge_fetch_sites();
     device_flow::DEVICE_GRANTS.purge();
     limits::retain_recent();
     if let Ok(conn) = pool.get().await {

@@ -240,6 +240,10 @@ pub static DEVICE_AUTHORIZATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(||
 /// refreshes of documents the server already holds (known clients) are not. A request over budget is refused alone.
 pub static CLIENT_DOCUMENT_FETCHES: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(3, 20));
 
+/// Background refreshes of client documents the server holds that requests from one IP address may start: a burst
+/// of 10, then one every 6 s. Over it, the request is served from what the server holds, without a refresh.
+pub static CLIENT_DOCUMENT_REFRESHES: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(6, 10));
+
 /// OAuth dynamic client registrations per IP address.
 pub static REGISTRATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
     RateLimit::with_period(CONFIG.reins_register_ratelimit_seconds(), CONFIG.reins_register_ratelimit_max_burst())
@@ -326,6 +330,7 @@ pub fn retain_recent() {
     DEVICE_AUTHORIZATIONS.retain_recent();
     REGISTRATIONS.retain_recent();
     CLIENT_DOCUMENT_FETCHES.retain_recent();
+    CLIENT_DOCUMENT_REFRESHES.retain_recent();
     OUTBOUND_REQUESTS.retain_recent();
     DEVICE_PROOFS.retain_recent();
     MEMBER_OP_REQUESTS.retain_recent();

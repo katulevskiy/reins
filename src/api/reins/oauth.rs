@@ -310,8 +310,19 @@ pub struct ClientInfo {
 
 /// A `client_id` that is a fetchable metadata-document URL (Decision 25).
 pub fn is_cimd_client_id(client_id: &str) -> bool {
-    Url::parse(client_id)
-        .is_ok_and(|u| u.scheme() == "https" && u.host().is_some() && u.path() != "/" && u.fragment().is_none())
+    Url::parse(client_id).is_ok_and(|u| {
+        u.scheme() == "https"
+            && matches!(u.host(), Some(url::Host::Domain(_)))
+            && u.path() != "/"
+            && u.fragment().is_none()
+    })
+}
+
+/// An `https://` URL whose host is an IP address. Client metadata documents and key sets must be named by a domain:
+/// addresses are cheap to rotate through, and no real client publishes its documents at one.
+pub fn is_ip_literal_https_url(raw: &str) -> bool {
+    Url::parse(raw)
+        .is_ok_and(|u| u.scheme() == "https" && matches!(u.host(), Some(url::Host::Ipv4(_) | url::Host::Ipv6(_))))
 }
 
 /// Test mode only (`REINS_TEST_ALLOW_LOOPBACK`): an `http://` metadata document on a loopback host, so the
@@ -342,6 +353,9 @@ fn assertion_alg(name: &str) -> Option<Algorithm> {
 /// `jwks_uri`: https (http only on loopback, which the outbound guard refuses outside the test mode), no fragment,
 /// no credentials, bounded length. Where it may point is checked again, address by address, when it is fetched.
 fn parse_jwks_uri(raw: &str) -> Result<String, String> {
+    if is_ip_literal_https_url(raw) {
+        return Err("jwks_uri must name a domain, not an IP address".to_owned());
+    }
     parse_redirect_uri(raw).map(|_| raw.to_owned()).map_err(|e| e.replace("redirect URI", "jwks_uri"))
 }
 
@@ -1165,6 +1179,10 @@ mod tests {
         assert!(!is_cimd_client_id("https://chatgpt.com/"));
         assert!(!is_cimd_client_id("http://chatgpt.com/x"));
         assert!(!is_cimd_client_id("3f2a-plain-uuid"));
+        assert!(!is_cimd_client_id("https://203.0.113.7/oauth/client.json"), "an address, not a domain");
+        assert!(!is_cimd_client_id("https://[2001:db8::1]/oauth/client.json"));
+        assert!(is_ip_literal_https_url("https://203.0.113.7/oauth/client.json"));
+        assert!(!is_ip_literal_https_url("https://chatgpt.com/oauth/client.json"));
         assert!(is_loopback_cimd_client_id("http://127.0.0.1:9/client.json"));
         assert!(!is_loopback_cimd_client_id("http://a.example/client.json"));
         assert!(!is_loopback_cimd_client_id("https://127.0.0.1/client.json"), "https is the normal path");
@@ -1236,6 +1254,7 @@ mod tests {
             (json!({}), "requires jwks_uri or jwks"),
             (json!({"jwks_uri": "https://a.example/jwks", "jwks": jwks}), "not declare both"),
             (json!({"jwks_uri": "http://a.example/jwks"}), "jwks_uri must be https"),
+            (json!({"jwks_uri": "https://203.0.113.7/jwks"}), "not an IP address"),
             (json!({"jwks_uri": "https://a.example/jwks#x"}), "fragment"),
             (json!({"jwks_uri": 7}), "must be a string"),
             (json!({"jwks": {"keys": []}}), "no keys"),
