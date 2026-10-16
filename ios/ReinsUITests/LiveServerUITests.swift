@@ -92,7 +92,7 @@ final class LiveServerUITests: XCTestCase {
         var tries = 0
         while app.navigationBars.buttons["BackButton"].exists && tries < 4 {
             app.navigationBars.buttons["BackButton"].tap()
-            Thread.sleep(forTimeInterval: 0.8)
+            _ = app.navigationBars.buttons["BackButton"].waitForNonExistence(timeout: 2)
             tries += 1
         }
         XCTAssertTrue(app.openTab(title, timeout: 5), "no tab \(title)")
@@ -127,7 +127,7 @@ final class LiveServerUITests: XCTestCase {
         advance(to: "onboardingDone")
         wait("onboardingDone").tap()
         wait("activityMood", 30)
-        Thread.sleep(forTimeInterval: 3)
+        // The banner is on this screen when registration failed.
         XCTAssertFalse(element("registrationBanner").exists, "registering as the approval device failed")
         shot("02-signed-in")
 
@@ -178,15 +178,12 @@ final class LiveServerUITests: XCTestCase {
         XCTAssertFalse(element("approvalSheet").exists, "the permission should have answered the third call")
         shot("09-mcp-server")
         section("activity")
-        Thread.sleep(forTimeInterval: 2)
         shot("10-activity")
 
         section("trust")
-        Thread.sleep(forTimeInterval: 1)
         shot("11-trust")
 
         section("settings")
-        Thread.sleep(forTimeInterval: 1)
         XCTAssertTrue(app.staticTexts[email].waitForExistence(timeout: 5) || app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", email)).firstMatch.exists, "Settings does not show the account")
         XCTAssertTrue(wait("approvalChip").label.contains("Approval phone"), "not the approval device")

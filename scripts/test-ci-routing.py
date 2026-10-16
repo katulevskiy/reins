@@ -7,6 +7,12 @@ import subprocess
 import tempfile
 import textwrap
 
+# /tmp is a RAM disk on this machine. Keep the disposable repos on disk.
+_scratch = Path.home() / "Documents/dev/tmp/ios-ci"
+_scratch.mkdir(parents=True, exist_ok=True)
+os.environ["TMPDIR"] = str(_scratch)
+tempfile.tempdir = str(_scratch)
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -53,6 +59,8 @@ cases = [
     ("docker/Dockerfile.debian", (False, False, True, False, False)),
     ("scripts/release-android.sh", (True, True, False, False, False)),
     ("scripts/install.ps1", (True, True, False, True, False)),
+    # ci.yml treats scripts/* as rust and android. ios.yml names this file so the suite still runs.
+    ("scripts/ios-ui-plan.py", (True, True, False, False, True)),
 ]
 
 with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
@@ -98,7 +106,7 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
         assert actual == expected, (name, actual, expected)
 
     # Unreachable before-SHAs can follow history rewrites. Missing history must never skip validation.
-    # The weekly run on main selects every lane, so it refreshes every cache.
+    # The nightly iOS run and the weekly CI run select every lane, so a quiet week still refreshes caches.
     for event, base in [("push", "f" * 40), ("push", "0" * 40), ("push", ""), ("workflow_dispatch", baseline),
                         ("schedule", baseline), ("schedule", "")]:
         assert lanes(event, base) == (True, True, True, True, True), (event, base)
@@ -113,10 +121,17 @@ for path in (
     "Cargo.lock",
     "rust-toolchain.toml",
     ".cargo/**",
-    "ios/scripts/build-core.sh",
+    "ios/**",
+    ".github/workflows/ios.yml",
+    "scripts/ios-ui-plan.py",
 ):
     assert path in push, path
-assert "github.event_name != 'push'" in ios_workflow
+assert 'cron: "17 3 * * *"' in ios_workflow
+assert "41 5 * * 1" not in ios_workflow
+assert "github.event_name != 'push'" not in ios_workflow
+# A pull request must not take every macOS runner. The nightly still may.
+assert "max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}" in ios_workflow
+assert "cancel-in-progress: false" in ios_workflow
 # A main push of this workflow must not satisfy the release gate. That gate names ci.yml only.
 gate = (ROOT / "scripts/wait-for-ci.sh").read_text()
 assert "--workflow ci.yml" in gate

@@ -1,10 +1,11 @@
 name: iOS
 
-# Push to main rebuilds only the simulator core, and only when a core input changes. The test shards
-# do not run on push. scripts/wait-for-ci.sh waits for ci.yml on that same commit, not this workflow,
-# so a core rebuild cannot hold a release. The saved cache is what the next pull request restores.
+# A pull request runs ReinsTests and the UI classes ios/ci-ui-map.txt names for its diff.
+# The full suite runs on a push to main, the nightly, a hand run, and a pull request labelled ios-full.
+# scripts/wait-for-ci.sh waits for ci.yml on that same commit, not this workflow, so none of this holds a release.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
   push:
     branches: [main]
@@ -15,18 +16,23 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - .cargo/**
-      - ios/scripts/build-core.sh
-  # Once a week on main, so a core nobody pushed still refreshes before GitHub drops the cache.
+      - ios/**
+      - .github/workflows/ios.yml
+      - scripts/ios-ui-plan.py
+  # Nightly on main, off peak, so a class no pull request mapped still runs within a day.
   schedule:
-    - cron: "41 5 * * 1"
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
 
-# A new push to a pull request supersedes its run in progress. The weekly run on main is not cancelled.
+# Every pull request shares one group, so two pull requests' iOS lanes queue instead of splitting the
+# xcode-27 runners between them (runs 38888346599 and 38889759511 waited 26-35 minutes for a runner that way).
+# A run in progress is not cancelled. GitHub keeps one pending run per group, so a newer pending pull request
+# run replaces an older pending one. A main or nightly run keeps its own group and is not cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && 'pr' || format('{0}-{1}', github.event_name, github.sha) }}
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -41,13 +47,15 @@ defaults:
 # apply, matching a local simulator build with an empty REINS_TEAM. The core is arm64. No test retries.
 #
 # Run 38858281608 kept five xcode-27 jobs busy and started the sixth seven seconds after one finished.
-# A sixth test shard would wait for a whole shard. Five shards, started together after the core, is the
-# split that finishes soonest. ActivityFlowTests is longer than one shard, so its tests are divided by
-# method using the per-test times from that run. ReinsTests (about two minutes) shares the rest shard.
-# Classes added later land on rest.
+# The build is one job before the shards, not a sixth shard beside them. A pull request runs at most
+# three shards at once, so two runners stay free for ci.yml and for a release. The nightly is off peak
+# and may take all five. ActivityFlowTests is divided by method. ReinsTests shares the rest shard.
+# scripts/ios-ui-plan.py owns that list. A mapped pull request leaves a shard empty instead of borrowing
+# tests. Classes added later still land on rest when the full suite runs.
 #
-# The core cache is written from main: a push of a core input, the weekly run, or a hand run.
-# Test shards do not run on push. DerivedData is not cached.
+# The simulator core and the Swift compile cache are written from main only. A pull request restores them.
+# Build products are uploaded for the shards, not cached: they carry absolute paths, which match this
+# runner's workspace (/Users/runner/work/reins/reins) and would not match a different one.
 
 jobs:
   changes:
@@ -56,6 +64,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       ios: ${{ steps.paths.outputs.ios }}
+      ui: ${{ steps.uitests.outputs.ui }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -81,11 +90,21 @@ jobs:
                 # The simulator core is a Cargo build. Cargo.toml alone does not change what it links.
                 Cargo.lock|rust-toolchain.toml|.cargo/*) ios=true ;;
                 crates/reins-core/*|crates/reins-proto/*|crates/reins-policy/*) ios=true ;;
+                # The plan decides the suite. A change to it has to run that suite.
+                scripts/ios-ui-plan.py) ios=true ;;
                 ios/*) ios=true ;;
               esac
             done < <(git diff --name-only -z "$BASE_SHA" HEAD)
           fi
           echo "ios=$ios" >> "$GITHUB_OUTPUT"
+      - name: Select UI tests
+        id: uitests
+        if: steps.paths.outputs.ios == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          LABELS: ${{ github.event_name == 'pull_request' && join(github.event.pull_request.labels.*.name, ',') || '' }}
+        run: python3 scripts/ios-ui-plan.py select >> "$GITHUB_OUTPUT"
 
   ios-core:
     name: iOS Rust core
@@ -174,88 +193,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  ios-test:
-    name: iOS tests (${{ matrix.shard }})
+  ios-build:
+    name: iOS build
     needs: [changes, ios-core]
-    if: github.event_name != 'push' && needs.changes.outputs.ios == 'true' && needs.ios-core.result == 'success'
+    if: needs.changes.outputs.ios == 'true' && needs.ios-core.result == 'success'
     runs-on: xcode-27
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # 10.9 min of tests on run 38858281608. Three tests added since that run stay in this class.
-          - shard: autopilot
-            only: ReinsUITests/AutopilotUITests
-            skip: ""
-          # 10.5 min. GrantsSettingsUITests was 10.2 min; one short activity test fills the shard.
-          - shard: grants
-            only: >-
-              ReinsUITests/GrantsSettingsUITests,
-              ReinsUITests/ActivityFlowTests/testAnEntryOpensAndAnEmailInItOpensInFull
-            skip: ""
-          # 10.5 min. OnboardingUITests was 5.0 min; the rest is activity tests.
-          - shard: onboarding
-            only: >-
-              ReinsUITests/OnboardingUITests,
-              ReinsUITests/ActivityFlowTests/testTheQuickMenuSwitchesModesAndBypassAsksForALength,
-              ReinsUITests/ActivityFlowTests/testAScrollStartingOnAWaitingCardScrollsAndOpensNothing,
-              ReinsUITests/ActivityFlowTests/testAScrollStartingOnARowScrollsAndOpensNothing,
-              ReinsUITests/ActivityFlowTests/testTheDockOffersHowLongAndApprovingClosesTheScreen,
-              ReinsUITests/ActivityFlowTests/testDenyIsOneTap,
-              ReinsUITests/ActivityFlowTests/testSwipingARowLeftStillRevealsThisWasWrong,
-              ReinsUITests/ActivityFlowTests/testTheModePillOpensTheQuickMenuAndMoreOpensAutopilot,
-              ReinsUITests/ActivityFlowTests/testAPushFromAnotherDeviceLoadsItsDiffFromGitHub,
-              ReinsUITests/ActivityFlowTests/testTheQuickMenuOffersOvernight,
-              ReinsUITests/ActivityFlowTests/testTheSyncNoticeShowsUntilOK,
-              ReinsUITests/ActivityFlowTests/testARatedRequestShowsItsRiskAndThatOvernightHeldIt
-            skip: ""
-          # 10.4 min.
-          - shard: field
-            only: >-
-              ReinsUITests/PasskeyUITests,
-              ReinsUITests/ApprovalFieldUITests,
-              ReinsUITests/SoundsScreenUITests,
-              ReinsUITests/NotificationsUITests,
-              ReinsUITests/LaunchTests,
-              ReinsUITests/ActivityFlowTests/testAScrollStartingOnARowAutopilotDecidedScrollsAndOpensNothing,
-              ReinsUITests/ActivityFlowTests/testTheTabBarStepsAsideForTheKeyboard,
-              ReinsUITests/ActivityFlowTests/testTheModeChipOpensOnATapAndOnAPressThatSlidesOntoARow,
-              ReinsUITests/ActivityFlowTests/testTappingARowStillOpensIt,
-              ReinsUITests/ActivityFlowTests/testALoadThatFailsSaysWhyAndOffersRetry,
-              ReinsUITests/ActivityFlowTests/testRowsScrollUnderPaperAtTheTop
-            skip: ""
-          # 10.4 min of UI tests plus ReinsTests (2.0 min). Anything not named above runs here,
-          # including a UI class added later. The live tests skip themselves without their harness.
-          - shard: rest
-            only: ReinsTests,ReinsUITests
-            skip: >-
-              ReinsUITests/AutopilotUITests,
-              ReinsUITests/GrantsSettingsUITests,
-              ReinsUITests/OnboardingUITests,
-              ReinsUITests/PasskeyUITests,
-              ReinsUITests/ApprovalFieldUITests,
-              ReinsUITests/SoundsScreenUITests,
-              ReinsUITests/NotificationsUITests,
-              ReinsUITests/LaunchTests,
-              ReinsUITests/ActivityFlowTests/testAnEntryOpensAndAnEmailInItOpensInFull,
-              ReinsUITests/ActivityFlowTests/testTheQuickMenuSwitchesModesAndBypassAsksForALength,
-              ReinsUITests/ActivityFlowTests/testAScrollStartingOnAWaitingCardScrollsAndOpensNothing,
-              ReinsUITests/ActivityFlowTests/testAScrollStartingOnARowScrollsAndOpensNothing,
-              ReinsUITests/ActivityFlowTests/testTheDockOffersHowLongAndApprovingClosesTheScreen,
-              ReinsUITests/ActivityFlowTests/testDenyIsOneTap,
-              ReinsUITests/ActivityFlowTests/testSwipingARowLeftStillRevealsThisWasWrong,
-              ReinsUITests/ActivityFlowTests/testTheModePillOpensTheQuickMenuAndMoreOpensAutopilot,
-              ReinsUITests/ActivityFlowTests/testAPushFromAnotherDeviceLoadsItsDiffFromGitHub,
-              ReinsUITests/ActivityFlowTests/testTheQuickMenuOffersOvernight,
-              ReinsUITests/ActivityFlowTests/testTheSyncNoticeShowsUntilOK,
-              ReinsUITests/ActivityFlowTests/testARatedRequestShowsItsRiskAndThatOvernightHeldIt,
-              ReinsUITests/ActivityFlowTests/testAScrollStartingOnARowAutopilotDecidedScrollsAndOpensNothing,
-              ReinsUITests/ActivityFlowTests/testTheTabBarStepsAsideForTheKeyboard,
-              ReinsUITests/ActivityFlowTests/testTheModeChipOpensOnATapAndOnAPressThatSlidesOntoARow,
-              ReinsUITests/ActivityFlowTests/testTappingARowStillOpensIt,
-              ReinsUITests/ActivityFlowTests/testALoadThatFailsSaysWhyAndOffersRetry,
-              ReinsUITests/ActivityFlowTests/testRowsScrollUnderPaperAtTheTop
     env:
       XCODE_VERSION: "27.0"
       DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
@@ -283,29 +226,133 @@ jobs:
           if [[ ! -s target/ios-core/iphonesimulator/libreins_core.a ||
                 ! -s target/ios-core/iphonesimulator/include/module.modulemap ]]; then
             echo "::error::The simulator core artifact is not at target/ios-core/iphonesimulator"
-            find target -type f | head -50
+            find target -type f
             exit 1
           fi
-      # Swift packages only (ONNX Runtime). DerivedData is left uncached: it stores absolute paths and the
-      # simulator id, so a restore onto another runner is not a safe hit.
+      # Module cache, the compilation cache, and Swift packages (ONNX Runtime). Not DerivedData:
+      # its products store absolute paths and the simulator id. Restore-keys so a partial hit still
+      # compiles less. Exact-key misses are saved from main only; a pull request only restores.
       - uses: actions/cache/restore@v5
-        id: spm
+        id: swift
         with:
-          path: spm
-          key: ios-spm-v1-${{ runner.os }}-${{ hashFiles('ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-      - name: Tests (${{ matrix.shard }})
+          path: |
+            derived/ModuleCache.noindex
+            derived/CompilationCache.noindex
+            spm
+            compilation-cache
+          key: ios-swift-v1-${{ runner.os }}-${{ hashFiles('ios/Reins.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'ios/**/*.swift', 'ios/**/*.m', 'ios/**/*.h') }}
+          restore-keys: |
+            ios-swift-v1-${{ runner.os }}-
+      - name: Build for testing
         env:
-          ONLY: ${{ matrix.only }}
-          SKIP: ${{ matrix.skip }}
+          MODE: build
+        run: bash ios/scripts/ci-xcode-test.sh
+      - name: Swift cache size
+        if: always() && !cancelled()
+        env:
+          CACHE_HIT: ${{ steps.swift.outputs.cache-hit }}
+        run: |
+          python3 - <<'PY'
+          import os
+          print("swift cache exact hit:", os.environ.get("CACHE_HIT", ""))
+          roots = [
+              "derived/ModuleCache.noindex",
+              "derived/CompilationCache.noindex",
+              "spm",
+              "compilation-cache",
+          ]
+          total = 0
+          for root in roots:
+              size = 0
+              if os.path.isdir(root):
+                  for dirpath, _, names in os.walk(root):
+                      for name in names:
+                          try:
+                              size += os.path.getsize(os.path.join(dirpath, name))
+                          except OSError:
+                              pass
+              print(f"{root}: {size / 1_000_000:.1f} MB")
+              total += size
+          print(f"swift cache total: {total / 1_000_000:.1f} MB")
+          PY
+      # An empty directory fails the save. A marker keeps the job green; the size step above is the real measurement.
+      - name: Keep an empty cache path saveable
+        if: success() && steps.swift.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          for dir in derived/ModuleCache.noindex derived/CompilationCache.noindex spm compilation-cache; do
+            mkdir -p "$dir"
+            if [[ -z "$(find "$dir" -type f -print -quit)" ]]; then
+              : > "$dir/.keep"
+            fi
+          done
+      - uses: actions/cache/save@v5
+        if: success() && steps.swift.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        with:
+          path: |
+            derived/ModuleCache.noindex
+            derived/CompilationCache.noindex
+            spm
+            compilation-cache
+          key: ${{ steps.swift.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-test-products
+          path: derived/Build/Products
+          if-no-files-found: error
+          retention-days: 1
+
+  ios-test:
+    name: iOS tests (${{ matrix.shard }})
+    needs: [changes, ios-build]
+    if: needs.changes.outputs.ios == 'true' && needs.ios-build.result == 'success'
+    runs-on: xcode-27
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # Three at a time on a pull request, a main push, or a hand run. The nightly uses all five.
+      max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}
+      matrix:
+        shard: [autopilot, grants, onboarding, field, rest]
+    env:
+      XCODE_VERSION: "27.0"
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Plan this shard
+        id: plan
+        env:
+          SHARD: ${{ matrix.shard }}
+          CLASSES: ${{ needs.changes.outputs.ui }}
+        run: python3 scripts/ios-ui-plan.py shard --name "$SHARD" --classes "$CLASSES" >> "$GITHUB_OUTPUT"
+      - name: Select Xcode 27.0
+        if: steps.plan.outputs.only != ''
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s "$DEVELOPER_DIR"
+          xcode="$(xcodebuild -version | sed -n 's/^Xcode //p')"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          [[ "$xcode" == "$XCODE_VERSION" && "$sdk" == "$XCODE_VERSION" ]] || {
+            echo "::error::iOS CI needs Xcode $XCODE_VERSION (simulator SDK $XCODE_VERSION) at $DEVELOPER_DIR; found Xcode $xcode, SDK $sdk"
+            exit 1
+          }
+      # The built products already link the core. Download them only when this shard has a test.
+      - uses: actions/download-artifact@v8
+        if: steps.plan.outputs.only != ''
+        with:
+          name: ios-test-products
+          path: derived/Build/Products
+      - name: Tests (${{ matrix.shard }})
+        if: steps.plan.outputs.only != ''
+        env:
+          MODE: test-without-building
+          ONLY: ${{ steps.plan.outputs.only }}
+          SKIP: ${{ steps.plan.outputs.skip }}
         run: |
           set -euo pipefail
           bash ios/scripts/ci-xcode-test.sh
-      # One writer. The other shards only restore, so parallel saves cannot race.
-      - uses: actions/cache/save@v5
-        if: matrix.shard == 'rest' && steps.spm.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-        with:
-          path: spm
-          key: ${{ steps.spm.outputs.cache-primary-key }}
       - name: Upload the test result
         if: failure()
         uses: actions/upload-artifact@v7
@@ -316,10 +363,10 @@ jobs:
           retention-days: 7
 
   # The check to require. Shards are skipped when the lane is off, which would leave a required shard
-  # pending; this job passes in that case and fails when a shard, the core build, or the lane selector did.
+  # pending; this job passes in that case and fails when a shard, the build, the core, or the lane selector did.
   ios:
     name: iOS
-    needs: [changes, ios-core, ios-test]
+    needs: [changes, ios-core, ios-build, ios-test]
     if: always() && !cancelled()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -330,23 +377,17 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           LANE: ${{ needs.changes.outputs.ios }}
           CORE: ${{ needs.ios-core.result }}
+          BUILD: ${{ needs.ios-build.result }}
           TESTS: ${{ needs.ios-test.result }}
         run: |
           set -euo pipefail
-          echo "event=$EVENT changes=$CHANGES lane=$LANE core=$CORE tests=$TESTS"
+          echo "event=$EVENT changes=$CHANGES lane=$LANE core=$CORE build=$BUILD tests=$TESTS"
           if [[ "$CHANGES" != success ]]; then
             echo "::error::The changes job did not succeed ($CHANGES)"
             exit 1
           fi
-          # A main push builds the core and saves the cache. The test shards are skipped on purpose.
-          if [[ "$EVENT" == push ]]; then
-            [[ "$CORE" == success ]] || { echo "::error::ios-core $CORE"; exit 1; }
-            [[ "$TESTS" == skipped || "$TESTS" == success ]] || { echo "::error::ios-test $TESTS"; exit 1; }
-            echo "iOS core saved on main; tests are not run on push"
-            exit 0
-          fi
           if [[ "$LANE" != true ]]; then
-            for result in "$CORE" "$TESTS"; do
+            for result in "$CORE" "$BUILD" "$TESTS"; do
               [[ "$result" == skipped || "$result" == success ]] || {
                 echo "::error::iOS lane was off but a job ended $result"
                 exit 1
@@ -357,6 +398,7 @@ jobs:
           fi
           status=0
           [[ "$CORE" == success ]] || { echo "::error::ios-core $CORE"; status=1; }
+          [[ "$BUILD" == success ]] || { echo "::error::ios-build $BUILD"; status=1; }
           [[ "$TESTS" == success ]] || { echo "::error::ios-test $TESTS"; status=1; }
           [[ "$status" == 0 ]] && echo "iOS passed"
           exit "$status"
