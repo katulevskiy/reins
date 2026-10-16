@@ -8,12 +8,14 @@
 //! - an AI connection: requests to `/mcp` and the desktop API per minute, calls waiting for the phone at once;
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
 //!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
-//!   phone, wrong proofs sent to take its approval role;
+//!   phone (at most [`super::pairing::MAX_PER_PARTY`] open per account), wrong proofs sent to take its approval role;
 //! - a device: concurrent `GET /pending` and `GET /sync` long-polls;
 //! - a phone of an account with phone roles (key: account and device): op uploads per minute, proposals per hour;
 //! - an account with phone roles: roster changes per hour, ops and bytes its log holds (`REINS_ACCOUNT_LOG_*`);
-//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer), "add
-//!   another phone" join requests (with at most [`super::join::MAX_PER_USER`] open per account).
+//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer, at most
+//!   [`super::device_flow::MAX_PER_ADDRESS`] open), "add another phone" join requests (with at most
+//!   [`super::join::MAX_PER_USER`] open per account). Unknown-email pairing decoys are capped per address too
+//!   ([`super::pairing::MAX_PER_PARTY`]). The address is [`client_network`].
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -198,6 +200,19 @@ impl<K: Hash + Eq + Clone> FailureLimit<K> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|_, times| times.back().is_some_and(|t| now.duration_since(*t) < self.window));
+    }
+}
+
+/// The address a limit sees: the IPv4 address, or the /64 of an IPv6 address (one host usually holds a whole /64, so
+/// single addresses in it would each get their own quota). IPv4-mapped IPv6 is the IPv4 address.
+pub fn client_network(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(std::net::Ipv6Addr::from(octets))
+        }
+        v4 @ IpAddr::V4(_) => v4,
     }
 }
 

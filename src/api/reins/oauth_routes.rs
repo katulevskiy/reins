@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 
 use super::{
     HUB, REFRESH_TOKEN_SECS,
-    device_flow::{DEVICE_GRANT_TTL, DEVICE_GRANTS, POLL_INTERVAL, Poll},
+    device_flow::{DEVICE_GRANT_TTL, DEVICE_GRANTS, POLL_INTERVAL, Poll, StartError as GrantStart},
     limits::{self, rate_limited_text, retry_secs},
     now_unix,
     oauth::{
@@ -38,7 +38,7 @@ use super::{
     },
     oauth_state::{AuthSession, FetchKind, OAUTH, StartedPairing},
     outbound, pages,
-    pairing::{PairingClient, PairingStatus, sanitize_client_name},
+    pairing::{PairingClient, PairingStatus, StartError as PairingStart, sanitize_client_name},
     push,
 };
 use crate::{
@@ -453,17 +453,9 @@ async fn fetch_document(url: &str, limit: usize, what: &str, pool: FetchPool) ->
     Ok(body)
 }
 
-/// Who pays for a fetch: the requesting IPv4 address, or the /64 network of an IPv6 address (one host usually holds
-/// a whole /64, so single addresses in it would be free to rotate through).
+/// Who pays for a fetch: [`limits::client_network`] of the requesting address.
 fn fetch_payer(ip: IpAddr) -> IpAddr {
-    match ip.to_canonical() {
-        IpAddr::V6(v6) => {
-            let mut octets = v6.octets();
-            octets[8..].fill(0);
-            IpAddr::V6(std::net::Ipv6Addr::from(octets))
-        }
-        v4 @ IpAddr::V4(_) => v4,
-    }
+    limits::client_network(ip)
 }
 
 /// Charges one fetch to the requesting address ([`limits::CLIENT_DOCUMENT_FETCHES`], see [`fetch_payer`]).
@@ -924,17 +916,29 @@ async fn authorize_post(data: Data<'_>, ip: ClientIp, conn: DbConn, pool: &State
     }
     let now = now_unix();
     let target = pairing_target(&email, &conn).await;
+    let network = limits::client_network(ip.ip).to_string();
     let started = match &target {
         Some((user_uuid, _)) => HUB.pairings.start(&user_uuid.to_string(), session.client.clone(), now),
-        None => HUB.pairings.start_decoy(session.client.clone(), now),
+        // The email is not stored on a decoy. The address is, so one address cannot fill the map with unknown emails.
+        // The refusal reads the same as an account's, which is what keeps an unknown email indistinguishable.
+        None => HUB.pairings.start_decoy(session.client.clone(), &network, now),
     };
-    let Ok((request, code)) = started else {
-        return error_flow(
-            pages::at::AUTHORIZE,
-            Status::ServiceUnavailable,
-            "Server busy",
-            "Please try again in a few minutes.",
-        );
+    let (request, code) = match started {
+        Ok(started) => started,
+        Err(PairingStart::Party) => {
+            return form_page(
+                Status::TooManyRequests,
+                "Too many connection requests for this account. Please try again in a few minutes.",
+            );
+        }
+        Err(PairingStart::Busy) => {
+            return error_flow(
+                pages::at::AUTHORIZE,
+                Status::ServiceUnavailable,
+                "Server busy",
+                "Please try again in a few minutes.",
+            );
+        }
     };
     if let Some((user_uuid, device)) = &target {
         push::spawn_push(
@@ -1068,7 +1072,7 @@ async fn device_authorization(data: Data<'_>, ip: ClientIp, pool: &State<DbPool>
         client_host,
         client_key: request.client_key,
     };
-    match DEVICE_GRANTS.start(pairing_client) {
+    match DEVICE_GRANTS.start(pairing_client, &limits::client_network(ip.ip).to_string()) {
         Ok(started) => JsonResponse(
             Status::Ok,
             device_authorization_response(
@@ -1080,7 +1084,11 @@ async fn device_authorization(data: Data<'_>, ip: ClientIp, pool: &State<DbPool>
                 POLL_INTERVAL.as_secs(),
             ),
         ),
-        Err(_) => JsonResponse(
+        Err(GrantStart::Party) => {
+            let description = "too many pairing codes for this address; try again when one expires";
+            JsonResponse(Status::TooManyRequests, json!({"error": "slow_down", "error_description": description}))
+        }
+        Err(GrantStart::Busy) => JsonResponse(
             Status::ServiceUnavailable,
             json!({"error": "temporarily_unavailable", "error_description": "the server is busy, try again soon"}),
         ),
