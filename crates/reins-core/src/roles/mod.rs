@@ -1083,13 +1083,14 @@ impl Engine {
     /// The primary is lost: with the recovery code (or the master password) this phone opens the recovery wrap, makes
     /// a new owner seed that the old owner key signs in, and becomes primary (epoch + 1, the old primary removed, a
     /// new view key for the viewers). `tip`: the [`RecoveryPreview::tip`] the user confirmed; the server's roster must
-    /// still end there.
+    /// still end there. `confirmation`: the token of the [`CoreError::RecoveryNeedsConfirmation`] the user accepted;
+    /// the recovery goes on only if it finds exactly that again.
     pub async fn roster_recover(
         &self,
         code_or_password: Zeroizing<String>,
         device_name: &str,
         tip: &str,
-        confirmed: bool,
+        confirmation: Option<&str>,
     ) -> Result<RosterSummary, CoreError> {
         let session = self.session()?;
         let one = self.roles.changing.lock().await;
@@ -1135,10 +1136,20 @@ impl Engine {
                 reported_counter,
             )
             .await?;
-        if !check.confirm.is_empty() && !confirmed {
-            return Err(CoreError::RecoveryNeedsConfirmation {
-                reason: check.confirm.join(" "),
-            });
+        if !check.confirm.is_empty() {
+            // Bound to what the user saw: the findings, the counter the entry names, the head and the tip.
+            let token = crate::store::records::digest(&serde_json::json!({
+                "confirm": check.confirm,
+                "counter": check.counter,
+                "head": check.head,
+                "tip": tip,
+            }));
+            if confirmation != Some(token.as_str()) {
+                return Err(CoreError::RecoveryNeedsConfirmation {
+                    reason: check.confirm.join(" "),
+                    token,
+                });
+            }
         }
         let mut warnings = check.warnings;
         warnings.extend(check.confirm);

@@ -677,13 +677,20 @@ impl World {
 /// Recovers `core` the way the app does: the preview, which the user confirms, then the recovery from its tip.
 async fn recover(core: &ReinsCore, typed: &str, name: &str) -> Result<reins_core::RosterSummary, CoreError> {
     let preview = core.roster_recover_preview(typed.to_owned()).await?;
-    core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip, false).await
+    core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip, None).await
 }
 
-/// Recovers `core`, confirming what the recovery asks to be confirmed (as the user would after reading it).
+/// Recovers `core`, confirming what the recovery asks to be confirmed (as the user would after reading it): with the
+/// token of what it was shown.
 async fn recover_confirmed(core: &ReinsCore, typed: &str, name: &str) -> Result<reins_core::RosterSummary, CoreError> {
     let preview = core.roster_recover_preview(typed.to_owned()).await?;
-    core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip, true).await
+    match core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip.clone(), None).await {
+        Err(CoreError::RecoveryNeedsConfirmation {
+            token,
+            ..
+        }) => core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip, Some(token)).await,
+        other => other,
+    }
 }
 
 /// This phone's device id, as the roster lists it.
@@ -791,7 +798,7 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     let preview = a.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
     assert_eq!((preview.epoch, preview.removed_primary.as_str()), (5, "Pixel"));
     assert!(preview.viewers.is_empty(), "the user sees who stays: nobody but this phone");
-    let recovered = a.roster_recover(PASSWORD.to_owned(), "iPhone".to_owned(), preview.tip, true).await.unwrap();
+    let recovered = recover_confirmed(&a, PASSWORD, "iPhone").await.unwrap();
     assert_eq!((recovered.epoch, recovered.role), (5, PhoneRole::Primary));
     assert_ne!(recovered.owner_fingerprint, b.roster_summary(false).await.unwrap().unwrap().owner_fingerprint);
     b.roster_summary(true).await.unwrap();
@@ -1031,7 +1038,7 @@ async fn a_recovery_never_starts_from_an_older_roster_than_the_phone_saw() {
     let preview = b.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
     assert_eq!(preview.removed_primary, "iPhone");
     enroll(&a, &c, "Tablet again").await;
-    let refused = b.roster_recover(PASSWORD.to_owned(), "Pixel".to_owned(), preview.tip, true).await.unwrap_err();
+    let refused = b.roster_recover(PASSWORD.to_owned(), "Pixel".to_owned(), preview.tip, None).await.unwrap_err();
     assert!(refused.to_string().contains("changed"), "{refused}");
     assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
     assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
@@ -2033,4 +2040,46 @@ async fn a_viewer_behind_the_floor_that_recovers_takes_the_checkpoint_as_untrust
     recover_confirmed(&b, PASSWORD, "Pixel").await.unwrap();
     b.live_sync(0).await.unwrap();
     assert_eq!(b.autopilot_settings().await.unwrap().bypass_until, None, "not taken as trusted");
+}
+
+#[tokio::test]
+async fn a_confirmation_stands_only_for_what_the_user_was_shown() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    w.state().heartbeat = None;
+    let fresh = w.phone().await;
+    let preview = fresh.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
+    let again = || fresh.roster_recover(PASSWORD.to_owned(), "New iPhone".to_owned(), preview.tip.clone(), None);
+    let Err(CoreError::RecoveryNeedsConfirmation {
+        reason,
+        token,
+    }) = again().await
+    else {
+        panic!("asks first");
+    };
+    assert!(reason.contains("missing"), "{reason}");
+    let epoch = w.state().roster.last().unwrap().epoch;
+    // A token for anything else (made up, or for what the server showed before it changed) signs nothing.
+    let recover_with = |token: String| {
+        fresh.roster_recover(PASSWORD.to_owned(), "New iPhone".to_owned(), preview.tip.clone(), Some(token))
+    };
+    assert!(matches!(recover_with("0".repeat(64)).await, Err(CoreError::RecoveryNeedsConfirmation { .. })));
+    w.state().inflate_counter = Some(500);
+    let Err(CoreError::RecoveryNeedsConfirmation {
+        reason: changed,
+        token: other,
+    }) = recover_with(token.clone()).await
+    else {
+        panic!("asks again");
+    };
+    assert_ne!(other, token);
+    assert!(changed.contains("500"), "{changed}");
+    assert_eq!(w.state().roster.last().unwrap().epoch, epoch, "nothing signed");
+    // What the user was shown, confirmed: it goes through.
+    w.state().inflate_counter = None;
+    let done = recover_with(token).await.unwrap();
+    assert_eq!(done.role, PhoneRole::Primary);
 }

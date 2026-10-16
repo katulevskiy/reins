@@ -74,6 +74,9 @@ const GRANT_PREFIX: &str = "~reins.view-grant/";
 const UNPUBLISHED: &str = "unpublished\u{1f}";
 const FAILED: &str = "failed\u{1f}";
 const UNTRUSTED_START: &str = "untrusted-start";
+/// The outgoing primary's checkpoint a recovery loaded ("author|seq"): a recovery tried again (once the user confirmed)
+/// finds the same as the first try, though the checkpoint is behind it now.
+const RECOVERY_CHECKPOINT: &str = "recovery-checkpoint";
 /// How often a record that does not write is tried again before it waits for a newer version of it.
 const MAX_WRITE_TRIES: u32 = 3;
 /// How long a refused (or too large) checkpoint waits before the next try.
@@ -150,6 +153,8 @@ pub(crate) struct RecoveryCheck {
     pub confirm: Vec<String>,
     /// What the user is told after.
     pub warnings: Vec<String>,
+    /// The seq this phone applied the log to (what the findings are about).
+    pub head: u64,
 }
 
 /// What one cycle's pull left.
@@ -1135,6 +1140,8 @@ impl Engine {
                             untrusted = true;
                             if cp.author == old_primary.device_id {
                                 old_checkpoint = Some(cp.seq);
+                                let mark = format!("{}|{}", cp.author, cp.seq);
+                                self.store.oplog(|c| local::set_mark(c, RECOVERY_CHECKPOINT, &mark))??;
                             }
                         } else {
                             self.store.oplog(|c| local::clear_mark(c, UNTRUSTED_START))??;
@@ -1189,6 +1196,17 @@ impl Engine {
         let s = self.store.oplog(|c| oplog::state(c))??;
         if untrusted {
             self.store.oplog(|c| local::set_mark(c, UNTRUSTED_START, &s.seq.to_string()))??;
+        }
+        check.head = s.seq;
+        // Loaded on an earlier try of this recovery: the same checkpoint, still under this phone's state.
+        if old_checkpoint.is_none()
+            && let Some(mark) = self.store.oplog(|c| local::mark(c, RECOVERY_CHECKPOINT))??
+            && let Some((author, seq)) = mark.split_once('|')
+            && author == old_primary.device_id
+            && let Ok(seq) = seq.parse::<u64>()
+            && seq <= s.seq
+        {
+            old_checkpoint = Some(seq);
         }
         let sign_pub = old_primary.sign_pub.clone();
         let (applied, held) = self.store.oplog(|c| -> Result<(u64, u64), CoreError> {
@@ -1518,7 +1536,9 @@ impl Engine {
         if failed == 0 {
             self.store.oplog(|c| local::set_mark(c, MATERIALIZED_SEQ, &applied.to_string()))??;
         }
-        if let Some(bound) = bound {
+        if let Some(bound) = bound
+            && untrusted_start_over(failed, applied, bound)
+        {
             self.settle_untrusted(bound)?;
         }
         Ok(failed)
@@ -1529,25 +1549,19 @@ impl Engine {
         Ok(self.store.oplog(|c| local::mark(c, UNTRUSTED_START))??.map(|v| v.parse().unwrap_or(u64::MAX)))
     }
 
-    /// The untrusted start is over once every record of it was seen: taken (tightened), skipped, or given up on (a
-    /// brake's table is never given up on, so its record keeps the mark until it writes).
+    /// The untrusted start is over once every record of it was taken (tightened) or skipped, after a pass with no
+    /// failure that reached its bound ([`untrusted_start_over`]). A record given up on (the retry cap) keeps the mark:
+    /// were it ever written later, it is still tightened.
     fn settle_untrusted(&self, bound: u64) -> Result<(), CoreError> {
         let (all, mirror) =
             self.store.oplog(|c| -> Result<_, CoreError> { Ok((oplog::all_records(c)?, local::mirror(c)?)) })??;
-        let now = unix_now();
         for r in all.iter().filter(|r| r.seq <= bound) {
             if r.key.starts_with(RESERVED_PREFIX) || records::sql_table(r.table).is_none() || r.table == Table::Audit {
                 continue;
             }
             let tbl = table_name(r.table);
             let seen = mirror.get(&(tbl.clone(), r.key.clone())).and_then(|m| m.version.as_ref()) == Some(&r.version);
-            if seen {
-                continue;
-            }
-            let version = format!("{}.{}.{}", r.version.epoch, r.version.author, r.version.counter);
-            let mark = self.store.oplog(|c| local::mark(c, &failed_mark(&tbl, &r.key)))??;
-            let (due, tries) = retry_due(r.table, mark.as_deref(), &version, now);
-            if due || tries < MAX_WRITE_TRIES || matches!(r.table, Table::Grants | Table::AutopilotSettings) {
+            if !seen {
                 return Ok(());
             }
         }
@@ -1821,6 +1835,12 @@ fn unpublished_mark(table: &str, key: &str) -> String {
     format!("{UNPUBLISHED}{table}\u{1f}{key}")
 }
 
+/// Whether a materialize pass may end an untrusted start of bound `bound`: only one where nothing failed (a record
+/// given up on still counts) and the materialized seq reached the bound.
+const fn untrusted_start_over(failed: usize, materialized: u64, bound: u64) -> bool {
+    failed == 0 && materialized >= bound
+}
+
 fn failed_mark(table: &str, key: &str) -> String {
     format!("{FAILED}{table}\u{1f}{key}")
 }
@@ -1869,6 +1889,16 @@ mod tests {
         assert!(retry_due(Table::AutopilotSettings, Some(&format!("3.v.1|3|{now}")), "3.v.1", now + 60).0);
         assert!(!retry_due(Table::Grants, Some(&format!("3.v.1|9|{now}")), "3.v.1", now + 1_000).0);
         assert!(retry_due(Table::Grants, Some(&format!("3.v.1|40|{now}")), "3.v.1", now + 3_600).0);
+    }
+
+    #[test]
+    fn an_untrusted_start_ends_only_after_a_clean_pass_that_reached_its_bound() {
+        // A record skipped by the retry cap is still a failure: the mark stays.
+        assert!(!untrusted_start_over(1, 20, 10));
+        // Not yet materialized up to the bound (or still loading, bound u64::MAX): the mark stays.
+        assert!(!untrusted_start_over(0, 9, 10));
+        assert!(!untrusted_start_over(0, 20, u64::MAX));
+        assert!(untrusted_start_over(0, 10, 10));
     }
 
     #[test]

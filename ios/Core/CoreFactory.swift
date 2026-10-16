@@ -61,7 +61,7 @@ extension Error {
             case .OtherApprovalDevice:
                 return "This account already has a phone for approvals. Approve this phone from it, or enter your recovery code."
             case .ViewerOnly: return "Decisions are made on the primary phone."
-            case let .RecoveryNeedsConfirmation(reason): return reason
+            case let .RecoveryNeedsConfirmation(reason, _): return reason
             }
         case let e as ForeignError:
             switch e {

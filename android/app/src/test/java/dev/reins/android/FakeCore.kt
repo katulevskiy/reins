@@ -828,7 +828,7 @@ class FakeCore : ReinsCoreInterface {
         codeOrPassword: String,
         deviceName: String,
         tip: String,
-        confirmed: Boolean,
+        confirmation: String?,
     ): dev.reins.core.RosterSummary = throw CoreException.NotFound()
 
     override suspend fun rosterRemoveMember(deviceId: String) = throw CoreException.NotFound()

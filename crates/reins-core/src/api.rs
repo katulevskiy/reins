@@ -726,20 +726,22 @@ impl ReinsCore {
 
     /// Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
     /// becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
-    /// phones changed since, nothing is signed.
+    /// phones changed since, nothing is signed. `confirmation`: the token of the `RecoveryNeedsConfirmation` the
+    /// user accepted (none at first).
     pub async fn roster_recover(
         &self,
         code_or_password: String,
         device_name: String,
         tip: String,
-        confirmed: bool,
+        confirmation: Option<String>,
     ) -> Result<RosterSummary, CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let typed = Zeroizing::new(code_or_password);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
-            let summary = engine.run_account(engine.roster_recover(typed, &device_name, &tip, confirmed)).await?;
+            let summary =
+                engine.run_account(engine.roster_recover(typed, &device_name, &tip, confirmation.as_deref())).await?;
             runtime.check_engine(&engine)?;
             match runtime.activate_unlocked().await {
                 Ok(()) | Err(CoreError::NotLoggedIn) => {}

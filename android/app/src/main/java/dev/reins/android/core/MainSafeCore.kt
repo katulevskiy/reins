@@ -288,8 +288,8 @@ class MainSafeCore(
         codeOrPassword: String,
         deviceName: String,
         tip: String,
-        confirmed: Boolean,
-    ): RosterSummary = io { rosterRecover(codeOrPassword, deviceName, tip, confirmed) }
+        confirmation: String?,
+    ): RosterSummary = io { rosterRecover(codeOrPassword, deviceName, tip, confirmation) }
 
     override suspend fun rosterRemoveMember(deviceId: String) = io { rosterRemoveMember(deviceId) }
 

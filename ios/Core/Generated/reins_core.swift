@@ -3179,9 +3179,10 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     /**
      * Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
      * becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
-     * phones changed since, nothing is signed.
+     * phones changed since, nothing is signed. `confirmation`: the token of the `RecoveryNeedsConfirmation` the
+     * user accepted (none at first).
      */
-    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String, confirmed: Bool) async throws  -> RosterSummary
+    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String, confirmation: String?) async throws  -> RosterSummary
     
     /**
      * "<primary> lost? Use the recovery code", step 1: what the recovery would make of the account's phones (this
@@ -5379,14 +5380,15 @@ open func rosterCreate(deviceName: String, codeOrPassword: String?)async throws 
     /**
      * Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
      * becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
-     * phones changed since, nothing is signed.
+     * phones changed since, nothing is signed. `confirmation`: the token of the `RecoveryNeedsConfirmation` the
+     * user accepted (none at first).
      */
-open func rosterRecover(codeOrPassword: String, deviceName: String, tip: String, confirmed: Bool)async throws  -> RosterSummary  {
+open func rosterRecover(codeOrPassword: String, deviceName: String, tip: String, confirmation: String?)async throws  -> RosterSummary  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_roster_recover(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword),FfiConverterString.lower(deviceName),FfiConverterString.lower(tip),FfiConverterBool.lower(confirmed)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword),FfiConverterString.lower(deviceName),FfiConverterString.lower(tip),FfiConverterOptionString.lower(confirmation)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
@@ -18877,9 +18879,10 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case ViewerOnly
     /**
      * `roster_recover`: the account's history could not be fully checked (`reason`, for the user). Ask whether to
-     * recover anyway, then call it again with `confirmed`.
+     * recover anyway, then call it again with `token` as its confirmation: it stands for exactly what the user was
+     * shown, so a recovery that would find something else asks again.
      */
-    case RecoveryNeedsConfirmation(reason: String
+    case RecoveryNeedsConfirmation(reason: String, token: String
     )
 
     
@@ -18941,7 +18944,8 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
         case 14: return .OtherApprovalDevice
         case 15: return .ViewerOnly
         case 16: return .RecoveryNeedsConfirmation(
-            reason: try FfiConverterString.read(from: &buf)
+            reason: try FfiConverterString.read(from: &buf), 
+            token: try FfiConverterString.read(from: &buf)
             )
 
          default: throw UniffiInternalError.unexpectedEnumCase
@@ -19023,9 +19027,10 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(15))
         
         
-        case let .RecoveryNeedsConfirmation(reason):
+        case let .RecoveryNeedsConfirmation(reason,token):
             writeInt(&buf, Int32(16))
             FfiConverterString.write(reason, into: &buf)
+            FfiConverterString.write(token, into: &buf)
             
         }
     }
@@ -23820,7 +23825,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_roster_create() != 29964) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_roster_recover() != 37402) {
+    if (uniffi_reins_core_checksum_method_reinscore_roster_recover() != 35071) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_roster_recover_preview() != 24859) {
