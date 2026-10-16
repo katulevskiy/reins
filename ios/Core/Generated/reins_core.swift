@@ -8194,6 +8194,12 @@ public struct ApprovalView: Equatable, Hashable {
      * A git host's token the computer hands to the phone's integration of that host.
      */
     public var tokenStore: TokenStoreView?
+    /**
+     * A write to a GitHub repository that lands on its default branch or a protected one, or may (a pull request or a
+     * branch merged, a file committed to the default branch or without naming a branch): Autopilot's Auto and
+     * Overnight always ask for it.
+     */
+    public var targetsDefaultBranch: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8267,7 +8273,12 @@ public struct ApprovalView: Equatable, Hashable {
          */secretsStore: SecretsStoreView? = nil, 
         /**
          * A git host's token the computer hands to the phone's integration of that host.
-         */tokenStore: TokenStoreView? = nil) {
+         */tokenStore: TokenStoreView? = nil, 
+        /**
+         * A write to a GitHub repository that lands on its default branch or a protected one, or may (a pull request or a
+         * branch merged, a file committed to the default branch or without naming a branch): Autopilot's Auto and
+         * Overnight always ask for it.
+         */targetsDefaultBranch: Bool = false) {
         self.requestId = requestId
         self.connectionId = connectionId
         self.connectionLabel = connectionLabel
@@ -8303,6 +8314,7 @@ public struct ApprovalView: Equatable, Hashable {
         self.envRelease = envRelease
         self.secretsStore = secretsStore
         self.tokenStore = tokenStore
+        self.targetsDefaultBranch = targetsDefaultBranch
     }
 
     
@@ -8355,7 +8367,8 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
                 purchase: FfiConverterOptionTypePurchaseView.read(from: &buf), 
                 envRelease: FfiConverterOptionTypeEnvReleaseView.read(from: &buf), 
                 secretsStore: FfiConverterOptionTypeSecretsStoreView.read(from: &buf), 
-                tokenStore: FfiConverterOptionTypeTokenStoreView.read(from: &buf)
+                tokenStore: FfiConverterOptionTypeTokenStoreView.read(from: &buf), 
+                targetsDefaultBranch: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -8395,6 +8408,7 @@ public struct FfiConverterTypeApprovalView: FfiConverterRustBuffer {
         FfiConverterOptionTypeEnvReleaseView.write(value.envRelease, into: &buf)
         FfiConverterOptionTypeSecretsStoreView.write(value.secretsStore, into: &buf)
         FfiConverterOptionTypeTokenStoreView.write(value.tokenStore, into: &buf)
+        FfiConverterBool.write(value.targetsDefaultBranch, into: &buf)
     }
 }
 
@@ -8563,6 +8577,15 @@ public struct AskView: Equatable, Hashable {
      * `None`: the generic kind.
      */
     public var kind: String?
+    /**
+     * The branch checked out where a hook's command runs, as the desktop app reported it: only when a push of it
+     * (`git push`, `git push origin HEAD`) lands on the branch of the same name. `None`: not reported.
+     */
+    public var branch: String?
+    /**
+     * The repository's default branch (its remote's), as the desktop app reported it.
+     */
+    public var defaultBranch: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8591,7 +8614,14 @@ public struct AskView: Equatable, Hashable {
         /**
          * The guard group everything the command (or the file list) does falls in, which Autopilot learns on its own;
          * `None`: the generic kind.
-         */kind: String? = nil) {
+         */kind: String? = nil, 
+        /**
+         * The branch checked out where a hook's command runs, as the desktop app reported it: only when a push of it
+         * (`git push`, `git push origin HEAD`) lands on the branch of the same name. `None`: not reported.
+         */branch: String? = nil, 
+        /**
+         * The repository's default branch (its remote's), as the desktop app reported it.
+         */defaultBranch: String? = nil) {
         self.question = question
         self.detail = detail
         self.topic = topic
@@ -8599,6 +8629,8 @@ public struct AskView: Equatable, Hashable {
         self.uncertain = uncertain
         self.destructive = destructive
         self.kind = kind
+        self.branch = branch
+        self.defaultBranch = defaultBranch
     }
 
     
@@ -8623,7 +8655,9 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
                 rule: FfiConverterOptionTypeAskRuleView.read(from: &buf), 
                 uncertain: FfiConverterBool.read(from: &buf), 
                 destructive: FfiConverterBool.read(from: &buf), 
-                kind: FfiConverterOptionString.read(from: &buf)
+                kind: FfiConverterOptionString.read(from: &buf), 
+                branch: FfiConverterOptionString.read(from: &buf), 
+                defaultBranch: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -8635,6 +8669,8 @@ public struct FfiConverterTypeAskView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.uncertain, into: &buf)
         FfiConverterBool.write(value.destructive, into: &buf)
         FfiConverterOptionString.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.branch, into: &buf)
+        FfiConverterOptionString.write(value.defaultBranch, into: &buf)
     }
 }
 

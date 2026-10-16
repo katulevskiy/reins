@@ -135,6 +135,8 @@ fn main() {
                 uncertain: false,
                 destructive: false,
                 kind: None,
+                branch: None,
+                default_branch: None,
             };
             risk::ask_context(&ask).1
         } else if v["mcp"].is_object() {

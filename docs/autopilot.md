@@ -143,13 +143,20 @@ command in that folder, so a learnt answer never covers another command). There 
   clear of risk, with the model in use, count as agreement: approving requests it held for their risk never releases
   that hold. Without a model that rates risk, a kind asks until then.
 - **Pushes to the default branch** always ask in Auto and in Overnight, whatever the model says: the repository's own
-  default, and `main`, `master`, `trunk`, `develop`, `dev`, `production`, `prod`, `staging`, `stable`, `gh-pages` and
-  `release…` whatever the case. This covers a push from the desktop app and a `git push` a harness hook asks about
-  (every refspec read as git resolves it, `HEAD:main`, `heads/main` and `refs//heads/main` included); `--all`,
-  `--mirror`, a push that names no destination (the current branch, whichever it is) and one to anything that is not
-  clearly a branch or a tag ask too. A git command hidden behind an alias, or one that redefines an alias or where a
-  remote pushes (`-c alias.…`, `-c remote.….push`), is held as not read with certainty. Force pushes and branch deletes are on the hard floor. Outside the floor it weighs,
-  Overnight applies Auto's risk checks too.
+  default, and `main`, `master`, `trunk`, `develop`, `dev`, `production`, `prod`, `staging`, `stable`, `gh-pages`,
+  `release`, `release/…` and `release-…` whatever the case.
+  - It covers a push from the desktop app, a `git push` a harness hook asks about (every refspec read as git resolves
+    it, `HEAD:main`, `heads/main` and `refs//heads/main` included, options such as `-o` read with their values), and a
+    GitHub write that lands on the default branch: a pull request or a branch merged, or a file committed to it or
+    without naming a branch.
+  - `git push`, `git push origin` and `git push origin HEAD` push the branch checked out. For a hook, the desktop app
+    reads it from the repository's files (it never runs git there) and reports it when a push of it certainly lands on
+    the branch of the same name: a feature branch is then decided as usual. When it is not reported, or the line
+    changes folder or branch first, it asks.
+  - `--all`, `--mirror` and a push to anything that is not clearly a branch or a tag ask too.
+  - A git command hidden behind an alias, configuration that can run commands, git's environment, `xargs`, or a shell
+    construct the phone does not read is held as not read with certainty. Force pushes and branch deletes are on the
+    hard floor. Outside the floor it weighs, Overnight applies Auto's risk checks too.
 - **Paused:** when you say an automatic approval was wrong (Auto's or Overnight's), or deny something Autopilot would
   have approved, auto-approve pauses for that kind, and a trust you gave it by hand is taken back. It resumes once the
   wrong one is out of your last 20 answers there and Autopilot again agrees with at least 95% of what you decided.

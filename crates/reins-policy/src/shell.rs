@@ -389,7 +389,7 @@ fn resolve(raw: &Raw, out: &mut Out, depth: usize, windows: bool, every: bool) -
     let words = &raw.words;
     let mut i = 0;
     loop {
-        while words.get(i).is_some_and(|w| is_assignment(w)) {
+        while words.get(i).is_some_and(|w| is_assignment(w) || is_reserved_prefix(w)) {
             i += 1;
         }
         let Some(first) = words.get(i) else {
@@ -595,6 +595,17 @@ fn is_assignment(word: &str) -> bool {
             && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             && !name.starts_with(|c: char| c.is_ascii_digit())
     })
+}
+
+/// The shell's reserved words that may come before a command in a simple command (`if git push …`, `then git push …`,
+/// `! git push …`, `{ git push …`): not a program, the command follows them. (`for`, `case`, `select` and the like,
+/// whose words are not a command, are left as they are: Autopilot holds what it cannot classify; `time` is read as the
+/// wrapper it also is, with its options.)
+pub const RESERVED_PREFIXES: [&str; 12] =
+    ["if", "then", "else", "elif", "do", "done", "fi", "while", "until", "!", "{", "}"];
+
+fn is_reserved_prefix(word: &str) -> bool {
+    RESERVED_PREFIXES.contains(&word)
 }
 
 /// A simple command as written: its words, and whether a heredoc (`<<EOF`) or a here-string (`<<< word`) feeds it.

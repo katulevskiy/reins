@@ -350,6 +350,11 @@ fn write_preview(call: &ConnectorCall) -> Result<Preview, CoreError> {
             format!("Body:\n{shown}")
         });
     }
+    // A raw write that can move a branch (a ref, a merge, a file committed, a branch renamed or protected): which
+    // branch is not read from the path, so it counts as the default one (Autopilot never decides it on the model).
+    let lower = path.to_ascii_lowercase();
+    let moves_a_branch =
+        ["/git/refs", "/merges", "/merge", "/contents/", "/branches/"].iter().any(|p| lower.contains(p));
     Ok(Preview {
         resource: target.resource,
         resource_label: target.label,
@@ -359,6 +364,7 @@ fn write_preview(call: &ConnectorCall) -> Result<Preview, CoreError> {
         class: Some(target.class.to_owned()),
         blob: None,
         secrets: None,
+        default_branch: moves_a_branch,
     })
 }
 
