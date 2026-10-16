@@ -57,6 +57,7 @@ struct Handover {
 }
 
 #[derive(Default)]
+#[expect(clippy::struct_excessive_bools, reason = "the fake server's switches, each a lie it can tell")]
 struct State {
     roster: Vec<RosterEntry>,
     wrap: Option<String>,
@@ -66,6 +67,7 @@ struct State {
     joins: HashMap<String, Join>,
     handovers: HashMap<String, Handover>,
     requests: Vec<Value>,
+    pairings: Vec<Value>,
     /// Answers whose signature verified: (kind, id, bytes).
     signed: Vec<(AnswerKind, String, Vec<u8>)>,
     unsigned: Vec<String>,
@@ -82,6 +84,17 @@ struct State {
     stale_wrap: Option<String>,
     /// Serve the roster as it was at this epoch, with the wrap in force then: a consistent older state.
     serve_at: Option<u64>,
+    /// The next roster append answers 503: after storing the entry (`true`) or without storing it (`false`).
+    fail_append: Option<bool>,
+    /// Answer an empty roster (a server that lost or dropped it).
+    empty_roster: bool,
+    /// Hold the answer to a reveal this long (the reveal itself is taken at once).
+    reveal_delay: Option<std::time::Duration>,
+    /// Show the primary this name instead of the one the joining phone gave.
+    rename_join: Option<String>,
+    /// Recovery-wrap requests that reached the server.
+    wrap_requests: u32,
+    deleted: bool,
 }
 
 #[derive(Clone)]
@@ -144,7 +157,9 @@ impl State {
             RosterReason::Create | RosterReason::Recovery if entry.primary.device_id != me => {
                 return err(400, "not_the_caller");
             }
-            RosterReason::Recovery if append.master_password_hash.as_deref() != Some(&self.password) => {
+            RosterReason::Create | RosterReason::Recovery
+                if append.master_password_hash.as_deref() != Some(&self.password) =>
+            {
                 return err(403, "wrong_proof");
             }
             RosterReason::Handover if append.bundle.is_none() => return err(400, "no_bundle"),
@@ -181,6 +196,7 @@ impl State {
         let p = req.url.path().trim_start_matches("/reins/api").to_owned();
         let parts: Vec<&str> = p.trim_start_matches('/').split('/').collect();
         match (req.method.as_str(), parts.as_slice()) {
+            ("GET", ["roster"]) if self.empty_roster => ok(Roster::default()),
             ("GET", ["roster"]) => {
                 let mut entries = self.roster.clone();
                 if let Some(at) = self.serve_at {
@@ -194,9 +210,21 @@ impl State {
                     entries,
                 })
             }
-            ("POST", ["roster"]) => self.append(&me, req.body_json().unwrap()),
+            ("POST", ["roster"]) => match self.fail_append.take() {
+                Some(true) => {
+                    drop(self.append(&me, req.body_json().unwrap()));
+                    err(503, "unavailable")
+                }
+                Some(false) => err(503, "unavailable"),
+                None => self.append(&me, req.body_json().unwrap()),
+            },
+            ("POST", ["account", "delete"]) => {
+                self.deleted = true;
+                ResponseTemplate::new(204)
+            }
             ("POST", ["roster", "recovery-wrap"]) => {
                 let r: RecoveryWrapRequest = req.body_json().unwrap();
+                self.wrap_requests += 1;
                 if r.master_password_hash != self.password {
                     return err(403, "wrong_proof");
                 }
@@ -228,7 +256,8 @@ impl State {
                     .map(|h| &h.request)
                     .collect();
                 let requests = std::mem::take(&mut self.requests);
-                ok(json!({"requests": requests, "pairings": [], "joins": joins, "handovers": handovers}))
+                let pairings = std::mem::take(&mut self.pairings);
+                ok(json!({"requests": requests, "pairings": pairings, "joins": joins, "handovers": handovers}))
             }
             ("POST", ["joins"]) => {
                 let new: NewJoin = req.body_json().unwrap();
@@ -236,7 +265,7 @@ impl State {
                 let request = JoinRequest {
                     v: 1,
                     id: id.clone(),
-                    device_name: new.device_name,
+                    device_name: self.rename_join.clone().unwrap_or(new.device_name),
                     public_key: new.public_key,
                     created_at: 100,
                     device_id: Some(me.clone()),
@@ -306,7 +335,11 @@ impl State {
                     return err(400, "bad_reveal");
                 }
                 j.request.reveal = Some(reveal);
-                ResponseTemplate::new(204)
+                let answer = ResponseTemplate::new(204);
+                match self.reveal_delay {
+                    Some(delay) => answer.set_delay(delay),
+                    None => answer,
+                }
             }
             ("POST", ["joins", id, "response"]) => {
                 let id = (*id).to_owned();
@@ -845,4 +878,168 @@ async fn a_viewer_with_bypass_on_answers_nothing_pushed_to_it() {
     w.state().by_id.insert("r12".to_owned(), request("r12"));
     b.handle_push("req".to_owned(), "r12".to_owned()).await.unwrap();
     assert_eq!(w.state().answered, ["r11"]);
+}
+
+#[tokio::test]
+async fn a_second_challenge_is_refused_even_while_the_first_reveal_is_in_flight() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = Arc::new(w.phone().await);
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    let start = b.enroll_begin("Pixel".to_owned()).await.unwrap();
+    a.sync(0).await.unwrap();
+    a.enroll_view(start.id).await.unwrap();
+    // The server holds the answer to B's reveal; meanwhile a second poll runs and the server offers another
+    // challenge. The first one was kept before the nonce went out, so the second is refused.
+    w.state().reveal_delay = Some(std::time::Duration::from_millis(400));
+    let first = {
+        let b = Arc::clone(&b);
+        tokio::spawn(async move { b.enroll_poll().await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    w.state().swap_challenge = true;
+    let second = b.enroll_poll().await;
+    let first = first.await.unwrap();
+    assert!(
+        matches!((&first, &second), (Ok(EnrollProgress::Compare { .. }), Err(_))),
+        "the first poll shows the code, the second refuses the swapped challenge: {first:?} {second:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_joining_phone_refuses_to_be_listed_under_a_name_it_did_not_give() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    w.state().rename_join = Some("Your bank".to_owned());
+    let start = b.enroll_begin("Pixel".to_owned()).await.unwrap();
+    a.sync(0).await.unwrap();
+    a.enroll_view(start.id.clone()).await.unwrap();
+    assert!(matches!(b.enroll_poll().await.unwrap(), EnrollProgress::Compare { .. }));
+    let view = a.enroll_view(start.id.clone()).await.unwrap();
+    assert_eq!(view.device_name, "Your bank", "the primary sees what the server relayed");
+    a.enroll_confirm(start.id, true).await.unwrap();
+    let refused = b.enroll_poll().await.unwrap_err();
+    assert!(refused.to_string().contains("names this phone differently"), "{refused}");
+}
+
+#[tokio::test]
+async fn a_change_the_server_took_without_answering_completes_and_one_it_refused_changes_nothing() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    let c = w.phone().await;
+    // Create: the server stored it, then the answer was lost. The retry finds it and keeps the same keys.
+    w.state().fail_append = Some(true);
+    assert!(a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.is_ok());
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
+    assert!(a.engine().holds_owner_seed().await.unwrap());
+    enroll(&a, &b, "Pixel").await;
+    enroll(&a, &c, "Tablet").await;
+    // A removal that never reached the server: refused, nothing changed, the keys kept.
+    w.state().fail_append = Some(false);
+    let c_id = device_of(&c).await;
+    assert!(a.roster_remove_member(c_id.clone()).await.is_err());
+    assert_eq!(a.roster_summary(true).await.unwrap().unwrap().members.len(), 3);
+    assert!(a.engine().holds_owner_seed().await.unwrap());
+    // A removal stored but unanswered: confirmed by the fetch, done.
+    w.state().fail_append = Some(true);
+    a.roster_remove_member(c_id).await.unwrap();
+    assert_eq!(a.roster_summary(false).await.unwrap().unwrap().members.len(), 2);
+    // A handover stored but unanswered: the old primary is a viewer, and drops the owner seed, once it sees it.
+    let b_id = device_of(&b).await;
+    let id = b.handover_request().await.unwrap();
+    a.sync(0).await.unwrap();
+    w.state().fail_append = Some(true);
+    a.handover_approve(id, b_id).await.unwrap();
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Viewer);
+    assert!(!a.engine().holds_owner_seed().await.unwrap());
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+    // A recovery the server never got: refused, A's standing unchanged; tried again, it goes through.
+    w.state().fail_append = Some(false);
+    assert!(recover(&a, PASSWORD, "iPhone").await.is_err());
+    assert_eq!(a.roster_summary(true).await.unwrap().unwrap().role, PhoneRole::Viewer);
+    let recovered = recover(&a, PASSWORD, "iPhone").await.unwrap();
+    assert_eq!(recovered.role, PhoneRole::Primary);
+    // A refusal (4xx) is final: a create with a wrong master password keeps nothing.
+    let mut w2 = world().await;
+    let lone = w2.phone().await;
+    assert!(lone.roster_create("iPhone".to_owned(), Some("not the password".to_owned())).await.is_err());
+    assert!(!lone.engine().holds_owner_seed().await.unwrap());
+    assert_eq!(lone.phone_role().await.unwrap(), PhoneRole::Legacy);
+}
+
+#[tokio::test]
+async fn an_empty_roster_from_the_server_is_never_the_end_of_phone_roles_but_a_deletion_here_is() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    // The server answers an empty roster: refused (a rollback), and nothing is dropped.
+    w.state().empty_roster = true;
+    assert!(a.roster_summary(true).await.is_err());
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
+    assert!(a.engine().holds_owner_seed().await.unwrap());
+    // Nothing irreversible (a new AI connected) runs while the server does not show this phone as primary.
+    w.state().pairings.push(json!({"v": 1, "id": "p1", "client_name": "Claude", "client_host": "claude.ai",
+        "choices": [12, 47, 83], "created_at": 7}));
+    a.sync(0).await.unwrap();
+    assert!(a.pending().await.unwrap().iter().any(|p| p.id == "p1"));
+    assert!(a.answer_pairing("p1".to_owned(), true, Some(47), None).await.is_err());
+    assert!(a.pending().await.unwrap().iter().any(|p| p.id == "p1"), "it still waits");
+    // The user deletes the account here: everything phone roles kept for it goes with it.
+    w.state().empty_roster = false;
+    a.delete_account(EMAIL.to_owned()).await.unwrap();
+    assert!(w.state().deleted);
+    a.login(w.server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Legacy);
+    assert!(!a.engine().holds_owner_seed().await.unwrap());
+}
+
+#[tokio::test]
+async fn a_mistyped_recovery_code_never_reaches_the_server_and_the_preview_shows_what_to_compare() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    let created = a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    let typo = "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567-ABCD-EFGH-IJKL-MNOP-QRS";
+    assert!(b.roster_recover_preview(typo.to_owned()).await.is_err());
+    assert_eq!(w.state().wrap_requests, 0, "no proof was spent on it");
+    let preview = b.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
+    assert_eq!(w.state().wrap_requests, 1);
+    assert_eq!((preview.roster_epoch, preview.epoch), (2, 3));
+    assert_eq!(preview.owner_fingerprint, created.owner_fingerprint, "the same as the primary shows");
+}
+
+#[tokio::test]
+async fn a_viewer_changes_nothing_but_may_pull_the_brake() {
+    use reins_core::AutopilotMode;
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    // Before phone roles, B starts a bypass of its own (as any phone could).
+    b.start_bypass(None, Some(30)).await.unwrap();
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    // Every change is the primary's: refused on the viewer before it touches anything.
+    assert_eq!(b.start_bypass(None, Some(30)).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.set_autopilot_mode(None, Some(AutopilotMode::Auto), None).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.deny("r1".to_owned()).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.revoke_connection("c1".to_owned()).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.mcp_remove("m1".to_owned()).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.payments_remove_limit("l1".to_owned()).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.delete_account(EMAIL.to_owned()).await, Err(CoreError::ViewerOnly));
+    // The brake stays open (Q2): stopping the running bypass, Lockdown, revoking a grant.
+    b.set_autopilot_mode(None, None, None).await.unwrap();
+    assert_eq!(b.autopilot_settings().await.unwrap().bypass_until, None, "the bypass stopped");
+    b.set_autopilot_mode(None, Some(AutopilotMode::Lockdown), None).await.unwrap();
+    assert_ne!(b.revoke_grant("g1".to_owned()).await, Err(CoreError::ViewerOnly));
+    assert_ne!(b.delete_grant("g1".to_owned()).await, Err(CoreError::ViewerOnly), "a removal only tightens");
+    // The primary goes on as before; a removed phone is refused like a viewer.
+    a.start_bypass(None, Some(30)).await.unwrap();
+    let b_id = device_of(&b).await;
+    a.roster_remove_member(b_id).await.unwrap();
+    b.roster_summary(true).await.unwrap();
+    assert_eq!(b.start_bypass(None, Some(30)).await, Err(CoreError::ViewerOnly));
 }

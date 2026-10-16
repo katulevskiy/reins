@@ -217,6 +217,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.restore_account_sync_backup();
             runtime.finish(&engine, result)
         })
@@ -288,6 +289,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let list = engine.run_account(engine.add_vault_passkey(&credential_id, &prf, &name)).await?;
             runtime.check_engine(&engine)?;
             Ok(list)
@@ -300,6 +302,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let list = engine.run_account(engine.remove_vault_passkey(&credential_id)).await?;
             runtime.check_engine(&engine)?;
             Ok(list)
@@ -399,6 +402,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.answer_join(&id, approve).await }).await;
             runtime.finish(&engine, result)
@@ -807,6 +811,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.approve(&request_id, choice).await }).await;
             runtime.finish(&engine, result)
@@ -821,6 +826,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.approve_quick(&request_id).await }).await;
             runtime.finish(&engine, result)
@@ -847,6 +853,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.set_starting_policy(policy);
             runtime.finish(&engine, result)
@@ -859,6 +866,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.deny(&request_id).await }).await;
             runtime.finish(&engine, result)
@@ -904,6 +912,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine
                 .run_account(async { engine.answer_pairing(&pairing_id, approve, chosen_code, label).await })
@@ -954,6 +963,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.revoke_connection(&connection_id).await }).await;
             runtime.finish(&engine, result)
@@ -982,6 +992,7 @@ impl ReinsCore {
         let typed = Zeroizing::new(code_or_password);
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.sign_out_device(&device_id, typed).await }).await;
             runtime.finish(&engine, result)
@@ -1031,6 +1042,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.vault_create(&input).await }).await;
             runtime.finish(&engine, result)
         })
@@ -1043,6 +1055,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.vault_update(&id, &input).await }).await;
             runtime.finish(&engine, result)
         })
@@ -1055,6 +1068,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.vault_delete(&id).await }).await;
             runtime.finish(&engine, result)
         })
@@ -1067,6 +1081,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.vault_generate_ssh_key(&name).await }).await;
             runtime.finish(&engine, result)
         })
@@ -1097,6 +1112,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.set_secrets_always_ask(&project, &env, always) }).await;
             runtime.finish(&engine, result)
         })
@@ -1114,6 +1130,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine
                 .run_account(async { engine.revoke_secrets_everywhere(project.as_deref(), env.as_deref()).await })
@@ -1129,6 +1146,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_connection_icon(&connection_id, icon) }).await;
             runtime.finish(&engine, result)
@@ -1148,6 +1166,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.set_connection_blobatar(&connection_id, shape, colour) }).await;
@@ -1165,6 +1184,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.shuffle_connection_blobatar(&connection_id) }).await;
             runtime.finish(&engine, result)
@@ -1184,6 +1204,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.create_grant(&connection_id, &account, kind, standing).await }).await;
@@ -1198,6 +1219,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.resume_grant(&grant_id, duration_secs) }).await;
             runtime.finish(&engine, result)
@@ -1211,6 +1233,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.extend_grant(&grant_id, duration_secs) }).await;
             runtime.finish(&engine, result)
@@ -1224,6 +1247,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.resume_grant_edited(&grant_id, &standing) }).await;
             runtime.finish(&engine, result)
@@ -1276,6 +1300,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_account(&hint).await }).await;
             runtime.finish(&engine, result)
@@ -1289,6 +1314,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.remove_account(&account).await }).await;
             runtime.finish(&engine, result)
@@ -1323,6 +1349,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_service_account(&service, &hint).await }).await;
             runtime.finish(&engine, result)
@@ -1337,6 +1364,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_token_account(&service, &token).await }).await;
             runtime.finish(&engine, result)
@@ -1350,6 +1378,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_begin(&service, &phone).await }).await;
             runtime.finish(&engine, result)
@@ -1363,6 +1392,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_code(&service, &code).await }).await;
             runtime.finish(&engine, result)
@@ -1377,6 +1407,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_password(&service, &password).await }).await;
             runtime.finish(&engine, result)
@@ -1390,6 +1421,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.remove_service_account(&service, &account).await }).await;
             runtime.finish(&engine, result)
@@ -1492,6 +1524,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.answer_blob(&id, approve).await }).await;
             runtime.finish(&engine, result)
@@ -1534,6 +1567,10 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            // Lockdown and stopping a running bypass are the brake: any member may pull it (Q2).
+            if !engine.is_brake(connection_id.as_deref(), mode)? {
+                engine.require_decider()?;
+            }
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.set_autopilot_mode(connection_id, mode, minutes).await }).await;
@@ -1551,6 +1588,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.start_bypass(connection_id, minutes).await }).await;
             runtime.finish(&engine, result)
@@ -1576,6 +1614,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine
                 .run_account(async { engine.start_overnight(connection_id, minutes, owner.as_ref()).await })
@@ -1596,6 +1635,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.set_overnight_when_risky(risky, owner.as_ref()).await }).await;
@@ -1648,6 +1688,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.create_profile(&name, icon) }).await;
             runtime.finish(&engine, result)
@@ -1665,6 +1706,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.rename_profile(&profile_id, &name, icon) }).await;
             runtime.finish(&engine, result)
@@ -1678,6 +1720,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.delete_profile(&profile_id) }).await;
             runtime.finish(&engine, result)
@@ -1691,6 +1734,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.reset_profile(&profile_id) }).await;
             runtime.finish(&engine, result)
@@ -1704,6 +1748,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_default_profile(&profile_id) }).await;
             runtime.finish(&engine, result)
@@ -1717,6 +1762,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.assign_profile(&connection_id, profile_id) }).await;
             runtime.finish(&engine, result)
@@ -1736,6 +1782,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_class_lock(&profile_id, &class_key, locked) }).await;
             runtime.finish(&engine, result)
@@ -1748,6 +1795,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_preset(&profile_id, preset) }).await;
             runtime.finish(&engine, result)
@@ -1761,6 +1809,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_thresholds(&profile_id, approve_at, deny_at) }).await;
             runtime.finish(&engine, result)
@@ -1806,6 +1855,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.correct_decision(activity_id, should_have).await }).await;
             runtime.finish(&engine, result)

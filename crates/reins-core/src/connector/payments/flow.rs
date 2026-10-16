@@ -279,6 +279,8 @@ impl Engine {
         let decision = Decision::new("", self.ap_human_note(request_id));
         let work = async {
             let session = self.session()?;
+            // A purchase is not taken back: only while this phone is still the primary.
+            self.require_decider_fresh(&session).await?;
             let (_, parked) = self.parked(request_id)?;
             self.approve_parked_purchase(&session, request_id, &parked, Some(&choice)).await
         };

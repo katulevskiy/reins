@@ -133,6 +133,15 @@ impl Store {
         self.device_store().secret_delete(service, account)
     }
 
+    /// Deletes every device secret of `service` whose account starts with `prefix`.
+    pub(crate) fn device_secret_delete_prefix(&self, service: &str, prefix: &str) -> Result<(), CoreError> {
+        self.device_store().lock()?.execute(
+            "DELETE FROM secrets WHERE service = ?1 AND substr(account, 1, length(?2)) = ?2",
+            params![service, prefix],
+        )?;
+        Ok(())
+    }
+
     /// The 32 random bytes kept as device secret (`service`, `account`), made the first time. Of two first calls at
     /// once, the first value stays.
     pub(crate) fn device_seed(&self, service: &str, account: &str) -> Result<Zeroizing<[u8; 32]>, CoreError> {

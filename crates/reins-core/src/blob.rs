@@ -866,8 +866,12 @@ impl Engine {
     /// [`Engine::answer_blob`] for a caller that already claimed the upload (the user, or Autopilot).
     pub(crate) async fn answer_blob_claimed(&self, id: &str, approve: bool) -> Result<(), CoreError> {
         // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
-        self.require_decider()?;
         let session = self.session()?;
+        if approve {
+            self.require_decider_fresh(&session).await?;
+        } else {
+            self.require_decider()?;
+        }
         let info = self.parked_blob(id)?;
         let decision = BlobDecision {
             v: PROTOCOL_VERSION,

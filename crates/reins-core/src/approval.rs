@@ -194,9 +194,10 @@ impl Engine {
 
     /// Approves a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn approve_claimed(&self, request_id: &str, choice: ApprovalChoice) -> Result<(), CoreError> {
-        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
-        self.require_decider()?;
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say), and it checks with
+        // the server that it still is the primary before the action runs: an email sent is not taken back.
         let session = self.session()?;
+        self.require_decider_fresh(&session).await?;
         let (_, mut parked) = self.parked(request_id)?;
         let now = unix_now();
         if matches!(parked.request.call, ToolCall::Mcp(_)) {
@@ -604,8 +605,13 @@ impl Engine {
         chosen_code: Option<u8>,
         label: Option<String>,
     ) -> Result<(), CoreError> {
-        self.require_decider()?;
         let session = self.session()?;
+        if approve {
+            // A connection approved is a new asker: only while this phone is still the primary.
+            self.require_decider_fresh(&session).await?;
+        } else {
+            self.require_decider()?;
+        }
         let Some(_claim) = self.claim(id) else {
             return Err(CoreError::NotFound);
         };

@@ -254,6 +254,9 @@ async fn post_roster(
     match (entry.reason, prev) {
         (RosterReason::Create, None) => {
             require_approval_device(&headers, &key, &conn).await?;
+            // The wrap is sealed under the master key: the creating phone proves it holds that key, so a mistyped
+            // master password never seals a wrap that opens for nobody.
+            check_recovery_proof(&headers, append.master_password_hash.as_deref())?;
             if entry.primary.device_id != caller {
                 return Err(bad_roster("The approval device creates the roster as its primary"));
             }
@@ -442,6 +445,8 @@ async fn announce_new_primary(
 /// account like takeover proofs.
 fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()> {
     let user = user_key(headers);
+    // Counted per device: a stolen token of one device spends that device's budget, never the account's recovery.
+    let budget = format!("{user}/{}", headers.device.uuid);
     let Some(hash) = hash.filter(|h| !h.is_empty()) else {
         return Err(api_err(
             Status::Forbidden,
@@ -449,14 +454,14 @@ fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()
             "This needs the recovery code or master password",
         ));
     };
-    if let Err(wait) = super::limits::DEVICE_PROOFS.check(&user) {
-        return Err(rate_limited("too many wrong recovery codes or passwords for this account", wait));
+    if let Err(wait) = super::limits::DEVICE_PROOFS.check(&budget) {
+        return Err(rate_limited("too many wrong recovery codes or passwords from this device", wait));
     }
     if headers.user.check_valid_password(hash) {
         return Ok(());
     }
-    super::limits::DEVICE_PROOFS.fail(&user);
-    warn!("Reins: a wrong recovery proof for user {user}");
+    super::limits::DEVICE_PROOFS.fail(&budget);
+    warn!("Reins: a wrong recovery proof for user {user} from device {}", headers.device.uuid);
     Err(api_err(Status::Forbidden, codes::WRONG_PROOF, "That is neither the recovery code nor the master password"))
 }
 

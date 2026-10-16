@@ -299,8 +299,15 @@ impl fmt::Debug for ViewKeyEntry {
 pub const MAX_CARRIED_VIEW_KEYS: usize = 16;
 
 impl ViewKeyring {
-    pub fn insert(&mut self, key: ViewKey) {
+    /// Adds a key. A key id this ring holds already keeps its key: a key is never replaced, so a grant or bundle can
+    /// never swap the key ops of that id were sealed with. False (and nothing changes) when the id was there with
+    /// another key.
+    pub fn insert(&mut self, key: ViewKey) -> bool {
+        if let Some(kept) = self.keys.get(&key.kid) {
+            return reins_proto::enroll::ct_eq(&kept.key[..], &key.key[..]);
+        }
         self.keys.insert(key.kid, key);
+        true
     }
 
     pub fn get(&self, kid: u64) -> Option<&ViewKey> {
@@ -355,7 +362,9 @@ impl ViewKeyring {
             if e.kid == 0 {
                 return Err(CoreError::invalid("view key ids start at 1"));
             }
-            self.insert(ViewKey::from_bytes(e.kid, &raw)?);
+            if !self.insert(ViewKey::from_bytes(e.kid, &raw)?) {
+                return Err(CoreError::invalid("A view key differs from the one this phone holds for its id"));
+            }
         }
         Ok(())
     }
@@ -480,6 +489,18 @@ mod tests {
             .is_err()
         );
         assert!(!format!("{:?}", carried[0]).contains(&carried[0].key));
+        // A key id keeps its key: another key for it is refused, the same key again is fine.
+        let mut kept = ViewKeyring::default();
+        assert!(kept.insert(seed.view_key("a", 1)));
+        assert!(kept.insert(seed.view_key("a", 1)));
+        let other = OwnerSeed::from_bytes(&[6; 32]).unwrap().view_key("a", 1);
+        assert!(!kept.insert(other.clone()));
+        assert_eq!(kept.get(1).unwrap().as_bytes(), seed.view_key("a", 1).as_bytes());
+        let swapped = ViewKeyEntry {
+            kid: 1,
+            key: BASE64URL_NOPAD.encode(other.as_bytes()),
+        };
+        assert!(kept.extend(&[swapped]).is_err());
     }
 
     #[test]

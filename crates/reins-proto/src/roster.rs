@@ -474,8 +474,9 @@ pub struct RosterAppend {
     /// entry's primary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle: Option<String>,
-    /// `recovery` only, required: the master password hash of the recovery code or master password, checked and
-    /// counted like the takeover proof of `PUT /reins/api/device`.
+    /// `create` and `recovery`, required: the master password hash of the recovery code or master password, checked
+    /// and counted per device like the takeover proofs (a `create` so proves that its wrap is sealed under the
+    /// account's master key).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub master_password_hash: Option<String>,
 }

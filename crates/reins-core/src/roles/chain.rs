@@ -8,7 +8,7 @@
 //! has seen is refused: a rollback or a fork.
 
 use reins_proto::canon::hex32;
-use reins_proto::roster::{Member, RosterEntry, RosterError, verify_step};
+use reins_proto::roster::{Member, RosterEntry, RosterError, RosterReason, verify_step};
 use serde::{Deserialize, Serialize};
 
 use super::keys::ed25519_verify;
@@ -85,6 +85,16 @@ impl LocalRoster {
     /// The signing key of the primary at `epoch`, if this phone verified that epoch.
     pub fn primary_key_at(&self, epoch: u64) -> Option<[u8; 32]> {
         self.at(epoch).and_then(|e| e.primary.sign_key().ok())
+    }
+
+    /// The key that may sign a view-key grant of key id `kid`: the primary of the entry at that epoch, and only when
+    /// that entry brought a view key (`create`, `remove`, `recovery`). Any other signer, or a key id no such entry
+    /// names, is refused ([`super::sealed::open_view_grant`]).
+    pub fn view_key_signer(&self, kid: u64) -> Option<[u8; 32]> {
+        let entry = self.at(kid)?;
+        matches!(entry.reason, RosterReason::Create | RosterReason::Remove | RosterReason::Recovery)
+            .then(|| entry.primary.sign_key().ok())
+            .flatten()
     }
 
     /// Adds `next` (an entry this phone just made, or one fetched): it must follow the newest entry.
@@ -171,7 +181,6 @@ pub fn anchored_by_code(
 pub(crate) mod tests {
     use super::*;
     use crate::roles::keys::{OwnerSeed, SigningKey};
-    use reins_proto::roster::RosterReason;
 
     pub(crate) fn member(id: &str, n: u8) -> Member {
         Member {
@@ -230,6 +239,11 @@ pub(crate) mod tests {
         assert_eq!(local.standing("p", &member("x", 9).sign_pub), Standing::Removed, "another key");
         assert_eq!(local.primary_key_at(2), Some(member("p", 1).sign_key().unwrap()));
         assert_eq!(local.primary_key_at(9), None);
+        // Only an entry that brought a view key names who may grant it: genesis yes, an enrollment or handover no.
+        assert_eq!(local.view_key_signer(1), Some(member("p", 1).sign_key().unwrap()));
+        assert_eq!(local.view_key_signer(2), None);
+        assert_eq!(local.view_key_signer(3), None);
+        assert_eq!(local.view_key_signer(9), None);
         // The same chain again changes nothing.
         assert_eq!(local.updated(&[g, e2, e3]).unwrap(), local);
     }

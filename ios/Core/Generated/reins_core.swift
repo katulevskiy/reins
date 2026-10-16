@@ -10264,6 +10264,10 @@ public func FfiConverterTypeEnrollStart_lower(_ value: EnrollStart) -> RustBuffe
  */
 public struct EnrollView: Equatable, Hashable {
     public var id: String
+    /**
+     * The name the asking phone gave, as the server relayed it: not covered by the code, so show it as unverified.
+     * (The asking phone refuses to be listed under another name, so a renamed request never completes.)
+     */
     public var deviceName: String
     /**
      * The six digits to compare, once the asking phone revealed its nonce (`None`: ask again in a moment).
@@ -10278,7 +10282,11 @@ public struct EnrollView: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, deviceName: String, 
+    public init(id: String, 
+        /**
+         * The name the asking phone gave, as the server relayed it: not covered by the code, so show it as unverified.
+         * (The asking phone refuses to be listed under another name, so a renamed request never completes.)
+         */deviceName: String, 
         /**
          * The six digits to compare, once the asking phone revealed its nonce (`None`: ask again in a moment).
          */code: String?, 
@@ -13864,6 +13872,11 @@ public struct RecoveryPreview: Equatable, Hashable {
      */
     public var epoch: UInt64
     /**
+     * The roster's epoch now, and its owner key's fingerprint: compare them with another phone's.
+     */
+    public var rosterEpoch: UInt64
+    public var ownerFingerprint: String
+    /**
      * The primary the recovery removes.
      */
     public var removedPrimary: String
@@ -13882,6 +13895,9 @@ public struct RecoveryPreview: Equatable, Hashable {
          * The epoch the recovery makes.
          */epoch: UInt64, 
         /**
+         * The roster's epoch now, and its owner key's fingerprint: compare them with another phone's.
+         */rosterEpoch: UInt64, ownerFingerprint: String, 
+        /**
          * The primary the recovery removes.
          */removedPrimary: String, 
         /**
@@ -13889,6 +13905,8 @@ public struct RecoveryPreview: Equatable, Hashable {
          */viewers: [RosterMemberView]) {
         self.tip = tip
         self.epoch = epoch
+        self.rosterEpoch = rosterEpoch
+        self.ownerFingerprint = ownerFingerprint
         self.removedPrimary = removedPrimary
         self.viewers = viewers
     }
@@ -13911,6 +13929,8 @@ public struct FfiConverterTypeRecoveryPreview: FfiConverterRustBuffer {
             try RecoveryPreview(
                 tip: FfiConverterString.read(from: &buf), 
                 epoch: FfiConverterUInt64.read(from: &buf), 
+                rosterEpoch: FfiConverterUInt64.read(from: &buf), 
+                ownerFingerprint: FfiConverterString.read(from: &buf), 
                 removedPrimary: FfiConverterString.read(from: &buf), 
                 viewers: FfiConverterSequenceTypeRosterMemberView.read(from: &buf)
         )
@@ -13919,6 +13939,8 @@ public struct FfiConverterTypeRecoveryPreview: FfiConverterRustBuffer {
     public static func write(_ value: RecoveryPreview, into buf: inout [UInt8]) {
         FfiConverterString.write(value.tip, into: &buf)
         FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterUInt64.write(value.rosterEpoch, into: &buf)
+        FfiConverterString.write(value.ownerFingerprint, into: &buf)
         FfiConverterString.write(value.removedPrimary, into: &buf)
         FfiConverterSequenceTypeRosterMemberView.write(value.viewers, into: &buf)
     }

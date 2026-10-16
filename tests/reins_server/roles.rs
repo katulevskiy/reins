@@ -124,7 +124,9 @@ impl Account {
             ),
             &owner,
         );
-        let (status, body) = primary.post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP})).await;
+        let (status, body) = primary
+            .post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP, "master_password_hash": PASSWORD_HASH}))
+            .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["epoch"], 1);
         Self {
@@ -263,7 +265,9 @@ async fn roster_create_enroll_handover_and_recovery() {
         ),
         &own,
     );
-    let (status, body) = stranger.post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP})).await;
+    let (status, body) = stranger
+        .post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP, "master_password_hash": PASSWORD_HASH}))
+        .await;
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_approval_device"));
 
     let mut acct = Account::with_roster(server, a).await;
@@ -869,6 +873,48 @@ async fn a_signed_handover_request_is_kept_and_a_badly_signed_one_refused() {
 }
 
 #[tokio::test]
+async fn a_roster_is_created_only_with_the_password_and_proofs_are_counted_per_device() {
+    let options = Options {
+        env: vec![("REINS_DEVICE_PROOF_MAX_FAILURES", "2".to_owned())],
+        ..Options::default()
+    };
+    let server = Server::start_with(options).await;
+    let a = server.phone("una@example.com").await;
+    a.register_device().await;
+    let user = account_of(&a);
+    let own = owner(70);
+    let e1 = signed(
+        RosterEntry::genesis(
+            &user,
+            member(&a, &keys(1), "iPhone"),
+            public(&own),
+            encode_key(&[1; 32]),
+            wrap_hash(WRAP),
+            1,
+        ),
+        &own,
+    );
+    // Without the master password hash, or with a wrong one: no roster (the wrap would open for nobody).
+    let (status, body) = a.post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP})).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "proof_required"));
+    let wrong = json!({"entry": e1, "recovery_wrap": WRAP, "master_password_hash": "not-it"});
+    let (status, body) = a.post("/roster", &wrong).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "wrong_proof"));
+    let right = json!({"entry": e1, "recovery_wrap": WRAP, "master_password_hash": PASSWORD_HASH});
+    assert_eq!(a.post("/roster", &right).await.0, StatusCode::OK);
+    // Another device that guesses wrong runs out of its own tries, never the account's: the primary still gets in.
+    let thief = server.second_device("una@example.com").await;
+    let guess = json!({"master_password_hash": "guess"});
+    for _ in 0..2 {
+        assert_eq!(thief.post("/roster/recovery-wrap", &guess).await.0, StatusCode::FORBIDDEN);
+    }
+    let (status, body) = thief.post("/roster/recovery-wrap", &guess).await;
+    assert_eq!((status, error(&body)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+    let (status, body) = a.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
 async fn handover_requests_are_limited_per_phone() {
     let options = Options {
         env: vec![("REINS_HANDOVER_REQUESTS_PER_HOUR", "2".to_owned())],
@@ -897,7 +943,8 @@ async fn small_order_keys_and_spent_enrollments_are_refused() {
     let mut weak = member(&a, &keys(1), "iPhone");
     weak.sign_pub = encode_key(&[0; 32]);
     let e1 = signed(RosterEntry::genesis(&user, weak, public(&own), encode_key(&[1; 32]), wrap_hash(WRAP), 1), &own);
-    let (status, body) = a.post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP})).await;
+    let (status, body) =
+        a.post("/roster", &json!({"entry": e1, "recovery_wrap": WRAP, "master_password_hash": PASSWORD_HASH})).await;
     assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "a small-order signing key");
 
     let mut acct = Account::with_roster(server, a).await;

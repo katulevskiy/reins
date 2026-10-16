@@ -37,9 +37,9 @@ use crate::store::unix_now;
 use crate::types::PendingKind;
 
 /// The joining phone's open enrollment (device store, per account).
-const ENROLL: &str = "reins.enroll";
+pub(super) const ENROLL: &str = "reins.enroll";
 /// The primary's side of each enrollment it challenged (device store, `<account slot>:<join id>`).
-const ENROLL_PRIMARY: &str = "reins.enroll-primary";
+pub(super) const ENROLL_PRIMARY: &str = "reins.enroll-primary";
 
 /// This phone asked to view the account: poll with `enroll_poll` until it shows the code to compare.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -66,6 +66,8 @@ pub enum EnrollProgress {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct EnrollView {
     pub id: String,
+    /// The name the asking phone gave, as the server relayed it: not covered by the code, so show it as unverified.
+    /// (The asking phone refuses to be listed under another name, so a renamed request never completes.)
     pub device_name: String,
     /// The six digits to compare, once the asking phone revealed its nonce (`None`: ask again in a moment).
     pub code: Option<String>,
@@ -87,6 +89,9 @@ struct OpenEnrollment {
     challenge: Option<EnrollChallenge>,
     #[serde(default)]
     revealed: bool,
+    /// The name this phone asked to be listed under.
+    #[serde(default)]
+    name: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -172,6 +177,7 @@ impl Engine {
                 nonce: encode_nonce(&nonce),
                 challenge: None,
                 revealed: false,
+                name: new.device_name.clone(),
             },
         )?;
         Ok(EnrollStart {
@@ -183,6 +189,8 @@ impl Engine {
     /// Where the enrollment stands (see [`EnrollProgress`]).
     pub async fn enroll_poll(&self) -> Result<EnrollProgress, CoreError> {
         let session = self.session()?;
+        // One poll at a time: two overlapping polls must never each accept a challenge.
+        let _one = self.roles.changing.lock().await;
         let account = self.roles_account(&session).await?;
         let mut open: OpenEnrollment = self.load(ENROLL, &account.slot)?.ok_or(CoreError::NotFound)?;
         if open.account != account.id {
@@ -248,6 +256,9 @@ impl Engine {
             None => {
                 challenge.validate(unix_now()).map_err(invalid)?;
                 open.challenge = Some(challenge.clone());
+                // Kept before the nonce is revealed: whatever happens to the reveal (a stalled answer, a cancelled
+                // poll, the app killed), this phone never takes another challenge for this join.
+                self.save(ENROLL, &account.slot, &*open)?;
             }
         }
         let nonce = parse_nonce(&open.nonce).ok_or_else(|| CoreError::storage("corrupt enrollment"))?;
@@ -269,6 +280,7 @@ impl Engine {
             };
             api_call!(session, |api| api.enroll_reveal(&open.id, &reveal)).map_err(ApiFailure::into_core)?;
             open.revealed = true;
+            self.save(ENROLL, &account.slot, &*open)?;
         }
         if state.status != JoinStatus::Approved {
             return Ok(EnrollProgress::Compare {
@@ -290,6 +302,10 @@ impl Engine {
         }
         if self.standing_in(&roster)? != Standing::Viewer {
             return Err(CoreError::invalid("The roster does not list this phone."));
+        }
+        // The name the primary saw came through the server: the roster must name this phone as it asked.
+        if !open.name.is_empty() && roster.member(&open.device_id).is_some_and(|m| m.name != open.name) {
+            return Err(CoreError::invalid("The roster names this phone differently than it asked."));
         }
         let mut ring = self.keyring(&account.slot)?;
         ring.extend(&grant.view_keys)?;
@@ -457,6 +473,10 @@ impl Engine {
             if self.revealed_transcript_check(&account, &join, &mine)?.is_none() {
                 return Err(CoreError::invalid("The other phone has not shown its code yet."));
             }
+            // The comparison holds for the challenge's lifetime only.
+            if unix_now() >= mine.challenge.expires_at {
+                return Err(CoreError::invalid("The codes ran out. Ask the other phone to try again."));
+            }
             self.enroll_member(&session, &account, &join).await?
         } else {
             JoinAnswer {
@@ -520,15 +540,14 @@ impl Engine {
         let mut entry =
             current.successor(RosterReason::Enroll, current.primary.clone(), viewers, unix_now()).map_err(invalid)?;
         entry.sig = seed.owner_key()?.sign_b64(&entry.signing_bytes().map_err(invalid)?);
-        roster.push(entry.clone())?;
         let append = RosterAppend {
             entry: entry.clone(),
             recovery_wrap: None,
             bundle: None,
             master_password_hash: None,
         };
-        self.post_roster(session, &append).await?;
-        self.save_roster(&account.slot, &roster)?;
+        // Answered only once the server has the entry (it said so, or a fetch shows it).
+        self.commit_entry(session, account, &roster, &append).await.map_err(super::Commit::into_error)?;
         let grant = EnrollGrant {
             v: PROTOCOL_VERSION,
             join_id: join.id.clone(),
