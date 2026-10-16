@@ -55,6 +55,7 @@ use crate::roles::LocalRoster;
 use crate::roles::keys::{SigningKey, ViewKeyring, ed25519_verify, sealed_kid};
 
 pub use checkpoint::{CheckpointCheck, HeartbeatCheck, check_heartbeat};
+pub use rules::activity_key;
 
 /// How long a proposal waits for the primary (seconds).
 pub const PROPOSAL_TTL_SECS: i64 = 7 * 86_400;
@@ -450,6 +451,17 @@ fn authorize(op: &Op, ctx: &Context<'_>) -> Result<(), Refusal> {
         &entries[..]
     };
     authorize_op(op, view).map(|_| ()).map_err(Refusal::NotAuthorized)
+}
+
+/// The highest counter of `member`'s ops this phone took or holds (0: none): a handover or recovery entry naming a
+/// higher `primary_counter` is not taken yet ([`crate::roles::LocalRoster::updated_seen`]).
+pub fn seen_counter(conn: &Connection, member: &Member) -> Result<u64, CoreError> {
+    let held: Option<i64> = conn.query_row(
+        "SELECT max(counter) FROM oplog_held WHERE author = ?1 AND sign_pub = ?2",
+        params![member.device_id, member.sign_pub],
+        |r| r.get(0),
+    )?;
+    Ok(last_counter(conn, member)?.max(held.map_or(0, as_u64)))
 }
 
 /// The last counter of `member`'s ops this phone took (0: none): what a handover or recovery entry names as the

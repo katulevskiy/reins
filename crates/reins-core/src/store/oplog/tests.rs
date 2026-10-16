@@ -125,6 +125,22 @@ fn grant_row(revoked: bool, expires_at: i64) -> serde_json::Value {
     json!({"grant": g, "connection_label": "Claude"})
 }
 
+/// The key of the Activity entry `author`'s next op (at `epoch`) writes.
+fn next_activity_key(w: &World, author: &str, epoch: u64) -> String {
+    activity_key(&Version {
+        epoch,
+        author: author.to_owned(),
+        counter: w.counters.get(author).copied().unwrap_or(0) + 1,
+    })
+}
+
+/// `author`'s next op: an Activity entry under its own key.
+fn activity(w: &mut World, author: &str, row: serde_json::Value) -> (String, Op) {
+    let key = next_activity_key(w, author, 3);
+    let op = w.op(author, 3, OpClass::Primary, put(Table::Audit, &key, None, row));
+    (key, op)
+}
+
 fn value(conn: &Connection, table: Table, key: &str) -> Option<serde_json::Value> {
     record(conn, table, key).unwrap().and_then(|r| r.value)
 }
@@ -267,6 +283,8 @@ fn an_op_ahead_of_its_authors_counter_waits_for_the_ones_before_it() {
     let skipped = w.op("p", 3, OpClass::Primary, put(Table::Meta, "k", None, json!(1)));
     assert_eq!(run(&mut conn, &w, 4, &[skipped]), [Outcome::Held]);
     assert_eq!(value(&conn, Table::Meta, "k"), None);
+    // Seen (held), not taken: a roster entry may vouch for it, the applied counter is still 0.
+    assert_eq!((seen_counter(&conn, &member("p", 1)).unwrap(), last_counter(&conn, &member("p", 1)).unwrap()), (6, 0));
     assert!(counter_gaps(&conn).unwrap().is_empty(), "waiting is no gap yet");
     conn.execute("UPDATE oplog_state SET seq = ?1", [i64::try_from(3 + HOLD_SEQS).unwrap()]).unwrap();
     let other = w.op("v", 3, OpClass::Proposal, put(Table::Proposals, "v/1", None, json!({})));
@@ -435,19 +453,18 @@ fn removals_beat_concurrent_edits_and_activity_only_grows() {
     let back = w.op("p", 3, OpClass::Primary, put(Table::Grants, "g1", Some(tomb), grant_row(false, 1)));
     assert_eq!(run(&mut conn, &w, 7, &[back]), [Outcome::Superseded]);
     // Activity: an entry never changes and is never removed by an op.
-    let entry = w.op("p", 3, OpClass::Primary, put(Table::Audit, "op-1", None, json!({"detail": "first"})));
-    let changed = w.op("p", 3, OpClass::Primary, put(Table::Audit, "op-1", None, json!({"detail": "rewritten"})));
-    let dropped = w.op("p", 3, OpClass::Primary, remove(Table::Audit, "op-1"));
-    assert_eq!(
-        run(&mut conn, &w, 8, &[entry, changed, dropped]),
-        [Outcome::Applied, Outcome::Superseded, Outcome::Superseded]
-    );
+    let (key, entry) = activity(&mut w, "p", json!({"detail": "first"}));
+    let changed = w.op("p", 3, OpClass::Primary, put(Table::Audit, &key, None, json!({"detail": "rewritten"})));
+    let dropped = w.op("p", 3, OpClass::Primary, remove(Table::Audit, &key));
+    let outcomes = run(&mut conn, &w, 8, &[entry, changed, dropped]);
+    assert_eq!(outcomes[0], Outcome::Applied);
+    assert!(matches!(outcomes[1], Outcome::Refused(Refusal::Invalid(_))), "another op's key: {:?}", outcomes[1]);
+    assert_eq!(outcomes[2], Outcome::Superseded);
     // Not even by a writer that saw it (its version as prev).
-    let seen = version(&conn, Table::Audit, "op-1");
-    let rewritten =
-        w.op("p", 3, OpClass::Primary, put(Table::Audit, "op-1", Some(seen), json!({"detail": "rewritten"})));
-    assert_eq!(run(&mut conn, &w, 11, &[rewritten]), [Outcome::Superseded]);
-    assert_eq!(value(&conn, Table::Audit, "op-1").unwrap()["detail"], "first");
+    let seen = version(&conn, Table::Audit, &key);
+    let rewritten = w.op("p", 3, OpClass::Primary, put(Table::Audit, &key, Some(seen), json!({"detail": "rewritten"})));
+    assert!(matches!(run(&mut conn, &w, 11, &[rewritten])[..], [Outcome::Refused(Refusal::Invalid(_))]));
+    assert_eq!(value(&conn, Table::Audit, &key).unwrap()["detail"], "first");
 }
 
 #[test]
@@ -593,9 +610,7 @@ fn activity_is_trimmed_at_the_same_point_on_every_phone() {
     let mut w = World::new(false);
     let (mut a, mut b) = (store(), store());
     let full = AUDIT_RETENTION + 2;
-    let ops: Vec<Op> = (0..full)
-        .map(|i| w.op("p", 3, OpClass::Primary, put(Table::Audit, &format!("e{i}"), None, json!({"n": i}))))
-        .collect();
+    let (keys, ops): (Vec<String>, Vec<Op>) = (0..full).map(|i| activity(&mut w, "p", json!({"n": i}))).unzip();
     let outcomes = run(&mut a, &w, 1, &ops);
     assert!(outcomes.iter().all(|o| *o == Outcome::Applied));
     // b applied the same ops a while later (other local times): the same entries, the same state.
@@ -617,13 +632,23 @@ fn activity_is_trimmed_at_the_same_point_on_every_phone() {
         apply(&mut b, &ctx, &synced).unwrap();
     }
     assert_eq!(records(&a, Table::Audit).unwrap().len(), usize::try_from(AUDIT_RETENTION).unwrap());
-    assert!(record(&a, Table::Audit, "e1").unwrap().is_none(), "the oldest went");
-    assert!(record(&a, Table::Audit, "e2").unwrap().is_some());
+    assert!(record(&a, Table::Audit, &keys[1]).unwrap().is_none(), "the oldest went");
+    assert!(record(&a, Table::Audit, &keys[2]).unwrap().is_some());
     assert_eq!(state_digest(&a).unwrap(), state_digest(&b).unwrap());
+    // A trimmed entry never comes back: no other op may write its key, and its own op is a replay.
+    let mut w = later;
+    let again = w.op("p", 3, OpClass::Primary, put(Table::Audit, &keys[0], None, json!({"n": "again"})));
+    let mut replayed = ops[0].clone();
+    replayed.sig = key_of("p").sign_b64(&replayed.signing_bytes().unwrap());
+    let next = 1 + u64::try_from(full).unwrap();
+    let outcomes = run(&mut a, &w, next, &[again, replayed]);
+    assert!(matches!(outcomes[0], Outcome::Refused(Refusal::Invalid(_))), "{:?}", outcomes[0]);
+    assert_eq!(outcomes[1], Outcome::Refused(Refusal::CounterReplay));
+    assert!(record(&a, Table::Audit, &keys[0]).unwrap().is_none());
     // A store that kept one more entry has another state.
     b.execute(
-        "INSERT INTO oplog_records (tbl, key, value, epoch, author, counter, seq, at) VALUES ('audit', 'e0', '{}', 3, 'p', 1, 1, 0)",
-        [],
+        "INSERT INTO oplog_records (tbl, key, value, epoch, author, counter, seq, at) VALUES ('audit', ?1, '{}', 3, 'p', 1, 1, 0)",
+        [&keys[0]],
     )
     .unwrap();
     assert_ne!(state_digest(&a).unwrap(), state_digest(&b).unwrap());

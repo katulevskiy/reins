@@ -136,6 +136,22 @@ impl LocalRoster {
         Ok(next)
     }
 
+    /// Like [`Self::updated`], but a newer entry that names more of the outgoing primary's ops (`primary_counter`)
+    /// than this phone has seen of it (`seen`: the highest counter of that member's ops it took or holds) is not taken
+    /// yet, nor any entry after it: the outgoing primary's ops up to there count as its history on every phone, so no
+    /// entry may vouch for ops this phone never saw. It comes in once this phone has caught up with the log; one that
+    /// names ops that never were (a modified primary's `u64::MAX`) never does.
+    pub fn updated_seen(&self, fetched: &[RosterEntry], seen: impl Fn(&Member) -> u64) -> Result<Self, CoreError> {
+        let mut next = self.updated(fetched)?;
+        let known = self.entries.len();
+        if let Some(i) = (known..next.entries.len())
+            .find(|&i| next.entries[i].primary_counter.is_some_and(|named| named > seen(&next.entries[i - 1].primary)))
+        {
+            next.entries.truncate(i);
+        }
+        Ok(next)
+    }
+
     /// A short fingerprint of the anchor's owner key, for people to compare ("a1b2 c3d4").
     pub fn owner_fingerprint(&self) -> String {
         let key = reins_proto::canon::sha256(self.current().owner_pub.as_bytes());
@@ -223,6 +239,38 @@ pub(crate) mod tests {
             entry.recovery_wrap_hash = hex32(&[u8::try_from(entry.epoch).unwrap(); 32]);
         }
         sign(entry, owner)
+    }
+
+    #[test]
+    fn an_entry_vouching_for_ops_this_phone_never_saw_waits() {
+        let owner = OwnerSeed::generate().unwrap();
+        let g = genesis(&owner);
+        let e2 = next(&g, RosterReason::Enroll, member("p", 1), vec![member("v", 2)], &owner);
+        let mut e3 = e2.successor(RosterReason::Handover, member("v", 2), vec![member("p", 1)], 20).unwrap();
+        e3.recovery_wrap_hash = hex32(&[3; 32]);
+        e3.primary_counter = Some(5);
+        let e3 = sign(e3, &owner);
+        let e4 = next(&e3, RosterReason::Enroll, member("v", 2), vec![member("p", 1), member("w", 3)], &owner);
+        let chain = [g.clone(), e2, e3, e4];
+        let local = LocalRoster::created(g).unwrap();
+        // p's 5th op not seen yet (or never written): the handover, and what follows it, wait.
+        let seen = |n: u64| {
+            move |m: &Member| {
+                if m.device_id == "p" {
+                    n
+                } else {
+                    0
+                }
+            }
+        };
+        assert_eq!(local.updated_seen(&chain, seen(4)).unwrap().epoch(), 2);
+        assert_eq!(local.updated_seen(&chain, seen(0)).unwrap().epoch(), 2);
+        // Seen it: all of it comes in.
+        assert_eq!(local.updated_seen(&chain, seen(5)).unwrap().epoch(), 4);
+        assert_eq!(local.updated_seen(&chain, seen(9)).unwrap(), local.updated(&chain).unwrap());
+        // An entry this phone took already is never checked again.
+        let taken = local.updated(&chain).unwrap();
+        assert_eq!(taken.updated_seen(&chain, seen(0)).unwrap().epoch(), 4);
     }
 
     #[test]

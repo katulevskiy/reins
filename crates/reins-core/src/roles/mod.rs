@@ -516,7 +516,7 @@ impl Engine {
             return Ok(None);
         };
         let fetched = api_call!(session, |api| api.roster()).map_err(ApiFailure::into_core)?;
-        let updated = local.updated(&fetched.entries)?;
+        let updated = local.updated_seen(&fetched.entries, |m| self.seen_counter(m))?;
         if updated != local {
             self.save_roster(&account.slot, &updated)?;
         }
@@ -766,6 +766,12 @@ impl Engine {
         self.store.oplog(|c| crate::store::oplog::last_counter(c, primary))?
     }
 
+    /// The highest counter of `member`'s ops this phone took or holds (0 when it cannot tell): a roster entry may name
+    /// no more of them ([`LocalRoster::updated_seen`]).
+    fn seen_counter(&self, member: &Member) -> u64 {
+        self.store.oplog(|c| crate::store::oplog::seen_counter(c, member)).ok().and_then(Result::ok).unwrap_or(0)
+    }
+
     fn rewrap_entry(
         account: &Account,
         entry: &mut RosterEntry,
@@ -964,7 +970,7 @@ impl Engine {
         verify_chain(&fetched, None, ed25519_verify)
             .map_err(|e| CoreError::invalid(format!("The account's roster does not verify: {e}")))?;
         let base = match self.local_roster(&account.slot)? {
-            Some(local) => local.updated(&fetched)?,
+            Some(local) => local.updated_seen(&fetched, |m| self.seen_counter(m))?,
             None => LocalRoster::anchored(
                 fetched.last().cloned().ok_or_else(|| CoreError::invalid("This account has no phone roles."))?,
             )?,

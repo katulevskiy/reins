@@ -5,7 +5,7 @@
 //! | `grants` | replaces it | [`join_grants`]: revoked wins, the earlier expiry and smaller limit, a scope change revokes, the most uses | a tombstone a put never lifts (ids are not reused) |
 //! | `autopilot_settings` | replaces it | Lockdown wins, else the less permissive mode; the earlier bypass end, a stopped one stays stopped | a tombstone |
 //! | `meta` | replaces it | merged entry by entry, "ask every time" wins; a value of another kind keeps the stored one | a tombstone |
-//! | `audit` | kept (an entry never changes) | kept | ignored (grow-only; the newest entries kept as the log goes) |
+//! | `audit` | keyed by the op that writes it ([`activity_key`]), so it is written once: never changed, never back once trimmed | kept | ignored (grow-only; the newest entries kept as the log goes) |
 //! | the others | replaces it | the later op's (last writer in `seq` order) | a tombstone |
 //!
 //! A put on a tombstone lifts it only when it names the tombstone's version (its writer saw the removal and adds the
@@ -100,6 +100,13 @@ pub(super) fn apply_change(
     }
 }
 
+/// The key of the Activity entry the op of `version` writes. An entry is its op's own: no other op (whoever writes it)
+/// can write that key, and its op is never applied twice (its counter), so an entry is never changed, nor written again
+/// once trimmed.
+pub fn activity_key(version: &Version) -> String {
+    format!("{}/{}/{}", version.epoch, version.author, version.counter)
+}
+
 fn put_record(
     tx: &Transaction<'_>,
     table: Table,
@@ -109,6 +116,11 @@ fn put_record(
     seq: u64,
     now: i64,
 ) -> Result<Outcome, CoreError> {
+    if table == Table::Audit && key != activity_key(version) {
+        return Ok(Outcome::Refused(Refusal::Invalid(
+            "an Activity entry is keyed by the op that writes it".to_owned(),
+        )));
+    }
     let current = record(tx, table, key)?;
     // An Activity entry never changes, whoever writes it and whatever it names as replaced.
     if table == Table::Audit && current.is_some() {
