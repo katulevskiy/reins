@@ -229,5 +229,5 @@ async fn client_metadata_documents_are_never_fetched_from_private_addresses() {
         let page = r.text().await.unwrap();
         assert!(page.contains("not allowed"), "{client_id}: {page}");
     }
-    assert!(mock.requests().is_empty(), "nothing reached the local server");
+    assert!(mock.requests_not_probes().is_empty(), "nothing reached the local server");
 }

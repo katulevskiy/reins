@@ -11341,6 +11341,7 @@ dependencies = [
  "pastey 0.2.3",
  "percent-encoding",
  "pico-args",
+ "psl",
  "rand 0.10.2",
  "regex",
  "reins-proto",
