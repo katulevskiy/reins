@@ -377,12 +377,13 @@ repositories, or it refuses the feed (its `fetch.txt` destinations are only `fil
    `reins.gpg` and `reins.asc`, so no client sees an index whose files are not there yet;
 3. keep replaced files under `packages/` for 14 days, as it does for `files/`.
 
-**The AUR package** `reins-bin` is written for each release by `scripts/package/aur.sh` (PKGBUILD and .SRCINFO from the
-release's `SHA256SUMS`; the release's `aur` job checks .SRCINFO and the sources with makepkg in an Arch Linux
-container) and pushed to `ssh://aur@aur.archlinux.org/reins-bin.git` once the release is public. It needs an AUR
-account with an SSH key: `ssh-keygen -t ed25519 -N '' -C reins-bin -f aur_ed25519`, the public half in the account's
-settings, the private half (the whole OpenSSH key file) in Infisical `/signing/aur` as `AUR_SSH_PRIVATE_KEY`. Without
-it the job only says so; the first push creates the package. The job cannot fail or hold back a release.
+**The AUR package** `reins-bin` is not published yet. `scripts/package/aur.sh` writes its PKGBUILD and .SRCINFO for
+each release, from the release's `SHA256SUMS`. The release's `aur` job checks .SRCINFO and the sources with makepkg
+in an Arch Linux container. A push to `ssh://aur@aur.archlinux.org/reins-bin.git` needs an AUR account with an SSH
+key: `ssh-keygen -t ed25519 -N '' -C reins-bin -f aur_ed25519`, the public half in the account's settings, the private
+half (the whole OpenSSH key file) in Infisical `/signing/aur` as `AUR_SSH_PRIVATE_KEY`. Without that key the job only
+says so. The job cannot fail or hold back a release. Until the package is on the AUR, Arch users install with
+`curl -fsSL https://reins2fa.com/install.sh | sh`.
 
 Production signing uses a dedicated non-debug RSA-4096 identity, alias `reinsrelease`. Its SHA-256 certificate is
 `61edfc4c65cbdfa1b7a07109a9df347de93500b52012c3380b38c7c4a4e3f1c8`, pinned in

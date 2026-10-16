@@ -6,7 +6,6 @@ Every release of the desktop app is also a set of Linux packages:
 | --- | --- | --- |
 | `reins` | the command-line program, `/usr/bin/reins` (the same static build as the release archives) | x86_64 (amd64), aarch64 (arm64) |
 | `reins-app` | the Reins app (window and tray), `/usr/bin/reins-app`, with its menu entry; needs `reins` | x86_64 (amd64) |
-| `reins-bin` (AUR) | both of the above in one Arch Linux package | x86_64 (aarch64: `reins` only) |
 
 They come from signed package repositories at `https://reins2fa.com/releases/packages/`, which always hold the latest
 release, so the system's updates bring new versions. The same `.deb` and `.rpm` files are assets of every
@@ -65,17 +64,14 @@ that key. A downloaded package: `sudo dnf install ./reins-<version>-1.x86_64.rpm
 
 ## Arch Linux
 
-`reins-bin` is on the [AUR](https://aur.archlinux.org/packages/reins-bin). With an AUR helper, `yay -S reins-bin` or
-`paru -S reins-bin`; by hand:
+There is no Arch package yet. Install with the script:
 
 ```sh
-git clone https://aur.archlinux.org/reins-bin.git
-cd reins-bin
-makepkg -si
+curl -fsSL https://reins2fa.com/install.sh | sh
 ```
 
-Its PKGBUILD downloads the release's archives from GitHub and checks them against the SHA-256 published with the
-release.
+`scripts/package/aur.sh` writes a PKGBUILD for `reins-bin` on each release. It is not published on the AUR yet.
+Later updates from the script: `reins update`.
 
 ## Checking the key
 
@@ -91,8 +87,8 @@ gpg --show-keys <(curl -fsSL https://reins2fa.com/releases/packages/reins.asc)  
 ## After installing
 
 Continue with `reins login` and `reins resume` ([quick start](quick-start.md#3b-install-the-desktop-app)), or open
-**Reins** from the applications menu. Updates come with the system's (`sudo apt upgrade`, `sudo dnf upgrade`, your AUR
-helper); `reins update` only says that, as it does not replace a program the package manager owns. After an upgrade
+**Reins** from the applications menu. Updates come with the system's (`sudo apt upgrade`, `sudo dnf upgrade`);
+`reins update` only says that, as it does not replace a program the package manager owns. After an upgrade
 the packages restart the background service of every logged-in user who runs it, so it runs the new program.
 
 If you used the install script before, remove its copy, `~/.local/bin/reins` (and `~/.local/bin/Reins.AppImage` with

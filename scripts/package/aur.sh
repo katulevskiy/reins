@@ -9,7 +9,7 @@
 #
 # .SRCINFO is written here from the same values, so this runs without Arch Linux; it is what
 # `makepkg --printsrcinfo` prints for the PKGBUILD (the release workflow and scripts/test-linux-packages.py check that).
-# The release workflow pushes both to ssh://aur@aur.archlinux.org/reins-bin.git.
+# The release workflow can push both to ssh://aur@aur.archlinux.org/reins-bin.git. reins-bin is not on the AUR yet.
 set -euo pipefail
 
 die() {

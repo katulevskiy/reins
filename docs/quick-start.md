@@ -74,9 +74,9 @@ Resume. The app is also a download of its own: `Reins-macOS.dmg`, `Reins-Windows
 On macOS, Homebrew installs it too: `brew install --cask katulevskiy/tap/reins` (the app, and the `reins` command
 that comes with it).
 
-On Debian and Ubuntu, Fedora and Arch Linux, Reins also comes as packages, which the system keeps up to date: `reins`
-(the command-line program) and `reins-app` (the app) from signed APT and RPM repositories, and `reins-bin` on the
-AUR. For Debian and Ubuntu:
+On Debian, Ubuntu and Fedora, Reins also comes as packages, which the system keeps up to date: `reins`
+(the command-line program) and `reins-app` (the app) from signed APT and RPM repositories. On Arch Linux, use the
+install script above. For Debian and Ubuntu:
 
 ```sh
 sudo install -d -m 0755 /etc/apt/keyrings
