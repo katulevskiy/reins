@@ -2294,13 +2294,13 @@ async fn a_paused_download_keeps_what_arrived() {
         }
     });
     let part = dir.path().join("models/fake-laya-2/model.onnx.part");
-    let (d, k, s, p) = (dir.path().to_owned(), known.clone(), Arc::clone(&state), part.clone());
+    let (data_dir, pinned, shared) = (dir.path().to_owned(), known.clone(), Arc::clone(&state));
     let download = tokio::spawn(async move {
         let listener = testing::Progress::default();
-        model::download(&http, &format!("http://{addr}/models"), &d, &k, &listener, &s).await
+        model::download(&http, &format!("http://{addr}/models"), &data_dir, &pinned, &listener, &shared).await
     });
     for _ in 0..200 {
-        if std::fs::metadata(&p).is_ok_and(|m| m.len() == half as u64) {
+        if std::fs::metadata(&part).is_ok_and(|m| m.len() == half as u64) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;

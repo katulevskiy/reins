@@ -1919,15 +1919,13 @@ impl Engine {
             rt.load(path).map_err(|e| CoreError::service(format!("the model could not be loaded ({e})")))?;
             checked.run(rt.as_ref(), &[SELF_CHECK_STATE])
         });
-        let passes = match tokio::time::timeout(SELF_CHECK_TIMEOUT, &mut work).await {
-            Ok(joined) => joined.map_err(|e| CoreError::service(e.to_string()))??,
-            Err(_) => {
-                if tokio::time::timeout(SELF_CHECK_GIVE_UP, work).await.is_err() {
-                    log::warn!("the new model's self-check still runs; the previous model is loaded after it");
-                }
-                return Err(CoreError::service("the new model took too long"));
+        let Ok(joined) = tokio::time::timeout(SELF_CHECK_TIMEOUT, &mut work).await else {
+            if tokio::time::timeout(SELF_CHECK_GIVE_UP, work).await.is_err() {
+                log::warn!("the new model's self-check still runs; the previous model is loaded after it");
             }
+            return Err(CoreError::service("the new model took too long"));
         };
+        let passes = joined.map_err(|e| CoreError::service(e.to_string()))??;
         let sane = passes.len() == 1
             && passes.iter().all(|p| {
                 let sum: f32 = p.probs.iter().sum();
