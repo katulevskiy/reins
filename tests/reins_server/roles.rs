@@ -875,7 +875,7 @@ async fn a_signed_handover_request_is_kept_and_a_badly_signed_one_refused() {
 #[tokio::test]
 async fn a_roster_is_created_only_with_the_password_and_proofs_are_counted_per_device() {
     let options = Options {
-        env: vec![("REINS_DEVICE_PROOF_MAX_FAILURES", "2".to_owned())],
+        env: vec![("REINS_DEVICE_PROOF_MAX_FAILURES", "3".to_owned())],
         ..Options::default()
     };
     let server = Server::start_with(options).await;
@@ -902,15 +902,43 @@ async fn a_roster_is_created_only_with_the_password_and_proofs_are_counted_per_d
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "wrong_proof"));
     let right = json!({"entry": e1, "recovery_wrap": WRAP, "master_password_hash": PASSWORD_HASH});
     assert_eq!(a.post("/roster", &right).await.0, StatusCode::OK);
-    // Another device that guesses wrong runs out of its own tries, never the account's: the primary still gets in.
-    let thief = server.second_device("una@example.com").await;
+    // Guesses from ever new device ids (with the wrong one above, three for the account): each device has tries left,
+    // but the account's limit, shared with every other proof, stops them all.
+    let guess = json!({"master_password_hash": "guess"});
+    for _ in 0..2 {
+        let device = server.second_device("una@example.com").await;
+        assert_eq!(device.post("/roster/recovery-wrap", &guess).await.0, StatusCode::FORBIDDEN);
+    }
+    let fresh = server.second_device("una@example.com").await;
+    let (status, body) = fresh.post("/roster/recovery-wrap", &guess).await;
+    assert_eq!((status, error(&body)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "the account's limit");
+    // The phone that proved itself before keeps its own tries: the flood does not lock the owner out.
+    let (status, body) = a.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn one_devices_wrong_proofs_leave_another_devices_tries_alone() {
+    let options = Options {
+        env: vec![
+            ("REINS_DEVICE_PROOF_MAX_FAILURES", "10".to_owned()),
+            ("REINS_DEVICE_PROOF_MAX_FAILURES_PER_DEVICE", "2".to_owned()),
+        ],
+        ..Options::default()
+    };
+    let acct = Account::new_with("vic@example.com", options).await;
+    let thief = acct.server.second_device("vic@example.com").await;
+    let other = acct.server.second_device("vic@example.com").await;
     let guess = json!({"master_password_hash": "guess"});
     for _ in 0..2 {
         assert_eq!(thief.post("/roster/recovery-wrap", &guess).await.0, StatusCode::FORBIDDEN);
     }
     let (status, body) = thief.post("/roster/recovery-wrap", &guess).await;
-    assert_eq!((status, error(&body)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
-    let (status, body) = a.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
+    assert_eq!((status, error(&body)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "its own tries are used up");
+    // Another device still has its own: a wrong guess is a wrong guess, a right one gets the wrap.
+    let (status, body) = other.post("/roster/recovery-wrap", &guess).await;
+    assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "wrong_proof"));
+    let (status, body) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
 

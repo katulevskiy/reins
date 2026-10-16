@@ -572,6 +572,9 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     // Handover to B.
     let id = b.handover_request().await.unwrap();
     assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Waiting);
+    // A viewer cannot decline a handover request (its own, or another's): only the primary answers them.
+    assert_eq!(b.handover_deny(id.clone()).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Waiting);
     a.sync(0).await.unwrap();
     let asks = a.handover_requests().await.unwrap();
     assert_eq!((asks.len(), asks[0].device_name.as_str()), (1, "Pixel"));

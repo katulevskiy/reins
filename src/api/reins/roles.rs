@@ -445,8 +445,11 @@ async fn announce_new_primary(
 /// account like takeover proofs.
 fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()> {
     let user = user_key(headers);
-    // Counted per device: a stolen token of one device spends that device's budget, never the account's recovery.
-    let budget = format!("{user}/{}", headers.device.uuid);
+    // Counted twice: per device (one stolen token cannot use up everyone's tries at once) and against the account's
+    // limit shared with every other proof (new device ids never get more guesses). A device that proved itself before
+    // keeps its own tries when others used up the account's.
+    let device = format!("{user}/{}", headers.device.uuid);
+    let proven = || super::limits::PROVEN_DEVICES.lock().unwrap_or_else(PoisonError::into_inner).contains(&device);
     let Some(hash) = hash.filter(|h| !h.is_empty()) else {
         return Err(api_err(
             Status::Forbidden,
@@ -454,13 +457,20 @@ fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()
             "This needs the recovery code or master password",
         ));
     };
-    if let Err(wait) = super::limits::DEVICE_PROOFS.check(&budget) {
+    if let Err(wait) = super::limits::DEVICE_PROOFS_PER_DEVICE.check(&device) {
         return Err(rate_limited("too many wrong recovery codes or passwords from this device", wait));
     }
+    if let Err(wait) = super::limits::DEVICE_PROOFS.check(&user)
+        && !proven()
+    {
+        return Err(rate_limited("too many wrong recovery codes or passwords for this account", wait));
+    }
     if headers.user.check_valid_password(hash) {
+        super::limits::PROVEN_DEVICES.lock().unwrap_or_else(PoisonError::into_inner).insert(device);
         return Ok(());
     }
-    super::limits::DEVICE_PROOFS.fail(&budget);
+    super::limits::DEVICE_PROOFS_PER_DEVICE.fail(&device);
+    super::limits::DEVICE_PROOFS.fail(&user);
     warn!("Reins: a wrong recovery proof for user {user} from device {}", headers.device.uuid);
     Err(api_err(Status::Forbidden, codes::WRONG_PROOF, "That is neither the recovery code nor the master password"))
 }

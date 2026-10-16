@@ -1373,6 +1373,12 @@ impl Engine {
     pub async fn handover_deny(&self, id: &str) -> Result<(), CoreError> {
         let session = self.session()?;
         let account = self.roles_account(&session).await?;
+        // The primary answers handover requests; on a roster account no other phone does.
+        let roster =
+            self.local_roster(&account.slot)?.ok_or_else(|| CoreError::invalid("This account has no phone roles."))?;
+        if self.standing_in(&roster)? != Standing::Primary {
+            return Err(CoreError::ViewerOnly);
+        }
         let kept =
             self.roles.handovers.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|h| h.id == id).cloned();
         let request = match kept {
