@@ -8,8 +8,8 @@ name: Release
 # the server mirrors it into reins2fa.com/releases, with the APT and RPM repositories), and SHA256SUMS. Android
 # signing is required for every release. Archives and installers use a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
-# After the release, the aur job prepares reins-bin (optional; not published on the AUR yet), and ios-testflight uploads the iOS app
-# to TestFlight.
+# After the release, the aur job prepares reins-bin (optional; not published on the AUR yet), deploy-server upgrades
+# app.reins2fa.com when the release changes the server, and ios-testflight uploads the iOS app to TestFlight.
 
 # Only main pushes and maintainer dispatches can build with release credentials.
 # Public release/image tags are updated only after CI and all required builds pass.
@@ -1531,6 +1531,79 @@ jobs:
   #   AC_API_KEY_P8, AC_API_KEY_ID, AC_API_ISSUER_ID, APPLE_TEAM_ID  the App Store Connect API key "Reins CI"
   # Repository variables: TESTFLIGHT_EXTERNAL_GROUP_ID (the external group's id: two groups are named "Testers"),
   # TESTFLIGHT_INTERNAL_GROUPS (default Internal), IOS_GOOGLE_CLIENT_ID (required: Gmail, Calendar, Contacts).
+  deploy-server:
+    name: Deploy the server
+    needs: [plan, publish]
+    # Main only, after this run's own publication. The key in the `production` environment (main only) can do two things
+    # on the host, through a forced command: say which version runs, and run reins-upgrade for a release tag (it checks
+    # SHA256SUMS, backs up the database, swaps the binary, checks /alive and rolls back if the new one does not come up).
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' && needs.publish.result == 'success' &&
+      inputs.verify_only != true && needs.plan.outputs.release == 'true'
+    environment: production
+    # One deploy at a time, in release order.
+    concurrency:
+      group: release-deploy-server
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: SSH key and the host's key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Unexpected tag '$TAG'"; exit 1; }
+          [ -n "$DEPLOY_SSH_KEY" ] && [ -n "$DEPLOY_KNOWN_HOSTS" ] && [ -n "$DEPLOY_HOST" ] && [ -n "$DEPLOY_USER" ] ||
+            { echo "::error::The production environment lacks DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS, DEPLOY_HOST or DEPLOY_USER"; exit 1; }
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy && chmod 0600 ~/.ssh/deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: What the server runs, and whether this release changes it
+        id: check
+        run: |
+          remote() { ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes \
+            -o ConnectTimeout=20 "$DEPLOY_USER@$DEPLOY_HOST" "$@"; }
+          running=$(remote version)
+          echo "running=$running" >> "$GITHUB_OUTPUT"
+          echo "The server runs $running; this release is $TAG."
+          # Restarting drops the requests waiting in the relay's memory, so only a release that changes the server
+          # deploys: its sources, migrations, the proto crate, or the build's inputs.
+          if [[ "$running" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && git rev-parse -q --verify "refs/tags/$running" >/dev/null &&
+            git diff --quiet "$running" "$TAG" -- src migrations macros crates/reins-proto Cargo.toml Cargo.lock \
+              build.rs rust-toolchain.toml; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the server is built from changed since $running: no deploy."
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upgrade
+        if: steps.check.outputs.deploy == 'true'
+        run: |
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=20 \
+            -o ServerAliveInterval=15 "$DEPLOY_USER@$DEPLOY_HOST" "upgrade $TAG"
+      - name: The public server answers
+        if: steps.check.outputs.deploy == 'true'
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            curl -fsS --max-time 10 https://app.reins2fa.com/alive >/dev/null && { echo "app.reins2fa.com is up on $TAG"; exit 0; }
+            sleep 10
+          done
+          echo "::error::app.reins2fa.com/alive does not answer after the upgrade"; exit 1
+      - name: Forget the key
+        if: always()
+        run: rm -f ~/.ssh/deploy
+
   ios-testflight:
     name: TestFlight upload
     needs: [plan, publish]

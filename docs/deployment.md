@@ -1,8 +1,8 @@
 # Deploying Reins
 
 Reins is Vaultwarden with the AI permission relay switched on. One server, one Android app per user. This guide is
-for a public deployment such as `https://reins.example.com`. Nothing here is automated on purpose: DNS, TLS and
-the Google consent screen are decisions for whoever owns the domain and the Google Cloud project.
+for a public deployment such as `https://reins.example.com`. Nothing here is automated on purpose (apart from the
+optional deploy after a release, under Operating notes): DNS, TLS and the Google consent screen are decisions for whoever owns the domain and the Google Cloud project.
 
 ## What runs where
 
@@ -228,6 +228,27 @@ Arguments (a push lists commits and files) are never logged.
 * Revoking a phone: sign in from another phone and tap **Use this phone for approvals** (it needs the recovery code or
   master password, or the old phone's approval); the old phone is told it was replaced and stops receiving requests.
 * Logs never contain tokens, message contents or Gmail data; `LOG_LEVEL=info` is safe.
+
+### Deploying from the release workflow (optional)
+
+The release workflow's `deploy-server` job upgrades a server after each release that changes it: the server's sources,
+`migrations/`, `macros/`, `crates/reins-proto`, `Cargo.toml`, `Cargo.lock`, `build.rs` or `rust-toolchain.toml` since the
+version it runs. Other releases leave it alone, since a restart drops the requests waiting in the relay's memory. To
+set it up on the host:
+
+* An upgrade script that verifies the release's `SHA256SUMS`, backs up, swaps the binary, checks `/alive` and rolls
+  back (hosted: `/usr/local/sbin/reins-upgrade vX.Y.Z`).
+* A user with a locked password, `reins-deploy`, allowed to run only that script with sudo (`/etc/sudoers.d/reins-deploy`),
+  and listed in sshd's `AllowUsers`.
+* One key in its `authorized_keys`, `restrict,command="/usr/local/sbin/reins-deploy-ci" ssh-ed25519 …`. The forced command
+  answers `version` (the running version) and `upgrade vX.Y.Z` (the tag is checked), and nothing else: no shell, no
+  forwarding.
+* In GitHub, the `production` environment (main only): the secret `DEPLOY_SSH_KEY` (the private key), and the
+  variables `DEPLOY_HOST`, `DEPLOY_USER` and `DEPLOY_KNOWN_HOSTS` (the host's key, from `ssh-keyscan`, checked against
+  the host itself).
+
+Rotating the key: make a new one, replace the line in `authorized_keys` and the `DEPLOY_SSH_KEY` secret. Without the
+environment's values the job fails and nothing is deployed; a manual `reins-upgrade` still works.
 
 ### Which tools the AI sees
 
