@@ -208,7 +208,11 @@ pub(crate) mod tests {
         viewers: Vec<Member>,
         owner: &OwnerSeed,
     ) -> RosterEntry {
-        sign(prev.successor(reason, primary, viewers, 20).unwrap(), owner)
+        let mut entry = prev.successor(reason, primary, viewers, 20).unwrap();
+        if reason.brings_wrap() {
+            entry.recovery_wrap_hash = hex32(&[u8::try_from(entry.epoch).unwrap(); 32]);
+        }
+        sign(entry, owner)
     }
 
     #[test]

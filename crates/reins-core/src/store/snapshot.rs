@@ -60,6 +60,8 @@ pub(super) const DEVICE_SECRETS: &[&str] = &[
     "reins.enroll-primary",
     "reins.view-grants",
     "reins.handover",
+    "reins.handover-nonces",
+    "reins.wrap-key",
 ];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -49,9 +49,51 @@ pub fn recovery_wrap_key(master: &MasterKey, account: &str) -> Zeroizing<[u8; 32
     master.derive(&c.finish())
 }
 
-fn wrap_aad(account: &str) -> Vec<u8> {
+/// Where in the roster a recovery wrap came in: the epoch of the entry that names it first and that entry's
+/// `prev_hash`. Sealed as associated data, so a wrap opens only for the place it was made for: a server serving an
+/// older chain needs that chain's own (older) wrap, and every removal and handover brings a new one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WrapPlace {
+    pub epoch: u64,
+    pub prev_hash: Option<[u8; 32]>,
+}
+
+impl WrapPlace {
+    /// The place of the wrap `entry` brings.
+    pub fn of(entry: &RosterEntry) -> Result<Self, CoreError> {
+        let prev_hash = match &entry.prev_hash {
+            Some(h) => {
+                Some(reins_proto::canon::parse_hex32(h).ok_or_else(|| CoreError::invalid("invalid roster entry"))?)
+            }
+            None => None,
+        };
+        Ok(Self {
+            epoch: entry.epoch,
+            prev_hash,
+        })
+    }
+
+    /// The place of the wrap in force at the end of `chain` (verified, ascending): the earliest entry of the run of
+    /// entries at its end that name the same wrap.
+    pub fn in_force(chain: &[RosterEntry]) -> Result<Self, CoreError> {
+        let latest = chain.last().ok_or_else(|| CoreError::invalid("This account has no phone roles."))?;
+        let first = chain
+            .iter()
+            .rev()
+            .take_while(|e| e.recovery_wrap_hash == latest.recovery_wrap_hash)
+            .last()
+            .unwrap_or(latest);
+        if first.epoch != 1 && !first.reason.brings_wrap() {
+            // The run reached the start of what this phone verified without finding the entry that brought the wrap.
+            return Err(CoreError::invalid("The roster does not show where its recovery wrap came in."));
+        }
+        Self::of(first)
+    }
+}
+
+fn wrap_aad(account: &str, place: WrapPlace) -> Vec<u8> {
     let mut c = Canon::new(contexts::RECOVERY_WRAP);
-    c.str(account);
+    c.str(account).u64(place.epoch).opt_key(place.prev_hash.as_ref());
     c.finish()
 }
 
@@ -65,10 +107,11 @@ struct WrapPlain {
     view_keys: Vec<ViewKeyEntry>,
 }
 
-/// The recovery wrap (base64url: nonce ‖ AES-256-GCM): the owner seed and the view keys `carried`.
+/// The recovery wrap (base64url: nonce ‖ AES-256-GCM) for `place`: the owner seed and the view keys `carried`.
 pub fn seal_recovery_wrap(
     key: &[u8; 32],
     account: &str,
+    place: WrapPlace,
     seed: &OwnerSeed,
     carried: &ViewKeyring,
 ) -> Result<String, CoreError> {
@@ -80,16 +123,22 @@ pub fn seal_recovery_wrap(
     let nonce = random_bytes::<NONCE_LEN>()?;
     let mut buf = plain.to_vec();
     aead(key)?
-        .seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce), Aad::from(wrap_aad(account)), &mut buf)
+        .seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce), Aad::from(wrap_aad(account, place)), &mut buf)
         .map_err(|_| CoreError::storage("encryption failed"))?;
     let mut out = nonce.to_vec();
     out.extend_from_slice(&buf);
     Ok(encode_payload(&out))
 }
 
-/// Opens a recovery wrap of `account`: its owner seed and carried view keys. Fails for a wrong key (not this
-/// account's master key), another account's wrap, or anything tampered with.
-pub fn open_recovery_wrap(key: &[u8; 32], account: &str, wrap: &str) -> Result<(OwnerSeed, ViewKeyring), CoreError> {
+/// Opens a recovery wrap of `account` made for `place`: its owner seed and carried view keys. Fails for a wrong key
+/// (not this account's master key), another account's wrap, a wrap made for another place in the roster, or anything
+/// tampered with.
+pub fn open_recovery_wrap(
+    key: &[u8; 32],
+    account: &str,
+    place: WrapPlace,
+    wrap: &str,
+) -> Result<(OwnerSeed, ViewKeyring), CoreError> {
     let fail = || bad("The recovery wrap");
     let raw = decode_payload(wrap).ok_or_else(fail)?;
     if raw.len() < NONCE_LEN + AES_256_GCM.tag_len() {
@@ -97,7 +146,7 @@ pub fn open_recovery_wrap(key: &[u8; 32], account: &str, wrap: &str) -> Result<(
     }
     let nonce = Nonce::try_assume_unique_for_key(&raw[..NONCE_LEN]).map_err(|_| fail())?;
     let mut buf = Zeroizing::new(raw[NONCE_LEN..].to_vec());
-    let plain = aead(key)?.open_in_place(nonce, Aad::from(wrap_aad(account)), &mut buf).map_err(|_| fail())?;
+    let plain = aead(key)?.open_in_place(nonce, Aad::from(wrap_aad(account, place)), &mut buf).map_err(|_| fail())?;
     let parsed: WrapPlain = serde_json::from_slice(plain).map_err(|_| fail())?;
     if parsed.v != PROTOCOL_VERSION {
         return Err(fail());
@@ -168,6 +217,10 @@ pub struct BundlePayload {
     pub account_secret: Option<String>,
     #[serde(default)]
     pub device_secrets: Vec<CarriedSecret>,
+    /// The key the recovery wrap is sealed with (derived from the master key), base64url: the primary seals a new
+    /// wrap at every removal and handover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap_key: Option<String>,
 }
 
 impl fmt::Debug for BundlePayload {
@@ -409,19 +462,60 @@ mod tests {
         let mut carried = ViewKeyring::default();
         carried.insert(OwnerSeed::generate().unwrap().view_key("acct", 3));
         let key = recovery_wrap_key(&master("pw"), "acct");
-        let wrap = seal_recovery_wrap(&key, "acct", &seed, &carried).unwrap();
-        let (back, ring) = open_recovery_wrap(&key, "acct", &wrap).unwrap();
+        let here = WrapPlace {
+            epoch: 4,
+            prev_hash: Some([3; 32]),
+        };
+        let wrap = seal_recovery_wrap(&key, "acct", here, &seed, &carried).unwrap();
+        let (back, ring) = open_recovery_wrap(&key, "acct", here, &wrap).unwrap();
         assert_eq!(back.as_bytes(), seed.as_bytes());
         assert_eq!(ring.kids(), [3]);
         // Another password, another account, the same master key for another account: nothing opens.
-        assert!(open_recovery_wrap(&recovery_wrap_key(&master("other"), "acct"), "acct", &wrap).is_err());
-        assert!(open_recovery_wrap(&key, "acct2", &wrap).is_err());
-        assert!(open_recovery_wrap(&recovery_wrap_key(&master("pw"), "acct2"), "acct2", &wrap).is_err());
+        assert!(open_recovery_wrap(&recovery_wrap_key(&master("other"), "acct"), "acct", here, &wrap).is_err());
+        assert!(open_recovery_wrap(&key, "acct2", here, &wrap).is_err());
+        assert!(open_recovery_wrap(&recovery_wrap_key(&master("pw"), "acct2"), "acct2", here, &wrap).is_err());
+        // Made for another place in the roster (an older or newer entry, or another chain): it does not open.
+        for elsewhere in [
+            WrapPlace {
+                epoch: 3,
+                prev_hash: Some([3; 32]),
+            },
+            WrapPlace {
+                epoch: 4,
+                prev_hash: Some([4; 32]),
+            },
+            WrapPlace {
+                epoch: 4,
+                prev_hash: None,
+            },
+        ] {
+            assert!(open_recovery_wrap(&key, "acct", elsewhere, &wrap).is_err(), "{elsewhere:?}");
+        }
         let mut raw = decode_payload(&wrap).unwrap();
         *raw.last_mut().unwrap() ^= 1;
-        assert!(open_recovery_wrap(&key, "acct", &encode_payload(&raw)).is_err(), "tampered");
-        assert!(open_recovery_wrap(&key, "acct", "AAAA").is_err(), "truncated");
-        assert!(open_recovery_wrap(&key, "acct", "not base64!").is_err());
+        assert!(open_recovery_wrap(&key, "acct", here, &encode_payload(&raw)).is_err(), "tampered");
+        assert!(open_recovery_wrap(&key, "acct", here, "AAAA").is_err(), "truncated");
+        assert!(open_recovery_wrap(&key, "acct", here, "not base64!").is_err());
+    }
+
+    #[test]
+    fn the_wrap_in_force_is_placed_at_the_entry_that_brought_it() {
+        use crate::roles::chain::tests::{genesis, member, next};
+        let owner = OwnerSeed::generate().unwrap();
+        let g = genesis(&owner);
+        let e2 = next(&g, RosterReason::Enroll, member("p", 1), vec![member("v", 2)], &owner);
+        let e3 = next(&e2, RosterReason::Enroll, member("p", 1), vec![member("v", 2), member("w", 3)], &owner);
+        // Enrollments keep the wrap: it is the genesis's.
+        assert_eq!(WrapPlace::in_force(&[g.clone(), e2.clone(), e3.clone()]).unwrap(), WrapPlace::of(&g).unwrap());
+        // A removal brought a new one: that entry's place, whatever enrollments follow.
+        let e4 = next(&e3, RosterReason::Remove, member("p", 1), vec![member("v", 2)], &owner);
+        let e5 = next(&e4, RosterReason::Enroll, member("p", 1), vec![member("v", 2), member("x", 4)], &owner);
+        let place = WrapPlace::in_force(&[g.clone(), e2.clone(), e3.clone(), e4.clone(), e5]).unwrap();
+        assert_eq!((place, place.epoch), (WrapPlace::of(&e4).unwrap(), 4));
+        assert_ne!(place, WrapPlace::in_force(&[g, e2.clone(), e3.clone()]).unwrap(), "an older roster, another place");
+        // A chain cut where the wrap's entry is missing tells nothing: refused.
+        assert!(WrapPlace::in_force(&[e2, e3]).is_err());
+        assert!(WrapPlace::in_force(&[]).is_err());
     }
 
     fn handover_entry(old: &Member, new: &Member, seed: &OwnerSeed) -> RosterEntry {
@@ -449,6 +543,7 @@ mod tests {
             owner_seed: BASE64URL_NOPAD.encode(seed.as_bytes()),
             view_keys: vec![],
             account_secret: None,
+            wrap_key: None,
             device_secrets: vec![CarriedSecret {
                 service: "payments.provider".to_owned(),
                 account: "privacy".to_owned(),

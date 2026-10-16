@@ -3121,10 +3121,17 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func rosterCreate(deviceName: String, codeOrPassword: String?) async throws  -> RosterSummary
     
     /**
-     * "<primary> lost? Use the recovery code": with the recovery code (or the master password) this phone becomes
-     * the primary under a new owner key; the old primary is removed.
+     * Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
+     * becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
+     * phones changed since, nothing is signed.
      */
-    func rosterRecover(codeOrPassword: String, deviceName: String) async throws  -> RosterSummary
+    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String) async throws  -> RosterSummary
+    
+    /**
+     * "<primary> lost? Use the recovery code", step 1: what the recovery would make of the account's phones (this
+     * phone primary, the viewers kept, the primary removed). Show it; the user confirms before `roster_recover`.
+     */
+    func rosterRecoverPreview(codeOrPassword: String) async throws  -> RecoveryPreview
     
     /**
      * On the primary: takes a viewer off the account (it reads nothing written from now on).
@@ -5124,21 +5131,42 @@ open func rosterCreate(deviceName: String, codeOrPassword: String?)async throws 
 }
     
     /**
-     * "<primary> lost? Use the recovery code": with the recovery code (or the master password) this phone becomes
-     * the primary under a new owner key; the old primary is removed.
+     * Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
+     * becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
+     * phones changed since, nothing is signed.
      */
-open func rosterRecover(codeOrPassword: String, deviceName: String)async throws  -> RosterSummary  {
+open func rosterRecover(codeOrPassword: String, deviceName: String, tip: String)async throws  -> RosterSummary  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_roster_recover(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword),FfiConverterString.lower(deviceName)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword),FfiConverterString.lower(deviceName),FfiConverterString.lower(tip)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeRosterSummary_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "<primary> lost? Use the recovery code", step 1: what the recovery would make of the account's phones (this
+     * phone primary, the viewers kept, the primary removed). Show it; the user confirms before `roster_recover`.
+     */
+open func rosterRecoverPreview(codeOrPassword: String)async throws  -> RecoveryPreview  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_recover_preview(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRecoveryPreview_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -13824,6 +13852,95 @@ public func FfiConverterTypeQuickApproval_lower(_ value: QuickApproval) -> RustB
 
 
 /**
+ * What a recovery would make of the account's phones, for the user to check before it is signed.
+ */
+public struct RecoveryPreview: Equatable, Hashable {
+    /**
+     * The roster entry the recovery starts from (hex); hand it back to `roster_recover`.
+     */
+    public var tip: String
+    /**
+     * The epoch the recovery makes.
+     */
+    public var epoch: UInt64
+    /**
+     * The primary the recovery removes.
+     */
+    public var removedPrimary: String
+    /**
+     * The viewers that stay (this phone becomes the primary).
+     */
+    public var viewers: [RosterMemberView]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The roster entry the recovery starts from (hex); hand it back to `roster_recover`.
+         */tip: String, 
+        /**
+         * The epoch the recovery makes.
+         */epoch: UInt64, 
+        /**
+         * The primary the recovery removes.
+         */removedPrimary: String, 
+        /**
+         * The viewers that stay (this phone becomes the primary).
+         */viewers: [RosterMemberView]) {
+        self.tip = tip
+        self.epoch = epoch
+        self.removedPrimary = removedPrimary
+        self.viewers = viewers
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RecoveryPreview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecoveryPreview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecoveryPreview {
+        return
+            try RecoveryPreview(
+                tip: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                removedPrimary: FfiConverterString.read(from: &buf), 
+                viewers: FfiConverterSequenceTypeRosterMemberView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RecoveryPreview, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tip, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterString.write(value.removedPrimary, into: &buf)
+        FfiConverterSequenceTypeRosterMemberView.write(value.viewers, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecoveryPreview_lift(_ buf: RustBuffer) throws -> RecoveryPreview {
+    return try FfiConverterTypeRecoveryPreview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecoveryPreview_lower(_ value: RecoveryPreview) -> RustBuffer {
+    return FfiConverterTypeRecoveryPreview.lower(value)
+}
+
+
+/**
  * What a request is, the same on every screen: the thing it touches (the tile), what it does to it (the badge on the
  * tile's corner) and the request itself in a few words, "Run `git push --force origin main`". Built by the core from
  * the call (`crate::titles`), so a waiting card, its Activity row and the entry's page agree.
@@ -22028,7 +22145,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_roster_create() != 29964) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_roster_recover() != 39262) {
+    if (uniffi_reins_core_checksum_method_reinscore_roster_recover() != 44614) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_recover_preview() != 24859) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_roster_remove_member() != 252) {

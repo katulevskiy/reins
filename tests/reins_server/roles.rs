@@ -20,6 +20,8 @@ use crate::harness::{Options, PASSWORD_HASH, Phone, Server, between, client};
 /// The recovery wrap the tests' rosters start with (opaque bytes to the server), and the one a recovery brings.
 const WRAP: &str = "d3JhcA";
 const NEW_WRAP: &str = "bmV3IHdyYXA";
+/// The wrap a handover brings ("handover").
+const HANDOVER_WRAP: &str = "aGFuZG92ZXI";
 
 fn wrap_hash(wrap: &str) -> String {
     recovery_wrap_hash(wrap).expect("base64url")
@@ -61,6 +63,12 @@ fn member(phone: &Phone, k: &Keys, name: &str) -> Member {
         sign_pub: k.sign_pub.clone(),
         box_pub: k.box_pub.clone(),
     }
+}
+
+/// `entry` naming `wrap` as its recovery wrap (removals and handovers bring a new one).
+fn rewrapped(mut entry: RosterEntry, wrap: &str) -> RosterEntry {
+    entry.recovery_wrap_hash = wrap_hash(wrap);
+    entry
 }
 
 fn signed(mut entry: RosterEntry, by: &Ed25519KeyPair) -> RosterEntry {
@@ -293,19 +301,25 @@ async fn roster_create_enroll_handover_and_recovery() {
     assert_eq!(pending["handovers"][0]["id"].as_str(), Some(handover_id.as_str()));
     assert_eq!(pending["log_head"], 0, "a roster account's poll carries the log head");
     let e3 = signed(
-        acct.current()
-            .successor(
-                RosterReason::Handover,
-                member(&b, &bk, "Pixel"),
-                vec![member(&acct.primary, &acct.pk, "iPhone")],
-                3,
-            )
-            .expect("next"),
+        rewrapped(
+            acct.current()
+                .successor(
+                    RosterReason::Handover,
+                    member(&b, &bk, "Pixel"),
+                    vec![member(&acct.primary, &acct.pk, "iPhone")],
+                    3,
+                )
+                .expect("next"),
+            HANDOVER_WRAP,
+        ),
         &acct.owner,
     );
-    let (status, body) = acct.primary.post("/roster", &json!({"entry": e3})).await;
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": e3, "recovery_wrap": HANDOVER_WRAP})).await;
     assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "a handover carries the bundle");
     let (status, body) = acct.primary.post("/roster", &json!({"entry": e3, "bundle": "QlVORExF"})).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"), "and its new recovery wrap");
+    let with_both = json!({"entry": e3, "bundle": "QlVORExF", "recovery_wrap": HANDOVER_WRAP});
+    let (status, body) = acct.primary.post("/roster", &with_both).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     acct.chain.push(e3);
     assert_eq!(b.get("/pending?wait=0").await.0, StatusCode::OK, "b approves now");
@@ -708,9 +722,19 @@ async fn the_recovery_wrap_is_bound_to_the_roster_and_given_only_with_a_proof() 
     acct.chain.push(rewrap);
     let (_, wrap) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
     assert_eq!(wrap, json!({"epoch": 3, "recovery_wrap": NEW_WRAP}));
-    // Any other entry carrying a wrap is refused.
+    // A removal that keeps the wrap in force is refused (an older wrap would still fit the roster after it), and so
+    // is one whose wrap is not the one it names.
     let removal = signed(
         acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 6).expect("next"),
+        &acct.owner,
+    );
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": removal})).await;
+    assert_eq!((status, error(&body)), (StatusCode::BAD_REQUEST, "bad_roster"));
+    let removal = signed(
+        rewrapped(
+            acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 6).expect("next"),
+            HANDOVER_WRAP,
+        ),
         &acct.owner,
     );
     let (status, body) = acct.primary.post("/roster", &json!({"entry": removal, "recovery_wrap": WRAP})).await;
@@ -780,15 +804,19 @@ async fn a_signed_handover_request_is_kept_and_a_badly_signed_one_refused() {
     acct.enroll(&b, &bk, "Pixel").await;
     let epoch = acct.current().epoch;
     let nonce = encode_payload(&[5; 32]);
-    let message = |device: &str, epoch: u64| {
-        reins_proto::roster::handover_request_message(&acct.user, epoch, device, &nonce, 100).expect("message")
+    let now = chrono_now();
+    let signed_at = |by: &Ed25519KeyPair, device: &str, epoch: u64, at: i64| {
+        let message =
+            reins_proto::roster::handover_request_message(&acct.user, epoch, device, &nonce, at).expect("message");
+        json!({"v": 1, "signed": {"epoch": epoch, "nonce": nonce, "at": at, "sig": sig(by, &message)}})
     };
-    let signed = |by: &Ed25519KeyPair, device: &str, epoch: u64| json!({"v": 1, "signed": {"epoch": epoch, "nonce": nonce, "at": 100, "sig": sig(by, &message(device, epoch))}});
-    // Signed by another key, for another phone, or at another epoch: refused.
+    let signed = |by: &Ed25519KeyPair, device: &str, epoch: u64| signed_at(by, device, epoch, now);
+    // Signed by another key, for another phone, at another epoch, or long ago: refused.
     for body in [
         signed(&keys(9).sign, &b.device_id, epoch),
         signed(&bk.sign, &acct.primary.device_id, epoch),
         signed(&bk.sign, &b.device_id, epoch + 1),
+        signed_at(&bk.sign, &b.device_id, epoch, now - 3600),
     ] {
         let (status, refused) = b.post("/handovers", &body).await;
         assert_eq!((status, error(&refused)), (StatusCode::FORBIDDEN, "bad_signature"), "{body}");
@@ -803,6 +831,9 @@ async fn a_signed_handover_request_is_kept_and_a_badly_signed_one_refused() {
     assert_eq!(status, StatusCode::OK, "{created}");
     let (_, pending) = acct.primary.get("/pending?wait=0").await;
     assert_eq!(pending["handovers"][0]["signed"]["epoch"], epoch, "{pending}");
+    // The same signed request again is a replay.
+    let (status, body) = b.post("/handovers", &signed(&bk.sign, &b.device_id, epoch)).await;
+    assert_eq!((status, error(&body)), (StatusCode::CONFLICT, "already_answered"));
 }
 
 #[tokio::test]
@@ -842,10 +873,14 @@ async fn small_order_keys_and_spent_enrollments_are_refused() {
     let bk = keys(2);
     acct.enroll(&b, &bk, "Pixel").await;
     let removal = signed(
-        acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 5).expect("next"),
+        rewrapped(
+            acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 5).expect("next"),
+            NEW_WRAP,
+        ),
         &acct.owner,
     );
-    assert_eq!(acct.primary.post("/roster", &json!({"entry": removal})).await.0, StatusCode::OK);
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": removal, "recovery_wrap": NEW_WRAP})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     acct.chain.push(removal);
     // Listing b again needs a new enrollment: the one it went through bound the earlier entry.
     let again = signed(
@@ -866,13 +901,16 @@ async fn a_removed_viewer_stops_syncing_at_once() {
     let (_, first) = b.get("/sync?wait=0").await;
     let path = format!("/sync?after=0&seen={}&wait=20", first["cursor"].as_str().unwrap());
     let removal = signed(
-        acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 5).expect("next"),
+        rewrapped(
+            acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 5).expect("next"),
+            NEW_WRAP,
+        ),
         &acct.owner,
     );
     let start = Instant::now();
     let remove = async {
         tokio::time::sleep(Duration::from_millis(300)).await;
-        acct.primary.post("/roster", &json!({"entry": removal})).await.0
+        acct.primary.post("/roster", &json!({"entry": removal, "recovery_wrap": NEW_WRAP})).await.0
     };
     let ((status, body), removed) = tokio::join!(b.get(&path), remove);
     assert_eq!(removed, StatusCode::OK);

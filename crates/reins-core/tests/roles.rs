@@ -60,6 +60,8 @@ struct Handover {
 struct State {
     roster: Vec<RosterEntry>,
     wrap: Option<String>,
+    /// Every wrap the roster brought, by the epoch that brought it (a lying server keeps them).
+    wraps: Vec<(u64, String)>,
     bundle: Option<(u64, String)>,
     joins: HashMap<String, Join>,
     handovers: HashMap<String, Handover>,
@@ -74,6 +76,8 @@ struct State {
     extra_entry: Option<RosterEntry>,
     swap_challenge: bool,
     stale_wrap: Option<String>,
+    /// Serve the roster as it was at this epoch, with the wrap in force then: a consistent older state.
+    serve_at: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -126,7 +130,7 @@ impl State {
         if let Err(e) = verify_step(prev, &entry, verify) {
             return err(400, &e.to_string());
         }
-        let new_wrap = matches!(entry.reason, RosterReason::Create | RosterReason::Recovery | RosterReason::Rewrap);
+        let new_wrap = entry.reason.brings_wrap();
         match &append.recovery_wrap {
             Some(w) if new_wrap && recovery_wrap_hash(w).as_deref() == Some(&entry.recovery_wrap_hash) => {}
             None if !new_wrap => {}
@@ -143,6 +147,7 @@ impl State {
             _ => {}
         }
         if let Some(w) = append.recovery_wrap {
+            self.wraps.push((entry.epoch, w.clone()));
             self.wrap = Some(w);
         }
         if let Some(b) = append.bundle {
@@ -174,6 +179,9 @@ impl State {
         match (req.method.as_str(), parts.as_slice()) {
             ("GET", ["roster"]) => {
                 let mut entries = self.roster.clone();
+                if let Some(at) = self.serve_at {
+                    entries.retain(|e| e.epoch <= at);
+                }
                 if self.roll_back {
                     entries.pop();
                 }
@@ -187,6 +195,13 @@ impl State {
                 let r: RecoveryWrapRequest = req.body_json().unwrap();
                 if r.master_password_hash != self.password {
                     return err(403, "wrong_proof");
+                }
+                if let Some(at) = self.serve_at {
+                    let old = self.wraps.iter().rev().find(|(e, _)| *e <= at).unwrap().1.clone();
+                    return ok(RecoveryWrap {
+                        epoch: at,
+                        recovery_wrap: old,
+                    });
                 }
                 ok(RecoveryWrap {
                     epoch: self.roster.last().unwrap().epoch,
@@ -436,6 +451,12 @@ impl World {
     }
 }
 
+/// Recovers `core` the way the app does: the preview, which the user confirms, then the recovery from its tip.
+async fn recover(core: &ReinsCore, typed: &str, name: &str) -> Result<reins_core::RosterSummary, CoreError> {
+    let preview = core.roster_recover_preview(typed.to_owned()).await?;
+    core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip).await
+}
+
 /// This phone's device id, as the roster lists it.
 async fn device_of(core: &ReinsCore) -> String {
     let summary = core.roster_summary(false).await.unwrap().unwrap();
@@ -530,8 +551,11 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     assert_eq!(b.roster_summary(false).await.unwrap().unwrap().epoch, 4);
 
     // A recovers with the master password: a new owner key, B removed.
-    assert!(a.roster_recover("wrong password".to_owned(), "iPhone".to_owned()).await.is_err());
-    let recovered = a.roster_recover(PASSWORD.to_owned(), "iPhone".to_owned()).await.unwrap();
+    assert!(recover(&a, "wrong password", "iPhone").await.is_err());
+    let preview = a.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
+    assert_eq!((preview.epoch, preview.removed_primary.as_str()), (5, "Pixel"));
+    assert!(preview.viewers.is_empty(), "the user sees who stays: nobody but this phone");
+    let recovered = a.roster_recover(PASSWORD.to_owned(), "iPhone".to_owned(), preview.tip).await.unwrap();
     assert_eq!((recovered.epoch, recovered.role), (5, PhoneRole::Primary));
     assert_ne!(recovered.owner_fingerprint, b.roster_summary(false).await.unwrap().unwrap().owner_fingerprint);
     b.roster_summary(true).await.unwrap();
@@ -545,7 +569,7 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     a.roster_rewrap(PASSWORD.to_owned()).await.unwrap();
     assert_eq!(w.state().roster.last().unwrap().reason, RosterReason::Rewrap);
     // And recovering again from the new wrap still works (B, with the password).
-    let again = b.roster_recover(PASSWORD.to_owned(), "Pixel".to_owned()).await.unwrap();
+    let again = recover(&b, PASSWORD, "Pixel").await.unwrap();
     assert_eq!(again.role, PhoneRole::Primary);
 }
 
@@ -597,7 +621,7 @@ async fn an_unopenable_or_swapped_recovery_wrap_is_refused() {
     enroll(&a, &b, "Pixel").await;
     // A wrap the roster does not name (the server keeps an older one, or makes one up).
     w.state().stale_wrap = Some(BASE64URL_NOPAD.encode(b"some other wrap bytes, sealed by nobody"));
-    let refused = b.roster_recover(PASSWORD.to_owned(), "Pixel".to_owned()).await.unwrap_err();
+    let refused = b.roster_recover_preview(PASSWORD.to_owned()).await.unwrap_err();
     assert!(refused.to_string().contains("recovery wrap"), "{refused}");
     w.state().stale_wrap = None;
     assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer, "nothing changed");
@@ -689,4 +713,87 @@ async fn a_roster_account_takes_no_join_over_one_key() {
     other.join_begin("Another old phone".to_owned()).await.unwrap();
     a.sync(0).await.unwrap();
     assert!(a.pending().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_declined_handover_request_replayed_is_not_shown_again() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    let b_id = device_of(&b).await;
+    let id = b.handover_request().await.unwrap();
+    a.sync(0).await.unwrap();
+    assert_eq!(a.handover_requests().await.unwrap().len(), 1);
+    a.handover_deny(id.clone()).await.unwrap();
+    // The server replays B's signed request under a new id, and twice at once.
+    for copy in ["h-replay-1", "h-replay-2"] {
+        let mut replayed = w.state().handovers[&id].request.clone();
+        replayed.id = copy.to_owned();
+        w.state().handovers.insert(
+            copy.to_owned(),
+            Handover {
+                device: b_id.clone(),
+                request: replayed,
+                status: HandoverStatus::Waiting,
+                epoch: None,
+            },
+        );
+    }
+    a.sync(0).await.unwrap();
+    assert!(a.handover_requests().await.unwrap().is_empty(), "declined once, never shown again");
+    assert!(a.handover_approve("h-replay-1".to_owned(), b_id.clone()).await.is_err());
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
+    // A fresh request from B is shown.
+    let fresh = b.handover_request().await.unwrap();
+    a.sync(0).await.unwrap();
+    let asks = a.handover_requests().await.unwrap();
+    assert_eq!(asks.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(), [fresh.as_str()]);
+}
+
+#[tokio::test]
+async fn a_recovery_never_starts_from_an_older_roster_than_the_phone_saw() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    let c = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    enroll(&a, &c, "Tablet").await;
+    let c_id = device_of(&c).await;
+    a.roster_remove_member(c_id).await.unwrap();
+    b.roster_summary(true).await.unwrap();
+    assert_eq!(w.state().roster.last().unwrap().epoch, 4);
+    // Every removal brought a new wrap.
+    assert_eq!(w.state().wraps.iter().map(|(e, _)| *e).collect::<Vec<_>>(), [1, 4]);
+
+    // The server serves the roster as it was before the removal (epoch 3, Tablet still in it) with that time's own
+    // wrap. B saw epoch 4: refused.
+    w.state().serve_at = Some(3);
+    assert!(b.roster_recover_preview(PASSWORD.to_owned()).await.is_err(), "older than this phone saw");
+    // A phone with no roster of its own cannot know: it opens the old wrap, but the preview shows what it would
+    // recover into (Tablet, removed since, is in it), so the user can refuse it.
+    let fresh = w.phone().await;
+    let preview = fresh.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
+    assert_eq!(preview.epoch, 4);
+    let names: Vec<&str> = preview.viewers.iter().map(|v| v.name.as_str()).collect();
+    assert!(names.contains(&"Tablet"), "{names:?}");
+    // The newer wrap does not open for the older roster (it names another wrap), and vice versa.
+    let newest = w.state().wraps.last().unwrap().1.clone();
+    w.state().stale_wrap = Some(newest);
+    w.state().serve_at = None;
+    let old = w.state().wraps[0].1.clone();
+    w.state().stale_wrap = Some(old);
+    assert!(fresh.roster_recover_preview(PASSWORD.to_owned()).await.is_err(), "an old wrap for the newer roster");
+    w.state().stale_wrap = None;
+
+    // The tip the user confirmed must still be the roster's when the recovery is signed.
+    let preview = b.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
+    assert_eq!(preview.removed_primary, "iPhone");
+    enroll(&a, &c, "Tablet again").await;
+    let refused = b.roster_recover(PASSWORD.to_owned(), "Pixel".to_owned(), preview.tip).await.unwrap_err();
+    assert!(refused.to_string().contains("changed"), "{refused}");
+    assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
 }

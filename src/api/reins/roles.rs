@@ -25,10 +25,10 @@ use reins_proto::{
     device::codes,
     pairing::{PushKind, PushMessage},
     roster::{
-        HandoverAnswer, HandoverBundle, HandoverCreated, HandoverRequest, HandoverSignature, HandoverState,
-        HandoverStatus, MAX_BUNDLE_CHARS, MAX_RECOVERY_WRAP_CHARS, Member, MemberRegistration, NewHandover,
-        RecoveryWrap, RecoveryWrapRequest, Roster, RosterAppend, RosterAppended, RosterEntry, RosterError,
-        RosterReason, handover_request_message, recovery_wrap_hash, verify_step,
+        HANDOVER_REQUEST_SKEW_SECS, HandoverAnswer, HandoverBundle, HandoverCreated, HandoverRequest,
+        HandoverSignature, HandoverState, HandoverStatus, MAX_BUNDLE_CHARS, MAX_RECOVERY_WRAP_CHARS, Member,
+        MemberRegistration, NewHandover, RecoveryWrap, RecoveryWrapRequest, Roster, RosterAppend, RosterAppended,
+        RosterEntry, RosterError, RosterReason, handover_request_message, recovery_wrap_hash, verify_step,
     },
 };
 use rocket::{Data, Route, State, http::Status, serde::json::Json};
@@ -287,7 +287,7 @@ async fn post_roster(
         (_, Some(_)) => return Err(bad_roster("Only a handover carries a bundle")),
         (_, None) => {}
     }
-    let new_wrap = matches!(entry.reason, RosterReason::Create | RosterReason::Recovery | RosterReason::Rewrap);
+    let new_wrap = entry.reason.brings_wrap();
     match (&append.recovery_wrap, new_wrap) {
         (Some(wrap), true) => {
             check_payload("recovery_wrap", wrap, MAX_RECOVERY_WRAP_CHARS)?;
@@ -296,9 +296,11 @@ async fn post_roster(
             }
         }
         (None, true) => {
-            return Err(bad_roster("A create, recovery or rewrap entry carries its new recovery wrap"));
+            return Err(bad_roster(
+                "A create, recovery, rewrap, removal or handover entry carries its new recovery wrap",
+            ));
         }
-        (Some(_), false) => return Err(bad_roster("Only a create, recovery or rewrap entry carries a recovery wrap")),
+        (Some(_), false) => return Err(bad_roster("An enrollment carries no recovery wrap")),
         (None, false) => {}
     }
 
@@ -504,6 +506,9 @@ struct HandoverEntry {
 /// Viewers asking to become primary ("Decide on this phone"), in memory for [`ITEM_TTL`]. Limited per account only.
 pub struct HandoverHub {
     entries: Mutex<HashMap<String, HandoverEntry>>,
+    /// Nonces of signed requests seen per (user, device), until their signed time is out of the skew window: a
+    /// replayed request is refused.
+    nonces: Mutex<HashMap<(String, String, String), i64>>,
     signal: Arc<ItemSignal>,
 }
 
@@ -522,8 +527,16 @@ impl HandoverHub {
     pub fn new(signal: Arc<ItemSignal>) -> Self {
         Self {
             entries: Mutex::default(),
+            nonces: Mutex::default(),
             signal,
         }
+    }
+
+    /// Records a signed request's nonce; false when this device sent it already (a replay).
+    pub fn fresh_nonce(&self, user: &str, device: &str, signed: &HandoverSignature, now: i64) -> bool {
+        let mut nonces = self.nonces.lock().unwrap_or_else(PoisonError::into_inner);
+        nonces.retain(|_, at| (now - *at).abs() <= HANDOVER_REQUEST_SKEW_SECS);
+        nonces.insert((user.to_owned(), device.to_owned(), signed.nonce.clone()), signed.at).is_none()
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<String, HandoverEntry>> {
@@ -712,8 +725,12 @@ async fn post_handover(
         let message = handover_request_message(&user, signed.epoch, &member.device_uuid, &signed.nonce, signed.at);
         let verified = matches!((signer, message, reins_proto::canon::parse_sig(&signed.sig)),
             (Some(key), Some(message), Some(sig)) if ed25519_verify(&key, &message, &sig));
-        if signed.epoch != current.epoch || !verified {
+        let now = now_unix();
+        if signed.epoch != current.epoch || !verified || (now - signed.at).abs() > HANDOVER_REQUEST_SKEW_SECS {
             return Err(api_err(Status::Forbidden, codes::BAD_SIGNATURE, "The request is not signed by this phone"));
+        }
+        if !HUB.handovers.fresh_nonce(&user, &member.device_uuid, signed, now) {
+            return Err(super::device_api::already_answered());
         }
     }
     let name = entries

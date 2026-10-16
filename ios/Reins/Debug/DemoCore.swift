@@ -457,7 +457,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     func handoverRequests() async throws -> [HandoverView] { [] }
     func handoverApprove(id: String, deviceId: String) async throws { throw CoreError.NotFound }
     func handoverDeny(id: String) async throws { throw CoreError.NotFound }
-    func rosterRecover(codeOrPassword: String, deviceName: String) async throws -> RosterSummary {
+    func rosterRecoverPreview(codeOrPassword: String) async throws -> RecoveryPreview {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String) async throws -> RosterSummary {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
     func rosterRemoveMember(deviceId: String) async throws { throw CoreError.NotFound }

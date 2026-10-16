@@ -773,8 +773,14 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun handoverDeny(id: String) = throw CoreException.NotFound()
 
-    override suspend fun rosterRecover(codeOrPassword: String, deviceName: String): dev.reins.core.RosterSummary =
+    override suspend fun rosterRecoverPreview(codeOrPassword: String): dev.reins.core.RecoveryPreview =
         throw CoreException.NotFound()
+
+    override suspend fun rosterRecover(
+        codeOrPassword: String,
+        deviceName: String,
+        tip: String,
+    ): dev.reins.core.RosterSummary = throw CoreException.NotFound()
 
     override suspend fun rosterRemoveMember(deviceId: String) = throw CoreException.NotFound()
 

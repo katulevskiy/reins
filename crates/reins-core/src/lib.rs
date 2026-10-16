@@ -60,7 +60,8 @@ pub use engine::{CoreConfig, Engine};
 pub use error::{CoreError, ForeignError};
 pub use mcp::{McpAddStep, McpCallView, McpServerView, McpToolView};
 pub use roles::{
-    EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RosterMemberView, RosterSummary,
+    EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview,
+    RosterMemberView, RosterSummary,
 };
 pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck};
 pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, ServerInfo, SsoOutcome, SsoStart};

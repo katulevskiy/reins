@@ -12,13 +12,14 @@
 //! |---|---|---|---|---|
 //! | `create` | the approval device (epoch 1 only) | none | new | new |
 //! | `enroll` | unchanged | the previous ones and at least one more | unchanged | unchanged |
-//! | `remove` | unchanged | some of the previous ones, at least one fewer | unchanged | unchanged |
-//! | `handover` | a previous viewer | the previous ones, the new primary out, the old primary may join | unchanged | unchanged |
+//! | `remove` | unchanged | some of the previous ones, at least one fewer | unchanged | new |
+//! | `handover` | a previous viewer | the previous ones, the new primary out, the old primary may join | unchanged | new |
 //! | `recovery` | another device | some of the previous ones; the old primary is gone | a new owner key, any credential key | new |
 //! | `rewrap` | unchanged | unchanged | unchanged | new (the master password changed) |
 //!
 //! Every entry names the SHA-256 of the recovery wrap in force (`recovery_wrap_hash`), so the server can neither
-//! swap the wrap nor serve an older one.
+//! swap the wrap nor serve an older one. Every change of who is primary or who was removed brings a new wrap (sealed
+//! over its place in the chain), so a wrap from before a removal or a handover never fits the roster after it.
 //!
 //! Endpoints (server, `/reins/api`): `GET /roster` ([`Roster`]; any signed-in device of the account, an empty list
 //! before the account has a roster, 404 on a server without phone roles), `POST /roster` ([`RosterAppend`]),
@@ -73,6 +74,13 @@ pub enum RosterReason {
 }
 
 impl RosterReason {
+    /// Whether an entry of this reason brings a new recovery wrap (and must): `create`, `recovery`, `rewrap`, and every
+    /// `remove` and `handover`.
+    #[must_use]
+    pub const fn brings_wrap(self) -> bool {
+        !matches!(self, Self::Enroll)
+    }
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -331,9 +339,10 @@ pub fn check_successor(prev: Option<&RosterEntry>, next: &RosterEntry) -> Result
     if !recovery && (next.owner_pub != prev.owner_pub || next.credential_pub != prev.credential_pub) {
         return Err(RosterError::Reason("only a recovery changes the owner or credential key"));
     }
-    let new_wrap = matches!(next.reason, RosterReason::Recovery | RosterReason::Rewrap);
-    if new_wrap == (next.recovery_wrap_hash == prev.recovery_wrap_hash) {
-        return Err(RosterError::Reason("a recovery or a rewrap brings a new recovery wrap, nothing else does"));
+    if next.reason.brings_wrap() == (next.recovery_wrap_hash == prev.recovery_wrap_hash) {
+        return Err(RosterError::Reason(
+            "a recovery, rewrap, removal or handover brings a new recovery wrap, nothing else does",
+        ));
     }
     let had = |m: &Member| prev.viewers.iter().any(|p| p.same_keys(m));
     match next.reason {
@@ -736,7 +745,7 @@ pub(crate) mod tests {
         if reason == RosterReason::Recovery {
             entry.credential_pub = key(61);
         }
-        if matches!(reason, RosterReason::Recovery | RosterReason::Rewrap) {
+        if reason.brings_wrap() {
             entry.recovery_wrap_hash = hex32(&[71 + u8::try_from(prev.epoch).unwrap(); 32]);
         }
         let signer = decode_key(&prev.owner_pub).unwrap()[0];
@@ -757,7 +766,9 @@ pub(crate) mod tests {
         verify_chain(&chain, Some(&key(50)), fake_verify).unwrap();
         assert_eq!(verify_chain(&chain, Some(&key(9)), fake_verify), Err(RosterError::BadSignature));
         // After the recovery, the old owner key signs nothing.
-        let forged = signed(chain[7].successor(RosterReason::Remove, member("x", 4), vec![], 30).unwrap(), 50);
+        let mut forged = chain[7].successor(RosterReason::Remove, member("x", 4), vec![], 30).unwrap();
+        forged.recovery_wrap_hash = hex32(&[99; 32]);
+        let forged = signed(forged, 50);
         assert_eq!(verify_step(Some(&chain[7]), &forged, fake_verify), Err(RosterError::BadSignature));
         assert_eq!(previous_primary(&chain).map(|m| m.device_id.as_str()), Some("v"));
         assert_eq!(previous_primary(&chain[..4]), None);
@@ -822,6 +833,15 @@ pub(crate) mod tests {
         sneaks_wrap.recovery_wrap_hash = hex32(&[9; 32]);
         refused(signed(sneaks_wrap, 50), &e2);
         refused(next(&e2, RosterReason::Rewrap, member("p", 1), vec![], 50), &e2);
+        // A removal or a handover that keeps the old wrap: refused (the old wrap would still fit after it).
+        for (reason, primary, viewers) in [
+            (RosterReason::Remove, member("p", 1), vec![]),
+            (RosterReason::Handover, member("v", 2), vec![member("p", 1)]),
+        ] {
+            let mut keeps = next(&e2, reason, primary, viewers, 50);
+            keeps.recovery_wrap_hash.clone_from(&e2.recovery_wrap_hash);
+            refused(signed(keeps, 50), &e2);
+        }
         check_successor(Some(&e2), &next(&e2, RosterReason::Rewrap, member("p", 1), vec![member("v", 2)], 50)).unwrap();
         assert_eq!(recovery_wrap_hash("d3JhcA"), Some(hex32(&sha256(b"wrap"))));
         assert!(

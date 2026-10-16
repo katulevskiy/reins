@@ -26,6 +26,7 @@ pub mod keys;
 mod net;
 pub mod sealed;
 
+use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError};
 
 use data_encoding::BASE64URL_NOPAD;
@@ -41,7 +42,7 @@ use zeroize::Zeroizing;
 pub use chain::{LocalRoster, Standing};
 pub use enroll::{EnrollProgress, EnrollStart, EnrollView};
 use keys::{BOX_KEY, BoxKey, OWNER_SEED, OwnerSeed, SIGN_KEY, SigningKey, VIEW_KEYS, ViewKeyring, ed25519_verify};
-use sealed::{BundlePayload, CarriedSecret};
+use sealed::{BundlePayload, CarriedSecret, WrapPlace};
 
 use crate::CoreError;
 use crate::crypto::MasterKey;
@@ -56,6 +57,10 @@ use crate::store::{Owner, unix_now};
 const ROSTER: &str = "reins.roster";
 const VIEW_GRANTS: &str = "reins.view-grants";
 const HANDOVER: &str = "reins.handover";
+/// Handover requests the primary answered (by nonce), so a replay is not shown again.
+const HANDOVER_NONCES: &str = "reins.handover-nonces";
+/// The key the primary seals recovery wraps with (derived from the master key).
+const WRAP_KEY: &str = "reins.wrap-key";
 /// The device secrets that move with the primary role (the card provider's API key).
 const MOVING_SECRETS: &[&str] = &["payments.provider"];
 
@@ -102,6 +107,19 @@ pub struct RosterSummary {
     pub owner_fingerprint: String,
 }
 
+/// What a recovery would make of the account's phones, for the user to check before it is signed.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RecoveryPreview {
+    /// The roster entry the recovery starts from (hex); hand it back to `roster_recover`.
+    pub tip: String,
+    /// The epoch the recovery makes.
+    pub epoch: u64,
+    /// The primary the recovery removes.
+    pub removed_primary: String,
+    /// The viewers that stay (this phone becomes the primary).
+    pub viewers: Vec<RosterMemberView>,
+}
+
 /// A viewer asking to become primary, as the primary sees it.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct HandoverView {
@@ -143,6 +161,16 @@ pub struct OutgoingGrant {
     pub kid: u64,
     /// [`sealed::seal_view_grant`], base64url.
     pub sealed: String,
+}
+
+/// What a recovery starts from (see `prepare_recovery`).
+struct Recovering {
+    master: Master,
+    fetched: Vec<RosterEntry>,
+    base: LocalRoster,
+    wrap_key: Zeroizing<[u8; 32]>,
+    old_seed: OwnerSeed,
+    carried: ViewKeyring,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -488,6 +516,33 @@ impl Engine {
         .map_err(interrupted)?
     }
 
+    /// The key this primary seals recovery wraps with (derived from the master key; kept since `create`, a recovery,
+    /// a rewrap or a handover).
+    fn wrap_key(&self, slot: &str) -> Result<Zeroizing<[u8; 32]>, CoreError> {
+        let raw = self.store.device_secret_get(WRAP_KEY, slot)?.ok_or_else(|| {
+            CoreError::invalid("This phone lost the recovery wrap's key. Seal it again with the master password.")
+        })?;
+        <[u8; 32]>::try_from(raw.as_slice()).map(Zeroizing::new).map_err(|_| CoreError::storage("corrupt wrap key"))
+    }
+
+    fn keep_wrap_key(&self, slot: &str, key: &[u8; 32]) -> Result<(), CoreError> {
+        self.store.device_secret_put(WRAP_KEY, slot, key)
+    }
+
+    /// Seals a new recovery wrap for `entry` (unsigned yet), at its place in the chain, and names it in the entry.
+    fn rewrap_entry(
+        account: &Account,
+        entry: &mut RosterEntry,
+        key: &[u8; 32],
+        seed: &OwnerSeed,
+        carried: &ViewKeyring,
+    ) -> Result<String, CoreError> {
+        let wrap = sealed::seal_recovery_wrap(key, &account.id, WrapPlace::of(entry)?, seed, carried)?;
+        entry.recovery_wrap_hash =
+            recovery_wrap_hash(&wrap).ok_or_else(|| CoreError::storage("invalid recovery wrap"))?;
+        Ok(wrap)
+    }
+
     /// Makes this phone (the approval device) the primary of a new roster: a new owner seed, roster epoch 1 and the
     /// recovery wrap. `code_or_password`: needed for an account with a master password (this phone keeps no secret
     /// of it); otherwise the account secret this phone keeps seals the wrap.
@@ -510,27 +565,24 @@ impl Engine {
             return Err(CoreError::invalid("This account has phone roles already."));
         }
         let master = self.master_for(&session, &account, code_or_password).await?;
+        let wrap_key = sealed::recovery_wrap_key(&master.key, &account.id);
         let seed = OwnerSeed::generate()?;
-        let wrap = sealed::seal_recovery_wrap(
-            &sealed::recovery_wrap_key(&master.key, &account.id),
-            &account.id,
-            &seed,
-            &ViewKeyring::default(),
-        )?;
         let owner = seed.owner_key()?;
         let mut entry = RosterEntry::genesis(
             &account.id,
             self.me(device_name)?,
             owner.public_b64(),
             seed.credential_key().public_b64(),
-            recovery_wrap_hash(&wrap).ok_or_else(|| CoreError::storage("invalid recovery wrap"))?,
+            String::new(),
             unix_now(),
         );
+        let wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ViewKeyring::default())?;
         entry.sig = owner.sign_b64(&entry.signing_bytes().map_err(|e| CoreError::invalid(e.to_string()))?);
         let roster = LocalRoster::created(entry.clone())?;
         // Kept before the server has the entry: a seed for an entry that never landed is harmless, an entry whose
         // seed was lost is not.
         self.keep_owner_seed(&account.slot, &seed)?;
+        self.keep_wrap_key(&account.slot, &wrap_key)?;
         let mut ring = ViewKeyring::default();
         ring.insert(seed.view_key(&account.id, 1));
         self.save_keyring(&account.slot, &ring)?;
@@ -541,8 +593,9 @@ impl Engine {
             master_password_hash: None,
         };
         if let Err(e) = self.post_roster(&session, &append).await {
-            self.store.device_secret_delete(OWNER_SEED, &account.slot)?;
-            self.store.device_secret_delete(VIEW_KEYS, &account.slot)?;
+            for service in [OWNER_SEED, VIEW_KEYS, WRAP_KEY] {
+                self.store.device_secret_delete(service, &account.slot)?;
+            }
             return Err(e);
         }
         self.save_roster(&account.slot, &roster)?;
@@ -576,6 +629,9 @@ impl Engine {
         let mut entry = current
             .successor(RosterReason::Remove, current.primary.clone(), viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
+        // A new wrap, so the one from before the removal opens for no roster after it.
+        let mut ring = self.keyring(&account.slot)?;
+        let wrap = Self::rewrap_entry(account, &mut entry, &*self.wrap_key(&account.slot)?, seed, &ring)?;
         entry.sig = seed.owner_key()?.sign_b64(&entry.signing_bytes().map_err(|e| CoreError::invalid(e.to_string()))?);
         roster.push(entry.clone())?;
         let key = seed.view_key(&account.id, entry.epoch);
@@ -593,13 +649,12 @@ impl Engine {
             .collect::<Result<Vec<_>, CoreError>>()?;
         let append = RosterAppend {
             entry,
-            recovery_wrap: None,
+            recovery_wrap: Some(wrap),
             bundle: None,
             master_password_hash: None,
         };
         self.post_roster(session, &append).await?;
         self.save_roster(&account.slot, &roster)?;
-        let mut ring = self.keyring(&account.slot)?;
         ring.insert(key);
         self.save_keyring(&account.slot, &ring)?;
         self.owe_grants(&account.slot, grants)?;
@@ -626,19 +681,12 @@ impl Engine {
             } => CoreError::invalid("That is not the account's master password now."),
             other => other.into_core(),
         })?;
-        let ring = self.keyring(&account.slot)?;
-        let wrap = sealed::seal_recovery_wrap(
-            &sealed::recovery_wrap_key(&master.key, &account.id),
-            &account.id,
-            &seed,
-            &ring,
-        )?;
+        let wrap_key = sealed::recovery_wrap_key(&master.key, &account.id);
         let current = roster.current().clone();
         let mut entry = current
             .successor(RosterReason::Rewrap, current.primary.clone(), current.viewers.clone(), unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
-        entry.recovery_wrap_hash =
-            recovery_wrap_hash(&wrap).ok_or_else(|| CoreError::storage("invalid recovery wrap"))?;
+        let wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &self.keyring(&account.slot)?)?;
         entry.sig = seed.owner_key()?.sign_b64(&entry.signing_bytes().map_err(|e| CoreError::invalid(e.to_string()))?);
         roster.push(entry.clone())?;
         let append = RosterAppend {
@@ -648,39 +696,34 @@ impl Engine {
             master_password_hash: None,
         };
         self.post_roster(&session, &append).await?;
+        self.keep_wrap_key(&account.slot, &wrap_key)?;
         self.save_roster(&account.slot, &roster)
     }
 
-    /// The primary is lost: with the recovery code (or the master password) this phone opens the recovery wrap, makes
-    /// a new owner seed that the old owner key signs in, and becomes primary (epoch + 1, the old primary removed, a
-    /// new view key for the viewers).
-    pub async fn roster_recover(
+    /// Everything a recovery starts from: the master key, the verified roster, and the opened wrap in force.
+    async fn prepare_recovery(
         &self,
-        code_or_password: Zeroizing<String>,
-        device_name: &str,
-    ) -> Result<RosterSummary, CoreError> {
-        let session = self.session()?;
-        let one = self.roles.changing.lock().await;
-        let account = self.roles_account(&session).await?;
-        let master = self.master_for(&session, &account, Some(code_or_password)).await?;
-        let fetched = api_call!(&session, |api| api.roster()).map_err(ApiFailure::into_core)?.entries;
-        let local = self.local_roster(&account.slot)?;
-        // Every entry verifies (from this phone's anchor when it has one). Which one is current is then vouched for by
-        // the wrap: only the master key seals it, and it must carry the seed of the current owner key.
-        let base = if let Some(local) = &local {
-            local.updated(&fetched)?
-        } else {
-            verify_chain(&fetched, None, ed25519_verify)
-                .map_err(|e| CoreError::invalid(format!("The account's roster does not verify: {e}")))?;
-            LocalRoster::anchored(
+        session: &Session,
+        account: &Account,
+        typed: Zeroizing<String>,
+    ) -> Result<Recovering, CoreError> {
+        let master = self.master_for(session, account, Some(typed)).await?;
+        let fetched = api_call!(session, |api| api.roster()).map_err(ApiFailure::into_core)?.entries;
+        // Every entry verifies from the first; a phone that verified the roster before also refuses anything older
+        // than (or different from) what it saw.
+        verify_chain(&fetched, None, ed25519_verify)
+            .map_err(|e| CoreError::invalid(format!("The account's roster does not verify: {e}")))?;
+        let base = match self.local_roster(&account.slot)? {
+            Some(local) => local.updated(&fetched)?,
+            None => LocalRoster::anchored(
                 fetched.last().cloned().ok_or_else(|| CoreError::invalid("This account has no phone roles."))?,
-            )?
+            )?,
         };
         let latest = base.current().clone();
         let request = RecoveryWrapRequest {
             master_password_hash: master.hash.to_string(),
         };
-        let wrap = api_call!(&session, |api| api.recovery_wrap(&request)).map_err(|e| match e {
+        let wrap = api_call!(session, |api| api.recovery_wrap(&request)).map_err(|e| match e {
             ApiFailure::Status {
                 status: 403,
                 ..
@@ -692,10 +735,78 @@ impl Engine {
         {
             return Err(CoreError::invalid("The server's recovery wrap is not the one the roster names."));
         }
+        // The wrap opens only for the place in the chain it was sealed for: the entry that brought it.
         let wrap_key = sealed::recovery_wrap_key(&master.key, &account.id);
-        let (old_seed, carried) = sealed::open_recovery_wrap(&wrap_key, &account.id, &wrap.recovery_wrap)?;
+        let place = WrapPlace::in_force(&fetched)?;
+        let (old_seed, carried) = sealed::open_recovery_wrap(&wrap_key, &account.id, place, &wrap.recovery_wrap)?;
         if old_seed.owner_key()?.public_b64() != latest.owner_pub {
             return Err(CoreError::invalid("The recovery wrap holds another owner key than the roster's."));
+        }
+        Ok(Recovering {
+            master,
+            fetched,
+            base,
+            wrap_key,
+            old_seed,
+            carried,
+        })
+    }
+
+    /// What a recovery with `code_or_password` would make of the account's phones, for the user to check before
+    /// [`Engine::roster_recover`]: this phone primary, the viewers kept, the primary removed. `tip` names the roster
+    /// entry it starts from; the recovery refuses any other.
+    pub async fn roster_recover_preview(
+        &self,
+        code_or_password: Zeroizing<String>,
+    ) -> Result<RecoveryPreview, CoreError> {
+        let session = self.session()?;
+        let account = self.roles_account(&session).await?;
+        let recovering = self.prepare_recovery(&session, &account, code_or_password).await?;
+        let latest = recovering.base.current();
+        let me = self.store.device_id()?;
+        let viewers = latest
+            .viewers
+            .iter()
+            .filter(|v| v.device_id != me)
+            .map(|v| RosterMemberView {
+                device_id: v.device_id.clone(),
+                name: v.name.clone(),
+                primary: false,
+                this_phone: false,
+            })
+            .collect();
+        Ok(RecoveryPreview {
+            tip: latest.hash_hex().map_err(|e| CoreError::invalid(e.to_string()))?,
+            epoch: latest.epoch.saturating_add(1),
+            removed_primary: latest.primary.name.clone(),
+            viewers,
+        })
+    }
+
+    /// The primary is lost: with the recovery code (or the master password) this phone opens the recovery wrap, makes
+    /// a new owner seed that the old owner key signs in, and becomes primary (epoch + 1, the old primary removed, a
+    /// new view key for the viewers). `tip`: the [`RecoveryPreview::tip`] the user confirmed; the server's roster must
+    /// still end there.
+    pub async fn roster_recover(
+        &self,
+        code_or_password: Zeroizing<String>,
+        device_name: &str,
+        tip: &str,
+    ) -> Result<RosterSummary, CoreError> {
+        let session = self.session()?;
+        let one = self.roles.changing.lock().await;
+        let account = self.roles_account(&session).await?;
+        let Recovering {
+            master,
+            fetched,
+            base,
+            wrap_key,
+            old_seed,
+            carried,
+        } = self.prepare_recovery(&session, &account, code_or_password).await?;
+        let latest = base.current().clone();
+        if latest.hash_hex().map_err(|e| CoreError::invalid(e.to_string()))? != tip {
+            return Err(CoreError::invalid("The account's phones changed since you checked them. Check again."));
         }
         // What the old owner's tenure was sealed with: the view keys it introduced (and what its wrap carried).
         let mut ring = self.keyring(&account.slot)?;
@@ -706,7 +817,6 @@ impl Engine {
             }
         }
         let seed = OwnerSeed::generate()?;
-        let new_wrap = sealed::seal_recovery_wrap(&wrap_key, &account.id, &seed, &ring)?;
         let me = self.me(device_name)?;
         let viewers: Vec<Member> = latest.viewers.iter().filter(|v| v.device_id != me.device_id).cloned().collect();
         let mut entry = latest
@@ -714,8 +824,7 @@ impl Engine {
             .map_err(|e| CoreError::invalid(e.to_string()))?;
         entry.owner_pub = seed.owner_key()?.public_b64();
         entry.credential_pub = seed.credential_key().public_b64();
-        entry.recovery_wrap_hash =
-            recovery_wrap_hash(&new_wrap).ok_or_else(|| CoreError::storage("invalid recovery wrap"))?;
+        let new_wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ring)?;
         entry.sig =
             old_seed.owner_key()?.sign_b64(&entry.signing_bytes().map_err(|e| CoreError::invalid(e.to_string()))?);
         let mut roster = base;
@@ -750,6 +859,7 @@ impl Engine {
             }
             return Err(e);
         }
+        self.keep_wrap_key(&account.slot, &wrap_key)?;
         self.save_keyring(&account.slot, &ring)?;
         self.save_roster(&account.slot, &roster)?;
         self.owe_grants(&account.slot, grants)?;
@@ -854,9 +964,17 @@ impl Engine {
         if seed.owner_key()?.public_b64() != roster.current().owner_pub {
             return Err(CoreError::invalid("The handover bundle carries another owner key."));
         }
+        let wrap_key = payload
+            .wrap_key
+            .as_deref()
+            .and_then(|k| BASE64URL_NOPAD.decode(k.as_bytes()).ok())
+            .and_then(|k| <[u8; 32]>::try_from(k.as_slice()).ok())
+            .map(Zeroizing::new)
+            .ok_or_else(|| CoreError::invalid("The handover bundle lacks the recovery wrap's key."))?;
         let mut ring = self.keyring(&account.slot)?;
         ring.extend(&payload.view_keys)?;
         self.keep_owner_seed(&account.slot, &seed)?;
+        self.keep_wrap_key(&account.slot, &wrap_key)?;
         self.save_keyring(&account.slot, &ring)?;
         for carried in &payload.device_secrets {
             if MOVING_SECRETS.contains(&carried.service.as_str()) {
@@ -888,6 +1006,23 @@ impl Engine {
         }
     }
 
+    /// Nonces of handover requests this primary answered (approved or declined), with their signed time, while that
+    /// time is within the skew window (a request older than that is refused anyway).
+    fn answered_nonces(&self, slot: &str, now: i64) -> Result<BTreeMap<String, i64>, CoreError> {
+        let mut nonces: BTreeMap<String, i64> = self.load(HANDOVER_NONCES, slot)?.unwrap_or_default();
+        nonces.retain(|_, at| (now - *at).abs() <= HANDOVER_REQUEST_SKEW_SECS);
+        Ok(nonces)
+    }
+
+    fn answer_nonce(&self, slot: &str, (nonce, at): (String, i64), now: i64) -> Result<(), CoreError> {
+        if nonce.is_empty() {
+            return Ok(());
+        }
+        let mut nonces = self.answered_nonces(slot, now)?;
+        nonces.insert(nonce, at);
+        self.save(HANDOVER_NONCES, slot, &nonces)
+    }
+
     /// On the primary: the viewers asking to decide (as the last poll of the waiting list carried them), only those
     /// whose request the viewer signed with its key in this phone's verified roster, at its current epoch, and named
     /// as that roster names them (never as the server does).
@@ -899,10 +1034,16 @@ impl Engine {
         };
         let seen = self.roles.handovers.lock().unwrap_or_else(PoisonError::into_inner).clone();
         let now = unix_now();
+        let answered = self.answered_nonces(&account.slot, now)?;
+        let mut shown_nonces = std::collections::BTreeSet::new();
         Ok(seen
             .iter()
             .filter_map(|h| match verified_handover(&roster, &account.id, h, now) {
-                Ok(view) => Some(view),
+                Ok(view) => {
+                    // A request answered before, or the same one twice (a replay), is shown once at most.
+                    let nonce = h.signed.as_ref().map(|s| s.nonce.clone()).unwrap_or_default();
+                    (!answered.contains_key(&nonce) && shown_nonces.insert(nonce)).then_some(view)
+                }
                 Err(e) => {
                     log::warn!("a handover request was dropped: {e}");
                     None
@@ -920,9 +1061,14 @@ impl Engine {
         let account = self.roles_account(&session).await?;
         let request = api_call!(&session, |api| api.handover_request(id)).map_err(ApiFailure::into_core)?;
         let (mut roster, seed) = self.as_primary(&session, &account).await?;
-        let shown = verified_handover(&roster, &account.id, &request, unix_now())?;
+        let now = unix_now();
+        let shown = verified_handover(&roster, &account.id, &request, now)?;
         if shown.device_id != device_id {
             return Err(CoreError::invalid("That request is from another phone than the one shown."));
+        }
+        let nonce = request.signed.as_ref().map(|s| (s.nonce.clone(), s.at)).unwrap_or_default();
+        if self.answered_nonces(&account.slot, now)?.contains_key(&nonce.0) {
+            return Err(CoreError::invalid("That request was answered already."));
         }
         let current = roster.current().clone();
         let new_primary =
@@ -933,6 +1079,10 @@ impl Engine {
         let mut entry = current
             .successor(RosterReason::Handover, new_primary, viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
+        // A new wrap, so the one from before the handover opens for no roster after it.
+        let wrap_key = self.wrap_key(&account.slot)?;
+        let ring = self.keyring(&account.slot)?;
+        let wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ring)?;
         entry.sig = seed.owner_key()?.sign_b64(&entry.signing_bytes().map_err(|e| CoreError::invalid(e.to_string()))?);
         roster.push(entry.clone())?;
         let mut device_secrets = Vec::new();
@@ -948,22 +1098,25 @@ impl Engine {
         let payload = BundlePayload {
             v: PROTOCOL_VERSION,
             owner_seed: BASE64URL_NOPAD.encode(seed.as_bytes()),
-            view_keys: self.keyring(&account.slot)?.entries(),
+            view_keys: ring.entries(),
             account_secret: self.secret_of(&account.id)?.map(|s| BASE64URL_NOPAD.encode(s.as_bytes())),
             device_secrets,
+            wrap_key: Some(BASE64URL_NOPAD.encode(&wrap_key[..])),
         };
         let bundle = sealed::seal_bundle(&self.sign_key()?, &account.id, &entry, &payload)?;
         drop(payload);
         let append = RosterAppend {
             entry,
-            recovery_wrap: None,
+            recovery_wrap: Some(wrap),
             bundle: Some(bundle),
             master_password_hash: None,
         };
         self.post_roster(&session, &append).await?;
         self.save_roster(&account.slot, &roster)?;
+        self.answer_nonce(&account.slot, nonce, now)?;
         // This phone is a viewer now: what moved with the role goes (Q1 = B: it keeps the account secret and vault).
         self.store.device_secret_delete(OWNER_SEED, &account.slot)?;
+        self.store.device_secret_delete(WRAP_KEY, &account.slot)?;
         for service in MOVING_SECRETS {
             for (acct, _) in self.store.secrets_of(service)? {
                 self.store.secret_delete(service, &acct)?;
@@ -976,6 +1129,17 @@ impl Engine {
     /// On the primary: declines a viewer's request to decide.
     pub async fn handover_deny(&self, id: &str) -> Result<(), CoreError> {
         let session = self.session()?;
+        let account = self.roles_account(&session).await?;
+        let kept =
+            self.roles.handovers.lock().unwrap_or_else(PoisonError::into_inner).iter().find(|h| h.id == id).cloned();
+        let request = match kept {
+            Some(request) => Some(request),
+            None => api_call!(&session, |api| api.handover_request(id)).ok(),
+        };
+        // Declined once, the same signed request is never shown again (a replay within its time).
+        if let Some(signed) = request.and_then(|r| r.signed) {
+            self.answer_nonce(&account.slot, (signed.nonce, signed.at), unix_now())?;
+        }
         match api_call!(&session, |api| api.deny_handover(id)) {
             Ok(())
             | Err(ApiFailure::Status {

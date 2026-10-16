@@ -16,7 +16,9 @@ use crate::autopilot::{
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
-use crate::roles::{EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RosterSummary};
+use crate::roles::{
+    EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview, RosterSummary,
+};
 use crate::types::{
     AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, DeviceView,
     EmailContent, GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, SecretsRevoked,
@@ -577,19 +579,34 @@ impl ReinsCore {
         .await
     }
 
-    /// "<primary> lost? Use the recovery code": with the recovery code (or the master password) this phone becomes
-    /// the primary under a new owner key; the old primary is removed.
+    /// "<primary> lost? Use the recovery code", step 1: what the recovery would make of the account's phones (this
+    /// phone primary, the viewers kept, the primary removed). Show it; the user confirms before `roster_recover`.
+    pub async fn roster_recover_preview(&self, code_or_password: String) -> Result<RecoveryPreview, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let typed = Zeroizing::new(code_or_password);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.roster_recover_preview(typed)).await
+        })
+        .await
+    }
+
+    /// Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
+    /// becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
+    /// phones changed since, nothing is signed.
     pub async fn roster_recover(
         &self,
         code_or_password: String,
         device_name: String,
+        tip: String,
     ) -> Result<RosterSummary, CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let typed = Zeroizing::new(code_or_password);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
-            let summary = engine.run_account(engine.roster_recover(typed, &device_name)).await?;
+            let summary = engine.run_account(engine.roster_recover(typed, &device_name, &tip)).await?;
             runtime.check_engine(&engine)?;
             match runtime.activate_unlocked().await {
                 Ok(()) | Err(CoreError::NotLoggedIn) => {}

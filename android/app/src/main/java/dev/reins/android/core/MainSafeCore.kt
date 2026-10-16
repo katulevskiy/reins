@@ -43,6 +43,7 @@ import dev.reins.core.EnrollView
 import dev.reins.core.HandoverProgress
 import dev.reins.core.HandoverView
 import dev.reins.core.PhoneRole
+import dev.reins.core.RecoveryPreview
 import dev.reins.core.RosterSummary
 import dev.reins.core.JoinProgress
 import dev.reins.core.JoinStart
@@ -259,8 +260,11 @@ class MainSafeCore(
 
     override suspend fun handoverDeny(id: String) = io { handoverDeny(id) }
 
-    override suspend fun rosterRecover(codeOrPassword: String, deviceName: String): RosterSummary =
-        io { rosterRecover(codeOrPassword, deviceName) }
+    override suspend fun rosterRecoverPreview(codeOrPassword: String): RecoveryPreview =
+        io { rosterRecoverPreview(codeOrPassword) }
+
+    override suspend fun rosterRecover(codeOrPassword: String, deviceName: String, tip: String): RosterSummary =
+        io { rosterRecover(codeOrPassword, deviceName, tip) }
 
     override suspend fun rosterRemoveMember(deviceId: String) = io { rosterRemoveMember(deviceId) }
 
