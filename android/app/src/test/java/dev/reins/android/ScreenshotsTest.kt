@@ -688,6 +688,33 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("32-git-tags-unknown")
     }
 
+    /** A push of 8 commits where 2 deserve a closer look: one changes CI (Close), one deletes a file (Look). */
+    @Test
+    fun attentionPush() {
+        openGit(TestData.attentionPushView())
+        shoot("attention-1-push")
+        tap("gitCommits:0")
+        await("gitCommit:0:5")
+        shoot("attention-2-commits")
+        tap("gitCommit:0:5")
+        await("commitSubject")
+        shoot("attention-3-commit")
+    }
+
+    /** A search that finds 12 emails, 2 worth a closer look (a password reset, an invoice); both start ticked. */
+    @Test
+    fun attentionEmails() {
+        history()
+        val view = TestData.attentionSearchView(waitUntil = now + 40)
+        core.pending = listOf(TestData.pending(view.requestId, "search", 12u, waitUntil = now + 40, label = view.connectionLabel, account = view.account))
+        core.approval = view
+        launch(link("request", view.requestId))
+        await("check:n11")
+        shoot("attention-4-emails")
+        rule.onNodeWithTag("messagesHeader").performScrollTo()
+        shoot("attention-5-emails-list")
+    }
+
     @Test
     fun gitFetch() {
         history()

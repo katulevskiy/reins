@@ -95,6 +95,35 @@ final class ApprovalFieldUITests: XCTestCase {
         shot(app, "facts-purchase")
     }
 
+    func testFlaggedCommitsComeFirstAndOpenTheirOwnCommit() {
+        let app = open("req23", extra: ["-demoAttention"])
+        assertShown(app, "gitAttention:0", says: "2 of 8 to look at")
+        shot(app, "attention-push")
+        element(app, "gitCommits:0").tap()
+        // The CI commit (6th in the push) is first, then the deleted file (3rd), then the rest in order.
+        let ci = element(app, "gitCommit:0:5")
+        let deletes = element(app, "gitCommit:0:2")
+        XCTAssertTrue(ci.waitForExistence(timeout: 5))
+        XCTAssertLessThan(ci.frame.minY, deletes.frame.minY)
+        XCTAssertLessThan(deletes.frame.minY, element(app, "gitCommit:0:0").frame.minY)
+        XCTAssertTrue(ci.label.contains("Look closer: Changes CI"), ci.label)
+        XCTAssertTrue(deletes.label.contains("Worth a look: Deletes a file"), deletes.label)
+        shot(app, "attention-commits")
+        ci.tap()
+        let subject = element(app, "commitSubject")
+        XCTAssertTrue(subject.waitForExistence(timeout: 5))
+        XCTAssertEqual(subject.label, "Run the release on every tag")
+    }
+
+    func testFlaggedEmailsAreCountedAndStayTicked() {
+        let app = open("req12", extra: ["-demoAttention"])
+        XCTAssertTrue(app.staticTexts["12 found · 2 to look at"].waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "attention:n10").exists)
+        XCTAssertTrue(element(app, "attention:n11").exists)
+        XCTAssertEqual(element(app, "message:n11").value as? String, "Ticked")
+        shot(app, "attention-emails")
+    }
+
     func testADrillInKeepsTheAskInItsBand() {
         let app = open("req20")
         let commits = element(app, "gitCommits:0")
