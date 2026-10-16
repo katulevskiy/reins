@@ -12,6 +12,9 @@
 # Expects DEVELOPER_DIR, GITHUB_WORKSPACE and RUNNER_TEMP. The Rust core is the one ios-core already built
 # (target/ios-core/iphonesimulator, REINS_SKIP_CORE=1). Simulator only, no retries.
 #
+# -collect-test-diagnostics never: after a failure xcodebuild otherwise spends 600 s timing out on
+# simulator diagnostics (run 38888346599, three shards). The xcresult still records the failure.
+#
 # Ad-hoc identity "-" (CODE_SIGNING_ALLOWED=YES, no certificate, no team, no profile). An unsigned build
 # never gets its entitlements, and SealedSnapshot's data-protection keychain item then fails to be created.
 # Device status and the keys lock are dropped, which is not how a local simulator build (empty REINS_TEAM,
@@ -183,6 +186,7 @@ if [[ "$MODE" == test-without-building ]]; then
     -destination "platform=iOS Simulator,id=${UDID}" \
     -destination-timeout 300 \
     -resultBundlePath "$GITHUB_WORKSPACE/results.xcresult" \
+    -collect-test-diagnostics never \
     -parallel-testing-enabled NO \
     "${args[@]}" \
     "${sign[@]}"
@@ -199,6 +203,7 @@ xcodebuild test \
   -onlyUsePackageVersionsFromResolvedFile \
   -disableAutomaticPackageResolution \
   -resultBundlePath "$GITHUB_WORKSPACE/results.xcresult" \
+  -collect-test-diagnostics never \
   -parallel-testing-enabled NO \
   "${args[@]}" \
   "${sign[@]}"
