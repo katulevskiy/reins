@@ -603,7 +603,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         if code.hasPrefix("BBBB") { throw CoreError.NotFound }
         return locked { s in
             let id = "code-\(code)"
-            if let parked = s.pairings[id] { return parked }
+            if let parked = s.pairings[id] { return Self.named(parked, in: s).view }
             let p = PairingView(
                 id: id, clientName: "studio", clientHost: "studio", choices: Data([47, 12, 83]),
                 createdAt: Self.now(), keyFingerprint: "3170 6422"
@@ -611,7 +611,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             s.pairings[id] = p
             s.pending.insert(DemoData.pairingItem(p), at: 0)
             s.pendingVersion += 1
-            return p
+            // Filled as pairingView fills it: the name field's start and whether the client is connected already.
+            return Self.named(p, in: s).view
         }
     }
 
@@ -619,21 +620,27 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     /// already (the same name from the same host).
     func pairingView(pairingId: String) async throws -> PairingView {
         try locked { s in
-            guard var p = s.pairings[pairingId] else { throw CoreError.NotFound }
-            let same = s.connections.filter {
-                $0.clientHost.lowercased() == p.clientHost.lowercased()
-                    && ($0.clientName.isEmpty ? $0.label : $0.clientName).lowercased() == p.clientName.lowercased()
-            }.count
-            p.sameClient = UInt32(same)
-            p.suggestedName = p.clientName
-            if same > 0 {
-                let taken = Set(s.connections.map { $0.label.lowercased() })
-                var n = same + 1
-                while taken.contains("\(p.clientName) \(n)".lowercased()) { n += 1 }
-                p.suggestedName = "\(p.clientName) \(n)"
-            }
-            return p
+            guard let p = s.pairings[pairingId] else { throw CoreError.NotFound }
+            return Self.named(p, in: s).view
         }
+    }
+
+    /// As the core's `named_pairing`: the pairing with its suggestion filled from the connections there are now, and
+    /// the number a second of the same client is told apart by (nil for the first).
+    private static func named(_ pairing: PairingView, in s: State) -> (view: PairingView, number: UInt32?) {
+        var p = pairing
+        let same = s.connections.filter {
+            $0.clientHost.lowercased() == p.clientHost.lowercased()
+                && ($0.clientName.isEmpty ? $0.label : $0.clientName).lowercased() == p.clientName.lowercased()
+        }.count
+        p.sameClient = UInt32(same)
+        p.suggestedName = p.clientName
+        guard same > 0 else { return (p, nil) }
+        let taken = Set(s.connections.map { $0.label.lowercased() })
+        var n = same + 1
+        while taken.contains("\(p.clientName) \(n)".lowercased()) { n += 1 }
+        p.suggestedName = "\(p.clientName) \(n)"
+        return (p, UInt32(n))
     }
 
     /// As the core: one clean line of at most 64 characters; blank takes the name away.
@@ -774,17 +781,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws {
         try await latency()
         try locked { s in
-            guard let p = s.pairings[pairingId] else { throw CoreError.NotFound }
+            guard let parked = s.pairings[pairingId] else { throw CoreError.NotFound }
             Self.removePending(&s, pairingId)
             s.pairings[pairingId] = nil
             guard approve else { return }
+            // As the core, the suggestion and number are worked out again now, from the connections there are.
+            let (p, number) = Self.named(parked, in: s)
             s.nextConnection += 1
             let typed = label.map { untrustedName($0, limit: 64) }.flatMap { $0.isEmpty ? nil : $0 }
             // As the core: only a name the user edited is theirs, and never the client's own or the suggestion.
             let own = [p.clientName, p.suggestedName].map { untrustedName($0, limit: 64).lowercased() }
             let given: String? = nameEdited ? typed.flatMap { own.contains($0.lowercased()) ? nil : $0 } : nil
             // A second of the same client keeps the suggestion's number as part of its own name ("Claude 2").
-            let number: UInt32? = p.sameClient > 0 ? p.suggestedName.split(separator: " ").last.flatMap { UInt32($0) } : nil
             let ownLabel = number.map { "\(p.clientName) \($0)" } ?? p.clientName
             let name = given ?? ownLabel
             let id = "c\(s.nextConnection)"
