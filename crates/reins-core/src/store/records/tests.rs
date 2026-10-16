@@ -168,41 +168,56 @@ fn proposal_rows_are_written_all_or_none_and_never_over_a_row_there() {
 }
 
 #[test]
-fn an_untrusted_start_revokes_every_grant_and_tightens_every_mode() {
+fn an_untrusted_start_takes_nothing_that_loosens_anything() {
     let dir = tempfile::tempdir().unwrap();
     let store = filled(dir.path());
-    store
-        .lock()
-        .unwrap()
-        .execute("INSERT INTO autopilot_settings (scope, mode, updated_at) VALUES ('c2', 'lockdown', 1)", [])
-        .unwrap();
-    store.meta_set("secrets.always-ask", r#"{"app/dev":false,"app/prod":true}"#).unwrap();
-    store
-        .meta_set("payments.config", r#"{"limits":[{"id":"l1"}],"budgets":[{"id":"b1"}],"tolerance_pct":10}"#)
-        .unwrap();
-    store
-        .lock()
-        .unwrap()
-        .execute_batch(
-            "UPDATE mcp_servers SET tools = '[{\"name\":\"delete_all\",\"read_only\":true}]', status = 'trusted';",
-        )
-        .unwrap();
-    store.tighten_untrusted().unwrap();
+    store.meta_set("vault.secret-store.seen", r#"["a/dev"]"#).unwrap();
     let rows = store.sync_rows().unwrap();
-    // Autopilot's learning and approved targets, paired computers: gone (each set or paired again).
-    for gone in [Table::AutopilotMemory, Table::Targets, Table::DesktopKeys] {
-        assert!(rows.iter().all(|r| r.table != gone), "{gone:?}");
-    }
-    let server = rows.iter().find(|r| r.table == Table::McpServers).unwrap();
-    assert_eq!((server.value["tools"].clone(), server.value["status"].clone()), (json!("[]"), json!("ok")));
-    let meta = |k: &str| rows.iter().find(|r| r.table == Table::Meta && r.key == k).unwrap().value.clone();
-    assert_eq!(meta("secrets.always-ask"), json!({"app/dev": true, "app/prod": true}));
-    assert_eq!(meta("payments.config")["limits"], json!([]));
-    assert_eq!(meta("payments.config")["budgets"], json!([{"id": "b1"}]), "budgets only refuse: kept");
     let get = |t: Table, k: &str| rows.iter().find(|r| r.table == t && r.key == k).unwrap().value.clone();
-    assert_eq!(get(Table::Grants, "g1")["grant"]["revoked"], true);
-    let global = get(Table::AutopilotSettings, "*");
+    let now = 1_800_000_000;
+    let tight = |t: Table, k: &str, v: Json| store.tighten_record(t, k, &v, now).unwrap();
+    let written = |t: Table, k: &str, v: Json| match tight(t, k, v) {
+        Tightened::Write(v) => v,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(written(Table::Grants, "g1", get(Table::Grants, "g1"))["grant"]["revoked"], true);
+    let global = written(Table::AutopilotSettings, "*", get(Table::AutopilotSettings, "*"));
     assert_eq!((global["mode"].clone(), global["bypass_until"].clone()), (json!("manual"), Json::Null));
-    assert_eq!(get(Table::AutopilotSettings, "c2")["mode"], "lockdown", "Lockdown stays Lockdown");
-    assert_eq!(get(Table::AutopilotSettings, "c1")["mode"], Json::Null, "inherits the global, now Manual");
+    let lockdown = json!({"scope": "c2", "mode": "lockdown", "bypass_until": 9, "updated_at": 1});
+    assert_eq!(written(Table::AutopilotSettings, "c2", lockdown)["mode"], "lockdown", "Lockdown stays");
+    assert_eq!(written(Table::AutopilotSettings, "c1", get(Table::AutopilotSettings, "c1"))["mode"], Json::Null);
+    let profile = written(Table::Profiles, "p1", get(Table::Profiles, "p1"));
+    let data: Json = serde_json::from_slice(&bytes_of(&profile["data"]).unwrap()).unwrap();
+    assert_eq!(data["name"], "Work");
+    for skipped in [Table::AutopilotMemory, Table::Targets, Table::DesktopKeys] {
+        let any = rows.iter().find(|r| r.table == skipped).unwrap();
+        assert_eq!(tight(skipped, &any.key, any.value.clone()), Tightened::Skip, "{skipped:?}");
+    }
+    assert_eq!(tight(Table::Secrets, "x", json!({})), Tightened::KeepLocal);
+    let server =
+        written(Table::McpServers, "m1", json!({"id": "m1", "tools": "[{\"read_only\":true}]", "status": "ok"}));
+    assert_eq!((server["tools"].clone(), server["status"].clone()), (json!("[]"), json!("needs_sign_in")));
+    assert_eq!(
+        written(Table::Meta, "secrets.always-ask", json!({"a": false, "b": true})),
+        json!({"a": true, "b": true})
+    );
+    assert_eq!(
+        written(Table::Meta, "starting_policy", json!({"$text": "headlines_first_hour"})),
+        json!({"$text": "ask_every_time"})
+    );
+    let config = written(
+        Table::Meta,
+        "payments.config",
+        json!({"limits": [{"id": "l"}], "tolerance_pct": 50,
+        "default_method": "card:1", "cards": ["1"], "pay_on_phone": true, "merchant_account": true, "budgets": [1]}),
+    );
+    assert_eq!(
+        config,
+        json!({"limits": [], "tolerance_pct": 0, "default_method": null, "default_address": null,
+        "cards": [], "pay_on_phone": false, "merchant_account": false, "budgets": [1]})
+    );
+    assert_eq!(tight(Table::Meta, "payments.ledger", json!([])), Tightened::KeepLocal);
+    assert_eq!(written(Table::Meta, "~autopilot_created:c1", json!({"$text": "5"})), json!({"$text": now.to_string()}));
+    // Never fewer secrets seen than this phone saw.
+    assert_eq!(written(Table::Meta, "vault.secret-store.seen", json!(["b/prod"])), json!(["a/dev", "b/prod"]));
 }

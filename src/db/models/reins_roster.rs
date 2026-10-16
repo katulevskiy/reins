@@ -438,6 +438,17 @@ fn q_append(
                         } else {
                             m.acked_seq
                         }),
+                        // A heartbeat signed with the old keys is not this member's any more.
+                        reins_members::heartbeat.eq(if rekeyed {
+                            None
+                        } else {
+                            m.heartbeat.clone()
+                        }),
+                        reins_members::heartbeat_at.eq(if rekeyed {
+                            None
+                        } else {
+                            m.heartbeat_at
+                        }),
                         reins_members::updated_at.eq(now),
                     ))
                     .execute(c)?;

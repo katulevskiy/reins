@@ -478,6 +478,7 @@ pub fn heartbeat(
         head_seq: s.seq,
         applied_hash: hex32(&s.applied_hash),
         t: ctx.now,
+        last_counter: Some(super::author_last_counter(conn, author, &signer.public_b64())?),
         sig: String::new(),
     };
     hb.sig = signer.sign_b64(&hb.signing_bytes().map_err(|e| CoreError::invalid(e.to_string()))?);

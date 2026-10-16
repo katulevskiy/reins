@@ -283,8 +283,12 @@ class MainSafeCore(
     override suspend fun rosterRecoverPreview(codeOrPassword: String): RecoveryPreview =
         io { rosterRecoverPreview(codeOrPassword) }
 
-    override suspend fun rosterRecover(codeOrPassword: String, deviceName: String, tip: String): RosterSummary =
-        io { rosterRecover(codeOrPassword, deviceName, tip) }
+    override suspend fun rosterRecover(
+        codeOrPassword: String,
+        deviceName: String,
+        tip: String,
+        confirmed: Boolean,
+    ): RosterSummary = io { rosterRecover(codeOrPassword, deviceName, tip, confirmed) }
 
     override suspend fun rosterRemoveMember(deviceId: String) = io { rosterRemoveMember(deviceId) }
 

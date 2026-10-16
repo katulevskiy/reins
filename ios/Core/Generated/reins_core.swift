@@ -3170,7 +3170,7 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
      * phones changed since, nothing is signed.
      */
-    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String) async throws  -> RosterSummary
+    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String, confirmed: Bool) async throws  -> RosterSummary
     
     /**
      * "<primary> lost? Use the recovery code", step 1: what the recovery would make of the account's phones (this
@@ -5337,12 +5337,12 @@ open func rosterCreate(deviceName: String, codeOrPassword: String?)async throws 
      * becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
      * phones changed since, nothing is signed.
      */
-open func rosterRecover(codeOrPassword: String, deviceName: String, tip: String)async throws  -> RosterSummary  {
+open func rosterRecover(codeOrPassword: String, deviceName: String, tip: String, confirmed: Bool)async throws  -> RosterSummary  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_roster_recover(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword),FfiConverterString.lower(deviceName),FfiConverterString.lower(tip)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword),FfiConverterString.lower(deviceName),FfiConverterString.lower(tip),FfiConverterBool.lower(confirmed)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
@@ -15116,6 +15116,10 @@ public struct RosterSummary: Equatable, Hashable {
      * A short fingerprint of the owner key ("a1b2 c3d4").
      */
     public var ownerFingerprint: String
+    /**
+     * After a recovery: what the user should know of what it found (else empty).
+     */
+    public var warnings: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -15125,11 +15129,15 @@ public struct RosterSummary: Equatable, Hashable {
          */members: [RosterMemberView], 
         /**
          * A short fingerprint of the owner key ("a1b2 c3d4").
-         */ownerFingerprint: String) {
+         */ownerFingerprint: String, 
+        /**
+         * After a recovery: what the user should know of what it found (else empty).
+         */warnings: [String]) {
         self.epoch = epoch
         self.role = role
         self.members = members
         self.ownerFingerprint = ownerFingerprint
+        self.warnings = warnings
     }
 
     
@@ -15151,7 +15159,8 @@ public struct FfiConverterTypeRosterSummary: FfiConverterRustBuffer {
                 epoch: FfiConverterUInt64.read(from: &buf), 
                 role: FfiConverterTypePhoneRole.read(from: &buf), 
                 members: FfiConverterSequenceTypeRosterMemberView.read(from: &buf), 
-                ownerFingerprint: FfiConverterString.read(from: &buf)
+                ownerFingerprint: FfiConverterString.read(from: &buf), 
+                warnings: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -15160,6 +15169,7 @@ public struct FfiConverterTypeRosterSummary: FfiConverterRustBuffer {
         FfiConverterTypePhoneRole.write(value.role, into: &buf)
         FfiConverterSequenceTypeRosterMemberView.write(value.members, into: &buf)
         FfiConverterString.write(value.ownerFingerprint, into: &buf)
+        FfiConverterSequenceString.write(value.warnings, into: &buf)
     }
 }
 
@@ -18476,6 +18486,12 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      * bypass and revoking a grant (the brake) stay open to it.
      */
     case ViewerOnly
+    /**
+     * `roster_recover`: the account's history could not be fully checked (`reason`, for the user). Ask whether to
+     * recover anyway, then call it again with `confirmed`.
+     */
+    case RecoveryNeedsConfirmation(reason: String
+    )
 
     
 
@@ -18535,6 +18551,9 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             )
         case 14: return .OtherApprovalDevice
         case 15: return .ViewerOnly
+        case 16: return .RecoveryNeedsConfirmation(
+            reason: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -18614,6 +18633,11 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
         case .ViewerOnly:
             writeInt(&buf, Int32(15))
         
+        
+        case let .RecoveryNeedsConfirmation(reason):
+            writeInt(&buf, Int32(16))
+            FfiConverterString.write(reason, into: &buf)
+            
         }
     }
 }
@@ -23388,7 +23412,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_roster_create() != 29964) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_roster_recover() != 44614) {
+    if (uniffi_reins_core_checksum_method_reinscore_roster_recover() != 37402) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_roster_recover_preview() != 24859) {

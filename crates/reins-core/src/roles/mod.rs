@@ -107,6 +107,8 @@ pub struct RosterSummary {
     pub members: Vec<RosterMemberView>,
     /// A short fingerprint of the owner key ("a1b2 c3d4").
     pub owner_fingerprint: String,
+    /// After a recovery: what the user should know of what it found (else empty).
+    pub warnings: Vec<String>,
 }
 
 /// What a recovery would make of the account's phones, for the user to check before it is signed.
@@ -580,6 +582,7 @@ impl Engine {
             role: self.standing_in(&roster)?.into(),
             members,
             owner_fingerprint: roster.owner_fingerprint(),
+            warnings: Vec::new(),
         }))
     }
 
@@ -1086,6 +1089,7 @@ impl Engine {
         code_or_password: Zeroizing<String>,
         device_name: &str,
         tip: &str,
+        confirmed: bool,
     ) -> Result<RosterSummary, CoreError> {
         let session = self.session()?;
         let one = self.roles.changing.lock().await;
@@ -1120,15 +1124,25 @@ impl Engine {
         // The log first, verified under the roster before this recovery (the outgoing primary's checkpoint and the
         // signed ops after it): the entry names only the outgoing primary's ops this phone verified. A server that
         // claims to hold more of them than it serves is refused: nothing is signed.
-        let verified =
-            self.recovery_catch_up(&session, &account, &base, &ring, master.hash.as_ref(), &latest.primary).await?;
-        if reported_counter > verified {
-            return Err(CoreError::invalid(format!(
-                "The server says the lost primary wrote {reported_counter} changes but shows {verified} of them. Nothing \
-                 was signed: try again later."
-            )));
+        let check = self
+            .recovery_catch_up(
+                &session,
+                &account,
+                &base,
+                &ring,
+                master.hash.as_ref(),
+                &latest.primary,
+                reported_counter,
+            )
+            .await?;
+        if !check.confirm.is_empty() && !confirmed {
+            return Err(CoreError::RecoveryNeedsConfirmation {
+                reason: check.confirm.join(" "),
+            });
         }
-        entry.primary_counter = Some(verified);
+        let mut warnings = check.warnings;
+        warnings.extend(check.confirm);
+        entry.primary_counter = Some(check.counter);
         entry.owner_pub = seed.owner_key()?.public_b64();
         entry.credential_pub = seed.credential_key().public_b64();
         let new_wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ring)?;
@@ -1179,7 +1193,9 @@ impl Engine {
             self.adopt_secret(secret).await?;
         }
         drop(one);
-        self.roster_summary(false).await?.ok_or(CoreError::NotFound)
+        let mut summary = self.roster_summary(false).await?.ok_or(CoreError::NotFound)?;
+        summary.warnings = warnings;
+        Ok(summary)
     }
 
     // ---- handover -----------------------------------------------------------------------------------------------

@@ -474,7 +474,8 @@ impl Checkpoint {
 /// The primary's signed "I have applied everything up to `head_seq`".
 ///
 /// Signed message (context `reins/heartbeat/v1`): `v` (u32), `account` (string), `epoch` (u64), `author` (string),
-/// `head_seq` (u64), `applied_hash` (32 bytes), `t` (i64).
+/// `head_seq` (u64), `applied_hash` (32 bytes), `t` (i64), then whether `last_counter` is set (bool) and its value
+/// (u64, 0 when not).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Heartbeat {
     pub v: u32,
@@ -486,6 +487,9 @@ pub struct Heartbeat {
     pub applied_hash: String,
     /// Unix seconds, the primary's clock.
     pub t: i64,
+    /// The last of its own ops the primary applied (its counter): a phone recovering from it must have them all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_counter: Option<u64>,
     pub sig: String,
 }
 
@@ -506,6 +510,7 @@ impl Heartbeat {
         let applied = parse_hex32(&self.applied_hash).ok_or_else(|| invalid("applied_hash", "not a hash"))?;
         let mut c = Canon::new(contexts::HEARTBEAT);
         c.u32(self.v).str(&self.account).u64(self.epoch).str(&self.author).u64(self.head_seq).key(&applied).i64(self.t);
+        c.bool(self.last_counter.is_some()).u64(self.last_counter.unwrap_or(0));
         Ok(c.finish())
     }
 }
@@ -898,9 +903,16 @@ mod tests {
             head_seq: 500,
             applied_hash: hex32(&[1; 32]),
             t: 9,
+            last_counter: Some(7),
             sig: encode_sig(&[0; 64]),
         };
         hb.validate().unwrap();
+        // The last counter is signed.
+        let mut other = hb.clone();
+        other.last_counter = Some(8);
+        assert_ne!(hb.signing_bytes().unwrap(), other.signing_bytes().unwrap());
+        other.last_counter = None;
+        assert_ne!(hb.signing_bytes().unwrap(), other.signing_bytes().unwrap());
         // The same numbers under another context never verify as the other kind.
         assert_ne!(cp.signing_bytes().unwrap()[..30], hb.signing_bytes().unwrap()[..30]);
         let mut bad = hb;

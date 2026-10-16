@@ -121,6 +121,8 @@ struct State {
     inflate_counter: Option<u64>,
     /// Serve a recovering phone ops only up to this seq.
     recovery_up_to: Option<u64>,
+    /// Serve the checkpoint with a signature that does not verify.
+    corrupt_checkpoint: bool,
 }
 
 #[derive(Clone)]
@@ -203,6 +205,10 @@ impl State {
                 h.status = HandoverStatus::Done;
                 h.epoch = Some(entry.epoch);
             }
+        }
+        // The heartbeat served is the primary member's: a new primary (or new keys) has none yet.
+        if self.roster.last().is_some_and(|p| !p.primary.same_keys(&entry.primary)) {
+            self.heartbeat = None;
         }
         let appended = RosterAppended {
             epoch: entry.epoch,
@@ -366,12 +372,18 @@ impl State {
                 let up_to = self.recovery_up_to.unwrap_or(u64::MAX);
                 let ops: Vec<SyncedOp> =
                     self.ops.iter().filter(|o| o.seq > from && o.seq <= up_to).take(500).cloned().collect();
+                let mut checkpoint = if r.with_checkpoint {
+                    self.checkpoint.clone()
+                } else {
+                    None
+                };
+                if self.corrupt_checkpoint
+                    && let Some(cp) = &mut checkpoint
+                {
+                    cp.sig = BASE64URL_NOPAD.encode(&[7; 64]);
+                }
                 ok(reins_proto::oplog::RecoveryLog {
-                    checkpoint: if r.with_checkpoint {
-                        self.checkpoint.clone()
-                    } else {
-                        None
-                    },
+                    checkpoint,
                     heartbeat: self.heartbeat.clone(),
                     floor_seq: self.floor,
                     head_seq: self.head(),
@@ -579,6 +591,10 @@ impl State {
                 ResponseTemplate::new(204)
             }
             ("POST", ["heartbeat"]) => {
+                // Only the current primary's (as the real server stores it on the primary's member row).
+                if self.roster.last().is_none_or(|e| e.primary.device_id != me) {
+                    return err(403, "not_primary");
+                }
                 self.heartbeat = Some(req.body_json().unwrap());
                 ResponseTemplate::new(204)
             }
@@ -661,7 +677,13 @@ impl World {
 /// Recovers `core` the way the app does: the preview, which the user confirms, then the recovery from its tip.
 async fn recover(core: &ReinsCore, typed: &str, name: &str) -> Result<reins_core::RosterSummary, CoreError> {
     let preview = core.roster_recover_preview(typed.to_owned()).await?;
-    core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip).await
+    core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip, false).await
+}
+
+/// Recovers `core`, confirming what the recovery asks to be confirmed (as the user would after reading it).
+async fn recover_confirmed(core: &ReinsCore, typed: &str, name: &str) -> Result<reins_core::RosterSummary, CoreError> {
+    let preview = core.roster_recover_preview(typed.to_owned()).await?;
+    core.roster_recover(typed.to_owned(), name.to_owned(), preview.tip, true).await
 }
 
 /// This phone's device id, as the roster lists it.
@@ -769,7 +791,7 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     let preview = a.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
     assert_eq!((preview.epoch, preview.removed_primary.as_str()), (5, "Pixel"));
     assert!(preview.viewers.is_empty(), "the user sees who stays: nobody but this phone");
-    let recovered = a.roster_recover(PASSWORD.to_owned(), "iPhone".to_owned(), preview.tip).await.unwrap();
+    let recovered = a.roster_recover(PASSWORD.to_owned(), "iPhone".to_owned(), preview.tip, true).await.unwrap();
     assert_eq!((recovered.epoch, recovered.role), (5, PhoneRole::Primary));
     assert_ne!(recovered.owner_fingerprint, b.roster_summary(false).await.unwrap().unwrap().owner_fingerprint);
     b.roster_summary(true).await.unwrap();
@@ -783,7 +805,9 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     assert!(a.roster_rewrap("not it".to_owned()).await.is_err());
     a.roster_rewrap(PASSWORD.to_owned()).await.unwrap();
     assert_eq!(w.state().roster.last().unwrap().reason, RosterReason::Rewrap);
-    // And recovering again from the new wrap still works (B, with the password).
+    // And recovering again from the new wrap still works (B, with the password), with nothing to confirm once the
+    // lost phone's status covers what it wrote.
+    a.live_sync(0).await.unwrap();
     let again = recover(&b, PASSWORD, "Pixel").await.unwrap();
     assert_eq!(again.role, PhoneRole::Primary);
 }
@@ -1007,7 +1031,7 @@ async fn a_recovery_never_starts_from_an_older_roster_than_the_phone_saw() {
     let preview = b.roster_recover_preview(PASSWORD.to_owned()).await.unwrap();
     assert_eq!(preview.removed_primary, "iPhone");
     enroll(&a, &c, "Tablet again").await;
-    let refused = b.roster_recover(PASSWORD.to_owned(), "Pixel".to_owned(), preview.tip).await.unwrap_err();
+    let refused = b.roster_recover(PASSWORD.to_owned(), "Pixel".to_owned(), preview.tip, true).await.unwrap_err();
     assert!(refused.to_string().contains("changed"), "{refused}");
     assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
     assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
@@ -1133,14 +1157,14 @@ async fn a_change_the_server_took_without_answering_completes_and_one_it_refused
     // wrap key.
     let held = a.engine().held_roles_keys().await.unwrap();
     w.state().refuse_append = true;
-    assert!(recover(&a, PASSWORD, "iPhone").await.is_err());
+    assert!(recover_confirmed(&a, PASSWORD, "iPhone").await.is_err());
     assert_eq!(a.engine().held_roles_keys().await.unwrap(), held);
     assert_eq!(a.roster_summary(true).await.unwrap().unwrap().role, PhoneRole::Viewer);
     // A recovery the server never got: refused, A's standing unchanged; tried again, it goes through.
     w.state().fail_append = Some(false);
-    assert!(recover(&a, PASSWORD, "iPhone").await.is_err());
+    assert!(recover_confirmed(&a, PASSWORD, "iPhone").await.is_err());
     assert_eq!(a.roster_summary(true).await.unwrap().unwrap().role, PhoneRole::Viewer);
-    let recovered = recover(&a, PASSWORD, "iPhone").await.unwrap();
+    let recovered = recover_confirmed(&a, PASSWORD, "iPhone").await.unwrap();
     assert_eq!(recovered.role, PhoneRole::Primary);
     // A refusal (4xx) is final: a create with a wrong master password keeps nothing.
     let mut w2 = world().await;
@@ -1648,7 +1672,7 @@ async fn a_viewers_leftover_rows_go_once_it_takes_the_log() {
 // ---- the live sync, security review round 2 ------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_recovery_names_only_what_it_verified_and_refuses_a_server_that_claims_more() {
+async fn a_recovery_names_only_what_it_verified_and_asks_when_a_server_claims_more() {
     let mut w = world().await;
     let a = w.phone().await;
     let b = w.phone().await;
@@ -1658,11 +1682,12 @@ async fn a_recovery_names_only_what_it_verified_and_refuses_a_server_that_claims
     a.live_sync(0).await.unwrap();
     let a_id = device_of(&a).await;
     let stored = stored_ops(&w, &a_id).iter().map(|(_, counter)| *counter).max().unwrap();
-    // The server claims the lost primary wrote more than it serves: nothing is signed.
+    // The server claims the lost primary wrote more than it serves: the user is asked, nothing signed before.
     w.state().inflate_counter = Some(stored + 50);
     let c = w.phone().await;
     let epoch = w.state().roster.last().unwrap().epoch;
     let refused = recover(&c, PASSWORD, "New iPhone").await.unwrap_err();
+    assert!(matches!(refused, CoreError::RecoveryNeedsConfirmation { .. }), "{refused:?}");
     assert!(refused.to_string().contains("shows"), "{refused}");
     assert_eq!(w.state().roster.last().unwrap().epoch, epoch, "nothing signed");
     // Honest: the fresh phone reads the log with its proof, verifies it, and names exactly what it verified.
@@ -1801,7 +1826,7 @@ async fn a_recovery_starts_from_the_primarys_earlier_checkpoint_when_no_newer_on
 }
 
 #[tokio::test]
-async fn a_recovery_refuses_to_vouch_for_a_gap_or_a_log_shorter_than_the_primary_signed() {
+async fn a_short_log_or_a_gap_never_blocks_a_recovery_the_user_confirms() {
     let mut w = world().await;
     let a = w.phone().await;
     let b = w.phone().await;
@@ -1812,22 +1837,187 @@ async fn a_recovery_refuses_to_vouch_for_a_gap_or_a_log_shorter_than_the_primary
     a.live_sync(0).await.unwrap();
     a.live_sync(0).await.unwrap();
     let epoch = w.state().roster.last().unwrap().epoch;
-    // The server serves less than the head the primary's last heartbeat signs.
+    // The server serves less than the head the lost phone's last status signs: the user is asked.
     let head = w.state().heartbeat.as_ref().unwrap().head_seq;
     assert!(head > 1);
     w.state().recovery_up_to = Some(head - 1);
     let phone = w.phone().await;
-    let refused = recover(&phone, PASSWORD, "New iPhone").await.unwrap_err();
-    assert!(refused.to_string().contains("less"), "{refused}");
+    let asked = recover(&phone, PASSWORD, "New iPhone").await.unwrap_err();
+    assert!(matches!(asked, CoreError::RecoveryNeedsConfirmation { .. }), "{asked:?}");
+    assert!(asked.to_string().contains("less"), "{asked}");
+    // The op held back is the lost phone's own: its status signed more of its changes than this phone verified.
+    assert!(asked.to_string().contains("own changes"), "{asked}");
     assert_eq!(w.state().roster.last().unwrap().epoch, epoch, "nothing signed");
     w.state().recovery_up_to = None;
-    // The server drops one of the primary's ops: a later one waits for it, and the recovery would vouch for a gap.
+    // An op of the lost phone after a gap: dropped (a warning), never a veto; with its status gone too, the user
+    // confirms and the recovery goes through, naming only what was verified.
     let a_id = device_of(&a).await;
     let first_of_a = w.state().ops.iter().position(|o| o.op.author == a_id).unwrap();
     drop_op(&w, first_of_a);
     w.state().heartbeat = None;
     let other = w.phone().await;
-    let refused = recover(&other, PASSWORD, "Other").await.unwrap_err();
-    assert!(refused.to_string().contains("without the ones before"), "{refused}");
-    assert_eq!(w.state().roster.last().unwrap().epoch, epoch, "nothing signed");
+    let asked = recover(&other, PASSWORD, "Other").await.unwrap_err();
+    assert!(asked.to_string().contains("missing"), "{asked}");
+    let done = recover_confirmed(&other, PASSWORD, "Other").await.unwrap();
+    assert!(done.warnings.iter().any(|w| w.contains("dropped")), "{:?}", done.warnings);
+    let entry = w.state().roster.last().unwrap().clone();
+    assert_eq!((entry.reason, entry.primary_counter), (RosterReason::Recovery, Some(0)));
+}
+
+// ---- the live sync, security review round 4 ------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_omitted_status_is_confirmed_and_a_new_account_needs_none() {
+    // A new account: the lost phone wrote nothing to the log, so its status is not needed.
+    let mut w = world().await;
+    let a = w.phone().await;
+    w.state().ops_down = true;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    w.state().heartbeat = None;
+    assert!(w.state().ops.is_empty());
+    let fresh = w.phone().await;
+    let done = recover(&fresh, PASSWORD, "New iPhone").await.unwrap();
+    assert!(done.warnings.is_empty(), "{:?}", done.warnings);
+
+    // An account with history: the status omitted asks the user, and the recovery goes on once confirmed.
+    let mut w = world().await;
+    let a = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    w.state().heartbeat = None;
+    let fresh = w.phone().await;
+    let asked = recover(&fresh, PASSWORD, "New iPhone").await.unwrap_err();
+    assert!(matches!(asked, CoreError::RecoveryNeedsConfirmation { .. }) && asked.to_string().contains("missing"));
+    let done = recover_confirmed(&fresh, PASSWORD, "New iPhone").await.unwrap();
+    assert_eq!(done.role, PhoneRole::Primary);
+}
+
+#[tokio::test]
+async fn a_stale_status_from_an_earlier_primary_is_confirmed_never_a_block() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    a.live_sync(0).await.unwrap();
+    let from_a = w.state().heartbeat.clone().unwrap();
+    // B takes over and writes; then B is lost, and the server shows A's old status instead of B's.
+    let id = b.handover_request().await.unwrap();
+    a.sync(0).await.unwrap();
+    a.handover_approve(id, device_of(&b).await).await.unwrap();
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+    b.start_bypass(None, Some(60)).await.unwrap();
+    b.live_sync(0).await.unwrap();
+    w.state().heartbeat = Some(from_a);
+    let fresh = w.phone().await;
+    let asked = recover(&fresh, PASSWORD, "New iPhone").await.unwrap_err();
+    assert!(matches!(asked, CoreError::RecoveryNeedsConfirmation { .. }), "{asked:?}");
+    assert!(asked.to_string().contains("does not check out"), "{asked}");
+    let done = recover_confirmed(&fresh, PASSWORD, "New iPhone").await.unwrap();
+    assert_eq!(done.role, PhoneRole::Primary);
+}
+
+#[tokio::test]
+async fn another_history_than_the_lost_phone_signed_is_a_warning_the_user_can_override() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    a.live_sync(0).await.unwrap();
+    b.live_sync(0).await.unwrap();
+    // The viewer pulls the brake, then the primary writes: two ops of two phones, side by side.
+    b.set_autopilot_mode(None, Some(AutopilotMode::Lockdown), None).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    a.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    let b_id = device_of(&b).await;
+    // A fresh status signed over that history (a new epoch makes the primary post at once).
+    let c = w.phone().await;
+    enroll(&a, &c, "Tablet").await;
+    a.live_sync(0).await.unwrap();
+    // The server swaps the brake with the op after it: the same ops, another history at the signed head.
+    {
+        let mut st = w.state();
+        let brake = st.ops.iter().position(|o| o.op.author == b_id).unwrap();
+        assert!(brake + 1 < st.ops.len());
+        let (first, second) = (st.ops[brake].seq, st.ops[brake + 1].seq);
+        st.ops.swap(brake, brake + 1);
+        st.ops[brake].seq = first;
+        st.ops[brake + 1].seq = second;
+    }
+    let fresh = w.phone().await;
+    let asked = recover(&fresh, PASSWORD, "New iPhone").await.unwrap_err();
+    assert!(matches!(asked, CoreError::RecoveryNeedsConfirmation { .. }), "{asked:?}");
+    assert!(asked.to_string().contains("another history"), "{asked}");
+    let done = recover_confirmed(&fresh, PASSWORD, "New iPhone").await.unwrap();
+    assert!(done.warnings.iter().any(|w| w.contains("another history")), "{:?}", done.warnings);
+}
+
+#[tokio::test]
+async fn an_unverifiable_checkpoint_asks_for_a_fresh_start_instead_of_failing() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    w.state().drop_behind_checkpoint();
+    w.state().corrupt_checkpoint = true;
+    let fresh = w.phone().await;
+    let asked = recover(&fresh, PASSWORD, "New iPhone").await.unwrap_err();
+    assert!(asked.to_string().contains("afresh"), "{asked}");
+    let done = recover_confirmed(&fresh, PASSWORD, "New iPhone").await.unwrap();
+    assert_eq!(done.role, PhoneRole::Primary);
+}
+
+#[tokio::test]
+async fn a_recovered_primarys_own_changes_are_never_tightened_again() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    b.live_sync(0).await.unwrap();
+    w.state().drop_behind_checkpoint();
+    let c = w.phone().await;
+    recover_confirmed(&c, PASSWORD, "New iPhone").await.unwrap();
+    c.live_sync(0).await.unwrap();
+    assert_eq!(c.autopilot_settings().await.unwrap().bypass_until, None, "the untrusted start is tightened");
+    // What the new primary sets itself stays set, cycle after cycle.
+    c.start_bypass(None, Some(60)).await.unwrap();
+    for _ in 0..3 {
+        c.live_sync(0).await.unwrap();
+    }
+    assert!(c.autopilot_settings().await.unwrap().bypass_until.is_some());
+    b.live_sync(0).await.unwrap();
+    assert!(b.autopilot_settings().await.unwrap().bypass_until.is_some(), "and reaches the viewer");
+}
+
+#[tokio::test]
+async fn a_viewer_behind_the_floor_that_recovers_takes_the_checkpoint_as_untrusted() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    a.live_sync(0).await.unwrap();
+    b.live_sync(0).await.unwrap();
+    // The viewer is away while the primary runs a bypass, a phone joins (a checkpoint at the new epoch), and the
+    // server drops what the viewer had not taken.
+    let before = w.state().ops.last().map_or(0, |o| o.seq);
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    let c = w.phone().await;
+    enroll(&a, &c, "Tablet").await;
+    a.live_sync(0).await.unwrap();
+    w.state().drop_behind_checkpoint();
+    assert!(w.state().floor > before, "the viewer is behind the floor");
+    recover_confirmed(&b, PASSWORD, "Pixel").await.unwrap();
+    b.live_sync(0).await.unwrap();
+    assert_eq!(b.autopilot_settings().await.unwrap().bypass_until, None, "not taken as trusted");
 }

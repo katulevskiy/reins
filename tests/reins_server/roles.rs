@@ -535,6 +535,7 @@ async fn sync_long_polls_wake_on_ops_heartbeats_and_waiting_items() {
         head_seq: 1,
         applied_hash: hex32(&[3; 32]),
         t: chrono_now(),
+        last_counter: Some(1),
         sig: String::new(),
     };
     hb.sig = sig(&acct.pk.sign, &hb.signing_bytes().unwrap());

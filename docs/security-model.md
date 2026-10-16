@@ -506,13 +506,22 @@ Details: [autopilot.md](autopilot.md).
     an op signed before a phone's anchor is skipped once the phone has a state.
   - **A phone that recovers verifies before it signs.** It reads the log with its recovery proof (it is no member
     yet), applies it under the roster before the recovery (the outgoing primary's checkpoint, then the signed ops),
-    and names as the old primary's last op only what it verified, never past a gap; a server that claims the old
-    primary wrote more than it serves, or serves less than the old primary's last heartbeat signed, is refused, and
-    nothing is signed. A phone that started with nothing and took a checkpoint (which a thief holding the old
-    primary could have put just before) treats it as untrusted until the user sets it again: every grant revoked,
-    every mode Manual (Lockdown stays), Autopilot's learning and approved targets forgotten and its profiles reset,
-    paired computers to pair again, MCP servers' tools to be listed again, every "always ask" asking, no spend limit,
-    and no token taken from it.
+    and names as the old primary's last op only what it verified, never past a gap (the old primary's ops after a
+    gap are dropped, with a warning). Nothing the old primary's key can produce blocks a recovery, since a thief may
+    hold it: what does not check out is for the user to confirm. With anything of the old primary in the log, its
+    last heartbeat must verify (its key, an epoch of its tenure), reach its checkpoint and its newest op, sign the
+    same history at its head, and count no more of its own ops than were verified; a missing, stale or forged one,
+    a server that serves less than that heartbeat signed, or a server that claims the old primary wrote more than it
+    serves, asks the user ("Recover without the lost phone's last status?") and signs nothing until confirmed. A
+    new account (nothing of the old primary in the log) needs no heartbeat. A checkpoint the phone cannot verify
+    asks to start afresh. Whatever a recovering phone takes from a checkpoint it did not apply op by op (which a
+    thief holding the old primary could have put just before) is untrusted, marked before it loads and tightened
+    row by row as it is materialized, until every row of it was seen: every grant revoked, every mode Manual
+    (Lockdown stays) and no Bypass, Autopilot's learning and approved targets forgotten and its profiles reset,
+    paired computers to pair again, MCP servers' tools listed again and their address to be checked, every "always
+    ask" asking, the starting policy the strictest, payments with no limit, tolerance, default card or address,
+    phone pay or merchant account, this phone's payment ledger kept, every connection's Autopilot age reset, secrets
+    seen only added to, and no token taken from it. What the new primary sets afterwards is never tightened again.
   - **A replaced primary cannot stop the others.** Only the current primary's heartbeat at the current epoch can show a
     fork (and stop applying for good); one from a replaced primary or an older epoch that disagrees is a warning ("Your
     devices may disagree"), never kept.

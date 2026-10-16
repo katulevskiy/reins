@@ -25,15 +25,13 @@ use data_encoding::BASE64URL_NOPAD;
 use reins_proto::canon::{hex32, sha256};
 use reins_proto::oplog::{MAX_RECORD_KEY_CHARS, Table};
 use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension, params_from_iter};
+use rusqlite::{Connection, params_from_iter};
 use serde_json::{Map, Value as Json};
 
 use super::snapshot::{DEVICE_META, DEVICE_SECRETS};
 use super::{Store, TOMBSTONE_PREFIX};
 use crate::CoreError;
 
-/// Where the payment settings (with their spend limits) are kept.
-const PAYMENTS_CONFIG_KEY: &str = "app.payments.config";
 /// The global Autopilot setting's scope in the store, and its record key.
 const GLOBAL_SCOPE: (&str, &str) = ("", "*");
 /// Record keys the sync keeps for itself (view-key grants): never a store row.
@@ -68,6 +66,39 @@ pub(crate) struct SyncRow {
     pub value: Json,
     /// How this store finds the row again (its key columns, or its local id), JSON.
     pub local: String,
+}
+
+/// What a record from an untrusted start becomes ([`Store::tighten_record`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Tightened {
+    /// Written as this.
+    Write(Json),
+    /// Not taken, and gone from the account (the primary publishes the removal).
+    Skip,
+    /// Not taken; this phone's own (if any) stays, and nothing is published of it.
+    KeepLocal,
+}
+
+/// Everything in `mine` and in `theirs` (lists: each item once; maps: every key, this phone's value first).
+fn union(mine: Option<Json>, theirs: Json) -> Json {
+    match (mine, theirs) {
+        (Some(Json::Array(mut a)), Json::Array(b)) => {
+            for x in b {
+                if !a.contains(&x) {
+                    a.push(x);
+                }
+            }
+            Json::Array(a)
+        }
+        (Some(Json::Object(mut a)), Json::Object(b)) => {
+            for (k, x) in b {
+                a.entry(k).or_insert(x);
+            }
+            Json::Object(a)
+        }
+        (Some(mine), _) if !mine.is_null() => mine,
+        (_, theirs) => theirs,
+    }
 }
 
 impl SyncRow {
@@ -405,64 +436,109 @@ impl Store {
         Ok(())
     }
 
-    /// After a start this phone could not verify (a fresh primary that loaded a checkpoint it cannot vouch for): nothing
-    /// of that state loosens anything until the user sets it again.
-    /// - every grant revoked, every mode at the tightest (Lockdown stays Lockdown, anything else Manual), no bypass;
-    /// - Autopilot's learning forgotten (its memory, its approved targets) and its profiles back to their defaults;
-    /// - paired computers' keys forgotten (each pairs again), MCP servers' tool lists and marks to be listed again;
-    /// - every "always ask" entry asking, and no spend limit (budgets, which only refuse, stay).
-    pub(crate) fn tighten_untrusted(&self) -> Result<(), CoreError> {
-        for p in self.ap_profiles()? {
-            let reset = crate::autopilot::store::Profile {
-                name: p.profile.name.clone(),
-                icon: p.profile.icon.clone(),
-                ..crate::autopilot::store::Profile::default()
-            };
-            self.ap_put_profile(&p.id, p.created_at, &reset)?;
-        }
-        let conn = self.lock()?;
-        conn.execute_batch(
-            "DELETE FROM autopilot_memory;
-             DELETE FROM autopilot_targets;
-             DELETE FROM desktop_keys;
-             UPDATE mcp_servers SET tools = '[]', heavy = '[]', status = 'ok', error = NULL, listed_at = NULL;",
-        )?;
-        let meta = |key: &str| -> Result<Option<Json>, CoreError> {
-            let raw: Option<String> =
-                conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).optional()?;
-            Ok(raw.and_then(|r| serde_json::from_str(&r).ok()))
-        };
-        let put = |key: &str, value: &Json| -> Result<(), CoreError> {
-            conn.execute("UPDATE meta SET value = ?1 WHERE key = ?2", rusqlite::params![value.to_string(), key])?;
-            Ok(())
-        };
-        if let Some(Json::Object(mut asks)) = meta(super::lattice::ALWAYS_ASK_KEY)? {
-            for v in asks.values_mut() {
-                *v = Json::Bool(true);
+    /// How a record from a start this phone could not verify (a checkpoint, or the history before a recovery, which a
+    /// thief holding the old primary could have written) is taken: nothing of it loosens anything until the user sets
+    /// it again.
+    /// - a grant revoked; a mode Manual (Lockdown stays; one that follows the global stays so), no bypass;
+    /// - an Autopilot profile back to its defaults (its name kept); its memory and approved targets not taken;
+    /// - a paired computer's key not taken (it pairs again); an MCP server's tools to be listed again, after the user
+    ///   checks its address (it waits for a sign-in);
+    /// - "always ask" asking everywhere; the starting rule asking every time; every connection new to Autopilot;
+    /// - the payment settings back to asking for everything (no spend limit, no tolerance, no default method or
+    ///   address, no card switched on); the payment ledger and tokens not taken (this phone's own stay);
+    /// - the desktop secrets seen never fewer than this phone already saw.
+    pub(crate) fn tighten_record(
+        &self,
+        table: Table,
+        key: &str,
+        value: &Json,
+        now: i64,
+    ) -> Result<Tightened, CoreError> {
+        let mut v = value.clone();
+        let set = |v: &mut Json, k: &str, x: Json| {
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert(k.to_owned(), x);
             }
-            put(super::lattice::ALWAYS_ASK_KEY, &Json::Object(asks))?;
-        }
-        if let Some(Json::Object(mut config)) = meta(PAYMENTS_CONFIG_KEY)? {
-            config.insert("limits".to_owned(), Json::Array(Vec::new()));
-            put(PAYMENTS_CONFIG_KEY, &Json::Object(config))?;
-        }
-        let grants: Vec<(String, String)> = conn
-            .prepare("SELECT id, grant_json FROM grants")?
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<Result<_, _>>()?;
-        for (id, raw) in grants {
-            let mut grant: Json = serde_json::from_str(&raw).map_err(|_| bad("a grant"))?;
-            if let Some(obj) = grant.as_object_mut() {
-                obj.insert("revoked".to_owned(), Json::Bool(true));
+        };
+        Ok(match table {
+            Table::Grants => {
+                if let Some(grant) = v.get_mut("grant") {
+                    set(grant, "revoked", Json::Bool(true));
+                }
+                Tightened::Write(v)
             }
-            conn.execute("UPDATE grants SET grant_json = ?1 WHERE id = ?2", rusqlite::params![grant.to_string(), id])?;
-        }
-        conn.execute(
-            "UPDATE autopilot_settings SET bypass_until = NULL,
-                 mode = CASE WHEN mode IS NULL OR mode = 'lockdown' THEN mode ELSE 'manual' END",
-            [],
-        )?;
-        Ok(())
+            Table::AutopilotSettings => {
+                let loosens = v.get("mode").and_then(Json::as_str).is_some_and(|m| m != "lockdown");
+                if loosens {
+                    set(&mut v, "mode", Json::from("manual"));
+                }
+                set(&mut v, "bypass_until", Json::Null);
+                Tightened::Write(v)
+            }
+            Table::Profiles => {
+                let profile = v
+                    .get("data")
+                    .and_then(bytes_of)
+                    .and_then(|raw| serde_json::from_slice::<crate::autopilot::store::Profile>(&raw).ok());
+                let Some(profile) = profile else {
+                    return Ok(Tightened::Skip);
+                };
+                let reset = crate::autopilot::store::Profile {
+                    name: profile.name,
+                    icon: profile.icon,
+                    ..crate::autopilot::store::Profile::default()
+                };
+                set(&mut v, "data", b64(&serde_json::to_vec(&reset).map_err(|e| CoreError::storage(e.to_string()))?));
+                Tightened::Write(v)
+            }
+            Table::AutopilotMemory | Table::Targets | Table::DesktopKeys => Tightened::Skip,
+            Table::Secrets => Tightened::KeepLocal,
+            Table::McpServers => {
+                for (column, x) in [("tools", Json::from("[]")), ("heavy", Json::from("[]")), ("listed_at", Json::Null)]
+                {
+                    set(&mut v, column, x);
+                }
+                set(&mut v, "status", Json::from("needs_sign_in"));
+                set(&mut v, "error", Json::from("Check this server's address, then refresh it."));
+                Tightened::Write(v)
+            }
+            Table::Meta => match key {
+                "secrets.always-ask" => {
+                    if let Some(obj) = v.as_object_mut() {
+                        for x in obj.values_mut() {
+                            *x = Json::Bool(true);
+                        }
+                    }
+                    Tightened::Write(v)
+                }
+                "starting_policy" => Tightened::Write(serde_json::json!({"$text": "ask_every_time"})),
+                "payments.config" => {
+                    for (k, x) in [
+                        ("limits", serde_json::json!([])),
+                        ("tolerance_pct", Json::from(0)),
+                        ("default_method", Json::Null),
+                        ("default_address", Json::Null),
+                        ("cards", serde_json::json!([])),
+                        ("pay_on_phone", Json::Bool(false)),
+                        ("merchant_account", Json::Bool(false)),
+                    ] {
+                        set(&mut v, k, x);
+                    }
+                    Tightened::Write(v)
+                }
+                "payments.ledger" => Tightened::KeepLocal,
+                "vault.secret-store.seen" => {
+                    let mine =
+                        self.meta_get("vault.secret-store.seen")?.and_then(|s| serde_json::from_str::<Json>(&s).ok());
+                    Tightened::Write(union(mine, v))
+                }
+                k if k.starts_with("~autopilot_created:") => {
+                    Tightened::Write(serde_json::json!({"$text": now.to_string()}))
+                }
+                _ => Tightened::Write(v),
+            },
+            _ => Tightened::Write(v),
+        })
     }
 
     fn write_row_in(

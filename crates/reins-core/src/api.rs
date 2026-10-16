@@ -712,13 +712,14 @@ impl ReinsCore {
         code_or_password: String,
         device_name: String,
         tip: String,
+        confirmed: bool,
     ) -> Result<RosterSummary, CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let typed = Zeroizing::new(code_or_password);
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
-            let summary = engine.run_account(engine.roster_recover(typed, &device_name, &tip)).await?;
+            let summary = engine.run_account(engine.roster_recover(typed, &device_name, &tip, confirmed)).await?;
             runtime.check_engine(&engine)?;
             match runtime.activate_unlocked().await {
                 Ok(()) | Err(CoreError::NotLoggedIn) => {}

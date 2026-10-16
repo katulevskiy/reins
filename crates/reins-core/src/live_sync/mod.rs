@@ -101,6 +101,7 @@ pub(crate) struct State {
     /// When this phone (the primary) last posted a heartbeat, and at which epoch (a new one posts at once).
     heartbeat_posted: AtomicI64,
     heartbeat_epoch: AtomicU64,
+    heartbeat_counter: AtomicU64,
     /// No checkpoint is tried before then (one was refused, or would not fit).
     checkpoint_after: AtomicI64,
     /// Brakes and proposals of this phone the server refused for good: shown once, never dropped silently.
@@ -138,6 +139,17 @@ pub struct LiveSyncState {
     pub counter_gaps: u32,
     /// Something to show, if the last cycle did not finish.
     pub notice: Option<String>,
+}
+
+/// What a recovery found while it checked the account's history ([`Engine::recovery_catch_up`]).
+#[derive(Debug, Default)]
+pub(crate) struct RecoveryCheck {
+    /// The outgoing primary's last op the entry names (its contiguous applied counter).
+    pub counter: u64,
+    /// What the user must confirm before anything is signed.
+    pub confirm: Vec<String>,
+    /// What the user is told after.
+    pub warnings: Vec<String>,
 }
 
 /// What one cycle's pull left.
@@ -259,8 +271,7 @@ impl Engine {
                 if first.notice.is_some() || first.waiting_for_key {
                     notice = first.notice.or(Some("The account's log is not all here yet.".to_owned()));
                 } else {
-                    let failed = self.materialize(account)?;
-                    self.tighten_untrusted_start(failed)?;
+                    self.materialize(account)?;
                 }
             }
             self.deliver_grants(account, &keys)?;
@@ -275,7 +286,6 @@ impl Engine {
         let pulled = self.pull_and_apply(session, account, wait).await?;
         notice = notice.or(pulled.notice);
         let failed = self.materialize(account)?;
-        self.tighten_untrusted_start(failed)?;
         if failed > 0 {
             notice = notice.or(Some(format!(
                 "{failed} changes from the account's log could not be written on this phone; the next sync tries again."
@@ -808,24 +818,6 @@ impl Engine {
         Ok(())
     }
 
-    /// After a start from a checkpoint this phone could not verify as its own (a fresh phone that recovered): every grant
-    /// revoked, every mode at the tightest, no bypass, before anything is published from it. The user approves again.
-    /// The mark stays until every record of the log wrote (`failed` is 0): what writes later is tightened too.
-    fn tighten_untrusted_start(&self, failed: usize) -> Result<(), CoreError> {
-        if !self.untrusted_start()? {
-            return Ok(());
-        }
-        self.store.tighten_untrusted()?;
-        if failed == 0 {
-            self.store.oplog(|c| local::clear_mark(c, UNTRUSTED_START))??;
-        }
-        Ok(())
-    }
-
-    fn untrusted_start(&self) -> Result<bool, CoreError> {
-        Ok(self.store.oplog(|c| local::mark(c, UNTRUSTED_START))??.is_some())
-    }
-
     /// Writes a record into this phone's store as a sign-in or a setting would (tests: a row too large for an op).
     #[doc(hidden)]
     pub fn keep_sync_row(&self, table: &str, value: &str) -> Result<(), CoreError> {
@@ -998,14 +990,17 @@ impl Engine {
                             .map(|r| self.standing_in(&r))
                             .transpose()?
                             .is_some_and(|st| st == Standing::Primary);
-                        if primary
-                            && s.seq == 0
-                            && let Some(Ok(_)) =
+                        if primary && s.seq == 0 {
+                            // Untrusted, marked before it loads (a crash between leaves nothing taken as trusted):
+                            // everything up to the server's head now is tightened as it is taken.
+                            let bound = response.head_seq.max(cp.seq).to_string();
+                            self.store.oplog(|c| local::set_mark(c, UNTRUSTED_START, &bound))??;
+                            if let Some(Ok(_)) =
                                 self.with_context(account, |c, ctx| checkpoint::load_bootstrap(c, ctx, &cp))?
-                        {
-                            // Untrusted: once in the store, everything it loosens is tightened (see `tighten`).
-                            self.store.oplog(|c| local::set_mark(c, UNTRUSTED_START, "1"))??;
-                            continue;
+                            {
+                                continue;
+                            }
+                            self.store.oplog(|c| local::clear_mark(c, UNTRUSTED_START))??;
                         }
                         return Ok(Pulled {
                             response: Some(response),
@@ -1064,15 +1059,21 @@ impl Engine {
     }
 
     /// Before a recovery is signed: applies the account's log under `roster` (the roster before the recovery) with
-    /// `ring` (every view key of the outgoing owner), and returns the last op of `old_primary` it verified, the one the
-    /// entry may name. A phone that is no member yet reads the log with its recovery proof (`proof`).
+    /// `ring` (every view key of the outgoing owner), and says what the recovery may name and what the user must hear.
+    /// A phone that is no member yet reads the log with its recovery proof (`proof`).
     ///
-    /// The outgoing primary's checkpoint loads only when it verifies (the current primary's, at the current epoch or,
-    /// on a phone with nothing, an earlier epoch of its tenure), then the signed ops after it. On a phone that started
-    /// with nothing, whatever a checkpoint brought is untrusted (a thief may have put it just before): it is tightened
-    /// before anything is published. Refused, so that nothing is signed: a history that does not verify, an op of the
-    /// outgoing primary held for one before it (the entry would vouch for a gap), and a log that ends before the head
-    /// the outgoing primary signed in its last heartbeat, or differs from it there.
+    /// Nothing the lost primary's key can produce blocks a recovery (a thief may hold it): what does not check out is
+    /// for the user to confirm, or a warning. A server that withholds what it holds is refused (or confirmed).
+    /// - The outgoing primary's checkpoint loads when it verifies (the current primary's, at the current epoch or, on
+    ///   a phone with nothing, an earlier epoch of its tenure), then the signed ops after it. Whatever a checkpoint
+    ///   brought is untrusted, tightened as it is taken. No checkpoint this phone can verify: the user confirms a
+    ///   fresh start.
+    /// - The entry names the outgoing primary's contiguous applied counter; ops of it after a gap are dropped (a
+    ///   warning).
+    /// - With anything of the outgoing primary in the log, its last heartbeat must verify (its key, an epoch of its
+    ///   tenure), reach its checkpoint and its newest op, have the same history at its head as this phone, and its
+    ///   own ops up to its last counter: else the user confirms.
+    #[expect(clippy::too_many_arguments, reason = "the recovery's keys and roster, and the server's count")]
     pub(crate) async fn recovery_catch_up(
         &self,
         session: &Session,
@@ -1081,16 +1082,19 @@ impl Engine {
         ring: &ViewKeyring,
         proof: &str,
         old_primary: &reins_proto::roster::Member,
-    ) -> Result<u64, CoreError> {
+        reported: u64,
+    ) -> Result<RecoveryCheck, CoreError> {
         // One applier at a time: the live loop waits.
         let _guard = self.account_sync.lock().await;
         let started_empty = self.store.oplog(|c| -> Result<bool, CoreError> {
             let s = oplog::state(c)?;
             Ok(s.seq == 0 && oplog::all_records(c)?.is_empty())
         })??;
-        let mut tried_checkpoint = false;
-        let mut want_checkpoint = false;
+        let mut check = RecoveryCheck::default();
+        let (mut tried_checkpoint, mut want_checkpoint, mut untrusted) = (false, false, false);
         let mut heartbeat = None;
+        let mut old_checkpoint = None;
+        let mut newest_old = None;
         let mut done = false;
         for _ in 0..400 {
             let s = self.store.oplog(|c| oplog::state(c))??;
@@ -1112,36 +1116,60 @@ impl Engine {
             };
             let starts_past = s.seq < log.floor_seq || log.ops.first().is_some_and(|o| o.seq > s.seq + 1);
             if starts_past {
-                let Some(cp) = log.checkpoint.as_ref().filter(|cp| cp.seq > s.seq) else {
-                    if want_checkpoint {
-                        return Err(CoreError::invalid(
-                            "The server holds no checkpoint for the history it dropped; nothing was signed.",
-                        ));
-                    }
+                let cp = log.checkpoint.as_ref().filter(|cp| cp.seq > s.seq);
+                if cp.is_none() && !want_checkpoint {
                     want_checkpoint = true;
                     continue;
-                };
-                if tried_checkpoint {
-                    return Err(CoreError::invalid("The account's history does not continue its checkpoint."));
                 }
-                tried_checkpoint = true;
-                want_checkpoint = false;
-                let loaded = match self.store.oplog(|c| checkpoint::load(c, &ctx, cp))? {
-                    Ok(check) => Ok(check),
-                    Err(_) if started_empty => self.store.oplog(|c| checkpoint::load_tenure(c, &ctx, cp))?,
-                    Err(e) => Err(e),
+                let loaded = match cp {
+                    Some(cp) if !tried_checkpoint => {
+                        tried_checkpoint = true;
+                        // Untrusted, marked before it loads: whatever it brings is tightened as it is taken.
+                        self.store.oplog(|c| local::set_mark(c, UNTRUSTED_START, &u64::MAX.to_string()))??;
+                        let first = self.store.oplog(|c| checkpoint::load(c, &ctx, cp))?;
+                        let loaded = match first {
+                            Err(_) if started_empty => self.store.oplog(|c| checkpoint::load_tenure(c, &ctx, cp))?,
+                            other => other,
+                        };
+                        if loaded.is_ok() {
+                            untrusted = true;
+                            if cp.author == old_primary.device_id {
+                                old_checkpoint = Some(cp.seq);
+                            }
+                        } else {
+                            self.store.oplog(|c| local::clear_mark(c, UNTRUSTED_START))??;
+                        }
+                        loaded.is_ok()
+                    }
+                    _ => false,
                 };
-                loaded.map_err(|e| CoreError::invalid(format!("The account's checkpoint does not verify: {e}")))?;
-                if started_empty {
-                    self.store.oplog(|c| local::set_mark(c, UNTRUSTED_START, "1"))??;
+                if loaded {
+                    want_checkpoint = false;
+                    continue;
                 }
-                continue;
+                // Nothing this phone can verify the history from: a fresh start, if the user says so.
+                check.confirm.push(
+                    "This phone cannot check the account's history from here. Start it afresh (everything the lost \
+                     phone set is to be set again)?"
+                        .to_owned(),
+                );
+                done = true;
+                break;
             }
             if log.ops.is_empty() {
                 done = true;
                 break;
             }
-            let (_, halt) = self.store.oplog(|c| oplog::apply_all(c, &ctx, &log.ops))?;
+            let (outcomes, halt) = self.store.oplog(|c| oplog::apply_all(c, &ctx, &log.ops))?;
+            for (synced, outcome) in log.ops.iter().zip(&outcomes) {
+                let verified = !matches!(
+                    outcome,
+                    oplog::Outcome::Refused(oplog::Refusal::BadSignature | oplog::Refusal::Invalid(_))
+                );
+                if synced.op.author == old_primary.device_id && verified {
+                    newest_old = Some(synced.seq);
+                }
+            }
             match halt {
                 None if log.more => {}
                 None => {
@@ -1158,8 +1186,9 @@ impl Engine {
         if !done {
             return Err(CoreError::invalid("The account's history is too long to verify now; nothing was signed."));
         }
-        if let Some(hb) = &heartbeat {
-            self.reaches_signed_head(roster, hb)?;
+        let s = self.store.oplog(|c| oplog::state(c))??;
+        if untrusted {
+            self.store.oplog(|c| local::set_mark(c, UNTRUSTED_START, &s.seq.to_string()))??;
         }
         let sign_pub = old_primary.sign_pub.clone();
         let (applied, held) = self.store.oplog(|c| -> Result<(u64, u64), CoreError> {
@@ -1168,48 +1197,87 @@ impl Engine {
                 oplog::seen_counter(c, old_primary)?,
             ))
         })??;
+        check.counter = applied;
         if held > applied {
-            return Err(CoreError::invalid(
-                "Some of the lost primary's changes came without the ones before them; nothing was signed. Try again \
-                 later.",
+            check.warnings.push(
+                "The lost phone sent changes that cannot be verified (something before them is missing); they were \
+                 dropped."
+                    .to_owned(),
+            );
+        }
+        if reported > applied.max(held) {
+            check.confirm.push(format!(
+                "The server says the lost phone made {reported} changes but shows {applied}. Recover without the \
+                 rest?"
             ));
         }
-        Ok(applied)
+        // What of the outgoing primary the log holds (from this run or an earlier try): the records its ops wrote
+        // with these keys (epochs it was primary with them; the same phone's earlier tenures do not count).
+        let tenure =
+            roster.entries.iter().filter(|e| e.primary.same_keys(old_primary)).map(|e| e.epoch).collect::<HashSet<_>>();
+        let newest_record = self.store.oplog(|c| -> Result<Option<u64>, CoreError> {
+            Ok(oplog::all_records(c)?
+                .iter()
+                .filter(|r| r.version.author == old_primary.device_id && tenure.contains(&r.version.epoch))
+                .map(|r| r.seq)
+                .max())
+        })??;
+        let newest_old = newest_old.max(newest_record);
+        if old_checkpoint.is_some() || newest_old.is_some() || applied > 0 {
+            let needs =
+                self.heartbeat_findings(roster, old_primary, heartbeat.as_ref(), old_checkpoint, newest_old, applied)?;
+            check.confirm.extend(needs);
+        }
+        Ok(check)
     }
 
-    /// Whether this phone's log reaches the head `hb` signs, with the same history there: else the server withheld or
-    /// changed part of the outgoing primary's history (refused). A heartbeat that does not verify against `roster` is
-    /// no evidence either way.
-    fn reaches_signed_head(&self, roster: &LocalRoster, hb: &reins_proto::oplog::Heartbeat) -> Result<(), CoreError> {
-        let Some(entry) = roster.at(hb.epoch) else {
-            return Ok(());
+    /// What is wrong with the outgoing primary's last heartbeat, as things the user must confirm (see
+    /// [`Self::recovery_catch_up`]); nothing when it checks out.
+    fn heartbeat_findings(
+        &self,
+        roster: &LocalRoster,
+        old_primary: &reins_proto::roster::Member,
+        hb: Option<&reins_proto::oplog::Heartbeat>,
+        old_checkpoint: Option<u64>,
+        newest_old: Option<u64>,
+        applied: u64,
+    ) -> Result<Vec<String>, CoreError> {
+        let without = "Recover without the lost phone's last status?";
+        let Some(hb) = hb else {
+            return Ok(vec![format!("The lost phone's last status is missing. {without}")]);
         };
-        let verifies = entry.primary.device_id == hb.author
-            && entry
-                .primary
-                .sign_key()
-                .ok()
-                .zip(reins_proto::canon::parse_sig(&hb.sig))
-                .zip(hb.signing_bytes().ok())
-                .is_some_and(|((key, sig), message)| crate::roles::keys::ed25519_verify(&key, &message, &sig));
-        if !verifies {
-            return Ok(());
+        // Its key, at an epoch of its tenure (it was primary with that key at every epoch since).
+        let tenure = roster.entries.iter().filter(|e| e.epoch >= hb.epoch).collect::<Vec<_>>();
+        let in_tenure = tenure.first().is_some_and(|e| e.epoch == hb.epoch)
+            && tenure.iter().all(|e| e.primary.same_keys(old_primary));
+        let signed = old_primary
+            .sign_key()
+            .ok()
+            .zip(reins_proto::canon::parse_sig(&hb.sig))
+            .zip(hb.signing_bytes().ok())
+            .is_some_and(|((key, sig), message)| crate::roles::keys::ed25519_verify(&key, &message, &sig));
+        if hb.author != old_primary.device_id || !in_tenure || !signed {
+            return Ok(vec![format!("The lost phone's last status does not check out. {without}")]);
         }
-        let withheld = || {
-            CoreError::invalid(
-                "The server shows less of the account's history than the lost primary signed it had; nothing was \
-                 signed.",
-            )
-        };
+        let mut found = Vec::new();
         let s = self.store.oplog(|c| oplog::state(c))??;
+        if old_checkpoint.is_some_and(|cp| hb.head_seq < cp) || newest_old.is_some_and(|op| hb.head_seq < op) {
+            found.push(format!("The lost phone's last status is older than its own history. {without}"));
+        }
         if hb.head_seq > s.seq {
-            return Err(withheld());
+            found.push(format!("The server shows less of the history than the lost phone signed it had. {without}"));
+        } else {
+            let theirs = reins_proto::canon::parse_hex32(&hb.applied_hash);
+            if let Some(mine) = self.store.oplog(|c| oplog::applied_at(c, hb.head_seq))??
+                && Some(mine) != theirs
+            {
+                found.push(format!("The lost phone signed another history than the server shows. {without}"));
+            }
         }
-        let theirs = reins_proto::canon::parse_hex32(&hb.applied_hash);
-        match self.store.oplog(|c| oplog::applied_at(c, hb.head_seq))?? {
-            Some(mine) if Some(mine) != theirs => Err(withheld()),
-            _ => Ok(()),
+        if hb.last_counter.is_some_and(|last| last > applied) {
+            found.push(format!("The lost phone signed more of its own changes than the server shows. {without}"));
         }
+        Ok(found)
     }
 
     /// Applies what the log holds, up to the first op this phone cannot take yet (no roster fetch, no store writes;
@@ -1309,7 +1377,10 @@ impl Engine {
             ))
         })??;
         let audit = table_name(Table::Audit);
-        let untrusted = self.untrusted_start()?;
+        // Records up to this seq came from a start this phone could not verify: each is tightened as it is taken.
+        let bound = self.untrusted_bound()?;
+        let untrusted = |r: &oplog::Record| bound.is_some_and(|b| r.seq <= b);
+        let now = unix_now();
         let mut failed = 0;
         let live_keys: HashSet<(Table, String)> =
             all.iter().filter(|r| r.value.is_some()).map(|r| (r.table, r.key.clone())).collect();
@@ -1324,8 +1395,8 @@ impl Engine {
                 continue;
             }
             // A viewer takes no token; nor does anyone from a start it could not verify (seen, never written).
-            if record.table == Table::Secrets && (!primary || untrusted) {
-                if untrusted && primary {
+            if record.table == Table::Secrets && (!primary || untrusted(&record)) {
+                if primary {
                     self.set_mirror(&tbl, &record.key, Some(record.version.clone()), String::new(), None)?;
                 }
                 continue;
@@ -1386,7 +1457,27 @@ impl Engine {
             let digest = plain.as_ref().map(records::digest).unwrap_or_default();
             // A row this phone had before it took the log (a leftover from before phone roles) is found by its key.
             let local_key = seen.and_then(|m| m.local.clone()).or_else(|| records::local_of(record.table, &record.key));
-            if seen.is_some_and(|m| m.digest == digest) {
+            // From an untrusted start: tightened before it is written. The mirror keeps the record's own digest, so the
+            // primary publishes what it made of it (a skipped one as removed).
+            let plain = match (&plain, untrusted(&record)) {
+                (Some(v), true) => match self.store.tighten_record(record.table, &record.key, v, now)? {
+                    records::Tightened::Write(t) => Some(self.store.normalized(record.table, &t)?),
+                    records::Tightened::Skip => {
+                        if let Some(local) = &local_key {
+                            self.store.write_sync_row(record.table, &record.key, Some(local), None)?;
+                        }
+                        self.set_mirror(&tbl, &record.key, Some(record.version.clone()), digest, None)?;
+                        continue;
+                    }
+                    records::Tightened::KeepLocal => {
+                        self.set_mirror(&tbl, &record.key, Some(record.version.clone()), String::new(), local_key)?;
+                        continue;
+                    }
+                },
+                _ => plain,
+            };
+            let digest_written = plain.as_ref().map(records::digest).unwrap_or_default();
+            if seen.is_some_and(|m| m.digest == digest_written) && digest_written == digest {
                 self.set_mirror(&tbl, &record.key, Some(record.version.clone()), digest, local_key)?;
                 continue;
             }
@@ -1407,6 +1498,8 @@ impl Engine {
             match self.store.write_sync_row(record.table, &record.key, local_key.as_deref(), plain.as_ref()) {
                 Ok(found) => {
                     self.store.oplog(|c| local::clear_mark(c, &failing))??;
+                    // A tightened record keeps the log's digest in the mirror: it differs from the row, so it is
+                    // published as the primary now has it.
                     self.set_mirror(&tbl, &record.key, Some(record.version.clone()), digest, found.or(local_key))?;
                 }
                 Err(e) => {
@@ -1425,7 +1518,40 @@ impl Engine {
         if failed == 0 {
             self.store.oplog(|c| local::set_mark(c, MATERIALIZED_SEQ, &applied.to_string()))??;
         }
+        if let Some(bound) = bound {
+            self.settle_untrusted(bound)?;
+        }
         Ok(failed)
+    }
+
+    /// The seq up to which records came from a start this phone could not verify, while some of them were not taken.
+    fn untrusted_bound(&self) -> Result<Option<u64>, CoreError> {
+        Ok(self.store.oplog(|c| local::mark(c, UNTRUSTED_START))??.map(|v| v.parse().unwrap_or(u64::MAX)))
+    }
+
+    /// The untrusted start is over once every record of it was seen: taken (tightened), skipped, or given up on (a
+    /// brake's table is never given up on, so its record keeps the mark until it writes).
+    fn settle_untrusted(&self, bound: u64) -> Result<(), CoreError> {
+        let (all, mirror) =
+            self.store.oplog(|c| -> Result<_, CoreError> { Ok((oplog::all_records(c)?, local::mirror(c)?)) })??;
+        let now = unix_now();
+        for r in all.iter().filter(|r| r.seq <= bound) {
+            if r.key.starts_with(RESERVED_PREFIX) || records::sql_table(r.table).is_none() || r.table == Table::Audit {
+                continue;
+            }
+            let tbl = table_name(r.table);
+            let seen = mirror.get(&(tbl.clone(), r.key.clone())).and_then(|m| m.version.as_ref()) == Some(&r.version);
+            if seen {
+                continue;
+            }
+            let version = format!("{}.{}.{}", r.version.epoch, r.version.author, r.version.counter);
+            let mark = self.store.oplog(|c| local::mark(c, &failed_mark(&tbl, &r.key)))??;
+            let (due, tries) = retry_due(r.table, mark.as_deref(), &version, now);
+            if due || tries < MAX_WRITE_TRIES || matches!(r.table, Table::Grants | Table::AutopilotSettings) {
+                return Ok(());
+            }
+        }
+        self.store.oplog(|c| local::clear_mark(c, UNTRUSTED_START))?
     }
 
     /// On a viewer: rows of the security tables the log does not have (left from before phone roles, or removed since)
@@ -1540,8 +1666,11 @@ impl Engine {
     async fn post_heartbeat(&self, session: &Session, account: &Account, keys: &Keys) {
         let now = unix_now();
         let epoch = keys.roster.epoch();
+        // Also as soon as the primary's own ops moved on: a recovery needs a status that covers all of them.
+        let own = self.own_applied_counter().unwrap_or(0);
         if now - self.live().heartbeat_posted.load(Ordering::Acquire) < HEARTBEAT_EVERY_SECS
             && self.live().heartbeat_epoch.load(Ordering::Acquire) == epoch
+            && self.live().heartbeat_counter.load(Ordering::Acquire) == own
         {
             return;
         }
@@ -1554,6 +1683,7 @@ impl Engine {
             Ok(()) => {
                 self.live().heartbeat_posted.store(now, Ordering::Release);
                 self.live().heartbeat_epoch.store(epoch, Ordering::Release);
+                self.live().heartbeat_counter.store(own, Ordering::Release);
             }
             Err(e) => log::debug!("the heartbeat was not posted: {}", e.into_core()),
         }
