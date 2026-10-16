@@ -261,7 +261,7 @@ async fn without_the_test_switch_loopback_and_http_are_refused() {
         let (status, body) = phone.post("/blobs/fetch", &fetch).await;
         assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("bad_request")), "{url}: {body}");
     }
-    assert!(mock.requests().is_empty(), "nothing reached the local server");
+    assert!(mock.requests_not_probes().is_empty(), "nothing reached the local server");
 }
 
 #[tokio::test]

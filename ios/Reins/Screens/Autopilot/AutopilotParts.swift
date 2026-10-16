@@ -8,9 +8,9 @@ enum AutopilotStyle {
     /// Blue for Manual, the violet accent for Auto, night indigo for Overnight, red for Bypass, amber for Lockdown.
     static func tint(_ mode: AutopilotMode) -> Color {
         switch mode {
-        case .manual: Palette.search
-        case .auto: Palette.accent
-        case .overnight: Palette.overnight
+        case .manual: Palette.kindRead
+        case .auto: Palette.violet
+        case .overnight: Palette.violet
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
@@ -20,7 +20,7 @@ enum AutopilotStyle {
         switch verdict {
         case .approve: Palette.success
         case .deny: Palette.danger
-        case .ask: Palette.search
+        case .ask: Palette.kindRead
         }
     }
 
@@ -33,7 +33,7 @@ enum AutopilotStyle {
     }
 
     /// The faint track under rings and meters.
-    static let track = Palette.controlFill
+    static let track = Palette.paperSunken
 }
 
 /// A rounded square holding a symbol on a wash of its colour; `filled` turns it solid.
@@ -133,13 +133,13 @@ struct ProbabilityRow: View {
         HStack(spacing: 10) {
             Text(label)
                 .font(RFont.sans(13.5, .medium))
-                .foregroundStyle(Palette.secondary)
+                .foregroundStyle(Palette.ink2)
                 .frame(width: 92, alignment: .leading)
                 .lineLimit(1)
             MeterBar(fraction: Double(p), tint: tint)
             Text(AutopilotText.percent(p))
                 .font(RFont.mono(13, .medium))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .frame(width: 44, alignment: .trailing)
                 .lineLimit(1)
         }
@@ -165,17 +165,17 @@ struct AutopilotNeighbourRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(untrusted(neighbour.label))
                     .font(RFont.sans(14, .medium))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(2)
                 Text("\(AutopilotText.pastVerdict(neighbour.verdict)) · \(Self.relative(neighbour.at))")
                     .font(RFont.sans(12))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
             Text("\(AutopilotText.percent(neighbour.similarity)) alike")
                 .font(RFont.mono(12, .medium))
-                .foregroundStyle(Palette.secondary)
+                .foregroundStyle(Palette.ink2)
                 .lineLimit(1)
         }
         .padding(.vertical, 6)
@@ -220,7 +220,7 @@ struct RadioDot: View {
 
     var body: some View {
         Circle()
-            .strokeBorder(selected ? tint : Palette.tertiary.opacity(0.6), lineWidth: 1.75)
+            .strokeBorder(selected ? tint : Palette.inkMeta.opacity(0.6), lineWidth: 1.75)
             .frame(width: 22, height: 22)
             .overlay {
                 Circle().fill(tint)
@@ -280,7 +280,7 @@ struct BypassRing: View {
 struct StatTile: View {
     var value: String
     var label: String
-    var tint: Color = Palette.text
+    var tint: Color = Palette.ink
     var suffix: String? = nil
 
     var body: some View {
@@ -292,21 +292,21 @@ struct StatTile: View {
                 if let suffix {
                     Text(suffix)
                         .font(RFont.sans(15))
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.inkMeta)
                 }
             }
             .lineLimit(1)
             .minimumScaleFactor(0.6)
             Text(label)
                 .font(RFont.sans(11.5))
-                .foregroundStyle(Palette.tertiary)
+                .foregroundStyle(Palette.inkMeta)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
+        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
 }
@@ -349,7 +349,7 @@ struct Segments<ID: Hashable>: View {
                             Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
                         }
                     }
-                    .foregroundStyle(item.tint ?? (on ? Palette.text : Palette.secondary))
+                    .foregroundStyle(item.tint ?? (on ? Palette.ink : Palette.ink2))
                     .frame(maxWidth: .infinity, minHeight: 36)
                     .padding(.horizontal, 2)
                     .background {
@@ -367,7 +367,7 @@ struct Segments<ID: Hashable>: View {
             }
         }
         .padding(3)
-        .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
         .animation(.smooth(duration: 0.2), value: selected)
     }
 }
@@ -385,7 +385,7 @@ struct HelpLine: View {
             HStack(spacing: 6) {
                 Text(text)
                     .font(RFont.sans(14))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .multilineTextAlignment(alignment == .center ? .center : .leading)
                     .fixedSize(horizontal: false, vertical: true)
                 HelpMark(open: open) {
@@ -397,7 +397,7 @@ struct HelpLine: View {
             if open {
                 Text(help)
                     .font(RFont.sans(13))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .multilineTextAlignment(alignment == .center ? .center : .leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
@@ -416,7 +416,7 @@ struct HelpMark: View {
         Button(action: action) {
             Image(systemName: "questionmark.circle")
                 .font(.system(size: 16))
-                .foregroundStyle(open ? Palette.accent : Palette.tertiary)
+                .foregroundStyle(open ? Palette.violet : Palette.inkMeta)
                 .frame(width: 30, height: 28)
                 .contentShape(Rectangle())
         }
@@ -446,7 +446,7 @@ struct ProfileAvatar: View {
     var size: CGFloat
 
     var body: some View {
-        Circle().fill(Palette.accentSoft)
+        Circle().fill(Palette.violetWash)
             .frame(width: size, height: size)
             .overlay { GlyphIcon(AutopilotText.profileGlyph(AutopilotText.profileIcon(profile)), size: size * 0.48).foregroundStyle(Palette.violet) }
             .accessibilityHidden(true)
@@ -463,7 +463,7 @@ struct AutopilotCaption: View {
         Text(text.uppercased())
             .font(RFont.sans(11.5, .semibold))
             .tracking(0.6)
-            .foregroundStyle(Palette.tertiary)
+            .foregroundStyle(Palette.inkMeta)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -474,8 +474,8 @@ struct AutopilotNoteRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "info.circle").font(.system(size: 14)).foregroundStyle(Palette.secondary)
-            Text(text).font(RFont.sans(13.5)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+            Image(systemName: "info.circle").font(.system(size: 14)).foregroundStyle(Palette.ink2)
+            Text(text).font(RFont.sans(13.5)).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true)
         }
     }
 }

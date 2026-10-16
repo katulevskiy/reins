@@ -48,10 +48,7 @@ fn the_background_service_starts_at_once_and_goes_away_again() {
     let run = |args: &[&str]| {
         Command::new(EXE)
             .args(args)
-            .env("HOME", &home)
-            .env("USERPROFILE", &home)
-            .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .envs(reins_desktop::config::home_env(&home))
             .env("REINS_CONFIG_DIR", &config)
             .env("REINS_STATE_DIR", &state)
             .output()

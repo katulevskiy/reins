@@ -15,6 +15,7 @@ mod account_sync;
 pub mod api;
 pub mod approval;
 pub mod autopilot;
+pub mod avatar;
 pub mod blob;
 pub mod connector;
 pub mod crypto;
@@ -61,10 +62,14 @@ pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck};
 pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, ServerInfo, SsoOutcome, SsoStart};
 pub use types::{
     AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ActivityPush, ActivityRequest, ApprovalChoice,
-    ApprovalKind, ApprovalView, BlobView, ConnectionView, DeviceKind, DeviceView, DiffLineKind, DiffLineView,
-    EmailContent, EmailView, GitCommitView, GitFileView, GitPushView, GitRefView, GmailStatus, GrantRequestView,
-    GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem, PendingKind, QuickApproval, ResourceView,
-    ServiceView, SessionInfo, StandingGrant, StartingPolicy,
+    ApprovalKind, ApprovalView, Attention, AttentionLevel, AttentionReason, BlobView, ConnectionView, DeviceKind,
+    DeviceView, DiffLineKind, DiffLineView, EmailContent, EmailView, GitCommitView, GitFileView, GitPushView,
+    GitRefView, GmailStatus, GrantRequestView, GrantScopeChoice, GrantView, MessageView, PairingView, PendingItem,
+    PendingKind, QuickApproval, ReasonCode, ResourceView, ServiceView, SessionInfo, StandingGrant, StartingPolicy,
+};
+pub use types::{
+    ActivityConnection, ActivityCursor, ActivityDecider, ActivityFacets, ActivityField, ActivityHighlight, ActivityHit,
+    ActivityOutcome, ActivityPage, ActivityQuery, ActivitySnippet, ActivityStamp,
 };
 pub use types::{
     AskRuleView, AskView, CommandOption, EnvReleaseView, EnvStoreView, SecretReleaseView, SecretsRevoked,

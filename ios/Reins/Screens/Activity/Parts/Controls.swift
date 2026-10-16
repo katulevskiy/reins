@@ -16,7 +16,7 @@ struct Banner: View {
 
     var body: some View {
         let tone: Color = switch kind {
-        case .notice: Palette.accent
+        case .notice: Palette.violet
         case .warning: Palette.warning
         case .error: Palette.danger
         }
@@ -26,7 +26,7 @@ struct Banner: View {
                 .foregroundStyle(tone)
             Text(text)
                 .font(RFont.sans(14.5))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .lineSpacing(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
@@ -53,7 +53,7 @@ struct GroupCard<Content: View>: View {
             }
             VStack(alignment: .leading, spacing: 0) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             if let footer {
                 GroupFooter(footer).padding(.horizontal, 12).padding(.top, 4)
@@ -69,7 +69,7 @@ struct Hairline: View {
 
     var body: some View {
         Rectangle()
-            .fill(Palette.hairline)
+            .fill(Palette.rule)
             .frame(height: 0.75)
             .padding(.leading, inset)
             .accessibilityHidden(true)
@@ -84,8 +84,8 @@ struct CheckMark: View {
     var body: some View {
         ZStack {
             Circle()
-                .strokeBorder(checked ? Color.clear : Palette.tertiary, lineWidth: 1.75)
-                .background(Circle().fill(checked ? Palette.accent : Color.clear))
+                .strokeBorder(checked ? Color.clear : Palette.inkMeta, lineWidth: 1.75)
+                .background(Circle().fill(checked ? Palette.violet : Color.clear))
             if checked {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11.5, weight: .bold))
@@ -163,7 +163,7 @@ struct SelectChip<Leading: View>: View {
                 if hasLeading { leading }
                 Text(title)
                     .font(RFont.sans(14, .semibold))
-                    .foregroundStyle(selected ? Palette.text : Palette.secondary)
+                    .foregroundStyle(selected ? Palette.ink : Palette.ink2)
                     .lineLimit(1)
                 if selected {
                     Image(systemName: "checkmark")
@@ -177,7 +177,7 @@ struct SelectChip<Leading: View>: View {
             .padding(.trailing, 13)
             .frame(minHeight: 38)
             .background(selected ? SelectChipLook.fill : Color.clear, in: shape)
-            .overlay(shape.strokeBorder(selected ? Palette.accent : SelectChipLook.edge, lineWidth: selected ? 1.5 : 1))
+            .overlay(shape.strokeBorder(selected ? Palette.violet : SelectChipLook.edge, lineWidth: selected ? 1.5 : 1))
             .contentShape(shape)
         }
         .buttonStyle(.plain)
@@ -209,10 +209,10 @@ struct TintTag: View {
     var body: some View {
         Text(text)
             .font(mono ? RFont.mono(12.5) : RFont.sans(12.5, .medium))
-            .foregroundStyle(tint ?? Palette.secondary)
+            .foregroundStyle(tint ?? Palette.ink2)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
-            .background(tint.map { $0.opacity(0.13) } ?? Palette.controlFill, in: Capsule())
+            .background(tint.map { $0.opacity(0.13) } ?? Palette.paperSunken, in: Capsule())
             .lineLimit(1)
     }
 }
@@ -240,15 +240,15 @@ struct ListRow: View {
             if let symbol {
                 Image(systemName: symbol)
                     .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .frame(width: 22)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text).lineLimit(2)
+                Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink).lineLimit(2)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(monoSubtitle ? RFont.mono(13) : RFont.sans(13))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                         .lineLimit(4)
                 }
             }
@@ -256,7 +256,7 @@ struct ListRow: View {
             if chevron {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
             }
         }
         .padding(.horizontal, 16)
@@ -270,7 +270,7 @@ struct ListRow: View {
 struct RowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(configuration.isPressed ? Palette.controlFill : Color.clear)
+            .background(configuration.isPressed ? Palette.paperSunken : Color.clear)
     }
 }
 
@@ -281,7 +281,7 @@ struct Caption: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text).font(RFont.sans(12, .medium)).foregroundStyle(Palette.tertiary)
+        Text(text).font(RFont.sans(12, .medium)).foregroundStyle(Palette.inkMeta)
     }
 }
 
@@ -293,11 +293,11 @@ struct MonoBox: View {
     var body: some View {
         Text(text)
             .font(RFont.mono(13))
-            .foregroundStyle(Palette.text)
+            .foregroundStyle(Palette.ink)
             .lineLimit(lineLimit)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(Palette.controlFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .environment(\.layoutDirection, .leftToRight)
             .textSelection(.enabled)
     }

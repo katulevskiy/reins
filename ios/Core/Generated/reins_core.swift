@@ -2752,10 +2752,21 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func activityCommitChange(entryId: Int64, shortSha: String) async throws  -> GitCommitView
     
     /**
+     * The integrations, kinds and connections the Activity holds: the search filters' choices.
+     */
+    func activityFacets() async throws  -> ActivityFacets
+    
+    /**
      * An Activity entry's push, the best copy this device has: commits, files with lines added and removed, and the
      * changes line by line where kept (`ActivityPush.diffs`, `diffs_not_kept`). `None` when the entry is no push.
      */
     func activityPush(entryId: Int64) async throws  -> ActivityPush?
+    
+    /**
+     * When each entry matching `query` was logged, how it ended and who decided, newest first: to group the Activity
+     * by day (in the phone's time zone) and count each day without loading the entries.
+     */
+    func activityStamps(query: ActivityQuery) async throws  -> [ActivityStamp]
     
     /**
      * Connects a Google account that was just authorized on this phone (`hint` is its address).
@@ -3047,6 +3058,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func revokeSecretsEverywhere(project: String?, env: String?) async throws  -> SecretsRevoked
     
     /**
+     * Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
+     * newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
+     * matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.
+     */
+    func searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt32) async throws  -> ActivityPage
+    
+    /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
      * can wake each phone app. Unknown values are `None`; an unreachable server is no error.
      */
@@ -3087,6 +3105,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func setClassLock(profileId: String, classKey: String, locked: Bool?) async throws 
     
     /**
+     * Changes a connection's blobatar to `shape` (below `blobatar_shape_count()`) and `colour` (an index of
+     * `blobatar_colours()`), keeping its figure. Returns the one kept.
+     */
+    func setConnectionBlobatar(connectionId: String, shape: UInt8, colour: UInt8) async throws  -> Blobatar
+    
+    /**
      * Remembers the icon picked for a connection (`None` = derive it from the name).
      */
     func setConnectionIcon(connectionId: String, icon: String?) async throws 
@@ -3125,6 +3149,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * A profile's own thresholds (the `Custom` preset), each clamped to 0.80–0.99.
      */
     func setThresholds(profileId: String, approveAt: Float, denyAt: Float) async throws 
+    
+    /**
+     * "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
+     */
+    func shuffleConnectionBlobatar(connectionId: String) async throws  -> Blobatar
     
     /**
      * Signs another device of the account out (a lost phone), with the recovery code or master password the user
@@ -3533,6 +3562,25 @@ open func activityCommitChange(entryId: Int64, shortSha: String)async throws  ->
 }
     
     /**
+     * The integrations, kinds and connections the Activity holds: the search filters' choices.
+     */
+open func activityFacets()async throws  -> ActivityFacets  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_activity_facets(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeActivityFacets_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * An Activity entry's push, the best copy this device has: commits, files with lines added and removed, and the
      * changes line by line where kept (`ActivityPush.diffs`, `diffs_not_kept`). `None` when the entry is no push.
      */
@@ -3548,6 +3596,26 @@ open func activityPush(entryId: Int64)async throws  -> ActivityPush?  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeActivityPush.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * When each entry matching `query` was logged, how it ended and who decided, newest first: to group the Activity
+     * by day (in the phone's time zone) and count each day without loading the entries.
+     */
+open func activityStamps(query: ActivityQuery)async throws  -> [ActivityStamp]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_activity_stamps(
+                        self.uniffiCloneHandle(),FfiConverterTypeActivityQuery_lower(query)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeActivityStamp.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4740,6 +4808,27 @@ open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -
 }
     
     /**
+     * Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
+     * newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
+     * matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.
+     */
+open func searchActivity(query: ActivityQuery, after: ActivityCursor?, limit: UInt32)async throws  -> ActivityPage  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_search_activity(
+                        self.uniffiCloneHandle(),FfiConverterTypeActivityQuery_lower(query),FfiConverterOptionTypeActivityCursor.lower(after),FfiConverterUInt32.lower(limit)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeActivityPage_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * What `server_url` offers before signing in: whether "Continue" (browser sign-in) works there, and whether it
      * can wake each phone app. Unknown values are `None`; an unreachable server is no error.
      */
@@ -4875,6 +4964,26 @@ open func setClassLock(profileId: String, classKey: String, locked: Bool?)async 
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Changes a connection's blobatar to `shape` (below `blobatar_shape_count()`) and `colour` (an index of
+     * `blobatar_colours()`), keeping its figure. Returns the one kept.
+     */
+open func setConnectionBlobatar(connectionId: String, shape: UInt8, colour: UInt8)async throws  -> Blobatar  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_set_connection_blobatar(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterUInt8.lower(shape),FfiConverterUInt8.lower(colour)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeBlobatar_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -5020,6 +5129,25 @@ open func setThresholds(profileId: String, approveAt: Float, denyAt: Float)async
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
+     */
+open func shuffleConnectionBlobatar(connectionId: String)async throws  -> Blobatar  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_shuffle_connection_blobatar(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeBlobatar_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -5894,6 +6022,123 @@ public func FfiConverterTypeAccountView_lower(_ value: AccountView) -> RustBuffe
 }
 
 
+public struct ActivityConnection: Equatable, Hashable {
+    public var id: String
+    /**
+     * Cleaned, one line.
+     */
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * Cleaned, one line.
+         */label: String) {
+        self.id = id
+        self.label = label
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityConnection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityConnection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityConnection {
+        return
+            try ActivityConnection(
+                id: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityConnection, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityConnection_lift(_ buf: RustBuffer) throws -> ActivityConnection {
+    return try FfiConverterTypeActivityConnection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityConnection_lower(_ value: ActivityConnection) -> RustBuffer {
+    return FfiConverterTypeActivityConnection.lower(value)
+}
+
+
+/**
+ * Where a page of results ends: pass it back for the next page.
+ */
+public struct ActivityCursor: Equatable, Hashable {
+    public var at: Int64
+    public var id: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(at: Int64, id: Int64) {
+        self.at = at
+        self.id = id
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityCursor: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityCursor: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityCursor {
+        return
+            try ActivityCursor(
+                at: FfiConverterInt64.read(from: &buf), 
+                id: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityCursor, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterInt64.write(value.id, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityCursor_lift(_ buf: RustBuffer) throws -> ActivityCursor {
+    return try FfiConverterTypeActivityCursor.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityCursor_lower(_ value: ActivityCursor) -> RustBuffer {
+    return FfiConverterTypeActivityCursor.lower(value)
+}
+
+
 public struct ActivityEntry: Equatable, Hashable {
     /**
      * Stable, increasing row number.
@@ -6067,6 +6312,203 @@ public func FfiConverterTypeActivityEntry_lower(_ value: ActivityEntry) -> RustB
 
 
 /**
+ * What the Activity holds, for the filters' choices.
+ */
+public struct ActivityFacets: Equatable, Hashable {
+    /**
+     * Integrations with entries, most used first.
+     */
+    public var services: [String]
+    /**
+     * Kinds with entries, most used first.
+     */
+    public var actions: [String]
+    /**
+     * Connections with entries, most recent first.
+     */
+    public var connections: [ActivityConnection]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Integrations with entries, most used first.
+         */services: [String], 
+        /**
+         * Kinds with entries, most used first.
+         */actions: [String], 
+        /**
+         * Connections with entries, most recent first.
+         */connections: [ActivityConnection]) {
+        self.services = services
+        self.actions = actions
+        self.connections = connections
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityFacets: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityFacets: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityFacets {
+        return
+            try ActivityFacets(
+                services: FfiConverterSequenceString.read(from: &buf), 
+                actions: FfiConverterSequenceString.read(from: &buf), 
+                connections: FfiConverterSequenceTypeActivityConnection.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityFacets, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.services, into: &buf)
+        FfiConverterSequenceString.write(value.actions, into: &buf)
+        FfiConverterSequenceTypeActivityConnection.write(value.connections, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityFacets_lift(_ buf: RustBuffer) throws -> ActivityFacets {
+    return try FfiConverterTypeActivityFacets.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityFacets_lower(_ value: ActivityFacets) -> RustBuffer {
+    return FfiConverterTypeActivityFacets.lower(value)
+}
+
+
+/**
+ * A piece of a snippet: shown as is, set apart when `hit` (it matches the search). The text is cleaned: one line, no
+ * control or bidi characters, invisible characters shown as U+FFFD; the pieces in order are the snippet.
+ */
+public struct ActivityHighlight: Equatable, Hashable {
+    public var text: String
+    public var hit: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(text: String, hit: Bool) {
+        self.text = text
+        self.hit = hit
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityHighlight: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityHighlight: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityHighlight {
+        return
+            try ActivityHighlight(
+                text: FfiConverterString.read(from: &buf), 
+                hit: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityHighlight, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterBool.write(value.hit, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHighlight_lift(_ buf: RustBuffer) throws -> ActivityHighlight {
+    return try FfiConverterTypeActivityHighlight.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHighlight_lower(_ value: ActivityHighlight) -> RustBuffer {
+    return FfiConverterTypeActivityHighlight.lower(value)
+}
+
+
+public struct ActivityHit: Equatable, Hashable {
+    public var entry: ActivityEntry
+    /**
+     * `None` when the title, agent and connection already show every word searched (or nothing was).
+     */
+    public var snippet: ActivitySnippet?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(entry: ActivityEntry, 
+        /**
+         * `None` when the title, agent and connection already show every word searched (or nothing was).
+         */snippet: ActivitySnippet?) {
+        self.entry = entry
+        self.snippet = snippet
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityHit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityHit: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityHit {
+        return
+            try ActivityHit(
+                entry: FfiConverterTypeActivityEntry.read(from: &buf), 
+                snippet: FfiConverterOptionTypeActivitySnippet.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityHit, into buf: inout [UInt8]) {
+        FfiConverterTypeActivityEntry.write(value.entry, into: &buf)
+        FfiConverterOptionTypeActivitySnippet.write(value.snippet, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHit_lift(_ buf: RustBuffer) throws -> ActivityHit {
+    return try FfiConverterTypeActivityHit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityHit_lower(_ value: ActivityHit) -> RustBuffer {
+    return FfiConverterTypeActivityHit.lower(value)
+}
+
+
+/**
  * Everything the activity screen can show for one entry.
  */
 public struct ActivityInfo: Equatable, Hashable {
@@ -6227,6 +6669,91 @@ public func FfiConverterTypeActivityMessage_lower(_ value: ActivityMessage) -> R
 
 
 /**
+ * One page of an Activity search, newest first.
+ */
+public struct ActivityPage: Equatable, Hashable {
+    public var hits: [ActivityHit]
+    /**
+     * The next page starts after this; `None` on the last page.
+     */
+    public var next: ActivityCursor?
+    /**
+     * Entries matching, on every page.
+     */
+    public var total: UInt32
+    /**
+     * The words searched as matched (lower case): set apart each word of a title that starts with one, as the
+     * snippets do.
+     */
+    public var terms: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(hits: [ActivityHit], 
+        /**
+         * The next page starts after this; `None` on the last page.
+         */next: ActivityCursor?, 
+        /**
+         * Entries matching, on every page.
+         */total: UInt32, 
+        /**
+         * The words searched as matched (lower case): set apart each word of a title that starts with one, as the
+         * snippets do.
+         */terms: [String]) {
+        self.hits = hits
+        self.next = next
+        self.total = total
+        self.terms = terms
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityPage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityPage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityPage {
+        return
+            try ActivityPage(
+                hits: FfiConverterSequenceTypeActivityHit.read(from: &buf), 
+                next: FfiConverterOptionTypeActivityCursor.read(from: &buf), 
+                total: FfiConverterUInt32.read(from: &buf), 
+                terms: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityPage, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeActivityHit.write(value.hits, into: &buf)
+        FfiConverterOptionTypeActivityCursor.write(value.next, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterSequenceString.write(value.terms, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityPage_lift(_ buf: RustBuffer) throws -> ActivityPage {
+    return try FfiConverterTypeActivityPage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityPage_lower(_ value: ActivityPage) -> RustBuffer {
+    return FfiConverterTypeActivityPage.lower(value)
+}
+
+
+/**
  * The push of an Activity entry, the best copy this device has (`activity_push`): this device's own copy of the
  * approval when it showed it, else the copy synced with the entry.
  */
@@ -6319,6 +6846,128 @@ public func FfiConverterTypeActivityPush_lift(_ buf: RustBuffer) throws -> Activ
 #endif
 public func FfiConverterTypeActivityPush_lower(_ value: ActivityPush) -> RustBuffer {
     return FfiConverterTypeActivityPush.lower(value)
+}
+
+
+/**
+ * A search of the Activity, run on this device only (never sent anywhere). Every filter left empty keeps everything;
+ * the filters combine (an entry must pass each one), the values within one filter are alternatives.
+ */
+public struct ActivityQuery: Equatable, Hashable {
+    /**
+     * Words to find, each as the start of a word (`inv` finds "invoice"; `alice@example.com` finds that address). In
+     * the title, the agent and connection, addresses, email subjects and bodies kept, a push's repository, branches,
+     * commits (subjects and ids), files and changes kept, commands, URLs, paths, and MCP tools and their arguments.
+     */
+    public var text: String
+    public var outcomes: [ActivityOutcome]
+    public var deciders: [ActivityDecider]
+    /**
+     * Integrations (`ActivityEntry.service`: "gmail", "github", "desktop", ...).
+     */
+    public var services: [String]
+    /**
+     * Kinds (`ActivityEntry.action`: "search", "read", "send", "grant", "pair", "request", ...).
+     */
+    public var actions: [String]
+    /**
+     * Connections (`ActivityEntry.connection_id`).
+     */
+    public var connections: [String]
+    /**
+     * Logged at or after (Unix seconds).
+     */
+    public var since: Int64?
+    /**
+     * Logged before (Unix seconds).
+     */
+    public var until: Int64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Words to find, each as the start of a word (`inv` finds "invoice"; `alice@example.com` finds that address). In
+         * the title, the agent and connection, addresses, email subjects and bodies kept, a push's repository, branches,
+         * commits (subjects and ids), files and changes kept, commands, URLs, paths, and MCP tools and their arguments.
+         */text: String = "", outcomes: [ActivityOutcome] = [], deciders: [ActivityDecider] = [], 
+        /**
+         * Integrations (`ActivityEntry.service`: "gmail", "github", "desktop", ...).
+         */services: [String] = [], 
+        /**
+         * Kinds (`ActivityEntry.action`: "search", "read", "send", "grant", "pair", "request", ...).
+         */actions: [String] = [], 
+        /**
+         * Connections (`ActivityEntry.connection_id`).
+         */connections: [String] = [], 
+        /**
+         * Logged at or after (Unix seconds).
+         */since: Int64? = nil, 
+        /**
+         * Logged before (Unix seconds).
+         */until: Int64? = nil) {
+        self.text = text
+        self.outcomes = outcomes
+        self.deciders = deciders
+        self.services = services
+        self.actions = actions
+        self.connections = connections
+        self.since = since
+        self.until = until
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityQuery: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityQuery: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityQuery {
+        return
+            try ActivityQuery(
+                text: FfiConverterString.read(from: &buf), 
+                outcomes: FfiConverterSequenceTypeActivityOutcome.read(from: &buf), 
+                deciders: FfiConverterSequenceTypeActivityDecider.read(from: &buf), 
+                services: FfiConverterSequenceString.read(from: &buf), 
+                actions: FfiConverterSequenceString.read(from: &buf), 
+                connections: FfiConverterSequenceString.read(from: &buf), 
+                since: FfiConverterOptionInt64.read(from: &buf), 
+                until: FfiConverterOptionInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityQuery, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterSequenceTypeActivityOutcome.write(value.outcomes, into: &buf)
+        FfiConverterSequenceTypeActivityDecider.write(value.deciders, into: &buf)
+        FfiConverterSequenceString.write(value.services, into: &buf)
+        FfiConverterSequenceString.write(value.actions, into: &buf)
+        FfiConverterSequenceString.write(value.connections, into: &buf)
+        FfiConverterOptionInt64.write(value.since, into: &buf)
+        FfiConverterOptionInt64.write(value.until, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityQuery_lift(_ buf: RustBuffer) throws -> ActivityQuery {
+    return try FfiConverterTypeActivityQuery.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityQuery_lower(_ value: ActivityQuery) -> RustBuffer {
+    return FfiConverterTypeActivityQuery.lower(value)
 }
 
 
@@ -6444,6 +7093,128 @@ public func FfiConverterTypeActivityRequest_lift(_ buf: RustBuffer) throws -> Ac
 #endif
 public func FfiConverterTypeActivityRequest_lower(_ value: ActivityRequest) -> RustBuffer {
     return FfiConverterTypeActivityRequest.lower(value)
+}
+
+
+/**
+ * Where an entry matched outside its title, with the matching words set apart.
+ */
+public struct ActivitySnippet: Equatable, Hashable {
+    public var field: ActivityField
+    public var spans: [ActivityHighlight]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(field: ActivityField, spans: [ActivityHighlight]) {
+        self.field = field
+        self.spans = spans
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivitySnippet: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivitySnippet: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivitySnippet {
+        return
+            try ActivitySnippet(
+                field: FfiConverterTypeActivityField.read(from: &buf), 
+                spans: FfiConverterSequenceTypeActivityHighlight.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivitySnippet, into buf: inout [UInt8]) {
+        FfiConverterTypeActivityField.write(value.field, into: &buf)
+        FfiConverterSequenceTypeActivityHighlight.write(value.spans, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivitySnippet_lift(_ buf: RustBuffer) throws -> ActivitySnippet {
+    return try FfiConverterTypeActivitySnippet.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivitySnippet_lower(_ value: ActivitySnippet) -> RustBuffer {
+    return FfiConverterTypeActivitySnippet.lower(value)
+}
+
+
+/**
+ * An entry matching a search, as little as a day's header needs: when, and how it ended.
+ */
+public struct ActivityStamp: Equatable, Hashable {
+    public var id: Int64
+    public var at: Int64
+    public var outcome: ActivityOutcome
+    public var decider: ActivityDecider
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, at: Int64, outcome: ActivityOutcome, decider: ActivityDecider) {
+        self.id = id
+        self.at = at
+        self.outcome = outcome
+        self.decider = decider
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityStamp: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityStamp: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityStamp {
+        return
+            try ActivityStamp(
+                id: FfiConverterInt64.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf), 
+                outcome: FfiConverterTypeActivityOutcome.read(from: &buf), 
+                decider: FfiConverterTypeActivityDecider.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityStamp, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterTypeActivityOutcome.write(value.outcome, into: &buf)
+        FfiConverterTypeActivityDecider.write(value.decider, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityStamp_lift(_ buf: RustBuffer) throws -> ActivityStamp {
+    return try FfiConverterTypeActivityStamp.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityStamp_lower(_ value: ActivityStamp) -> RustBuffer {
+    return FfiConverterTypeActivityStamp.lower(value)
 }
 
 
@@ -7149,6 +7920,132 @@ public func FfiConverterTypeAskView_lower(_ value: AskView) -> RustBuffer {
 
 
 /**
+ * What deserves a closer look in one commit, file or message. At most three reasons, heaviest first.
+ */
+public struct Attention: Equatable, Hashable {
+    /**
+     * The heaviest reason. Weights are not added together.
+     */
+    public var level: AttentionLevel
+    public var reasons: [AttentionReason]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The heaviest reason. Weights are not added together.
+         */level: AttentionLevel, reasons: [AttentionReason]) {
+        self.level = level
+        self.reasons = reasons
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Attention: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttention: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Attention {
+        return
+            try Attention(
+                level: FfiConverterTypeAttentionLevel.read(from: &buf), 
+                reasons: FfiConverterSequenceTypeAttentionReason.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Attention, into buf: inout [UInt8]) {
+        FfiConverterTypeAttentionLevel.write(value.level, into: &buf)
+        FfiConverterSequenceTypeAttentionReason.write(value.reasons, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttention_lift(_ buf: RustBuffer) throws -> Attention {
+    return try FfiConverterTypeAttention.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttention_lower(_ value: Attention) -> RustBuffer {
+    return FfiConverterTypeAttention.lower(value)
+}
+
+
+/**
+ * One reason, in fixed wording. A deletion count is the only fact filled in.
+ */
+public struct AttentionReason: Equatable, Hashable {
+    public var code: ReasonCode
+    /**
+     * Never a path, a subject, an author, a snippet or a secret.
+     */
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(code: ReasonCode, 
+        /**
+         * Never a path, a subject, an author, a snippet or a secret.
+         */label: String) {
+        self.code = code
+        self.label = label
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AttentionReason: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttentionReason: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttentionReason {
+        return
+            try AttentionReason(
+                code: FfiConverterTypeReasonCode.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AttentionReason, into buf: inout [UInt8]) {
+        FfiConverterTypeReasonCode.write(value.code, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttentionReason_lift(_ buf: RustBuffer) throws -> AttentionReason {
+    return try FfiConverterTypeAttentionReason.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttentionReason_lower(_ value: AttentionReason) -> RustBuffer {
+    return FfiConverterTypeAttentionReason.lower(value)
+}
+
+
+/**
  * A request Autopilot decided, for the quiet "Autopilot" notification (spec §7).
  */
 public struct AutoDecisionView: Equatable, Hashable {
@@ -7794,6 +8691,68 @@ public func FfiConverterTypeBlobView_lower(_ value: BlobView) -> RustBuffer {
 
 
 /**
+ * A connection's blobatar: the library's figure for `seed`, drawn in colour `colour` (an index of [`COLOURS`]) with
+ * shape `shape` (the library's order, [`SHAPES`]).
+ */
+public struct Blobatar: Equatable, Hashable {
+    public var seed: String
+    public var shape: UInt8
+    public var colour: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(seed: String, shape: UInt8, colour: UInt8) {
+        self.seed = seed
+        self.shape = shape
+        self.colour = colour
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Blobatar: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBlobatar: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Blobatar {
+        return
+            try Blobatar(
+                seed: FfiConverterString.read(from: &buf), 
+                shape: FfiConverterUInt8.read(from: &buf), 
+                colour: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Blobatar, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.seed, into: &buf)
+        FfiConverterUInt8.write(value.shape, into: &buf)
+        FfiConverterUInt8.write(value.colour, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBlobatar_lift(_ buf: RustBuffer) throws -> Blobatar {
+    return try FfiConverterTypeBlobatar.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBlobatar_lower(_ value: Blobatar) -> RustBuffer {
+    return FfiConverterTypeBlobatar.lower(value)
+}
+
+
+/**
  * A budget: every AI together (`connection_id` empty) or one.
  */
 public struct BudgetView: Equatable, Hashable {
@@ -8345,28 +9304,63 @@ public func FfiConverterTypeConnectionAutopilot_lower(_ value: ConnectionAutopil
 
 public struct ConnectionView: Equatable, Hashable {
     public var id: String
+    /**
+     * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
+     * name it was given (`avatar::shown_label`).
+     */
     public var label: String
     public var clientHost: String
     public var createdAt: Int64
     public var lastUsedAt: Int64?
     /**
-     * The icon the user picked (`None` = derived from the name by the app).
+     * The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
+     * ("macos", "windows", "linux") or "blob".
      */
     public var icon: String?
     /**
      * A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
      */
     public var keyFingerprint: String?
+    /**
+     * What Auto shows: for a computer its platform's logo ("macos", "windows", "linux"), for an AI its provider's
+     * ("claude", "grok", ...) when its name says which, else "blob" (its blobatar).
+     */
+    public var autoIcon: String
+    /**
+     * A computer's platform: "macos", "windows" or "linux"; `None` for an AI app or when not known.
+     */
+    public var platform: String?
+    /**
+     * Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
+     * changed by the user).
+     */
+    public var blobatar: Blobatar?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, label: String, clientHost: String, createdAt: Int64, lastUsedAt: Int64?, 
+    public init(id: String, 
         /**
-         * The icon the user picked (`None` = derived from the name by the app).
+         * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
+         * name it was given (`avatar::shown_label`).
+         */label: String, clientHost: String, createdAt: Int64, lastUsedAt: Int64?, 
+        /**
+         * The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
+         * ("macos", "windows", "linux") or "blob".
          */icon: String?, 
         /**
          * A computer (the Reins desktop app): the eight digits of the key pinned when it paired. `None` for an AI app.
-         */keyFingerprint: String?) {
+         */keyFingerprint: String?, 
+        /**
+         * What Auto shows: for a computer its platform's logo ("macos", "windows", "linux"), for an AI its provider's
+         * ("claude", "grok", ...) when its name says which, else "blob" (its blobatar).
+         */autoIcon: String = "", 
+        /**
+         * A computer's platform: "macos", "windows" or "linux"; `None` for an AI app or when not known.
+         */platform: String? = nil, 
+        /**
+         * Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
+         * changed by the user).
+         */blobatar: Blobatar? = nil) {
         self.id = id
         self.label = label
         self.clientHost = clientHost
@@ -8374,6 +9368,9 @@ public struct ConnectionView: Equatable, Hashable {
         self.lastUsedAt = lastUsedAt
         self.icon = icon
         self.keyFingerprint = keyFingerprint
+        self.autoIcon = autoIcon
+        self.platform = platform
+        self.blobatar = blobatar
     }
 
     
@@ -8398,7 +9395,10 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
                 createdAt: FfiConverterInt64.read(from: &buf), 
                 lastUsedAt: FfiConverterOptionInt64.read(from: &buf), 
                 icon: FfiConverterOptionString.read(from: &buf), 
-                keyFingerprint: FfiConverterOptionString.read(from: &buf)
+                keyFingerprint: FfiConverterOptionString.read(from: &buf), 
+                autoIcon: FfiConverterString.read(from: &buf), 
+                platform: FfiConverterOptionString.read(from: &buf), 
+                blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf)
         )
     }
 
@@ -8410,6 +9410,9 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.lastUsedAt, into: &buf)
         FfiConverterOptionString.write(value.icon, into: &buf)
         FfiConverterOptionString.write(value.keyFingerprint, into: &buf)
+        FfiConverterString.write(value.autoIcon, into: &buf)
+        FfiConverterOptionString.write(value.platform, into: &buf)
+        FfiConverterOptionTypeBlobatar.write(value.blobatar, into: &buf)
     }
 }
 
@@ -9223,6 +10226,11 @@ public struct GitCommitView: Equatable, Hashable {
      * (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
      */
     public var hiddenChars: Bool
+    /**
+     * What in this commit deserves a closer look. `None`: no rule matched, which is not a clearance. At most three
+     * reasons, heaviest first. Computed when the view is built, and never stored on the push.
+     */
+    public var attention: Attention?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9246,7 +10254,11 @@ public struct GitCommitView: Equatable, Hashable {
         /**
          * The subject, the author or one of its files holds characters that change how text reads without being seen
          * (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
-         */hiddenChars: Bool = false) {
+         */hiddenChars: Bool = false, 
+        /**
+         * What in this commit deserves a closer look. `None`: no rule matched, which is not a clearance. At most three
+         * reasons, heaviest first. Computed when the view is built, and never stored on the push.
+         */attention: Attention? = nil) {
         self.shortSha = shortSha
         self.subject = subject
         self.author = author
@@ -9256,6 +10268,7 @@ public struct GitCommitView: Equatable, Hashable {
         self.additions = additions
         self.deletions = deletions
         self.hiddenChars = hiddenChars
+        self.attention = attention
     }
 
     
@@ -9282,7 +10295,8 @@ public struct FfiConverterTypeGitCommitView: FfiConverterRustBuffer {
                 files: FfiConverterSequenceTypeGitFileView.read(from: &buf), 
                 additions: FfiConverterOptionUInt64.read(from: &buf), 
                 deletions: FfiConverterOptionUInt64.read(from: &buf), 
-                hiddenChars: FfiConverterBool.read(from: &buf)
+                hiddenChars: FfiConverterBool.read(from: &buf), 
+                attention: FfiConverterOptionTypeAttention.read(from: &buf)
         )
     }
 
@@ -9296,6 +10310,7 @@ public struct FfiConverterTypeGitCommitView: FfiConverterRustBuffer {
         FfiConverterOptionUInt64.write(value.additions, into: &buf)
         FfiConverterOptionUInt64.write(value.deletions, into: &buf)
         FfiConverterBool.write(value.hiddenChars, into: &buf)
+        FfiConverterOptionTypeAttention.write(value.attention, into: &buf)
     }
 }
 
@@ -9341,6 +10356,10 @@ public struct GitFileView: Equatable, Hashable {
      * is shown as U+FFFD. Show a warning.
      */
     public var hiddenChars: Bool
+    /**
+     * What in this file deserves a closer look. `None`: no rule matched, which is not a clearance.
+     */
+    public var attention: Attention?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9361,7 +10380,10 @@ public struct GitFileView: Equatable, Hashable {
         /**
          * The path or a line of `diff` held invisible characters (bidi controls, zero-width characters); in `diff` each
          * is shown as U+FFFD. Show a warning.
-         */hiddenChars: Bool = false) {
+         */hiddenChars: Bool = false, 
+        /**
+         * What in this file deserves a closer look. `None`: no rule matched, which is not a clearance.
+         */attention: Attention? = nil) {
         self.path = path
         self.status = status
         self.additions = additions
@@ -9370,6 +10392,7 @@ public struct GitFileView: Equatable, Hashable {
         self.diff = diff
         self.diffCut = diffCut
         self.hiddenChars = hiddenChars
+        self.attention = attention
     }
 
     
@@ -9395,7 +10418,8 @@ public struct FfiConverterTypeGitFileView: FfiConverterRustBuffer {
                 binary: FfiConverterBool.read(from: &buf), 
                 diff: FfiConverterSequenceTypeDiffLineView.read(from: &buf), 
                 diffCut: FfiConverterBool.read(from: &buf), 
-                hiddenChars: FfiConverterBool.read(from: &buf)
+                hiddenChars: FfiConverterBool.read(from: &buf), 
+                attention: FfiConverterOptionTypeAttention.read(from: &buf)
         )
     }
 
@@ -9408,6 +10432,7 @@ public struct FfiConverterTypeGitFileView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeDiffLineView.write(value.diff, into: &buf)
         FfiConverterBool.write(value.diffCut, into: &buf)
         FfiConverterBool.write(value.hiddenChars, into: &buf)
+        FfiConverterOptionTypeAttention.write(value.attention, into: &buf)
     }
 }
 
@@ -10517,13 +11542,24 @@ public struct MessageView: Equatable, Hashable {
      * Looks like something that must never be shared by default (a login code, a password).
      */
     public var sensitive: Bool
+    /**
+     * What in this message deserves a closer look. `None`: no rule matched, which is not a clearance.
+     * A sign-in code or a password is also `sensitive` and starts unticked. A reset, a bank message or a security
+     * alert is only marked here.
+     */
+    public var attention: Attention?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(id: String, from: String, subject: String, date: Int64, snippet: String, coveredByGrant: Bool, 
         /**
          * Looks like something that must never be shared by default (a login code, a password).
-         */sensitive: Bool) {
+         */sensitive: Bool, 
+        /**
+         * What in this message deserves a closer look. `None`: no rule matched, which is not a clearance.
+         * A sign-in code or a password is also `sensitive` and starts unticked. A reset, a bank message or a security
+         * alert is only marked here.
+         */attention: Attention? = nil) {
         self.id = id
         self.from = from
         self.subject = subject
@@ -10531,6 +11567,7 @@ public struct MessageView: Equatable, Hashable {
         self.snippet = snippet
         self.coveredByGrant = coveredByGrant
         self.sensitive = sensitive
+        self.attention = attention
     }
 
     
@@ -10555,7 +11592,8 @@ public struct FfiConverterTypeMessageView: FfiConverterRustBuffer {
                 date: FfiConverterInt64.read(from: &buf), 
                 snippet: FfiConverterString.read(from: &buf), 
                 coveredByGrant: FfiConverterBool.read(from: &buf), 
-                sensitive: FfiConverterBool.read(from: &buf)
+                sensitive: FfiConverterBool.read(from: &buf), 
+                attention: FfiConverterOptionTypeAttention.read(from: &buf)
         )
     }
 
@@ -10567,6 +11605,7 @@ public struct FfiConverterTypeMessageView: FfiConverterRustBuffer {
         FfiConverterString.write(value.snippet, into: &buf)
         FfiConverterBool.write(value.coveredByGrant, into: &buf)
         FfiConverterBool.write(value.sensitive, into: &buf)
+        FfiConverterOptionTypeAttention.write(value.attention, into: &buf)
     }
 }
 
@@ -15117,6 +16156,347 @@ public func FfiConverterTypeAccountKeys_lower(_ value: AccountKeys) -> RustBuffe
 
 
 
+/**
+ * Who decided an Activity entry.
+ */
+
+public enum ActivityDecider: Equatable, Hashable {
+    
+    /**
+     * The user, or a grant the user gave.
+     */
+    case you
+    /**
+     * Autopilot, in any of its modes (Overnight too).
+     */
+    case autopilot
+    case bypass
+    case lockdown
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ActivityDecider: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityDecider: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityDecider
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityDecider {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .you
+        
+        case 2: return .autopilot
+        
+        case 3: return .bypass
+        
+        case 4: return .lockdown
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ActivityDecider, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .you:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .autopilot:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .bypass:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .lockdown:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityDecider_lift(_ buf: RustBuffer) throws -> ActivityDecider {
+    return try FfiConverterTypeActivityDecider.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityDecider_lower(_ value: ActivityDecider) -> RustBuffer {
+    return FfiConverterTypeActivityDecider.lower(value)
+}
+
+
+
+/**
+ * What part of an entry a snippet comes from.
+ */
+
+public enum ActivityField: Equatable, Hashable {
+    
+    case title
+    /**
+     * The agent, the connection or the account.
+     */
+    case agent
+    /**
+     * An email address (from, to, cc).
+     */
+    case address
+    /**
+     * An email's or message's subject.
+     */
+    case subject
+    /**
+     * An email's body, a message's text, a search query, a note.
+     */
+    case body
+    case repo
+    case branch
+    /**
+     * A commit: its id and subject.
+     */
+    case commit
+    /**
+     * A file or folder path.
+     */
+    case file
+    /**
+     * A change line by line.
+     */
+    case diff
+    case command
+    case url
+    /**
+     * Anything else the request held: a tool's name or arguments, why it was asked.
+     */
+    case request
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ActivityField: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityField: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityField
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityField {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .title
+        
+        case 2: return .agent
+        
+        case 3: return .address
+        
+        case 4: return .subject
+        
+        case 5: return .body
+        
+        case 6: return .repo
+        
+        case 7: return .branch
+        
+        case 8: return .commit
+        
+        case 9: return .file
+        
+        case 10: return .diff
+        
+        case 11: return .command
+        
+        case 12: return .url
+        
+        case 13: return .request
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ActivityField, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .title:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .agent:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .address:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .subject:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .body:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .repo:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .branch:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .commit:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .file:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .diff:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .command:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .url:
+            writeInt(&buf, Int32(12))
+        
+        
+        case .request:
+            writeInt(&buf, Int32(13))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityField_lift(_ buf: RustBuffer) throws -> ActivityField {
+    return try FfiConverterTypeActivityField.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityField_lower(_ value: ActivityField) -> RustBuffer {
+    return FfiConverterTypeActivityField.lower(value)
+}
+
+
+
+/**
+ * How an Activity entry ended, as search filters and day counts group it.
+ */
+
+public enum ActivityOutcome: Equatable, Hashable {
+    
+    /**
+     * Carried out: released, sent or granted.
+     */
+    case approved
+    case denied
+    /**
+     * Allowed but it failed.
+     */
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ActivityOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .approved
+        
+        case 2: return .denied
+        
+        case 3: return .failed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ActivityOutcome, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .approved:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .denied:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityOutcome_lift(_ buf: RustBuffer) throws -> ActivityOutcome {
+    return try FfiConverterTypeActivityOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityOutcome_lower(_ value: ActivityOutcome) -> RustBuffer {
+    return FfiConverterTypeActivityOutcome.lower(value)
+}
+
+
+
 
 public enum ApprovalKind: Equatable, Hashable {
     
@@ -15226,6 +16606,83 @@ public func FfiConverterTypeApprovalKind_lift(_ buf: RustBuffer) throws -> Appro
 #endif
 public func FfiConverterTypeApprovalKind_lower(_ value: ApprovalKind) -> RustBuffer {
     return FfiConverterTypeApprovalKind.lower(value)
+}
+
+
+
+/**
+ * How closely the person should look at one commit, file or message.
+ *
+ * The level is the heaviest reason. Weights are not added together.
+ */
+
+public enum AttentionLevel: Equatable, Hashable {
+    
+    /**
+     * Worth a glance: the heaviest reason has weight 3 to 5.
+     */
+    case look
+    /**
+     * Open this before approving: the heaviest reason has weight 6 or more.
+     */
+    case close
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AttentionLevel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttentionLevel: FfiConverterRustBuffer {
+    typealias SwiftType = AttentionLevel
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttentionLevel {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .look
+        
+        case 2: return .close
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AttentionLevel, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .look:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .close:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttentionLevel_lift(_ buf: RustBuffer) throws -> AttentionLevel {
+    return try FfiConverterTypeAttentionLevel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttentionLevel_lower(_ value: AttentionLevel) -> RustBuffer {
+    return FfiConverterTypeAttentionLevel.lower(value)
 }
 
 
@@ -16651,6 +18108,211 @@ public func FfiConverterTypePreset_lower(_ value: Preset) -> RustBuffer {
 
 
 /**
+ * Why an item deserves a closer look. Declaration order breaks ties between equal weights.
+ */
+
+public enum ReasonCode: Equatable, Hashable {
+    
+    /**
+     * "Secret file".
+     */
+    case secretFile
+    /**
+     * "Looks like a key".
+     */
+    case looksLikeKey
+    /**
+     * "Password".
+     */
+    case password
+    /**
+     * "Looks like a sign-in code".
+     */
+    case signInCode
+    /**
+     * "Changes CI".
+     */
+    case changesCi
+    /**
+     * "Changes auth".
+     */
+    case changesAuth
+    /**
+     * "Password reset".
+     */
+    case passwordReset
+    /**
+     * "Security alert".
+     */
+    case securityAlert
+    /**
+     * "Hidden characters".
+     */
+    case hiddenChars
+    /**
+     * "Deletes N lines".
+     */
+    case deletesLines
+    /**
+     * "Changes infra".
+     */
+    case changesInfra
+    /**
+     * "Bank or invoice".
+     */
+    case finance
+    /**
+     * "Changes owners".
+     */
+    case changesOwners
+    /**
+     * "Runs on build".
+     */
+    case changesBuildScripts
+    /**
+     * "Deletes a file".
+     */
+    case deletesFile
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ReasonCode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeReasonCode: FfiConverterRustBuffer {
+    typealias SwiftType = ReasonCode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReasonCode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .secretFile
+        
+        case 2: return .looksLikeKey
+        
+        case 3: return .password
+        
+        case 4: return .signInCode
+        
+        case 5: return .changesCi
+        
+        case 6: return .changesAuth
+        
+        case 7: return .passwordReset
+        
+        case 8: return .securityAlert
+        
+        case 9: return .hiddenChars
+        
+        case 10: return .deletesLines
+        
+        case 11: return .changesInfra
+        
+        case 12: return .finance
+        
+        case 13: return .changesOwners
+        
+        case 14: return .changesBuildScripts
+        
+        case 15: return .deletesFile
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ReasonCode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .secretFile:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .looksLikeKey:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .password:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .signInCode:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .changesCi:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .changesAuth:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .passwordReset:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .securityAlert:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .hiddenChars:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .deletesLines:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .changesInfra:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .finance:
+            writeInt(&buf, Int32(12))
+        
+        
+        case .changesOwners:
+            writeInt(&buf, Int32(13))
+        
+        
+        case .changesBuildScripts:
+            writeInt(&buf, Int32(14))
+        
+        
+        case .deletesFile:
+            writeInt(&buf, Int32(15))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReasonCode_lift(_ buf: RustBuffer) throws -> ReasonCode {
+    return try FfiConverterTypeReasonCode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReasonCode_lower(_ value: ReasonCode) -> RustBuffer {
+    return FfiConverterTypeReasonCode.lower(value)
+}
+
+
+
+/**
  * How bad it would be if a request were a mistake, in its context (`docs/autopilot-risk.md` §2).
  */
 
@@ -17206,6 +18868,30 @@ fileprivate struct FfiConverterOptionTypeDeviceBridge: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeActivityCursor: FfiConverterRustBuffer {
+    typealias SwiftType = ActivityCursor?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivityCursor.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivityCursor.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeActivityPush: FfiConverterRustBuffer {
     typealias SwiftType = ActivityPush?
 
@@ -17246,6 +18932,30 @@ fileprivate struct FfiConverterOptionTypeActivityRequest: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeActivityRequest.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeActivitySnippet: FfiConverterRustBuffer {
+    typealias SwiftType = ActivitySnippet?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeActivitySnippet.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeActivitySnippet.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -17326,6 +19036,30 @@ fileprivate struct FfiConverterOptionTypeAskView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAttention: FfiConverterRustBuffer {
+    typealias SwiftType = Attention?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAttention.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAttention.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAutopilotNote: FfiConverterRustBuffer {
     typealias SwiftType = AutopilotNote?
 
@@ -17366,6 +19100,30 @@ fileprivate struct FfiConverterOptionTypeBlobView: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeBlobView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeBlobatar: FfiConverterRustBuffer {
+    typealias SwiftType = Blobatar?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeBlobatar.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeBlobatar.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -18027,6 +19785,31 @@ fileprivate struct FfiConverterSequenceTypeAccountView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeActivityConnection: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityConnection]
+
+    public static func write(_ value: [ActivityConnection], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityConnection.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityConnection] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityConnection]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityConnection.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeActivityEntry: FfiConverterRustBuffer {
     typealias SwiftType = [ActivityEntry]
 
@@ -18044,6 +19827,56 @@ fileprivate struct FfiConverterSequenceTypeActivityEntry: FfiConverterRustBuffer
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeActivityEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeActivityHighlight: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityHighlight]
+
+    public static func write(_ value: [ActivityHighlight], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityHighlight.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityHighlight] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityHighlight]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityHighlight.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeActivityHit: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityHit]
+
+    public static func write(_ value: [ActivityHit], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityHit.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityHit] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityHit]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityHit.read(from: &buf))
         }
         return seq
     }
@@ -18077,6 +19910,31 @@ fileprivate struct FfiConverterSequenceTypeActivityMessage: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeActivityStamp: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityStamp]
+
+    public static func write(_ value: [ActivityStamp], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityStamp.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityStamp] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityStamp]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityStamp.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAddressView: FfiConverterRustBuffer {
     typealias SwiftType = [AddressView]
 
@@ -18094,6 +19952,31 @@ fileprivate struct FfiConverterSequenceTypeAddressView: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAddressView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAttentionReason: FfiConverterRustBuffer {
+    typealias SwiftType = [AttentionReason]
+
+    public static func write(_ value: [AttentionReason], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAttentionReason.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AttentionReason] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AttentionReason]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAttentionReason.read(from: &buf))
         }
         return seq
     }
@@ -19048,6 +20931,56 @@ fileprivate struct FfiConverterSequenceTypeVaultUse: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeActivityDecider: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityDecider]
+
+    public static func write(_ value: [ActivityDecider], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityDecider.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityDecider] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityDecider]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityDecider.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeActivityOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityOutcome]
+
+    public static func write(_ value: [ActivityOutcome], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityOutcome.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityOutcome] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityOutcome]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityOutcome.read(from: &buf))
+        }
+        return seq
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
@@ -19256,7 +21189,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_activity_commit_change() != 48115) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_activity_facets() != 56450) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_activity_push() != 60254) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_activity_stamps() != 13560) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_add_account() != 25987) {
@@ -19451,6 +21390,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_revoke_secrets_everywhere() != 57345) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_search_activity() != 51150) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_server_info() != 48285) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -19470,6 +21412,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_class_lock() != 43604) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_set_connection_blobatar() != 16073) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_connection_icon() != 4706) {
@@ -19494,6 +21439,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_thresholds() != 38198) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_shuffle_connection_blobatar() != 1265) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_sign_out_device() != 32606) {

@@ -112,13 +112,4 @@ extension AppModel {
         }
         return OwnerRefusal(message: nil)
     }
-
-    /// The icon pick stored for a connection: by id, or, for entries logged before ids were recorded (an empty id), by
-    /// the label it had then when exactly one connection carries it.
-    func iconPick(connectionId: String, label: String) -> String? {
-        if let c = connections.first(where: { $0.id == connectionId }) { return c.icon }
-        guard connectionId.isEmpty else { return nil }
-        let named = connections.filter { $0.label == label }
-        return named.count == 1 ? named[0].icon : nil
-    }
 }

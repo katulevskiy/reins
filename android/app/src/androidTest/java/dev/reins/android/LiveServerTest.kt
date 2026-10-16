@@ -31,7 +31,8 @@ class LiveServerTest {
     private val args = InstrumentationRegistry.getArguments()
 
     private object NoGoogle : GoogleTokenProvider {
-        override suspend fun accessToken(): String = throw ForeignException.NeedsUserInteraction()
+        override suspend fun accessToken(account: String, service: String): String =
+            throw ForeignException.NeedsUserInteraction()
     }
 
     private object Quiet : Notifier {
@@ -51,7 +52,15 @@ class LiveServerTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val dir = File(context.cacheDir, "live-${UUID.randomUUID()}").also { it.mkdirs() }
         try {
-            val core = ReinsCore(dir.absolutePath, KeystoreKeyWrapper("reins_live_${UUID.randomUUID()}"), NoGoogle, Quiet)
+            val core = ReinsCore(
+                dir.absolutePath,
+                KeystoreKeyWrapper("reins_live_${UUID.randomUUID()}"),
+                NoGoogle,
+                Quiet,
+                null,
+                BuildConfig.TELEGRAM_API_ID,
+                BuildConfig.TELEGRAM_API_HASH,
+            )
             val session = core.login(server!!, email!!, password!!, null)
             assertEquals(email, session.email)
             core.registerDevice(null)

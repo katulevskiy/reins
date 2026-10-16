@@ -268,6 +268,34 @@ final class GrantsSettingsUITests: XCTestCase {
         }
     }
 
+    /// Claude shows its logo; changing its blobatar's colour and shuffling keep the sheet open and make it show the
+    /// blobatar.
+    func testAConnectionsBlobatarCanBeChangedAndShuffled() {
+        launch()
+        section("connections")
+        scrollTo("connection:c1")
+        tap("connection:c1")
+        scrollTo("connectionIcon", detail: true)
+        tap("connectionIcon")
+        wait("iconSheet")
+        var tries = 0
+        while !(element("shuffleBlobatar").exists && element("shuffleBlobatar").isHittable) && tries < 4 {
+            element("iconSheet").swipeUp()
+            tries += 1
+        }
+        tap("colour:3")
+        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element("colour:3"))
+        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element("icon:blob"))
+        waitForExpectations(timeout: 5)
+        tap("shape:2")
+        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element("shape:2"))
+        waitForExpectations(timeout: 5)
+        tap("shuffleBlobatar")
+        XCTAssertTrue(element("iconSheet").exists, "changing the blobatar keeps the sheet open")
+        expectation(for: NSPredicate(format: "isSelected == false"), evaluatedWith: element("shape:2"))
+        waitForExpectations(timeout: 5)
+    }
+
     func testSigningOutReturnsToSignIn() {
         launch()
         section("settings")

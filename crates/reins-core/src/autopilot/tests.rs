@@ -81,18 +81,18 @@ async fn mount(server: &MockServer, verb: &str, at: &str, status: u16, body: Val
 
 /// Signed in, Gmail connected, the fake model installed (or not) and its runtime given.
 async fn env(with_model: bool) -> Env {
-    env_with(with_model, testing::package()).await
+    env_with(with_model, testing::package(), None).await
 }
 
 /// The same with a fake model that rates risk, whose runtime reads the risk output (benign unless a rule says
 /// otherwise).
 async fn env_risk() -> Env {
-    let env = env_with(true, testing::package_with_risk()).await;
+    let env = env_with(true, testing::package_with_risk(), None).await;
     env.model.set_risk_default(testing::risk(0.9, 0.05, 0.04, 0.01));
     env
 }
 
-async fn env_with(with_model: bool, files: Vec<(String, Vec<u8>)>) -> Env {
+async fn env_with(with_model: bool, files: Vec<(String, Vec<u8>)>, github_base: Option<String>) -> Env {
     let server = MockServer::start().await;
     let gmail = MockServer::start().await;
     mount(&server, "POST", "/identity/accounts/prelogin", 200, json!({"kdf": 0, "kdfIterations": 5000})).await;
@@ -145,6 +145,7 @@ async fn env_with(with_model: bool, files: Vec<(String, Vec<u8>)>) -> Env {
     let known = testing::known_model("fake-laya-1", &files);
     let cfg = CoreConfig {
         gmail_base: gmail.uri(),
+        github_base: github_base.unwrap_or_else(|| crate::connector::github::GITHUB_BASE.to_owned()),
         backoff_base: Duration::from_millis(1),
         models_base: format!("{}/models", server.uri()),
         models: vec![known.clone()],
@@ -1304,7 +1305,7 @@ async fn overnight_holds_everything(env: &Env, why: &[&str]) {
 
 #[tokio::test]
 async fn a_runtime_that_does_not_return_the_risk_output_holds_everything_in_overnight() {
-    let env = env_with(true, testing::package_with_risk()).await;
+    let env = env_with(true, testing::package_with_risk(), None).await;
     overnight_holds_everything(&env, &["the risk could not be read"]).await;
 }
 
@@ -1312,7 +1313,7 @@ async fn a_runtime_that_does_not_return_the_risk_output_holds_everything_in_over
 async fn a_package_without_an_overnight_threshold_holds_everything() {
     let mut cfg: Value = serde_json::from_str(&testing::laya_config_with_risk_json(0.5)).unwrap();
     cfg["risk"]["thresholds"] = json!({});
-    let env = env_with(true, testing::package_with_config(&cfg.to_string())).await;
+    let env = env_with(true, testing::package_with_config(&cfg.to_string()), None).await;
     env.model.set_risk_default(testing::risk(0.97, 0.01, 0.01, 0.01));
     overnight_holds_everything(&env, &["the model has no threshold"]).await;
     // Never a default: the risk shown is the model's, the hold is for want of a threshold.
@@ -1401,7 +1402,7 @@ async fn the_model_reads_the_context_line_only_when_it_rates_risk() {
     assert_eq!((s.risk.clone().unwrap().level, s.risk.unwrap().held), (RiskLevel::Benign, false));
     assert!(env.decided().is_empty());
 
-    let v1 = env_with(true, testing::package()).await;
+    let v1 = env_with(true, testing::package(), None).await;
     v1.relay("r1", OLD, email_to(&["a@x.com", "b@y.com", "c@z.com"], "hi all")).await;
     let seen = v1.model.seen.lock().unwrap().clone();
     assert!(
@@ -1885,6 +1886,132 @@ async fn the_playground_judges_a_typed_situation_without_keeping_it() {
     assert!((s.p_approve - 0.9).abs() < 0.01, "{s:?}");
     assert!(env.core.autopilot_evaluate(None, "  ".to_owned()).await.is_err());
     assert_eq!(env.memory(&env.profile_id().await).len(), 0);
+}
+
+// ---- a Close item holds an Approve ------------------------------------------------------------------------------------
+
+const CLOSER_LOOK: &str = "Always asks: one item needs a closer look";
+const PUSH_DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+/// GitHub is connected, so a push can be parked and answered with a sealed credential.
+async fn env_git(with_risk: bool) -> (Env, MockServer) {
+    let github = MockServer::start().await;
+    mount(&github, "GET", "/user", 200, json!({"login": "me"})).await;
+    let files = if with_risk {
+        testing::package_with_risk()
+    } else {
+        testing::package()
+    };
+    let env = env_with(true, files, Some(github.uri())).await;
+    env.core.add_token_account("github".to_owned(), "ghp_attentionholdtoken".to_owned()).await.unwrap();
+    (env, github)
+}
+
+fn oid(fill: u8) -> String {
+    char::from(fill).to_string().repeat(40)
+}
+
+/// A fast-forward of `feature/glance` (not the default branch) whose one commit touches `path`.
+fn push_call(key: &str, id: &str, path: &str, subject: &str) -> Value {
+    let file = reins_proto::desktop::FileChange::new(
+        path.to_owned(),
+        reins_proto::desktop::FileStatus::Modified,
+        Some(1),
+        Some(0),
+        false,
+    );
+    let summary = reins_proto::desktop::PushSummary {
+        updates: vec![reins_proto::desktop::RefUpdate {
+            name: "refs/heads/feature/glance".to_owned(),
+            change: reins_proto::desktop::RefChange::Update,
+            old: oid(b'a'),
+            new: oid(b'b'),
+            fast_forward: Some(true),
+            commit_count: 1,
+            commits: vec![reins_proto::desktop::CommitInfo {
+                sha: oid(b'c'),
+                subject: subject.to_owned(),
+                author: "Ann <ann@example.com>".to_owned(),
+                date: 1_700_000_000,
+                files_changed: Some(1),
+                files: vec![file.clone()],
+                additions: Some(1),
+                deletions: Some(0),
+            }],
+            files_changed: 1,
+            files: vec![file],
+            additions: Some(1),
+            deletions: Some(0),
+        }],
+        pack_bytes: 128,
+        push_options: vec![],
+        notes: vec![],
+        default_branch: Some("main".to_owned()),
+    };
+    json!({"tool": "connector", "service": "github", "op": "git_push", "args": {
+        "repo": "me/app", "client_key": key, "nonce": format!("nonce-{id}"), "digest": PUSH_DIGEST,
+        "summary": serde_json::to_value(summary).unwrap()
+    }})
+}
+
+/// The model would approve a push it has seen before. A Close commit waits; a Look-only commit is approved;
+/// a deny stays a deny; Bypass still approves the Close one.
+#[tokio::test]
+async fn a_close_commit_the_model_would_approve_waits_and_look_deny_and_bypass_stay() {
+    let (env, _github) = env_git(false).await;
+    let key = desktop_key(&env);
+    env.mode(None, AutopilotMode::Auto).await;
+    env.model.set_default(logits(0.97, 0.01, 0.02));
+    env.model.rule("deny-this-push", logits(0.01, 0.97, 0.02));
+
+    // A new repository waits, however confident the model is. Approving it is what makes the next one known.
+    env.relay("seed", OLD, push_call(&key, "seed", "src/parse.rs", "Fix the parser")).await;
+    let seed = env.suggestion("seed").await;
+    assert_eq!(seed.class_key, "github/write/code", "{seed:?}");
+    assert!(seed.novel && seed.verdict == Verdict::Ask && !seed.reason.contains("closer look"), "{seed:?}");
+    env.unlock(&seed.class_key).await;
+    env.approve("seed").await;
+
+    env.relay("close", OLD, push_call(&key, "close", ".github/workflows/ci.yml", "Adjust CI")).await;
+    let close = env.suggestion("close").await;
+    assert_eq!((close.verdict, close.reason.as_str()), (Verdict::Ask, CLOSER_LOOK), "{close:?}");
+    assert!(close.judged && !close.novel && close.p_approve > 0.9, "the model would approve: {close:?}");
+    assert!(env.waiting().await.contains(&"close".to_owned()));
+    assert!(!env.decided().iter().any(|(id, _, _)| id == "close"));
+
+    env.relay("look", OLD, push_call(&key, "look", "CODEOWNERS", "Add owners")).await;
+    assert_eq!(env.decided().last().unwrap(), &("look".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+
+    env.relay("deny", OLD, push_call(&key, "deny", ".github/workflows/ci.yml", "please deny-this-push")).await;
+    assert_eq!(env.decided().last().unwrap(), &("deny".to_owned(), Verdict::Deny, "autopilot".to_owned()));
+
+    // Bypass approves the Close commit that was waiting, and the next one, without asking.
+    env.core.start_bypass(None, None).await.unwrap();
+    assert!(env.decided().iter().any(|(id, v, by)| id == "close" && *v == Verdict::Approve && by == "bypass"));
+    env.relay("close-2", OLD, push_call(&key, "close-2", ".github/workflows/ci.yml", "Adjust CI again")).await;
+    assert!(env.decided().iter().any(|(id, v, by)| id == "close-2" && *v == Verdict::Approve && by == "bypass"));
+}
+
+/// Overnight's own Approve is held the same way. A Look-only commit is still approved.
+#[tokio::test]
+async fn overnight_asks_when_a_commit_needs_a_closer_look() {
+    let (env, _github) = env_git(true).await;
+    env.model.set_risk_default(testing::risk(0.9, 0.05, 0.04, 0.01));
+    env.model.set_default(logits(0.97, 0.01, 0.02));
+    let key = desktop_key(&env);
+    env.unlock("github/write/code").await;
+    env.relay("seed", OLD, push_call(&key, "seed", "src/parse.rs", "Fix the parser")).await;
+    assert_eq!(env.suggestion("seed").await.verdict, Verdict::Ask, "a new repository waits");
+    env.approve("seed").await;
+    env.mode(None, AutopilotMode::Overnight).await;
+
+    env.relay("close", OLD, push_call(&key, "close", ".github/workflows/ci.yml", "Adjust CI")).await;
+    let close = env.suggestion("close").await;
+    assert_eq!((close.verdict, close.reason.as_str()), (Verdict::Ask, CLOSER_LOOK), "{close:?}");
+    assert!(env.decided().iter().all(|(id, _, _)| id != "close"));
+
+    env.relay("look", OLD, push_call(&key, "look", "CODEOWNERS", "Add owners")).await;
+    assert_eq!(env.decided().last().unwrap(), &("look".to_owned(), Verdict::Approve, "overnight".to_owned()));
 }
 
 // ---- profiles --------------------------------------------------------------------------------------------------------

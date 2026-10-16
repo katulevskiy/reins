@@ -22,6 +22,8 @@ device-flow = []
 
 [dependencies]
 reins-desktop = { path = "../reins-desktop" }
+# The marks on a push's commits and files that deserve a closer look, the same rules the phones show.
+reins-proto = { path = "../reins-proto" }
 # A command's simple commands, read with the guard's own tokenizer, for how a request is worded.
 reins-policy = { path = "../reins-policy" }
 # Host names as their ASCII (punycode) form, so a look-alike name shows as what it is.

@@ -97,7 +97,7 @@ struct ConnectionAutopilotContent: View {
             HStack(spacing: 14) {
                 IconTile(symbol: AutopilotText.symbol(mode), tint: AutopilotStyle.tint(mode), size: 44, filled: true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(AutopilotText.name(mode)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.text)
+                    Text(AutopilotText.name(mode)).font(RFont.sans(17, .semibold)).foregroundStyle(Palette.ink)
                     // Only a bypass or an Overnight counts down; otherwise the line does not change with time.
                     if let until = running, !AutopilotText.isUntilOff(until) {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -170,7 +170,7 @@ struct ConnectionAutopilotContent: View {
     private func modeText(_ line: String, tint: Color?) -> some View {
         Text(line)
             .font(RFont.sans(13))
-            .foregroundStyle(tint ?? Palette.secondary)
+            .foregroundStyle(tint ?? Palette.ink2)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("connectionModeLine")
     }

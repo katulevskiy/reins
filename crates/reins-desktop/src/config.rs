@@ -60,6 +60,36 @@ fn home_from(env: impl Fn(&str) -> Option<PathBuf>, windows: bool) -> Option<Pat
     }
 }
 
+/// The environment that keeps a program (git, `reins`, the daemon) inside a stand-in home such as a test's temporary
+/// one: `HOME` and `USERPROFILE`, the XDG config and state directories under it, git's global config at
+/// `home/.gitconfig` and no system git config. `HOME` alone is not enough: with no `~/.gitconfig`, git's `--global`
+/// follows an inherited `$XDG_CONFIG_HOME` to the user's real `git/config`.
+#[must_use]
+pub fn home_env(home: &Path) -> [(&'static str, std::ffi::OsString); 6] {
+    [
+        ("HOME", home.into()),
+        ("USERPROFILE", home.into()),
+        ("XDG_CONFIG_HOME", home.join(".config").into()),
+        ("XDG_STATE_HOME", home.join(".local").join("state").into()),
+        ("GIT_CONFIG_GLOBAL", home.join(".gitconfig").into()),
+        ("GIT_CONFIG_NOSYSTEM", "1".into()),
+    ]
+}
+
+/// The XDG config directory for `home`: `$XDG_CONFIG_HOME` when `home` is this process's own home, else
+/// `home/.config`, so a stand-in home (`REINS_HOME`, a test's) keeps everything under it.
+#[must_use]
+pub fn config_home(home: &Path) -> PathBuf {
+    config_home_from(home, home_dir().ok().as_deref(), env_dir("XDG_CONFIG_HOME"))
+}
+
+fn config_home_from(home: &Path, own_home: Option<&Path>, xdg: Option<PathBuf>) -> PathBuf {
+    match xdg {
+        Some(dir) if own_home == Some(home) => dir,
+        _ => home.join(".config"),
+    }
+}
+
 impl Paths {
     /// From the environment (see the module docs).
     pub fn from_env() -> Result<Self, ConfigError> {
@@ -663,5 +693,19 @@ mod tests {
         assert_eq!(home_from(vars(&both), true), Some(PathBuf::from("/p")));
         assert_eq!(home_from(vars(&[("HOME", "/h")]), true), Some(PathBuf::from("/h")));
         assert_eq!(home_from(vars(&[("USERPROFILE", "/p")]), false), None);
+    }
+
+    #[test]
+    fn a_stand_in_home_keeps_its_config_under_it() {
+        let me = Some(Path::new("/home/me"));
+        let xdg = Some(PathBuf::from("/xdg"));
+        assert_eq!(config_home_from(Path::new("/home/me"), me, xdg.clone()), Path::new("/xdg"));
+        assert_eq!(config_home_from(Path::new("/home/me"), me, None), Path::new("/home/me/.config"));
+        assert_eq!(config_home_from(Path::new("/tmp/h"), me, xdg), Path::new("/tmp/h/.config"));
+        let env = home_env(Path::new("/tmp/h"));
+        let get = |k: &str| env.iter().find(|(name, _)| *name == k).map(|(_, v)| PathBuf::from(v));
+        assert_eq!(get("XDG_CONFIG_HOME").unwrap(), Path::new("/tmp/h/.config"));
+        assert_eq!(get("GIT_CONFIG_GLOBAL").unwrap(), Path::new("/tmp/h/.gitconfig"));
+        assert_eq!(get("HOME").unwrap(), Path::new("/tmp/h"));
     }
 }

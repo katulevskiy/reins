@@ -28,9 +28,9 @@ enum SettingsText {
 
     static func modeTint(_ mode: AutopilotMode) -> Color {
         switch mode {
-        case .manual: Palette.search
-        case .auto: Palette.accent
-        case .overnight: Palette.overnight
+        case .manual: Palette.kindRead
+        case .auto: Palette.violet
+        case .overnight: Palette.violet
         case .bypass: Palette.danger
         case .lockdown: Palette.warning
         }
@@ -187,11 +187,11 @@ enum SettingsText {
         Date(timeIntervalSince1970: TimeInterval(epochSeconds)).formatted(.dateTime.month(.abbreviated).day())
     }
 
-    /// The name of an icon choice: Auto (from the name), Blobatar, or the provider's.
+    /// The name of an icon choice: Auto, Blobatar, the platform's ("macOS") or the provider's.
     static func iconName(_ pick: String?) -> String {
         guard let pick else { return "Auto" }
         if pick == Providers.blob { return "Blobatar" }
-        return Providers.byKey(pick)?.name ?? "Auto"
+        return Platforms.byKey(pick)?.name ?? Providers.byKey(pick)?.name ?? "Auto"
     }
 
     /// "1.4": the version of this app, for the footer.

@@ -36,6 +36,9 @@ const ALERT_TITLE: &str = "Reins";
 const ALERT_BODY: &str = "Something is waiting for you";
 const ALERT_SOUND: &str = "reins_request.caf";
 const THREAD_ID: &str = "requests";
+/// What a viewer's alert for a synced change says until the notification extension decrypts the change.
+const SYNC_ALERT_BODY: &str = "Reins updated";
+const SYNC_THREAD_ID: &str = "sync";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Environment {
@@ -155,17 +158,39 @@ pub struct Notification {
 /// The payload the iOS notification service extension relies on: a fixed, content-free alert for requests, pairings
 /// and files, and a silent background push for `replaced`. `t` and `id` are the FCM data fields, unchanged.
 pub fn notification(push: &PushMessage) -> Notification {
+    let silent = || {
+        let mut payload = json!(push);
+        payload["aps"] = json!({"content-available": 1});
+        Notification {
+            push_type: "background",
+            priority: 5,
+            payload,
+        }
+    };
     let category = match push.t {
         PushKind::Req => "request",
         PushKind::Pair => "pairing",
         PushKind::Blob => "blob",
         PushKind::Join => "join",
-        PushKind::Replaced => {
+        PushKind::Handover => "handover",
+        PushKind::Replaced => return silent(),
+        PushKind::Sync => {
+            if push.sync_head().is_none_or(|(_, alert)| !alert) {
+                return silent();
+            }
+            // An op that asked to notify (a mode change, Bypass, a new connection): the extension decrypts it and
+            // replaces the fixed text ("Bypass on · ends 14:32"), else "Reins updated" stays.
             let mut payload = json!(push);
-            payload["aps"] = json!({"content-available": 1});
+            payload["aps"] = json!({
+                "alert": {"title": ALERT_TITLE, "body": SYNC_ALERT_BODY},
+                "mutable-content": 1,
+                "category": "sync",
+                "thread-id": SYNC_THREAD_ID,
+                "interruption-level": "active"
+            });
             return Notification {
-                push_type: "background",
-                priority: 5,
+                push_type: "alert",
+                priority: 10,
                 payload,
             };
         }
@@ -482,6 +507,20 @@ mod tests {
         let n = notification(&push(PushKind::Replaced, ""));
         assert_eq!((n.push_type, n.priority), ("background", 5));
         assert_eq!(n.payload, json!({"aps": {"content-available": 1}, "t": "replaced", "id": ""}));
+    }
+
+    #[test]
+    fn sync_pushes_are_silent_unless_an_op_asked_to_alert() {
+        let n = notification(&PushMessage::sync(7, false));
+        assert_eq!((n.push_type, n.priority), ("background", 5));
+        assert_eq!(n.payload, json!({"aps": {"content-available": 1}, "t": "sync", "id": "7"}));
+        let n = notification(&PushMessage::sync(8, true));
+        assert_eq!((n.push_type, n.priority), ("alert", 10));
+        assert_eq!(n.payload["aps"]["mutable-content"], 1);
+        assert_eq!(n.payload["aps"]["alert"]["body"], "Reins updated");
+        assert_eq!((n.payload["t"].as_str(), n.payload["id"].as_str()), (Some("sync"), Some("8:alert")));
+        let n = notification(&push(PushKind::Handover, "h-1"));
+        assert_eq!((n.push_type, n.payload["aps"]["category"].as_str()), ("alert", Some("handover")));
     }
 
     #[test]

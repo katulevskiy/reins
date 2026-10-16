@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -44,6 +45,7 @@ import dev.reins.android.design.SvgAssets
 import dev.reins.android.design.askString
 import dev.reins.android.design.serviceName
 import dev.reins.android.design.serviceTint
+import dev.reins.android.ui.activity.askTitle
 import dev.reins.core.RequestLabel
 
 // What a request is, drawn the same in every Activity row, waiting card, entry and notification (ASK-TEXT.md): the
@@ -250,9 +252,12 @@ fun AskSentenceText(
     detailsMaxLines: Int = Int.MAX_VALUE,
     tag: String? = null,
     detailsTag: String? = null,
+    /** Words searched (lower case): where the sentence matches them is set apart in [highlight]. */
+    terms: List<String> = emptyList(),
+    highlight: SpanStyle? = null,
 ) {
     Column(modifier) {
-        val text = remember(sentence.text, sentence.target) { askString(sentence.text, sentence.target) }
+        val text = remember(sentence.text, sentence.target, terms, highlight) { askTitle(sentence.text, sentence.target, terms, highlight) }
         BasicText(
             text,
             if (tag != null) Modifier.testTag(tag) else Modifier,

@@ -906,25 +906,112 @@ impl Engine {
     pub async fn connections(&self) -> Result<Vec<ConnectionView>, CoreError> {
         let session = self.session()?;
         let list = api_call!(&session, |api| api.connections()).map_err(ApiFailure::into_core)?;
+        let blobatars = self.blobatars_for(&list.connections);
         Ok(list
             .connections
             .into_iter()
-            .map(|c| ConnectionView {
-                icon: self.store.connection_icon(&c.id.0).ok().flatten(),
-                key_fingerprint: self
+            .map(|c| {
+                let key_fingerprint = self
                     .store
                     .desktop_key(&c.id.0)
                     .ok()
                     .flatten()
                     .as_deref()
-                    .and_then(reins_proto::desktop::key_fingerprint),
-                id: c.id.0,
-                label: crate::text::truncate_chars(&crate::text::one_line(&c.label), 64),
-                client_host: crate::text::one_line(&c.client_host),
-                created_at: c.created_at,
-                last_used_at: c.last_used_at,
+                    .and_then(reins_proto::desktop::key_fingerprint);
+                let computer = key_fingerprint.is_some();
+                let platform = computer.then(|| crate::avatar::platform(&c.client_name, &c.label)).flatten();
+                let label = crate::avatar::shown_label(&c.label);
+                ConnectionView {
+                    icon: self.store.connection_icon(&c.id.0).ok().flatten(),
+                    key_fingerprint,
+                    auto_icon: crate::avatar::auto_icon(&label, computer, platform),
+                    platform: platform.map(|p| p.key().to_owned()),
+                    blobatar: blobatars.get(&c.id.0).cloned(),
+                    id: c.id.0,
+                    label,
+                    client_host: crate::text::one_line(&c.client_host),
+                    created_at: c.created_at,
+                    last_used_at: c.last_used_at,
+                }
             })
             .collect())
+    }
+
+    /// Every listed connection's blobatar: the one kept, else a new one standing apart from the others' (kept now, so
+    /// that it stays and every phone of the account draws it). The kept ones of connections no longer listed go.
+    fn blobatars_for(
+        &self,
+        connections: &[reins_proto::device::ConnectionInfo],
+    ) -> std::collections::HashMap<String, crate::avatar::Blobatar> {
+        let raw = self.store.connection_blobatars().unwrap_or_default();
+        let kept: std::collections::HashMap<String, crate::avatar::Blobatar> =
+            raw.iter().filter_map(|(id, v)| Some((id.clone(), crate::avatar::Blobatar::decode(v)?))).collect();
+        let mut oldest_first: Vec<&reins_proto::device::ConnectionInfo> = connections.iter().collect();
+        oldest_first.sort_by(|a, b| (a.created_at, &a.id.0).cmp(&(b.created_at, &b.id.0)));
+        let ids: Vec<String> = oldest_first.iter().map(|c| c.id.0.clone()).collect();
+        let mut out = std::collections::HashMap::new();
+        for (id, blobatar, new) in crate::avatar::assign(&ids, &kept) {
+            // One a newer version kept (that this one cannot read) is left as it is.
+            if new
+                && !raw.contains_key(&id)
+                && let Err(e) = self.store.set_connection_blobatar(&id, Some(&blobatar.encode()))
+            {
+                log::warn!("could not keep a connection's blobatar: {e}");
+            }
+            out.insert(id, blobatar);
+        }
+        for gone in raw.keys().filter(|id| !out.contains_key(*id)) {
+            if let Err(e) = self.store.set_connection_blobatar(gone, None) {
+                log::warn!("could not forget a removed connection's blobatar: {e}");
+            }
+        }
+        out
+    }
+
+    /// Changes a connection's blobatar to `shape` and `colour` (its figure stays).
+    pub fn set_connection_blobatar(
+        &self,
+        connection_id: &str,
+        shape: u8,
+        colour: u8,
+    ) -> Result<crate::avatar::Blobatar, CoreError> {
+        check_id(connection_id)?;
+        let (current, _) = self.blobatar_and_others(connection_id)?;
+        let blobatar = crate::avatar::Blobatar::new(&current.seed, shape, colour)
+            .ok_or_else(|| CoreError::invalid("no such shape or colour"))?;
+        self.store.set_connection_blobatar(connection_id, Some(&blobatar.encode()))?;
+        Ok(blobatar)
+    }
+
+    /// Gives a connection a new random blobatar: another figure, shape and colour (one no other connection has, while
+    /// there is one).
+    pub fn shuffle_connection_blobatar(&self, connection_id: &str) -> Result<crate::avatar::Blobatar, CoreError> {
+        check_id(connection_id)?;
+        let (current, others) = self.blobatar_and_others(connection_id)?;
+        let blobatar = crate::avatar::shuffled(&current, &others, uuid::Uuid::new_v4().as_u128());
+        self.store.set_connection_blobatar(connection_id, Some(&blobatar.encode()))?;
+        Ok(blobatar)
+    }
+
+    /// A connection's kept blobatar (a new one when it has none yet) and the other connections'.
+    fn blobatar_and_others(
+        &self,
+        connection_id: &str,
+    ) -> Result<(crate::avatar::Blobatar, Vec<crate::avatar::Blobatar>), CoreError> {
+        let mut current = None;
+        let mut others = Vec::new();
+        for (id, value) in self.store.connection_blobatars()? {
+            let Some(b) = crate::avatar::Blobatar::decode(&value) else {
+                continue;
+            };
+            if id == connection_id {
+                current = Some(b);
+            } else {
+                others.push(b);
+            }
+        }
+        let current = current.unwrap_or_else(|| crate::avatar::first_blobatar(connection_id, &others));
+        Ok((current, others))
     }
 
     /// The devices signed in to the account: this phone first, then the approval device, then by last use.
@@ -1004,6 +1091,7 @@ impl Engine {
         self.store.remove_connection_grants(&connection)?;
         self.store.remove_desktop_key(connection_id)?;
         self.store.set_connection_icon(connection_id, None)?;
+        self.store.set_connection_blobatar(connection_id, None)?;
         for row in self.store.pending_rows(unix_now())? {
             if row.kind != PendingKind::Request {
                 continue;
@@ -1019,6 +1107,42 @@ impl Engine {
 
     pub fn activity(&self, limit: u32) -> Result<Vec<ActivityEntry>, CoreError> {
         Ok(self.store.activity(limit.clamp(1, 500))?.iter().map(views::activity_entry).collect())
+    }
+
+    /// One page of the entries matching `query`, newest first, after `after` (see `store::audit_search`).
+    pub fn search_activity(
+        &self,
+        query: &crate::types::ActivityQuery,
+        after: Option<crate::types::ActivityCursor>,
+        limit: u32,
+    ) -> Result<crate::types::ActivityPage, CoreError> {
+        let page = self.store.search_activity(query, after, limit)?;
+        Ok(crate::types::ActivityPage {
+            hits: page
+                .found
+                .into_iter()
+                .map(|f| crate::types::ActivityHit {
+                    entry: views::activity_entry(&f.record),
+                    snippet: f.snippet,
+                })
+                .collect(),
+            next: page.next,
+            total: page.total,
+            terms: page.terms,
+        })
+    }
+
+    /// When each entry matching `query` was logged and how it ended, newest first.
+    pub fn activity_stamps(
+        &self,
+        query: &crate::types::ActivityQuery,
+    ) -> Result<Vec<crate::types::ActivityStamp>, CoreError> {
+        self.store.activity_stamps(query)
+    }
+
+    /// The integrations, kinds and connections the Activity holds, for the filters.
+    pub fn activity_facets(&self) -> Result<crate::types::ActivityFacets, CoreError> {
+        self.store.activity_facets()
     }
 
     /// The request of an Activity entry as its approval showed it, to be shown again read-only. A device without that

@@ -3,10 +3,7 @@ import UIKit
 
 /// Reins Signal (design/signal/tokens/signal.tokens.json): paper, ink and hairlines for everything you read, and seven
 /// fields of colour for the moment something needs a decision. Fields are the same in light and dark; only paper and
-/// ink flip. Colour only; nothing here affects layout.
-///
-/// The names from before Signal (`background`, `text`, `accent`, `search`…) are kept as aliases of the new tokens so
-/// every screen recolours as it is; screens move to the new names one by one and the aliases go last.
+/// ink flip. Colour only; nothing here affects layout. The names from before Signal are gone: use these.
 enum Palette {
     static func dynamic(_ light: UInt32, _ dark: UInt32, alpha: CGFloat = 1) -> Color {
         Color(uiColor: UIColor { traits in
@@ -97,35 +94,10 @@ enum Palette {
     static let kindAccounts = dynamic(0xBE185D, 0xF472B6)
     static let kindWarn = dynamic(0xA16207, 0xFACC15)
 
-    // MARK: Aliases from before Signal (phase 2 renames their callers, then they go)
+    // MARK: Washes
 
-    static let background = paper
-    static let elevated = paperRaised
-    static let text = ink
-    static let secondary = ink2
-    static let tertiary = inkMeta
-    static let hairline = rule
-    static let accent = violet
-    static let accentSoft = dual(UIColor(hex: 0x5B43E8, alpha: 0.13), UIColor(hex: 0xA196FF, alpha: 0.13))
-    /// Was a translucent fill for glass; Signal's wells and soft buttons are `paperSunken`.
-    static let controlFill = paperSunken
-    static let chip = paperSunken
-    /// Overnight runs as a grant: violet ink on paper (`fieldGrant` as a field, `violetFill` as a chip).
-    static let overnight = violet
-    /// The selected row in the iPad sidebar.
-    static let rowActive = dual(UIColor(white: 1, alpha: 0.9), UIColor(white: 1, alpha: 0.06))
-
-    // What an operation is, by its kind's ink. Reads and searches are both `read` (blue).
-    static let search = kindRead
-    static let read = kindRead
-    static let send = kindPush
-    static let grant = kindGrant
-    static let pair = kindPair
-    static let accounts = kindAccounts
-
-    /// Floating chrome where glass is not used (toasts over content): a raised plate with a hairline edge.
-    static let plate = paperRaised
-    static let plateEdge = rule
+    /// Violet at 13 %: a chosen chip's or a soft violet button's fill on paper.
+    static let violetWash = dual(UIColor(hex: 0x5B43E8, alpha: 0.13), UIColor(hex: 0xA196FF, alpha: 0.13))
 }
 
 extension UIColor {

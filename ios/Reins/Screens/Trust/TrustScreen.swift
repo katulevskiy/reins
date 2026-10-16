@@ -222,9 +222,9 @@ struct TrustScreen: View {
         AutopilotGroup(header: nil) {
             ModelRow(ap: ap, onUpdate: download) { modelOpen = true }
             RowDivider(inset: 60)
-            AutopilotLinkRow(title: "Try it", symbol: "flask.fill", tint: Palette.send, identifier: "openTryIt") {
+            AutopilotLinkRow(title: "Try it", symbol: "flask.fill", tint: Palette.kindPush, identifier: "openTryIt") {
                 if !ap.modelReady {
-                    Text("after download").font(RFont.sans(15)).foregroundStyle(Palette.tertiary).lineLimit(1)
+                    Text("after download").font(RFont.sans(15)).foregroundStyle(Palette.inkMeta).lineLimit(1)
                 }
             } action: {
                 model.openFromAutopilot(.tryIt(nil))
@@ -242,7 +242,7 @@ struct TrustScreen: View {
                     Label("New", systemImage: "plus")
                         .labelStyle(.titleAndIcon)
                         .font(RFont.sans(14.5, .medium))
-                        .foregroundStyle(Palette.accent)
+                        .foregroundStyle(Palette.violet)
                         .frame(minHeight: 30)
                         .contentShape(Rectangle())
                 }

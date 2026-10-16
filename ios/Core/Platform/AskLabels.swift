@@ -89,7 +89,8 @@ enum AskLabels {
     /// A request from the core's label. `cwd`: where a command ran, as the core kept it; `matched`: the guard's own
     /// match; `who`: the asker, to start a past sentence where it is not shown beside it.
     static func line(
-        _ label: RequestLabel, field: FieldKind?, tense: AskTense = .waiting, who: String? = nil, cwd: String? = nil, matched: String? = nil
+        _ label: RequestLabel, field: FieldKind?, tense: AskTense = .waiting, who: String? = nil, cwd: String? = nil, matched: String? = nil,
+        git: GitPushView? = nil
     ) -> AskLine {
         let provider = label.provider
         let action = label.action
@@ -123,6 +124,12 @@ enum AskLabels {
         }
         if action == "push" || (action == "delete" && lead.hasPrefix("Delete ") && lead.hasSuffix(" from")) {
             let (head, names) = gitLead(lead)
+            // The push as kept with the entry: its count and its branches from the refs, never from words.
+            if let git, names == nil, action == "push" {
+                let commits = git.refs.reduce(0) { $0 + Int($1.commitCount) }
+                let pushHead = commits > 0 ? "Push \(commits) \(commits == 1 ? "commit" : "commits") to" : head
+                return make(pushHead + " ", subject, mono: refsLine(git), stand: "a repository")
+            }
             return make(head + " ", subject, mono: names, stand: "a repository")
         }
         if provider == "gmail" && action == "send" {
@@ -179,7 +186,7 @@ enum AskLabels {
         let tense = AskTense.of(outcome: e.outcome)
         if let label = e.label {
             let request = e.request
-            return line(label, field: field, tense: tense, who: who, cwd: request.flatMap { $0.cwd.isEmpty ? nil : $0.cwd })
+            return line(label, field: field, tense: tense, who: who, cwd: request.flatMap { $0.cwd.isEmpty ? nil : $0.cwd }, git: request?.git)
         }
         return legacy(service: e.service, action: e.action, count: Int(e.count), op: e.op, opTitle: e.opTitle, field: field, tense: tense, who: who)
     }
@@ -206,6 +213,7 @@ enum AskLabels {
     /// …" otherwise.
     static func told(_ line: AskLine, _ tense: AskTense, _ who: String?) -> AskLine {
         var line = line
+        line.lead = oneVerb(line.lead)
         let name = who.map { untrustedName($0) }.flatMap { $0.isEmpty || mixedScriptRaw($0) != nil ? nil : $0 }
         switch tense {
         case .waiting:
@@ -230,12 +238,26 @@ enum AskLabels {
         "answer": "Answered", "commit": "Committed", "ask": "Asked", "start": "Started", "end": "Ended", "clone": "Cloned", "pay": "Paid", "print": "Printed",
     ]
 
-    /// `lead` in the past: its first word, if it is a verb this knows.
+    /// One verb where the core's title has two for one act: a clone is a first fetch, so "Clone and fetch octo/app"
+    /// is "Fetch octo/app" (and "Fetched", "Asked to fetch").
+    static func oneVerb(_ lead: String) -> String {
+        let prefix = "clone and fetch"
+        guard lead.lowercased().hasPrefix(prefix) else { return lead }
+        let rest = lead.dropFirst(prefix.count)
+        return (lead.first?.isUppercase == true ? "Fetch" : "fetch") + rest
+    }
+
+    /// `lead` in the past: its first word, if it is a verb this knows, and a second verb joined to it by "and" too
+    /// ("Create and push" is "Created and pushed", never "Created and push").
     static func past(_ lead: String) -> String {
-        let space = lead.firstIndex(of: " ") ?? lead.endIndex
-        let first = String(lead[..<space])
-        guard let done = pastTense[first.lowercased()] else { return lead }
-        return done + lead[space...]
+        let words = lead.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+        guard let first = words.first, let done = pastTense[first.lowercased()] else { return lead }
+        var out = words
+        out[0] = done
+        if out.count > 2, out[1] == "and", let second = pastTense[out[2].lowercased()] {
+            out[2] = second.lowercased()
+        }
+        return out.joined(separator: " ")
     }
 
     /// The label line from the core's provider and action: "GitHub · Push", "Computer · Run".
@@ -308,6 +330,19 @@ enum AskLabels {
             return ("Push a tag to", String(lead.dropFirst("Push tag ".count).dropLast(" to".count)))
         }
         return (lead, nil)
+    }
+
+    /// A push's branches in one mono line: "feature/laya · new branch", "main · force push", "v1.0 · new tag".
+    static func refsLine(_ git: GitPushView) -> String? {
+        let parts = git.refs.map { ref -> String in
+            let name = oneLine(ref.shortName)
+            switch ref.change {
+            case "create": return "\(name) · new \(ref.kind == "tag" ? "tag" : "branch")"
+            case "delete": return "\(name) · delete"
+            default: return ref.force || ref.forceUnknown ? "\(name) · force push" : name
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     /// "Search Gmail for" → "Search Gmail": the word that led to a target that went below.

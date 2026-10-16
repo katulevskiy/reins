@@ -147,6 +147,9 @@ data-encoding = "2.11.1"
 # JWT library
 jsonwebtoken = { version = "11.0.0", default-features = false, features = ["rust_crypto", "use_pem"] }
 
+# Public Suffix List (compiled in): groups OAuth client-document fetches by registrable domain
+psl = "2.1.241"
+
 # TOTP library
 totp-lite = "2.0.1"
 

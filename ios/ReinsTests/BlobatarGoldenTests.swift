@@ -16,7 +16,7 @@ final class BlobatarGoldenTests: XCTestCase {
             .map { $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) }
     }
 
-    private func backdrop(_ label: String) -> Blobatar.Backdrop {
+    private func backdrop(_ label: String) -> BlobatarArt.Backdrop {
         switch label {
         case "", "bg:none": .none
         case "bg:square", "square": .square
@@ -33,28 +33,28 @@ final class BlobatarGoldenTests: XCTestCase {
     func testThePortRendersTheLibraryMarkupForItsWholeGoldenCorpus() throws {
         let rows = try lines("blobatar-gen2-hashes")
         XCTAssertGreaterThanOrEqual(rows.count, 1000, "fixture looks truncated")
-        let wrong = rows.filter { $0.count >= 3 && sha16(Blobatar.svg($0[0], backdrop: backdrop($0[1]))) != $0[2] }
+        let wrong = rows.filter { $0.count >= 3 && sha16(BlobatarArt.svg($0[0], backdrop: backdrop($0[1]))) != $0[2] }
         XCTAssertEqual(wrong.prefix(10).map { "\($0[0])|\($0[1])" }, [], "names whose blobatar differs from the library's (\(wrong.count))")
     }
 
     func testCompleteMarkupsMatchByteForByte() throws {
         for row in try lines("blobatar-gen2-markup") where row.count >= 3 {
-            XCTAssertEqual(Blobatar.svg(row[0], backdrop: backdrop(row[1])), row[2], "\(row[0])/\(row[1])")
+            XCTAssertEqual(BlobatarArt.svg(row[0], backdrop: backdrop(row[1])), row[2], "\(row[0])/\(row[1])")
         }
     }
 
     func testNamesAreNormalisedLikeTheLibraryDoes() {
-        XCTAssertEqual(Blobatar.svg("alain@x.com"), Blobatar.svg("  Alain@X.com "))
-        XCTAssertEqual(Blobatar.svg("caf\u{E9}"), Blobatar.svg("cafe\u{301}"))
+        XCTAssertEqual(BlobatarArt.svg("alain@x.com"), BlobatarArt.svg("  Alain@X.com "))
+        XCTAssertEqual(BlobatarArt.svg("caf\u{E9}"), BlobatarArt.svg("cafe\u{301}"))
     }
 
     func testJavaScriptRounding() {
-        XCTAssertEqual(Blobatar.jsRound(2.5), 3)
-        XCTAssertEqual(Blobatar.jsRound(-2.5), -2)
-        XCTAssertEqual(Blobatar.jsRound(0.49999999999999994), 0)
-        XCTAssertEqual(Blobatar.num(-0.004), "0")
-        XCTAssertEqual(Blobatar.num(12.5), "12.5")
-        XCTAssertEqual(Blobatar.num(-3.07), "-3.07")
-        XCTAssertEqual(Blobatar.num(40), "40")
+        XCTAssertEqual(BlobatarArt.jsRound(2.5), 3)
+        XCTAssertEqual(BlobatarArt.jsRound(-2.5), -2)
+        XCTAssertEqual(BlobatarArt.jsRound(0.49999999999999994), 0)
+        XCTAssertEqual(BlobatarArt.num(-0.004), "0")
+        XCTAssertEqual(BlobatarArt.num(12.5), "12.5")
+        XCTAssertEqual(BlobatarArt.num(-3.07), "-3.07")
+        XCTAssertEqual(BlobatarArt.num(40), "40")
     }
 }

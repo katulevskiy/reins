@@ -1,8 +1,8 @@
 import SwiftUI
 
-// Activity's header menus (iOS-Activity.png, 03 and 04), both Signal menus growing from their trigger: the mode chip's
-// (Manual and Auto switch at once; Overnight, Lockdown and Bypass… as on Trust; Autopilot settings opens Trust) and the
-// filter button's. They replace the quick menu the mode pill used to drop; its rows keep their identifiers.
+// Activity's header menu (iOS-Activity.png, 03), a Signal menu growing from the mode chip: Manual and Auto switch at
+// once; Overnight, Lockdown and Bypass… as on Trust; Autopilot settings opens Trust. It replaces the quick menu the mode
+// pill used to drop; its rows keep their identifiers. The filter button and its chips are in ActivityFilterBar.swift.
 
 /// The global mode as the header's chip shows it: a bypass or an Overnight running, else the mode.
 extension ModeChip.Mode {
@@ -132,85 +132,3 @@ struct ActivityModeMenu: View {
     }
 }
 
-/// The round filter button and its menu: everything, what Autopilot decided, the denials, what a grant covered.
-struct ActivityFilterMenu: View {
-    @Binding var filter: ActivityFilter
-    /// One AI's entries only ("" for any), and the AIs to choose from.
-    @Binding var ai: String
-    var ais: [(id: String, name: String)]
-
-    var body: some View {
-        GlyphIcon(.filter, size: 20)
-            .foregroundStyle(Palette.ink)
-            .frame(width: 40, height: 40)
-            .background(Palette.paperRaised, in: Circle())
-            .overlay(Circle().strokeBorder(Palette.rule, lineWidth: 1))
-            .overlay(alignment: .topTrailing) {
-                if filter != .all || !ai.isEmpty {
-                    Circle().fill(Palette.violetFill).frame(width: 9, height: 9).offset(x: -2, y: 2)
-                }
-            }
-            .signalMenu(
-                id: "filterMenu",
-                items: ActivityFilter.allCases.map { f in
-                    SignalMenuItem(id: "filter:\(f.rawValue)", title: f.title, glyph: Self.glyph(f))
-                } + AnyAIChip.items(ais, separated: true),
-                selected: ai.isEmpty ? "filter:\(filter.rawValue)" : "ai:\(ai)",
-                identifier: "filterMenu"
-            ) { id in
-                if id.hasPrefix("ai:") {
-                    ai = AnyAIChip.connection(id)
-                } else if let f = ActivityFilter(rawValue: String(id.dropFirst("filter:".count))) {
-                    filter = f
-                }
-            }
-            .accessibilityLabel(filter == .all && ai.isEmpty ? "Filter" : "Filter: \(filter.title)")
-            .accessibilityIdentifier("filterToggle")
-    }
-
-    static func glyph(_ f: ActivityFilter) -> Glyph {
-        switch f {
-        case .all: .activity
-        case .autopilot: .autopilot
-        case .denied: .block
-        case .grants: .key
-        }
-    }
-}
-
-/// "Any AI ⌄": a chip whose menu narrows the river to one AI's entries, or back to any.
-struct AnyAIChip: View {
-    @Binding var ai: String
-    var ais: [(id: String, name: String)]
-
-    var body: some View {
-        let name = ais.first { $0.id == ai }?.name
-        HStack(spacing: 4) {
-            Text(name ?? "Any AI").lineLimit(1)
-            GlyphIcon(.chevronDown, size: 14)
-        }
-        .font(RFont.sans(14, .medium))
-        .foregroundStyle(ai.isEmpty ? Palette.ink : Palette.onInverse)
-        .padding(.horizontal, 13)
-        .frame(height: 34)
-        .background(ai.isEmpty ? Palette.paperRaised : Palette.inverse, in: Capsule())
-        .overlay {
-            if ai.isEmpty { Capsule().strokeBorder(Palette.rule, lineWidth: 1) }
-        }
-        .signalMenu(
-            id: "aiMenu", items: [SignalMenuItem(id: "ai:", title: "Any AI", glyph: .activity)] + Self.items(ais, separated: true),
-            selected: "ai:\(ai)", identifier: "aiMenu"
-        ) { id in ai = Self.connection(id) }
-        .accessibilityLabel(name.map { "AI: \($0)" } ?? "Any AI")
-        .accessibilityIdentifier("filter:ai")
-    }
-
-    /// One row per AI, its name from the history (untrusted, one line).
-    static func items(_ ais: [(id: String, name: String)], separated: Bool) -> [SignalMenuItem] {
-        ais.enumerated().map { i, ai in
-            SignalMenuItem(id: "ai:\(ai.id)", title: ai.name.isEmpty ? "Unnamed AI" : ai.name, glyph: .person, separated: separated && i == 0)
-        }
-    }
-
-    static func connection(_ menuId: String) -> String { String(menuId.dropFirst("ai:".count)) }
-}

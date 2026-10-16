@@ -4,7 +4,7 @@
 //! address, so a changed port does not leave old rules behind) and nothing else.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::{Config, GitHost, HostEntry, Mode, Paths};
@@ -16,7 +16,8 @@ pub enum Scope {
     Repo(PathBuf),
 }
 
-/// How git is run: extra environment for tests (a temporary `HOME`).
+/// How git is run: extra environment for a stand-in home (`REINS_HOME`, a test's temporary `HOME`). Whenever it sets
+/// `HOME`, git's global config stays under that home too.
 #[derive(Clone, Debug, Default)]
 pub struct Git {
     envs: Vec<(OsString, OsString)>,
@@ -35,9 +36,33 @@ impl Git {
         self
     }
 
+    /// Git confined to the stand-in home `home` ([`crate::config::home_env`]).
+    #[must_use]
+    pub fn under(home: &Path) -> Self {
+        crate::config::home_env(home).into_iter().fold(Self::default(), |git, (k, v)| git.env(k, v))
+    }
+
+    /// The environment git runs with. When `HOME` is set, `XDG_CONFIG_HOME` and `GIT_CONFIG_GLOBAL` default to that
+    /// home's (`.config`, `.gitconfig`): otherwise, with no `.gitconfig` there, `git config --global` would follow an
+    /// inherited `$XDG_CONFIG_HOME` to the user's real `git/config`.
+    fn envs(&self) -> Vec<(OsString, OsString)> {
+        let mut envs = self.envs.clone();
+        let given = |name: &str| self.envs.iter().any(|(k, _)| k == name);
+        if let Some((_, home)) = self.envs.iter().rev().find(|(k, _)| k == "HOME") {
+            let home = Path::new(home);
+            if !given("XDG_CONFIG_HOME") {
+                envs.push(("XDG_CONFIG_HOME".into(), home.join(".config").into()));
+            }
+            if !given("GIT_CONFIG_GLOBAL") {
+                envs.push(("GIT_CONFIG_GLOBAL".into(), home.join(".gitconfig").into()));
+            }
+        }
+        envs
+    }
+
     fn run(&self, scope: &Scope, args: &[&str]) -> Result<(bool, String), String> {
         let mut cmd = Command::new("git");
-        cmd.envs(self.envs.iter().map(|(k, v)| (k, v)));
+        cmd.envs(self.envs());
         match scope {
             Scope::Global => cmd.args(["config", "--global"]),
             Scope::Repo(dir) => cmd.arg("-C").arg(dir).args(["config", "--local"]),
@@ -226,18 +251,25 @@ mod tests {
         assert!(unserved_hosts(&c, both.as_deref()).is_empty());
     }
 
-    fn git(home: &std::path::Path) -> Git {
-        Git::default()
-            .env("HOME", home)
-            .env("XDG_CONFIG_HOME", home.join(".config"))
-            .env("GIT_CONFIG_GLOBAL", home.join(".gitconfig"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
+    #[test]
+    fn a_home_keeps_the_global_config_under_it_unless_told_otherwise() {
+        let get = |git: &Git, name: &str| {
+            git.envs().into_iter().rev().find(|(k, _)| k == name).map(|(_, v)| PathBuf::from(v))
+        };
+        let home = Path::new("/tmp/h");
+        let only_home = Git::default().env("HOME", home);
+        assert_eq!(get(&only_home, "XDG_CONFIG_HOME").unwrap(), home.join(".config"));
+        assert_eq!(get(&only_home, "GIT_CONFIG_GLOBAL").unwrap(), home.join(".gitconfig"));
+        let given = Git::default().env("HOME", home).env("XDG_CONFIG_HOME", "/x").env("GIT_CONFIG_GLOBAL", "/g");
+        assert_eq!(get(&given, "XDG_CONFIG_HOME").unwrap(), Path::new("/x"));
+        assert_eq!(get(&given, "GIT_CONFIG_GLOBAL").unwrap(), Path::new("/g"));
+        assert!(Git::default().envs().is_empty(), "the real git: the user's own environment");
     }
 
     #[test]
     fn setup_is_idempotent_and_unsetup_removes_exactly_its_rules() {
         let home = tempfile::tempdir().unwrap();
-        let g = git(home.path());
+        let g = Git::under(home.path());
         let user = "[user]\n\tname = Me\n[url \"https://example.com/\"]\n\tinsteadOf = ex:\n";
         std::fs::write(home.path().join(".gitconfig"), user).unwrap();
         let base = "http://127.0.0.1:7457/github.com/";
@@ -262,9 +294,14 @@ mod tests {
     #[test]
     fn a_repository_scope_touches_only_that_repository() {
         let home = tempfile::tempdir().unwrap();
-        let g = git(home.path());
+        let g = Git::under(home.path());
         let repo = home.path().join("r");
-        let ok = Command::new("git").args(["init", "-q"]).arg(&repo).env("HOME", home.path()).status().unwrap();
+        let ok = Command::new("git")
+            .args(["init", "-q"])
+            .arg(&repo)
+            .envs(crate::config::home_env(home.path()))
+            .status()
+            .unwrap();
         assert!(ok.success());
         let scope = Scope::Repo(repo.clone());
         assert_eq!(g.setup(&scope, "http://[::1]:7457/github.com/", "github.com").unwrap().len(), 3);

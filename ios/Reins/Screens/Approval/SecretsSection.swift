@@ -19,14 +19,14 @@ struct EnvReleaseFacts: View {
                     ProgramWarningRow(warning: warning, program: untrusted(release.program))
                 }
                 FactRow(key: "Who", value: untrusted(release.runnerLabel), valueId: "envWho") {
-                    if release.agent { TintTag(text: "Agent", tint: Palette.send).accessibilityIdentifier("envAgent") }
+                    if release.agent { TintTag(text: "Agent", tint: Palette.kindPush).accessibilityIdentifier("envAgent") }
                 }
                 // The command in full, wrapped and never cut: it is what the values are for.
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Command").font(RFont.sans(13, .medium)).foregroundStyle(Palette.tertiary)
+                    Text("Command").font(RFont.sans(13, .medium)).foregroundStyle(Palette.inkMeta)
                     Text(untrusted(release.command))
                         .font(RFont.mono(14, .medium))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .environment(\.layoutDirection, .leftToRight)
                         .textSelection(.enabled)
@@ -66,7 +66,7 @@ struct EnvReleaseFacts: View {
             ) {
                 Text(names.prefix(3).joined(separator: ", "))
                     .font(RFont.mono(13))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .lineLimit(1)
                     .environment(\.layoutDirection, .leftToRight)
             }
@@ -89,7 +89,7 @@ private struct ProgramWarningRow: View {
                 Text(warning).font(RFont.sans(14.5, .semibold)).foregroundStyle(Palette.warning)
                 Text(program)
                     .font(RFont.mono(12.5))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .fixedSize(horizontal: false, vertical: true)
                     .environment(\.layoutDirection, .leftToRight)
                     .textSelection(.enabled)
@@ -130,7 +130,7 @@ private struct AlwaysAskMore: View {
                     Spacer()
                     Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).rotationEffect(.degrees(open ? 90 : 0))
                 }
-                .foregroundStyle(Palette.accent)
+                .foregroundStyle(Palette.violet)
                 .padding(.horizontal, 22)
                 .padding(.vertical, 8)
                 .contentShape(Rectangle())
@@ -142,9 +142,9 @@ private struct AlwaysAskMore: View {
                 FactGroup {
                     HStack(spacing: 10) {
                         Toggle(isOn: Binding(get: { isOn }, set: { set($0) })) {
-                            Text("Ask every time").font(RFont.sans(15.5)).foregroundStyle(Palette.text)
+                            Text("Ask every time").font(RFont.sans(15.5)).foregroundStyle(Palette.ink)
                         }
-                        .tint(Palette.accent)
+                        .tint(Palette.violet)
                         .disabled(busy || fixed)
                         .accessibilityIdentifier("envAlwaysAsk")
                         HelpDot(
@@ -192,11 +192,11 @@ struct CheckDigits: View {
             FactHeader(text: "Check digits") {
                 HelpDot(id: id, text: "Compare with the terminal.")
             }
-            FactGroup(border: Palette.accent.opacity(0.35)) {
+            FactGroup(border: Palette.violet.opacity(0.35)) {
                 Text(untrusted(digits))
                     .font(RFont.mono(34, .semibold))
                     .tracking(6)
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
                     .environment(\.layoutDirection, .leftToRight)
@@ -227,12 +227,12 @@ struct SecretsStoreFacts: View {
                     ForEach(Array(store.ssh.enumerated()), id: \.offset) { i, key in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 10) {
-                                Image(systemName: "key.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.accent)
-                                Text(untrusted(key.name)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text)
+                                Image(systemName: "key.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.violet)
+                                Text(untrusted(key.name)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.ink)
                             }
                             Text(untrusted(key.fingerprint))
                                 .font(RFont.mono(12.5))
-                                .foregroundStyle(Palette.tertiary)
+                                .foregroundStyle(Palette.inkMeta)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .environment(\.layoutDirection, .leftToRight)
                                 .textSelection(.enabled)
@@ -268,7 +268,7 @@ private struct EnvStoreRow: View {
             HStack(spacing: 8) {
                 Text("\(untrusted(env.project)) · \(untrusted(env.env))")
                     .font(RFont.sans(15.5, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 if env.newEnv { TintTag(text: "New", tint: Palette.success) }
                 Spacer(minLength: 6)
@@ -280,7 +280,7 @@ private struct EnvStoreRow: View {
             if !changes.isEmpty {
                 Text(changes)
                     .font(RFont.mono(12.5))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .fixedSize(horizontal: false, vertical: true)
                     .environment(\.layoutDirection, .leftToRight)
                     .textSelection(.enabled)
@@ -301,13 +301,13 @@ private struct TokenRow: View {
         HStack(spacing: 12) {
             ServiceAvatar(service: token.service, size: 34)
             VStack(alignment: .leading, spacing: 2) {
-                Text(serviceName(token.service)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.text).lineLimit(1)
-                Text(untrusted(token.host)).font(RFont.mono(12.5)).foregroundStyle(Palette.tertiary)
+                Text(serviceName(token.service)).font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
+                Text(untrusted(token.host)).font(RFont.mono(12.5)).foregroundStyle(Palette.inkMeta)
                     .environment(\.layoutDirection, .leftToRight)
                 if !token.scopes.isEmpty {
                     Text(token.scopes.map(untrusted).joined(separator: ", "))
                         .font(RFont.mono(12.5))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                         .environment(\.layoutDirection, .leftToRight)
                 }
             }
@@ -315,7 +315,7 @@ private struct TokenRow: View {
             if showCheck {
                 Text(untrusted(token.check))
                     .font(RFont.mono(15, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .environment(\.layoutDirection, .leftToRight)
                     .accessibilityLabel("Check digits \(untrusted(token.check))")
             }

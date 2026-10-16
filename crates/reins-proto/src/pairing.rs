@@ -69,6 +69,12 @@ pub enum PushKind {
     Blob,
     /// Another phone of the account asks for its secret (the id is the join's).
     Join,
+    /// The account's op log or roster changed (to its other members): the id is [`PushMessage::sync`]'s, the new head
+    /// `seq` and whether to alert. Fetch `GET /reins/api/sync`.
+    Sync,
+    /// A handover concerns this phone (the id is the handover's): to the primary when a viewer asks to decide, to the
+    /// new primary when the roster made it primary (`GET /reins/api/handover-bundle`).
+    Handover,
 }
 
 /// FCM data payload. Carries only an id; content is fetched over HTTPS.
@@ -76,6 +82,39 @@ pub enum PushKind {
 pub struct PushMessage {
     pub t: PushKind,
     pub id: String,
+}
+
+/// The suffix of a [`PushKind::Sync`] id that asks for an alert (FCM data values are strings, so the flag rides in the
+/// id).
+const ALERT_SUFFIX: &str = ":alert";
+
+impl PushMessage {
+    /// A [`PushKind::Sync`] push for head `seq`: an alert (iOS: mutable content, decrypted by the notification
+    /// extension) when an op asked for one ([`crate::oplog::Op::notify`]), else silent. The id is `"<seq>"` or
+    /// `"<seq>:alert"`.
+    #[must_use]
+    pub fn sync(seq: u64, alert: bool) -> Self {
+        Self {
+            t: PushKind::Sync,
+            id: if alert {
+                format!("{seq}{ALERT_SUFFIX}")
+            } else {
+                seq.to_string()
+            },
+        }
+    }
+
+    /// The head `seq` and alert flag of a [`PushKind::Sync`] push; `None` for any other push or a malformed id.
+    #[must_use]
+    pub fn sync_head(&self) -> Option<(u64, bool)> {
+        if self.t != PushKind::Sync {
+            return None;
+        }
+        match self.id.strip_suffix(ALERT_SUFFIX) {
+            Some(seq) => seq.parse().ok().map(|s| (s, true)),
+            None => self.id.parse().ok().map(|s| (s, false)),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +140,26 @@ mod tests {
         };
         assert_eq!(serde_json::to_value(&p).unwrap(), json!({"t": "replaced", "id": ""}));
         assert_eq!(serde_json::from_value::<PushMessage>(json!({"t": "replaced", "id": ""})).unwrap(), p);
+    }
+
+    #[test]
+    fn sync_and_handover_pushes() {
+        let silent = PushMessage::sync(42, false);
+        assert_eq!(serde_json::to_value(&silent).unwrap(), json!({"t": "sync", "id": "42"}));
+        assert_eq!(silent.sync_head(), Some((42, false)));
+        let alert = PushMessage::sync(43, true);
+        assert_eq!(serde_json::to_value(&alert).unwrap(), json!({"t": "sync", "id": "43:alert"}));
+        assert_eq!(alert.sync_head(), Some((43, true)));
+        let handover: PushMessage = serde_json::from_value(json!({"t": "handover", "id": "h1"})).unwrap();
+        assert_eq!(handover.t, PushKind::Handover);
+        assert_eq!(handover.sync_head(), None);
+        for bad in ["", "x", "1:alertx", ":alert", "-1"] {
+            let p = PushMessage {
+                t: PushKind::Sync,
+                id: bad.to_owned(),
+            };
+            assert_eq!(p.sync_head(), None, "{bad}");
+        }
     }
 
     #[test]

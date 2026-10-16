@@ -12,14 +12,16 @@ struct ActivityDetailScreen: View {
     @State private var dockShown = false
     /// The approval as it was shown, read once; nil for older entries.
     @State private var recorded: ApprovalModel?
+    /// A push's changes as this iPhone has them, and those loaded from GitHub; nil for anything but a push.
+    @State private var diffs: PushDiffs?
     /// Until the core has answered nothing is drawn, so an entry with its approval never flashes the older page first.
     @State private var looked = false
 
     var body: some View {
-        let entry = model.activity.first(where: { $0.id == entryId })
+        let entry = model.entry(entryId)
         Group {
             if let entry, let vm = recorded, let view = vm.view {
-                EntryApprovalPage(entry: entry, vm: vm, view: view) {
+                EntryApprovalPage(entry: entry, vm: vm, view: view, diffs: diffs) {
                     AskedSections(entry: entry)
                     extras(entry)
                     // A project's environment released to a computer: its values can be dropped everywhere.
@@ -58,7 +60,7 @@ struct ActivityDetailScreen: View {
                             ConnectionIcon(connectionId: entry.connectionId, label: entry.connectionLabel, size: 22)
                             Text(untrusted(entry.connectionLabel))
                                 .font(RFont.sans(15, .semibold))
-                                .foregroundStyle(Palette.text)
+                                .foregroundStyle(Palette.ink)
                                 .lineLimit(1)
                         }
                         .accessibilityElement(children: .combine)
@@ -77,10 +79,14 @@ struct ActivityDetailScreen: View {
     private func lookUp() async {
         let shown = try? await model.core.activityApproval(entryId: entryId)
         if Task.isCancelled { return }
-        if let shown, let entry = model.activity.first(where: { $0.id == entryId }) {
+        if let shown, let entry = model.entry(entryId) {
             // What was shared is ticked: the emails' ids and the addresses the entry released.
             let released = Set(entry.info.messages.map(\.id).filter { !$0.isEmpty } + entry.info.accounts)
             recorded = ApprovalModel(recorded: shown, released: released)
+            // A push decided on another device may have come without its changes line by line.
+            if shown.git != nil, let push = try? await model.core.activityPush(entryId: entryId), !Task.isCancelled {
+                diffs = PushDiffs(entryId: entryId, notKept: push.diffsNotKept)
+            }
         }
         looked = true
     }
@@ -108,26 +114,34 @@ struct ActivityDetailScreen: View {
 
             AskedSections(entry: entry)
 
-            GroupCard {
-                ValueRow(label: "When", value: TimeText.dateTime(entry.at))
-                if let account = entry.account, !account.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Hairline()
-                    ValueRow(label: "Account", value: account, mono: true)
+            // When is said once: under "What it asked", with how long the answer took, when the request was kept.
+            let when = entry.request == nil
+            let account = entry.account.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+            let service = !entry.service.isEmpty
+            if when || account != nil || service || entry.grantId != nil || entry.autopilot != nil {
+                GroupCard {
+                    if when {
+                        ValueRow(label: "When", value: TimeText.dateTime(entry.at))
+                    }
+                    if let account {
+                        if when { Hairline() }
+                        ValueRow(label: "Account", value: account, mono: true)
+                    }
+                    if service {
+                        if when || account != nil { Hairline() }
+                        ValueRow(label: "Service", value: serviceName(entry.service))
+                    }
+                    if let id = entry.grantId {
+                        if when || account != nil || service { Hairline() }
+                        coveredBy(id)
+                    }
+                    if let note = entry.autopilot {
+                        if when || account != nil || service || entry.grantId != nil { Hairline() }
+                        AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
+                    }
                 }
-                if !entry.service.isEmpty {
-                    Hairline()
-                    ValueRow(label: "Service", value: serviceName(entry.service))
-                }
-                if let id = entry.grantId {
-                    Hairline()
-                    coveredBy(id)
-                }
-                if let note = entry.autopilot {
-                    Hairline()
-                    AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
-                }
+                .padding(.top, 14)
             }
-            .padding(.top, 14)
 
             if let query = info.query {
                 GroupCard(header: "Search") { ListRow(title: untrusted(query)).accessibilityIdentifier("detailQuery") }
@@ -181,7 +195,7 @@ struct ActivityDetailScreen: View {
                     BlobAvatar(seed: address, size: 36)
                     Text(address)
                         .font(RFont.sans(15.5, .medium))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .environment(\.layoutDirection, .leftToRight)
                         .textSelection(.enabled)
@@ -221,23 +235,23 @@ private struct MessageLine: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(untrusted(message.from))
                     .font(RFont.sans(15, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                     .environment(\.layoutDirection, .leftToRight)
                 if !message.subject.isEmpty {
-                    Text(untrusted(message.subject)).font(RFont.sans(14.5)).foregroundStyle(Palette.text).lineLimit(2)
+                    Text(untrusted(message.subject)).font(RFont.sans(14.5)).foregroundStyle(Palette.ink).lineLimit(2)
                 }
                 // Another integration keeps what was shared, so it can be read here without asking anyone.
                 if !message.text.isEmpty {
-                    Text(untrusted(message.text)).font(RFont.sans(14)).foregroundStyle(Palette.secondary)
+                    Text(untrusted(message.text)).font(RFont.sans(14)).foregroundStyle(Palette.ink2)
                 }
                 if message.date != 0 {
-                    Text(TimeText.dateTime(message.date)).font(RFont.sans(12)).foregroundStyle(Palette.tertiary).padding(.top, 1)
+                    Text(TimeText.dateTime(message.date)).font(RFont.sans(12)).foregroundStyle(Palette.inkMeta).padding(.top, 1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if openable {
-                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.tertiary)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.inkMeta)
             }
         }
         .padding(.horizontal, 16)

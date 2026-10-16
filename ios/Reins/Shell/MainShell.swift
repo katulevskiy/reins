@@ -63,6 +63,8 @@ private struct TabShell: View {
     @State private var visited: Set<AppSection> = []
     /// The tab bar's measured height (an estimate until it has been laid out).
     @State private var barHeight: CGFloat = SignalTabBar<AppSection>.estimatedHeight
+    /// The keyboard is up (Activity's search): the tab bar steps aside rather than ride on it over the results.
+    @State private var keyboardUp = false
 
     var body: some View {
         @Bindable var model = model
@@ -74,7 +76,7 @@ private struct TabShell: View {
                         // The one place the room under the tab bar is given: every root page scrolls its last row
                         // clear of the bar. Pushed pages have no tab bar, so they get none.
                         SectionRoot(section: section)
-                            .tabBarClearance(barHeight + Self.barGap)
+                            .tabBarClearance(keyboardUp ? 0 : barHeight + Self.barGap)
                             .navigationDestination(for: Route.self) { RouteView(route: $0) }
                     }
                     .pageFeedback(model.path(section).count)
@@ -86,8 +88,9 @@ private struct TabShell: View {
         }
         .overlay(alignment: .bottom) {
             // At a place's root only: a pushed page has its own bottom (a dock, "This was wrong") and its back button.
-            // It floats over the page, which scrolls on beneath it; the page's room for it is `tabBarClearance`.
-            if model.path(model.section).isEmpty {
+            // It floats over the page, which scrolls on beneath it; the page's room for it is `tabBarClearance`. Never on
+            // the keyboard: while it is up the results take its inset and the bar comes back when it goes.
+            if model.path(model.section).isEmpty && !keyboardUp {
                 SignalTabBar(items: items, selection: Binding(get: { model.section }, set: { model.select($0) }))
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
                     .padding(.bottom, Self.barGap)
@@ -95,6 +98,9 @@ private struct TabShell: View {
             }
         }
         .animation(Motion.of(Motion.easeOut(Motion.drillIn), reduce: reduceMotion), value: model.path(model.section).isEmpty)
+        .animation(Motion.of(Motion.easeOut(Motion.drillIn), reduce: reduceMotion), value: keyboardUp)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
         .onChange(of: model.section, initial: true) { _, section in visited.insert(section) }
     }
 

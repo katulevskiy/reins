@@ -103,6 +103,9 @@ final class SettingsTextTests: XCTestCase {
         XCTAssertEqual(SettingsText.iconName(nil), "Auto")
         XCTAssertEqual(SettingsText.iconName(Providers.blob), "Blobatar")
         XCTAssertEqual(SettingsText.iconName("grok"), "Grok")
+        XCTAssertEqual(SettingsText.iconName("macos"), "macOS")
+        XCTAssertEqual(SettingsText.iconName("windows"), "Windows")
+        XCTAssertEqual(SettingsText.iconName("linux"), "Linux")
     }
 
     func testAHoldTicksFasterAsItFills() {
@@ -152,15 +155,5 @@ final class SettingsTextTests: XCTestCase {
         XCTAssertFalse(DeviceStatus.approvalDevice)
         let session = await core.session()
         XCTAssertNil(session)
-    }
-
-    @MainActor
-    func testAnIconPickIsFoundByLabelOnlyWhenTheIdIsMissingAndUnambiguous() async {
-        let core = DemoReinsCore(signedIn: true, modelInstalled: true, syncCap: 0.3)
-        let model = AppModel(core: core, feedback: NoFeedback.shared, authenticator: TrustingAuthenticator(), demo: true)
-        await model.refreshConnections()
-        XCTAssertEqual(model.iconPick(connectionId: "c1", label: "x"), "claude")
-        XCTAssertEqual(model.iconPick(connectionId: "", label: "Claude"), "claude")
-        XCTAssertNil(model.iconPick(connectionId: "gone", label: "Claude"))
     }
 }

@@ -216,6 +216,8 @@ pub struct Model {
     /// This computer's friendly name, and the vault project of its own credentials (`machine-<name>-<key hash>`).
     pub computer: String,
     pub machine: String,
+    /// The name the phone shows for this computer (`reins_desktop::computer::name`: "M2A").
+    pub shown_as: String,
     /// `--demo`: the pretend pairing went through.
     demo_paired: bool,
     /// `--demo`: the made-up activity and connections.
@@ -301,10 +303,10 @@ impl Model {
             } else {
                 demo
             };
-            let demo = if std::env::var("REINS_DEMO_WAITING").is_ok_and(|v| v == "push") {
-                demo.push_waiting()
-            } else {
-                demo
+            let demo = match std::env::var("REINS_DEMO_WAITING").as_deref() {
+                Ok("push") => demo.push_waiting(),
+                Ok("force-push") => demo.force_push(),
+                _ => demo,
             };
             if set("REINS_DEMO_EMPTY") {
                 demo.empty()
@@ -357,6 +359,11 @@ impl Model {
                 secrets,
                 computer: computer.clone(),
                 machine,
+                shown_as: if args_demo {
+                    computer.clone()
+                } else {
+                    reins_desktop::computer::name()
+                },
                 demo_paired,
                 demo,
                 notified: std::collections::HashSet::new(),
