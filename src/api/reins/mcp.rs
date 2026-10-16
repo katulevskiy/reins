@@ -14,10 +14,37 @@ pub const LEGACY_VERSION: &str = "2025-11-25";
 /// Legacy revisions we answer `initialize` for.
 pub const LEGACY_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 pub const SERVER_NAME: &str = "reins";
-pub const INSTRUCTIONS: &str = "Reins gives you access to the user's Gmail through their phone: search, read and send, \
-and organizing the mailbox (archive, labels, spam, Trash, drafts, attachments, filters). Every request may need the \
-user's approval in the Reins app: if a result says the request is waiting or the device is offline, tell the user \
-and call reins_get_result with the given request_id after they confirm.";
+/// How to use Reins, for every client: the flow in a few lines. [`instructions`] adds what the user has connected.
+pub const INSTRUCTIONS: &str = "Reins lets you act in the user's accounts (Gmail, Google Calendar and Contacts, \
+GitHub, Telegram, text messages, the password vault, and MCP servers the user added in Reins) through their phone, \
+where the user approves what you do. Credentials never reach you: you only get results.
+- For a single action, call its tool directly (gmail_send, github_create_issue, calendar_create_event, ...). Reins \
+asks the user on their phone. Do not ask for a standing permission first.
+- reins_request_access is only for doing the same kind of Gmail call many times over a while; it is never a step \
+before a single action.
+- If a result says the request is waiting, tell the user to approve it on their phone, then call reins_get_result \
+with the request_id. Never say an action is done until a result confirms it.
+- If a result says the device is offline, tell the user to open the Reins app on their phone.
+- If a result says a service is not connected, ask the user to add it in the Reins app, then call the tool again; \
+no new chat is needed.
+- If the user has several accounts for a service, call reins_list_accounts with that service to pick one.";
+
+/// [`INSTRUCTIONS`] and, when the phone has reported them, the services the user has connected right now.
+pub fn instructions(services: Option<&[String]>) -> String {
+    match services {
+        Some([]) => format!(
+            "{INSTRUCTIONS}\nRight now no service is connected: the user adds them in the Reins app (Connections)."
+        ),
+        Some(services) => {
+            let names: Vec<&str> = services.iter().map(|s| reins_proto::connector::service_name(s)).collect();
+            format!(
+                "{INSTRUCTIONS}\nConnected right now: {}. Others can be added in the Reins app at any time.",
+                names.join(", ")
+            )
+        }
+        None => INSTRUCTIONS.to_owned(),
+    }
+}
 
 const META_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
@@ -150,8 +177,9 @@ fn check_headers(headers: &McpHeaders, method: &str, params: &Value, id: &Value)
 }
 
 /// Parses and dispatches one POST body.
-/// `services`: the integrations the user's phone reported (`None`: every tool is listed); `mcp`: the MCP servers the
-/// user added on the phone, whose tools are listed too.
+/// `services`: the integrations the user's phone reported (`None`: not reported since the server started), named in
+/// the instructions; every tool is listed either way. `mcp`: the MCP servers the user added on the phone, whose tools
+/// are listed too.
 pub fn handle(headers: &McpHeaders, body: &[u8], services: Option<&[String]>, mcp: &[McpServerReport]) -> Action {
     let null = Value::Null;
     let Ok(value) = serde_json::from_slice::<Value>(body) else {
@@ -214,22 +242,24 @@ pub fn handle(headers: &McpHeaders, body: &[u8], services: Option<&[String]>, mc
             } else {
                 LEGACY_VERSION
             };
+            // `listChanged` stays false: with no server-to-client stream (GET /mcp is 405) a change cannot be pushed.
+            // Every Reins tool is listed from the start, so only the tools of MCP servers added later need a refresh.
             finish(json!({
                 "protocolVersion": negotiated,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": server_info(),
-                "instructions": INSTRUCTIONS
+                "instructions": instructions(services)
             }))
         }
         "server/discover" => finish(json!({
             "supportedVersions": [MODERN_VERSION, LEGACY_VERSION],
             "capabilities": {"tools": {"listChanged": false}},
             "serverInfo": server_info(),
-            "instructions": INSTRUCTIONS
+            "instructions": instructions(services)
         })),
         "ping" => finish(json!({})),
         "tools/list" => {
-            let mut result = json!({"tools": tools::tool_definitions_with(services, mcp)});
+            let mut result = json!({"tools": tools::tool_definitions_with(mcp)});
             if modern && let Some(obj) = result.as_object_mut() {
                 obj.insert("ttlMs".to_owned(), json!(LIST_TTL_MS));
                 obj.insert("cacheScope".to_owned(), json!("private"));
@@ -359,6 +389,39 @@ mod tests {
         );
         assert_eq!(modern["result"]["resultType"], "complete");
         assert_eq!(modern["result"]["tools"], legacy["result"]["tools"]);
+    }
+
+    #[test]
+    fn the_list_is_complete_whatever_is_connected_and_the_instructions_name_what_is() {
+        let github = vec!["github".to_owned(), "gcalendar".to_owned()];
+        let body = rpc(1, "tools/list", json!({})).to_string();
+        let (_, some) = reply(handle(&McpHeaders::default(), body.as_bytes(), Some(&github), &[]));
+        let (_, all) = reply(call(&McpHeaders::default(), rpc(1, "tools/list", json!({}))));
+        assert_eq!(some, all, "what the phone reported never hides a tool");
+        assert!(some["result"]["tools"].as_array().unwrap().iter().any(|t| t["name"] == "gmail_send"));
+
+        let init = rpc(2, "initialize", json!({"protocolVersion": LEGACY_VERSION})).to_string();
+        let (_, known) = reply(handle(&McpHeaders::default(), init.as_bytes(), Some(&github), &[]));
+        let text = known["result"]["instructions"].as_str().unwrap();
+        assert!(text.starts_with(INSTRUCTIONS));
+        assert!(text.ends_with(
+            "Connected right now: GitHub, Google Calendar. Others can be added in the Reins app at any time."
+        ));
+        let (_, unknown) = reply(call(&McpHeaders::default(), rpc(3, "initialize", json!({}))));
+        assert_eq!(unknown["result"]["instructions"], INSTRUCTIONS);
+        assert!(instructions(Some(&[])).contains("no service is connected"));
+        // The core flow, in the words the model reads.
+        for must in [
+            "call its tool directly",
+            "Do not ask for a standing permission first",
+            "reins_get_result",
+            "Never say an action is done",
+            "offline",
+            "Credentials never reach you",
+            "reins_list_accounts",
+        ] {
+            assert!(INSTRUCTIONS.contains(must), "{must}");
+        }
     }
 
     #[test]

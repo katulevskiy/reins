@@ -315,7 +315,7 @@ async fn put_device(
 }
 
 /// The integrations that have an account on the phone (ids only) and the MCP servers added there (tools, never
-/// tokens); the server lists just their tools to the AI.
+/// tokens): the server names the integrations to the AI and lists the MCP servers' tools.
 #[put("/reins/api/services", data = "<data>")]
 async fn put_services(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
     require_approval_device(&headers, &key, &conn).await?;

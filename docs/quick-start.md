@@ -47,8 +47,17 @@ Go to **Activity → Integrations**. Each service is connected on the phone and 
 
 ## 3a. Connect a cloud AI (Claude.ai, ChatGPT)
 
-- **Claude.ai**: Settings → Connectors → Add custom connector, URL `https://app.reins2fa.com/mcp`.
-- **ChatGPT**: Settings → Connectors (developer mode), same URL.
+The address is `https://app.reins2fa.com/mcp` for every client; sign-in is OAuth, nothing else to enter.
+
+- **Claude.ai** (any plan; Free allows one custom connector): **Customize → Connectors → Add custom connector**,
+  paste the address, **Add**, then **Connect**. On Team and Enterprise an Owner adds it under **Organization
+  settings → Connectors** first.
+- **ChatGPT**: turn on **Developer mode** (Settings → Apps), then add a custom MCP server with the address and OAuth.
+  Plans and menu names change often: see [ChatGPT](directories/openai-apps.md#add-reins-to-chatgpt-today).
+- **Perplexity and Grok**: see [Perplexity and Grok](directories/perplexity-grok.md).
+
+Every Reins tool is listed from the start. If a service is not connected yet, the AI is told to ask you to add it in
+the app; then it tries again in the same chat.
 
 A browser page asks for your account email and shows a two-digit code. Your phone shows three codes. Tap the one that
 matches, give the connection a name, and confirm. From then on that AI has Reins's tools for the services you

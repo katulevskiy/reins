@@ -57,7 +57,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "env_release",
             Effect::Write,
             "Use a project's secrets on the computer",
-            "Hands the variables of one environment of a project (Reins Secrets) to the desktop app for one command, \
+            "Hand the variables of one environment of a project (Reins Secrets) to the desktop app for one command, \
              sealed to its key. The user sees who runs what where, and the variables' names, never a value.",
             vec![
                 str_p("project", 64, true, "The project (the vault folder Reins/<project>)."),
@@ -93,14 +93,19 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "secrets_store",
             Effect::Write,
             "Save a project's secrets from the computer",
-            "Sets, removes, renames and copies variables of environments of projects (Reins Secrets), keeps SSH keys \
-             and hands git hosts' tokens to the phone's integrations, sent by the desktop app in a box only the phone \
+            "Set, remove, rename and copy variables of environments of projects (Reins Secrets), keep SSH keys \
+             and hand git hosts' tokens to the phone's integrations, sent by the desktop app in a box only the phone \
              opens. One approval for the batch; the user compares four check digits with the computer.",
             vec![
                 list_p("envs", MAX_STORE_ENVS, 130, "The environments changed: `project/env`, as in the box."),
                 list_p("ssh", MAX_STORE_SSH, 200, "The SSH keys saved in Reins/ssh, by name, as in the box."),
                 list_p("hosts", MAX_STORE_TOKENS, 100, "The git hosts whose tokens go to the phone, as in the box."),
-                text_p("sealed", 480_000, true, "The changes, boxed to the phone's key (base64url of nonce and ciphertext)."),
+                text_p(
+                    "sealed",
+                    480_000,
+                    true,
+                    "The changes, boxed to the phone's key (base64url of nonce and ciphertext).",
+                ),
                 CLIENT_KEY,
                 NONCE,
             ],
@@ -127,11 +132,16 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "secret_release",
             Effect::Write,
             "Use secrets on the computer",
-            "Hands secrets from the vault to the desktop app for one command or API route, sealed to its key. `secrets` \
+            "Hand secrets from the vault to the desktop app for one command or API route, sealed to its key. `secrets` \
              lists `item/field` references (field: password, username, totp, notes, or a custom field name).",
             vec![
                 list_p("secrets", 10, 300, "`item/field` references: an item id or exact name, then the field."),
-                str_p("command", 500, true, "What will use them, as shown to the user (`npm run deploy`, `API openai`)."),
+                str_p(
+                    "command",
+                    500,
+                    true,
+                    "What will use them, as shown to the user (`npm run deploy`, `API openai`).",
+                ),
                 str_p("purpose", 300, false, "Why, in the user's words or the agent's."),
                 int_p("lease_secs", 60, 86_400, Some(3_600), "How long the desktop app may keep them in memory."),
                 CLIENT_KEY,
@@ -158,7 +168,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "ssh_sign",
             Effect::Write,
             "Sign in to a server with SSH",
-            "Signs one SSH authentication with a vault SSH key, on the phone. The user sees the key and the server.",
+            "Sign one SSH authentication with a vault SSH key, on the phone. The user sees the key and the server.",
             vec![
                 str_p("key", 100, true, "The key's SHA256 fingerprint (`SHA256:…`)."),
                 text_p("data_base64", 65_536, true, "The data the SSH client asks to sign, base64."),
@@ -191,14 +201,19 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "secret_store",
             Effect::Write,
             "Save a secret from the computer",
-            "Saves a value sent by `reins vault add` in a vault item, boxed from the desktop app's key to the phone's \
+            "Save a value sent by `reins vault add` in a vault item, boxed from the desktop app's key to the phone's \
              key: the server cannot read or change it. Makes a new item; changes the field of the item with that \
              name only when the box says to replace it.",
             vec![
                 str_p("name", 300, true, "The item's exact name."),
                 str_p("kind", 20, true, "`api-key`, `login`, `note` or `ssh`."),
                 str_p("field", 100, true, "`password`, `username`, `notes`, `private_key`, or a custom field's name."),
-                text_p("sealed", 40_000, true, "The value, boxed to the phone's key (base64url of nonce and ciphertext)."),
+                text_p(
+                    "sealed",
+                    40_000,
+                    true,
+                    "The value, boxed to the phone's key (base64url of nonce and ciphertext).",
+                ),
                 CLIENT_KEY,
                 NONCE,
             ],

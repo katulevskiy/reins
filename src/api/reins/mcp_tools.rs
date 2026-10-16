@@ -44,10 +44,14 @@ pub fn tool_definitions(reports: &[McpServerReport]) -> Vec<Value> {
     exposed(reports)
         .map(|(name, server, tool)| {
             let title = tool.title.as_deref().filter(|t| !t.trim().is_empty()).unwrap_or(&tool.name);
-            let mut annotations = json!({"readOnlyHint": tool.read_only, "openWorldHint": true});
-            if !tool.read_only {
-                annotations["destructiveHint"] = json!(tool.destructive);
-            }
+            // All four hints, as the directories ask. A third party's server: nothing is known to be idempotent or
+            // closed, except that a read changes nothing.
+            let annotations = json!({
+                "readOnlyHint": tool.read_only,
+                "destructiveHint": !tool.read_only && tool.destructive,
+                "idempotentHint": tool.read_only,
+                "openWorldHint": true
+            });
             json!({
                 "name": name,
                 "title": format!("{}: {title}", server.name),
@@ -150,7 +154,10 @@ mod tests {
         assert_eq!(defs[0]["title"], "LINEAR: search");
         assert_eq!(defs[0]["description"], "LINEAR: does search");
         assert_eq!(defs[0]["inputSchema"]["properties"]["q"]["type"], "string");
-        assert_eq!(defs[0]["annotations"], json!({"readOnlyHint": true, "openWorldHint": true}));
+        assert_eq!(
+            defs[0]["annotations"],
+            json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true})
+        );
         assert_eq!(defs[1]["name"], "linear__create_issue");
         assert_eq!(defs[1]["title"], "LINEAR: Create issue");
         assert_eq!(defs[1]["annotations"]["destructiveHint"], true);

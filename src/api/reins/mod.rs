@@ -94,7 +94,8 @@ pub struct Hub {
     /// Phones asking the approval device for the account secret.
     pub joins: JoinHub,
     /// Per user: the integrations that have an account on the approval device (as the phone last reported them).
-    /// Unknown (the phone has not reported since the server started) means every tool is listed.
+    /// Named in the MCP instructions; every tool is listed regardless, and every call goes to the phone, which knows
+    /// first when an account is added. Unknown until the phone reports after the server started.
     services: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
     /// Per user: the MCP servers added on the phone, as last reported (validated).
     mcp_servers: std::sync::Mutex<std::collections::HashMap<String, Arc<Vec<McpServerReport>>>>,

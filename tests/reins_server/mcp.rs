@@ -260,7 +260,7 @@ async fn a_fetched_but_undecided_request_is_pending_then_delivered_late_exactly_
     assert_eq!(
         text_of(&pending),
         format!(
-            "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this message), call reins_get_result with request_id={request_id}, or repeat the same request: a one-time approval may already cover it."
+            "Waiting for the user to approve on their phone; nothing has happened yet. Tell the user to approve it in the Reins app. When they confirm (the user can approve even after this message), call reins_get_result with request_id={request_id}, or repeat the same request: a one-time approval may already cover it."
         )
     );
     // The user approves after the AI gave up.
@@ -321,31 +321,24 @@ fn tool_names(body: &Value) -> Vec<String> {
         .collect()
 }
 
+/// An AI client reads the tool list once per chat, so every tool is listed whatever the phone reported; a call for an
+/// integration the phone does not have still goes to the phone (which knows first when one is added), and the
+/// instructions name what is connected.
 #[tokio::test]
-async fn tools_of_integrations_without_an_account_are_not_listed_once_the_phone_says_which_it_has() {
+async fn every_tool_is_listed_whatever_the_phone_reported_and_the_instructions_name_what_is_connected() {
     let (server, phone, tokens) = connected().await;
     let list = || rpc(1, "tools/list", json!({}));
 
-    // Nothing reported yet: every tool is listed.
-    let (_, _, all) = mcp(&server, Some(&tokens.access), &[], &list()).await;
-    let all = tool_names(&all);
-    assert!(all.iter().any(|n| n == "gmail_search") && all.iter().any(|n| n == "github_list_repos"));
+    let (_, _, before) = mcp(&server, Some(&tokens.access), &[], &list()).await;
+    let before = tool_names(&before);
+    assert!(before.iter().any(|n| n == "gmail_send") && before.iter().any(|n| n == "github_list_repos"));
 
     let (status, body) = phone.put("/services", &json!({"services": ["github", "nonsense"]})).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
-    let (_, _, some) = mcp(&server, Some(&tokens.access), &[], &list()).await;
-    let some = tool_names(&some);
-    assert!(some.iter().any(|n| n == "github_list_repos"));
-    assert!(!some.iter().any(|n| n.starts_with("gmail_") || n.starts_with("telegram_") || n.starts_with("vault_")));
-    for always in ["reins_get_result", "reins_list_accounts", "reins_request_access"] {
-        assert!(some.iter().any(|n| n == always), "{always}");
-    }
-
-    let (status, _) = phone.put("/services", &json!({"services": ["gmail"]})).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let (_, _, gmail) = mcp(&server, Some(&tokens.access), &[], &list()).await;
-    let gmail = tool_names(&gmail);
-    assert!(gmail.iter().any(|n| n == "gmail_search") && !gmail.iter().any(|n| n.starts_with("github_")));
+    let (_, _, after) = mcp(&server, Some(&tokens.access), &[], &list()).await;
+    assert_eq!(tool_names(&after), before, "what the phone reported never hides a tool");
+    let (_, _, init) = mcp(&server, Some(&tokens.access), &[], &rpc(2, "initialize", json!({}))).await;
+    assert!(init["result"]["instructions"].as_str().unwrap().contains("Connected right now: GitHub."), "{init}");
 
     let (status, _) = phone.put("/services", &json!("not an object")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

@@ -305,13 +305,78 @@ impl ToolSpec {
         json!({"type": "object", "properties": properties, "required": required, "additionalProperties": false})
     }
 
-    /// The MCP annotations: writes are not read-only.
+    /// The MCP annotations, all four always set (the Claude and ChatGPT directories check them):
+    /// - `readOnlyHint`: lists, reads and searches;
+    /// - `destructiveHint`: a write that deletes, overwrites, cancels or sends something out for good, or one asked for
+    ///   every time ([`ToolSpec::once_only`]);
+    /// - `idempotentHint`: reads, and writes that leave the same state when repeated (a delete, a set, a star);
+    /// - `openWorldHint`: GitHub (public repositories, any user), purchases, and writes that reach other people
+    ///   (messages, invitations, automatic replies). The user's own mail, chats, calendars and vault are closed.
     #[must_use]
     pub fn annotations(&self) -> Value {
-        match self.effect {
-            Effect::Write => json!({"readOnlyHint": false, "destructiveHint": self.once_only, "openWorldHint": true}),
-            _ => json!({"readOnlyHint": true, "openWorldHint": false}),
+        let read_only = self.effect != Effect::Write;
+        json!({
+            "readOnlyHint": read_only,
+            "destructiveHint": !read_only && self.is_destructive(),
+            "idempotentHint": read_only || self.is_idempotent_write(),
+            "openWorldHint": self.is_open_world(),
+        })
+    }
+
+    fn name_has(&self, words: &[&str]) -> bool {
+        self.tool.split('_').any(|part| words.contains(&part))
+    }
+
+    /// See [`ToolSpec::annotations`]. Pinging a webhook is asked for every time but changes nothing; reporting how a
+    /// purchase went changes nothing either.
+    fn is_destructive(&self) -> bool {
+        const DESTRUCTIVE: &[&str] = &[
+            "delete", "remove", "trash", "cancel", "empty", "update", "set", "merge", "transfer", "dismiss", "put",
+            "edit", "send", "commit", "write",
+        ];
+        if matches!(self.tool, "github_webhook_ping" | "payments_purchase_complete") {
+            return false;
         }
+        self.once_only || self.name_has(DESTRUCTIVE)
+    }
+
+    /// Writes are idempotent unless they make something new or set something running each time. When unsure, not.
+    fn is_idempotent_write(&self) -> bool {
+        const NOT_IDEMPOTENT: &[&str] = &[
+            "create",
+            "send",
+            "comment",
+            "dispatch",
+            "rerun",
+            "fork",
+            "upload",
+            "clone",
+            "purchase",
+            "commit",
+            "ping",
+            "attachment",
+            "key",
+            "transfer",
+            "merge",
+            "approve",
+            "review",
+            "write",
+        ];
+        !self.name_has(NOT_IDEMPOTENT)
+    }
+
+    fn is_open_world(&self) -> bool {
+        self.service == GITHUB
+            || matches!(
+                self.tool,
+                "telegram_send"
+                    | "sms_send"
+                    | "calendar_create_event"
+                    | "calendar_delete_event"
+                    | "gmail_set_vacation"
+                    | "gmail_create_filter"
+                    | "payments_purchase_request"
+            )
     }
 
     /// Validates and normalizes the arguments of a tool call. Unknown arguments are refused, never dropped. Returns the
@@ -624,6 +689,29 @@ pub fn spec_for_tool(name: &str) -> Option<&'static ToolSpec> {
     specs().iter().find(|s| s.tool == name)
 }
 
+/// An integration's name as the user knows it ("Google Calendar" for `gcalendar`); the id itself for one it does not
+/// know.
+#[must_use]
+pub fn service_name(service: &str) -> &str {
+    match service {
+        GMAIL => "Gmail",
+        TELEGRAM => "Telegram",
+        GCALENDAR => "Google Calendar",
+        GCONTACTS => "Google Contacts",
+        DEVICE_CALENDAR => "Phone calendar",
+        DEVICE_CONTACTS => "Phone contacts",
+        SMS => "Text messages",
+        GITHUB => "GitHub",
+        GITLAB => "GitLab",
+        CODEBERG => "Codeberg",
+        BITBUCKET => "Bitbucket",
+        DESKTOP => "Desktop app",
+        VAULT => "Password vault",
+        PAYMENTS => "Payments",
+        other => other,
+    }
+}
+
 const SENSITIVE: &str = " The user approves on their phone, and sees exactly what is shared.";
 
 fn build_specs() -> Vec<ToolSpec> {
@@ -636,7 +724,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "list_chats",
             List,
             "List Telegram chats",
-            "Lists the user's Telegram chats (name, kind and id), newest activity first. The user chooses which chats \
+            "List the user's Telegram chats (name, kind and id), newest activity first. The user chooses which chats \
              to show you; use the ids with telegram_read, telegram_search and telegram_send.",
             vec![str_p("query", 100, false, "Only chats whose name contains this text."), LIMIT],
             None,
@@ -647,7 +735,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "read",
             Read,
             "Read Telegram messages",
-            "Reads the latest messages of one Telegram chat, newest first.",
+            "Read the latest messages of one Telegram chat, newest first.",
             vec![
                 str_p("chat", 100, true, "The chat: an id from telegram_list_chats, an @username or the exact name."),
                 LIMIT,
@@ -660,7 +748,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "search",
             Search,
             "Search Telegram messages",
-            "Searches messages for a text, in one chat or across all of them.",
+            "Search messages for a text, in one chat or across all of them.",
             vec![
                 str_p("query", 200, true, "The text to look for."),
                 str_p("chat", 100, false, "Restrict the search to this chat."),
@@ -674,7 +762,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "send",
             Write,
             "Send a Telegram message",
-            "Sends a text message from the user's Telegram account. The user always sees the chat and the exact text \
+            "Send a text message from the user's Telegram account. The user always sees the chat and the exact text \
              on their phone and must approve unless they granted a standing permission for that chat.",
             vec![
                 str_p("chat", 100, true, "The chat: an id, an @username or the exact name."),
@@ -690,7 +778,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "list_calendars",
             List,
             "List Google calendars",
-            "Lists the user's Google calendars (name and id).",
+            "List the user's Google calendars (name and id).",
             vec![],
             None,
         ),
@@ -700,7 +788,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "list_events",
             Read,
             "List Google Calendar events",
-            "Lists events of one calendar between two moments, soonest first.",
+            "List events of one calendar between two moments, soonest first.",
             vec![
                 str_p(
                     "calendar",
@@ -721,7 +809,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "create_event",
             Write,
             "Create a Google Calendar event",
-            "Adds an event to a calendar. The user sees it and approves on their phone unless they granted a standing \
+            "Add an event to a calendar. The user sees it and approves on their phone unless they granted a standing \
              permission for that calendar.",
             vec![
                 str_p("title", 300, true, "The event title."),
@@ -740,7 +828,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "delete_event",
             Write,
             "Delete a Google Calendar event",
-            "Deletes an event. The user approves on their phone.",
+            "Delete an event. The user approves on their phone.",
             vec![
                 str_p("event_id", 200, true, "The id of the event, from calendar_list_events."),
                 str_p("calendar", 200, false, "Default: the main calendar."),
@@ -754,7 +842,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "search",
             Search,
             "Search Google contacts",
-            "Finds contacts by name, email or phone number.",
+            "Find contacts by name, email or phone number.",
             vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
             None,
         ),
@@ -765,7 +853,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "list_events",
             Read,
             "List events in the phone's calendar",
-            "Lists events from the calendars on the user's phone (whatever accounts sync there), soonest first.",
+            "List events from the calendars on the user's phone (whatever accounts sync there), soonest first.",
             vec![
                 str_p("from", 40, false, WHEN_HELP),
                 str_p("to", 40, false, WHEN_HELP),
@@ -780,7 +868,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "create_event",
             Write,
             "Add an event to the phone's calendar",
-            "Adds an event to the phone's default calendar. The user approves on their phone.",
+            "Add an event to the phone's default calendar. The user approves on their phone.",
             vec![
                 str_p("title", 300, true, "The event title."),
                 str_p("start", 40, true, WHEN_HELP),
@@ -796,7 +884,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "search",
             Search,
             "Search the phone's contacts",
-            "Finds contacts stored on the user's phone by name, email or phone number.",
+            "Find contacts stored on the user's phone by name, email or phone number.",
             vec![str_p("query", 200, true, "Part of a name, an email or a number."), LIMIT],
             None,
         ),
@@ -806,7 +894,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "list_threads",
             List,
             "List SMS conversations",
-            "Lists the user's text-message conversations (who with, latest activity).",
+            "List the user's text-message conversations (who with, latest activity).",
             vec![LIMIT],
             None,
         ),
@@ -816,7 +904,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "read",
             Read,
             "Read text messages",
-            "Reads the latest text messages of one conversation. Messages that look like login or verification \
+            "Read the latest text messages of one conversation. Messages that look like login or verification \
              codes are never shared without the user ticking them one by one.",
             vec![str_p("thread", 100, true, "A conversation id from sms_list_threads."), LIMIT],
             Some("thread"),
@@ -827,7 +915,7 @@ fn build_specs() -> Vec<ToolSpec> {
             "send",
             Write,
             "Send a text message",
-            "Sends an SMS from the user's phone. The user always approves the number and the text.",
+            "Send an SMS from the user's phone. The user always approves the number and the text.",
             vec![str_p("to", 40, true, "The phone number."), str_p("text", 1_000, true, "The message.")],
             Some("to"),
         ),

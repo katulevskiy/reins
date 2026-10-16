@@ -14,7 +14,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "send_list",
             List,
             "List Bitwarden Sends",
-            "Lists the user's Sends (text or files shared by link): name, type, how often each was opened and the most \
+            "List the user's Sends (text or files shared by link): name, type, how often each was opened and the most \
              allowed, expiration and deletion dates, whether it is disabled, has a password or hides the creator's \
              email. Never links or content; use vault_send_get for those. The user chooses which Sends to show you.",
             vec![str_p("query", 100, false, "Only Sends whose name contains this text."), LIMIT],
@@ -26,7 +26,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "send_get",
             Read,
             "Get a Bitwarden Send with its link",
-            "Fetches one Send: its text (or the file's name and size, never the file itself) and the link anyone can \
+            "Fetch one Send: its text (or the file's name and size, never the file itself) and the link anyone can \
              open it with. The user approves every time on their phone; a standing permission never covers it. The \
              password of a Send cannot be read back.",
             vec![str_p("send", 100, true, "The id of the Send, from vault_send_list.")],
@@ -38,7 +38,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "send_create",
             Write,
             "Create a Bitwarden Send",
-            "Creates a Send that is encrypted on the phone and shared by a link, and returns the link once. A text \
+            "Create a Send that is encrypted on the phone and shared by a link, and return the link once. A text \
              Send needs `text`; a file Send needs `file_name` and `content_base64`. Without `delete_in_days` it is \
              deleted after 7 days; the vault server allows 31 days at most. The user sees the name, the limits and \
              the start of the text (not a hidden text, not the password) and approves on their phone unless they \
@@ -97,7 +97,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "send_update",
             Write,
             "Change a Bitwarden Send",
-            "Changes only the fields given on an existing Send; the type and a file cannot change, and the link stays \
+            "Change only the fields given on an existing Send; the type and a file cannot change, and the link stays \
              the same. Give at least one field. The user sees the old and new values on their phone (not passwords, \
              not a hidden text) and approves unless they granted a standing permission for Sends.",
             vec![
@@ -141,7 +141,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "send_remove_password",
             Write,
             "Remove the password of a Bitwarden Send",
-            "Removes the password of a Send, so anyone with the link can open it. The user approves on their phone \
+            "Remove the password of a Send, so anyone with the link can open it. The user approves on their phone \
              unless they granted a standing permission for Sends.",
             vec![str_p("send", 100, true, "The id of the Send, from vault_send_list.")],
             Some("send"),
@@ -153,7 +153,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "send_delete",
             Write,
             "Delete a Bitwarden Send",
-            "Deletes a Send for good; its link stops working. The user approves on their phone unless they granted a \
+            "Delete a Send for good; its link stops working. The user approves on their phone unless they granted a \
              standing permission for Sends.",
             vec![str_p("send", 100, true, "The id of the Send, from vault_send_list.")],
             Some("send"),
@@ -165,7 +165,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "generate_password",
             Read,
             "Generate a random password",
-            "Generates a random password on the user's phone (nothing is sent anywhere and nothing is stored). Every \
+            "Generate a random password on the user's phone (nothing is sent anywhere and nothing is stored). Every \
              character class that is on appears at least once (or `min_*` times) as far as the length allows. The user \
              approves on their phone unless they granted a standing permission for the generator; they see that a \
              password was generated, not the password.",
@@ -190,7 +190,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "generate_passphrase",
             Read,
             "Generate a random passphrase",
-            "Generates a passphrase of random words from the EFF large word list (7776 words) on the user's phone. \
+            "Generate a passphrase of random words from the EFF large word list (7776 words) on the user's phone. \
              The user approves on their phone unless they granted a standing permission for the generator; they see \
              that a passphrase was generated, not the passphrase.",
             vec![
@@ -207,7 +207,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "generate_username",
             Read,
             "Generate a random username",
-            "Generates a username on the user's phone: a random word (optionally capitalized, with a number), a \
+            "Generate a username on the user's phone: a random word (optionally capitalized, with a number), a \
              plus-addressed email (name+random@domain from the user's own address) or a catch-all email (random@domain). \
              The user approves on their phone unless they granted a standing permission for the generator.",
             vec![
@@ -230,7 +230,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "generate_check_password",
             Read,
             "Check the strength of a password",
-            "Estimates how strong a password is (length, character classes, entropy, a short list of very common \
+            "Estimate how strong a password is (length, character classes, entropy, a short list of very common \
              passwords) on the user's phone. The password is not sent to any service, not looked up in breach \
              databases, not stored and not shown to the user. The user approves on their phone unless they granted a \
              standing permission for the generator.",

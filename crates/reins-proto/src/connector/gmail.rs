@@ -75,7 +75,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "organize",
             Write,
             "Organize Gmail messages",
-            "Archives, labels, stars, marks read or unread, or moves to Spam (and back) the messages you name; get \
+            "Archive, label, star, mark read or unread, or move to Spam (and back) the messages you name; get \
              their ids with gmail_search. Nothing is deleted. The user sees the action, how many messages and \
              examples on their phone and approves, unless they allowed organizing their mail for a while. To undo, \
              call it again with the opposite action (archive ↔ move_to_inbox, add_label ↔ remove_label, spam ↔ \
@@ -94,7 +94,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "trash",
             Write,
             "Move Gmail messages to Trash",
-            "Moves the messages you name to Trash, where Gmail keeps them for 30 days, or (`restore`) back out of \
+            "Move the messages you name to Trash, where Gmail keeps them for 30 days, or (`restore`) back out of \
              it. Messages are never deleted for good. The user approves on their phone.",
             vec![
                 message_ids(MAX_TRASH_IDS),
@@ -109,7 +109,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "list_labels",
             List,
             "List Gmail labels",
-            "Lists the labels of the user's Gmail (name, id, and whether Gmail or the user made it).",
+            "List the labels of the user's Gmail (name, id, and whether Gmail or the user made it).",
             vec![],
             None,
         ),
@@ -119,7 +119,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "create_label",
             Write,
             "Create a Gmail label",
-            "Creates a label. Nest it with a slash (Work/Clients). The user approves on their phone.",
+            "Create a label. Nest it with a slash (Work/Clients). The user approves on their phone.",
             vec![str_p("name", 225, true, "The label's name.")],
             None,
         )
@@ -130,7 +130,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "rename_label",
             Write,
             "Rename a Gmail label",
-            "Renames one of the user's labels. The user approves on their phone.",
+            "Rename one of the user's labels. The user approves on their phone.",
             vec![str_p("label", 225, true, LABEL_HELP), str_p("new_name", 225, true, "The new name.")],
             None,
         )
@@ -141,7 +141,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "delete_label",
             Write,
             "Delete a Gmail label",
-            "Deletes one of the user's labels; the messages keep everything else. Asked for every time.",
+            "Delete one of the user's labels; the messages keep everything else. Asked for every time.",
             vec![str_p("label", 225, true, LABEL_HELP)],
             None,
         )
@@ -153,7 +153,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "create_draft",
             Write,
             "Save a Gmail draft",
-            "Saves an email as a draft in the user's Gmail, for them to review and send from Gmail themselves; \
+            "Save an email as a draft in the user's Gmail, for them to review and send from Gmail themselves; \
              nothing is sent. It can carry one file of up to 4 MB: give `file_name` with `content_base64` for a small \
              file (under about 700 KB), or `file_name` alone to get an upload link. The user approves on their phone.",
             vec![
@@ -175,7 +175,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "list_attachments",
             List,
             "List a Gmail message's attachments",
-            "Lists the files attached to one message (name, type, size and `part`); fetch one with \
+            "List the files attached to one message (name, type, size and `part`); fetch one with \
              gmail_get_attachment.",
             vec![str_p("message_id", 64, true, "The message id, from gmail_search.")],
             None,
@@ -186,7 +186,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "get_attachment",
             Read,
             "Download a Gmail attachment",
-            "Downloads one attached file, base64-encoded (large files come as a download link). The user sees its \
+            "Download one attached file, base64-encoded (large files come as a download link). The user sees its \
              name and size and approves on their phone.",
             vec![
                 str_p("message_id", 64, true, "The message id."),
@@ -200,7 +200,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "list_filters",
             List,
             "List Gmail filters",
-            "Lists the user's Gmail filters: what each matches and what it does.",
+            "List the user's Gmail filters: what each matches and what it does.",
             vec![],
             None,
         ),
@@ -210,7 +210,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "create_filter",
             Write,
             "Create a Gmail filter",
-            "Creates a filter Gmail applies to new mail. Give at least one condition (from, to, subject, query, \
+            "Create a filter Gmail applies to new mail. Give at least one condition (from, to, subject, query, \
              has_attachment) and one action. Filters never forward mail. Asked for every time.",
             vec![
                 str_p("from", 254, false, "Mail from this address or domain."),
@@ -236,7 +236,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "delete_filter",
             Write,
             "Delete a Gmail filter",
-            "Deletes one filter. Asked for every time.",
+            "Delete one filter. Asked for every time.",
             vec![str_p("filter_id", 100, true, "The filter's id, from gmail_list_filters.")],
             None,
         )
@@ -248,7 +248,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "get_vacation",
             Read,
             "Read the Gmail vacation reply",
-            "Reads the user's vacation reply: whether it is on, its text and dates.",
+            "Read the user's vacation reply: whether it is on, its text and dates.",
             vec![],
             None,
         ),
@@ -258,7 +258,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "set_vacation",
             Write,
             "Set the Gmail vacation reply",
-            "Turns the vacation reply on (with its subject, text and optional dates) or off. Asked for every time.",
+            "Turn the vacation reply on (with its subject, text and optional dates) or off. Asked for every time.",
             vec![
                 Param {
                     name: "enabled",

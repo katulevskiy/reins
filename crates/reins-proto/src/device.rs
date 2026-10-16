@@ -151,8 +151,8 @@ impl std::fmt::Debug for AccountDeletion {
     }
 }
 
-/// `PUT /services` body: which integrations have an account on the phone, so that the server lists only their tools
-/// to the AI. Only the integration ids (`gmail`, `github`, ...) travel, never an account name.
+/// `PUT /services` body: which integrations have an account on the phone, so that the server can tell the AI which are
+/// connected. Only the integration ids (`gmail`, `github`, ...) travel, never an account name.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ServicesReport {
     pub services: Vec<String>,
