@@ -740,7 +740,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             // As the core: only a name the user edited is theirs, and never the client's own or the suggestion.
             let own = [p.clientName, p.suggestedName].map { untrustedName($0, limit: 64).lowercased() }
             let given: String? = nameEdited ? typed.flatMap { own.contains($0.lowercased()) ? nil : $0 } : nil
-            let name = given ?? p.clientName
+            // A second of the same client keeps the suggestion's number as part of its own name ("Claude 2").
+            let number: UInt32? = p.sameClient > 0 ? p.suggestedName.split(separator: " ").last.flatMap { UInt32($0) } : nil
+            let ownLabel = number.map { "\(p.clientName) \($0)" } ?? p.clientName
+            let name = given ?? ownLabel
             let id = "c\(s.nextConnection)"
             // The demo's computers are Macs (a real one says its platform in the name it registers with).
             let platform: String? = p.keyFingerprint != nil ? "macos" : nil
@@ -748,7 +751,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 id: id, label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil, keyFingerprint: p.keyFingerprint,
                 autoIcon: Self.autoIcon(label: p.clientName, computer: p.keyFingerprint != nil, platform: platform), platform: platform,
                 blobatar: Self.firstBlobatar(id, others: s.connections.compactMap(\.blobatar)),
-                name: given, ownLabel: p.clientName, clientName: p.clientName
+                name: given, ownLabel: ownLabel, number: given == nil ? number : nil, clientName: p.clientName
             ))
         }
     }

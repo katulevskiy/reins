@@ -933,17 +933,20 @@ impl Engine {
                     .and_then(reins_proto::desktop::key_fingerprint);
                 let computer = key_fingerprint.is_some();
                 let platform = computer.then(|| crate::avatar::platform(&c.client_name, &c.label)).flatten();
-                let own_label = crate::avatar::shown_label(&c.label);
+                let shown = crate::avatar::shown_label(&c.label);
                 let name = names.get(&c.id.0).map(str::to_owned);
+                // Its own name, with the number a second connection of its client is told apart by ("Claude 2").
+                let own_label = names.own(&c.id.0, &shown);
                 ConnectionView {
                     icon: self.store.connection_icon(&c.id.0).ok().flatten(),
                     key_fingerprint,
                     // From what it is, never from the name the user gave it.
-                    auto_icon: crate::avatar::auto_icon(&own_label, computer, platform),
+                    auto_icon: crate::avatar::auto_icon(&shown, computer, platform),
                     platform: platform.map(|p| p.key().to_owned()),
                     blobatar: blobatars.get(&c.id.0).cloned(),
                     label: name.clone().unwrap_or_else(|| own_label.clone()),
                     name,
+                    number: names.number(&c.id.0),
                     own_label,
                     client_name: crate::names::original_name(&c.client_name),
                     id: c.id.0,
@@ -990,23 +993,35 @@ impl Engine {
         self.store.set_computer_name_sent(connection_id, Some(want))
     }
 
-    /// The names the user gave connections ([`crate::names::Names`]), to show in every view.
+    /// The names the user gave connections and the numbers second connections of a client go by
+    /// ([`crate::names::Names`]), to show in every view.
     pub(crate) fn names(&self) -> crate::names::Names {
-        crate::names::Names::new(self.store.connection_names().unwrap_or_else(|e| {
-            log::warn!("could not read the names of the connections: {e}");
-            std::collections::HashMap::new()
-        }))
+        let read = |what: &str, e: CoreError| log::warn!("could not read the {what} of the connections: {e}");
+        crate::names::Names::new(
+            self.store.connection_names().unwrap_or_else(|e| {
+                read("names", e);
+                std::collections::HashMap::new()
+            }),
+            self.store.connection_numbers().unwrap_or_else(|e| {
+                read("numbers", e);
+                std::collections::HashMap::new()
+            }),
+        )
     }
 
-    /// The names of the listed connections; those of connections no longer listed are forgotten.
+    /// The names and numbers of the listed connections; those of connections no longer listed are forgotten.
     fn names_for(&self, connections: &[reins_proto::device::ConnectionInfo]) -> crate::names::Names {
         let kept = self.store.connection_names().unwrap_or_default();
-        for gone in kept.keys().filter(|id| !connections.iter().any(|c| &c.id.0 == *id)) {
-            if let Err(e) = self.store.set_connection_name(gone, None) {
+        let numbers = self.store.connection_numbers().unwrap_or_default();
+        let listed = |id: &String| connections.iter().any(|c| &c.id.0 == id);
+        for gone in kept.keys().chain(numbers.keys()).filter(|id| !listed(id)) {
+            if let Err(e) =
+                self.store.set_connection_name(gone, None).and_then(|()| self.store.set_connection_number(gone, None))
+            {
                 log::warn!("could not forget a removed connection's name: {e}");
             }
         }
-        crate::names::Names::new(kept)
+        crate::names::Names::new(kept, numbers)
     }
 
     /// Gives a connection the name the user typed (`names::typed_name`); `None`, or a name that is empty once cleaned,
@@ -1182,6 +1197,7 @@ impl Engine {
         self.store.set_connection_icon(connection_id, None)?;
         self.store.set_connection_blobatar(connection_id, None)?;
         self.store.set_connection_name(connection_id, None)?;
+        self.store.set_connection_number(connection_id, None)?;
         self.store.set_computer_name_sent(connection_id, None)?;
         for row in self.store.pending_rows(unix_now())? {
             if row.kind != PendingKind::Request {

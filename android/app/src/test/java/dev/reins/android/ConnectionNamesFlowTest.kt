@@ -127,6 +127,7 @@ class ConnectionNamesFlowTest : FlowHarness() {
         val claude = TestData.connection("c1", "Claude").copy(ownLabel = "Claude", clientName = "Claude")
         assertNull(calledItself(claude))
         assertEquals("Calls itself “Claude”", calledItself(claude.copy(name = "Mine", label = "Mine")))
+        assertEquals("a second Claude says what it is", "Calls itself “Claude”", calledItself(claude.copy(label = "Claude 2", ownLabel = "Claude 2", number = 2u)))
         assertFalse(calledItself(claude.copy(name = "Mine", clientName = "Ev‮il\nname"))!!.any { it == '‮' || it == '\n' })
         assertEquals("Never", lastUsed(claude.copy(lastUsedAt = null)))
     }

@@ -108,10 +108,10 @@ enum SettingsText {
         return untrusted(c.clientHost) + " · " + used
     }
 
-    /// The quiet line under a renamed connection's name: what it calls itself, quoted ("Calls itself “Claude”"), so
-    /// that a name the user gave never hides what it is. Nil while it goes by its own name.
+    /// The quiet line under a renamed connection's name, or a numbered one's ("Claude 2"): what it calls itself,
+    /// quoted ("Calls itself “Claude”"), so that a name never hides what it is. Nil while it goes by its own name.
     static func calledItself(_ c: ConnectionView) -> String? {
-        guard c.name != nil else { return nil }
+        guard c.name != nil || c.number != nil else { return nil }
         let own = untrustedName(c.clientName.isEmpty ? c.ownLabel : c.clientName, limit: 48)
         return own.isEmpty ? nil : "Calls itself “\(own)”"
     }

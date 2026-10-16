@@ -117,7 +117,9 @@ final class DemoCoreTests: XCTestCase {
         // The suggestion left as it was, or the client's own name typed back, is not the user's.
         try await c.answerPairing(pairingId: again, approve: true, chosenCode: 42, label: "Gemini 2", nameEdited: false)
         let untouched = try await c.connections().last
-        XCTAssertNil(untouched?.name)
+        XCTAssertNil(untouched?.name, "the suggestion is not the user's name")
+        XCTAssertEqual(untouched?.label, "Gemini 2", "but it tells the two apart")
+        XCTAssertEqual(untouched?.number, 2)
         let third = try await c.addDemoPairing(clientName: "Gemini", clientHost: "gemini.google.com")
         _ = try await c.pairingView(pairingId: third)
         try await c.answerPairing(pairingId: third, approve: true, chosenCode: 42, label: " gemini ", nameEdited: true)

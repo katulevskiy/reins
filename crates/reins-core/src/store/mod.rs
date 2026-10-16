@@ -91,6 +91,8 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
 const BLOBATAR_KEY: &str = "connection.blobatar.";
 /// Where the name the user gave a connection is kept (`meta`, `connection.name.<connection id>`).
 const NAME_KEY: &str = "connection.name.";
+/// The number the core told a second connection of a client apart by (`meta`, `connection.number.<connection id>`).
+const NUMBER_KEY: &str = "connection.number.";
 /// The name last sealed for a computer and left at the server (`meta`, `connection.sent-name.<connection id>`).
 const SENT_NAME_KEY: &str = "connection.sent-name.";
 /// The records whose removal is a security decision (a permission, a connected account or its token, a paired
@@ -671,6 +673,16 @@ impl Store {
     /// Keeps the name the user gave a connection (`None` forgets it: the connection goes by its own name again).
     pub fn set_connection_name(&self, connection_id: &str, name: Option<&str>) -> Result<(), CoreError> {
         self.set_meta_for_connection(NAME_KEY, connection_id, name)
+    }
+
+    /// The numbers the core told second connections of a client apart by ("Claude 2"), by connection id: part of
+    /// their own names, never the user's; synced like the names. Values that are not numbers are left out.
+    pub fn connection_numbers(&self) -> Result<std::collections::HashMap<String, u32>, CoreError> {
+        Ok(self.meta_by_connection(NUMBER_KEY)?.into_iter().filter_map(|(id, v)| Some((id, v.parse().ok()?))).collect())
+    }
+
+    pub fn set_connection_number(&self, connection_id: &str, number: Option<u32>) -> Result<(), CoreError> {
+        self.set_meta_for_connection(NUMBER_KEY, connection_id, number.map(|n| n.to_string()).as_deref())
     }
 
     /// The name last left for a computer at the server, sealed to its key ("" for none), by any phone of the account.

@@ -460,6 +460,12 @@ mod tests {
         assert_eq!(on_a.get("c1").map(String::as_str), Some("Claude (personal)"), "the rename came over");
         assert_eq!(on_a.get("c2"), None, "cleared: it goes by its own name again");
         assert!(a.connection_blobatars().unwrap().is_empty(), "names are not blobatars");
+        // The number a second Claude is told apart by travels too, apart from the names.
+        a.set_connection_number("c3", Some(2)).unwrap();
+        server.sync(&a);
+        server.pull(&b);
+        assert_eq!(b.connection_numbers().unwrap().get("c3"), Some(&2));
+        assert_eq!(b.connection_names().unwrap().get("c3"), None, "a number is not a name");
     }
 
     /// A corrupt base is as good as none: never a refusal.

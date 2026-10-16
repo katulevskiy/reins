@@ -42,27 +42,43 @@ pub fn original_name(client_name: &str) -> String {
     text::truncate_chars(&text::one_line(client_name), MAX_NAME_CHARS)
 }
 
-/// The name a new connection is offered when it pairs: its own (`base`, cleaned), or, when a connection of the same
-/// client is there already (`same_client` of them), the first of "Claude 2", "Claude 3", ... that no connection goes
-/// by (`taken`, compared without case).
+/// The largest number a connection is told apart by ("Claude 2", ...).
+pub const MAX_NUMBER: u32 = 999;
+
+/// `own` (a connection's own name as shown) with its number: "Claude 2". The number keeps its room: the name is cut,
+/// never the number.
+#[must_use]
+pub fn numbered(own: &str, number: u32) -> String {
+    let suffix = format!(" {number}");
+    let room = MAX_NAME_CHARS.saturating_sub(suffix.chars().count());
+    format!("{}{suffix}", text::truncate_chars(own, room).trim_end())
+}
+
+/// The number a new connection is told apart by when a connection of the same client is there already (`same_client`
+/// of them): the first of 2, 3, ... that makes a name no connection goes by (`taken`, compared without case). `None`
+/// for the first of its client.
+#[must_use]
+pub fn suggested_number(base: &str, same_client: usize, taken: &[String]) -> Option<u32> {
+    if same_client == 0 {
+        return None;
+    }
+    let base = crate::avatar::shown_label(base);
+    let taken: Vec<String> = taken.iter().map(|t| t.to_lowercase()).collect();
+    let first = u32::try_from(same_client + 1).unwrap_or(MAX_NUMBER).min(MAX_NUMBER);
+    // One of these is free: there are fewer names taken than numbers tried.
+    let last = u32::try_from(taken.len()).unwrap_or(MAX_NUMBER).saturating_add(first).min(MAX_NUMBER);
+    Some((first..=last).find(|&n| !taken.contains(&numbered(&base, n).to_lowercase())).unwrap_or(first))
+}
+
+/// The name a new connection is offered when it pairs: its own (`base`, cleaned), or, with a number
+/// ([`suggested_number`]), "Claude 2".
 #[must_use]
 pub fn suggested_name(base: &str, same_client: usize, taken: &[String]) -> String {
-    let base = crate::avatar::shown_label(base);
-    if same_client == 0 {
-        return base;
+    let own = crate::avatar::shown_label(base);
+    match suggested_number(base, same_client, taken) {
+        Some(n) => numbered(&own, n),
+        None => own,
     }
-    let taken: Vec<String> = taken.iter().map(|t| t.to_lowercase()).collect();
-    // A number keeps its room: the base is cut, never the number.
-    let numbered = |n: usize| {
-        let suffix = format!(" {n}");
-        let room = MAX_NAME_CHARS.saturating_sub(suffix.chars().count());
-        format!("{}{suffix}", text::truncate_chars(&base, room).trim_end())
-    };
-    // One of these is free: there are fewer names taken than numbers tried.
-    (same_client + 1..=same_client + taken.len() + 1)
-        .map(numbered)
-        .find(|name| !taken.contains(&name.to_lowercase()))
-        .unwrap_or_else(|| numbered(same_client + 1))
 }
 
 /// Whether two connections are the same client: the same name (as shown, without case) from the same host.
@@ -72,37 +88,63 @@ pub fn same_client(name: &str, host: &str, other_name: &str, other_host: &str) -
     !host.is_empty() && host.eq_ignore_ascii_case(other_host) && shown(name) == shown(other_name)
 }
 
-/// The names the user gave connections, by connection id, applied to the views the apps draw.
+/// The names the user gave connections, and the numbers the core gave second connections of a client, by connection
+/// id, applied to the views the apps draw.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Names(HashMap<String, String>);
+pub struct Names {
+    given: HashMap<String, String>,
+    numbers: HashMap<String, u32>,
+}
 
 impl Names {
-    /// The names as kept (`Store::connection_names`). Each is cleaned again: one that came from another phone is held
-    /// to the same rules, and one that cannot be a name is left out.
+    /// The names and numbers as kept (`Store::connection_names`, `Store::connection_numbers`). Each name is cleaned
+    /// again: one that came from another phone is held to the same rules, and one that cannot be a name is left out;
+    /// so is a number out of range.
     #[must_use]
-    pub fn new(kept: HashMap<String, String>) -> Self {
-        Self(kept.into_iter().filter_map(|(id, name)| Some((id, typed_name(&name)?))).collect())
+    pub fn new(kept: HashMap<String, String>, numbers: HashMap<String, u32>) -> Self {
+        Self {
+            given: kept.into_iter().filter_map(|(id, name)| Some((id, typed_name(&name)?))).collect(),
+            numbers: numbers.into_iter().filter(|(_, n)| (2..=MAX_NUMBER).contains(n)).collect(),
+        }
     }
 
     /// The name the user gave a connection.
     #[must_use]
     pub fn get(&self, connection_id: &str) -> Option<&str> {
-        self.0.get(connection_id).map(String::as_str)
+        self.given.get(connection_id).map(String::as_str)
     }
 
-    /// A connection's name as shown: the user's, else `own` (its own, already cleaned).
+    /// The number the core told a connection apart by (a second account of a client), if any. Not the user's: it
+    /// belongs to the connection's own name.
+    #[must_use]
+    pub fn number(&self, connection_id: &str) -> Option<u32> {
+        self.numbers.get(connection_id).copied()
+    }
+
+    /// A connection's own name with its number when it has one ("Claude 2"): what it goes by without a name of the
+    /// user's. `own` is its own name, already cleaned.
+    #[must_use]
+    pub fn own(&self, connection_id: &str, own: &str) -> String {
+        match self.number(connection_id) {
+            Some(n) if !own.is_empty() => numbered(own, n),
+            _ => own.to_owned(),
+        }
+    }
+
+    /// A connection's name as shown: the user's, else its own with its number ([`Self::own`]).
     #[must_use]
     pub fn label(&self, connection_id: &str, own: &str) -> String {
-        self.get(connection_id).unwrap_or(own).to_owned()
+        self.get(connection_id).map_or_else(|| self.own(connection_id, own), str::to_owned)
     }
 
-    /// Puts the user's name for `connection_id` in `label`, and at the start of each of `lines` that start with the
-    /// connection's own name ("Claude wants to read 2 emails").
+    /// Puts the name `connection_id` is shown by in `label` (which holds its own name), and at the start of each of
+    /// `lines` that start with its own name ("Claude wants to read 2 emails").
     fn rename(&self, connection_id: &str, label: &mut String, lines: &mut [&mut String]) {
-        let Some(name) = self.get(connection_id) else {
-            return;
-        };
         if label.is_empty() {
+            return;
+        }
+        let name = self.label(connection_id, label);
+        if name == *label {
             return;
         }
         for line in lines.iter_mut() {
@@ -110,7 +152,7 @@ impl Names {
                 **line = format!("{name}{rest}");
             }
         }
-        name.clone_into(label);
+        *label = name;
     }
 
     pub fn item(&self, item: &mut PendingItem) {
@@ -176,19 +218,29 @@ mod tests {
 
     #[test]
     fn the_users_name_wins_everywhere_and_its_own_shows_otherwise() {
-        let names = Names::new(HashMap::from([
-            ("c1".to_owned(), "Claude (work)".to_owned()),
-            ("c2".to_owned(), "  \u{200b} ".to_owned()),
-        ]));
+        let names = Names::new(
+            HashMap::from([
+                ("c1".to_owned(), "Claude (work)".to_owned()),
+                ("c2".to_owned(), "  \u{200b} ".to_owned()),
+                ("c4".to_owned(), "Mine".to_owned()),
+            ]),
+            HashMap::from([("c3".to_owned(), 2), ("c4".to_owned(), 3), ("c5".to_owned(), 0), ("c6".to_owned(), 5000)]),
+        );
         assert_eq!(names.label("c1", "Claude"), "Claude (work)");
         assert_eq!(names.label("c2", "ChatGPT"), "ChatGPT", "a name that cleans to nothing is no name");
-        assert_eq!(names.label("c3", "Grok"), "Grok");
         assert_eq!(names.get("c2"), None);
+        assert_eq!(names.label("c9", "Grok"), "Grok");
+        // A number belongs to its own name, never the user's: shown with it, and a name of the user's wins.
+        assert_eq!((names.label("c3", "Claude"), names.get("c3")), ("Claude 2".to_owned(), None));
+        assert_eq!(names.own("c4", "Claude"), "Claude 3");
+        assert_eq!(names.label("c4", "Claude"), "Mine");
+        assert_eq!(names.label("c5", "Claude"), "Claude", "no number 0");
+        assert_eq!(names.label("c6", "Claude"), "Claude", "nor one out of range");
     }
 
     #[test]
     fn a_waiting_item_is_renamed_in_its_title_and_headline() {
-        let names = Names::new(HashMap::from([("c1".to_owned(), "Claude (work)".to_owned())]));
+        let names = Names::new(HashMap::from([("c1".to_owned(), "Claude (work)".to_owned())]), HashMap::new());
         let mut item = PendingItem {
             kind: crate::types::PendingKind::Request,
             id: "r1".to_owned(),
@@ -232,6 +284,8 @@ mod tests {
         );
         assert_eq!(suggested_name("Claude", 2, &["Claude".to_owned(), "Claude (work)".to_owned()]), "Claude 3");
         assert_eq!(suggested_name("M2A (macOS)", 1, &[]), "M2A 2", "a computer by its own name");
+        assert_eq!(suggested_number("Claude", 0, &[]), None);
+        assert_eq!(suggested_number("Claude", 1, &["Claude 2".to_owned()]), Some(3));
         let long = "n".repeat(80);
         let s = suggested_name(&long, 1, &[]);
         assert!(s.ends_with(" 2") && s.chars().count() == MAX_NAME_CHARS, "{s}");

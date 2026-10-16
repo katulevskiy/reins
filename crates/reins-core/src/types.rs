@@ -820,6 +820,11 @@ pub struct ConnectionView {
     /// the name brings it back.
     #[uniffi(default)]
     pub own_label: String,
+    /// The number the core tells a second connection of the same client apart by ("Claude 2", already in
+    /// [`Self::own_label`]): set when it paired and the same client was connected, never from the client's text, and
+    /// never the user's name. `None` for the first of its client.
+    #[uniffi(default)]
+    pub number: Option<u32>,
     /// What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
     /// (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
     #[uniffi(default)]

@@ -230,11 +230,11 @@ fun ConnectionDetailScreen(
 private enum class Picker { Icon, Profile, Name }
 
 /**
- * The quiet line under a renamed connection's name: what it calls itself, quoted ("Calls itself “Claude”"), so that a
- * name the user gave never hides what it is. Null while it goes by its own name.
+ * The quiet line under a renamed connection's name, or a numbered one's ("Claude 2"): what it calls itself, quoted
+ * ("Calls itself “Claude”"), so that a name never hides what it is. Null while it goes by its own name.
  */
 internal fun calledItself(connection: ConnectionView): String? {
-    if (connection.name == null) return null
+    if (connection.name == null && connection.number == null) return null
     val own = untrustedName(connection.clientName.ifEmpty { connection.ownLabel }, 48)
     return if (own.isEmpty()) null else "Calls itself “$own”"
 }

@@ -9257,6 +9257,12 @@ public struct ConnectionView: Equatable, Hashable {
      */
     public var ownLabel: String
     /**
+     * The number the core tells a second connection of the same client apart by ("Claude 2", already in
+     * [`Self::own_label`]): set when it paired and the same client was connected, never from the client's text, and
+     * never the user's name. `None` for the first of its client.
+     */
+    public var number: UInt32?
+    /**
      * What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
      * (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
      */
@@ -9297,6 +9303,11 @@ public struct ConnectionView: Equatable, Hashable {
          * the name brings it back.
          */ownLabel: String = "", 
         /**
+         * The number the core tells a second connection of the same client apart by ("Claude 2", already in
+         * [`Self::own_label`]): set when it paired and the same client was connected, never from the client's text, and
+         * never the user's name. `None` for the first of its client.
+         */number: UInt32? = nil, 
+        /**
          * What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
          * (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
          */clientName: String = "") {
@@ -9312,6 +9323,7 @@ public struct ConnectionView: Equatable, Hashable {
         self.blobatar = blobatar
         self.name = name
         self.ownLabel = ownLabel
+        self.number = number
         self.clientName = clientName
     }
 
@@ -9343,6 +9355,7 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
                 blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf), 
                 name: FfiConverterOptionString.read(from: &buf), 
                 ownLabel: FfiConverterString.read(from: &buf), 
+                number: FfiConverterOptionUInt32.read(from: &buf), 
                 clientName: FfiConverterString.read(from: &buf)
         )
     }
@@ -9360,6 +9373,7 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
         FfiConverterOptionTypeBlobatar.write(value.blobatar, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
         FfiConverterString.write(value.ownLabel, into: &buf)
+        FfiConverterOptionUInt32.write(value.number, into: &buf)
         FfiConverterString.write(value.clientName, into: &buf)
     }
 }

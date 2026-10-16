@@ -60,6 +60,10 @@ final class SettingsTextTests: XCTestCase {
         var c = ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: 0, lastUsedAt: 9_700, icon: nil, keyFingerprint: nil,
                                ownLabel: "Claude", clientName: "Claude")
         XCTAssertNil(SettingsText.calledItself(c), "its own name: nothing to add")
+        var second = c
+        second.number = 2
+        second.label = "Claude 2"
+        XCTAssertEqual(SettingsText.calledItself(second), "Calls itself “Claude”", "a second Claude says what it is")
         c.name = "Claude (work)"
         c.label = "Claude (work)"
         XCTAssertEqual(SettingsText.calledItself(c), "Calls itself “Claude”")

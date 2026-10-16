@@ -652,19 +652,22 @@ async fn a_second_account_of_the_same_ai_is_offered_a_name_of_its_own_kept_with_
 async fn a_name_the_field_was_given_is_never_the_users() {
     let env = env().await;
     serve_connections(&env).await;
+    // Each pairs next to the ones before it, so the suggestion counts up: "Claude 2", "Claude 3", ...
     let cases: [(&str, Option<&str>, bool); 4] = [
         ("p1", Some("Claude 2"), false),
-        ("p2", Some(" claude\u{200b}  2 "), true),
+        ("p2", Some(" claude\u{200b}  3 "), true),
         ("p3", Some("CLAUDE\u{feff}"), true),
         ("p4", Some("Claude (personal)"), false),
     ];
+    let mut rows = vec![json!({"id": "c1", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai",
+        "created_at": 1})];
     for (i, (id, typed, edited)) in cases.iter().enumerate() {
         let pairing = json!({"v": 1, "id": id, "client_name": "Claude", "client_host": "claude.ai",
             "choices": [12, 47, 83], "created_at": 50});
         serve_pending(&env, &[], &[pairing]).await;
         env.core.sync(0).await.unwrap();
         let view = env.core.pairing_view((*id).to_owned()).await.unwrap();
-        assert_eq!(view.suggested_name, "Claude 2");
+        assert_eq!(view.suggested_name, format!("Claude {}", i + 2));
         let connection = format!("n{i}");
         Mock::given(method("POST"))
             .and(path(format!("/reins/api/pairings/{id}/response")))
@@ -673,25 +676,99 @@ async fn a_name_the_field_was_given_is_never_the_users() {
             .mount(&env.server)
             .await;
         env.core.answer_pairing((*id).to_owned(), true, Some(47), typed.map(str::to_owned), *edited).await.unwrap();
+        // From now on the server lists it.
+        rows.push(json!({"id": connection, "label": "Claude", "client_name": "Claude", "client_host": "claude.ai",
+            "created_at": 10 + i}));
+        Mock::given(method("GET"))
+            .and(path("/reins/api/connections"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": rows})))
+            .with_priority(4 - u8::try_from(i).unwrap())
+            .mount(&env.server)
+            .await;
     }
-    let rows: Vec<Value> = (0..4)
-        .map(|i| {
-            json!({"id": format!("n{i}"), "label": "Claude", "client_name": "Claude", "client_host": "claude.ai",
-            "created_at": 10 + i})
-        })
-        .chain([json!({"id": "c1", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai",
-            "created_at": 1})])
-        .collect();
-    Mock::given(method("GET"))
-        .and(path("/reins/api/connections"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": rows})))
-        .with_priority(1)
-        .mount(&env.server)
-        .await;
     let listed = env.core.connections().await.unwrap();
-    for c in &listed {
-        assert_eq!((c.id.as_str(), c.name.as_deref(), c.label.as_str()), (c.id.as_str(), None, "Claude"), "{c:?}");
+    let shown: Vec<(&str, Option<u32>)> = listed.iter().map(|c| (c.label.as_str(), c.number)).collect();
+    // Each was told apart by its number, never by a name of the user's.
+    assert_eq!(
+        shown,
+        [("Claude", None), ("Claude 2", Some(2)), ("Claude 3", Some(3)), ("Claude 4", Some(4)), ("Claude 5", Some(5))]
+    );
+    assert!(listed.iter().all(|c| c.name.is_none() && c.client_name == "Claude"), "{listed:?}");
+}
+
+/// Two Claude.ai accounts paired without a name typed show as "Claude" and "Claude 2" everywhere; the number is the
+/// core's, part of the connection's own name: neither is a name of the user's, and the user's name replaces it.
+#[tokio::test]
+async fn two_claudes_paired_without_a_name_show_as_claude_and_claude_2() {
+    let env = env().await;
+    let row = |id: &str, at: i64| json!({"id": id, "label": "Claude", "client_name": "Claude", "client_host": "claude.ai", "created_at": at});
+    let list = |rows: Vec<Value>| ResponseTemplate::new(200).set_body_json(json!({"connections": rows}));
+    // No connection yet: the first Claude is just "Claude".
+    Mock::given(method("GET")).and(path("/reins/api/connections")).respond_with(list(vec![])).mount(&env.server).await;
+    for (id, connection) in [("p1", "k1"), ("p2", "k2")] {
+        let pairing = json!({"v": 1, "id": id, "client_name": "Claude", "client_host": "claude.ai",
+            "choices": [12, 47, 83], "created_at": 50});
+        serve_pending(&env, &[], &[pairing]).await;
+        env.core.sync(0).await.unwrap();
+        let view = env.core.pairing_view(id.to_owned()).await.unwrap();
+        assert_eq!(
+            view.suggested_name,
+            if id == "p1" {
+                "Claude"
+            } else {
+                "Claude 2"
+            }
+        );
+        Mock::given(method("POST"))
+            .and(path(format!("/reins/api/pairings/{id}/response")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": connection})))
+            .with_priority(1)
+            .mount(&env.server)
+            .await;
+        env.core.answer_pairing(id.to_owned(), true, Some(47), Some(view.suggested_name.clone()), false).await.unwrap();
+        // From now on the server lists it.
+        let rows = if id == "p1" {
+            vec![row("k1", 1)]
+        } else {
+            vec![row("k1", 1), row("k2", 2)]
+        };
+        Mock::given(method("GET"))
+            .and(path("/reins/api/connections"))
+            .respond_with(list(rows))
+            .with_priority(if id == "p1" {
+                3
+            } else {
+                2
+            })
+            .mount(&env.server)
+            .await;
     }
+    let shown = |listed: &[reins_core::ConnectionView]| -> Vec<(String, Option<String>, Option<u32>, String)> {
+        listed.iter().map(|c| (c.label.clone(), c.name.clone(), c.number, c.client_name.clone())).collect()
+    };
+    let listed = env.core.connections().await.unwrap();
+    assert_eq!(
+        shown(&listed),
+        [
+            ("Claude".to_owned(), None, None, "Claude".to_owned()),
+            ("Claude 2".to_owned(), None, Some(2), "Claude".to_owned()),
+        ]
+    );
+    assert_eq!(listed[1].own_label, "Claude 2", "the number is part of its own name");
+    assert_eq!(listed[1].auto_icon, "claude");
+
+    // Its requests say "Claude 2" too.
+    serve_gmail_search(&env, &[("m1", "Bank <alerts@bank.com>")]).await;
+    serve_pending(&env, &[search_request("r1", "k2", "Claude", "from:bank")], &[]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert_eq!(items[0].title, "Claude 2 wants to search your Gmail");
+
+    // The user's name replaces it; cleared, it is "Claude 2" again.
+    env.core.rename_connection("k2".to_owned(), Some("Claude (work)".to_owned())).await.unwrap();
+    let renamed = env.core.connections().await.unwrap();
+    assert_eq!((renamed[1].label.as_str(), renamed[1].name.as_deref()), ("Claude (work)", Some("Claude (work)")));
+    env.core.rename_connection("k2".to_owned(), None).await.unwrap();
+    assert_eq!(env.core.connections().await.unwrap()[1].label, "Claude 2");
 }
 
 /// A computer pairs (`client_name` as its desktop app registered) and the user approves it as `connection`.

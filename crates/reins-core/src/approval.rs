@@ -558,18 +558,19 @@ impl Engine {
 
     pub async fn pairing_view(&self, id: &str) -> Result<PairingView, CoreError> {
         let view = views::pairing_view(&self.parked_pairing(id)?);
-        Ok(self.named_pairing(view).await)
+        Ok(self.named_pairing(view).await.0)
     }
 
     /// The name a pairing's name field starts with: its own, or one of its own ("Claude 2") when a connection of the
-    /// same client is there already, which the user is asked to make theirs. The connections come from the server;
-    /// without them the pairing keeps its own name.
-    async fn named_pairing(&self, mut view: PairingView) -> PairingView {
+    /// same client is there already, which the user is asked to make theirs; and that number, which the connection
+    /// keeps when the user names it nothing else. The connections come from the server; without them the pairing keeps
+    /// its own name.
+    async fn named_pairing(&self, mut view: PairingView) -> (PairingView, Option<u32>) {
         let connections = match self.connections().await {
             Ok(c) => c,
             Err(e) => {
                 log::warn!("could not list the connections to name a new one: {e}");
-                return view;
+                return (view, None);
             }
         };
         let same = connections
@@ -577,9 +578,10 @@ impl Engine {
             .filter(|c| crate::names::same_client(&view.client_name, &view.client_host, &c.client_name, &c.client_host))
             .count();
         let taken: Vec<String> = connections.into_iter().map(|c| c.label).collect();
+        let number = crate::names::suggested_number(&view.client_name, same, &taken);
         view.suggested_name = crate::names::suggested_name(&view.client_name, same, &taken);
         view.same_client = u32::try_from(same).unwrap_or(u32::MAX);
-        view
+        (view, number)
     }
 
     /// The pairing a computer's code stands for (scanned from its QR code, or from a link): the server hands it to this
@@ -637,11 +639,12 @@ impl Engine {
             }
         }
         // What the field started with: the suggestion ("Claude 2") is made from the client's name, so it is no more the
-        // user's than that name is.
-        let suggested = if approve && name_edited && label.is_some() {
-            self.named_pairing(views::pairing_view(&pairing)).await.suggested_name
+        // user's than that name is; its number stays with the connection's own name when the user gives it none.
+        let (suggested, number) = if approve {
+            let (view, number) = self.named_pairing(views::pairing_view(&pairing)).await;
+            (view.suggested_name, number)
         } else {
-            String::new()
+            (String::new(), None)
         };
         let given = given_name(&pairing.client_name, &suggested, label.as_deref(), name_edited);
         let response = PairingResponse {
@@ -669,8 +672,13 @@ impl Engine {
         };
         // The desktop app's key, compared by the user on both screens, now belongs to this connection.
         let new_connection = result.as_ref().ok().filter(|_| approve).and_then(|r| r.connection_id.as_ref());
-        if let (Some(connection), Some(name)) = (new_connection, given.as_deref()) {
-            self.store.set_connection_name(&connection.0, Some(name))?;
+        if let Some(connection) = new_connection {
+            match (given.as_deref(), number) {
+                (Some(name), _) => self.store.set_connection_name(&connection.0, Some(name))?,
+                // A second account of a client already connected: told apart by a number, never a name of the user's.
+                (None, Some(n)) => self.store.set_connection_number(&connection.0, Some(n))?,
+                (None, None) => {}
+            }
         }
         let key = pairing.client_key.as_deref().and_then(reins_proto::desktop::decode_key);
         let mut note = format!("From {}", pairing.client_host);
