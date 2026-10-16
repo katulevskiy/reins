@@ -53,6 +53,14 @@ impl Store {
         Ok(inserted == 1)
     }
 
+    /// Replaces a parked item's payload (the server sent it again with more, an enrollment's reveal). False when
+    /// `id` is not parked.
+    pub(crate) fn update_parked(&self, id: &str, payload: &[u8]) -> Result<bool, CoreError> {
+        let sealed = self.seal(&aad(id), payload)?;
+        let updated = self.lock()?.execute("UPDATE pending SET payload = ?2 WHERE id = ?1", params![id, sealed])?;
+        Ok(updated == 1)
+    }
+
     /// One unexpired parked item.
     pub fn pending_item(&self, id: &str, now: i64) -> Result<Option<PendingRow>, CoreError> {
         Ok(self.pending_rows(now)?.into_iter().find(|r| r.id == id))

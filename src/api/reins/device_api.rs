@@ -501,6 +501,11 @@ async fn post_pairing_claim(
         Err(ClaimError::Taken) => {
             Err(api_err(Status::Conflict, codes::ALREADY_ANSWERED, "Another account's phone already scanned this code"))
         }
+        Err(ClaimError::Limited) => Err(api_err(
+            Status::TooManyRequests,
+            codes::RATE_LIMITED,
+            "Too many open connection requests for this account",
+        )),
         Err(ClaimError::Busy) => {
             Err(api_err(Status::ServiceUnavailable, codes::INTERNAL, "The server is busy; try again in a minute"))
         }

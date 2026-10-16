@@ -35,7 +35,8 @@ use crate::engine::Engine;
 use crate::phone_api::check_id;
 use crate::store::{AuditAutopilot, AuditRecord, PendingRow, unix_now};
 use crate::types::{
-    ApprovalChoice, ApprovalKind, ApprovalView, GrantScopeChoice, PendingItem, PendingKind, StandingGrant,
+    ApprovalChoice, ApprovalKind, ApprovalView, Attention, AttentionLevel, GrantScopeChoice, PendingItem, PendingKind,
+    StandingGrant,
 };
 use crate::views::{self, ParkedRequest};
 use crate::{CoreError, OwnerCheck};
@@ -194,6 +195,32 @@ fn everything(view: &ApprovalView) -> ApprovalChoice {
         selected_message_ids,
         standing: None,
     }
+}
+
+/// After an Approve, a Close item on the view still waits. The wording is fixed: no path, subject, or secret.
+const CLOSER_LOOK: &str = "Always asks: one item needs a closer look";
+
+fn is_close(attention: Option<&Attention>) -> bool {
+    attention.is_some_and(|found| found.level == AttentionLevel::Close)
+}
+
+/// Whether a commit, a file, or a message on the approval view is Close.
+fn needs_closer_look(subject: &Subject) -> bool {
+    let Some(view) = &subject.view else {
+        return false;
+    };
+    if view.messages.iter().any(|message| is_close(message.attention.as_ref())) {
+        return true;
+    }
+    view.git.as_ref().is_some_and(|git| {
+        git.refs.iter().any(|git_ref| {
+            git_ref.files.iter().any(|file| is_close(file.attention.as_ref()))
+                || git_ref.commits.iter().any(|commit| {
+                    is_close(commit.attention.as_ref())
+                        || commit.files.iter().any(|file| is_close(file.attention.as_ref()))
+                })
+        })
+    })
 }
 
 fn default_choice(view: &ApprovalView) -> ApprovalChoice {
@@ -532,6 +559,11 @@ impl Engine {
     }
 
     async fn ap_pass(&self, model: bool) -> Result<(), CoreError> {
+        // A viewer's (or a removed phone's) own Bypass, Overnight or Auto decides nothing: its items wait for the
+        // primary, which runs its own Autopilot.
+        if !self.decides() {
+            return Ok(());
+        }
         let now = unix_now();
         self.ap_expire_bypasses(now)?;
         self.store.ap_prune(now)?;
@@ -924,14 +956,20 @@ impl Engine {
             let line = s.risk.as_ref().map(RiskNote::line).unwrap_or_default();
             return match decision {
                 overnight::Gate::Approve(proof) => {
-                    log::debug!("Overnight approves a request at P(catastrophic) {:.4}", proof.p_catastrophic());
-                    s.verdict = Verdict::Approve;
-                    s.reason = format!("Allowed {} · {line}", OVERNIGHT_NAME.to_lowercase());
-                    // Marked as this Overnight's: anything granted while carrying it out ends when it does. (It
-                    // approves once, as Auto does: it never asks for a standing permission.)
-                    let scope = self.ap_overnight_scope(&subject.connection_id, now)?;
-                    subject.grant_origin = Some(modes::overnight_origin(&scope));
-                    Box::pin(self.ap_conclude(&subject, s, Verdict::Approve, By::Overnight(Some(proof)))).await
+                    if needs_closer_look(&subject) {
+                        s.verdict = Verdict::Ask;
+                        CLOSER_LOOK.clone_into(&mut s.reason);
+                        self.ap_wait(&subject, &s)
+                    } else {
+                        log::debug!("Overnight approves a request at P(catastrophic) {:.4}", proof.p_catastrophic());
+                        s.verdict = Verdict::Approve;
+                        s.reason = format!("Allowed {} · {line}", OVERNIGHT_NAME.to_lowercase());
+                        // Marked as this Overnight's: anything granted while carrying it out ends when it does. (It
+                        // approves once, as Auto does: it never asks for a standing permission.)
+                        let scope = self.ap_overnight_scope(&subject.connection_id, now)?;
+                        subject.grant_origin = Some(modes::overnight_origin(&scope));
+                        Box::pin(self.ap_conclude(&subject, s, Verdict::Approve, By::Overnight(Some(proof)))).await
+                    }
                 }
                 overnight::Gate::Hold(overnight::Hold::Catastrophic(_)) => match self.ap_overnight_risky()? {
                     OvernightRisky::Wait => {
@@ -1009,6 +1047,11 @@ impl Engine {
                 }
                 Verdict::Approve => {
                     if self.ap_rate_ok(&subject.connection_id, now)? {
+                        if needs_closer_look(&subject) {
+                            s.verdict = Verdict::Ask;
+                            CLOSER_LOOK.clone_into(&mut s.reason);
+                            return self.ap_wait(&subject, &s);
+                        }
                         return Box::pin(self.ap_conclude(&subject, s, Verdict::Approve, By::Autopilot)).await;
                     }
                     s.reason = format!("{} — paused: unusual volume from this connection", s.reason);

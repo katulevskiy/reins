@@ -1,29 +1,47 @@
 //! AI-connection pairing (spec §4.5 step 2-3, contracts A5/A6): the browser shows a
 //! two-digit code, the phone picks it among three choices.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError},
+};
 
+use data_encoding::HEXLOWER;
 use rand::RngExt;
 use reins_proto::{
     PROTOCOL_VERSION,
     ids::{ConnectionId, PairingId},
     pairing::{PairingRequest, PairingResponse},
 };
+use ring::hmac;
 
-use super::{
-    ITEM_TTL,
-    relay::ItemSignal,
-    ttl::{Full, TtlMap},
-};
+use super::{ITEM_TTL, relay::ItemSignal, ttl::TtlMap};
 use crate::util::get_uuid;
 
 pub const CODE_MIN: u8 = 10;
 pub const CODE_MAX: u8 = 99;
 /// Longest client name or connection label kept (characters).
 pub const MAX_NAME_CHARS: usize = 64;
-/// Upper bound on pairings (including decoys) held in memory.
+/// Upper bound on pairings (including decoys) held in memory. It never refuses a party that is under
+/// [`MAX_PER_PARTY`] while someone else holds more, and a decoy is dropped before any real pairing.
 pub const MAX_PAIRINGS: usize = 1_000;
+/// Open pairings one email may have at once, real and decoy together, and the most one client network may hold for
+/// every email together. Above the default pairing burst of 5, so one burst still fits, and far below
+/// [`MAX_PAIRINGS`]. A network that already holds this many is refused before the account is looked up. A network
+/// that holds none of an email's slots can still take the oldest open, undelivered one from another network: evicting
+/// an approval already in progress would drop it silently, so those stay.
+pub const MAX_PER_PARTY: usize = 8;
 pub const UNKNOWN_CLIENT: &str = "Unknown client";
+/// Network stored on a pairing the phone claimed itself (device flow). It is not a client address.
+const CLAIMED_NETWORK: &str = "device";
+
+/// Key a normalised email shares between a real pairing and a decoy, so the two cannot be told apart by which cap
+/// fills up. The email is not recoverable from it. Stable for this process; pairings do not outlive it.
+pub fn email_cap_key(email: &str) -> String {
+    static SECRET: LazyLock<[u8; 32]> = LazyLock::new(crate::crypto::get_random_bytes);
+    let key = hmac::Key::new(hmac::HMAC_SHA256, SECRET.as_slice());
+    HEXLOWER.encode(hmac::sign(&key, email.trim().to_lowercase().as_bytes()).as_ref())
+}
 
 /// Returns the browser code and three distinct codes in `CODE_MIN..=CODE_MAX`, in random
 /// order, exactly one of which is the browser code.
@@ -124,13 +142,154 @@ enum Stage {
 }
 
 struct PairingEntry {
-    /// `None` for decoys (unknown email): no phone ever sees them.
+    /// `None` for a decoy (unknown email): no phone ever sees it.
     user: Option<String>,
+    /// [`email_cap_key`] of the submitted email, or the account id when the phone claimed the pairing itself.
+    cap_key: String,
+    /// Client network the browser came from, or [`CLAIMED_NETWORK`] for a pairing the phone claimed itself.
+    network: String,
     client: PairingClient,
     code: u8,
     request: PairingRequest,
     delivered: bool,
     stage: Stage,
+}
+
+/// Why a pairing was not started.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StartError {
+    /// This network, or this email on this network, already holds [`MAX_PER_PARTY`], or the email is full and no
+    /// open, undelivered pairing of another network can be dropped. The browser still sees the ordinary wait page.
+    Party,
+    /// The map is full of this party's own entries, or of approvals already in progress. Another party is not
+    /// refused for that: its start drops a decoy, or the oldest open pairing of whoever holds the most.
+    Busy,
+}
+
+/// Who a new pairing is limited as.
+#[derive(Clone, Copy)]
+enum Slot<'a> {
+    /// A browser pairing. `user` is `None` for a decoy. `cap_key` is shared by the real pairing and the decoy.
+    Email {
+        user: Option<&'a str>,
+        cap_key: &'a str,
+        network: &'a str,
+    },
+    /// The phone scanned a computer's code. Already delivered, so another network cannot evict it.
+    Claimed {
+        user: &'a str,
+    },
+}
+
+fn is_open_undelivered(entry: &PairingEntry) -> bool {
+    !entry.delivered && matches!(entry.stage, Stage::Open)
+}
+
+/// Drops the oldest open, undelivered entry for which `same` holds, from a network other than `network` that holds
+/// strictly more of them than `network` does. Answering and done pairings, and ones already handed to the phone, stay.
+fn evict_other_network(
+    map: &mut TtlMap<PairingId, PairingEntry>,
+    network: &str,
+    same: impl Fn(&PairingEntry) -> bool,
+) -> bool {
+    let mine = map.values().filter(|entry| entry.network == network && same(entry)).count();
+    let mut held: HashMap<String, usize> = HashMap::new();
+    for entry in map.values() {
+        if entry.network != network && same(entry) {
+            *held.entry(entry.network.clone()).or_default() += 1;
+        }
+    }
+    map.evict_where(|entry| {
+        same(entry)
+            && entry.network != network
+            && is_open_undelivered(entry)
+            && held.get(&entry.network).is_some_and(|count| *count > mine)
+    })
+}
+
+/// Brings this email, and the account when there is one, back under [`MAX_PER_PARTY`] by dropping another network's
+/// open, undelivered pairing. `false` when the only way under the cap would drop an approval already in progress,
+/// a pairing the phone already has, or a pairing of a network that does not hold more than this one.
+fn release_email_cap(
+    map: &mut TtlMap<PairingId, PairingEntry>,
+    cap_key: &str,
+    network: &str,
+    user: Option<&str>,
+) -> bool {
+    loop {
+        let key_over = map.values().filter(|entry| entry.cap_key == cap_key).count() >= MAX_PER_PARTY;
+        let user_over = user
+            .is_some_and(|id| map.values().filter(|entry| entry.user.as_deref() == Some(id)).count() >= MAX_PER_PARTY);
+        if !key_over && !user_over {
+            return true;
+        }
+        if key_over && evict_other_network(map, network, |entry| entry.cap_key == cap_key) {
+            continue;
+        }
+        if user_over && evict_other_network(map, network, |entry| entry.user.as_deref() == user) {
+            continue;
+        }
+        return false;
+    }
+}
+
+/// The party in `counts` with strictly more than `mine` entries, the fullest such. Ties are arbitrary.
+fn fullest_over(counts: HashMap<String, usize>, mine: usize) -> Option<String> {
+    counts.into_iter().filter(|(_, n)| *n > mine).max_by_key(|(_, n)| *n).map(|(party, _)| party)
+}
+
+/// Makes one free slot for `slot` when the whole map is full. A real pairing drops a decoy first (a decoy can never
+/// be approved), then the oldest still-open pairing of another account that holds more open pairings than this one.
+/// An approval already being stored, or one the browser has not collected yet, is kept. A decoy drops only another
+/// network's decoy, and only when that network holds more of them.
+fn make_room(map: &mut TtlMap<PairingId, PairingEntry>, slot: &Slot<'_>) -> bool {
+    match slot {
+        Slot::Email {
+            user: None,
+            network,
+            ..
+        } => {
+            let mine = map.values().filter(|entry| entry.user.is_none() && entry.network == *network).count();
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            for entry in map.values() {
+                if entry.user.is_none() && entry.network != *network {
+                    *counts.entry(entry.network.clone()).or_default() += 1;
+                }
+            }
+            let Some(hog) = fullest_over(counts, mine) else {
+                return false;
+            };
+            map.evict_where(|entry| entry.user.is_none() && entry.network == hog)
+        }
+        Slot::Email {
+            user: Some(user),
+            ..
+        }
+        | Slot::Claimed {
+            user,
+        } => {
+            if map.evict_where(|entry| entry.user.is_none()) {
+                return true;
+            }
+            let mine = map
+                .values()
+                .filter(|entry| entry.user.as_deref() == Some(*user) && matches!(entry.stage, Stage::Open))
+                .count();
+            let mut counts: HashMap<String, usize> = HashMap::new();
+            for entry in map.values() {
+                if let Some(owner) = entry.user.as_deref()
+                    && owner != *user
+                    && matches!(entry.stage, Stage::Open)
+                {
+                    *counts.entry(owner.to_owned()).or_default() += 1;
+                }
+            }
+            let Some(hog) = fullest_over(counts, mine) else {
+                return false;
+            };
+            map.evict_where(|entry| entry.user.as_deref() == Some(hog.as_str()) && matches!(entry.stage, Stage::Open))
+        }
+    }
 }
 
 enum Verdict {
@@ -182,20 +341,25 @@ impl PairingHub {
         self.pairings.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn insert(&self, user: Option<String>, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full> {
+    fn insert(
+        &self,
+        slot: &Slot<'_>,
+        client: PairingClient,
+        now_unix: i64,
+    ) -> Result<(PairingRequest, u8), StartError> {
         let (code, choices) = generate_choices();
-        self.insert_with(user, client, code, choices, false, now_unix).map(|request| (request, code))
+        self.insert_with(slot, client, code, choices, false, now_unix).map(|request| (request, code))
     }
 
     fn insert_with(
         &self,
-        user: Option<String>,
+        slot: &Slot<'_>,
         client: PairingClient,
         code: u8,
         choices: [u8; 3],
         delivered: bool,
         now_unix: i64,
-    ) -> Result<PairingRequest, Full> {
+    ) -> Result<PairingRequest, StartError> {
         let client = PairingClient {
             client_name: sanitize_client_name(&client.client_name),
             ..client
@@ -209,20 +373,78 @@ impl PairingHub {
             created_at: now_unix,
             client_key: client.client_key.clone(),
         };
+        let (user, cap_key, network) = match *slot {
+            Slot::Email {
+                user,
+                cap_key,
+                network,
+            } => (user.map(str::to_owned), cap_key.to_owned(), network.to_owned()),
+            Slot::Claimed {
+                user,
+            } => (Some(user.to_owned()), user.to_owned(), CLAIMED_NETWORK.to_owned()),
+        };
         let entry = PairingEntry {
             user,
+            cap_key,
+            network,
             client,
             code,
             request: request.clone(),
             delivered,
             stage: Stage::Open,
         };
-        self.lock().insert(request.id.clone(), entry)?;
+        let mut map = self.lock();
+        map.purge();
+        if !Self::admit(&mut map, slot) {
+            return Err(StartError::Party);
+        }
+        // A party under its cap is never refused because the map is full of someone else. A decoy never takes the
+        // place of a real pairing; a real pairing drops a decoy before it drops anyone's open request.
+        if !map.has_room() && !make_room(&mut map, slot) {
+            return Err(StartError::Busy);
+        }
+        map.insert(request.id.clone(), entry).map_err(|_| StartError::Busy)?;
         Ok(request)
     }
 
+    /// `false` when this party is at its cap and nothing evictable on another network can make room. The caller
+    /// reports that as [`StartError::Party`].
+    fn admit(map: &mut TtlMap<PairingId, PairingEntry>, slot: &Slot<'_>) -> bool {
+        match *slot {
+            Slot::Email {
+                user,
+                cap_key,
+                network,
+            } => {
+                let network_full = map.values().filter(|entry| entry.network == network).count() >= MAX_PER_PARTY;
+                let key_here =
+                    map.values().filter(|entry| entry.cap_key == cap_key && entry.network == network).count()
+                        >= MAX_PER_PARTY;
+                if network_full || key_here {
+                    return false;
+                }
+                release_email_cap(map, cap_key, network, user)
+            }
+            Slot::Claimed {
+                user,
+            } => map.values().filter(|entry| entry.user.as_deref() == Some(user)).count() < MAX_PER_PARTY,
+        }
+    }
+
+    /// Whether another pairing for `cap_key` from `network` would be refused before an account lookup. A full email
+    /// whose slots all sit on other networks is not capped: that request may still evict one of them.
+    pub fn capped_for(&self, cap_key: &str, network: &str) -> bool {
+        let mut map = self.lock();
+        map.purge();
+        let network_full = map.values().filter(|entry| entry.network == network).count() >= MAX_PER_PARTY;
+        let key_here =
+            map.values().filter(|entry| entry.cap_key == cap_key && entry.network == network).count() >= MAX_PER_PARTY;
+        network_full || key_here
+    }
+
     /// A pairing `user`'s phone asked for itself (it scanned a computer's code, see `device_flow`): `code` is the
-    /// number the computer shows, among `choices`. It is delivered already, so it is neither pushed nor listed again.
+    /// number the computer shows, among `choices`. It is delivered already, so it is neither pushed nor listed again,
+    /// and another network cannot evict it.
     pub fn start_claimed(
         &self,
         user: &str,
@@ -230,20 +452,64 @@ impl PairingHub {
         code: u8,
         choices: [u8; 3],
         now_unix: i64,
-    ) -> Result<PairingRequest, Full> {
-        self.insert_with(Some(user.to_owned()), client, code, choices, true, now_unix)
+    ) -> Result<PairingRequest, StartError> {
+        self.insert_with(
+            &Slot::Claimed {
+                user,
+            },
+            client,
+            code,
+            choices,
+            true,
+            now_unix,
+        )
     }
 
-    /// Starts a pairing for `user`'s approval device; returns it and the browser code.
-    pub fn start(&self, user: &str, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full> {
-        let started = self.insert(Some(user.to_owned()), client, now_unix)?;
-        self.signal.notify();
+    /// Starts a pairing limited as `cap_key` (an [`email_cap_key`], or an account id) from `network`. `user` is the
+    /// account whose phone may approve it, or `None` for a decoy. Notifies the phone only for a real pairing.
+    pub fn start_email(
+        &self,
+        cap_key: &str,
+        network: &str,
+        user: Option<&str>,
+        client: PairingClient,
+        now_unix: i64,
+    ) -> Result<(PairingRequest, u8), StartError> {
+        let started = self.insert(
+            &Slot::Email {
+                user,
+                cap_key,
+                network,
+            },
+            client,
+            now_unix,
+        )?;
+        if user.is_some() {
+            self.signal.notify();
+        }
         Ok(started)
     }
 
-    /// Indistinguishable from `start` for the browser, but bound to no user (Decision 19).
-    pub fn start_decoy(&self, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), Full> {
-        self.insert(None, client, now_unix)
+    /// Starts a pairing for `user`'s approval device; returns it and the browser code. The account id is the cap
+    /// key and the network, which is how callers that do not know a client address stay per account. The HTTP flow
+    /// uses [`PairingHub::start_email`].
+    #[cfg(test)]
+    pub fn start(&self, user: &str, client: PairingClient, now_unix: i64) -> Result<(PairingRequest, u8), StartError> {
+        self.start_email(user, user, Some(user), client, now_unix)
+    }
+
+    /// Indistinguishable from [`PairingHub::start`] for the browser, but bound to no user (Decision 19). `party` is
+    /// both the cap key and the requester's address ([`super::limits::client_network`]), not the email, which is
+    /// not stored. The HTTP flow uses [`PairingHub::start_email`] with [`email_cap_key`] instead, so a decoy shares
+    /// the email's cap.
+    #[cfg(test)]
+    pub fn start_decoy(
+        &self,
+        client: PairingClient,
+        party: &str,
+        now_unix: i64,
+    ) -> Result<(PairingRequest, u8), StartError> {
+        self.start_email(party, party, None, client, now_unix)
     }
 
     /// Open pairings of `user` never handed out before, oldest first; marks them delivered.
@@ -459,7 +725,7 @@ mod tests {
         let (req, _) = h.start("u1", desktop.clone(), 0).unwrap();
         assert_eq!(req.client_key.as_deref(), Some(key.as_str()));
         assert_eq!(h.take_undelivered("u1")[0].client_key.as_deref(), Some(key.as_str()));
-        let (decoy, _) = h.start_decoy(desktop, 0).unwrap();
+        let (decoy, _) = h.start_decoy(desktop, "203.0.113.9", 0).unwrap();
         assert_eq!(decoy.client_key, Some(key), "a decoy must look exactly like a real pairing");
         assert_eq!(h.start("u1", client(), 0).unwrap().0.client_key, None);
     }
@@ -566,7 +832,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn decoys_look_real_but_nobody_can_see_or_answer_them() {
         let h = hub();
-        let (req, code) = h.start_decoy(client(), 0).unwrap();
+        let (req, code) = h.start_decoy(client(), "203.0.113.9", 0).unwrap();
         assert!(req.choices.contains(&code));
         assert_eq!(h.status(&req.id), Some(PairingStatus::Waiting));
         assert!(h.take_undelivered("").is_empty());
@@ -581,5 +847,183 @@ mod tests {
         tokio::time::advance(Duration::from_secs(600)).await;
         assert_eq!(h.status(&req.id), None);
         assert_eq!(h.answer("u1", &req.id, &approve(code, None)), Err(PairingAnswerError::NotFound));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_account_cannot_fill_pairings_for_everyone() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), MAX_PER_PARTY + 4);
+        let (first, _) = h.start("attacker", client(), 1).unwrap();
+        for n in 1..MAX_PER_PARTY {
+            h.start("attacker", client(), i64::try_from(n).unwrap_or(0)).unwrap();
+        }
+        assert_eq!(h.start("attacker", client(), 99).unwrap_err(), StartError::Party);
+        let (victim, _) = h.start("victim", client(), 100).unwrap();
+        assert_eq!(h.status(&victim.id), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&first.id), Some(PairingStatus::Waiting), "refusing the attacker drops nothing of theirs");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_address_of_unknown_emails_cannot_block_another_or_a_real_pairing() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), MAX_PER_PARTY + 4);
+        for _ in 0..MAX_PER_PARTY {
+            h.start_decoy(client(), "203.0.113.1", 0).unwrap();
+        }
+        assert_eq!(h.start_decoy(client(), "203.0.113.1", 0).unwrap_err(), StartError::Party);
+        let (other, _) = h.start_decoy(client(), "203.0.113.2", 0).unwrap();
+        let (real, _) = h.start("victim", client(), 0).unwrap();
+        assert_eq!(h.status(&other.id), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&real.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_map_gives_a_new_account_the_fullest_accounts_oldest_open_pairing() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), 2);
+        let (oldest, _) = h.start("attacker", client(), 1).unwrap();
+        let (newer, _) = h.start("attacker", client(), 2).unwrap();
+        assert_eq!(h.start("attacker", client(), 3).unwrap_err(), StartError::Busy, "it does not drop its own");
+        assert_eq!(h.status(&oldest.id), Some(PairingStatus::Waiting));
+        let (victim, _) = h.start("victim", client(), 4).unwrap();
+        assert_eq!(h.status(&oldest.id), None, "the account that held the most loses its oldest");
+        assert_eq!(h.status(&newer.id), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&victim.id), Some(PairingStatus::Waiting));
+        // Tied with the victim: the attacker cannot take the slot back.
+        assert_eq!(h.start("attacker", client(), 5).unwrap_err(), StartError::Busy);
+        assert_eq!(h.status(&victim.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_decoy_cannot_push_out_a_real_pairing_and_a_real_pairing_can_push_out_a_decoy() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), 1);
+        let (real, _) = h.start("victim", client(), 0).unwrap();
+        assert_eq!(h.start_decoy(client(), "203.0.113.1", 1).unwrap_err(), StartError::Busy);
+        assert_eq!(h.status(&real.id), Some(PairingStatus::Waiting));
+
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), 1);
+        let (decoy, _) = h.start_decoy(client(), "203.0.113.1", 0).unwrap();
+        let (real, _) = h.start("victim", client(), 1).unwrap();
+        assert_eq!(h.status(&decoy.id), None);
+        assert_eq!(h.status(&real.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_approval_in_progress_is_not_dropped_to_make_room() {
+        let h = PairingHub::with_capacity(Arc::new(ItemSignal::new()), 1);
+        let (req, code) = h.start("attacker", client(), 0).unwrap();
+        h.answer("attacker", &req.id, &approve(code, None)).unwrap();
+        assert_eq!(h.start("victim", client(), 1).unwrap_err(), StartError::Busy);
+        assert_eq!(h.status(&req.id), Some(PairingStatus::Waiting), "still storing the connection");
+    }
+
+    #[test]
+    fn the_cap_key_follows_the_email_and_does_not_contain_it() {
+        assert_eq!(email_cap_key("Ada@Example.com"), email_cap_key("  ada@example.com "));
+        assert_ne!(email_cap_key("ada@example.com"), email_cap_key("bob@example.com"));
+        let key = email_cap_key("ada@example.com");
+        assert_eq!(key.len(), 64, "{key}");
+        assert!(!key.contains("ada"), "{key}");
+    }
+
+    fn fill_email(h: &PairingHub, key: &str, network: &str, user: Option<&str>) -> Vec<PairingId> {
+        let mut ids = Vec::new();
+        for n in 0..MAX_PER_PARTY {
+            let (req, _) = h.start_email(key, network, user, client(), i64::try_from(n).unwrap_or(0)).unwrap();
+            ids.push(req.id);
+        }
+        ids
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_ninth_real_pairing_and_a_ninth_decoy_for_one_email_are_refused_alike() {
+        let h = hub();
+        let key = email_cap_key("ada@example.com");
+        fill_email(&h, &key, "203.0.113.1", Some("user"));
+        assert_eq!(h.start_email(&key, "203.0.113.1", Some("user"), client(), 9).unwrap_err(), StartError::Party);
+        let h = hub();
+        fill_email(&h, &key, "203.0.113.1", None);
+        assert_eq!(h.start_email(&key, "203.0.113.1", None, client(), 9).unwrap_err(), StartError::Party);
+        // Four of each share the one cap.
+        let h = hub();
+        for n in 0..4 {
+            h.start_email(&key, "203.0.113.1", Some("user"), client(), i64::try_from(n).unwrap_or(0)).unwrap();
+            h.start_email(&key, "203.0.113.1", None, client(), i64::try_from(n).unwrap_or(0)).unwrap();
+        }
+        assert_eq!(h.start_email(&key, "203.0.113.1", Some("user"), client(), 9).unwrap_err(), StartError::Party);
+        assert_eq!(h.start_email(&key, "203.0.113.1", None, client(), 9).unwrap_err(), StartError::Party);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_network_is_capped_for_every_email_before_another_network_is() {
+        let h = hub();
+        let key = email_cap_key("ada@example.com");
+        let decoys = fill_email(&h, &key, "203.0.113.1", None);
+        assert!(h.capped_for(&key, "203.0.113.1"));
+        assert!(h.capped_for("any-other-email", "203.0.113.1"), "the network cap does not depend on the email");
+        assert!(!h.capped_for(&key, "198.51.100.2"), "another network can still evict");
+        assert_eq!(h.start_email(&key, "203.0.113.1", Some("user"), client(), 1).unwrap_err(), StartError::Party);
+        let (real, _) = h.start_email(&key, "198.51.100.2", Some("user"), client(), 2).unwrap();
+        assert_eq!(h.status(&decoys[0]), None, "a decoy for this email counts toward the same cap");
+        assert_eq!(h.status(&decoys[1]), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&real.id), Some(PairingStatus::Waiting));
+
+        let h = hub();
+        let decoys = fill_email(&h, &key, "203.0.113.1", None);
+        let (other, _) = h.start_email("other-email", "198.51.100.2", Some("user"), client(), 3).unwrap();
+        assert_eq!(h.status(&decoys[0]), Some(PairingStatus::Waiting), "another email does not spend this cap");
+        assert_eq!(h.status(&other.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_flood_from_one_network_does_not_block_the_owner_on_another() {
+        let h = hub();
+        let key = email_cap_key("ada@example.com");
+        let from_a = fill_email(&h, &key, "203.0.113.1", Some("owner"));
+        assert_eq!(h.start_email(&key, "203.0.113.1", Some("owner"), client(), 20).unwrap_err(), StartError::Party);
+        let (owner, _) = h.start_email(&key, "198.51.100.2", Some("owner"), client(), 21).unwrap();
+        assert_eq!(h.status(&from_a[0]), None, "the oldest open pairing from the flooding network is dropped");
+        assert_eq!(h.status(&from_a[1]), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&owner.id), Some(PairingStatus::Waiting));
+        // The flood still holds more slots than the owner, so it cannot take the owner's slot back.
+        assert_eq!(h.start_email(&key, "203.0.113.1", Some("owner"), client(), 22).unwrap_err(), StartError::Party);
+        assert_eq!(h.status(&owner.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_in_progress_or_finished_pairing_is_not_evicted_for_another_network() {
+        let h = hub();
+        let key = email_cap_key("ada@example.com");
+        let (answering, code) = h.start_email(&key, "203.0.113.1", Some("owner"), client(), 1).unwrap();
+        h.answer("owner", &answering.id, &approve(code, None)).unwrap();
+        let (done, done_code) = h.start_email(&key, "203.0.113.1", Some("owner"), client(), 2).unwrap();
+        h.answer("owner", &done.id, &approve(done_code, None)).unwrap();
+        h.complete(&done.id, "conn-1".into());
+        let mut open = Vec::new();
+        for n in 3..=MAX_PER_PARTY {
+            let (req, _) =
+                h.start_email(&key, "203.0.113.1", Some("owner"), client(), i64::try_from(n).unwrap_or(0)).unwrap();
+            open.push(req.id);
+        }
+        let (owner, _) = h.start_email(&key, "198.51.100.2", Some("owner"), client(), 20).unwrap();
+        assert_eq!(h.status(&answering.id), Some(PairingStatus::Waiting), "answering stays");
+        assert_eq!(
+            h.status(&done.id),
+            Some(PairingStatus::Approved {
+                connection_id: "conn-1".into()
+            })
+        );
+        assert_eq!(h.status(&open[0]), None, "the oldest open, undelivered pairing is the one that goes");
+        assert_eq!(h.status(&open[1]), Some(PairingStatus::Waiting));
+        assert_eq!(h.status(&owner.id), Some(PairingStatus::Waiting));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_network_cannot_evict_pairings_the_phone_already_has() {
+        let h = hub();
+        let key = email_cap_key("ada@example.com");
+        let ids = fill_email(&h, &key, "203.0.113.1", Some("owner"));
+        assert_eq!(h.take_undelivered("owner").len(), MAX_PER_PARTY);
+        assert_eq!(h.start_email(&key, "198.51.100.2", Some("owner"), client(), 20).unwrap_err(), StartError::Party);
+        for id in &ids {
+            assert_eq!(h.status(id), Some(PairingStatus::Waiting));
+        }
     }
 }

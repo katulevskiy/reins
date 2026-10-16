@@ -12,8 +12,10 @@ mod audit_push;
 mod audit_search;
 mod desktop;
 mod grants;
+mod lattice;
 mod mcp;
 mod merge;
+pub mod oplog;
 mod pending;
 mod protected;
 mod snapshot;
@@ -156,7 +158,7 @@ fn drop_tombstone_triggers(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 /// Columns and tables added after the first release, applied once each (`PRAGMA user_version`). A table added to
 /// [`SCHEMA`] needs one here too: a sealed database restored from disk keeps the tables it was written with.
-const MIGRATIONS: [&str; 10] = [
+const MIGRATIONS: [&str; 11] = [
     "
 ALTER TABLE audit ADD COLUMN connection_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit ADD COLUMN service TEXT NOT NULL DEFAULT 'gmail';
@@ -292,6 +294,9 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
     // `command:make deploy`), which covered every later question with that topic. They are now keyed by exactly the
     // file, command or question, on that computer; the old, broader ones are dropped rather than honoured.
     DROP_TOPIC_DESKTOP_GRANTS,
+    // Phone roles' op-log store (`oplog`): records with their versions and tombstones, the proposals, each author's
+    // counter, the applied hash per seq, and where the log stands. This phone's own bookkeeping: never in a snapshot.
+    oplog::SCHEMA,
 ];
 const DROP_TOPIC_DESKTOP_GRANTS: &str = "
 DELETE FROM grants WHERE json_extract(grant_json, '$.scope.action') = 'service'
@@ -874,7 +879,7 @@ pub(crate) mod tests {
         assert_eq!((old[0].at, old[0].connection_label.as_str(), old[0].service.as_str()), (7, "Old", "gmail"));
         assert_eq!(old[0].detail, DETAIL_UNAVAILABLE, "rows from before the details existed have none");
         let version: i64 = store.lock().unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         assert_eq!(store.desktop_key("c1").unwrap(), None, "the desktop keys table exists");
         assert!(store.ap_profiles().unwrap().is_empty(), "the Autopilot tables exist");
         assert_eq!(store.ap_mode_row("").unwrap(), crate::autopilot::modes::ModeRow::default());

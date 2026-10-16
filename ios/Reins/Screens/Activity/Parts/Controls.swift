@@ -266,7 +266,9 @@ struct ListRow: View {
     }
 }
 
-/// A row that highlights while pressed, as list rows do.
+/// A row that highlights while pressed, as list rows do. The press is the Button's own: in a scroll view it shows after
+/// the scroll view's short wait and goes as soon as the touch turns into a scroll. Keep rows Buttons; a gesture of
+/// their own that presses at once (or a DragGesture) would light the row and could keep the list from scrolling.
 struct RowButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

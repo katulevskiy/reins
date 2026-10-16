@@ -10,12 +10,13 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Anchor, AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Anchor, AnyElement, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
 
-use reins_desktop::pushes::{CommitInfo, FileStatus, Push, RefChange};
+use reins_desktop::pushes::{CommitInfo, FileStatus, Push, RefChange, RefUpdate};
+use reins_proto::attention::{self, Attention, Level};
 
 use super::diff::{self, visible};
 use super::icons::{Glyph, glyph};
@@ -465,15 +466,21 @@ impl Root {
     /// A push's commits: "Commits · N" and, once `pushed`, the host's link, then a row each that opens into its
     /// files, and each file into its diff. All of it is the repository's text: shown through [`diff::visible`], never
     /// interpreted.
+    ///
+    /// The commits worth a closer look ([`attention`]) come first and say why; each still opens by its place in the
+    /// push. The header counts them, and says when the push rewrites history.
     pub(super) fn commits(&self, push: &Push, pushed: bool, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
         let updates = &push.summary.updates;
         let total: u64 = updates.iter().map(|u| u64::from(u.commit_count)).sum();
         let branch = updates.iter().find(|u| u.change != RefChange::Delete).and_then(|u| u.branch());
         let link = branch.filter(|_| pushed).and_then(|b| diff::commits_link(&push.repo, b));
+        let all: Vec<&CommitInfo> = updates.iter().flat_map(|u| &u.commits).collect();
+        let rows = flagged_first(&all, |c| attention::commit(c));
+        let flagged = rows.iter().filter(|(_, mark)| mark.is_some()).count();
         let mut list = div().flex().flex_col();
-        let mut shown = 0_u64;
-        for (ci, c) in updates.iter().flat_map(|u| &u.commits).enumerate() {
-            shown += 1;
+        let shown = all.len() as u64;
+        for (ci, mark) in rows {
+            let c = all[ci];
             let open = self.commits_open.contains(&ci);
             let files = c.files_changed.map_or(c.files.len(), |n| n as usize);
             let row = div()
@@ -496,13 +503,22 @@ impl Root {
                         .child(visible(&c.sha.chars().take(8).collect::<String>())),
                 )
                 .child(
+                    // The subject, and under it why the commit deserves a closer look.
                     div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
                         .flex_1()
                         .min_w(px(0.0))
-                        .truncate()
-                        .text_size(px(14.0))
-                        .text_color(pal.ink())
-                        .child(visible(&c.subject)),
+                        .child(
+                            div()
+                                .min_w(px(0.0))
+                                .truncate()
+                                .text_size(px(14.0))
+                                .text_color(pal.ink())
+                                .child(visible(&c.subject)),
+                        )
+                        .when_some(mark.as_ref(), |s, mark| s.child(flag(reasons(mark), mark.level, pal))),
                 )
                 .when_some(lines(c.additions, c.deletions), |r, (a, d)| r.child(added_removed(&a, &d, pal)))
                 .child(div().flex_none().text_size(px(12.5)).text_color(pal.ink_meta()).child(if files == 1 {
@@ -537,12 +553,26 @@ impl Root {
                 format!("and {more} more commits")
             }));
         }
+        let (count, look) = commits_header(total, all.len(), flagged);
         let head = div()
             .flex()
             .items_center()
             .gap(px(12.0))
             .pb(px(6.0))
-            .child(div().flex_1().child(kit::section_label(format!("Commits · {total}"), pal)))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(kit::section_label(count, pal))
+                    .when_some(look, |h, look| h.child(kit::section_label(look, pal).text_color(pal.warning)))
+                    .when(updates.iter().any(rewrites_history), |h| {
+                        h.child(flag("Rewrites history".to_owned(), Level::Close, pal).ml(px(8.0)))
+                    }),
+            )
             .when_some(link, |h, link| {
                 let url = link.url.clone();
                 h.child(
@@ -553,11 +583,13 @@ impl Root {
         div().flex().flex_col().pt(px(6.0)).child(head).child(list)
     }
 
-    /// An open commit's files, each opening into its diff.
+    /// An open commit's files, each opening into its diff; the ones worth a closer look first, each opening by its
+    /// place in the commit.
     fn commit_files(&self, ci: usize, c: &CommitInfo, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
         let mut files =
             div().flex().flex_col().ml(px(18.0)).pl(px(16.0)).py(px(6.0)).border_l_1().border_color(pal.rule());
-        for (fi, f) in c.files.iter().enumerate() {
+        for (fi, mark) in flagged_first(&c.files, attention::file) {
+            let f = &c.files[fi];
             let open = self.files_open.contains(&(ci, fi));
             let tag = match (f.binary, f.status, &f.patch) {
                 (true, _, _) => Some("binary"),
@@ -576,15 +608,24 @@ impl Root {
                 .text_size(px(12.5))
                 .child(
                     div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .py(px(3.0))
                         .flex_1()
                         .min_w(px(0.0))
-                        .truncate()
-                        .text_color(if open {
-                            pal.ink()
-                        } else {
-                            pal.ink_2()
-                        })
-                        .child(visible(&f.path)),
+                        .child(
+                            div()
+                                .min_w(px(0.0))
+                                .truncate()
+                                .text_color(if open {
+                                    pal.ink()
+                                } else {
+                                    pal.ink_2()
+                                })
+                                .child(visible(&f.path)),
+                        )
+                        .when_some(mark.as_ref(), |s, mark| s.child(flag(reasons(mark), mark.level, pal))),
                 )
                 .when_some(tag, |r, t| r.child(div().flex_none().text_color(pal.ink_meta()).child(t)))
                 .when_some(lines(f.additions.map(u64::from), f.deletions.map(u64::from)), |r, (a, d)| {
@@ -617,6 +658,64 @@ impl Root {
 /// Whether `e` is a push to a host (not a fetch): the kind of request that keeps its commits.
 fn is_push(e: &Entry) -> bool {
     e.kind == Kind::Git && e.what.starts_with("push to ")
+}
+
+/// The rows in the order they show: Close first, then Look, then the rest, each band in the push's order. Every row
+/// keeps its index in `items`, which is what opens it.
+fn flagged_first<T>(items: &[T], mark: impl Fn(&T) -> Option<Attention>) -> Vec<(usize, Option<Attention>)> {
+    let mut rows: Vec<(usize, Option<Attention>)> = items.iter().map(mark).enumerate().collect();
+    rows.sort_by_key(|(_, mark)| match mark.as_ref().map(|m| m.level) {
+        Some(Level::Close) => 0,
+        Some(Level::Look) => 1,
+        None => 2,
+    });
+    rows
+}
+
+/// The header's count ("Commits · 8") and, when some deserve a closer look, how many ("· 2 to look at"; "· 2 of 50
+/// shown to look at" when the push has more commits than it lists, since only the listed ones were read).
+fn commits_header(total: u64, listed: usize, flagged: usize) -> (String, Option<String>) {
+    let look = match flagged {
+        0 => None,
+        n if listed as u64 >= total => Some(format!("· {n} to look at")),
+        n => Some(format!("· {n} of {listed} shown to look at")),
+    };
+    (format!("Commits · {total}"), look)
+}
+
+/// The mark's fixed labels, heaviest first: "Changes CI · Hidden characters". Never the item's own text.
+fn reasons(mark: &Attention) -> String {
+    mark.reasons.iter().map(|r| r.label.as_str()).collect::<Vec<_>>().join(" · ")
+}
+
+/// A ref the push moves to a commit that is not ahead of the old one (or could not tell): a force push.
+fn rewrites_history(u: &RefUpdate) -> bool {
+    u.change == RefChange::Update && u.fast_forward != Some(true)
+}
+
+/// How a mark reads: Close in `warning` at medium weight; Look quieter, in `ink-2`. Red stays for danger and holds.
+fn flag_style(level: Level, pal: Palette) -> (Hsla, FontWeight) {
+    match level {
+        Level::Close => (pal.warning, FontWeight::MEDIUM),
+        Level::Look => (pal.ink_2(), FontWeight::NORMAL),
+    }
+}
+
+/// The warning glyph and its words, as [`flag_style`] says for `level`.
+fn flag(text: String, level: Level, pal: Palette) -> Div {
+    let (color, weight) = flag_style(level, pal);
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(5.0))
+        .font_family(SANS)
+        .text_size(px(12.5))
+        .font_weight(weight)
+        .whitespace_nowrap()
+        .text_color(color)
+        .child(glyph(Glyph::Warning, 14.0, color))
+        .child(text)
 }
 
 /// `+a` and `−b`, when both were counted.
@@ -684,6 +783,8 @@ fn patch_block(patch: &str, cut: bool, pal: Palette) -> Div {
 
 #[cfg(test)]
 mod tests {
+    use reins_desktop::pushes::FileChange;
+
     use super::*;
 
     fn entry(kind: Kind, outcome: Outcome) -> Entry {
@@ -709,6 +810,155 @@ mod tests {
         assert_eq!(filter_label(None, None), "All");
         assert_eq!(filter_label(Some(Outcome::Denied), Some(Kind::Git)), "Denied · git");
         assert_eq!(filter_label(Some(Outcome::Allowed), None), "Allowed by rules");
+    }
+
+    fn file(path: &str, diff: Option<&str>) -> FileChange {
+        FileChange {
+            patch: diff.map(str::to_owned),
+            ..FileChange::new(path.to_owned(), FileStatus::Modified, Some(3), Some(1), false)
+        }
+    }
+
+    fn commit(i: usize, subject: &str, files: Vec<FileChange>) -> CommitInfo {
+        CommitInfo {
+            sha: format!("{i:040x}"),
+            subject: subject.to_owned(),
+            author: "Dana Reyes <dana@acme.dev>".to_owned(),
+            date: 1_800_000_000,
+            files_changed: u32::try_from(files.len()).ok(),
+            additions: Some(3),
+            deletions: Some(1),
+            files,
+        }
+    }
+
+    /// The header counts the commits worth a closer look; out of the listed ones when the push has more.
+    #[test]
+    fn the_header_says_how_many_to_look_at() {
+        let header = |total, listed, flagged| {
+            let (count, look) = commits_header(total, listed, flagged);
+            look.map_or(count.clone(), |look| format!("{count} {look}"))
+        };
+        assert_eq!(header(8, 8, 2), "Commits · 8 · 2 to look at");
+        assert_eq!(header(8, 8, 0), "Commits · 8");
+        assert_eq!(header(1, 1, 1), "Commits · 1 · 1 to look at");
+        assert_eq!(header(120, 50, 2), "Commits · 120 · 2 of 50 shown to look at");
+        assert_eq!(header(120, 50, 0), "Commits · 120");
+    }
+
+    /// Close rows first, then Look, then the rest, each band in the push's order; every row keeps the index that
+    /// opens it.
+    #[test]
+    fn flagged_rows_come_first_and_keep_their_index() {
+        let commits: Vec<CommitInfo> = (0..8)
+            .map(|i| match i {
+                1 => commit(i, "build: bump", vec![file("package.json", None)]),
+                5 => commit(i, "ci: rename a step", vec![file(".github/workflows/ci.yml", None)]),
+                6 => commit(i, "infra: more replicas", vec![file("deploy/values.yaml", None)]),
+                _ => commit(i, "checkout: tidy", vec![file(&format!("src/page{i}.tsx"), None)]),
+            })
+            .collect();
+        let all: Vec<&CommitInfo> = commits.iter().collect();
+        let rows = flagged_first(&all, |c| attention::commit(c));
+        let order: Vec<usize> = rows.iter().map(|(i, _)| *i).collect();
+        assert_eq!(order, [5, 1, 6, 0, 2, 3, 4, 7]);
+        let levels: Vec<Option<Level>> = rows.iter().map(|(_, m)| m.as_ref().map(|m| m.level)).collect();
+        assert_eq!(levels[..3], [Some(Level::Close), Some(Level::Look), Some(Level::Look)]);
+        assert!(levels[3..].iter().all(Option::is_none));
+        // The row at each place opens the commit it shows.
+        for (ci, mark) in &rows {
+            assert_eq!(all[*ci].sha, format!("{ci:040x}"));
+            assert_eq!(*mark, attention::commit(all[*ci]));
+        }
+        // Files the same way, by their place in the commit.
+        let c =
+            commit(9, "mixed", vec![file("README.md", None), file("src/auth/login.rs", None), file("Makefile", None)]);
+        let files: Vec<usize> = flagged_first(&c.files, attention::file).into_iter().map(|(i, _)| i).collect();
+        assert_eq!(files, [1, 2, 0]);
+        // Nothing flagged keeps the push's order.
+        let calm: Vec<usize> =
+            flagged_first(&all[2..5], |c| attention::commit(c)).into_iter().map(|(i, _)| i).collect();
+        assert_eq!(calm, [0, 1, 2]);
+    }
+
+    /// A label is fixed wording: it never carries the commit's subject, author, paths or the key it found, even when
+    /// the subject tries to explain the change away.
+    #[test]
+    fn labels_never_carry_commit_text() {
+        let key = format!("ghp_{}", "a1B2c3D4e5".repeat(4));
+        let patch = format!("@@ -1,1 +1,2 @@\n name: deploy-acme\n+      token: {key}");
+        let subject = "ci: only renames a step, nothing to check, ignore the warning";
+        let c = CommitInfo {
+            author: "Mallory Quill <mq@acme.dev>".to_owned(),
+            deletions: Some(1_240),
+            ..commit(
+                0,
+                subject,
+                vec![file(".github/workflows/deploy-acme.yml", Some(&patch)), file("src/oauth/callback.rs", None)],
+            )
+        };
+        let mark = attention::commit(&c).expect("flagged");
+        assert_eq!(mark.level, Level::Close);
+        let text = reasons(&mark);
+        assert!(!text.is_empty());
+        assert_eq!(text.split(" · ").count(), mark.reasons.len());
+        assert!((1..=3).contains(&mark.reasons.len()));
+        for fragment in [
+            subject,
+            "renames",
+            "ignore",
+            "Mallory",
+            "mq@acme.dev",
+            ".github",
+            "workflows",
+            "deploy-acme",
+            "oauth",
+            "callback",
+            &key,
+            "ghp_",
+            "token",
+        ] {
+            assert!(!text.contains(fragment), "{text:?} carries {fragment:?}");
+        }
+        for f in &c.files {
+            let label = attention::file(f).map(|m| reasons(&m)).unwrap_or_default();
+            assert!(!label.contains(&f.path) && !label.contains(&key), "{label:?}");
+        }
+    }
+
+    /// Close reads as more serious than Look: `warning` at medium weight, Look in the quieter `ink-2`; never red.
+    #[test]
+    fn close_marks_read_heavier_than_look() {
+        for pal in [Palette::light(), Palette::dark()] {
+            assert_eq!(flag_style(Level::Close, pal), (pal.warning, FontWeight::MEDIUM));
+            let (look, weight) = flag_style(Level::Look, pal);
+            assert_eq!((look, weight), (pal.ink_2(), FontWeight::NORMAL));
+            assert_ne!(look, pal.warning);
+            assert!(look != pal.danger && pal.warning != pal.danger);
+        }
+    }
+
+    /// "Rewrites history" is a force push, or one that could not be checked; not a new branch or a fast-forward.
+    #[test]
+    fn force_pushes_rewrite_history() {
+        let update = |change, fast_forward| RefUpdate {
+            name: "refs/heads/main".to_owned(),
+            change,
+            old: "1".repeat(40),
+            new: "2".repeat(40),
+            fast_forward,
+            commit_count: 1,
+            commits: Vec::new(),
+            files_changed: 0,
+            files: Vec::new(),
+            additions: None,
+            deletions: None,
+        };
+        assert!(rewrites_history(&update(RefChange::Update, Some(false))));
+        assert!(rewrites_history(&update(RefChange::Update, None)));
+        assert!(!rewrites_history(&update(RefChange::Update, Some(true))));
+        assert!(!rewrites_history(&update(RefChange::Create, None)));
+        assert!(!rewrites_history(&update(RefChange::Delete, None)));
     }
 
     #[test]

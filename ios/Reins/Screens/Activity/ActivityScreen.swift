@@ -156,6 +156,7 @@ struct ActivityScreen: View {
         .onChange(of: atTop) { markSeenSoon() }
         .animation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion), value: searching)
         .pageBackground()
+        .statusBarBackdrop()
         .foldOverlay(model.fold)
         .signalMenuHost()
         .rootNavigationBar()
@@ -506,7 +507,10 @@ struct ActivityScreen: View {
     private func row(
         _ entry: ActivityEntry, selected: Bool, now: Int64, terms: [String] = [], snippet: ActivitySnippet? = nil, tracksSeen: Bool = true
     ) -> some View {
+        // A Button, so its press shows only after the scroll view's short wait and goes when the touch scrolls.
         Button {
+            // The finger that swiped the row to "This was wrong" lifts on it: that is not a tap.
+            guard !SidewaysPan.swiping else { return }
             model.show(.activityDetail(entry.id), in: .activity)
             feedback.defaultTap()
         } label: {
@@ -693,5 +697,23 @@ struct SyncNoticeRow: View {
         .padding(.horizontal, 24)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("syncNoticeBanner")
+    }
+}
+
+extension View {
+    /// Paper behind the status bar, fading into the page: rows scroll on beneath it and never run under the clock.
+    /// For a root page without a navigation bar whose content is a plain scroll view (a list brings its own).
+    func statusBarBackdrop() -> some View {
+        overlay(alignment: .top) {
+            VStack(spacing: 0) {
+                Palette.paper
+                    .ignoresSafeArea(edges: .top)
+                    .frame(height: 0)
+                LinearGradient(colors: [Palette.paper, Palette.paper.opacity(0)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 10)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
     }
 }

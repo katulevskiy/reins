@@ -293,11 +293,6 @@ fn grant_of(columns: &[String], row: &Row) -> Option<Grant> {
         _ => None,
     }
 }
-/// The earliest of some limits, where `None` is no limit.
-fn tightest<T: Ord + Copy>(limits: impl IntoIterator<Item = Option<T>>) -> Option<T> {
-    limits.into_iter().flatten().min()
-}
-
 /// Every version of one grant (the base's too): the merge is never more permissive than any of them, whatever the
 /// clocks say. Revoked in any version: revoked. A scope, account or connection that differs between versions:
 /// revoked (neither can be shown to be the narrower). Otherwise the earliest expiry, the smallest use limit, and every
@@ -311,22 +306,7 @@ fn merge_grant(columns: &[String], base: Option<&Row>, local: &Row, server: &Row
         Some(row) => Some(grant_of(columns, row)?),
         None => None,
     };
-    let all: Vec<&Grant> = [Some(&l), Some(&s), b.as_ref()].into_iter().flatten().collect();
-    let mut merged = s.clone();
-    merged.revoked = all.iter().any(|g| g.revoked)
-        || all.iter().any(|g| {
-            g.id != s.id || g.connection_id != s.connection_id || g.scope != s.scope || g.account != s.account
-        });
-    merged.expires_at = tightest(all.iter().map(|g| g.expires_at));
-    merged.max_uses = tightest(all.iter().map(|g| g.max_uses));
-    let base_uses = b.as_ref().map_or(0, |b| b.uses);
-    // Uses each phone counted since the base add up (with no base, the larger count).
-    let added = if b.is_some() {
-        l.uses.saturating_add(s.uses).saturating_sub(base_uses)
-    } else {
-        l.uses.max(s.uses)
-    };
-    merged.uses = added.max(l.uses).max(s.uses).max(base_uses);
+    let merged = super::lattice::join_grants(&s, &l, b.as_ref());
     let mut row = server.clone();
     set_cell(columns, &mut row, "grant_json", Cell::Text(serde_json::to_string(&merged).ok()?));
     let used = [local, server]
@@ -349,18 +329,12 @@ fn merge_grant(columns: &[String], base: Option<&Row>, local: &Row, server: &Row
     Some(row)
 }
 
-/// How much a mode lets through without asking: lower is more restrictive. No mode is the default (manual).
+/// How much a mode lets through without asking ([`super::lattice::permissiveness`]).
 fn permissiveness(mode: Option<&Cell>) -> u8 {
-    match mode {
-        Some(Cell::Text(m)) => match m.as_str() {
-            "lockdown" => 0,
-            "auto" => 2,
-            "overnight" => 3,
-            "bypass" => 4,
-            _ => 1,
-        },
-        _ => 1,
-    }
+    super::lattice::permissiveness(match mode {
+        Some(Cell::Text(m)) => Some(m.as_str()),
+        _ => None,
+    })
 }
 
 /// Autopilot's mode for one scope. Changed on one side only: that side's (a lockdown cleared or a bypass stopped on one
@@ -390,22 +364,11 @@ fn setting_versions(columns: &[String], v: &Versions<'_>) -> Option<Row> {
     } else {
         s.clone()
     };
-    let until: Vec<Option<&Cell>> = [l, s].iter().map(|r| cell(columns, r, "bypass_until")).collect();
-    let ends = if until.iter().any(|c| !matches!(c, Some(Cell::Integer(_)))) {
-        Cell::Null
-    } else {
-        until
-            .iter()
-            .filter_map(|c| {
-                if let Some(Cell::Integer(t)) = c {
-                    Some(*t)
-                } else {
-                    None
-                }
-            })
-            .min()
-            .map_or(Cell::Null, Cell::Integer)
+    let until = |r: &Row| match cell(columns, r, "bypass_until") {
+        Some(Cell::Integer(t)) => Some(*t),
+        _ => None,
     };
+    let ends = super::lattice::join_bypass_until(until(l), until(s)).map_or(Cell::Null, Cell::Integer);
     set_cell(columns, &mut row, "bypass_until", ends);
     let at = [l, s]
         .iter()
@@ -431,47 +394,11 @@ fn merge_meta(columns: &[String], base: Option<&Row>, local: &Row, server: &Row)
         Some(Cell::Text(t)) => serde_json::from_str::<Json>(t).ok(),
         _ => None,
     };
-    let restrictive_true = matches!(cell(columns, server, "key"), Some(Cell::Text(k)) if k == "app.secrets.always-ask");
+    let asking_wins =
+        matches!(cell(columns, server, "key"), Some(Cell::Text(k)) if k == super::lattice::ALWAYS_ASK_KEY);
     let (b, l, s) = (json(base), json(Some(local)), json(Some(server)));
     let merged = match (l, s) {
-        (Some(Json::Object(l)), Some(Json::Object(s))) => {
-            let b = match b {
-                Some(Json::Object(b)) => b,
-                _ => serde_json::Map::new(),
-            };
-            let mut out = serde_json::Map::new();
-            let keys: BTreeSet<&String> = l.keys().chain(s.keys()).collect();
-            for k in keys {
-                let (bv, lv, sv) = (b.get(k), l.get(k), s.get(k));
-                // Changed on one side: that side's; on both (or deleted on one): the server's.
-                let asks = restrictive_true && (lv == Some(&Json::Bool(true)) || sv == Some(&Json::Bool(true)));
-                let v = if asks {
-                    Some(&Json::Bool(true))
-                } else if lv == sv || bv == sv {
-                    lv
-                } else {
-                    sv
-                };
-                if let Some(v) = v {
-                    out.insert(k.clone(), v.clone());
-                }
-            }
-            Some(Json::Object(out))
-        }
-        (Some(Json::Array(l)), Some(Json::Array(s))) => {
-            let item_id = |v: &Json| v.get("id").and_then(Json::as_str).map_or_else(|| v.to_string(), str::to_owned);
-            let ids = |items: &[Json]| items.iter().map(item_id).collect::<BTreeSet<_>>();
-            let b = match b {
-                Some(Json::Array(b)) => ids(&b),
-                _ => BTreeSet::new(),
-            };
-            let (here, there) = (ids(&l), ids(&s));
-            // The server's items but those this phone deleted, then the ones this phone added.
-            let mut out: Vec<Json> =
-                s.into_iter().filter(|v| !b.contains(&item_id(v)) || here.contains(&item_id(v))).collect();
-            out.extend(l.into_iter().filter(|v| !there.contains(&item_id(v)) && !b.contains(&item_id(v))));
-            Some(Json::Array(out))
-        }
+        (Some(l), Some(s)) => super::lattice::merge_json(b.as_ref(), &l, &s, asking_wins),
         _ => None,
     };
     let mut row = server.clone();

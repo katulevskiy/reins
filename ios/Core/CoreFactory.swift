@@ -60,6 +60,7 @@ extension Error {
             case let .Storage(reason): return "Storage problem: \(reason)"
             case .OtherApprovalDevice:
                 return "This account already has a phone for approvals. Approve this phone from it, or enter your recovery code."
+            case .ViewerOnly: return "Decisions are made on the primary phone."
             }
         case let e as ForeignError:
             switch e {

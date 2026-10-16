@@ -8,15 +8,18 @@
 //! - an AI connection: requests to `/mcp` and the desktop API per minute, calls waiting for the phone at once;
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
 //!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
-//!   phone, wrong proofs sent to take its approval role;
+//!   phone (at most [`super::pairing::MAX_PER_PARTY`] open per email, shared with decoys for that email, and the same
+//!   number per client network), wrong proofs sent to take its approval role;
 //! - a device: concurrent `GET /pending` and `GET /sync` long-polls;
 //! - a phone of an account with phone roles (key: account and device): op uploads per minute, proposals per hour;
 //! - an account with phone roles: roster changes per hour, ops and bytes its log holds (`REINS_ACCOUNT_LOG_*`);
-//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer), "add
-//!   another phone" join requests (with at most [`super::join::MAX_PER_USER`] open per account).
+//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer, at most
+//!   [`super::device_flow::MAX_PER_ADDRESS`] open), "add another phone" join requests (with at most
+//!   [`super::join::MAX_PER_USER`] open per account). Pairing decoys share the email's cap and the per-network cap
+//!   ([`super::pairing::MAX_PER_PARTY`]). The address is [`client_network`].
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
     net::IpAddr,
     num::NonZeroU32,
@@ -201,6 +204,19 @@ impl<K: Hash + Eq + Clone> FailureLimit<K> {
     }
 }
 
+/// The address a limit sees: the IPv4 address, or the /64 of an IPv6 address (one host usually holds a whole /64, so
+/// single addresses in it would each get their own quota). IPv4-mapped IPv6 is the IPv4 address.
+pub fn client_network(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(std::net::Ipv6Addr::from(octets))
+        }
+        v4 @ IpAddr::V4(_) => v4,
+    }
+}
+
 /// Whole seconds to wait, rounded up, at least 1 (what error messages and `Retry-After` show).
 pub fn retry_secs(wait: Duration) -> u64 {
     (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1)
@@ -261,6 +277,19 @@ pub static DEVICE_PROOFS: LazyLock<FailureLimit<String>> = LazyLock::new(|| {
         Duration::from_secs(CONFIG.reins_device_proof_window_seconds()),
     )
 });
+
+/// Wrong recovery proofs (the recovery wrap, a recovery) from one device (key: `<user id>/<device id>`). Each also counts
+/// against [`DEVICE_PROOFS`], the account's limit.
+pub static DEVICE_PROOFS_PER_DEVICE: LazyLock<FailureLimit<String>> = LazyLock::new(|| {
+    FailureLimit::new(
+        CONFIG.reins_device_proof_max_failures_per_device(),
+        Duration::from_secs(CONFIG.reins_device_proof_window_seconds()),
+    )
+});
+
+/// Devices (`<user id>/<device id>`) that sent a right recovery proof before: they keep their own tries when other
+/// devices used up the account's limit, so a flood from new device ids never locks the owner out.
+pub static PROVEN_DEVICES: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Mutex::default);
 
 /// Outbound requests (file sends and fetches, proxied MCP calls) made for one account (key: user id).
 pub static OUTBOUND_REQUESTS: LazyLock<RateLimit<String>> =

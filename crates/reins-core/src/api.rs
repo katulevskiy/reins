@@ -16,6 +16,9 @@ use crate::autopilot::{
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
+use crate::roles::{
+    EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview, RosterSummary,
+};
 use crate::types::{
     AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, DeviceView,
     EmailContent, GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, SecretsRevoked,
@@ -234,6 +237,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.restore_account_sync_backup();
             runtime.finish(&engine, result)
         })
@@ -305,6 +309,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let list = engine.run_account(engine.add_vault_passkey(&credential_id, &prf, &name)).await?;
             runtime.check_engine(&engine)?;
             Ok(list)
@@ -317,6 +322,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let list = engine.run_account(engine.remove_vault_passkey(&credential_id)).await?;
             runtime.check_engine(&engine)?;
             Ok(list)
@@ -416,8 +422,245 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.answer_join(&id, approve).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    // ---- phone roles: one primary decides, viewers watch ----------------------------------------------------------
+
+    /// What this phone is on the signed-in account: `Legacy` while the account has no roster (or this phone is not in
+    /// it), else `Primary`, `Viewer` or `Removed`. From what this phone verified last; no network.
+    pub async fn phone_role(&self) -> Result<PhoneRole, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.phone_role()).await
+        })
+        .await
+    }
+
+    /// The account's phones as this phone verified them (`refresh`: fetched and verified again first). `None` on a
+    /// legacy account.
+    pub async fn roster_summary(&self, refresh: bool) -> Result<Option<RosterSummary>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.roster_summary(refresh)).await
+        })
+        .await
+    }
+
+    /// On the approval device: turns phone roles on for the account, with this phone as primary (`device_name`, e.g.
+    /// "iPhone"). `code_or_password`: only for an account made with a master password (this phone keeps no recovery
+    /// code to seal the recovery wrap with). Ask whether the recovery code is saved first.
+    pub async fn roster_create(
+        &self,
+        device_name: String,
+        code_or_password: Option<String>,
+    ) -> Result<RosterSummary, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let typed = code_or_password.map(Zeroizing::new);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.roster_create(&device_name, typed)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On a phone that should view the account: asks its primary to enroll it. Then call `enroll_poll` every few
+    /// seconds; it shows the code to compare once the primary answered.
+    pub async fn enroll_begin(&self, device_name: String) -> Result<EnrollStart, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.enroll_begin(&device_name)).await
+        })
+        .await
+    }
+
+    /// Where this phone's enrollment stands: `Compare` shows the six digits; `Enrolled` once it views the account
+    /// (with the vault open when the account has a recovery code). `NotFound` when none is open.
+    pub async fn enroll_poll(&self) -> Result<EnrollProgress, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let progress = engine.run_account(engine.enroll_poll()).await?;
+            runtime.check_engine(&engine)?;
+            if progress == EnrollProgress::Enrolled {
+                // The vault opens when the answer carried the account secret (an account with a master password signs
+                // in with it instead).
+                match runtime.activate_unlocked().await {
+                    Ok(()) | Err(CoreError::NotLoggedIn) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(progress)
+        })
+        .await
+    }
+
+    pub async fn enroll_cancel(&self) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.enroll_cancel()).await
+        })
+        .await
+    }
+
+    /// On the primary: a phone asking to view the account (a parked `Join` item). The first call answers it with this
+    /// phone's challenge; call again until `code` is there, then show it next to the other phone's.
+    pub async fn enroll_view(&self, id: String) -> Result<EnrollView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.enroll_view(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the primary, after the user compared the codes (and biometrics): enrolls the phone as a viewer, or declines.
+    pub async fn enroll_confirm(&self, id: String, approve: bool) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.enroll_confirm(&id, approve)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On a viewer: "Decide on this phone". Returns the request's id; follow with `handover_poll`.
+    pub async fn handover_request(&self) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.handover_request()).await
+        })
+        .await
+    }
+
+    /// Where this phone's handover request stands; `Done` once it is the primary (it verified and kept the keys the
+    /// old primary sealed to it). `NotFound` when none is open.
+    pub async fn handover_poll(&self) -> Result<HandoverProgress, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.handover_poll()).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the primary: the viewers asking to decide, each verified (signed by that viewer's roster key) and named as
+    /// the roster names it.
+    pub async fn handover_requests(&self) -> Result<Vec<HandoverView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.handover_requests()).await
+        })
+        .await
+    }
+
+    /// On the primary, after biometrics: makes the viewer that asked (`id`) the primary. `device_id` is the phone the
+    /// user saw in `handover_requests` (the request must be from it). This phone becomes a viewer.
+    pub async fn handover_approve(&self, id: String, device_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.handover_approve(&id, &device_id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    pub async fn handover_deny(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.handover_deny(&id)).await
+        })
+        .await
+    }
+
+    /// "<primary> lost? Use the recovery code", step 1: what the recovery would make of the account's phones (this
+    /// phone primary, the viewers kept, the primary removed). Show it; the user confirms before `roster_recover`.
+    pub async fn roster_recover_preview(&self, code_or_password: String) -> Result<RecoveryPreview, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let typed = Zeroizing::new(code_or_password);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.roster_recover_preview(typed)).await
+        })
+        .await
+    }
+
+    /// Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
+    /// becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
+    /// phones changed since, nothing is signed.
+    pub async fn roster_recover(
+        &self,
+        code_or_password: String,
+        device_name: String,
+        tip: String,
+    ) -> Result<RosterSummary, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let typed = Zeroizing::new(code_or_password);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let summary = engine.run_account(engine.roster_recover(typed, &device_name, &tip)).await?;
+            runtime.check_engine(&engine)?;
+            match runtime.activate_unlocked().await {
+                Ok(()) | Err(CoreError::NotLoggedIn) => {}
+                Err(e) => return Err(e),
+            }
+            Ok(summary)
+        })
+        .await
+    }
+
+    /// On the primary: takes a viewer off the account (it reads nothing written from now on).
+    pub async fn roster_remove_member(&self, device_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.roster_remove_member(&device_id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the primary, after the account's master password changed: seals the recovery wrap again for it.
+    pub async fn roster_rewrap(&self, new_password: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let typed = Zeroizing::new(new_password);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.roster_rewrap(typed)).await;
             runtime.finish(&engine, result)
         })
         .await
@@ -588,6 +831,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.approve(&request_id, choice).await }).await;
             runtime.finish(&engine, result)
@@ -602,6 +846,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.approve_quick(&request_id).await }).await;
             runtime.finish(&engine, result)
@@ -628,6 +873,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.set_starting_policy(policy);
             runtime.finish(&engine, result)
@@ -640,6 +886,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.deny(&request_id).await }).await;
             runtime.finish(&engine, result)
@@ -685,6 +932,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine
                 .run_account(async { engine.answer_pairing(&pairing_id, approve, chosen_code, label).await })
@@ -735,6 +983,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.revoke_connection(&connection_id).await }).await;
             runtime.finish(&engine, result)
@@ -763,6 +1012,7 @@ impl ReinsCore {
         let typed = Zeroizing::new(code_or_password);
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.sign_out_device(&device_id, typed).await }).await;
             runtime.finish(&engine, result)
@@ -812,6 +1062,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.vault_create(&input).await }).await;
             runtime.finish(&engine, result)
         })
@@ -824,6 +1075,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.vault_update(&id, &input).await }).await;
             runtime.finish(&engine, result)
         })
@@ -836,6 +1088,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.vault_delete(&id).await }).await;
             runtime.finish(&engine, result)
         })
@@ -848,6 +1101,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.vault_generate_ssh_key(&name).await }).await;
             runtime.finish(&engine, result)
         })
@@ -878,6 +1132,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             let result = engine.run_account(async { engine.set_secrets_always_ask(&project, &env, always) }).await;
             runtime.finish(&engine, result)
         })
@@ -895,6 +1150,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine
                 .run_account(async { engine.revoke_secrets_everywhere(project.as_deref(), env.as_deref()).await })
@@ -910,6 +1166,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_connection_icon(&connection_id, icon) }).await;
             runtime.finish(&engine, result)
@@ -929,6 +1186,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.set_connection_blobatar(&connection_id, shape, colour) }).await;
@@ -946,6 +1204,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.shuffle_connection_blobatar(&connection_id) }).await;
             runtime.finish(&engine, result)
@@ -965,6 +1224,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.create_grant(&connection_id, &account, kind, standing).await }).await;
@@ -979,6 +1239,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.resume_grant(&grant_id, duration_secs) }).await;
             runtime.finish(&engine, result)
@@ -992,6 +1253,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.extend_grant(&grant_id, duration_secs) }).await;
             runtime.finish(&engine, result)
@@ -1005,6 +1267,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.resume_grant_edited(&grant_id, &standing) }).await;
             runtime.finish(&engine, result)
@@ -1057,6 +1320,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_account(&hint).await }).await;
             runtime.finish(&engine, result)
@@ -1070,6 +1334,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.remove_account(&account).await }).await;
             runtime.finish(&engine, result)
@@ -1104,6 +1369,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_service_account(&service, &hint).await }).await;
             runtime.finish(&engine, result)
@@ -1118,6 +1384,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.add_token_account(&service, &token).await }).await;
             runtime.finish(&engine, result)
@@ -1131,6 +1398,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_begin(&service, &phone).await }).await;
             runtime.finish(&engine, result)
@@ -1144,6 +1412,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_code(&service, &code).await }).await;
             runtime.finish(&engine, result)
@@ -1158,6 +1427,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.login_password(&service, &password).await }).await;
             runtime.finish(&engine, result)
@@ -1171,6 +1441,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.remove_service_account(&service, &account).await }).await;
             runtime.finish(&engine, result)
@@ -1273,6 +1544,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.answer_blob(&id, approve).await }).await;
             runtime.finish(&engine, result)
@@ -1315,6 +1587,10 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            // Lockdown and stopping a running bypass are the brake: any member may pull it (Q2).
+            if !engine.is_brake(connection_id.as_deref(), mode)? {
+                engine.require_decider()?;
+            }
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.set_autopilot_mode(connection_id, mode, minutes).await }).await;
@@ -1332,6 +1608,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.start_bypass(connection_id, minutes).await }).await;
             runtime.finish(&engine, result)
@@ -1357,6 +1634,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine
                 .run_account(async { engine.start_overnight(connection_id, minutes, owner.as_ref()).await })
@@ -1377,6 +1655,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result =
                 engine.run_account(async { engine.set_overnight_when_risky(risky, owner.as_ref()).await }).await;
@@ -1429,6 +1708,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.create_profile(&name, icon) }).await;
             runtime.finish(&engine, result)
@@ -1446,6 +1726,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.rename_profile(&profile_id, &name, icon) }).await;
             runtime.finish(&engine, result)
@@ -1459,6 +1740,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.delete_profile(&profile_id) }).await;
             runtime.finish(&engine, result)
@@ -1472,6 +1754,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.reset_profile(&profile_id) }).await;
             runtime.finish(&engine, result)
@@ -1485,6 +1768,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_default_profile(&profile_id) }).await;
             runtime.finish(&engine, result)
@@ -1498,6 +1782,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.assign_profile(&connection_id, profile_id) }).await;
             runtime.finish(&engine, result)
@@ -1517,6 +1802,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_class_lock(&profile_id, &class_key, locked) }).await;
             runtime.finish(&engine, result)
@@ -1529,6 +1815,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_preset(&profile_id, preset) }).await;
             runtime.finish(&engine, result)
@@ -1542,6 +1829,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.set_thresholds(&profile_id, approve_at, deny_at) }).await;
             runtime.finish(&engine, result)
@@ -1587,6 +1875,7 @@ impl ReinsCore {
         let generation = runtime.generation();
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.correct_decision(activity_id, should_have).await }).await;
             runtime.finish(&engine, result)

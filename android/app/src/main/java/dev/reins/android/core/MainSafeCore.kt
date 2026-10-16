@@ -37,6 +37,14 @@ import dev.reins.core.EmailContent
 import dev.reins.core.GitCommitView
 import dev.reins.core.GmailStatus
 import dev.reins.core.GrantView
+import dev.reins.core.EnrollProgress
+import dev.reins.core.EnrollStart
+import dev.reins.core.EnrollView
+import dev.reins.core.HandoverProgress
+import dev.reins.core.HandoverView
+import dev.reins.core.PhoneRole
+import dev.reins.core.RecoveryPreview
+import dev.reins.core.RosterSummary
 import dev.reins.core.JoinProgress
 import dev.reins.core.JoinStart
 import dev.reins.core.JoinView
@@ -224,6 +232,43 @@ class MainSafeCore(
     override suspend fun joinPoll(): JoinProgress = io { joinPoll() }
 
     override suspend fun joinCancel() = io { joinCancel() }
+
+    override suspend fun phoneRole(): PhoneRole = io { phoneRole() }
+
+    override suspend fun rosterSummary(refresh: Boolean): RosterSummary? = io { rosterSummary(refresh) }
+
+    override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): RosterSummary =
+        io { rosterCreate(deviceName, codeOrPassword) }
+
+    override suspend fun enrollBegin(deviceName: String): EnrollStart = io { enrollBegin(deviceName) }
+
+    override suspend fun enrollPoll(): EnrollProgress = io { enrollPoll() }
+
+    override suspend fun enrollCancel() = io { enrollCancel() }
+
+    override suspend fun enrollView(id: String): EnrollView = io { enrollView(id) }
+
+    override suspend fun enrollConfirm(id: String, approve: Boolean) = io { enrollConfirm(id, approve) }
+
+    override suspend fun handoverRequest(): String = io { handoverRequest() }
+
+    override suspend fun handoverPoll(): HandoverProgress = io { handoverPoll() }
+
+    override suspend fun handoverRequests(): List<HandoverView> = io { handoverRequests() }
+
+    override suspend fun handoverApprove(id: String, deviceId: String) = io { handoverApprove(id, deviceId) }
+
+    override suspend fun handoverDeny(id: String) = io { handoverDeny(id) }
+
+    override suspend fun rosterRecoverPreview(codeOrPassword: String): RecoveryPreview =
+        io { rosterRecoverPreview(codeOrPassword) }
+
+    override suspend fun rosterRecover(codeOrPassword: String, deviceName: String, tip: String): RosterSummary =
+        io { rosterRecover(codeOrPassword, deviceName, tip) }
+
+    override suspend fun rosterRemoveMember(deviceId: String) = io { rosterRemoveMember(deviceId) }
+
+    override suspend fun rosterRewrap(newPassword: String) = io { rosterRewrap(newPassword) }
 
     override suspend fun joinView(id: String): JoinView = io { joinView(id) }
 

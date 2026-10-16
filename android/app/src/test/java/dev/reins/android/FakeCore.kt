@@ -753,6 +753,47 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun joinView(id: String): JoinView = joins[id] ?: throw CoreException.NotFound()
 
+    // Phone roles: a legacy account (no roster) in these tests.
+    override suspend fun phoneRole(): dev.reins.core.PhoneRole = dev.reins.core.PhoneRole.LEGACY
+
+    override suspend fun rosterSummary(refresh: Boolean): dev.reins.core.RosterSummary? = null
+
+    override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): dev.reins.core.RosterSummary =
+        throw CoreException.NotFound()
+
+    override suspend fun enrollBegin(deviceName: String): dev.reins.core.EnrollStart = throw CoreException.NotFound()
+
+    override suspend fun enrollPoll(): dev.reins.core.EnrollProgress = throw CoreException.NotFound()
+
+    override suspend fun enrollCancel() {}
+
+    override suspend fun enrollView(id: String): dev.reins.core.EnrollView = throw CoreException.NotFound()
+
+    override suspend fun enrollConfirm(id: String, approve: Boolean) = throw CoreException.NotFound()
+
+    override suspend fun handoverRequest(): String = throw CoreException.NotFound()
+
+    override suspend fun handoverPoll(): dev.reins.core.HandoverProgress = throw CoreException.NotFound()
+
+    override suspend fun handoverRequests(): List<dev.reins.core.HandoverView> = emptyList()
+
+    override suspend fun handoverApprove(id: String, deviceId: String) = throw CoreException.NotFound()
+
+    override suspend fun handoverDeny(id: String) = throw CoreException.NotFound()
+
+    override suspend fun rosterRecoverPreview(codeOrPassword: String): dev.reins.core.RecoveryPreview =
+        throw CoreException.NotFound()
+
+    override suspend fun rosterRecover(
+        codeOrPassword: String,
+        deviceName: String,
+        tip: String,
+    ): dev.reins.core.RosterSummary = throw CoreException.NotFound()
+
+    override suspend fun rosterRemoveMember(deviceId: String) = throw CoreException.NotFound()
+
+    override suspend fun rosterRewrap(newPassword: String) = throw CoreException.NotFound()
+
     override suspend fun answerJoin(id: String, approve: Boolean) {
         joinAnswers += id to approve
         joins.remove(id)
