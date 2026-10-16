@@ -84,6 +84,7 @@ SIGNUPS_ALLOWED=true             # turn off once your accounts exist, or use inv
 | `REINS_APNS_TOPIC` | Bundle id of the iOS app. Default `com.reins2fa.app`; change it only for an app built under another bundle id. |
 | `REINS_APPLE_TEAM_ID` | Apple team id of the iOS app, served in `/.well-known/apple-app-site-association` so that a computer's pairing QR code (`{DOMAIN}/pair?code=...`) opens in the app. Empty: `REINS_APNS_TEAM_ID`; neither: no app links (the link opens a page that offers the app). |
 | `REINS_ANDROID_CERT_SHA256` | SHA-256 fingerprints of the Android app's signing certificates (comma-separated, `AB:CD:...`), served in `/.well-known/assetlinks.json` for the same links. Empty: none. |
+| `REINS_OPENAI_APPS_CHALLENGE` | The domain verification token from the OpenAI Platform, for a ChatGPT directory submission ([directories](directories/openai-apps.md)), served as plain text at `/.well-known/openai-apps-challenge`. Empty: not found. |
 | `REINS_RELAY_WAIT_SECS` | ChatGPT aborts tool calls after 60 s; Claude allows longer. After this time the AI is told to call `reins_get_result` later. |
 | `REINS_OFFLINE_SECS` | Must be at most `REINS_RELAY_WAIT_SECS`. |
 | `REINS_TEST_ALLOW_LOOPBACK` | For the test suite only. Never set it in production. |
@@ -322,5 +323,6 @@ app within `REINS_OFFLINE_SECS`.
   everyone out. Grants, the activity log and Autopilot's memory live on the phones and are not affected.
 - Rotating the Firebase key: create the new key, replace the file, restart, then delete the old key.
 - Logs never contain tokens, message contents or tool arguments. `LOG_LEVEL=info` is safe.
-- The AI sees tools only for integrations the phone has reported. After a server restart, every tool is listed until
-  the phone next syncs. AI clients may need to reconnect to refresh their tool list.
+- The AI sees every Reins tool. A call for an integration that is not connected goes to the phone, which answers with
+  how to connect it. Tools of MCP servers added on the phone appear once it reports them; AI clients may need a new
+  chat to see those.

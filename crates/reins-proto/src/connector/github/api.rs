@@ -21,8 +21,8 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "api_read",
             Effect::Read,
             "Call the GitHub API (read)",
-            "A GET request to any GitHub REST endpoint (https://docs.github.com/rest) not covered by another tool. \
-             The answer is the JSON GitHub returns (large answers are cut, binary ones come as a download link). Reads \
+            "Read from any GitHub REST API endpoint (https://docs.github.com/rest) not covered by another tool, with a \
+             GET request. The answer is the JSON GitHub returns (large answers are cut, binary ones come as a download link). Reads \
              of one repository are covered by a read permission for it.",
             vec![PATH, QUERY],
             None,
@@ -33,8 +33,8 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "api_write",
             Effect::Write,
             "Call the GitHub API (change)",
-            "A POST, PUT, PATCH or DELETE to any GitHub REST endpoint not covered by another tool. The user sees the \
-             method, the path and the body. Changes to repository settings, collaborators, webhooks, keys, branch \
+            "Change something through any GitHub REST API endpoint (https://docs.github.com/rest) not covered by \
+             another tool, with a POST, PUT, PATCH or DELETE request. The user sees the method, the path and the body. Changes to repository settings, collaborators, webhooks, keys, branch \
              protection or deletions are asked every time.",
             vec![
                 choice_p(

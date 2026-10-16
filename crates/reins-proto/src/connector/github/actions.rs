@@ -70,7 +70,7 @@ fn workflows() -> Vec<ToolSpec> {
             "workflow_list",
             List,
             "List GitHub workflows",
-            "Lists the workflows (GitHub Actions) of a repository: id, name, file path and whether each is active. \
+            "List the workflows (GitHub Actions) of a repository: id, name, file path and whether each is active. \
              The workflow files themselves are edited with github_file_put.",
             vec![REPO, LIMIT],
             Some("repo"),
@@ -81,7 +81,7 @@ fn workflows() -> Vec<ToolSpec> {
             "workflow_get",
             Read,
             "Read a GitHub workflow",
-            "Reads the details of one workflow: name, file path, state and links.",
+            "Read the details of one workflow: name, file path, state and links.",
             vec![REPO, WORKFLOW],
             Some("repo"),
         ),
@@ -91,7 +91,7 @@ fn workflows() -> Vec<ToolSpec> {
             "workflow_usage",
             Read,
             "Read the usage of a GitHub workflow",
-            "Reads the billable running time of one workflow per operating system (GitHub may not report it for every \
+            "Read the billable running time of one workflow per operating system (GitHub may not report it for every \
              repository).",
             vec![REPO, WORKFLOW],
             Some("repo"),
@@ -102,7 +102,7 @@ fn workflows() -> Vec<ToolSpec> {
             "workflow_dispatch",
             Write,
             "Run a GitHub workflow",
-            "Starts a workflow that has a workflow_dispatch trigger, on a branch or tag, with optional inputs. This \
+            "Start a workflow that has a workflow_dispatch trigger, on a branch or tag, with optional inputs. This \
              runs code in the repository's CI. The user approves on their phone.",
             vec![
                 REPO,
@@ -119,7 +119,7 @@ fn workflows() -> Vec<ToolSpec> {
             "workflow_enable",
             Write,
             "Enable a GitHub workflow",
-            "Turns a disabled workflow back on. The user approves on their phone.",
+            "Turn a disabled workflow back on. The user approves on their phone.",
             vec![REPO, WORKFLOW],
             Some("repo"),
         )
@@ -130,7 +130,7 @@ fn workflows() -> Vec<ToolSpec> {
             "workflow_disable",
             Write,
             "Disable a GitHub workflow",
-            "Turns a workflow off so it no longer runs on its triggers. The user approves on their phone.",
+            "Turn a workflow off so it no longer runs on its triggers. The user approves on their phone.",
             vec![REPO, WORKFLOW],
             Some("repo"),
         )
@@ -147,7 +147,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_list",
             Read,
             "List GitHub workflow runs",
-            "Lists workflow runs of a repository, newest first, optionally of one workflow and filtered.",
+            "List workflow runs of a repository, newest first, optionally of one workflow and filtered.",
             vec![
                 REPO,
                 str_p("workflow", 100, false, "Only runs of this workflow (id or file name)."),
@@ -165,7 +165,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_get",
             Read,
             "Read a GitHub workflow run",
-            "Reads one workflow run: status, conclusion, commit, branch, actor, timing and attempt.",
+            "Read one workflow run: status, conclusion, commit, branch, actor, timing and attempt.",
             vec![REPO, RUN, int_p("attempt", 1, 1_000, None, "A specific attempt; default the latest.")],
             Some("repo"),
         ),
@@ -175,7 +175,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_attempts",
             Read,
             "List the attempts of a GitHub workflow run",
-            "Lists every attempt of a workflow run (the first run and each re-run), newest first, up to 20.",
+            "List every attempt of a workflow run (the first run and each re-run), newest first, up to 20.",
             vec![REPO, RUN],
             Some("repo"),
         ),
@@ -185,7 +185,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_rerun",
             Write,
             "Re-run a GitHub workflow run",
-            "Runs a whole workflow run again. The user approves on their phone.",
+            "Run a whole workflow run again. The user approves on their phone.",
             vec![REPO, RUN, DEBUG],
             Some("repo"),
         )
@@ -196,7 +196,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_rerun_failed",
             Write,
             "Re-run the failed jobs of a GitHub run",
-            "Runs again only the failed jobs of a workflow run (and the jobs that depend on them). The user approves on \
+            "Run again only the failed jobs of a workflow run (and the jobs that depend on them). The user approves on \
              their phone.",
             vec![REPO, RUN, DEBUG],
             Some("repo"),
@@ -208,7 +208,7 @@ fn runs() -> Vec<ToolSpec> {
             "job_rerun",
             Write,
             "Re-run one GitHub workflow job",
-            "Runs a single job of a workflow run again (and the jobs that depend on it). The user approves on their phone.",
+            "Run a single job of a workflow run again (and the jobs that depend on it). The user approves on their phone.",
             vec![REPO, JOB, DEBUG],
             Some("repo"),
         )
@@ -219,7 +219,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_cancel",
             Write,
             "Cancel a GitHub workflow run",
-            "Asks GitHub to cancel a workflow run that is running or queued. The user approves on their phone.",
+            "Ask GitHub to cancel a workflow run that is running or queued. The user approves on their phone.",
             vec![REPO, RUN],
             Some("repo"),
         )
@@ -230,7 +230,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_force_cancel",
             Write,
             "Force-cancel a GitHub workflow run",
-            "Cancels a workflow run immediately, skipping the always() and cleanup steps; use only when a normal cancel \
+            "Cancel a workflow run immediately, skipping the always() and cleanup steps; use only when a normal cancel \
              does not work. The user is asked every time.",
             vec![REPO, RUN],
             Some("repo"),
@@ -243,7 +243,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_delete",
             Write,
             "Delete a GitHub workflow run",
-            "Deletes a finished workflow run with its logs. The user approves on their phone.",
+            "Delete a finished workflow run with its logs. The user approves on their phone.",
             vec![REPO, RUN],
             Some("repo"),
         )
@@ -254,7 +254,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_approve",
             Write,
             "Approve a GitHub run from a fork",
-            "Approves a workflow run waiting on a pull request from a fork, which lets that code run in the \
+            "Approve a workflow run waiting on a pull request from a fork, which lets that code run in the \
              repository's CI. The user is asked every time.",
             vec![REPO, RUN],
             Some("repo"),
@@ -267,7 +267,7 @@ fn runs() -> Vec<ToolSpec> {
             "run_pending_deployments",
             Read,
             "List the deployments a GitHub run waits for",
-            "Lists the environments a workflow run is waiting to deploy to, and whether the user may review them.",
+            "List the environments a workflow run is waiting to deploy to, and whether the user may review them.",
             vec![REPO, RUN],
             Some("repo"),
         ),
@@ -277,7 +277,7 @@ fn runs() -> Vec<ToolSpec> {
             "deployment_review",
             Write,
             "Approve or reject a GitHub deployment",
-            "Approves or rejects the deployment of a workflow run to one or more environments that require review. \
+            "Approve or reject the deployment of a workflow run to one or more environments that require review. \
              The user is asked every time.",
             vec![
                 REPO,
@@ -313,7 +313,7 @@ fn jobs_and_artifacts() -> Vec<ToolSpec> {
             "run_jobs",
             Read,
             "List the jobs of a GitHub workflow run",
-            "Lists the jobs of a workflow run with their status, conclusion and steps (which step failed).",
+            "List the jobs of a workflow run with their status, conclusion and steps (which step failed).",
             vec![REPO, RUN, choice_p("filter", &["latest", "all"], false, "latest (default) or all attempts."), LIMIT],
             Some("repo"),
         ),
@@ -323,7 +323,7 @@ fn jobs_and_artifacts() -> Vec<ToolSpec> {
             "job_get",
             Read,
             "Read a GitHub workflow job",
-            "Reads one job: status, conclusion, runner and its steps.",
+            "Read one job: status, conclusion, runner and its steps.",
             vec![REPO, JOB],
             Some("repo"),
         ),
@@ -333,7 +333,7 @@ fn jobs_and_artifacts() -> Vec<ToolSpec> {
             "job_logs",
             Read,
             "Read the log of a GitHub job",
-            "Reads the log text of one job, biased to the end where failures show (at most 60000 characters; \
+            "Read the log text of one job, biased to the end where failures show (at most 60000 characters; \
              `truncated` says when the start was cut). Nothing is fetched with the token except the redirect.",
             vec![REPO, JOB, TAIL],
             Some("repo"),
@@ -344,7 +344,7 @@ fn jobs_and_artifacts() -> Vec<ToolSpec> {
             "run_logs",
             Read,
             "Read the logs of a GitHub workflow run",
-            "Reads the end of the log of every job of a workflow run (no zip; about 60000 characters in all, shared \
+            "Read the end of the log of every job of a workflow run (no zip; about 60000 characters in all, shared \
              among the jobs, failed jobs first).",
             vec![REPO, RUN, TAIL],
             Some("repo"),
@@ -355,7 +355,7 @@ fn jobs_and_artifacts() -> Vec<ToolSpec> {
             "artifact_list",
             List,
             "List GitHub Actions artifacts",
-            "Lists the build artifacts of a repository, or of one workflow run: name, size and expiry.",
+            "List the build artifacts of a repository, or of one workflow run: name, size and expiry.",
             vec![
                 REPO,
                 int_p("run_id", 1, i64::MAX, None, "Only the artifacts of this workflow run."),
@@ -370,7 +370,7 @@ fn jobs_and_artifacts() -> Vec<ToolSpec> {
             "artifact_download_url",
             Read,
             "Get a download link for a GitHub artifact",
-            "Returns a temporary link (valid for about a minute) to download an artifact zip; the file itself is not \
+            "Return a temporary link (valid for about a minute) to download an artifact zip; the file itself is not \
              fetched. The user approves the link, which is kept out of the activity log.",
             vec![REPO, ARTIFACT],
             Some("repo"),
@@ -381,7 +381,7 @@ fn jobs_and_artifacts() -> Vec<ToolSpec> {
             "artifact_delete",
             Write,
             "Delete a GitHub artifact",
-            "Deletes one build artifact. The user approves on their phone.",
+            "Delete one build artifact. The user approves on their phone.",
             vec![REPO, ARTIFACT],
             Some("repo"),
         )
@@ -400,7 +400,7 @@ fn variables_and_secrets() -> Vec<ToolSpec> {
             "variable_list",
             Read,
             "List GitHub Actions variables",
-            "Lists the Actions variables (name and value) of a repository or one of its environments.",
+            "List the Actions variables (name and value) of a repository or one of its environments.",
             vec![REPO, ENVIRONMENT, LIMIT],
             Some("repo"),
         ),
@@ -410,7 +410,7 @@ fn variables_and_secrets() -> Vec<ToolSpec> {
             "variable_get",
             Read,
             "Read a GitHub Actions variable",
-            "Reads one Actions variable of a repository or environment.",
+            "Read one Actions variable of a repository or environment.",
             vec![REPO, ENVIRONMENT, NAME],
             Some("repo"),
         ),
@@ -420,7 +420,7 @@ fn variables_and_secrets() -> Vec<ToolSpec> {
             "variable_create",
             Write,
             "Create a GitHub Actions variable",
-            "Creates an Actions variable in a repository or environment. Variables are not secret: use \
+            "Create an Actions variable in a repository or environment. Variables are not secret: use \
              github_secret_set for secrets. The user approves on their phone.",
             vec![
                 REPO,
@@ -437,7 +437,7 @@ fn variables_and_secrets() -> Vec<ToolSpec> {
             "variable_update",
             Write,
             "Change a GitHub Actions variable",
-            "Sets a new value for an existing Actions variable. The user sees the old and the new value and approves on \
+            "Set a new value for an existing Actions variable. The user sees the old and the new value and approves on \
              their phone.",
             vec![REPO, ENVIRONMENT, NAME, text_p("value", 48_000, true, "The new value.")],
             Some("repo"),
@@ -449,7 +449,7 @@ fn variables_and_secrets() -> Vec<ToolSpec> {
             "variable_delete",
             Write,
             "Delete a GitHub Actions variable",
-            "Deletes an Actions variable. The user approves on their phone.",
+            "Delete an Actions variable. The user approves on their phone.",
             vec![REPO, ENVIRONMENT, NAME],
             Some("repo"),
         )
@@ -460,7 +460,7 @@ fn variables_and_secrets() -> Vec<ToolSpec> {
             "secret_list",
             List,
             "List GitHub Actions secrets",
-            "Lists the names (never the values) of the Actions secrets of a repository or one of its environments.",
+            "List the names (never the values) of the Actions secrets of a repository or one of its environments.",
             vec![REPO, ENVIRONMENT, LIMIT],
             Some("repo"),
         ),
@@ -470,15 +470,10 @@ fn variables_and_secrets() -> Vec<ToolSpec> {
             "secret_set",
             Write,
             "Set a GitHub Actions secret",
-            "Creates or replaces an Actions secret in a repository or environment. The value is encrypted on the phone \
+            "Create or replace an Actions secret in a repository or environment. The value is encrypted on the phone \
              with the repository's public key before it is sent, and is never shown, logged or returned. The user is \
              asked every time.",
-            vec![
-                REPO,
-                ENVIRONMENT,
-                NAME,
-                text_p("value", 48_000, true, "The secret value."),
-            ],
+            vec![REPO, ENVIRONMENT, NAME, text_p("value", 48_000, true, "The secret value.")],
             Some("repo"),
         )
         .in_class("settings")
@@ -489,7 +484,7 @@ fn variables_and_secrets() -> Vec<ToolSpec> {
             "secret_delete",
             Write,
             "Delete a GitHub Actions secret",
-            "Deletes an Actions secret from a repository or environment. The user is asked every time.",
+            "Delete an Actions secret from a repository or environment. The user is asked every time.",
             vec![REPO, ENVIRONMENT, NAME],
             Some("repo"),
         )
@@ -508,7 +503,7 @@ fn environments_and_caches() -> Vec<ToolSpec> {
             "environment_list",
             List,
             "List GitHub environments",
-            "Lists the deployment environments of a repository.",
+            "List the deployment environments of a repository.",
             vec![REPO, LIMIT],
             Some("repo"),
         ),
@@ -518,7 +513,7 @@ fn environments_and_caches() -> Vec<ToolSpec> {
             "environment_get",
             Read,
             "Read a GitHub environment",
-            "Reads an environment's protection rules: wait timer, required reviewers and branch policy.",
+            "Read an environment's protection rules: wait timer, required reviewers and branch policy.",
             vec![REPO, ENV],
             Some("repo"),
         ),
@@ -528,7 +523,7 @@ fn environments_and_caches() -> Vec<ToolSpec> {
             "environment_set",
             Write,
             "Create or change a GitHub environment",
-            "Creates an environment or changes the protection rules of an existing one; only the fields given change. \
+            "Create an environment or change the protection rules of an existing one; only the fields given change. \
              The user is asked every time.",
             vec![
                 REPO,
@@ -553,7 +548,7 @@ fn environments_and_caches() -> Vec<ToolSpec> {
             "environment_delete",
             Write,
             "Delete a GitHub environment",
-            "Deletes an environment with its secrets and variables. The user is asked every time.",
+            "Delete an environment with its secrets and variables. The user is asked every time.",
             vec![REPO, ENV],
             Some("repo"),
         )
@@ -565,7 +560,7 @@ fn environments_and_caches() -> Vec<ToolSpec> {
             "cache_list",
             List,
             "List GitHub Actions caches",
-            "Lists the Actions caches of a repository: key, branch, size and last use.",
+            "List the Actions caches of a repository: key, branch, size and last use.",
             vec![
                 REPO,
                 str_p("key", 200, false, "Only caches whose key starts with this."),
@@ -580,7 +575,7 @@ fn environments_and_caches() -> Vec<ToolSpec> {
             "cache_delete",
             Write,
             "Delete GitHub Actions caches",
-            "Deletes one cache by id, or every cache with an exact key (optionally of one ref). Give the id or the key. \
+            "Delete one cache by id, or every cache with an exact key (optionally of one ref). Give the id or the key. \
              The user approves on their phone.",
             vec![
                 REPO,
@@ -604,7 +599,7 @@ fn security() -> Vec<ToolSpec> {
             "dependabot_alert_list",
             List,
             "List Dependabot alerts",
-            "Lists the Dependabot (vulnerable dependency) alerts of a repository.",
+            "List the Dependabot (vulnerable dependency) alerts of a repository.",
             vec![
                 REPO,
                 choice_p("state", &["open", "dismissed", "fixed", "auto_dismissed"], false, "Default: open."),
@@ -620,7 +615,7 @@ fn security() -> Vec<ToolSpec> {
             "dependabot_alert_get",
             Read,
             "Read a Dependabot alert",
-            "Reads one Dependabot alert: the advisory, the affected package and version, and the fix.",
+            "Read one Dependabot alert: the advisory, the affected package and version, and the fix.",
             vec![REPO, NUMBER],
             Some("repo"),
         ),
@@ -630,7 +625,7 @@ fn security() -> Vec<ToolSpec> {
             "dependabot_alert_update",
             Write,
             "Dismiss or reopen a Dependabot alert",
-            "Dismisses a Dependabot alert with a reason, or reopens it. The user approves on their phone.",
+            "Dismiss a Dependabot alert with a reason, or reopen it. The user approves on their phone.",
             vec![
                 REPO,
                 NUMBER,
@@ -655,11 +650,16 @@ fn security() -> Vec<ToolSpec> {
             "code_scanning_alert_list",
             List,
             "List code scanning alerts",
-            "Lists the code scanning alerts of a repository.",
+            "List the code scanning alerts of a repository.",
             vec![
                 REPO,
                 choice_p("state", &["open", "closed", "dismissed", "fixed"], false, "Default: open."),
-                choice_p("severity", &["critical", "high", "medium", "low", "warning", "error", "note"], false, "Only this severity."),
+                choice_p(
+                    "severity",
+                    &["critical", "high", "medium", "low", "warning", "error", "note"],
+                    false,
+                    "Only this severity.",
+                ),
                 str_p("ref", 250, false, "Only alerts on this ref (refs/heads/main)."),
                 LIMIT,
             ],
@@ -671,7 +671,7 @@ fn security() -> Vec<ToolSpec> {
             "code_scanning_alert_get",
             Read,
             "Read a code scanning alert",
-            "Reads one code scanning alert: the rule, the location and the message.",
+            "Read one code scanning alert: the rule, the location and the message.",
             vec![REPO, NUMBER],
             Some("repo"),
         ),
@@ -681,7 +681,7 @@ fn security() -> Vec<ToolSpec> {
             "code_scanning_alert_update",
             Write,
             "Dismiss or reopen a code scanning alert",
-            "Dismisses a code scanning alert with a reason, or reopens it. The user approves on their phone.",
+            "Dismiss a code scanning alert with a reason, or reopen it. The user approves on their phone.",
             vec![
                 REPO,
                 NUMBER,
@@ -706,7 +706,7 @@ fn security() -> Vec<ToolSpec> {
             "secret_scanning_alert_list",
             Read,
             "List secret scanning alerts",
-            "Lists the secret scanning alerts of a repository. The alerts contain the leaked secret itself, so the user \
+            "List the secret scanning alerts of a repository. The alerts contain the leaked secret itself, so the user \
              must tick each one on their phone; it is handed over but kept out of the activity log.",
             vec![
                 REPO,
@@ -722,7 +722,7 @@ fn security() -> Vec<ToolSpec> {
             "secret_scanning_alert_get",
             Read,
             "Read a secret scanning alert",
-            "Reads one secret scanning alert with the leaked secret and where it was found. The user must tick it on \
+            "Read one secret scanning alert with the leaked secret and where it was found. The user must tick it on \
              their phone; the secret is kept out of the activity log.",
             vec![REPO, NUMBER],
             Some("repo"),
@@ -733,7 +733,7 @@ fn security() -> Vec<ToolSpec> {
             "secret_scanning_alert_update",
             Write,
             "Resolve or reopen a secret scanning alert",
-            "Marks a secret scanning alert resolved with a resolution, or reopens it. The user approves on their phone.",
+            "Mark a secret scanning alert resolved with a resolution, or reopen it. The user approves on their phone.",
             vec![
                 REPO,
                 NUMBER,
@@ -758,7 +758,7 @@ fn security() -> Vec<ToolSpec> {
             "security_advisory_list",
             Read,
             "List repository security advisories",
-            "Lists the security advisories published or drafted for a repository.",
+            "List the security advisories published or drafted for a repository.",
             vec![
                 REPO,
                 choice_p("state", &["triage", "draft", "published", "closed"], false, "Only this state."),
@@ -772,7 +772,7 @@ fn security() -> Vec<ToolSpec> {
             "dependency_sbom",
             Read,
             "Read the dependencies of a GitHub repository",
-            "Reads the software bill of materials (dependency graph) of a repository as a list of packages, cut at \
+            "Read the software bill of materials (dependency graph) of a repository as a list of packages, cut at \
              60000 characters.",
             vec![REPO],
             Some("repo"),
@@ -791,7 +791,7 @@ fn account() -> Vec<ToolSpec> {
             "user_me",
             Read,
             "Read your GitHub account",
-            "Reads the profile of the GitHub account the user connected: login, name, plan and counts.",
+            "Read the profile of the GitHub account the user connected: login, name, plan and counts.",
             vec![],
             None,
         ),
@@ -801,7 +801,7 @@ fn account() -> Vec<ToolSpec> {
             "user_get",
             Read,
             "Read a GitHub user",
-            "Reads the public profile of a GitHub user or organisation.",
+            "Read the public profile of a GitHub user or organisation.",
             vec![USER],
             None,
         ),
@@ -811,7 +811,7 @@ fn account() -> Vec<ToolSpec> {
             "org_list",
             List,
             "List your GitHub organisations",
-            "Lists the organisations the user belongs to.",
+            "List the organisations the user belongs to.",
             vec![LIMIT],
             None,
         ),
@@ -821,7 +821,7 @@ fn account() -> Vec<ToolSpec> {
             "org_get",
             Read,
             "Read a GitHub organisation",
-            "Reads an organisation's public profile.",
+            "Read an organisation's public profile.",
             vec![ORG],
             None,
         ),
@@ -831,7 +831,7 @@ fn account() -> Vec<ToolSpec> {
             "org_repos",
             List,
             "List the repositories of a GitHub organisation",
-            "Lists the repositories of an organisation that the token can see.",
+            "List the repositories of an organisation that the token can see.",
             vec![ORG, LIMIT],
             None,
         ),
@@ -841,7 +841,7 @@ fn account() -> Vec<ToolSpec> {
             "org_members",
             List,
             "List the members of a GitHub organisation",
-            "Lists the logins of the members of an organisation that the token can see.",
+            "List the logins of the members of an organisation that the token can see.",
             vec![ORG, LIMIT],
             None,
         ),
@@ -851,7 +851,7 @@ fn account() -> Vec<ToolSpec> {
             "org_teams",
             List,
             "List the teams of a GitHub organisation",
-            "Lists the teams of an organisation that the token can see.",
+            "List the teams of an organisation that the token can see.",
             vec![ORG, LIMIT],
             None,
         ),
@@ -861,7 +861,7 @@ fn account() -> Vec<ToolSpec> {
             "starred_list",
             List,
             "List starred GitHub repositories",
-            "Lists the repositories the user (or another user) has starred.",
+            "List the repositories the user (or another user) has starred.",
             vec![str_p("username", 100, false, "Another user; default: the user."), LIMIT],
             None,
         ),
@@ -871,7 +871,7 @@ fn account() -> Vec<ToolSpec> {
             "star_add",
             Write,
             "Star a GitHub repository",
-            "Stars a repository for the user. The user approves on their phone.",
+            "Star a repository for the user. The user approves on their phone.",
             vec![REPO],
             None,
         )
@@ -882,7 +882,7 @@ fn account() -> Vec<ToolSpec> {
             "star_remove",
             Write,
             "Unstar a GitHub repository",
-            "Removes the user's star from a repository. The user approves on their phone.",
+            "Remove the user's star from a repository. The user approves on their phone.",
             vec![REPO],
             None,
         )
@@ -893,7 +893,7 @@ fn account() -> Vec<ToolSpec> {
             "watch_add",
             Write,
             "Watch a GitHub repository",
-            "Subscribes the user to the notifications of a repository (or ignores it). The user approves on their phone.",
+            "Subscribe the user to the notifications of a repository (or ignore it). The user approves on their phone.",
             vec![REPO, bool_p("ignored", "Ignore all notifications of the repository instead of watching it.")],
             None,
         )
@@ -904,7 +904,7 @@ fn account() -> Vec<ToolSpec> {
             "watch_remove",
             Write,
             "Stop watching a GitHub repository",
-            "Removes the user's subscription to a repository. The user approves on their phone.",
+            "Remove the user's subscription to a repository. The user approves on their phone.",
             vec![REPO],
             None,
         )
@@ -915,7 +915,7 @@ fn account() -> Vec<ToolSpec> {
             "follow_add",
             Write,
             "Follow a GitHub user",
-            "Makes the user follow another GitHub user. The user approves on their phone.",
+            "Make the user follow another GitHub user. The user approves on their phone.",
             vec![USER],
             None,
         )
@@ -926,7 +926,7 @@ fn account() -> Vec<ToolSpec> {
             "follow_remove",
             Write,
             "Unfollow a GitHub user",
-            "Makes the user stop following a GitHub user. The user approves on their phone.",
+            "Make the user stop following a GitHub user. The user approves on their phone.",
             vec![USER],
             None,
         )
@@ -937,7 +937,7 @@ fn account() -> Vec<ToolSpec> {
             "ssh_key_list",
             List,
             "List your GitHub SSH keys",
-            "Lists the titles and ids of the SSH keys on the user's account (never key material).",
+            "List the titles and ids of the SSH keys on the user's account (never key material).",
             vec![LIMIT],
             None,
         ),
@@ -947,7 +947,7 @@ fn account() -> Vec<ToolSpec> {
             "gpg_key_list",
             List,
             "List your GitHub GPG keys",
-            "Lists the key ids and email addresses of the GPG keys on the user's account (never key material).",
+            "List the key ids and email addresses of the GPG keys on the user's account (never key material).",
             vec![LIMIT],
             None,
         ),
@@ -957,7 +957,7 @@ fn account() -> Vec<ToolSpec> {
             "rate_limit",
             Read,
             "Read the GitHub rate limits",
-            "Reads how many GitHub API calls remain in each limit.",
+            "Read how many GitHub API calls remain in each limit.",
             vec![],
             None,
         ),
@@ -974,7 +974,7 @@ fn notifications_and_gists() -> Vec<ToolSpec> {
             "notification_list",
             Read,
             "List GitHub notifications",
-            "Lists the user's GitHub notifications (unread by default): what, where and why.",
+            "List the user's GitHub notifications (unread by default): what, where and why.",
             vec![
                 bool_p("all", "Include notifications already read."),
                 bool_p("participating", "Only those where the user is directly involved."),
@@ -989,7 +989,7 @@ fn notifications_and_gists() -> Vec<ToolSpec> {
             "notification_mark_read",
             Write,
             "Mark GitHub notifications as read",
-            "Marks one notification thread as read, or every notification (of one repository if given) when no thread \
+            "Mark one notification thread as read, or every notification (of one repository if given) when no thread \
              is named. The user approves on their phone.",
             vec![
                 str_p("thread_id", 30, false, "The thread id from github_notification_list. Omit to mark all."),
@@ -1004,7 +1004,7 @@ fn notifications_and_gists() -> Vec<ToolSpec> {
             "gist_list",
             List,
             "List GitHub gists",
-            "Lists the user's gists (or another user's public ones): id, description and file names.",
+            "List the user's gists (or another user's public ones): id, description and file names.",
             vec![str_p("username", 100, false, "Another user; default: the user."), LIMIT],
             None,
         ),
@@ -1014,7 +1014,7 @@ fn notifications_and_gists() -> Vec<ToolSpec> {
             "gist_get",
             Read,
             "Read a GitHub gist",
-            "Reads a gist with the text of its files (each file at most 20000 characters).",
+            "Read a gist with the text of its files (each file at most 20000 characters).",
             vec![GIST],
             None,
         ),
@@ -1024,7 +1024,7 @@ fn notifications_and_gists() -> Vec<ToolSpec> {
             "gist_create",
             Write,
             "Create a GitHub gist",
-            "Creates a gist. It is secret (unlisted) unless public is true. The user sees the files and approves on \
+            "Create a gist. It is secret (unlisted) unless public is true. The user sees the files and approves on \
              their phone.",
             vec![
                 str_p("description", 500, false, "What the gist is."),
@@ -1048,7 +1048,7 @@ fn notifications_and_gists() -> Vec<ToolSpec> {
             "gist_update",
             Write,
             "Change a GitHub gist",
-            "Changes a gist's description and files. In files, a name to text adds or replaces a file, a name to null \
+            "Change a gist's description and files. In files, a name to text adds or replaces a file, a name to null \
              deletes it. The user approves on their phone.",
             vec![
                 GIST,
@@ -1064,7 +1064,7 @@ fn notifications_and_gists() -> Vec<ToolSpec> {
             "gist_delete",
             Write,
             "Delete a GitHub gist",
-            "Deletes a gist for good. The user approves on their phone.",
+            "Delete a gist for good. The user approves on their phone.",
             vec![GIST],
             None,
         )
@@ -1075,7 +1075,7 @@ fn notifications_and_gists() -> Vec<ToolSpec> {
             "gist_star",
             Write,
             "Star or unstar a GitHub gist",
-            "Stars a gist for the user, or removes the star. The user approves on their phone.",
+            "Star a gist for the user, or remove the star. The user approves on their phone.",
             vec![GIST, bool_p("unstar", "Remove the star instead of adding it.")],
             None,
         )
@@ -1100,8 +1100,8 @@ fn request() -> Vec<ToolSpec> {
             "request_read",
             Read,
             "Read anything from the GitHub API",
-            "The last resort when no other GitHub tool fits: a GET request to the GitHub REST API. Under /repos/ the user \
-             ticks the result like any read; anything else is never covered by a standing permission. Prefer the \
+            "Read from the GitHub REST API (https://docs.github.com/rest) with a GET request, as a last resort when no \
+             other GitHub tool fits. Under /repos/ the user ticks the result like any read; anything else is never covered by a standing permission. Prefer the \
              specific tools.",
             vec![PATH, QUERY],
             None,
@@ -1112,8 +1112,8 @@ fn request() -> Vec<ToolSpec> {
             "request_write",
             Write,
             "Change anything through the GitHub API",
-            "The last resort when no other GitHub tool fits: a POST, PUT, PATCH or DELETE request to the GitHub REST API. \
-             The user sees the method, path and body and is asked every time. Prefer the specific tools.",
+            "Change something through the GitHub REST API (https://docs.github.com/rest) with a POST, PUT, PATCH or \
+             DELETE request, as a last resort when no other GitHub tool fits. The user sees the method, path and body and is asked every time. Prefer the specific tools.",
             vec![
                 choice_p("method", &["post", "put", "patch", "delete"], true, "The HTTP method."),
                 PATH,

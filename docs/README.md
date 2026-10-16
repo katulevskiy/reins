@@ -26,6 +26,8 @@
 
 - [Self-hosting](self-hosting.md): building and configuring the server, reverse proxy, push, accounts.
 - [Deployment notes](deployment.md): the setup of the hosted instance, with the Google Cloud and Firebase steps.
+- AI client directories: submission packages for [Claude](directories/anthropic-connectors.md) and
+  [ChatGPT](directories/openai-apps.md), and how to add Reins to [Perplexity and Grok](directories/perplexity-grok.md).
 
 **Legal (drafts)**
 

@@ -252,9 +252,12 @@ environment's values the job fails and nothing is deployed; a manual `reins-upgr
 
 ### Which tools the AI sees
 
-The phone tells the server which integrations have an account (ids only), and `tools/list` shows only their tools plus
-`reins_*`. Until the phone has reported (after a server restart, until its next sync) every tool is listed. An AI client
-may need to reconnect the connector to refresh its tool list after a new integration is added.
+`tools/list` always shows every Reins tool (desktop-only tools excepted), whatever the user has connected: Claude.ai and
+ChatGPT read the list once per chat, so a tool left out would stay missing after the user connected its integration.
+The phone tells the server which integrations have an account (ids only), and the server names them in the MCP
+instructions. A call for an integration that is not connected still goes to the phone, which answers at once with how
+to connect it: the phone knows the moment an account is added, the server only at its next report. The tools of MCP
+servers added on the phone are listed once it reports them; an open chat may need a new chat to see those.
 
 
 ## WorkOS passkeys and recovery rollout
