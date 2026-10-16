@@ -2508,6 +2508,12 @@ async fn a_push_to_the_default_branch_always_asks_in_auto_and_overnight() {
         "git --namespace x push origin main",
         "git -c alias.p=push p origin main",
         "git p origin main",
+        "GIT_DIR=/tmp/x git push origin feature/x",
+        "git -c core.sshCommand=evil push origin feature/x",
+        "git rebase -x 'git push origin main' main",
+        "sh -c 'git push origin main'",
+        "make && git push origin main",
+        "gh repo sync",
     ]
     .into_iter()
     .enumerate()
@@ -2518,7 +2524,13 @@ async fn a_push_to_the_default_branch_always_asks_in_auto_and_overnight() {
             env.relay(&id, OLD, hook_ask(&key, "", "command:git push", command)).await;
             let s = env.suggestion(&id).await;
             assert!(s.floor && !env.decided().iter().any(|(d, _, _)| *d == id), "{mode:?} {command}: {s:?}");
-            assert!(s.reason.contains("default branch"), "{mode:?} {command}: {}", s.reason);
+            // held as a push to the default branch, or by the hard floor before it (`-c core.sshCommand` is asked
+            // every time)
+            assert!(
+                s.reason.contains("default branch") || s.reason.contains("asked every time"),
+                "{mode:?} {command}: {}",
+                s.reason
+            );
         }
     }
     // A plain push of a feature branch, approved once by the user, is still Autopilot's.
@@ -2530,6 +2542,111 @@ async fn a_push_to_the_default_branch_always_asks_in_auto_and_overnight() {
     env.relay("hook-feature", OLD, hook_ask(&key, "", "command:git push", "git push origin feature/x")).await;
     let s = env.suggestion("hook-feature").await;
     assert!(env.decided().iter().any(|(d, v, _)| d == "hook-feature" && *v == Verdict::Approve), "{s:?}");
+}
+
+/// A GitHub write that lands on the default branch (no branch named, the repository's own default whatever its name,
+/// a protected name) or merges into one always asks in Auto and Overnight; one to a feature branch is decided.
+#[tokio::test]
+async fn a_github_write_to_the_default_branch_always_asks_in_auto_and_overnight() {
+    let (env, github) = env_git(true).await;
+    mount(
+        &github,
+        "GET",
+        "/repos/me/app",
+        200,
+        json!({"full_name": "me/app", "default_branch": "live", "private": true}),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"^/repos/me/app/git/ref/heads/.+$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"object": {"sha": oid(b'a')}})))
+        .mount(&github)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path_regex(r"^/repos/me/app/contents/.+$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"content": {}, "commit": {"sha": "c0ffee"}})))
+        .mount(&github)
+        .await;
+    env.model.set_risk_default(testing::risk(0.95, 0.03, 0.015, 0.005));
+    env.model.set_default(logits(0.99, 0.005, 0.005));
+    let put = |branch: Option<&str>| {
+        let mut args = json!({"repo": "me/app", "path": "README.md", "content": "hi", "message": "docs"});
+        if let Some(b) = branch {
+            args["branch"] = json!(b);
+        }
+        json!({"tool": "connector", "service": "github", "op": "file_put", "args": args})
+    };
+    // the user approved a commit to the feature branch once, by hand
+    env.relay("seed", OLD, put(Some("feature/x"))).await;
+    env.approve("seed").await;
+    for mode in [AutopilotMode::Auto, AutopilotMode::Overnight] {
+        env.mode(None, mode).await;
+        let id = format!("{mode:?}-feature");
+        env.relay(&id, OLD, put(Some("feature/x"))).await;
+        assert!(
+            env.decided().iter().any(|(d, v, _)| *d == id && *v == Verdict::Approve),
+            "{mode:?}: {:?}",
+            env.suggestion(&id).await
+        );
+        for (tag, branch) in [("none", None), ("live", Some("live")), ("main", Some("main"))] {
+            let id = format!("{mode:?}-{tag}");
+            env.relay(&id, OLD, put(branch)).await;
+            let s = env.suggestion(&id).await;
+            assert!(s.floor && s.reason.contains("default branch"), "{mode:?} {tag}: {s:?}");
+            assert!(!env.decided().iter().any(|(d, _, _)| *d == id));
+        }
+        let id = format!("{mode:?}-merge");
+        env.relay(
+            &id,
+            OLD,
+            json!({"tool": "connector", "service": "github", "op": "branch_merge",
+            "args": {"repo": "me/app", "base": "feature/y", "head": "feature/x"}}),
+        )
+        .await;
+        if let Ok(Some(s)) = env.core.autopilot_suggestion(id.clone()).await {
+            assert!(s.floor && s.reason.contains("default branch"), "{mode:?} merge: {s:?}");
+        }
+        assert!(!env.decided().iter().any(|(d, _, _)| *d == id), "a merge always asks");
+    }
+}
+
+/// The commonest agent pushes, `git push` and `git push -u origin HEAD`, are decided again when the desktop app reports
+/// a feature branch checked out; with main checked out, or nothing reported, they ask.
+#[tokio::test]
+async fn a_bare_push_of_a_reported_feature_branch_is_decided_and_of_main_asks() {
+    let env = env_risk().await;
+    env.model.set_default(logits(0.99, 0.005, 0.005));
+    let key = desktop_key(&env);
+    let header =
+        |branch: &str| format!("Rule: Pushing · git push\nMatched: git push\nBranch: {branch}\nDefault branch: main\n");
+    for (i, command) in ["git push", "git push -u origin HEAD"].into_iter().enumerate() {
+        // approved once by hand, with the feature branch checked out
+        env.mode(None, AutopilotMode::Manual).await;
+        let seed = format!("seed-{i}");
+        env.relay(&seed, OLD, hook_ask(&key, &header("feature/x"), "command:git push", command)).await;
+        env.approve(&seed).await;
+        env.mode(None, AutopilotMode::Auto).await;
+        let id = format!("feature-{i}");
+        env.relay(&id, OLD, hook_ask(&key, &header("feature/x"), "command:git push", command)).await;
+        assert!(
+            env.decided().iter().any(|(d, v, _)| *d == id && *v == Verdict::Approve),
+            "{command}: {:?}",
+            env.suggestion(&id).await
+        );
+        let id = format!("main-{i}");
+        env.relay(&id, OLD, hook_ask(&key, &header("main"), "command:git push", command)).await;
+        let s = env.suggestion(&id).await;
+        assert!(s.floor && s.reason.contains("default branch"), "{command}: {s:?}");
+        let id = format!("unreported-{i}");
+        env.relay(
+            &id,
+            OLD,
+            hook_ask(&key, "Rule: Pushing · git push\nMatched: git push\n", "command:git push", command),
+        )
+        .await;
+        let s = env.suggestion(&id).await;
+        assert!(s.floor && s.reason.contains("default branch"), "{command}: {s:?}");
+    }
 }
 
 // ---- profiles --------------------------------------------------------------------------------------------------------

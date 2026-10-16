@@ -1109,6 +1109,7 @@ impl Target {
             parents: parents(&self.repo, Some(&self.branch)),
             lines,
             once_only: false,
+            default_branch: self.is_default(),
             ..Preview::default()
         }
     }

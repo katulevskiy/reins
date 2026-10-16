@@ -840,7 +840,9 @@ impl Engine {
             None => risk::upload_context(),
         };
         let certain = matches!(reading.outcome(), risk::Outcome::Read);
-        let pushes_default_branch = reading.pushes_default_branch();
+        // the core's reading (a push, a hook's command) or the service's (a GitHub write to the default branch)
+        let pushes_default_branch =
+            reading.pushes_default_branch() || subject.view.as_ref().is_some_and(|v| v.targets_default_branch);
         let context = if rates_risk {
             if subject.view.is_some() {
                 s.label = situation::label_of(&for_risk.facts.operation, &for_risk.facts.target);

@@ -98,6 +98,10 @@ pub struct Preview {
     /// Reins Secrets: what the approval shows of a release, a store or a token (names, never values).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secrets: Option<SecretsPreview>,
+    /// The write lands on the repository's default branch, as the service said when it was previewed (a file
+    /// committed to it): Autopilot never decides it on the model (`ApprovalView::targets_default_branch`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default_branch: bool,
 }
 
 /// The structured part of a Reins Secrets preview (see [`Preview::secrets`]).

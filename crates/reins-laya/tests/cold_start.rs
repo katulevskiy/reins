@@ -149,6 +149,7 @@ fn view_of(c: &Value) -> ApprovalView {
         env_release: None,
         secrets_store: None,
         token_store: None,
+        targets_default_branch: false,
     };
     if core["ask"].is_object() {
         // as `connector::desktop::ask_view` reads a question, with the one reading every path uses
@@ -164,6 +165,9 @@ fn view_of(c: &Value) -> ApprovalView {
             uncertain: !reading.certain,
             destructive: reading.destructive,
             kind: reading.kind.map(str::to_owned),
+            // what a desktop app of this version reports is not in the golden set: as an older one, it asks
+            branch: None,
+            default_branch: None,
         });
         "desktop".clone_into(&mut service);
     }

@@ -148,6 +148,8 @@ fn owned_view(call: &ConnectorCall, computer: &str, o: &Owned, agent: bool) -> A
         // Finding or restoring secrets: asked every time and held, as before.
         destructive: true,
         kind: None,
+        branch: None,
+        default_branch: None,
     }
 }
 
@@ -167,6 +169,7 @@ pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
             text::truncate_chars(&text::one_line(call.str_arg("question").unwrap_or_default()), MAX_QUESTION);
         let topic = topic(call).ok().flatten().map(|t| text::one_line(&t));
         let reading = read_ask(topic.as_deref(), &question, raw);
+        let (branch, default_branch) = reported_rule(raw).map_or((None, None), |_| reported_head(raw));
         let detail = reported_rule(raw).map_or(raw, |(_, rest)| rest);
         AskView {
             question,
@@ -176,6 +179,8 @@ pub fn ask_view(call: &ConnectorCall, computer: &str) -> Option<AskView> {
             uncertain: !reading.certain,
             destructive: reading.destructive,
             kind: reading.kind.map(str::to_owned),
+            branch,
+            default_branch,
         }
     })
 }
@@ -456,6 +461,9 @@ pub(crate) fn reported_rule(detail: &str) -> Option<(AskRuleView, &str)> {
         }
         None => (None, false),
     };
+    // what the desktop app reports of the repository (`reins_desktop::hooks::head_lines`), after the rule's own lines
+    take_line(&mut rest, "Branch: ");
+    take_line(&mut rest, "Default branch: ");
     let clean = |s: &str, max: usize| text::truncate_chars(&text::one_line(s), max);
     let rule = AskRuleView {
         label: clean(label, 60),
@@ -466,6 +474,37 @@ pub(crate) fn reported_rule(detail: &str) -> Option<(AskRuleView, &str)> {
         reported: true,
     };
     Some((rule, rest.strip_prefix('\n').unwrap_or(rest)))
+}
+
+/// A branch name as git allows one (`git check-ref-format --branch`, the gist: no space, control or special
+/// character, no `..`, no leading `-`, not `HEAD`), at most 200 characters; else `None`.
+fn branch_name(value: &str) -> Option<String> {
+    let ok = !value.is_empty()
+        && value.len() <= 200
+        && value != "HEAD"
+        && !value.starts_with(['-', '/', '.'])
+        && !value.ends_with(['/', '.'])
+        && !value.to_ascii_lowercase().ends_with(".lock")
+        && !value.contains("..")
+        && !value.contains("//")
+        && !value.contains("@{")
+        && value.chars().all(|c| c.is_ascii_graphic() && !matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\'));
+    ok.then(|| value.to_owned())
+}
+
+/// The checked-out branch and the default branch the desktop app reports with a hook's question, in the lines it
+/// writes itself after the rule's (`Branch: …`, `Default branch: …`), before the command: a command cannot write them.
+/// Only with a reported rule (a hook's question), and only well-formed names.
+pub(crate) fn reported_head(detail: &str) -> (Option<String>, Option<String>) {
+    let mut rest = detail;
+    if take_line(&mut rest, "Rule: ").is_none() {
+        return (None, None);
+    }
+    take_line(&mut rest, "Matched: ");
+    take_line(&mut rest, "Group: ");
+    let branch = take_line(&mut rest, "Branch: ").and_then(branch_name);
+    let default = take_line(&mut rest, "Default branch: ").and_then(branch_name);
+    (branch, default)
 }
 
 /// What in a command or a question means it deletes, rewrites history or wipes something: never routine. Matched in
@@ -639,6 +678,41 @@ mod tests {
             service: DESKTOP.to_owned(),
             op: "ask".to_owned(),
             args: args.as_object().unwrap().clone(),
+        }
+    }
+
+    /// The branch a hook's push lands on, as the desktop app reports it in the lines after the rule's: read only there,
+    /// only as a branch name, and never shown as part of the command.
+    #[test]
+    fn the_reported_branch_is_read_from_the_header_only() {
+        let header =
+            "Rule: Pushing · git push\nMatched: git push\nGroup: publishing\nBranch: feature/x\nDefault branch: live\n";
+        let v = ask_view(
+            &call(&json!({"question": "Claude Code wants to run: git push origin HEAD",
+                "detail": format!("{header}\nCommand:\ngit push origin HEAD\n\nIn: /home/me/app"), "topic": "command:git push"})),
+            "x",
+        )
+        .unwrap();
+        assert_eq!((v.branch.as_deref(), v.default_branch.as_deref()), (Some("feature/x"), Some("live")));
+        assert!(v.detail.as_deref().is_some_and(|d| d.starts_with("Command:\n")), "{:?}", v.detail);
+        // a line the command writes is not the header's
+        let forged = ask_view(
+            &call(&json!({"question": "q", "detail": "Rule: Pushing · git push\nMatched: git push\n\nCommand:\ngit push\nBranch: feature/x",
+                "topic": "command:git push"})),
+            "x",
+        )
+        .unwrap();
+        assert_eq!(forged.branch, None);
+        // without a rule's lines (`reins ask`, an older desktop app) nothing is read
+        let bare =
+            ask_view(&call(&json!({"question": "q", "detail": "Branch: feature/x\nCommand:\ngit push"})), "x").unwrap();
+        assert_eq!(bare.branch, None);
+        // only a branch name git allows
+        for bad in ["feature x", "-main", "a..b", "HEAD", "x\u{0}y", "main.lock", "a:b"] {
+            let detail = format!("Rule: Pushing · git push\nMatched: git push\nBranch: {bad}\n\nCommand:\ngit push");
+            let v =
+                ask_view(&call(&json!({"question": "q", "detail": detail, "topic": "command:git push"})), "x").unwrap();
+            assert_eq!(v.branch, None, "{bad:?}");
         }
     }
 

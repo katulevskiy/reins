@@ -825,8 +825,26 @@ pub fn approval_view(parked: &ParkedRequest) -> ApprovalView {
             Some(crate::connector::SecretsPreview::Token(v)) => Some(v.clone()),
             _ => None,
         },
+        targets_default_branch: held.and_then(|h| h.preview.as_ref()).is_some_and(|p| p.default_branch)
+            || match &parked.request.call {
+                ToolCall::Connector(call) if call.service == reins_proto::connector::GITHUB => {
+                    github_targets_default_branch(&call.op, call.str_arg("branch"))
+                }
+                _ => false,
+            },
     };
     crate::quick::decorate(parked, view)
+}
+
+/// A GitHub write that lands on the default branch or a protected one, or may, by the call itself: a pull request or a
+/// branch merged (into its base), a file committed without naming a branch (the default one) or to a protected name.
+/// (When the preview found the named branch is the repository's default, it says so too: `Preview::default_branch`.)
+pub fn github_targets_default_branch(op: &str, branch: Option<&str>) -> bool {
+    match op {
+        "pr_merge" | "branch_merge" => true,
+        "file_put" | "file_delete" | "commit_files" => branch.is_none_or(crate::autopilot::risk::protected_branch),
+        _ => false,
+    }
 }
 
 /// "Read emails from alerts@bank.com for 1 hour" — one line describing what an AI asked for.
@@ -1364,12 +1382,33 @@ pub fn synced_push_approval_view(r: &AuditRecord, git: GitPushView) -> ApprovalV
         env_release: None,
         secrets_store: None,
         token_store: None,
+        // a push already made (an activity entry): what it pushed to is in `git`
+        targets_default_branch: false,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+
+    /// GitHub writes that land on the default branch or a protected one, by the call: a merge always, a file committed
+    /// unless it names a branch that is clearly not protected.
+    #[test]
+    fn github_writes_to_the_default_branch_are_marked() {
+        use super::github_targets_default_branch as marks;
+        for op in ["pr_merge", "branch_merge"] {
+            assert!(marks(op, None) && marks(op, Some("feature/x")));
+        }
+        for op in ["file_put", "file_delete", "commit_files"] {
+            assert!(marks(op, None), "{op}: no branch named, the default one");
+            for b in ["main", "Main", "release/1.0", "gh-pages", "staging"] {
+                assert!(marks(op, Some(b)), "{op} {b}");
+            }
+            assert!(!marks(op, Some("feature/x")), "{op}");
+        }
+        assert!(!marks("issue_create", None));
+        assert!(!marks("branch_create", Some("main")), "creating a branch moves none");
+    }
 
     use reins_policy::{Grant, Pattern};
     use reins_proto::gmail::OutgoingEmail;
