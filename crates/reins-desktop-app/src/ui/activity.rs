@@ -20,7 +20,7 @@ use reins_proto::attention::{self, Attention, Level};
 
 use super::diff::{self, visible};
 use super::icons::{Glyph, glyph};
-use super::parts::{fact_rows, italic, phone_qr, wrapped};
+use super::parts::{FactLook, fact_rows, italic, phone_qr, wrapped};
 use super::story::{Ask, Fact, FactStyle, answer, transcript};
 use super::{Data, ROWS, Root, kit};
 use crate::backend::ACTIVITY_LIMIT;
@@ -427,7 +427,7 @@ impl Root {
             rows.push(fact("Decided", who.to_owned()));
         }
         rows.extend(s.facts);
-        plate = plate.child(fact_rows(&rows, 0.0, Some(130.0), pal));
+        plate = plate.child(fact_rows(&rows, FactLook::Detail, pal));
 
         if let Some(push) = self.kept_for(e) {
             // The host has the commits once the push went through.
