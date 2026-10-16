@@ -247,7 +247,8 @@ pub async fn user_by_id(uuid: &UserId, conn: &DbConn) -> Result<Option<super::Us
 
 /// Deletes what Reins keeps for a user beyond Vaultwarden's own tables (which `User::delete` clears): the approval
 /// device, the AI and desktop connections with their refresh tokens, SSO sessions, the SSO identity and the vault's
-/// passkeys. SQLite does not enforce the foreign keys' cascades, so this does not rely on them.
+/// passkeys, and phone roles' roster, members, ops and checkpoints. SQLite does not enforce the foreign keys' cascades,
+/// so this does not rely on them.
 pub async fn delete_reins_data(user_uuid: &UserId, conn: &DbConn) -> EmptyResult {
     conn.run(move |c| q_delete_reins_data(c, user_uuid)).await.map_res("Error deleting the user's Reins data")
 }
@@ -347,6 +348,7 @@ fn q_delete_reins_data(c: &mut DbConnInner, user_uuid: &UserId) -> QueryResult<(
         diesel::delete(reins_sso_sessions::table.filter(reins_sso_sessions::user_uuid.eq(user_uuid))).execute(c)?;
         diesel::delete(sso_users::table.filter(sso_users::user_uuid.eq(user_uuid))).execute(c)?;
         super::reins_vault_passkey::q_delete_all(c, user_uuid)?;
+        super::reins_roster::q_delete_all(c, user_uuid.as_ref())?;
         Ok(())
     })
 }
@@ -432,6 +434,7 @@ mod tests {
                 token_hash: format!("hash-{user}"),
                 connection_uuid: conn.uuid.clone(),
                 expires_at: 99,
+                client_auth: "none".to_owned(),
             };
             diesel::insert_into(reins_refresh_tokens::table).values(&token).execute(&mut c).unwrap();
             q_save_session(
@@ -474,6 +477,7 @@ mod tests {
                 token_hash: format!("hash-{user}"),
                 connection_uuid: conn.uuid.clone(),
                 expires_at: 99,
+                client_auth: "none".to_owned(),
             };
             diesel::insert_into(reins_refresh_tokens::table).values(&token).execute(&mut c).unwrap();
         }

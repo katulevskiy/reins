@@ -120,7 +120,7 @@ private struct WhoCanAskSection: View {
             feedback.defaultTap()
         } label: {
             SettingsRowLabel(title: untrusted(connection.label), subtitle: SettingsText.connectionLine(connection)) {
-                ConnectionMark(connection: connection, size: 32)
+                ConnectionAvatar(connection: connection, size: 32)
             } trailing: {
                 EmptyView()
             }
@@ -129,29 +129,6 @@ private struct WhoCanAskSection: View {
         .accessibilityLabel("\(untrusted(connection.label)), \(SettingsText.connectionLine(connection))")
         .accessibilityIdentifier("connection:\(connection.id)")
         .cardRow()
-    }
-}
-
-/// A connection's mark: the icon picked for it, else a computer's laptop on a cyan tile, else the avatar its name
-/// suggests.
-struct ConnectionMark: View {
-    var connection: ConnectionView
-    var size: CGFloat
-
-    var body: some View {
-        if connection.keyFingerprint != nil && connection.icon == nil {
-            RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
-                .fill(Palette.pair)
-                .frame(width: size, height: size)
-                .overlay {
-                    Image(systemName: "laptopcomputer")
-                        .font(.system(size: size * 0.45, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .accessibilityHidden(true)
-        } else {
-            ConnectionAvatar(label: untrusted(connection.label), pick: connection.icon, size: size)
-        }
     }
 }
 
@@ -171,7 +148,7 @@ private struct ConnectSheet: View {
             HStack {
                 Text("Connect")
                     .font(RFont.sans(18, .semibold))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 GlassIconButton(symbol: "xmark", size: 34, label: "Close") { dismiss() }
@@ -186,7 +163,7 @@ private struct ConnectSheet: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .presentationDetents([.height(help ? 470 : 400), .large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(Palette.background)
+        .presentationBackground(Palette.paper)
         .accessibilityIdentifier("connectSheet")
     }
 
@@ -195,14 +172,14 @@ private struct ConnectSheet: View {
             HStack(spacing: 12) {
                 HStack(spacing: -10) {
                     ConnectionAvatar(label: "Claude", pick: "claude", size: 34)
-                        .overlay(Circle().strokeBorder(Palette.elevated, lineWidth: 2.5))
+                        .overlay(Circle().strokeBorder(Palette.paperRaised, lineWidth: 2.5))
                         .zIndex(1)
                     ConnectionAvatar(label: "ChatGPT", pick: "openai", size: 34)
                 }
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("AI app").font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.text)
-                    Text("Claude, ChatGPT and others").font(RFont.sans(13)).foregroundStyle(Palette.tertiary)
+                    Text("AI app").font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.ink)
+                    Text("Claude, ChatGPT and others").font(RFont.sans(13)).foregroundStyle(Palette.inkMeta)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
@@ -212,7 +189,7 @@ private struct ConnectSheet: View {
                 } label: {
                     Image(systemName: "questionmark.circle")
                         .font(.system(size: 17))
-                        .foregroundStyle(help ? Palette.accent : Palette.tertiary)
+                        .foregroundStyle(help ? Palette.violet : Palette.inkMeta)
                         .frame(width: 36, height: 36)
                         .contentShape(Rectangle())
                 }
@@ -223,7 +200,7 @@ private struct ConnectSheet: View {
             if help {
                 Text("In Claude.ai, ChatGPT or another AI app, add a custom connector (MCP) and paste this address. It then asks you here before it reads or sends anything.")
                     .font(RFont.sans(13))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 10)
                     .transition(.opacity)
@@ -232,19 +209,19 @@ private struct ConnectSheet: View {
                 HStack(spacing: 10) {
                     Text(SettingsText.host(model.mcpAddress))
                         .font(RFont.mono(13))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .font(RFont.sans(14, .semibold))
-                        .foregroundStyle(Palette.accent)
+                        .foregroundStyle(Palette.violet)
                 }
                 .environment(\.layoutDirection, .leftToRight)
                 .padding(.leading, 14)
                 .padding(.trailing, 12)
                 .padding(.vertical, 11)
-                .background(Palette.background, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .background(Palette.paper, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -253,7 +230,7 @@ private struct ConnectSheet: View {
             .accessibilityIdentifier("copyMcpUrl")
         }
         .padding(16)
-        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("connectAi")
     }
@@ -261,11 +238,11 @@ private struct ConnectSheet: View {
     private var computer: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                SettingsTile(symbol: "laptopcomputer", tint: Palette.pair)
+                SettingsTile(symbol: "laptopcomputer", tint: Palette.kindPair)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Computer").font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.text)
+                    Text("Computer").font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.ink)
                     // A key, not a String, so the command shows in code type.
-                    Text(LocalizedStringKey("Desktop app or `reins login`")).font(RFont.sans(13)).foregroundStyle(Palette.tertiary)
+                    Text(LocalizedStringKey("Desktop app or `reins login`")).font(RFont.sans(13)).foregroundStyle(Palette.inkMeta)
                 }
             }
             HStack(spacing: 10) {
@@ -289,7 +266,7 @@ private struct ConnectSheet: View {
             }
         }
         .padding(16)
-        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("connectComputerCard")
     }

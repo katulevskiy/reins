@@ -43,7 +43,7 @@ struct GitFacts: View {
             ForEach(Array(git.notes.enumerated()), id: \.offset) { k, note in
                 Text(untrusted(note))
                     .font(RFont.sans(12.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .padding(.horizontal, 24)
                     .accessibilityIdentifier("gitNote:\(k)")
             }
@@ -54,7 +54,7 @@ struct GitFacts: View {
     private func chipTint(_ ref: GitRefView) -> Color? {
         if ref.change == "delete" { return Palette.danger }
         if ref.change == "create" { return Palette.success }
-        if ref.kind == "tag" { return Palette.accent }
+        if ref.kind == "tag" { return Palette.violet }
         return nil
     }
 }
@@ -70,11 +70,11 @@ struct CommitsPage: View {
             let ref = refs[refIndex]
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 0) {
-                    Text(untrusted(ref.shortName)).font(RFont.mono(13)).foregroundStyle(Palette.secondary)
+                    Text(untrusted(ref.shortName)).font(RFont.mono(13)).foregroundStyle(Palette.ink2)
                     if ref.filesChanged > 0 {
                         Button(" · \(ApprovalWords.files(Int(ref.filesChanged)))") { nav.path.append(.files(ref: refIndex)) }
                             .font(RFont.sans(13))
-                            .foregroundStyle(Palette.tertiary)
+                            .foregroundStyle(Palette.inkMeta)
                             .accessibilityIdentifier("gitFiles:\(refIndex)")
                     }
                     Spacer(minLength: 8)
@@ -109,22 +109,22 @@ private struct CommitRow: View {
             HStack(alignment: .center, spacing: 12) {
                 Text(untrusted(commit.shortSha))
                     .font(RFont.mono(12.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .frame(width: 62, alignment: .leading)
                     .frame(maxHeight: .infinity, alignment: .top)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 3) {
                     let subject = untrusted(commit.subject)
-                    Text(subject.isEmpty ? "(no message)" : subject).font(RFont.sans(15)).foregroundStyle(Palette.text).lineLimit(2)
+                    Text(subject.isEmpty ? "(no message)" : subject).font(RFont.sans(15)).foregroundStyle(Palette.ink).lineLimit(2)
                     HStack(spacing: 8) {
-                        Text(untrusted(ApprovalWords.displayName(commit.author))).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary).lineLimit(1)
+                        Text(untrusted(ApprovalWords.displayName(commit.author))).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta).lineLimit(1)
                         Counts(additions: commit.additions, deletions: commit.deletions, size: 12)
                         if commit.hiddenChars { WarnTag(text: "Hidden", tint: Palette.danger, small: true) }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if opens {
-                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.tertiary)
+                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.inkMeta)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -144,25 +144,28 @@ struct CommitPage: View {
     var view: ApprovalView
     var refIndex: Int
     var index: Int
+    /// In Activity, a push's changes not kept on this iPhone: loaded from GitHub here. Nil on the waiting sheet.
+    @Environment(PushDiffs.self) private var diffs: PushDiffs?
 
     var body: some View {
         if let refs = view.git?.refs, refs.indices.contains(refIndex), refs[refIndex].commits.indices.contains(index) {
-            let commit = refs[refIndex].commits[index]
+            let kept = refs[refIndex].commits[index]
+            let commit = diffs?.commit(kept) ?? kept
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
                     let subject = untrusted(commit.subject)
                     Text(subject.isEmpty ? "(no message)" : subject)
                         .font(RFont.sans(21, .semibold))
-                        .foregroundStyle(Palette.text)
+                        .foregroundStyle(Palette.ink)
                         .accessibilityIdentifier("commitSubject")
                     HStack(spacing: 6) {
                         let who = untrusted(ApprovalWords.displayName(commit.author))
                         Text(commit.date != 0 ? "\(who) · \(TimeText.relative(commit.date))" : who)
                             .font(RFont.sans(13))
-                            .foregroundStyle(Palette.tertiary)
+                            .foregroundStyle(Palette.inkMeta)
                             .lineLimit(1)
                         if commit.additions != nil || commit.deletions != nil {
-                            Text("·").font(RFont.sans(13)).foregroundStyle(Palette.tertiary)
+                            Text("·").font(RFont.sans(13)).foregroundStyle(Palette.inkMeta)
                             Counts(additions: commit.additions, deletions: commit.deletions, size: 12.5)
                         }
                     }
@@ -176,6 +179,9 @@ struct CommitPage: View {
                 }
                 .padding(.horizontal, 22)
                 .padding(.top, 6)
+                if let diffs, diffs.missing(kept) {
+                    DiffNotKept(diffs: diffs, shortSha: kept.shortSha)
+                }
                 if let changed = commit.filesChanged {
                     FactGroup {
                         ForEach(Array(commit.files.enumerated()), id: \.offset) { j, file in
@@ -218,7 +224,7 @@ private struct NotListed: View {
     var body: some View {
         Text(text)
             .font(RFont.sans(13.5))
-            .foregroundStyle(Palette.tertiary)
+            .foregroundStyle(Palette.inkMeta)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 18)
             .padding(.vertical, 13)
@@ -242,20 +248,20 @@ private struct FileRow: View {
                 feedback.play(.expand(open))
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "doc.text").font(.system(size: 14)).foregroundStyle(Palette.secondary)
-                    (Text(path.0).foregroundStyle(Palette.tertiary) + Text(path.1).foregroundStyle(Palette.text))
+                    Image(systemName: "doc.text").font(.system(size: 14)).foregroundStyle(Palette.ink2)
+                    (Text(path.0).foregroundStyle(Palette.inkMeta) + Text(path.1).foregroundStyle(Palette.ink))
                         .font(RFont.mono(13))
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .environment(\.layoutDirection, .leftToRight)
                     if file.hiddenChars { WarnTag(text: "Hidden", tint: Palette.danger, small: true) }
                     if file.binary {
-                        Text("binary").font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                        Text("binary").font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
                     } else {
                         Counts(additions: file.additions.map { UInt64($0) }, deletions: file.deletions.map { UInt64($0) }, size: 12.5)
                     }
                     if opens {
-                        Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.tertiary)
+                        Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.inkMeta)
                     }
                 }
                 .padding(.leading, 16)
@@ -290,7 +296,7 @@ private struct DiffBlock: View {
             if cut {
                 Text("More changes not shown")
                     .font(RFont.sans(12.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .accessibilityIdentifier("diffCut")
@@ -310,9 +316,9 @@ private struct DiffBlock: View {
                 .lineLimit(1)
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
-                .background(Palette.search.opacity(0.06))
+                .background(Palette.kindRead.opacity(0.06))
         case .note:
-            Text(untrustedLine(line.text)).font(font).foregroundStyle(Palette.tertiary).padding(.leading, 46).frame(minHeight: 20)
+            Text(untrustedLine(line.text)).font(font).foregroundStyle(Palette.inkMeta).padding(.leading, 46).frame(minHeight: 20)
         case .add, .delete, .context:
             let add = line.kind == .add
             let del = line.kind == .delete
@@ -321,7 +327,7 @@ private struct DiffBlock: View {
                     .foregroundStyle(add ? Palette.dynamic(0x15803D, 0x2F7F5F) : del ? Palette.dynamic(0xDC2626, 0x8A3A3A) : Palette.dynamic(0x97979F, 0x4A4A52))
                     .frame(width: 30, alignment: .trailing)
                 Text("\(add ? "+" : del ? "−" : " ") \(untrustedLine(line.text))")
-                    .foregroundStyle(add ? Palette.dynamic(0x0F6A3F, 0x9FF0CF) : del ? Palette.dynamic(0x9B1C1C, 0xFDB4B4) : Palette.secondary)
+                    .foregroundStyle(add ? Palette.dynamic(0x0F6A3F, 0x9FF0CF) : del ? Palette.dynamic(0x9B1C1C, 0xFDB4B4) : Palette.ink2)
                     .padding(.trailing, 14)
             }
             .font(font)

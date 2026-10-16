@@ -1,4 +1,6 @@
 //! Stores only ciphertext. Reads are private to the authenticated user; writes require the approval device and CAS.
+//! Once the account has a roster (phone roles), state travels as ops and writes here answer 410; reads still serve the
+//! last state to apps from before.
 use super::device_api::{DeviceKey, PhoneResult, api_err, bad_request, read_body_limited, require_approval_device};
 use crate::{CONFIG, auth::Headers, db::DbConn};
 use reins_proto::account_state::{AccountState, AccountStateUpdate, MAX_CIPHERTEXT_BYTES};
@@ -82,6 +84,13 @@ async fn get_state(headers: Headers) -> PhoneResult<Json<AccountState>> {
 #[put("/reins/api/account-state", data = "<data>")]
 async fn put_state(headers: Headers, key: DeviceKey, data: Data<'_>, conn: DbConn) -> PhoneResult<Json<AccountState>> {
     require_approval_device(&headers, &key, &conn).await?;
+    if super::roles::has_roster(&headers.user.uuid.to_string(), &conn).await? {
+        return Err(api_err(
+            Status::Gone,
+            reins_proto::device::codes::LEGACY_RETIRED,
+            "This account has phone roles: its state syncs as ops (POST /reins/api/ops)",
+        ));
+    }
     let bytes = read_body_limited(data, MAX_CIPHERTEXT_BYTES as u64 + 1024).await?;
     let update: AccountStateUpdate =
         serde_json::from_slice(&bytes).map_err(|_| bad_request("Invalid encrypted account state"))?;

@@ -195,6 +195,30 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(element(app, "pairingSheet").waitForNonExistence(timeout: 5))
     }
 
+    /// The river by day: today open, earlier days folded until their header is tapped; words typed search the history
+    /// and the matches replace the stack; a filter alone searches too.
+    func testTheRiverFoldsByDayAndSearches() {
+        let app = launch(extra: ["-demoQuiet"])
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        let today = element(app, String(format: "day:%04d-%02d-%02d", c.year!, c.month!, c.day!))
+        expectToAppear(today)
+        XCTAssertEqual(today.value as? String, "Expanded")
+        let search = element(app, "activitySearch")
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Dinner")
+        expectToAppear(element(app, "searchResults"))
+        XCTAssertFalse(element(app, "pond").exists, "searching hides the stack")
+        shot(app, "activity-search")
+        element(app, "clearSearch").tap()
+        expectToAppear(element(app, "pond"))
+        element(app, "filterToggle").tap()
+        element(app, "filter:outcome").tap()
+        element(app, "filter:denied").tap()
+        expectToAppear(element(app, "searchResults"))
+        shot(app, "activity-filtered")
+    }
+
     func testAnEntryOpensAndAnEmailInItOpensInFull() {
         let app = launch("reins://activity?id=10")
         let message = element(app, "detailMessage:0")
@@ -252,5 +276,38 @@ final class ActivityFlowTests: XCTestCase {
         element(app, "deny").tap()
         XCTAssertTrue(element(app, "uploadSheet").waitForNonExistence(timeout: 5))
         XCTAssertFalse(element(app, "pending:blob_q3numbers").exists)
+    }
+
+    // MARK: A push decided on another device
+
+    /// Opens a synced push's first commit: its changes were not kept on this iPhone, and Load from GitHub brings them.
+    private func openSyncedCommit(_ extra: String) -> XCUIApplication {
+        let app = launch("reins://activity?id=14", extra: [extra])
+        let commits = element(app, "gitCommits:0")
+        expectToAppear(commits, timeout: 15)
+        commits.tap()
+        let first = element(app, "gitCommit:0:0")
+        expectToAppear(first, timeout: 5)
+        first.tap()
+        expectToAppear(element(app, "diffNotKept"), timeout: 5)
+        return app
+    }
+
+    func testAPushFromAnotherDeviceLoadsItsDiffFromGitHub() {
+        let app = openSyncedCommit("-demoSyncedPush")
+        shot(app, "synced-not-kept")
+        element(app, "loadDiff").tap()
+        XCTAssertTrue(element(app, "diffNotKept").waitForNonExistence(timeout: 8), "loaded, the note goes")
+        element(app, "commitFile:0").tap()
+        expectToAppear(element(app, "commitFile:0:diff"), timeout: 5)
+        shot(app, "synced-loaded")
+    }
+
+    func testALoadThatFailsSaysWhyAndOffersRetry() {
+        let app = openSyncedCommit("-demoSyncedPushFails")
+        element(app, "loadDiff").tap()
+        expectToAppear(element(app, "retryDiff"), timeout: 8)
+        XCTAssertTrue(element(app, "diffLoadError").exists)
+        shot(app, "synced-retry")
     }
 }

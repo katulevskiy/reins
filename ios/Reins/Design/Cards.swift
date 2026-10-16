@@ -8,7 +8,7 @@ import SwiftUI
 /// The colour of a kind of operation on cards and tiles; a request that always asks is red.
 enum KindTint {
     static func of(_ kind: ActionKind, danger: Bool = false) -> Color {
-        FieldKind.of(kind, danger: danger)?.ink ?? Palette.secondary
+        FieldKind.of(kind, danger: danger)?.ink ?? Palette.ink2
     }
 
     /// The approval hero's wash: the kind's colour from 16 % at the top to 4 % at the bottom, with a 24 % border.
@@ -41,7 +41,7 @@ struct ServiceTile: View {
             } else {
                 Image(systemName: symbol ?? "link")
                     .font(.system(size: size * 0.4, weight: .medium))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
             }
         }
         .frame(width: size, height: size)
@@ -72,7 +72,7 @@ struct ServiceMini: View {
                         ConnectionAvatar(label: untrusted(label), pick: nil, size: avatar)
                     }
                 }
-                .overlay(Circle().strokeBorder(Palette.background, lineWidth: 2.5).padding(-2.5))
+                .overlay(Circle().strokeBorder(Palette.paper, lineWidth: 2.5).padding(-2.5))
                 .offset(x: -size * 0.14, y: size * 0.14)
             }
             .padding(.leading, size * 0.14)
@@ -85,7 +85,7 @@ struct ServiceMini: View {
 struct ArcRing: View {
     var fraction: Double
     var color: Color
-    var track: Color = Palette.controlFill
+    var track: Color = Palette.paperSunken
     var lineWidth: CGFloat = 2.5
 
     var body: some View {
@@ -171,10 +171,10 @@ struct TimerPill: View {
     private func paperLabel(_ u: Urgency?, text: String) -> some View {
         let hot = u?.urgent == true
         let stale = u?.stale == true
-        let color = hot ? Palette.danger : stale ? Palette.tertiary : Palette.secondary
+        let color = hot ? Palette.danger : stale ? Palette.inkMeta : Palette.ink2
         return HStack(spacing: 6) {
             if let u {
-                ArcRing(fraction: u.stale ? 0 : u.fraction, color: color, track: hot ? Palette.danger.opacity(0.22) : Palette.controlFill, lineWidth: 2.5)
+                ArcRing(fraction: u.stale ? 0 : u.fraction, color: color, track: hot ? Palette.danger.opacity(0.22) : Palette.paperSunken, lineWidth: 2.5)
                     .frame(width: 16, height: 16)
             }
             Text(text)
@@ -186,7 +186,7 @@ struct TimerPill: View {
         .padding(.leading, u == nil ? 11 : 8)
         .padding(.trailing, 11)
         .padding(.vertical, 7)
-        .background(hot ? Palette.danger.opacity(0.13) : Palette.controlFill, in: Capsule())
+        .background(hot ? Palette.danger.opacity(0.13) : Palette.paperSunken, in: Capsule())
         .animation(.easeInOut(duration: 0.4), value: hot)
         .fixedSize()
         .accessibilityElement(children: .ignore)
@@ -423,7 +423,7 @@ struct HelpButton: View {
         } label: {
             Image(systemName: "questionmark.circle")
                 .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Palette.tertiary)
+                .foregroundStyle(Palette.inkMeta)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
@@ -432,7 +432,7 @@ struct HelpButton: View {
         .popover(isPresented: $open) {
             Text(text)
                 .font(RFont.sans(14.5))
-                .foregroundStyle(Palette.text)
+                .foregroundStyle(Palette.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 280, alignment: .leading)
                 .padding(16)

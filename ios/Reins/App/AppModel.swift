@@ -121,6 +121,13 @@ final class AppModel {
     private(set) var pending: [PendingItem] = []
     /// Everything that happened, newest first.
     private(set) var activity: [ActivityEntry] = []
+    /// Entries read by Activity's search and its day pages, older than `activity` reaches; by id.
+    private(set) var searchedEntries: [Int64: ActivityEntry] = [:]
+    /// Activity's days opened or closed by hand this session, by day ("2026-10-15"); never saved.
+    private(set) var activityOpenDays: [String: Bool] = [:]
+    /// What Activity searches for and how it narrows it; kept while the user moves between tabs.
+    var activitySearchText = ""
+    var activityFilters = ActivityFilters()
     private(set) var grants: [GrantView] = []
     /// What a newly connected AI may do at first; nil until the user chose (it then asks for everything).
     private(set) var startingPolicy: StartingPolicy?
@@ -293,6 +300,10 @@ final class AppModel {
         deviceReplaced = false
         pending = []
         activity = []
+        searchedEntries = [:]
+        activityOpenDays = [:]
+        activitySearchText = ""
+        activityFilters = ActivityFilters()
         grants = []
         startingPolicy = nil
         accounts = []
@@ -622,6 +633,32 @@ final class AppModel {
         }
     }
 
+    /// A change to a connection's blobatar from its Icon sheet.
+    enum BlobatarChange: Equatable {
+        case shape(UInt8)
+        case colour(UInt8)
+        case shuffle
+    }
+
+    /// Changes a connection's blobatar (kept and synced by the core) and, when the connection shows something else
+    /// (a logo), makes it show the blobatar, so the change is seen. Then reads the connections again.
+    func changeBlobatar(_ connectionId: String, _ change: BlobatarChange) async throws {
+        guard let connection = connection(connectionId) else { return }
+        let kept = connection.blobatar
+        switch change {
+        case let .shape(shape):
+            _ = try await core.setConnectionBlobatar(connectionId: connectionId, shape: shape, colour: kept?.colour ?? 0)
+        case let .colour(colour):
+            _ = try await core.setConnectionBlobatar(connectionId: connectionId, shape: kept?.shape ?? 0, colour: colour)
+        case .shuffle:
+            _ = try await core.shuffleConnectionBlobatar(connectionId: connectionId)
+        }
+        if !ConnectionLook.showsBlob(connection) {
+            try await core.setConnectionIcon(connectionId: connectionId, icon: Providers.blob)
+        }
+        await refreshConnections()
+    }
+
     private func setMcpServers(_ list: [McpServerView]) {
         mcpServers = list
         McpNames.update(Dictionary(uniqueKeysWithValues: list.map {
@@ -709,6 +746,23 @@ final class AppModel {
     }
 
     var unseenActivity: Int { activity.filter { $0.id > seenActivityId }.count }
+
+    /// An entry by id: from the history read at once, else from what a search or an opened day brought in.
+    func entry(_ id: Int64) -> ActivityEntry? {
+        activity.first { $0.id == id } ?? searchedEntries[id]
+    }
+
+    /// Keeps the entries a search or a day page read, so opening one finds it beyond the history read at once.
+    func remember(_ entries: [ActivityEntry]) {
+        guard !entries.isEmpty else { return }
+        if searchedEntries.count > 2_000 { searchedEntries.removeAll() }
+        for e in entries where searchedEntries[e.id] != e { searchedEntries[e.id] = e }
+    }
+
+    /// Whether Activity's day `key` ("2026-10-15") is open; today's is unless closed. In memory for the session only.
+    func activityDayOpen(_ key: String, today: String) -> Bool { activityOpenDays[key] ?? (key == today) }
+
+    func setActivityDay(_ key: String, open: Bool) { activityOpenDays[key] = open }
 
     var activeGrants: Int { grants.filter(\.active).count }
 
@@ -996,10 +1050,12 @@ final class AppModel {
 
     // MARK: Widgets
 
-    /// An item as widgets and Live Activities show it, with its connection's logo pick.
+    /// An item as widgets and Live Activities show it, with the icon its connection shows and the blobatar it keeps.
     func snapshotItem(_ item: PendingItem) -> Snapshot.Item {
         var s = item.snapshotItem
-        s.connectionIcon = connection(item.connectionId)?.icon
+        let c = connection(item.connectionId)
+        s.connectionIcon = c.flatMap(ConnectionLook.shownIcon)
+        s.connectionBlobatar = c.flatMap(ConnectionLook.blobatar)
         return s
     }
 
@@ -1105,9 +1161,14 @@ extension PendingItem {
             createdAt: createdAt,
             expiresAt: expiresAt,
             suggestion: suggestion,
-            quick: kind == .request && quick
+            quick: kind == .request && quick,
+            field: field.rawValue,
+            label: AskLabels.pending(self, field: field).kind
         )
     }
+
+    /// The field it is painted in outside the app, as on its waiting card (`ActivityText.field`).
+    private var field: FieldKind { ActivityText.field(self, danger: false) }
 }
 
 extension ActivityEntry {

@@ -897,6 +897,42 @@ impl ReinsCore {
         .await
     }
 
+    /// Changes a connection's blobatar to `shape` (below `blobatar_shape_count()`) and `colour` (an index of
+    /// `blobatar_colours()`), keeping its figure. Returns the one kept.
+    pub async fn set_connection_blobatar(
+        &self,
+        connection_id: String,
+        shape: u8,
+        colour: u8,
+    ) -> Result<crate::avatar::Blobatar, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result =
+                engine.run_account(async { engine.set_connection_blobatar(&connection_id, shape, colour) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// "Shuffle": a new random blobatar for a connection (another figure, shape and colour). Returns it.
+    pub async fn shuffle_connection_blobatar(
+        &self,
+        connection_id: String,
+    ) -> Result<crate::avatar::Blobatar, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.shuffle_connection_blobatar(&connection_id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
     /// Creates a permission ahead of any request (`kind` is `Read` or `Send`).
     pub async fn create_grant(
         &self,
@@ -1136,6 +1172,56 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.activity(limit) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
+    /// newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
+    /// matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.
+    pub async fn search_activity(
+        &self,
+        query: crate::types::ActivityQuery,
+        after: Option<crate::types::ActivityCursor>,
+        limit: u32,
+    ) -> Result<crate::types::ActivityPage, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.search_activity(&query, after, limit) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// When each entry matching `query` was logged, how it ended and who decided, newest first: to group the Activity
+    /// by day (in the phone's time zone) and count each day without loading the entries.
+    pub async fn activity_stamps(
+        &self,
+        query: crate::types::ActivityQuery,
+    ) -> Result<Vec<crate::types::ActivityStamp>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.activity_stamps(&query) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The integrations, kinds and connections the Activity holds: the search filters' choices.
+    pub async fn activity_facets(&self) -> Result<crate::types::ActivityFacets, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.activity_facets() }).await;
             runtime.finish(&engine, result)
         })
         .await

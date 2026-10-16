@@ -65,7 +65,7 @@ final class RequestLabelTests: XCTestCase {
     }
 
     func testWhoIsTheAgentAndItsComputer() {
-        XCTAssertEqual(AskedText.who(agent: "Claude Code", connection: "Reins desktop app on laptop", host: "laptop"), "Claude Code · laptop")
+        XCTAssertEqual(AskedText.who(agent: "Claude Code", connection: "M2A", host: "127.0.0.1"), "Claude Code · M2A", "the computer's name, not its host")
         XCTAssertEqual(AskedText.who(agent: "Claude Code", connection: "Work laptop", host: nil), "Claude Code · Work laptop")
         XCTAssertEqual(AskedText.who(agent: "", connection: "Claude", host: "claude.ai"), "Claude · claude.ai")
         XCTAssertEqual(AskedText.who(agent: "Claude", connection: "Claude", host: ""), "Claude", "said once")

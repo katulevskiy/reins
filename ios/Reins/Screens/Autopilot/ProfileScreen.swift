@@ -30,7 +30,7 @@ struct ProfileScreen: View {
                 ProgressView().padding(.top, 60).frame(maxWidth: .infinity)
             }
         }
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -156,7 +156,7 @@ struct ProfileScreen: View {
             }
 
             AutopilotGroup(header: nil) {
-                AutopilotRow(title: "Try this profile", symbol: "flask", tint: Palette.send, chevron: true, identifier: "tryProfile") {
+                AutopilotRow(title: "Try this profile", symbol: "flask", tint: Palette.kindPush, chevron: true, identifier: "tryProfile") {
                     model.push(.tryIt(profile.id))
                 }
             }
@@ -196,7 +196,7 @@ private struct ProfileHeader: View {
                             .minimumScaleFactor(0.7)
                             .accessibilityAddTraits(.isHeader)
                         if profile.isDefault {
-                            StatusPill(text: "Default", tint: Palette.accent).accessibilityIdentifier("defaultTag")
+                            StatusPill(text: "Default", tint: Palette.violet).accessibilityIdentifier("defaultTag")
                         }
                     }
                     Text(ais.isEmpty ? "No AI yet" : ais.map { untrustedName($0, limit: 40) }.joined(separator: ", "))
@@ -253,7 +253,7 @@ private struct ThresholdCard: View {
             if let replay = ap.replay {
                 Text(replayText(replay))
                     .font(RFont.sans(12.5))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("replay")
             }
@@ -261,8 +261,8 @@ private struct ThresholdCard: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.elevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
+        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.rule, lineWidth: 0.5))
         .onAppear(perform: follow)
         .onChange(of: profile.approveAt) { if !dragging { follow() } }
         .onChange(of: profile.denyAt) { if !dragging { follow() } }
@@ -289,7 +289,7 @@ private struct ThresholdCard: View {
     private func replayText(_ r: ThresholdReplay) -> AttributedString {
         AutopilotText.replayParts(r).reduce(into: AttributedString()) { text, part in
             var piece = AttributedString(part.text)
-            if part.strong { piece.foregroundColor = Palette.text }
+            if part.strong { piece.foregroundColor = Palette.ink }
             text.append(piece)
         }
     }
@@ -313,7 +313,7 @@ private struct ThresholdSlider: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(title).font(RFont.sans(14.5)).foregroundStyle(Palette.text)
+                Text(title).font(RFont.sans(14.5)).foregroundStyle(Palette.ink)
                 Spacer()
                 Text("\(value)%").font(RFont.mono(14, .semibold)).foregroundStyle(tint).monospacedDigit()
             }
@@ -325,7 +325,7 @@ private struct ThresholdSlider: View {
                     Capsule().fill(tint)
                         .frame(width: max(x(value) - x(lo), 0), height: 6)
                         .offset(x: x(lo))
-                    Rectangle().fill(Palette.tertiary)
+                    Rectangle().fill(Palette.inkMeta)
                         .frame(width: 2, height: 16)
                         .offset(x: x(lo) - 1)
                     Circle().fill(Color.white)
@@ -385,20 +385,20 @@ private struct KindRow: View {
             } label: {
                 HStack(spacing: 12) {
                     if locked {
-                        Circle().fill(Palette.chip)
+                        Circle().fill(Palette.paperSunken)
                             .frame(width: 34, height: 34)
-                            .overlay { Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(Palette.secondary) }
+                            .overlay { Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(Palette.ink2) }
                     } else {
                         ProgressRing(
                             fraction: AutopilotText.unlockProgress(cls),
-                            tint: cls.autoApprove ? Palette.success : Palette.search, size: 34, stroke: 3.5
+                            tint: cls.autoApprove ? Palette.success : Palette.kindRead, size: 34, stroke: 3.5
                         )
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(cls.label).font(RFont.sans(15, .medium)).foregroundStyle(Palette.text).lineLimit(1)
+                        Text(cls.label).font(RFont.sans(15, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
                         Text(AutopilotText.kindLine(cls))
                             .font(RFont.sans(12.5))
-                            .foregroundStyle(Palette.tertiary)
+                            .foregroundStyle(Palette.inkMeta)
                             .lineLimit(1)
                             .accessibilityIdentifier("kindLine:\(cls.classKey)")
                     }
@@ -423,10 +423,10 @@ private struct KindRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(AutopilotText.classStatus(cls))
                             .font(RFont.sans(13, .medium))
-                            .foregroundStyle(locked ? Palette.secondary : cls.autoApprove ? Palette.success : Palette.search)
+                            .foregroundStyle(locked ? Palette.ink2 : cls.autoApprove ? Palette.success : Palette.kindRead)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("classStatus:\(cls.classKey)")
-                        Text(AutopilotText.classNumbers(cls)).font(RFont.sans(12.5)).foregroundStyle(Palette.tertiary)
+                        Text(AutopilotText.classNumbers(cls)).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
                     }
                     FlowRow(spacing: 8) {
                         AutopilotChip(title: "Learn by itself", selected: cls.manual == nil, identifier: "lock:auto:\(cls.classKey)") { onLock(nil) }

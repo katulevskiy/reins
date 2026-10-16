@@ -40,6 +40,8 @@ pub struct ReinsRefreshToken {
     pub connection_uuid: String,
     /// Unix seconds; the token is dead at `now >= expires_at`.
     pub expires_at: i64,
+    /// How the client authenticated when it got this token (`none`, `private_key_jwt`); refreshing needs the same.
+    pub client_auth: String,
 }
 
 impl ReinsConnection {
@@ -215,6 +217,7 @@ mod tests {
             token_hash: hash.to_owned(),
             connection_uuid: conn.uuid.clone(),
             expires_at,
+            client_auth: "private_key_jwt".to_owned(),
         }
     }
 

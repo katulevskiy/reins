@@ -57,14 +57,15 @@ final class AutopilotUITests: XCTestCase {
         }
     }
 
-    private func selected(_ id: String) {
+    /// As long as `waitFor`: on a busy Mac a switch can take more than 5 s to show.
+    private func selected(_ id: String, timeout: TimeInterval = 8) {
         expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element(id))
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: timeout)
     }
 
-    private func notSelected(_ id: String) {
+    private func notSelected(_ id: String, timeout: TimeInterval = 8) {
         expectation(for: NSPredicate(format: "isSelected == false"), evaluatedWith: element(id))
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: timeout)
     }
 
     /// Manual → Auto → Manual → Auto: each time the card in force is selected, the other is not, and both stay

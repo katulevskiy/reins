@@ -242,7 +242,7 @@ object TestData {
 
     /** The desktop app pushes with git: the core's preview lines are there too, but the git section replaces them. */
     fun gitPushView(git: GitPushView = gitPush(gitRef()), noStanding: Boolean = false, tags: Boolean = false) = repoWriteView().copy(
-        requestId = "req20", connectionLabel = "Reins desktop app on laptop", op = if (tags) "git_tag_push" else "git_push",
+        requestId = "req20", connectionLabel = "M2A", op = if (tags) "git_tag_push" else "git_push",
         preview = listOf("Push 9 commits to main", "Commit number 1", "+120 −14 in 12 files"),
         noStanding = noStanding, opTitle = if (tags) "Push tags with git" else "Push with git",
         `class` = if (tags) "releases" else "code", git = git,
@@ -250,7 +250,7 @@ object TestData {
 
     /** The desktop app asks to clone and fetch: an ordinary item list, no git section. */
     fun gitFetchView() = fetchView().copy(
-        requestId = "req21", connectionLabel = "Reins desktop app on laptop", service = "github", account = "octo-cat",
+        requestId = "req21", connectionLabel = "M2A", service = "github", account = "octo-cat",
         op = "git_fetch", count = 1u,
         messages = listOf(MessageView("octo/app", "octo/app (private)", "Clone and fetch octo/app", 0, "Git on your computer can read this repository for 1 hour.", false, false)),
         resources = listOf(ResourceView("octo/app", "octo/app (private)", false), ResourceView("octo", "Every repository of octo", true)),
@@ -389,12 +389,45 @@ object TestData {
         classes = emptyList(),
     )
 
+    /**
+     * An AI app, as the core gives it: what Auto shows worked out from its name like the core does (its provider's
+     * logo, else its blobatar), and a blobatar of its own, its shape and colour picked from its id.
+     */
     fun connection(id: String = "c1", label: String = "Claude", icon: String? = null, keyFingerprint: String? = null) =
-        ConnectionView(id, label, "claude.ai", 1_700_000_000, 1_700_000_100, icon, keyFingerprint)
+        ConnectionView(
+            id, label, "claude.ai", 1_700_000_000, 1_700_000_100, icon, keyFingerprint,
+            autoIcon = if (keyFingerprint != null) "blob" else dev.reins.android.design.Providers.infer(label)?.key ?: "blob",
+            platform = null,
+            blobatar = blobatar(id),
+        )
 
-    /** A computer: the Reins desktop app, paired with its key. */
-    fun computer(id: String = "d1", label: String = "Laptop", fingerprint: String = "4821 9930") =
-        ConnectionView(id, label, "203.0.113.7", 1_700_000_000, 1_700_000_100, null, fingerprint)
+    /** A computer: the Reins desktop app, paired with its key, on [platform] (its logo is what Auto shows). */
+    fun computer(id: String = "d1", label: String = "M2A", fingerprint: String = "4821 9930", platform: String? = "macos") =
+        ConnectionView(
+            id, label, "203.0.113.7", 1_700_000_000, 1_700_000_100, null, fingerprint,
+            autoIcon = platform ?: "blob",
+            platform = platform,
+            blobatar = blobatar(id),
+        )
+
+    /** A blobatar for connection [id]: its id as the seed, a shape and colour of its own. */
+    fun blobatar(id: String, shape: Int? = null, colour: Int? = null): dev.reins.core.Blobatar {
+        val n = id.fold(7) { h, ch -> h * 31 + ch.code }.let { if (it < 0) -it else it }
+        return dev.reins.core.Blobatar(id, (shape ?: (n % 10)).toUByte(), (colour ?: (n / 10 % 12)).toUByte())
+    }
+
+    /** The connections of the screenshots: two computers, two AIs with their providers' logos, a bot with its blobatar. */
+    fun showcaseConnections(): List<ConnectionView> = listOf(
+        computer("d1", "M2A", platform = "macos").copy(lastUsedAt = 1_700_000_090, blobatar = blobatar("d1", 0, 7)),
+        computer("d2", "honeypot", fingerprint = "7310 2284", platform = "linux").copy(blobatar = blobatar("d2", 2, 4)),
+        connection("c1", "Claude").copy(blobatar = blobatar("c1", 1, 1)),
+        connection("c2", "Grok").copy(clientHost = "grok.com", blobatar = blobatar("c2", 4, 9)),
+        connection("c3", "notes-bot").copy(clientHost = "203.0.113.7", blobatar = blobatar("c3", 5, 0)),
+    )
+
+    /** A connection from before the core worked out its icon and blobatar: the apps fall back to its name. */
+    fun legacyConnection(id: String = "c1", label: String = "Claude", icon: String? = null, keyFingerprint: String? = null) =
+        ConnectionView(id, label, "claude.ai", 1_700_000_000, 1_700_000_100, icon, keyFingerprint)
 
     /**
      * A grant. Active ones were made [ageSeconds] ago and end in [leftSeconds]; ended ones expired long ago
@@ -531,14 +564,14 @@ object TestData {
     // ---- the desktop app --------------------------------------------------------------------------------------
 
     fun askView(detail: String? = "git push --force origin main", topic: String? = "command:git push --force", rule: AskRuleView? = null) = writeView().copy(
-        requestId = "req40", connectionLabel = "Reins desktop app on laptop", service = "desktop", account = null, op = "ask",
+        requestId = "req40", connectionLabel = "M2A", service = "desktop", account = null, op = "ask",
         resources = listOf(ResourceView(topic ?: "ask", topic ?: "Questions without a topic", false)),
         preview = listOf("Force-push main?"), opTitle = "Ask you on your phone", action = "write", `class` = "", classes = emptyList(),
         ask = AskView("Force-push main?", detail, topic, rule),
     )
 
     fun secretsView(lease: ULong = 1_800u) = writeView().copy(
-        requestId = "req41", connectionLabel = "Reins desktop app on laptop", service = "vault", account = "me@example.com",
+        requestId = "req41", connectionLabel = "M2A", service = "vault", account = "me@example.com",
         op = "secret_release", resources = listOf(ResourceView("secrets", "These secrets", false)),
         preview = listOf("npm run deploy"), noStanding = false, opTitle = "Use secrets on the computer", action = "write",
         `class` = "secrets", classes = emptyList(),
@@ -575,7 +608,7 @@ object TestData {
     )
 
     fun envReleaseView(release: dev.reins.core.EnvReleaseView = envRelease()) = writeView().copy(
-        requestId = "req43", connectionLabel = "Reins desktop app on laptop", service = "vault",
+        requestId = "req43", connectionLabel = "M2A", service = "vault",
         account = "me@example.com", op = "env_release",
         resources = listOf(ResourceView("secrets/shop/${release.env}", "shop · ${release.env}", false), ResourceView("secrets/shop", "shop", true)),
         preview = listOf("${release.runnerLabel}: ${release.env} for ${release.command}"),
@@ -587,7 +620,7 @@ object TestData {
 
     /** Values from the computer to save in the vault: two environments, an SSH key and a token, one approval. */
     fun secretsStoreView() = writeView().copy(
-        requestId = "req44", connectionLabel = "Reins desktop app on laptop", service = "vault",
+        requestId = "req44", connectionLabel = "M2A", service = "vault",
         account = "me@example.com", op = "secrets_store", resources = listOf(ResourceView("secrets", "Your vault", false)),
         preview = listOf("Save 9 secrets"), noStanding = true, opTitle = "Save secrets", action = "write", `class` = "secrets",
         classes = emptyList(),
@@ -603,7 +636,7 @@ object TestData {
     )
 
     fun tokenStoreView() = writeView().copy(
-        requestId = "req45", connectionLabel = "Reins desktop app on laptop", service = "vault",
+        requestId = "req45", connectionLabel = "M2A", service = "vault",
         account = "me@example.com", op = "token_store", resources = listOf(ResourceView("github", "GitHub", false)),
         preview = listOf("A GitHub token for github.com"), noStanding = true, opTitle = "Save a token", action = "write",
         `class` = "secrets", classes = emptyList(), tokenStore = tokenStore(),
@@ -616,7 +649,7 @@ object TestData {
     )
 
     fun sshView(host: String? = "build.example.com", hostKey: String? = "SHA256:Ql3mV1hd2bS9WgS0aVq2Jv0Rr2q8Zb0yRrj2uMm3n0E") = writeView().copy(
-        requestId = "req42", connectionLabel = "Reins desktop app on laptop", service = "vault", account = "me@example.com",
+        requestId = "req42", connectionLabel = "M2A", service = "vault", account = "me@example.com",
         op = "ssh_sign", resources = listOf(ResourceView("SHA256:abc@build.example.com", "Deploy key on build.example.com", false)),
         preview = listOf("Sign in to build.example.com"), opTitle = "Sign in to a server with SSH", action = "write",
         `class` = "ssh", classes = emptyList(),

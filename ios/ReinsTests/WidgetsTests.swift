@@ -115,14 +115,15 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(state.scope, "every AI")
         XCTAssertEqual(state.approvedCount, 3)
         let views = BypassLiveViews(state: state, stale: false)
-        XCTAssertEqual(views.title, "Overnight on")
-        XCTAssertEqual(views.symbol, "moon.stars.fill")
+        XCTAssertEqual(views.title, "Overnight on · every AI")
+        XCTAssertEqual(views.field, .grant, "an Overnight is a violet field")
         XCTAssertEqual(views.line, "For every AI. Holds what is too risky.")
         // The same end of a bypass, after it, is a new ring.
         let bypass = try XCTUnwrap(Glance.bypassState(global: now + 8 * 3_600, connections: [], previous: state, approvedSince: { _ in 0 }, now: now + 10))
         XCTAssertNil(bypass.overnight)
         XCTAssertNotEqual(bypass.startedAt, state.startedAt)
-        XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).title, "Bypass on")
+        XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).title, "Bypass on · every AI")
+        XCTAssertEqual(BypassLiveViews(state: bypass, stale: false).field, .delete, "a bypass is a red field")
     }
 
     func testAssistedFromAnOlderSnapshotShowsAsManual() {
@@ -317,7 +318,8 @@ final class WidgetsTests: XCTestCase {
         XCTAssertEqual(state.approvedCount, 7)
         let views = BypassLiveViews(state: state, stale: false)
         XCTAssertFalse(views.ended)
-        XCTAssertEqual(views.title, "Bypass on · until you stop it")
+        XCTAssertEqual(views.title, "Bypass on · every AI")
+        XCTAssertTrue(views.untilOff, "says until you stop it instead of counting down")
         // Unknown start: from now, and later refreshes keep it.
         let first = try XCTUnwrap(Glance.bypassState(global: AutopilotText.untilOff, connections: [], previous: nil, approvedSince: { _ in 0 }, now: now))
         XCTAssertEqual(first.startedAt, Date(timeIntervalSince1970: TimeInterval(now)))
@@ -326,7 +328,7 @@ final class WidgetsTests: XCTestCase {
         // A timed one is not.
         let timed = try XCTUnwrap(Glance.bypassState(global: now + 900, connections: [], previous: nil, approvedSince: { _ in 0 }, now: now))
         XCTAssertNil(timed.untilOff)
-        XCTAssertEqual(BypassLiveViews(state: timed, stale: false).title, "Bypass on")
+        XCTAssertEqual(BypassLiveViews(state: timed, stale: false).title, "Bypass on · every AI")
     }
 
     func testDownloadProgress() {
@@ -373,5 +375,20 @@ final class WidgetsTests: XCTestCase {
         XCTAssertNil(s.baseMode)
         XCTAssertNil(s.anyBypassUntil)
         XCTAssertNil(s.pending.first?.connectionIcon)
+        XCTAssertNil(s.pending.first?.connectionBlobatar)
+    }
+
+    /// A computer's platform logo and a kept blobatar reach the widgets and the Live Activity as the app draws them.
+    func testTheConnectionsIconAndBlobatarReachTheWidgets() throws {
+        var a = item("req1", created: now - 5, expires: now + 40, connection: "M2A")
+        a.connectionIcon = "macos"
+        a.connectionBlobatar = BlobatarLook(seed: "c6", shape: 4, colour: 6)
+        let state = Glance.approvalState([a], now: now)
+        XCTAssertEqual(state?.connectionIcon, "macos")
+        XCTAssertEqual(state?.connectionBlobatar, BlobatarLook(seed: "c6", shape: 4, colour: 6))
+        let back = try JSONDecoder().decode(Snapshot.Item.self, from: JSONEncoder().encode(a))
+        XCTAssertEqual(back, a)
+        XCTAssertEqual(AvatarLook.of(label: a.connection, icon: a.connectionIcon, blobatar: a.connectionBlobatar), .platform(Platforms.byKey("macos")!))
+        XCTAssertEqual(AvatarLook.of(label: "notes-bot", icon: "blob", blobatar: a.connectionBlobatar), .blob(seed: "c6", shape: 4, colour: 6))
     }
 }

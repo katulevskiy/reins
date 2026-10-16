@@ -1152,11 +1152,16 @@ class AutopilotFlowTest : FlowHarness() {
         launch()
         awaitTag("entry:2")
         tap("filters")
-        tap("filter:autopilot")
+        tap("filter:who")
+        tap("who:autopilot")
         awaitGone("entry:2")
         assertTrue(has("entry:3"))
-        assertTrue(has("entry:1"))
-        tap("filter:all")
+        // Lockdown is its own: Who · Autopilot is what Autopilot decided.
+        assertFalse(has("entry:1"))
+        tap("filter:who")
+        tap("who:lockdown")
+        awaitTag("entry:1")
+        tap("filtersClear")
         awaitTag("entry:2")
     }
 
@@ -1165,9 +1170,10 @@ class AutopilotFlowTest : FlowHarness() {
         core.activity = listOf(TestData.entry(1), TestData.entry(2, outcome = "denied"))
         launch()
         awaitTag("entry:1")
-        assertFalse(has("filter:denied"))
+        assertFalse(has("filter:outcome"))
         tap("filters")
-        tap("filter:denied")
+        tap("filter:outcome")
+        tap("outcome:denied")
         awaitGone("entry:1")
         assertTrue(has("entry:2"))
     }

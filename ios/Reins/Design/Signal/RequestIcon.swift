@@ -54,14 +54,33 @@ struct RequestIcon: View {
     }
 }
 
-/// A sentence's runs in the serif at a row's size, its target in italic (river rows, lists).
+/// A sentence's runs in the serif at a row's size, its target in italic (river rows, lists). `terms`: the words a
+/// search found, set apart where a word of the sentence starts with one (`TitleHighlight`).
 struct AskRunsText: View {
     var runs: [AskText.Run]
     var size: CGFloat
+    var terms: [String] = []
 
     var body: some View {
-        runs.reduce(Text(verbatim: "")) { sentence, run in
-            Text("\(sentence)\(Text(verbatim: run.text).font(RFont.serif(size, italic: run.target)))")
+        if terms.isEmpty {
+            runs.reduce(Text(verbatim: "")) { sentence, run in
+                Text("\(sentence)\(Text(verbatim: run.text).font(RFont.serif(size, italic: run.target)))")
+            }
+        } else {
+            Text(Self.attributed(runs, size: size, terms: terms))
         }
+    }
+
+    /// The sentence as one attributed string, its matches set apart. The runs are already clean (`AskLabels` cleans
+    /// everything that reaches them).
+    static func attributed(_ runs: [AskText.Run], size: CGFloat, terms: [String]) -> AttributedString {
+        var out = AttributedString()
+        for run in runs {
+            var part = AttributedString(run.text)
+            part.font = RFont.serif(size, italic: run.target)
+            out += part
+        }
+        TitleHighlight.apply(&out, terms: terms)
+        return out
     }
 }

@@ -154,12 +154,12 @@ struct ModelOffer: View {
         let waiting = ap.downloadJob == .waiting && !downloading
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                SettingsTile(symbol: "cpu", tint: Palette.search)
+                SettingsTile(symbol: "cpu", tint: Palette.kindRead)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Get Autopilot's score").font(RFont.sans(16, .semibold)).foregroundStyle(Palette.text)
+                    Text("Get Autopilot's score").font(RFont.sans(16, .semibold)).foregroundStyle(Palette.ink)
                     Text("\(AutopilotText.modelSize(model)) · runs on this phone")
                         .font(RFont.sans(13))
-                        .foregroundStyle(Palette.tertiary)
+                        .foregroundStyle(Palette.inkMeta)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -173,26 +173,26 @@ struct ModelOffer: View {
                 }
             }
             if downloading {
-                MeterBar(fraction: AutopilotText.fraction(model), tint: Palette.search, height: 6)
+                MeterBar(fraction: AutopilotText.fraction(model), tint: Palette.kindRead, height: 6)
                     .padding(.top, 14)
                     .accessibilityIdentifier("modelProgress")
                     .accessibilityLabel("Downloading")
                     .accessibilityValue(AutopilotText.fraction(model).map { "\(Int($0 * 100)) percent" } ?? "")
                 Text(AutopilotText.progressText(model))
                     .font(RFont.sans(12.5))
-                    .foregroundStyle(Palette.secondary)
+                    .foregroundStyle(Palette.ink2)
                     .padding(.top, 8)
                     .accessibilityIdentifier("modelState")
             } else if waiting {
                 HStack {
                     Text(AutopilotText.modelState(model, waitingForNetwork: true, wifiOnly: ap.waitingForWifi))
                         .font(RFont.sans(12.5))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                         .accessibilityIdentifier("modelState")
                     Spacer()
                     Button("Cancel") { ap.cancelDownload() }
                         .font(RFont.sans(12.5, .medium))
-                        .foregroundStyle(Palette.accent)
+                        .foregroundStyle(Palette.violet)
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("cancelDownload")
                 }
@@ -208,10 +208,10 @@ struct ModelOffer: View {
         }
         .padding(16)
         .background(
-            LinearGradient(colors: [Palette.search.opacity(0.14), Palette.search.opacity(0.03)], startPoint: .top, endPoint: .bottom),
+            LinearGradient(colors: [Palette.kindRead.opacity(0.14), Palette.kindRead.opacity(0.03)], startPoint: .top, endPoint: .bottom),
             in: RoundedRectangle(cornerRadius: 24, style: .continuous)
         )
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Palette.search.opacity(0.26), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Palette.kindRead.opacity(0.26), lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("modelOffer")
     }
@@ -224,7 +224,7 @@ struct ModelRow: View {
     var action: () -> Void
 
     var body: some View {
-        AutopilotLinkRow(title: "On-device model", symbol: "cpu", tint: Palette.read, identifier: "modelRow") {
+        AutopilotLinkRow(title: "On-device model", symbol: "cpu", tint: Palette.kindRead, identifier: "modelRow") {
             if let m = ap.model {
                 if m.state == .installed {
                     HStack(spacing: 5) {
@@ -232,16 +232,16 @@ struct ModelRow: View {
                             .foregroundStyle(Palette.success)
                         Text(AutopilotText.modelInstalledLine(m))
                             .font(RFont.sans(15))
-                            .foregroundStyle(Palette.secondary)
+                            .foregroundStyle(Palette.ink2)
                             .lineLimit(1)
                     }
                     .accessibilityIdentifier("modelInstalled")
                 } else if m.state == .downloading || ap.downloadJob == .running {
                     Text(AutopilotText.fraction(m).map { "\(Int($0 * 100))%" } ?? "…")
                         .font(RFont.mono(14))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                 } else {
-                    Text("Download").font(RFont.sans(15)).foregroundStyle(Palette.accent)
+                    Text("Download").font(RFont.sans(15)).foregroundStyle(Palette.violet)
                 }
             }
         } action: {
@@ -295,8 +295,8 @@ struct ProfileRow: View {
             HStack(spacing: 12) {
                 ProfileTile(profile: profile, size: 36)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(untrusted(profile.name)).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text).lineLimit(1)
-                    Text(line).font(RFont.sans(13)).foregroundStyle(Palette.tertiary).lineLimit(1)
+                    Text(untrusted(profile.name)).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
+                    Text(line).font(RFont.sans(13)).foregroundStyle(Palette.inkMeta).lineLimit(1)
                 }
                 Spacer(minLength: 6)
                 Chevron()
@@ -344,7 +344,7 @@ struct ModelSheet: View {
             .padding(20)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .presentationSizing(.form)
@@ -396,12 +396,12 @@ private struct ModelCard: View {
         let waiting = ap.downloadJob == .waiting && m.state != .downloading
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 14) {
-                IconTile(symbol: "cpu", tint: Palette.read, size: 46, filled: m.state == .installed)
+                IconTile(symbol: "cpu", tint: Palette.kindRead, size: 46, filled: m.state == .installed)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(m.label).font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.text).lineLimit(3)
+                    Text(m.label).font(RFont.sans(16.5, .semibold)).foregroundStyle(Palette.ink).lineLimit(3)
                     Text("Version \(m.version) · \(AutopilotText.modelSize(m))")
                         .font(RFont.sans(13))
-                        .foregroundStyle(Palette.secondary)
+                        .foregroundStyle(Palette.ink2)
                         .lineLimit(2)
                 }
                 .layoutPriority(1)
@@ -418,17 +418,17 @@ private struct ModelCard: View {
             }
             Text(AutopilotText.modelState(m, waitingForNetwork: waiting, wifiOnly: ap.waitingForWifi))
                 .font(RFont.sans(13.5, .medium))
-                .foregroundStyle(m.state == .failed ? Palette.danger : Palette.secondary)
+                .foregroundStyle(m.state == .failed ? Palette.danger : Palette.ink2)
                 .padding(.top, 12)
             if m.state == .installed, let ago = AutopilotText.updatedAgo(m.updatedAt) {
                 Text(ago)
                     .font(RFont.sans(13))
-                    .foregroundStyle(Palette.tertiary)
+                    .foregroundStyle(Palette.inkMeta)
                     .padding(.top, 4)
                     .accessibilityIdentifier("modelUpdated")
             }
             if downloading {
-                MeterBar(fraction: AutopilotText.fraction(m), tint: Palette.accent, height: 8)
+                MeterBar(fraction: AutopilotText.fraction(m), tint: Palette.violet, height: 8)
                     .padding(.top, 10)
                     .accessibilityLabel("Downloading")
                     .accessibilityValue(AutopilotText.fraction(m).map { "\(Int($0 * 100)) percent" } ?? "")
@@ -476,11 +476,11 @@ private struct ModelSwitchRow: View {
     var body: some View {
         Toggle(isOn: Binding(get: { on }, set: onChange)) {
             HStack(spacing: 14) {
-                IconTile(symbol: symbol, tint: Palette.accent, size: 34)
-                Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.text)
+                IconTile(symbol: symbol, tint: Palette.violet, size: 34)
+                Text(title).font(RFont.sans(16, .medium)).foregroundStyle(Palette.ink)
             }
         }
-        .tint(Palette.accent)
+        .tint(Palette.violet)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .accessibilityIdentifier(identifier)
@@ -504,7 +504,7 @@ private struct ModelMore: View {
                     Spacer()
                     Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).rotationEffect(.degrees(open ? 90 : 0))
                 }
-                .foregroundStyle(Palette.accent)
+                .foregroundStyle(Palette.violet)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .contentShape(Rectangle())
@@ -521,7 +521,7 @@ private struct ModelMore: View {
                     if let result = ap.modelCheckResult {
                         Text(result.text)
                             .font(RFont.sans(13.5, .medium))
-                            .foregroundStyle(result.failed ? Palette.danger : Palette.secondary)
+                            .foregroundStyle(result.failed ? Palette.danger : Palette.ink2)
                             .lineLimit(3)
                             .accessibilityIdentifier("checkModelResult")
                     }

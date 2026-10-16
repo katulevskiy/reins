@@ -255,6 +255,7 @@ fn the_command_line_reads_stdin_and_answers() {
     let run = |harness: &str, input: &str| {
         let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .args(["hook", harness])
+            .envs(reins_desktop::config::home_env(dir.path()))
             .env("REINS_CONFIG_DIR", dir.path().join("config"))
             .env("REINS_STATE_DIR", dir.path().join("state"))
             .stdin(std::process::Stdio::piped())

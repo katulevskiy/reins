@@ -14,6 +14,7 @@ pub mod device_flow;
 pub mod fcm;
 pub mod join;
 pub mod limits;
+pub mod live;
 pub mod mcp;
 pub mod mcp_routes;
 pub mod mcp_tools;
@@ -27,6 +28,7 @@ pub mod presence;
 pub mod proxy_call;
 pub mod push;
 pub mod relay;
+pub mod roles;
 pub mod sniff;
 pub mod tools;
 pub mod ttl;
@@ -100,6 +102,10 @@ pub struct Hub {
     pub presence: presence::Presence,
     /// Per desktop connection: sealed "drop your secrets" notes from the phone, until its daemon picks them up.
     pub revocations: Revocations,
+    /// Viewers asking to become primary (phone roles).
+    pub handovers: roles::HandoverHub,
+    /// Per account with phone roles: what wakes the members' long-polls, and the op log's head.
+    pub live: live::LiveHub,
 }
 
 /// Sealed lease revocations for desktop apps (Reins Secrets): the phone posts one per paired computer, the computer's
@@ -286,6 +292,8 @@ impl Hub {
             pairings: PairingHub::new(Arc::clone(&signal)),
             blobs: BlobHub::with_limits(Arc::clone(&signal), blob_limits),
             joins: JoinHub::new(Arc::clone(&signal)),
+            handovers: roles::HandoverHub::new(Arc::clone(&signal)),
+            live: live::LiveHub::default(),
             signal,
             services: std::sync::Mutex::default(),
             mcp_servers: std::sync::Mutex::default(),
@@ -325,10 +333,12 @@ impl Hub {
     }
 
     /// A2: undelivered requests, pairings and uploads awaiting a decision of `user`; if there are none, waits up to
-    /// `wait` and returns as soon as one appears. Returned items are marked delivered.
-    pub async fn pending(&self, user: &str, wait: Duration) -> Pending {
+    /// `wait` and returns as soon as one appears. Returned items are marked delivered. `log_after` (accounts with a
+    /// roster): also returns as soon as the op log's head passes it.
+    pub async fn pending(&self, user: &str, wait: Duration, log_after: Option<u64>) -> Pending {
         let deadline = tokio::time::Instant::now() + wait;
         let mut rx = self.signal.subscribe();
+        let mut log = log_after.map(|_| self.live.subscribe(user));
         // The phone is listening while this poll is open: requests reach it without a push.
         let _listening = self.presence.listen(user, now_unix());
         // The phone polls often: a cheap moment to delete expired files between the hourly purges.
@@ -340,12 +350,23 @@ impl Hub {
                 pairings: self.pairings.take_undelivered(user),
                 blobs: self.blobs.take_undelivered(user, now_unix()),
                 joins: self.joins.take_undelivered(user, now_unix()),
+                handovers: self.handovers.take_undelivered(user, now_unix()),
+                log_head: log_after.and(self.live.head(user)),
             };
-            if !pending.is_empty() || tokio::time::Instant::now() >= deadline {
+            let log_moved = pending.log_head.zip(log_after).is_some_and(|(head, after)| head > after);
+            if !pending.is_empty() || log_moved || tokio::time::Instant::now() >= deadline {
                 return pending;
             }
-            if matches!(tokio::time::timeout_at(deadline, rx.changed()).await, Ok(Err(_))) {
-                tokio::time::sleep_until(deadline).await;
+            let log_changed = async {
+                match log.as_mut() {
+                    Some(log) => log.changed().await.is_ok(),
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::select! {
+                changed = rx.changed() => if changed.is_err() { tokio::time::sleep_until(deadline).await },
+                alive = log_changed => if !alive { tokio::time::sleep_until(deadline).await },
+                () = tokio::time::sleep_until(deadline) => {}
             }
         }
     }
@@ -359,6 +380,8 @@ impl Hub {
         self.presence.forget(user);
         self.pairings.forget_user(user);
         self.joins.forget_user(user);
+        self.handovers.forget_user(user);
+        self.live.forget(user);
         self.blobs.remove_user(user);
     }
 
@@ -368,6 +391,8 @@ impl Hub {
         self.blobs.purge(now_unix());
         self.joins.purge(now_unix());
         self.revocations.purge(now_unix());
+        self.handovers.purge(now_unix());
+        self.live.purge();
     }
 }
 
@@ -431,6 +456,8 @@ pub fn routes() -> Vec<Route> {
     routes.extend(join::routes());
     routes.extend(workos_sync::routes());
     routes.extend(vault_passkeys::routes());
+    routes.extend(roles::routes());
+    routes.extend(live::routes());
     routes
 }
 
@@ -642,17 +669,17 @@ mod hub_tests {
         hub.pairings.start("u1", client(), 0).unwrap();
         hub.relay.submit("u1", &"c1".into(), "Claude", read_call(), None, 0).unwrap();
         let start = Instant::now();
-        let p = hub.pending("u1", Duration::from_secs(25)).await;
+        let p = hub.pending("u1", Duration::from_secs(25), None).await;
         assert_eq!((p.requests.len(), p.pairings.len()), (1, 1));
         assert_eq!(start.elapsed(), Duration::ZERO);
-        assert!(hub.pending("u1", Duration::ZERO).await.is_empty());
+        assert!(hub.pending("u1", Duration::ZERO, None).await.is_empty());
     }
 
     #[tokio::test(start_paused = true)]
     async fn pending_long_polls_until_an_item_for_this_user_arrives() {
         let hub = test_hub();
         let start = Instant::now();
-        let (p, ()) = tokio::join!(hub.pending("u1", Duration::from_secs(25)), async {
+        let (p, ()) = tokio::join!(hub.pending("u1", Duration::from_secs(25), None), async {
             sleep(Duration::from_secs(3)).await;
             hub.pairings.start("u2", client(), 0).unwrap();
             sleep(Duration::from_secs(2)).await;
@@ -673,10 +700,10 @@ mod hub_tests {
         }
         let request = hub.relay.submit("u1", &"c1".into(), "Work AI", read_call(), None, 0).unwrap();
         hub.forget_user("u1");
-        assert!(hub.pending("u1", Duration::ZERO).await.is_empty());
+        assert!(hub.pending("u1", Duration::ZERO, None).await.is_empty());
         assert!(hub.relay.fetch("u1", &request.id).is_none());
         assert_eq!(hub.services_of("u1"), None);
-        let p = hub.pending("u2", Duration::ZERO).await;
+        let p = hub.pending("u2", Duration::ZERO, None).await;
         assert_eq!((p.requests.len(), p.pairings.len()), (1, 1));
         assert!(hub.services_of("u2").is_some());
     }
@@ -685,7 +712,7 @@ mod hub_tests {
     async fn pending_gives_up_after_the_wait() {
         let hub = test_hub();
         let start = Instant::now();
-        assert!(hub.pending("u1", Duration::from_secs(25)).await.is_empty());
+        assert!(hub.pending("u1", Duration::from_secs(25), None).await.is_empty());
         assert_eq!(start.elapsed(), Duration::from_secs(25));
     }
 }

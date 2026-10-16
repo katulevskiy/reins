@@ -57,11 +57,12 @@ enum SnapshotWriter {
         s.accountFingerprint = owner
         s.signedIn = true
         if let pending = try? await core.pending() {
-            // The connections (and their logo picks) are a network call away: keep the picks the app last wrote.
-            let icons = Dictionary(s.pending.map { ($0.connection, $0.connectionIcon) }, uniquingKeysWith: { a, _ in a })
+            // The connections (and their icons) are a network call away: keep the icons the app last wrote.
+            let icons = Dictionary(s.pending.map { ($0.connection, ($0.connectionIcon, $0.connectionBlobatar)) }, uniquingKeysWith: { a, _ in a })
             s.pending = pending.map { p in
                 var i = item(p)
-                i.connectionIcon = icons[i.connection] ?? nil
+                i.connectionIcon = icons[i.connection]?.0 ?? nil
+                i.connectionBlobatar = icons[i.connection]?.1 ?? nil
                 return i
             }
         }

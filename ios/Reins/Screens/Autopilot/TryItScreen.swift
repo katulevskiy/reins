@@ -65,7 +65,7 @@ struct TryItScreen: View {
                         example = nil
                     }))
                     .font(RFont.mono(13))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .scrollContentBackground(.hidden)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
@@ -107,7 +107,7 @@ struct TryItScreen: View {
             .padding(.bottom, 40)
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
         .navigationTitle("")
         .navigationSubtitle(profile.map { untrustedName($0.name) } ?? "")
         .navigationBarTitleDisplayMode(.inline)
@@ -140,7 +140,7 @@ private struct VerdictCard: View {
     var s: SuggestionView
 
     var body: some View {
-        let tint = s.judged ? AutopilotStyle.tint(s.verdict) : Palette.tertiary
+        let tint = s.judged ? AutopilotStyle.tint(s.verdict) : Palette.inkMeta
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 16) {
                 ProgressRing(fraction: Double(s.verdict == .deny ? s.pDeny : s.pApprove), tint: tint, size: 64, stroke: 6) {
@@ -164,14 +164,14 @@ private struct VerdictCard: View {
                 VStack(spacing: 10) {
                     ProbabilityRow(label: "Approve", p: s.pApprove, tint: Palette.success)
                     ProbabilityRow(label: "Deny", p: s.pDeny, tint: Palette.danger)
-                    ProbabilityRow(label: "Confidence", p: s.confidence, tint: Palette.accent)
+                    ProbabilityRow(label: "Confidence", p: s.confidence, tint: Palette.violet)
                 }
                 .padding(.top, 18)
             }
             if !s.reason.isEmpty {
                 Text(untrusted(s.reason))
                     .font(RFont.sans(15))
-                    .foregroundStyle(Palette.text)
+                    .foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 16)
                     .accessibilityIdentifier("verdictReason")

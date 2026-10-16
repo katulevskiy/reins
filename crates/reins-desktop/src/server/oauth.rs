@@ -309,18 +309,9 @@ pub(super) async fn discover(http: &reqwest::Client, server: &str) -> Result<Met
     Err(format!("{server} is not a Reins server (no OAuth metadata)"))
 }
 
+/// The computer's own name and its platform ("M2A (macOS)"): the phone shows the name and the platform's logo.
 fn client_name() -> String {
-    let host = hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
-    let host: String = host.chars().filter(|c| !c.is_control()).take(64).collect();
-    let host = host.trim();
-    format!(
-        "Reins desktop app on {}",
-        if host.is_empty() {
-            "this computer"
-        } else {
-            host
-        }
-    )
+    crate::computer::client_name()
 }
 
 /// RFC 7591 dynamic registration as a public client with a loopback redirect (any port, RFC 8252).
@@ -665,6 +656,7 @@ mod tests {
 
     #[test]
     fn the_app_names_itself_after_this_computer() {
-        assert!(client_name().starts_with("Reins desktop app on "));
+        assert_eq!(client_name(), crate::computer::client_name());
+        assert!(!client_name().starts_with(reins_proto::computer::LEGACY_PREFIX));
     }
 }

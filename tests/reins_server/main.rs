@@ -5,6 +5,7 @@
 mod account_delete;
 mod account_state;
 mod blobs;
+mod client_auth;
 mod desktop;
 mod harness;
 mod limits;
@@ -13,5 +14,6 @@ mod mock;
 mod oauth;
 mod phone_api;
 mod remote_mcp;
+mod roles;
 mod takeover;
 mod vault_passkeys;

@@ -149,6 +149,7 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
     let scanned = pairing.user_code.to_lowercase().replace('-', " ");
     let view = phone.core.pairing_by_code(scanned.clone()).await.expect("the phone claims the code");
     assert_eq!(view.key_fingerprint.as_deref(), Some(identity.fingerprint().as_str()));
+    assert_eq!(view.client_name, reins_desktop::computer::name(), "the computer's own name, offered to keep");
     assert!(view.choices.contains(&confirm), "{view:?}");
     assert_eq!(phone.core.pairing_by_code(scanned).await.unwrap().id, view.id, "scanning twice is the same pairing");
     assert_eq!(phone.core.pairing_view(view.id.clone()).await.unwrap(), view, "parked like a pushed pairing");
@@ -161,6 +162,11 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
     let laptop = connections.iter().find(|c| c.label == "Laptop").expect("the computer's connection");
     // A computer is told apart from an AI app by the key it pinned.
     assert_eq!(laptop.key_fingerprint.as_deref(), Some(identity.fingerprint().as_str()));
+    // Renamed by hand, still known by its platform (from the name the app registered with), and shown by its logo.
+    let platform = reins_proto::computer::Os::current().map(reins_proto::computer::Os::key);
+    assert_eq!(laptop.platform.as_deref(), platform);
+    assert_eq!(laptop.auto_icon, platform.unwrap_or("blob"));
+    assert!(laptop.blobatar.is_some(), "a blobatar of its own all the same");
     let question = reins_desktop::ask::Question {
         question: "Deploy to prod?".to_owned(),
         detail: None,

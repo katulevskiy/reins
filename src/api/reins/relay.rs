@@ -332,6 +332,45 @@ impl RelayHub {
     pub fn forget_user(&self, user: &str) {
         self.lock().retain(|e| e.user != user);
     }
+
+    /// Unanswered requests of `user`, oldest first, without marking them delivered (what a viewer shows).
+    pub fn peek_waiting(&self, user: &str) -> Vec<RelayRequest> {
+        let mut out: Vec<RelayRequest> = self
+            .lock()
+            .values()
+            .filter(|e| e.user == user && e.state.borrow().outcome.is_none())
+            .map(|e| e.request.clone())
+            .collect();
+        out.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        out
+    }
+
+    /// Ids of `user`'s answered requests still held.
+    pub fn answered_ids(&self, user: &str) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .lock()
+            .values()
+            .filter(|e| e.user == user && e.state.borrow().outcome.is_some())
+            .map(|e| e.request.id.0.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// Hands `user`'s unanswered requests to the next `GET /pending` again (a new primary took the role). A call
+    /// still waiting on one counts it as undelivered from then on.
+    pub fn requeue(&self, user: &str) {
+        for e in self.lock().values().filter(|e| e.user == user) {
+            e.state.send_if_modified(|s| {
+                let again = s.outcome.is_none() && s.delivered;
+                if again {
+                    s.delivered = false;
+                }
+                again
+            });
+        }
+        self.signal.notify();
+    }
 }
 
 #[cfg(test)]
@@ -578,5 +617,23 @@ mod tests {
         assert_eq!(wait(Some(120)), Some(1_120));
         assert_eq!(wait(Some(5)), Some(1_045), "never shorter than one relay wait");
         assert_eq!(wait(Some(3_600)), Some(1_600), "never past the request's lifetime");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn viewers_peek_without_delivering_and_a_new_primary_gets_requests_again() {
+        let h = hub();
+        let req = h.submit(USER, &conn(), "ChatGPT", search(), None, 0).unwrap();
+        assert_eq!(h.peek_waiting(USER).len(), 1);
+        assert_eq!(h.take_undelivered(USER).len(), 1, "peeking did not deliver it");
+        assert!(h.take_undelivered(USER).is_empty());
+        h.requeue(USER);
+        assert_eq!(h.take_undelivered(USER).len(), 1, "handed out again");
+        assert!(h.answered_ids(USER).is_empty());
+        h.answer(USER, &req.id, found()).unwrap();
+        assert!(h.peek_waiting(USER).is_empty());
+        assert_eq!(h.answered_ids(USER), [req.id.0.clone()]);
+        h.requeue(USER);
+        assert!(h.take_undelivered(USER).is_empty(), "an answered request stays answered");
+        assert!(h.peek_waiting("someone-else").is_empty());
     }
 }

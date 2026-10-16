@@ -87,20 +87,20 @@ private struct ApprovalScreen: View {
                         Spacer(minLength: 0)
                         Text(AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label).text)
                             .font(RFont.sans(22, .semibold))
-                            .foregroundStyle(Palette.text)
+                            .foregroundStyle(Palette.ink)
                             .lineLimit(3)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 20)
                         dock
                     }
                     .frame(width: sideBySide ? geo.size.width / 2 : nil, height: sideBySide ? nil : geo.size.height / 2)
-                    .background(Palette.elevated.opacity(0.5))
+                    .background(Palette.paperRaised.opacity(0.5))
                 }
             } else {
                 pages(top: geo.safeAreaInsets.top).safeAreaInset(edge: .bottom, spacing: 0) { dock }
             }
         }
-        .background(Palette.background.ignoresSafeArea())
+        .background(Palette.paper.ignoresSafeArea())
         .environment(nav)
         .sheet(item: $nav.overlay) { overlay in
             Group {
@@ -146,13 +146,13 @@ private struct ApprovalScreen: View {
             .toolbar(.hidden, for: .navigationBar)
             // White status bar text on the field.
             .toolbarColorScheme(.dark, for: .navigationBar)
-            .background(Palette.background.ignoresSafeArea())
+            .background(Palette.paper.ignoresSafeArea())
             .navigationDestination(for: ApprovalPage.self) { page in
                 ScrollView {
                     page.content(view)
                         .padding(.bottom, 20)
                 }
-                .background(Palette.background.ignoresSafeArea())
+                .background(Palette.paper.ignoresSafeArea())
                 .fieldBand(view, title: Self.title(view, page), ask: AskFormat.waiting(view, core: model.pending.first { $0.id == view.requestId }?.label).text)
             }
         }
@@ -233,7 +233,7 @@ struct HelpText: View {
     var body: some View {
         Text(text)
             .font(RFont.sans(14))
-            .foregroundStyle(Palette.text)
+            .foregroundStyle(Palette.ink)
             .fixedSize(horizontal: false, vertical: true)
             .frame(idealWidth: 290, maxWidth: 320, alignment: .leading)
             .padding(15)
@@ -259,9 +259,9 @@ struct HelpDot: View {
         } label: {
             Image(systemName: "questionmark.circle")
                 .font(.system(size: size * 0.56, weight: .medium))
-                .foregroundStyle(onField ? Palette.onField : open ? Palette.text : Palette.secondary)
+                .foregroundStyle(onField ? Palette.onField : open ? Palette.ink : Palette.ink2)
                 .frame(width: size, height: size)
-                .background(onField ? Palette.onFieldWash : open ? Palette.text.opacity(0.18) : Palette.controlFill, in: Circle())
+                .background(onField ? Palette.onFieldWash : open ? Palette.ink.opacity(0.18) : Palette.paperSunken, in: Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("More about this")

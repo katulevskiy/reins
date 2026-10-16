@@ -110,11 +110,7 @@ async fn start(up: &Upstream, auth: &Arc<Recorder>) -> (Proxy, Home) {
         ..c
     };
     let h = home.dir.path();
-    let git = Git::default()
-        .env("HOME", h)
-        .env("XDG_CONFIG_HOME", h.join(".config"))
-        .env("GIT_CONFIG_GLOBAL", h.join(".gitconfig"))
-        .env("GIT_CONFIG_NOSYSTEM", "1");
+    let git = Git::under(h);
     let (added, _) = git.setup_hosts(&Scope::Global, &listening).unwrap();
     // Home already sends https://github.com/ to the proxy: the two other GitHub forms, three each for the others.
     assert_eq!(added.len(), 8, "{added:?}");

@@ -122,10 +122,12 @@ async fn the_command_line_exits_0_1_or_2() {
     let mock = Mock::start().await;
     let app = logged_in(&mock, 3600);
     let paths = app.paths.clone();
+    let home = app.dir.path().to_path_buf();
     let run = move |args: &[&str]| {
         let out = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
             .arg("ask")
             .args(args)
+            .envs(reins_desktop::config::home_env(&home))
             .env("REINS_CONFIG_DIR", &paths.config_dir)
             .env("REINS_STATE_DIR", &paths.state_dir)
             .stdin(std::process::Stdio::null())
