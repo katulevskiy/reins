@@ -121,6 +121,7 @@ struct TrustRunningField: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("runningField")
+        .accessibilityValue(TrustFold.stateValue(progress))
     }
 
     private func folded(_ progress: CGFloat) -> some View {
@@ -163,8 +164,6 @@ struct TrustRunningField: View {
         }
         .coordinateSpace(.named(Self.space))
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fold.open = $0 }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(TrustFold.stateIdentifier(progress))
     }
 
     private static let space = "runningField"

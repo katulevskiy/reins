@@ -49,9 +49,10 @@ final class TrustFold {
     /// The sentence under the timer fades out over the first part of the fold, before the button crosses it.
     nonisolated static func heroOpacity(_ progress: CGFloat) -> CGFloat { max(0, 1 - progress / 0.45) }
 
-    /// UI-test identifier of the field's state: "runningFieldOpen", "runningFieldFolding", "runningFieldCompact".
-    nonisolated static func stateIdentifier(_ progress: CGFloat) -> String {
-        progress >= 1 ? "runningFieldCompact" : progress <= 0 ? "runningFieldOpen" : "runningFieldFolding"
+    /// The field's state as its accessibility value: "open", "folding", "compact" (VoiceOver reads it; UI tests check
+    /// it on the field's own element, "runningField").
+    nonisolated static func stateValue(_ progress: CGFloat) -> String {
+        progress >= 1 ? "compact" : progress <= 0 ? "open" : "folding"
     }
 }
 

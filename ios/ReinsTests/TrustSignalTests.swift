@@ -101,9 +101,9 @@ final class TrustSignalTests: XCTestCase {
         XCTAssertEqual(TrustFold.held(-30, range: 200), 0)
         XCTAssertEqual(TrustFold.heroOpacity(0), 1)
         XCTAssertEqual(TrustFold.heroOpacity(0.45), 0)
-        XCTAssertEqual(TrustFold.stateIdentifier(0), "runningFieldOpen")
-        XCTAssertEqual(TrustFold.stateIdentifier(0.4), "runningFieldFolding")
-        XCTAssertEqual(TrustFold.stateIdentifier(1), "runningFieldCompact")
+        XCTAssertEqual(TrustFold.stateValue(0), "open")
+        XCTAssertEqual(TrustFold.stateValue(0.4), "folding")
+        XCTAssertEqual(TrustFold.stateValue(1), "compact")
     }
 
     func testOpenTheButtonRunsAcrossUnderTheSentence() {

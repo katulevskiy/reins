@@ -11,11 +11,28 @@ final class AutopilotUITests: XCTestCase {
     }
 
     private func launch(_ extra: [String] = []) {
+        open(extra)
+        _ = waitFor("modeHero")
+    }
+
+    /// With `-demoMode bypass|overnight|lockdown` Trust shows the running field where the mode hero was.
+    private func launchRunning(_ extra: [String]) {
+        open(extra)
+        _ = waitFor("runningField")
+    }
+
+    private func open(_ extra: [String]) {
         app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities"] + extra
         app.launch()
         // Autopilot is part of Trust (a tab on a phone, the sidebar on a regular width).
         XCTAssertTrue(app.openTab("trust"), "no Trust tab")
-        _ = waitFor("modeHero")
+    }
+
+    /// Waits for the running field to be open, folding or compact (its accessibility value).
+    private func waitForFold(_ state: String, timeout: TimeInterval = 8) {
+        let field = element("runningField")
+        let reached = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", state), object: field)
+        XCTAssertEqual(XCTWaiter().wait(for: [reached], timeout: timeout), .completed, "the field never became \(state): \(String(describing: field.value))")
     }
 
     private func shot(_ name: String) {
@@ -241,20 +258,20 @@ final class AutopilotUITests: XCTestCase {
     /// stay, the button moves to the timer's right and stays a full target; back at the top it opens again.
     func testTheRunningFieldFoldsIntoACompactBarOnScroll() {
         for (mode, button, clock) in [("bypass", "stopBypass", "bypassClock"), ("overnight", "stopOvernight", "overnightClock"), ("lockdown", "endLockdown", nil)] {
-            launch(["-demoMode", mode])
-            waitFor("runningFieldOpen")
+            launchRunning(["-demoMode", mode])
+            waitForFold("open")
             if let clock { waitFor(clock) }
             shot("trust-\(mode)-open")
 
             // A slow drag held before letting go stops without momentum, half way through the fold.
             let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
             from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.64)), withVelocity: .slow, thenHoldForDuration: 0.4)
-            waitFor("runningFieldFolding")
+            waitForFold("folding")
             shot("trust-\(mode)-folding")
 
             app.swipeUp()
             app.swipeUp()
-            waitFor("runningFieldCompact")
+            waitForFold("compact")
             if let clock { waitFor(clock) }
             XCTAssertTrue(element("heroMode").exists, "the sentence keeps its label when compact")
             let stop = waitFor(button)
@@ -264,7 +281,7 @@ final class AutopilotUITests: XCTestCase {
             shot("trust-\(mode)-compact")
 
             for _ in 0..<4 { app.swipeDown() }
-            waitFor("runningFieldOpen")
+            waitForFold("open")
             app.terminate()
         }
     }
@@ -272,7 +289,7 @@ final class AutopilotUITests: XCTestCase {
     /// A bypass that approved 100 requests lists the latest three; "Show all 97" opens the rest in place and "Show less"
     /// folds them back. Trust opens folded again.
     func testABypassListFoldsToItsLatestThree() {
-        launch(["-demoMode", "bypass", "-demoRunningEntries", "100"])
+        launchRunning(["-demoMode", "bypass", "-demoRunningEntries", "100"])
         let showAll = waitFor("runningShowAll")
         XCTAssertEqual(showAll.label, "Show all 97")
         // The mood line says what the bypass did (12 minutes of it; all of today unless the test runs just after midnight).
