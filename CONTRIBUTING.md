@@ -257,8 +257,8 @@ upload with a notice while the folder or the secret is missing; a repository sec
 ## Maintainers: TestFlight
 
 The `ios-build` job (runner `xcode-27`, its released Xcode 27.0) starts with the release's other builds: it archives
-the iOS app and signs it for the App Store as an .ipa, sending Apple nothing. Once the release is published, the
-`ios-testflight` job uploads that .ipa to App Store Connect ("Reins 2FA", `com.reins2fa.app`). Then
+and signs the iOS app, sending Apple nothing. Once the release is published, the `ios-testflight` job signs that
+archive for the App Store and uploads it to App Store Connect ("Reins 2FA", `com.reins2fa.app`). Then
 `scripts/testflight.py` waits for processing, sets export compliance (`usesNonExemptEncryption` false, as the
 Info.plist says), sets "What to Test" from the release notes, adds the build to the TestFlight groups and submits it for
 beta app review. A refused submission (a build already in review, for example) is only a warning, and a failure here
