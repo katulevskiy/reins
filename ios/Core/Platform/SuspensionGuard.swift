@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Something that keeps this process from being suspended while held: a UIApplication background task in the app, an
 /// expiring activity in the notification extension (which has no UIApplication).
@@ -19,13 +20,16 @@ protocol KeepAwakeToken: AnyObject, Sendable {
 /// already taking the process's time back, the lock is refused and the core's call fails instead.
 ///
 /// One hold covers a burst of locks: it ends `grace` seconds after the last one is given back. When the system says time
-/// is up, locks in progress (milliseconds each) are waited for, at most `drain` seconds, before the hold ends, and no new
-/// lock is taken meanwhile.
+/// is up, no new lock is taken, and the hold ends as soon as the locks in progress (milliseconds each) are given back:
+/// never while one is held, or iOS would suspend the app holding it. `expire` waits for them at most `drain` seconds;
+/// one still held then ends the hold from `unlocked`. A section that never ends gets the app ended for its overdue
+/// background task instead, the lesser evil, and is logged.
 final class SuspensionGuard: StoreLockGuard, @unchecked Sendable {
     private let keepAwake: KeepAwake
     private let grace: TimeInterval
     private let drain: TimeInterval
     private let ends = DispatchQueue(label: "com.reins2fa.suspension-guard")
+    private static let log = Logger(subsystem: "com.reins2fa.app", category: "store-lock")
 
     private let condition = NSCondition()
     // Guarded by `condition`.
@@ -98,19 +102,39 @@ final class SuspensionGuard: StoreLockGuard, @unchecked Sendable {
         generation += 1
         let idle = held == 0
         let current = generation
-        if idle { condition.broadcast() }
+        var endingNow: KeepAwakeToken?
+        if idle {
+            condition.broadcast()
+            if expiring {
+                // Time ran out while this was held: the hold ends now that nothing is.
+                endingNow = token
+                token = nil
+                expiring = false
+            }
+        }
         condition.unlock()
+        if let endingNow {
+            endingNow.end()
+            return
+        }
         guard idle else { return }
         ends.asyncAfter(deadline: .now() + grace) { [weak self] in self?.endIfIdle(current) }
     }
 
-    /// The system is taking the time back: no new locks, the ones in progress finish, then the hold ends.
+    /// The system is taking the time back: no new locks; the hold ends once the ones in progress are given back.
     func expire() {
         condition.lock()
         expiring = true
         expiries += 1
         let deadline = Date().addingTimeInterval(drain)
         while held > 0, condition.wait(until: deadline) {}
+        guard held == 0 else {
+            let stuck = held
+            condition.unlock()
+            // Never ended with the lock held: the last `unlocked` ends it.
+            Self.log.error("background time is up with \(stuck, privacy: .public) store lock(s) held; the task ends when they are given back")
+            return
+        }
         let ending = token
         token = nil
         generation += 1

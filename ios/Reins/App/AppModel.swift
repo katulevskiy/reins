@@ -589,6 +589,13 @@ final class AppModel {
         publish()
     }
 
+    /// Whether a screen may start reading the store now. Not in the background: nobody looks, and iOS may suspend the app
+    /// any moment (a read takes the store's lock in the shared container, which the app must not hold then); nor in
+    /// the seconds before (`willResignActive` to `didEnterBackground`) when little time is left.
+    var screensMayReadStore: Bool {
+        !inBackground && UIApplication.shared.backgroundTimeRemaining > 5
+    }
+
     /// The app went to the background or came back (`AppHost`): what a refresh reads, and whether Autopilot may load
     /// its model.
     func setInBackground(_ background: Bool) {

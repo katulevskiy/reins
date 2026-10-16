@@ -180,12 +180,19 @@ final class BackgroundTimeTests: XCTestCase {
         guarding.unlocked()
     }
 
-    func testAnExpiryWithALockStuckPastTheDrainStillEndsTheHold() {
+    func testAnExpiryWithALockStillHeldKeepsTheTaskUntilItIsGivenBack() {
         let keep = FakeKeepAwake()
         let guarding = SuspensionGuard(keepAwake: keep, grace: 10, drain: 0.1)
         XCTAssertTrue(guarding.locking())
         keep.expireLatest()
-        XCTAssertEqual(keep.tokens[0].endCount, 1, "iOS ends an app whose task outlives its time")
+        XCTAssertFalse(keep.tokens[0].ended, "never ended with the store's lock held: iOS would suspend the app holding it")
+        XCTAssertTrue(guarding.awake)
+        XCTAssertFalse(guarding.locking(), "no new lock once time is up")
+        guarding.unlocked()
+        XCTAssertEqual(keep.tokens[0].endCount, 1, "ended as soon as the lock is given back, not after the grace")
+        XCTAssertFalse(guarding.awake)
+        XCTAssertTrue(guarding.locking(), "a later wake locks again under a new task")
+        XCTAssertEqual(keep.tokens.count, 2)
         guarding.unlocked()
     }
 }

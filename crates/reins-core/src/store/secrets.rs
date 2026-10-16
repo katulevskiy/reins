@@ -14,7 +14,7 @@ fn aad(service: &str, account: &str) -> String {
 impl Store {
     pub fn secret_get(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, CoreError> {
         let blob: Option<Vec<u8>> = self
-            .lock()?
+            .read()?
             .query_row(
                 "SELECT value FROM secrets WHERE service = ?1 AND account = ?2",
                 params![service, account],

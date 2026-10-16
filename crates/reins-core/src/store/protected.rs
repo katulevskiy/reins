@@ -184,6 +184,9 @@ pub(crate) struct StoreLock<'a> {
     /// Taken back on drop before a write is sealed, so reads wait for the snapshot only, not for the disk.
     conn: Option<MutexGuard<'a, Option<Connection>>>,
     changes: u64,
+    /// Whether this holds a share of the cross-process lock (`Store::lock`); a read (`Store::read`) gave it back once
+    /// it had checked for another process's copy.
+    shared: bool,
 }
 // The `expect`s below cannot fail: `Store::lock` hands out a `StoreLock` only for an open connection (and a reload
 // only ever replaces it with another), and the guard is taken out of `conn` only in `drop`, after the last use.
@@ -215,6 +218,18 @@ impl Drop for StoreLock<'_> {
         let Some(p) = &self.store.persistence else {
             return;
         };
+        if changed && !self.shared {
+            // A read (`Store::read`) that wrote: a mistake in the caller. What it wrote is kept, under the lock taken
+            // now; another process may have written in between.
+            debug_assert!(false, "a write through Store::read");
+            log::error!("a write through a store read; writing it under the lock now");
+            if let Err(e) = p.acquire() {
+                drop(self.conn.take());
+                p.fail(&e);
+                return;
+            }
+            self.shared = true;
+        }
         // The copy is taken under the connection; sealing and the fsyncs happen after letting it go, and the
         // directory's fsync after giving back the cross-process lock too, which other processes wait on (iOS: a
         // process must not be suspended holding it). The call still returns only once its write is on disk (or a
@@ -226,9 +241,35 @@ impl Drop for StoreLock<'_> {
         };
         drop(self.conn.take());
         let written = taken.and_then(|seq| seq.map_or(Ok(None), |seq| write_through(self.store, p, seq)));
-        p.release();
+        if self.shared {
+            p.release();
+        }
         if let Err(e) = written.and_then(|unsynced| unsynced.map_or(Ok(()), Unsynced::sync)) {
             p.fail(&e);
+        }
+    }
+}
+/// Another process's sealed file, read under the cross-process lock.
+struct SealedCopy {
+    sealed: Vec<u8>,
+    stamp: Option<(SystemTime, u64)>,
+}
+/// The platform guard held for a window that holds other locks in the shared container, without the store's own: the
+/// legacy SQLite file, whose connection keeps SQLite's file locks while it is open. Given back on drop.
+pub(super) struct Awake(Option<Arc<dyn StoreLockGuard>>);
+pub(super) fn stay_awake() -> Result<Awake, CoreError> {
+    let guard = LOCK_GUARD.read().unwrap_or_else(PoisonError::into_inner).as_ref().map(|(g, _)| Arc::clone(g));
+    if let Some(g) = &guard
+        && !g.locking()
+    {
+        return Err(CoreError::storage(STORE_SUSPENDING));
+    }
+    Ok(Awake(guard))
+}
+impl Drop for Awake {
+    fn drop(&mut self) {
+        if let Some(g) = &self.0 {
+            g.unlocked();
         }
     }
 }
@@ -287,7 +328,19 @@ pub(super) fn memory() -> Result<Connection, CoreError> {
     Ok(conn)
 }
 impl Store {
+    /// The store's connection, holding the cross-process lock until the guard drops (and what it wrote is on disk): for
+    /// anything that may write. Another process's newer copy, if any, is loaded first.
     pub(crate) fn lock(&self) -> Result<StoreLock<'_>, CoreError> {
+        self.open_lock(true)
+    }
+    /// The store's connection for reading only (or writing the `temp` schema, which is never saved). The
+    /// cross-process lock is held just long enough to check for another process's newer copy and read its bytes;
+    /// opening and loading that copy, and the reads, need only this process's lock. A shorter hold: iOS ends a process
+    /// suspended while it holds the lock.
+    pub(crate) fn read(&self) -> Result<StoreLock<'_>, CoreError> {
+        self.open_lock(false)
+    }
+    fn open_lock(&self, write: bool) -> Result<StoreLock<'_>, CoreError> {
         self.check_owner()?;
         let mut conn = self.conn.lock().unwrap_or_else(PoisonError::into_inner);
         self.check_owner()?;
@@ -298,10 +351,20 @@ impl Store {
             if p.failure.lock().unwrap_or_else(PoisonError::into_inner).is_some() {
                 return Err(CoreError::storage("encrypted account data could not be saved"));
             }
-            if p.acquire()?
-                && let Err(e) = self.reload_if_changed(&mut conn, p)
-            {
+            // Only the first user here checks: while this process holds the lock, nobody else writes the file.
+            let changed = if p.acquire()? {
+                Self::read_if_changed(p)
+            } else {
+                Ok(None)
+            };
+            if !write {
                 p.release();
+            }
+            let loaded = changed.and_then(|copy| copy.map_or(Ok(()), |copy| self.load_copy(&mut conn, p, &copy)));
+            if let Err(e) = loaded {
+                if write {
+                    p.release();
+                }
                 return Err(e);
             }
         }
@@ -311,29 +374,40 @@ impl Store {
             store: self,
             conn: Some(conn),
             changes,
+            shared: write && self.persistence.is_some(),
         })
     }
-    /// Another process wrote the file since this one last read or wrote it: its copy replaces the one in memory.
-    fn reload_if_changed(&self, conn: &mut Option<Connection>, p: &Persistence) -> Result<(), CoreError> {
+    /// The file's bytes and stamp, when another process wrote it since this one last read or wrote it. Call holding
+    /// the cross-process lock: only the `stat` and the read happen under it.
+    fn read_if_changed(p: &Persistence) -> Result<Option<SealedCopy>, CoreError> {
         let current = stamp(&p.path);
-        if current.is_some() && current != *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) {
-            let bytes = fs::read(&p.path).map_err(|_| CoreError::storage("cannot read account data"))?;
-            let plain = Zeroizing::new(self.unseal(&p.aad, &bytes)?);
-            let mut loaded = Connection::open_in_memory()?;
-            // The copy replaces the whole database, schema included: it has the tables of whoever sealed it.
-            loaded.deserialize_read_exact("main", std::io::Cursor::new(plain.as_slice()), plain.len(), false)?;
-            // Sealed by an older version: what it exported then, to tell whether it was in sync before migrating.
-            let before_migrating = (self.owner.is_some() && super::schema_version(&loaded)? < super::SCHEMA_VERSION)
-                .then(|| snapshot::export_present(&loaded).ok())
-                .flatten();
-            prepare(&loaded)?;
-            if let Some(pre) = before_migrating {
-                super::sync::rebaseline(&loaded, &pre)?;
-            }
-            *conn = Some(loaded);
-            *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = current;
-            self.writes.fetch_add(1, Ordering::AcqRel);
+        if current.is_none() || current == *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) {
+            return Ok(None);
         }
+        let sealed = fs::read(&p.path).map_err(|_| CoreError::storage("cannot read account data"))?;
+        Ok(Some(SealedCopy {
+            sealed,
+            stamp: current,
+        }))
+    }
+    /// Another process's copy replaces the one in memory. Needs only this process's lock (`conn`): the bytes were
+    /// read under the cross-process one, and a newer file since has another stamp, which the next lock loads.
+    fn load_copy(&self, conn: &mut Option<Connection>, p: &Persistence, copy: &SealedCopy) -> Result<(), CoreError> {
+        let plain = Zeroizing::new(self.unseal(&p.aad, &copy.sealed)?);
+        let mut loaded = Connection::open_in_memory()?;
+        // The copy replaces the whole database, schema included: it has the tables of whoever sealed it.
+        loaded.deserialize_read_exact("main", std::io::Cursor::new(plain.as_slice()), plain.len(), false)?;
+        // Sealed by an older version: what it exported then, to tell whether it was in sync before migrating.
+        let before_migrating = (self.owner.is_some() && super::schema_version(&loaded)? < super::SCHEMA_VERSION)
+            .then(|| snapshot::export_present(&loaded).ok())
+            .flatten();
+        prepare(&loaded)?;
+        if let Some(pre) = before_migrating {
+            super::sync::rebaseline(&loaded, &pre)?;
+        }
+        *conn = Some(loaded);
+        *p.stamp.lock().unwrap_or_else(PoisonError::into_inner) = copy.stamp;
+        self.writes.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
     /// How many times the data has changed so far; equal counts mean equal data.
@@ -806,6 +880,28 @@ mod tests {
         drop(held);
         assert!(recorder.free());
         assert_eq!(recorder.calls(), [("locking", true), ("unlocked", true)]);
+    }
+
+    #[test]
+    fn a_read_gives_the_file_lock_back_once_it_has_checked_for_another_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, store, recorder, _) = guarded_account(dir.path(), DEFAULT_LOCK_WAIT);
+        store.meta_set("k", "v").unwrap();
+        // Another process (the extension) writes the file: the read loads its copy, the file lock already given back.
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let other = Store::account(Arc::clone(&root), dir.path(), owner("a"), &key).unwrap();
+        other.meta_set("k", "from the extension").unwrap();
+        drop(recorder.calls());
+        let reading = store.read().unwrap();
+        assert!(recorder.free(), "a read holds only this process's lock");
+        assert_eq!(recorder.calls(), [("locking", true), ("unlocked", true)]);
+        drop(reading);
+        assert_eq!(store.meta_get("k").unwrap().as_deref(), Some("from the extension"));
+        // A write keeps it until what it wrote is in place.
+        let writing = store.lock().unwrap();
+        assert!(!recorder.free());
+        drop(writing);
+        assert!(recorder.free());
     }
 
     #[test]
