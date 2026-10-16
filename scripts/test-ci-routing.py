@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise CI's actual component selector against disposable Git histories."""
+"""Exercise CI's actual component selectors against disposable Git histories."""
 
 import os
 from pathlib import Path
@@ -9,40 +9,50 @@ import textwrap
 
 
 ROOT = Path(__file__).resolve().parent.parent
-workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-# Read this literal shell block without introducing a YAML dependency in the lightweight checks job.
-selector_step = workflow.split("      - name: Select build lanes\n", 1)[1]
-selector_lines = selector_step.split("        run: |\n", 1)[1].splitlines()
-body = []
-for line in selector_lines:
-    if line.strip() and not line.startswith("          "):
-        break
-    body.append(line)
-selector = textwrap.dedent("\n".join(body))
 
-# (rust, android, docker, desktop)
+
+def load_selector(workflow_name):
+    # Read this literal shell block without introducing a YAML dependency in the lightweight checks job.
+    workflow = (ROOT / ".github/workflows" / workflow_name).read_text()
+    selector_step = workflow.split("      - name: Select build lanes\n", 1)[1]
+    selector_lines = selector_step.split("        run: |\n", 1)[1].splitlines()
+    body = []
+    for line in selector_lines:
+        if line.strip() and not line.startswith("          "):
+            break
+        body.append(line)
+    return textwrap.dedent("\n".join(body))
+
+
+CI_SELECTOR = load_selector("ci.yml")
+IOS_SELECTOR = load_selector("ios.yml")
+
+# (rust, android, docker, desktop, ios). ios is .github/workflows/ios.yml, not a ci.yml lane.
 cases = [
-    ("docs/example.md", (False, False, False, False)),
-    ("README.md", (False, False, False, False)),
-    ("src/config.rs", (True, False, False, False)),
-    ("crates/reins-core/src/sso.rs", (True, True, False, True)),
-    ("crates/reins-proto/src/lib.rs", (True, True, False, True)),
-    ("crates/reins-policy/src/lib.rs", (True, True, False, True)),
-    ("crates/reins-desktop/src/lib.rs", (True, False, False, True)),
-    ("crates/reins-desktop-app/src/main.rs", (True, False, False, True)),
-    ("crates/reins-e2e/tests/round_trip.rs", (True, False, False, False)),
-    ("Cargo.toml", (True, True, False, True)),
-    ("Cargo.lock", (True, True, False, True)),
-    ("rust-toolchain.toml", (True, True, False, True)),
-    (".cargo/config.toml", (True, True, False, True)),
-    ("android/app/build.gradle.kts", (False, True, False, False)),
-    (".github/workflows/ci.yml", (True, True, True, True)),
+    ("docs/example.md", (False, False, False, False, False)),
+    ("README.md", (False, False, False, False, False)),
+    ("src/config.rs", (True, False, False, False, False)),
+    ("crates/reins-core/src/sso.rs", (True, True, False, True, True)),
+    ("crates/reins-proto/src/lib.rs", (True, True, False, True, True)),
+    ("crates/reins-policy/src/lib.rs", (True, True, False, True, True)),
+    ("crates/reins-desktop/src/lib.rs", (True, False, False, True, False)),
+    ("crates/reins-desktop-app/src/main.rs", (True, False, False, True, False)),
+    ("crates/reins-e2e/tests/round_trip.rs", (True, False, False, False, False)),
+    ("Cargo.toml", (True, True, False, True, False)),
+    ("Cargo.lock", (True, True, False, True, True)),
+    ("rust-toolchain.toml", (True, True, False, True, True)),
+    (".cargo/config.toml", (True, True, False, True, True)),
+    ("ios/README.md", (False, False, False, False, True)),
+    ("ios/scripts/build-core.sh", (False, False, False, False, True)),
+    ("android/app/build.gradle.kts", (False, True, False, False, False)),
+    (".github/workflows/ci.yml", (True, True, True, True, False)),
+    (".github/workflows/ios.yml", (False, False, False, False, True)),
     # The release's workflow and actions do not run in CI's lanes; the checks job lints them.
-    (".github/workflows/release.yml", (False, False, False, False)),
-    (".github/actions/signing/action.yml", (False, False, False, False)),
-    ("docker/Dockerfile.debian", (False, False, True, False)),
-    ("scripts/release-android.sh", (True, True, False, False)),
-    ("scripts/install.ps1", (True, True, False, True)),
+    (".github/workflows/release.yml", (False, False, False, False, False)),
+    (".github/actions/signing/action.yml", (False, False, False, False, False)),
+    ("docker/Dockerfile.debian", (False, False, True, False, False)),
+    ("scripts/release-android.sh", (True, True, False, False, False)),
+    ("scripts/install.ps1", (True, True, False, True, False)),
 ]
 
 with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
@@ -56,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
             stderr=subprocess.DEVNULL,
         ).strip()
 
-    def select(event, base):
+    def select(selector, keys, event, base):
         output = root / "outputs"
         output.unlink(missing_ok=True)
         environment = os.environ | {"EVENT": event, "BASE_SHA": base, "GITHUB_OUTPUT": str(output)}
@@ -64,7 +74,12 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
             ["bash", "-e", "-o", "pipefail", "-c", selector], cwd=root, env=environment, check=True
         )
         values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-        return tuple(values[key] == "true" for key in ("rust", "android", "docker", "desktop"))
+        return tuple(values[key] == "true" for key in keys)
+
+    def lanes(event, base):
+        return select(CI_SELECTOR, ("rust", "android", "docker", "desktop"), event, base) + select(
+            IOS_SELECTOR, ("ios",), event, base
+        )
 
     git("init", "-q")
     (root / "baseline").write_text("base")
@@ -79,13 +94,32 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
         path.write_text("changed")
         git("add", ".")
         git("commit", "-qm", "change")
-        actual = select("pull_request", baseline)
+        actual = lanes("pull_request", baseline)
         assert actual == expected, (name, actual, expected)
 
     # Unreachable before-SHAs can follow history rewrites. Missing history must never skip validation.
     # The weekly run on main selects every lane, so it refreshes every cache.
     for event, base in [("push", "f" * 40), ("push", "0" * 40), ("push", ""), ("workflow_dispatch", baseline),
                         ("schedule", baseline), ("schedule", "")]:
-        assert select(event, base) == (True, True, True, True), (event, base)
+        assert lanes(event, base) == (True, True, True, True, True), (event, base)
+
+ios_workflow = (ROOT / ".github/workflows/ios.yml").read_text()
+push = ios_workflow.split("\n  push:\n", 1)[1].split("\n  schedule:\n", 1)[0]
+assert "branches: [main]" in push
+for path in (
+    "crates/reins-core/**",
+    "crates/reins-proto/**",
+    "crates/reins-policy/**",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/**",
+    "ios/scripts/build-core.sh",
+):
+    assert path in push, path
+assert "github.event_name != 'push'" in ios_workflow
+# A main push of this workflow must not satisfy the release gate. That gate names ci.yml only.
+gate = (ROOT / "scripts/wait-for-ci.sh").read_text()
+assert "--workflow ci.yml" in gate
+assert "ios.yml" not in gate
 
 print(f"{len(cases) + 6} CI component-routing checks passed")

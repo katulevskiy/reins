@@ -296,11 +296,128 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(row.isHittable, "\(row) is on screen")
     }
 
+    /// Where a finger can scroll Activity: inside the list, below the status bar (the phone hides the navigation bar),
+    /// and above the floating tab bar. The list's own frame runs under both.
+    private struct ListBand {
+        var list: CGRect
+        var band: CGRect
+        var top: CGRect
+        var bar: CGRect
+    }
+
+    private func listBand(_ app: XCUIApplication) -> ListBand {
+        let listEl = element(app, "activityList")
+        XCTAssertTrue(listEl.waitForExistence(timeout: 10), "the activity list is on screen")
+        let list = listEl.frame
+        var top = CGRect.zero
+        var haveTop = false
+        let status = app.statusBars.firstMatch
+        if status.exists, status.frame.height > 1 {
+            top = status.frame
+            haveTop = true
+        }
+        let nav = app.navigationBars.firstMatch
+        if nav.exists, nav.frame.height > 1 {
+            top = haveTop ? top.union(nav.frame) : nav.frame
+            haveTop = true
+        }
+        var bar = CGRect.zero
+        var haveBar = false
+        for id in ["tab:activity", "tab:trust", "tab:connections", "tab:settings"] {
+            let tab = element(app, id)
+            guard tab.exists, tab.frame.width > 1, tab.frame.height > 1 else { continue }
+            bar = haveBar ? bar.union(tab.frame) : tab.frame
+            haveBar = true
+        }
+        // The capsule's padding sits outside the tab buttons. A point there is still the bar.
+        if haveBar { bar = bar.insetBy(dx: -8, dy: -8) }
+        XCTAssertTrue(haveBar, "the floating tab bar is on screen")
+        let topLimit = haveTop ? top.maxY : list.minY
+        let bottomLimit = min(list.maxY, bar.minY)
+        let band = CGRect(x: list.minX, y: topLimit, width: list.width, height: max(0, bottomLimit - topLimit))
+        XCTAssertGreaterThan(band.height, 200, "the visible list is tall enough to centre a row (\(band))")
+        return ListBand(list: list, band: band, top: haveTop ? top : .zero, bar: bar)
+    }
+
+    /// Waits out a flick's glide, so the next measurement is of a list that has stopped.
+    private func settle(_ row: XCUIElement) {
+        var last = row.frame.minY
+        for _ in 0..<12 {
+            Thread.sleep(forTimeInterval: 0.1)
+            let y = row.frame.minY
+            if abs(y - last) < 0.5 { return }
+            last = y
+        }
+    }
+
+    /// Moves the list by `dy` without pressing `row`. The mood line when it is on screen; otherwise a point in the
+    /// open list that is not the row.
+    private func nudge(_ app: XCUIApplication, dy: CGFloat, avoiding row: XCUIElement) {
+        let band = listBand(app).band
+        let mood = element(app, "activityMood")
+        let clearOfRow = !row.frame.insetBy(dx: -8, dy: -8).intersects(mood.frame)
+        if mood.exists, mood.isHittable, mood.frame.height > 1, clearOfRow, band.intersects(mood.frame) {
+            drag(mood, dy: dy, speed: 700, hold: 0.25)
+            return
+        }
+        let blocked = row.frame.insetBy(dx: -12, dy: -12)
+        let candidates = [band.minY + 28, band.midY, band.maxY - 28]
+        let y = candidates.first { !blocked.contains(CGPoint(x: band.midX, y: $0)) } ?? band.midY
+        let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: band.midX, dy: y))
+        start.press(
+            forDuration: 0.02, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)),
+            withVelocity: XCUIGestureVelocity(rawValue: 700), thenHoldForDuration: 0.25
+        )
+    }
+
+    /// Scrolls until `row`'s centre is in the middle of the open list, not merely hittable.
+    private func centerInList(_ app: XCUIApplication, _ row: XCUIElement) {
+        expectToAppear(row)
+        settle(row)
+        for _ in 0..<10 {
+            let band = listBand(app).band
+            guard row.frame.height > 1 else {
+                nudge(app, dy: -140, avoiding: row)
+                settle(row)
+                continue
+            }
+            let delta = row.frame.midY - band.midY
+            if abs(delta) <= 36, band.contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { return }
+            let before = row.frame.midY
+            nudge(app, dy: max(-160, min(160, -delta)), avoiding: row)
+            settle(row)
+            if abs(row.frame.midY - before) < 1 { break }
+        }
+        let band = listBand(app).band
+        XCTAssertLessThan(
+            abs(row.frame.midY - band.midY), 48,
+            "the row is in the middle of the list (row \(row.frame.midY), middle \(band.midY), row \(row.frame))"
+        )
+    }
+
+    /// The finger goes down at `point` of `target`, which is inside the list and on neither bar.
+    private func assertDragStartsOnTheList(_ app: XCUIApplication, _ target: XCUIElement, at point: CGVector) {
+        let parts = listBand(app)
+        let start = CGPoint(
+            x: target.frame.minX + target.frame.width * point.dx,
+            y: target.frame.minY + target.frame.height * point.dy
+        )
+        XCTAssertTrue(parts.list.contains(start), "the drag starts inside the list (\(start) list \(parts.list))")
+        if parts.top.height > 1 {
+            XCTAssertFalse(parts.top.contains(start), "the drag starts under the top bar (\(start) bar \(parts.top))")
+        }
+        XCTAssertFalse(parts.bar.contains(start), "the drag starts under the tab bar (\(start) bar \(parts.bar))")
+        XCTAssertTrue(parts.band.contains(start), "the drag starts in the open part of the list (\(start) band \(parts.band))")
+    }
+
     /// A scroll up and back down, both starting on `target`: the list moves under the finger each time, and nothing
     /// opens. Quick and slower, and once after the finger rested a moment, as when the row starts to show its press.
+    /// Each drag begins with the row centred in the open list, so a flick's glide cannot park the next one on a bar.
     private func assertScrollsFrom(_ app: XCUIApplication, _ target: XCUIElement, at point: CGVector = CGVector(dx: 0.5, dy: 0.5)) {
         let moves: [(dy: CGFloat, speed: CGFloat, pause: TimeInterval)] = [(-200, 2500, 0.02), (200, 900, 0.02), (-200, 900, 0.12), (200, 2500, 0.12)]
         for move in moves {
+            centerInList(app, target)
+            assertDragStartsOnTheList(app, target, at: point)
             let before = target.frame.minY
             drag(target, at: point, dy: move.dy, pause: move.pause, speed: move.speed)
             // The list moves the finger's way, at least most of its travel (a quick flick may glide on): the bug kept it
