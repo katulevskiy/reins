@@ -496,7 +496,10 @@ struct ActivityScreen: View {
     private func row(
         _ entry: ActivityEntry, selected: Bool, now: Int64, terms: [String] = [], snippet: ActivitySnippet? = nil, tracksSeen: Bool = true
     ) -> some View {
+        // A Button, so its press shows only after the scroll view's short wait and goes when the touch scrolls.
         Button {
+            // The finger that swiped the row to "This was wrong" lifts on it: that is not a tap.
+            guard !SidewaysPan.swiping else { return }
             model.show(.activityDetail(entry.id), in: .activity)
             feedback.defaultTap()
         } label: {

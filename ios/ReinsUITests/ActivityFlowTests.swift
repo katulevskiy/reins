@@ -14,10 +14,10 @@ final class ActivityFlowTests: XCTestCase {
         app.launch()
         // The first launch of a run can race xcodebuild still installing the app, which then comes up again without
         // these arguments (on the real sign-in screen): once, launch it again, and say so in the log. The demo shows
-        // its tab bar, or a linked item's sheet over it.
+        // its Activity tab (Signal's own bar, not a system tab bar), a linked item's sheet over it, or a linked entry's
+        // page (pushed, so the tab bar is down).
         let demo = app.descendants(matching: .any).matching(NSPredicate(
-            format: "elementType == %d OR identifier IN %@",
-            XCUIElement.ElementType.tabBar.rawValue, ["approvalSheet", "pairingSheet", "uploadSheet"]
+            format: "identifier IN %@", ["tab:activity", "approvalSheet", "pairingSheet", "uploadSheet", "entryHero", "entryApproval"]
         )).firstMatch
         if !demo.waitForExistence(timeout: 20) {
             XCTContext.runActivity(named: "Relaunching: the demo's first screen did not appear") { activity in
@@ -270,6 +270,155 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertTrue(element(app, "corrected").waitForExistence(timeout: 5))
     }
 
+    // MARK: A scroll that starts on a row
+
+    /// Drags from `point` of `element` by `dx`, `dy` points at `speed` points a second, after the finger has been down for
+    /// `pause`, then holds still for `hold` so the list does not glide on.
+    private func drag(
+        _ element: XCUIElement, at point: CGVector = CGVector(dx: 0.5, dy: 0.5), dx: CGFloat = 0, dy: CGFloat = 0,
+        pause: TimeInterval = 0.02, speed: CGFloat = 1500, hold: TimeInterval = 0.3
+    ) {
+        let start = element.coordinate(withNormalizedOffset: point)
+        start.press(
+            forDuration: pause, thenDragTo: start.withOffset(CGVector(dx: dx, dy: dy)),
+            withVelocity: XCUIGestureVelocity(rawValue: speed), thenHoldForDuration: hold
+        )
+    }
+
+    /// Brings a history row fully on screen by scrolling from the mood line (plain text, nothing to press).
+    private func bringOnScreen(_ app: XCUIApplication, _ row: XCUIElement) {
+        expectToAppear(row)
+        var tries = 0
+        while !row.isHittable && tries < 3 {
+            drag(element(app, "activityMood"), dy: -120, speed: 600)
+            tries += 1
+        }
+        XCTAssertTrue(row.isHittable, "\(row) is on screen")
+    }
+
+    /// A scroll up and back down, both starting on `target`: the list moves under the finger each time, and nothing
+    /// opens. Quick and slower, and once after the finger rested a moment, as when the row starts to show its press.
+    private func assertScrollsFrom(_ app: XCUIApplication, _ target: XCUIElement, at point: CGVector = CGVector(dx: 0.5, dy: 0.5)) {
+        let moves: [(dy: CGFloat, speed: CGFloat, pause: TimeInterval)] = [(-200, 2500, 0.02), (200, 900, 0.02), (-200, 900, 0.12), (200, 2500, 0.12)]
+        for move in moves {
+            let before = target.frame.minY
+            drag(target, at: point, dy: move.dy, pause: move.pause, speed: move.speed)
+            // The list moves the finger's way, at least most of its travel (a quick flick may glide on): the bug kept it
+            // still while the row took the press.
+            let moved = target.frame.minY - before
+            XCTAssertGreaterThan(moved * (move.dy < 0 ? -1 : 1), abs(move.dy) * 0.7, "the list followed the finger (\(move), moved \(moved))")
+            XCTAssertFalse(element(app, "entryHero").waitForExistence(timeout: 1), "no entry opened (\(move))")
+            XCTAssertFalse(element(app, "approvalSheet").exists, "no request opened (\(move))")
+            XCTAssertFalse(app.alerts.firstMatch.exists, "nothing asked (\(move))")
+        }
+    }
+
+    /// The bug this guards: a scroll that started on a row sometimes pressed the row instead, and the list stayed put.
+    func testAScrollStartingOnARowScrollsAndOpensNothing() {
+        let app = launch()
+        // 12: a plain row (Bypass let it through; nothing to correct).
+        let row = element(app, "entry:12")
+        bringOnScreen(app, row)
+        assertScrollsFrom(app, row)
+        shot(app, "activity-scroll-from-row")
+    }
+
+    func testAScrollStartingOnARowAutopilotDecidedScrollsAndOpensNothing() {
+        let app = launch()
+        // 14: Autopilot approved it, so it can be swiped to "This was wrong".
+        let row = element(app, "entry:14")
+        bringOnScreen(app, row)
+        let frame = row.frame
+        assertScrollsFrom(app, row)
+        // The row did not slide open: a tap on its right end opens the entry, not the correction.
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.maxX - 40, dy: row.frame.midY)).tap()
+        XCTAssertTrue(element(app, "entryHero").waitForExistence(timeout: 5), "the tap opened the entry")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    func testAScrollStartingOnAWaitingCardScrollsAndOpensNothing() {
+        let app = launch()
+        let card = element(app, "pending:req1")
+        expectToAppear(card)
+        // On its ask, above its buttons.
+        assertScrollsFrom(app, card, at: CGVector(dx: 0.5, dy: 0.3))
+        XCTAssertTrue(card.exists, "the card was not answered")
+        // A tap still opens it.
+        element(app, "pendingTitle:req1").tap()
+        XCTAssertTrue(element(app, "approvalSheet").waitForExistence(timeout: 5))
+    }
+
+    func testAScrollStartingOnTheModeChipScrollsAndOpensNoMenu() {
+        let app = launch()
+        let pill = element(app, "modePill")
+        let card = element(app, "pending:req1")
+        expectToAppear(pill)
+        expectToAppear(card)
+        let before = card.frame.minY
+        drag(pill, dy: -60, speed: 2000)
+        XCTAssertLessThan(card.frame.minY, before - 30, "the list scrolled")
+        XCTAssertFalse(element(app, "autopilotQuick").waitForExistence(timeout: 1), "no menu opened")
+    }
+
+    /// The chip's menu still opens on a tap, and on a press that stays a moment, from which a slide picks a row.
+    func testTheModeChipOpensOnATapAndOnAPressThatSlidesOntoARow() {
+        let app = launch()
+        let pill = element(app, "modePill")
+        expectToAppear(pill)
+        pill.tap()
+        XCTAssertTrue(element(app, "autopilotQuick").waitForExistence(timeout: 3), "a tap opens the menu")
+        element(app, "quickScrim").tap()
+        XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
+        // Press, wait, slide onto the first row (Manual) and lift: it is picked and the menu closes.
+        let start = pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let firstRow = pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1)).withOffset(CGVector(dx: 0, dy: 40))
+        start.press(forDuration: 0.5, thenDragTo: firstRow, withVelocity: XCUIGestureVelocity(rawValue: 300), thenHoldForDuration: 0.2)
+        XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3), "the slide picked a row")
+        pill.tap()
+        XCTAssertTrue(element(app, "quick:MANUAL").waitForExistence(timeout: 3))
+        XCTAssertTrue(element(app, "quick:MANUAL").isSelected, "Manual was picked")
+    }
+
+    func testTappingARowStillOpensIt() {
+        let app = launch()
+        let row = element(app, "entry:12")
+        bringOnScreen(app, row)
+        row.tap()
+        XCTAssertTrue(element(app, "entryHero").waitForExistence(timeout: 5))
+    }
+
+    /// Swiping an Autopilot row left still opens "This was wrong", and a long swipe still asks at once.
+    func testSwipingARowLeftStillRevealsThisWasWrong() {
+        let app = launch()
+        let row = element(app, "entry:13")
+        bringOnScreen(app, row)
+        let frame = row.frame
+        drag(row, at: CGVector(dx: 0.8, dy: 0.5), dx: -150, speed: 800, hold: 0.1)
+        XCTAssertFalse(element(app, "entryHero").waitForExistence(timeout: 1), "the swipe opened nothing")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "a short swipe only opens the row")
+        shot(app, "activity-swipe-wrong")
+        // The violet "This was wrong" sits where the row's right end was.
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.maxX - 50, dy: frame.midY)).tap()
+        let ask = app.alerts.buttons["Approve next time"]
+        XCTAssertTrue(ask.waitForExistence(timeout: 3), "it asks what should have happened")
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(app.alerts.firstMatch.waitForNonExistence(timeout: 3))
+        // A long swipe asks at once.
+        drag(row, at: CGVector(dx: 0.9, dy: 0.5), dx: -(frame.width * 0.75), speed: 1200, hold: 0.1)
+        XCTAssertTrue(app.alerts.buttons["Approve next time"].waitForExistence(timeout: 3), "a long swipe asks at once")
+        app.alerts.buttons["Cancel"].tap()
+    }
+
+    /// Flicking a waiting request left still denies it.
+    func testFlickingACardLeftStillDeniesIt() {
+        let app = launch()
+        let card = element(app, "pending:req1")
+        expectToAppear(card)
+        drag(card, at: CGVector(dx: 0.8, dy: 0.3), dx: -(card.frame.width * 0.7), speed: 1500, hold: 0)
+        XCTAssertTrue(card.waitForNonExistence(timeout: 5), "the flick denied it")
+        XCTAssertFalse(element(app, "approvalSheet").exists, "without opening it")
+    }
+
     func testDenyIsOneTap() {
         let app = launch("reins://item?kind=blob&id=blob_q3numbers")
         XCTAssertTrue(element(app, "uploadSheet").waitForExistence(timeout: 10))
@@ -309,6 +458,42 @@ final class ActivityFlowTests: XCTestCase {
         expectToAppear(element(app, "retryDiff"), timeout: 8)
         XCTAssertTrue(element(app, "diffLoadError").exists)
         shot(app, "synced-retry")
+    }
+
+    // MARK: Loosening needs a tap
+
+    /// From Lockdown, a press on the mode chip that slides onto Manual or Auto and lifts changes nothing: the menu stays
+    /// open, and only a tap on the row ends the lockdown.
+    func testALooseningModeIsNeverPickedByASlide() {
+        let app = launch(extra: ["-demoMode", "lockdown"])
+        let pill = element(app, "modePill")
+        expectToAppear(pill)
+        XCTAssertTrue(pill.label.contains("Lockdown"), pill.label)
+        for row in ["quick:MANUAL", "quick:AUTO"] {
+            // Where the row sits once the menu is open; then closed again.
+            pill.tap()
+            let target = element(app, row)
+            expectToAppear(target, timeout: 5)
+            let onRow = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: target.frame.midX, dy: target.frame.midY))
+            element(app, "quickScrim").tap()
+            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
+            // One gesture from the closed chip: press until the menu opens, slide onto the row, lift.
+            let start = pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.6, thenDragTo: onRow, withVelocity: .slow, thenHoldForDuration: 0.2)
+            XCTAssertTrue(element(app, "autopilotQuick").waitForExistence(timeout: 2), "the menu stays open (\(row))")
+            XCTAssertTrue(pill.label.contains("Lockdown"), "still locked down after a slide onto \(row)")
+            element(app, "quickScrim").tap()
+            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
+        }
+        // A tap on the row, once the menu is open, does it.
+        pill.tap()
+        let manual = element(app, "quick:MANUAL")
+        expectToAppear(manual, timeout: 5)
+        shot(app, "lockdown-menu")
+        manual.tap()
+        XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
+        let unlocked = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'Manual'"), object: pill)
+        XCTAssertEqual(XCTWaiter().wait(for: [unlocked], timeout: 5), .completed, "a tap ended the lockdown: \(pill.label)")
     }
 
     // MARK: The keyboard and the clock
