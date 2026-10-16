@@ -86,6 +86,8 @@ struct State {
     serve_at: Option<u64>,
     /// The next roster append answers 503: after storing the entry (`true`) or without storing it (`false`).
     fail_append: Option<bool>,
+    /// The next roster append is refused (a definite 409) and not stored.
+    refuse_append: bool,
     /// Answer an empty roster (a server that lost or dropped it).
     empty_roster: bool,
     /// Hold the answer to a reveal this long (the reveal itself is taken at once).
@@ -210,6 +212,7 @@ impl State {
                     entries,
                 })
             }
+            ("POST", ["roster"]) if std::mem::take(&mut self.refuse_append) => err(409, "conflict"),
             ("POST", ["roster"]) => match self.fail_append.take() {
                 Some(true) => {
                     drop(self.append(&me, req.body_json().unwrap()));
@@ -959,6 +962,13 @@ async fn a_change_the_server_took_without_answering_completes_and_one_it_refused
     assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Viewer);
     assert!(!a.engine().holds_owner_seed().await.unwrap());
     assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+    // A recovery the server refused for good (a 4xx): nothing of it stays, not the old owner's view keys nor the
+    // wrap key.
+    let held = a.engine().held_roles_keys().await.unwrap();
+    w.state().refuse_append = true;
+    assert!(recover(&a, PASSWORD, "iPhone").await.is_err());
+    assert_eq!(a.engine().held_roles_keys().await.unwrap(), held);
+    assert_eq!(a.roster_summary(true).await.unwrap().unwrap().role, PhoneRole::Viewer);
     // A recovery the server never got: refused, A's standing unchanged; tried again, it goes through.
     w.state().fail_append = Some(false);
     assert!(recover(&a, PASSWORD, "iPhone").await.is_err());

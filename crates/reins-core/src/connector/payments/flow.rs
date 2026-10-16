@@ -154,6 +154,8 @@ impl Engine {
             && let Some(limit) = self.payments.covering_limit(&plan, connection, request.created_at, unix_now())?
             // Lockdown may have been switched on while the charges were read.
             && self.ap_mode_for(connection, unix_now())? != AutopilotMode::Lockdown
+            // Paid without asking only while the server confirms this phone is still the primary (else it asks).
+            && self.require_decider_fresh(session).await.is_ok()
         {
             let approval = Approval {
                 request_id: &request.id.0,
@@ -254,6 +256,9 @@ impl Engine {
             if let Some(why) = self.payments.refusal(&plan.cart, connection, Self::margin(plan, method), now)? {
                 return Err(CoreError::invalid(format!("{why} Change the budget in Payments, or deny this.")));
             }
+            // A purchase is not taken back: paid (by the user's tap or by Autopilot) only while the server confirms
+            // this phone is still the primary.
+            self.require_decider_fresh(session).await?;
             self.payments.perform(&one, plan, method, choice.address_id.as_deref(), &approval).await?
         };
         let mut note = None;
@@ -279,8 +284,6 @@ impl Engine {
         let decision = Decision::new("", self.ap_human_note(request_id));
         let work = async {
             let session = self.session()?;
-            // A purchase is not taken back: only while this phone is still the primary.
-            self.require_decider_fresh(&session).await?;
             let (_, parked) = self.parked(request_id)?;
             self.approve_parked_purchase(&session, request_id, &parked, Some(&choice)).await
         };

@@ -1078,6 +1078,10 @@ impl Engine {
         // the recovery completes on this phone (the new view key and its grants come with `reconcile_roles`).
         let previous_seed = self.owner_seed(&account.slot)?;
         let previous_roster = self.local_roster(&account.slot)?;
+        // The keyring (now with the old owner's keys) and the wrap key too: a refused recovery leaves none of it.
+        let previous_raw = [VIEW_KEYS, WRAP_KEY]
+            .map(|service| self.store.device_secret_get(service, &account.slot).map(|raw| (service, raw)));
+        let previous_raw = previous_raw.into_iter().collect::<Result<Vec<_>, _>>()?;
         self.keep_owner_seed(&account.slot, &seed)?;
         self.keep_wrap_key(&account.slot, &wrap_key)?;
         self.save_keyring(&account.slot, &ring)?;
@@ -1098,6 +1102,12 @@ impl Engine {
                 match previous_roster {
                     Some(previous) => self.save_roster(&account.slot, &previous)?,
                     None => self.store.device_secret_delete(ROSTER, &account.slot)?,
+                }
+                for (service, raw) in previous_raw {
+                    match raw {
+                        Some(raw) => self.store.device_secret_put(service, &account.slot, &raw)?,
+                        None => self.store.device_secret_delete(service, &account.slot)?,
+                    }
                 }
                 return Err(e);
             }
@@ -1407,6 +1417,17 @@ impl Engine {
         let session = self.session()?;
         let account = self.roles_account(&session).await?;
         Ok(self.owner_seed(&account.slot)?.is_some())
+    }
+
+    /// The view key ids and a digest of the recovery wrap's key this phone keeps for the signed-in account (tests: a
+    /// refused change leaves them as they were).
+    #[doc(hidden)]
+    pub async fn held_roles_keys(&self) -> Result<(Vec<u64>, Option<String>), CoreError> {
+        let session = self.session()?;
+        let account = self.roles_account(&session).await?;
+        let wrap = self.store.device_secret_get(WRAP_KEY, &account.slot)?;
+        let digest = wrap.map(|k| reins_proto::canon::hex32(&reins_proto::canon::sha256(&k)));
+        Ok((self.keyring(&account.slot)?.kids(), digest))
     }
 
     // ---- signed answers -----------------------------------------------------------------------------------------
