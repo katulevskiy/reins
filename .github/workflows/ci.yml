@@ -146,6 +146,10 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # 2,000 grant-soundness cases on the weekly run and on a manual dispatch. Pull requests and pushes
+    # to main stay at 256: a release waits for main's CI.
+    env:
+      PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '256' }}
     steps:
       - uses: actions/checkout@v7
         with:
