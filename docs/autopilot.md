@@ -153,11 +153,12 @@ command in that folder, so a learnt answer never covers another command). There 
     that mentions `git` with `push`, or `gh` with anything but a read, asks.
     - The whole line is `git push`, with no other command, wrapper, variable or quote.
     - Its only options are `-u`, `--set-upstream`, `-q`, `-v` or `--no-verify`.
-    - It names at most a plain remote, then plain branch names (`branch`, `src:branch`, `HEAD`).
+    - It names at most the remote `origin` (the one whose default was read), then plain branch names (`branch`,
+      `src:branch`, `HEAD`). A push to any other remote asks.
     - Every destination is a branch that is neither protected nor the repository's default. For a hook, the desktop
       app reads the checked-out branch and the default from the repository's files (it never runs git there). It
-      reports them only when the configuration parses cleanly and a push of the branch lands on the branch of the
-      same name. Without that report, the push asks.
+      reports them only when the configuration parses cleanly, a push of the branch lands on the branch of the
+      same name, and the push goes to origin. Without that report, the push asks.
   - A git command hidden behind an alias, configuration that can run commands, git's environment, `xargs`, or a shell
     construct the phone does not read is held as not read with certainty. Force pushes and branch deletes are on the
     hard floor. Outside the floor it weighs, Overnight applies Auto's risk checks too.
