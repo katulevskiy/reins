@@ -181,6 +181,20 @@ if [[ "$MODE" == test-without-building ]]; then
     exit 1
   fi
   echo "xctestrun $xctestrun"
+  # xcodebuild test-without-building does not forward host env vars to the test process
+  # inside the simulator. Inject CI=1 into each test target's EnvironmentVariables so
+  # XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil) works as intended.
+  python3 - "$xctestrun" <<'PY'
+import plistlib, sys
+path = sys.argv[1]
+with open(path, "rb") as f:
+    data = plistlib.load(f)
+for key, val in data.items():
+    if not key.startswith("__") and isinstance(val, dict):
+        val.setdefault("EnvironmentVariables", {})["CI"] = "1"
+with open(path, "wb") as f:
+    plistlib.dump(data, f, fmt=plistlib.FMT_XML)
+PY
   xcodebuild test-without-building \
     -xctestrun "$xctestrun" \
     -destination "platform=iOS Simulator,id=${UDID}" \
@@ -188,7 +202,6 @@ if [[ "$MODE" == test-without-building ]]; then
     -resultBundlePath "$GITHUB_WORKSPACE/results.xcresult" \
     -collect-test-diagnostics never \
     -parallel-testing-enabled NO \
-    -testenv CI=1 \
     "${args[@]}" \
     "${sign[@]}"
   exit 0
