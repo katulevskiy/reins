@@ -275,7 +275,8 @@ final class AutopilotUITests: XCTestCase {
             if let clock { waitFor(clock) }
             XCTAssertTrue(element("heroMode").exists, "the sentence keeps its label when compact")
             let stop = waitFor(button)
-            XCTAssertGreaterThanOrEqual(stop.frame.height, 44, "\(button) stays a full touch target")
+            // To the point: a frame measured between fractional positions reads 43.999999999999986.
+            XCTAssertGreaterThanOrEqual(stop.frame.height.rounded(), 44, "\(button) stays a full touch target")
             XCTAssertLessThan(stop.frame.maxY, app.frame.minY + 200, "\(button) moved up into the bar")
             shot("trust-\(mode)-compact")
 

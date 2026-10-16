@@ -105,7 +105,8 @@ struct RunningFieldGeometry: Equatable {
     var compactHeight: CGFloat
 
     static func clockScale(_ progress: CGFloat) -> CGFloat { lerp(1, clockScale, progress) }
-    static func buttonHeight(_ progress: CGFloat) -> CGFloat { lerp(openButton, compactButton, progress) }
+    /// Never under the compact height (a full touch target), whatever the arithmetic.
+    static func buttonHeight(_ progress: CGFloat) -> CGFloat { max(lerp(openButton, compactButton, progress), compactButton) }
 
     init(_ s: Sizes, progress p: CGFloat) {
         let side = Self.side, top = Self.top, gap = Self.gap
