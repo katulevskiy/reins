@@ -506,6 +506,146 @@ async fn a_connection_icon_choice_is_remembered_and_forgotten_with_the_connectio
     assert_eq!(env.core.connections().await.unwrap()[0].icon, None);
 }
 
+#[tokio::test]
+async fn a_connection_the_user_renames_goes_by_that_name_everywhere_until_it_is_cleared() {
+    let env = env().await;
+    serve_connections(&env).await;
+    serve_gmail_search(&env, &[("m1", "Bank <alerts@bank.com>")]).await;
+    let listed = env.core.connections().await.unwrap();
+    assert_eq!((listed[0].label.as_str(), listed[0].name.as_deref()), ("Claude", None));
+    assert_eq!((listed[0].own_label.as_str(), listed[0].client_name.as_str()), ("Claude", "Claude"));
+
+    // A typed name: one clean line, capped; it is kept as typed.
+    let kept = env.core.rename_connection("c1".to_owned(), Some("  Claude\u{200b} (work)\n".to_owned())).await.unwrap();
+    assert_eq!(kept.as_deref(), Some("Claude (work)"));
+    let renamed = &env.core.connections().await.unwrap()[0];
+    assert_eq!((renamed.label.as_str(), renamed.name.as_deref()), ("Claude (work)", Some("Claude (work)")));
+    assert_eq!(renamed.own_label, "Claude", "its own name stays, for the placeholder");
+    assert_eq!(renamed.client_name, "Claude", "and what it called itself, under the name");
+    assert_eq!(renamed.auto_icon, "claude", "the icon comes from what it is");
+
+    // Waiting cards, notifications, the approval, Activity, its filter and permissions all use the user's name, even
+    // for what was logged before the rename.
+    serve_pending(&env, &[search_request("r1", "c1", "Claude", "from:bank")], &[]).await;
+    let items = env.core.sync(0).await.unwrap();
+    assert_eq!(
+        (items[0].connection_label.as_str(), items[0].title.as_str()),
+        ("Claude (work)", "Claude (work) wants to search your Gmail")
+    );
+    let notified = env.notifier.pending.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(notified.title, "Claude (work) wants to search your Gmail", "the notification too");
+    let view = env.core.approval_view("r1".to_owned()).await.unwrap();
+    assert_eq!(view.connection_label, "Claude (work)");
+    assert!(!view.headline.starts_with("Claude gets"), "{}", view.headline);
+    env.core.approve("r1".to_owned(), choice(&["m1"], Some(bank_grant()))).await.unwrap();
+    assert_eq!(env.core.activity(5).await.unwrap()[0].connection_label, "Claude (work)");
+    assert_eq!(env.core.grants().await.unwrap()[0].connection_label, "Claude (work)");
+    let facets = env.core.activity_facets().await.unwrap();
+    assert_eq!(facets.connections.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Claude (work)"]);
+
+    // Cleared (or emptied): it goes by its own name again, everywhere.
+    assert_eq!(env.core.rename_connection("c1".to_owned(), Some(" \u{feff} ".to_owned())).await.unwrap(), None);
+    let cleared = &env.core.connections().await.unwrap()[0];
+    assert_eq!((cleared.label.as_str(), cleared.name.as_deref()), ("Claude", None));
+    assert_eq!(env.core.activity(5).await.unwrap()[0].connection_label, "Claude");
+    env.core.rename_connection("c1".to_owned(), Some("Mine".to_owned())).await.unwrap();
+    env.core.rename_connection("c1".to_owned(), None).await.unwrap();
+    assert_eq!(env.core.grants().await.unwrap()[0].connection_label, "Claude");
+    assert!(matches!(env.core.rename_connection("../x".to_owned(), None).await, Err(CoreError::Invalid { .. })));
+}
+
+#[tokio::test]
+async fn a_name_goes_with_its_connection() {
+    let env = env().await;
+    serve_connections(&env).await;
+    env.core.rename_connection("c1".to_owned(), Some("Work".to_owned())).await.unwrap();
+    env.core.rename_connection("gone".to_owned(), Some("Old".to_owned())).await.unwrap();
+    // A connection the server no longer lists loses its name; a revoked one too.
+    assert_eq!(env.core.connections().await.unwrap()[0].label, "Work");
+    Mock::given(method("DELETE"))
+        .and(path("/reins/api/connections/c1"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&env.server)
+        .await;
+    env.core.revoke_connection("c1".to_owned()).await.unwrap();
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
+            {"id": "c1", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai", "created_at": 1},
+            {"id": "gone", "label": "Grok", "client_name": "Grok", "client_host": "grok.com", "created_at": 2}]})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    let listed = env.core.connections().await.unwrap();
+    assert_eq!(
+        listed.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
+        ["Claude", "Grok"],
+        "an id that comes back is not given an old name"
+    );
+}
+
+#[tokio::test]
+async fn a_second_account_of_the_same_ai_is_offered_a_name_of_its_own_kept_with_the_account() {
+    let env = env().await;
+    serve_connections(&env).await;
+    // A second Claude.ai account connects: same name, same host, nothing else to tell them apart.
+    let pairing = json!({"v": 1, "id": "p2", "client_name": "Claude", "client_host": "claude.ai",
+        "choices": [12, 47, 83], "created_at": 50});
+    serve_pending(&env, &[], &[pairing]).await;
+    env.core.sync(0).await.unwrap();
+    let view = env.core.pairing_view("p2".to_owned()).await.unwrap();
+    assert_eq!((view.suggested_name.as_str(), view.same_client), ("Claude 2", 1));
+    Mock::given(method("POST"))
+        .and(path("/reins/api/pairings/p2/response"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": "c2"})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.core.answer_pairing("p2".to_owned(), true, Some(47), Some("Claude (work)".to_owned())).await.unwrap();
+    let requests = env.server.received_requests().await.unwrap();
+    let answer = requests.iter().find(|r| r.url.path() == "/reins/api/pairings/p2/response").unwrap();
+    let body: Value = serde_json::from_slice(&answer.body).unwrap();
+    assert_eq!(body["approved"], true);
+    assert_eq!(body["label"], Value::Null, "the server never gets the name");
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
+            {"id": "c1", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai", "created_at": 1},
+            {"id": "c2", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai", "created_at": 2}]})))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .mount(&env.server)
+        .await;
+    let listed = env.core.connections().await.unwrap();
+    assert_eq!(listed.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), ["Claude", "Claude (work)"]);
+    assert_eq!(listed[1].client_name, "Claude", "what it called itself stays in sight");
+
+    // A third, from another host that calls itself Claude, is not the same client: it is offered its own name; kept
+    // as it is, it stays its own (untrusted) name, never the user's.
+    let lookalike = json!({"v": 1, "id": "p3", "client_name": "Claude", "client_host": "claude.evil.example",
+        "choices": [12, 47, 83], "created_at": 60});
+    serve_pending(&env, &[], &[lookalike]).await;
+    env.core.sync(0).await.unwrap();
+    let view = env.core.pairing_view("p3".to_owned()).await.unwrap();
+    assert_eq!((view.suggested_name.as_str(), view.same_client), ("Claude", 0));
+    Mock::given(method("POST"))
+        .and(path("/reins/api/pairings/p3/response"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": "c3"})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    env.core.answer_pairing("p3".to_owned(), true, Some(47), Some("Claude".to_owned())).await.unwrap();
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
+            {"id": "c3", "label": "Claude", "client_name": "Claude", "client_host": "claude.evil.example",
+             "created_at": 3}]})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    assert_eq!(env.core.connections().await.unwrap()[0].name, None, "its own name is not the user's");
+}
+
 /// A computer pairs (`client_name` as its desktop app registered) and the user approves it as `connection`.
 async fn pair_computer(env: &Env, id: &str, client_name: &str, key_byte: u8, connection: &str) {
     let key = reins_proto::desktop::encode_key(&[key_byte; 32]);
@@ -821,9 +961,18 @@ async fn pairing_requests_are_cleaned_and_answered() {
         .filter(|r| r.url.path() == "/reins/api/pairings/p1/response")
         .map(|r| serde_json::from_slice(&r.body).unwrap())
         .collect();
-    assert_eq!(posted[0], json!({"v": 1, "approved": true, "chosen_code": 47, "label": "Work Claude"}));
+    // The name typed is the user's: kept with the account, cleaned, never sent to the server.
+    assert_eq!(posted[0], json!({"v": 1, "approved": true, "chosen_code": 47, "label": null}));
     assert_eq!(env.core.pending().await.unwrap().len(), 0);
     assert_eq!(env.core.activity(1).await.unwrap()[0].action, "pair");
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
+            {"id": "c9", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai", "created_at": 50}]})))
+        .mount(&env.server)
+        .await;
+    let listed = env.core.connections().await.unwrap();
+    assert_eq!((listed[0].label.as_str(), listed[0].name.as_deref()), ("Work Claude", Some("Work Claude")));
 }
 
 #[tokio::test]

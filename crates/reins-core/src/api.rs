@@ -633,7 +633,7 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.pairing_view(&pairing_id) }).await;
+            let result = engine.run_account(async { engine.pairing_view(&pairing_id).await }).await;
             runtime.finish(&engine, result)
         })
         .await
@@ -928,6 +928,25 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.shuffle_connection_blobatar(&connection_id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Gives a connection the user's own name for it ("Claude (work)"), kept with the account and shown everywhere
+    /// instead of its own; `None` or an empty name takes it away. One line of at most 64 characters, without control
+    /// or invisible characters. Returns the name kept (`None`: it goes by its own name).
+    pub async fn rename_connection(
+        &self,
+        connection_id: String,
+        name: Option<String>,
+    ) -> Result<Option<String>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.rename_connection(&connection_id, name).await }).await;
             runtime.finish(&engine, result)
         })
         .await

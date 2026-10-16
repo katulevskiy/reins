@@ -403,6 +403,8 @@ pub fn pairing_view(p: &PairingRequest) -> PairingView {
         choices: p.choices.to_vec(),
         created_at: p.created_at,
         key_fingerprint: p.client_key.as_deref().and_then(desktop::key_fingerprint),
+        suggested_name: crate::avatar::shown_label(&p.client_name),
+        same_client: 0,
     }
 }
 

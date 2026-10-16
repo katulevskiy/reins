@@ -556,8 +556,30 @@ impl Engine {
         serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked pairing"))
     }
 
-    pub fn pairing_view(&self, id: &str) -> Result<PairingView, CoreError> {
-        Ok(views::pairing_view(&self.parked_pairing(id)?))
+    pub async fn pairing_view(&self, id: &str) -> Result<PairingView, CoreError> {
+        let view = views::pairing_view(&self.parked_pairing(id)?);
+        Ok(self.named_pairing(view).await)
+    }
+
+    /// The name a pairing's name field starts with: its own, or one of its own ("Claude 2") when a connection of the
+    /// same client is there already, which the user is asked to make theirs. The connections come from the server;
+    /// without them the pairing keeps its own name.
+    async fn named_pairing(&self, mut view: PairingView) -> PairingView {
+        let connections = match self.connections().await {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("could not list the connections to name a new one: {e}");
+                return view;
+            }
+        };
+        let same = connections
+            .iter()
+            .filter(|c| crate::names::same_client(&view.client_name, &view.client_host, &c.client_name, &c.client_host))
+            .count();
+        let taken: Vec<String> = connections.into_iter().map(|c| c.label).collect();
+        view.suggested_name = crate::names::suggested_name(&view.client_name, same, &taken);
+        view.same_client = u32::try_from(same).unwrap_or(u32::MAX);
+        view
     }
 
     /// The pairing a computer's code stands for (scanned from its QR code, or from a link): the server hands it to this
@@ -582,14 +604,14 @@ impl Engine {
         };
         let id = pairing.id.0.clone();
         // Scanned twice: the pairing is parked already.
-        if let Ok(view) = self.pairing_view(&id) {
+        if let Ok(view) = self.pairing_view(&id).await {
             return Ok(view);
         }
         let Some(_guard) = self.begin(&id)? else {
-            return self.pairing_view(&id);
+            return self.pairing_view(&id).await;
         };
         self.park_pairing(pairing)?;
-        self.pairing_view(&id)
+        self.pairing_view(&id).await
     }
 
     /// Sends the user's answer for an AI-connection request.
@@ -613,6 +635,7 @@ impl Engine {
                 return Err(CoreError::invalid("that number was not offered"));
             }
         }
+        let given = given_name(&pairing.client_name, label.as_deref());
         let response = PairingResponse {
             v: PROTOCOL_VERSION,
             approved: approve,
@@ -621,7 +644,8 @@ impl Engine {
             } else {
                 None
             },
-            label: label.map(|l| text::truncate_chars(&text::one_line(&l), 64)).filter(|l| !l.is_empty()),
+            // The name the user gives it stays with the account (synced, sealed): the server keeps the client's own.
+            label: None,
         };
         let now = unix_now();
         let result = api_call!(&session, |api| api.answer_pairing(id, &response));
@@ -637,15 +661,24 @@ impl Engine {
         };
         // The desktop app's key, compared by the user on both screens, now belongs to this connection.
         let new_connection = result.as_ref().ok().filter(|_| approve).and_then(|r| r.connection_id.as_ref());
+        if let (Some(connection), Some(name)) = (new_connection, given.as_deref()) {
+            self.store.set_connection_name(&connection.0, Some(name))?;
+        }
         let key = pairing.client_key.as_deref().and_then(reins_proto::desktop::decode_key);
         let mut note = format!("From {}", pairing.client_host);
         if let (Some(connection), Some(key)) = (new_connection, key) {
             let key = reins_proto::desktop::encode_key(&key);
             // The name the user saw, kept on the phone: a purchase sealed to this app names it from here.
-            let named = response.label.clone().unwrap_or_else(|| text::one_line(&pairing.client_name));
+            let named = given.clone().unwrap_or_else(|| text::one_line(&pairing.client_name));
             self.store.pin_desktop_key(&connection.0, &key, &text::truncate_chars(&named, 64), now)?;
             if let Some(fingerprint) = reins_proto::desktop::key_fingerprint(&key) {
                 note = format!("{note}. Desktop app key {fingerprint}");
+            }
+            // The computer shows the name it was given from the start (else the next listing leaves it).
+            if given.is_some()
+                && let Err(e) = self.send_computer_name(&connection.0, given.as_deref()).await
+            {
+                log::warn!("could not leave the new computer its name: {e}");
             }
         }
         self.store.append_audit(&AuditRecord {
@@ -671,7 +704,7 @@ impl Engine {
         if let Some(connection) = new_connection
             && self.starting_policy()? == Some(crate::types::StartingPolicy::HeadlinesFirstHour)
         {
-            let label = label_for_grants(&pairing.client_name, response.label.as_deref());
+            let label = label_for_grants(&pairing.client_name, given.as_deref());
             if let Err(e) = self.grant_starter_headlines(&connection.0, &label, now) {
                 log::warn!("could not give the new connection its starting grants: {e}");
             }
@@ -681,6 +714,14 @@ impl Engine {
         self.notifier.item_resolved(id.to_owned());
         result.map(drop).map_err(ApiFailure::into_core)
     }
+}
+
+/// The name the user gave a new connection in the name field (`names::typed_name`), unless it is the client's own
+/// (the field starts with it): then the connection goes by its own name, which stays untrusted.
+fn given_name(client_name: &str, typed: Option<&str>) -> Option<String> {
+    let name = crate::names::typed_name(typed?)?;
+    let own = [crate::avatar::shown_label(client_name), crate::names::original_name(client_name)];
+    (!own.contains(&name)).then_some(name)
 }
 
 /// The name grants show for a new connection: the one the user gave it, else the client's.

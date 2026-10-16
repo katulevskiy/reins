@@ -731,6 +731,14 @@ pub struct PairingView {
     /// The Reins desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
     /// too. `None` for an AI client (or a key that cannot be used).
     pub key_fingerprint: Option<String>,
+    /// The name the name field starts with: its own, or one of its own ("Claude 2") when a connection of the same
+    /// client is there already (`names::suggested_name`).
+    #[uniffi(default)]
+    pub suggested_name: String,
+    /// How many connections of the same client there are already: two accounts of one AI (two Claude.ai accounts)
+    /// look the same to Reins, so the app puts the cursor in the name field for the user to tell this one apart.
+    #[uniffi(default)]
+    pub same_client: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -781,8 +789,8 @@ pub struct AccountView {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ConnectionView {
     pub id: String,
-    /// Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
-    /// name it was given (`avatar::shown_label`).
+    /// Its name as every screen shows it: the one the user gave it ([`Self::name`]), else its own
+    /// ([`Self::own_label`]).
     pub label: String,
     pub client_host: String,
     pub created_at: i64,
@@ -803,6 +811,19 @@ pub struct ConnectionView {
     /// changed by the user).
     #[uniffi(default)]
     pub blobatar: Option<crate::avatar::Blobatar>,
+    /// The name the user gave it (`names::typed_name`), synced to every phone of the account; `None`: it goes by its
+    /// own.
+    #[uniffi(default)]
+    pub name: Option<String>,
+    /// Its own name as the lists show it without the user's: a computer's ("M2A", not "Reins desktop app on
+    /// Mac.localdomain"), else the name it was given (`avatar::shown_label`). The name field's placeholder; clearing
+    /// the name brings it back.
+    #[uniffi(default)]
+    pub own_label: String,
+    /// What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
+    /// (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
+    #[uniffi(default)]
+    pub client_name: String,
 }
 
 /// What a device signed in to the account is.
