@@ -3,9 +3,13 @@ package dev.reins.android
 import android.content.Context
 import dev.reins.android.autopilot.AutopilotText
 import dev.reins.android.autopilot.ModelDownloads
+import dev.reins.android.autopilot.ModelUpdateGate
+import dev.reins.android.autopilot.ModelUpdates
+import dev.reins.android.autopilot.NetworkConditions
 import dev.reins.android.autopilot.OvernightReturns
 import dev.reins.android.autopilot.OnnxModelRuntime
 import dev.reins.android.autopilot.WorkModelDownloads
+import dev.reins.android.autopilot.WorkModelUpdates
 import dev.reins.android.core.CoreProvider
 import dev.reins.android.core.MainSafeCore
 import dev.reins.android.feedback.AndroidFeedback
@@ -87,6 +91,12 @@ class AppContainer(private val context: Context) {
 
     /** The model download job. */
     val modelDownloads: ModelDownloads by lazy { WorkModelDownloads(context) }
+
+    /** The quiet background runs that keep the model up to date on Wi-Fi. */
+    val modelUpdates: ModelUpdates by lazy { WorkModelUpdates(context) }
+
+    /** Whether the phone is online, on Wi-Fi, saving battery or data (what a model update waits for). */
+    fun networkConditions(): ModelUpdateGate.Conditions = NetworkConditions.read(context)
     val deviceStatus = DeviceStatusStore(context)
 
     /** Whether the setup after a fresh sign-in is still to be shown, per account. */

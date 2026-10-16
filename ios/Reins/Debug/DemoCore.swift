@@ -91,6 +91,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var model: ModelStatus
         var profiles: [ProfileView] = []
         var wifiOnly = true
+        /// "Update automatically" (on by default, as in the core).
+        var autoUpdate = true
         var overnightWhenRisky: OvernightRisky = .wait
         var suggestions: [String: SuggestionView] = [:]
         var arriveAt: Int64?
@@ -137,7 +139,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     ) {
         let now = Self.now()
         let seeded = DemoData.pending(now)
-        var s = State(model: modelInstalled ? DemoData.model(.installed, update: modelOutdated) : DemoData.model(.notInstalled))
+        var s = State(model: modelInstalled
+            ? DemoData.model(.installed, update: modelOutdated, updatedAt: now - 3 * 86_400)
+            : DemoData.model(.notInstalled))
         s.session = signedIn ? SessionInfo(serverUrl: DemoData.server, email: DemoData.email) : nil
         s.pending = quiet ? [] : seeded.items
         s.views = seeded.views
@@ -1246,7 +1250,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 bypassSince: running ? s.apGlobal.bypassSince : nil,
                 overnightUntil: night ? s.apGlobal.overnightUntil ?? .max : nil, overnightSince: night ? s.apGlobal.overnightSince : nil,
                 overnightWhenRisky: s.overnightWhenRisky,
-                defaultProfileId: defaultId, wifiOnly: s.wifiOnly, model: s.model, connections: rows
+                defaultProfileId: defaultId, wifiOnly: s.wifiOnly, autoUpdate: s.autoUpdate, model: s.model, connections: rows
             )
         }
     }
@@ -1401,6 +1405,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func setAutopilotWifiOnly(wifiOnly: Bool) async throws { locked { $0.wifiOnly = wifiOnly } }
 
+    func setAutopilotAutoUpdate(on: Bool) async throws { locked { $0.autoUpdate = on } }
+
     func autopilotProfiles() async throws -> [ProfileView] {
         locked { s in
             s.profiles.map { p in
@@ -1525,13 +1531,44 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             throw error
         }
         return locked { s in
-            s.model = DemoData.model(.installed, risk: updating)
+            s.model = DemoData.model(.installed, risk: updating, version: updating ? "2" : "1", updatedAt: Self.now())
             return s.model
         }
     }
 
     func deleteModel() async throws {
         locked { $0.model = DemoData.model(.notInstalled) }
+    }
+
+    /// An older model is in use and "Update automatically" is on.
+    func modelUpdatePending() async -> Bool {
+        locked { $0.autoUpdate && $0.model.state == .installed && $0.model.update }
+    }
+
+    /// Like the real core's: an older model is replaced by the newer one (which rates risk), downloaded over about four
+    /// seconds while the older one keeps scoring; anything else is up to date.
+    func updateModel(automatic: Bool, progress: DownloadProgress) async throws -> ModelUpdateOutcome {
+        let (installed, older, off) = locked { ($0.model.state == .installed, $0.model.update, !$0.autoUpdate) }
+        guard installed else { return .notInstalled }
+        if automatic && off { return .off }
+        guard older else { return .upToDate }
+        let total = DemoData.modelSize
+        locked { $0.model = DemoData.model(.downloading, update: true) }
+        progress.progress(downloaded: 0, total: total)
+        let steps: UInt64 = 16
+        do {
+            for step in 1...steps {
+                try await Task.sleep(for: .milliseconds(250))
+                let done = total * step / steps
+                locked { $0.model.downloadedBytes = done }
+                progress.progress(downloaded: done, total: total)
+            }
+        } catch {
+            locked { $0.model = DemoData.model(.installed, update: true) }
+            throw CoreError.Network(reason: "the download stopped")
+        }
+        locked { $0.model = DemoData.model(.installed, risk: true, version: "2", updatedAt: Self.now()) }
+        return .updated
     }
 
     /// "Try it": denies what mentions a password, money going out or an unknown address; approves the rest.

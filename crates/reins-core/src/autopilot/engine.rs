@@ -16,7 +16,7 @@ use super::context::{Decision, deciding};
 use super::decide::{self, Pass, Probs};
 use super::gates::{self, RATE_PER_10_MIN, RATE_PER_DAY};
 use super::memory::{CORRECTION_WEIGHT, Embedding, MemoryRow, Source, Variant};
-use super::model::{self, DownloadState, KnownModel, Laya};
+use super::model::{self, DownloadState, KnownModel, Laya, Published};
 use super::modes::{self, DEFAULT_BYPASS_MINUTES};
 use super::overnight;
 use super::risk::{self, RiskNote};
@@ -28,8 +28,8 @@ use super::store::{
 };
 use super::types::{
     AutoDecisionView, AutopilotEvent, AutopilotMode, AutopilotNote, AutopilotSettings, AutopilotStats, ClassView,
-    ConnectionAutopilot, ModelStatus, NeighbourView, OVERNIGHT_NAME, OvernightRisky, Preset, ProfileView, RiskLevel,
-    SuggestionView, ThresholdReplay, Verdict,
+    ConnectionAutopilot, ModelStatus, ModelUpdateOutcome, NeighbourView, OVERNIGHT_NAME, OvernightRisky, Preset,
+    ProfileView, RiskLevel, SuggestionView, ThresholdReplay, Verdict,
 };
 use crate::engine::Engine;
 use crate::phone_api::check_id;
@@ -58,6 +58,14 @@ const MODEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[cfg(test)]
 const MODEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const WIFI_ONLY_KEY: &str = "autopilot.wifi_only";
+/// "Update automatically" (on unless turned off).
+const AUTO_UPDATE_KEY: &str = "autopilot.auto_update";
+/// The id of the newer model whose download failed its check, or that failed its self-check: automatic updates leave
+/// it alone until the user's "Check now".
+const REJECTED_KEY: &str = "autopilot.model_rejected";
+/// What a new model is run on once before it is put in use: it must load and answer in the expected shape.
+const SELF_CHECK_STATE: &str = "connection: Reins\nconnection age: 30 days\nservice: gmail\naction: send\noperation: \
+                                Send an email\nclass: email.send\ntarget: someone@example.com\ntarget is new: yes";
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -73,6 +81,9 @@ pub struct State {
     pub(crate) download: DownloadState,
     /// One pass at a time.
     pass: tokio::sync::Mutex<()>,
+    /// Every use of the model holds this to read; putting a new model in use holds it to write, so that it waits for
+    /// runs in progress and no run sees half a change.
+    model_use: tokio::sync::RwLock<()>,
     /// Profiles are changed read-modify-write under this, so that no writer undoes another's change.
     profile_writes: Mutex<()>,
     /// Connection → when its "paused" notice was sent.
@@ -409,6 +420,7 @@ impl Engine {
     /// request then waits for the user).
     /// Returns the (verified) package that ran too.
     async fn ap_infer(&self, states: Vec<String>) -> Result<(Arc<Laya>, Vec<Pass>), String> {
+        let _using = self.autopilot.model_use.read().await;
         let (laya, runtime) = self.ap_model().await?;
         let id = Arc::clone(&laya);
         let work = tokio::task::spawn_blocking(move || {
@@ -1663,8 +1675,209 @@ impl Engine {
         };
         let mut status = self.autopilot.download.status(shown, installed, runtime);
         status.risk = installed && model::rates_risk(&self.data_dir, &known);
-        status.update = installed && known.id != default.id;
+        status.update = self.ap_update_target().is_some();
+        status.updated_at = if installed {
+            model::installed_at(&self.data_dir, &known)
+        } else {
+            None
+        };
         status
+    }
+
+    /// The newer model to update to: the newest this build trusts, when the one in use is an older version.
+    fn ap_update_target(&self) -> Option<KnownModel> {
+        let (known, default) = (self.ap_known(), self.ap_default());
+        (known.id != default.id && model::installed(&self.data_dir, &known) && default.newer_than(&known))
+            .then_some(default)
+    }
+
+    fn ap_auto_update(&self) -> Result<bool, CoreError> {
+        Ok(self.store.meta_get(AUTO_UPDATE_KEY)?.is_none_or(|v| v != "0"))
+    }
+
+    fn ap_rejected(&self, id: &str) -> bool {
+        self.store.meta_get(REJECTED_KEY).ok().flatten().is_some_and(|r| r == id)
+    }
+
+    pub fn set_autopilot_auto_update(&self, on: bool) -> Result<(), CoreError> {
+        self.store.meta_set(
+            AUTO_UPDATE_KEY,
+            if on {
+                "1"
+            } else {
+                "0"
+            },
+        )
+    }
+
+    /// An automatic update has something to do: updating automatically is on, an older model is in use and the newer
+    /// one has not failed its check. Asks nobody (the app uses it to decide whether to wait for Wi-Fi).
+    pub fn model_update_pending(&self) -> bool {
+        !self.autopilot.download.running.load(Ordering::SeqCst)
+            && self.ap_auto_update().unwrap_or(true)
+            && self.ap_update_target().is_some_and(|t| !self.ap_rejected(&t.id))
+    }
+
+    /// Updates the model when a newer one this build trusts is published: downloads it (going on from what an earlier
+    /// attempt left), verifies every file against its pin, runs it once and only then puts it in use, with no decision
+    /// running. The model in use stays until then, and stays if anything fails. `automatic`: the app's own check
+    /// (honours "Update automatically" and leaves a model that failed alone); else the user's "Check now". The app
+    /// decides when the network allows. Never changes a mode, a profile or a rule.
+    pub async fn update_model(
+        &self,
+        automatic: bool,
+        progress: Arc<dyn DownloadProgress>,
+    ) -> Result<ModelUpdateOutcome, CoreError> {
+        if automatic && !self.ap_auto_update()? {
+            return Ok(ModelUpdateOutcome::Off);
+        }
+        if !self.ap_installed() {
+            return Ok(ModelUpdateOutcome::NotInstalled);
+        }
+        let Some(target) = self.ap_update_target() else {
+            return Ok(ModelUpdateOutcome::UpToDate);
+        };
+        if automatic && self.ap_rejected(&target.id) {
+            return Ok(ModelUpdateOutcome::Rejected);
+        }
+        // Downloaded and verified already (the app stopped before the self-check): the host need not be asked.
+        if !model::staged(&self.data_dir, &target) {
+            match model::published(&self.http, &self.cfg.models_base, &target).await? {
+                Published::Yes => {}
+                Published::No => return Ok(ModelUpdateOutcome::Unavailable),
+                Published::Different => {
+                    log::warn!("the model server lists other files than this build trusts; the update waits");
+                    return Ok(ModelUpdateOutcome::Unavailable);
+                }
+            }
+        }
+        self.ap_fetch_and_install(&target, progress).await?;
+        Ok(ModelUpdateOutcome::Updated)
+    }
+
+    /// Downloads `target`, verifies it and puts it in use ([`Self::ap_swap_in`]).
+    async fn ap_fetch_and_install(
+        &self,
+        target: &KnownModel,
+        progress: Arc<dyn DownloadProgress>,
+    ) -> Result<(), CoreError> {
+        /// Clears `running` however the download ends (a panic in it included), so that a later attempt can go on
+        /// from what arrived.
+        struct Running<'a>(&'a AtomicBool);
+        impl Drop for Running<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        let state = &self.autopilot.download;
+        if state.running.swap(true, Ordering::SeqCst) {
+            return Err(CoreError::invalid("the model is already being downloaded"));
+        }
+        let _running = Running(&state.running);
+        *lock(&state.error) = None;
+        state.done.store(0, Ordering::SeqCst);
+        let result = async {
+            if model::installed(&self.data_dir, target) {
+                return Ok(());
+            }
+            model::download(&self.http, &self.cfg.models_base, &self.data_dir, target, progress.as_ref(), state)
+                .await
+                .inspect_err(|e| {
+                    if model::failed_check(e) {
+                        self.ap_reject(&target.id);
+                    }
+                })?;
+            self.ap_swap_in(target).await
+        }
+        .await;
+        if let Err(e) = &result {
+            *lock(&state.error) = Some(e.to_string());
+        }
+        result
+    }
+
+    fn ap_reject(&self, id: &str) {
+        if let Err(e) = self.store.meta_set(REJECTED_KEY, id) {
+            log::warn!("Autopilot could not note the model that failed: {e}");
+        }
+    }
+
+    /// Puts a staged package in use, with no decision running: the pass and every use of the model wait. The new
+    /// model is opened, loaded and run once; only if that works is it committed (one rename) and the older packages
+    /// removed. Else it is deleted, the runtime lets it go, and the model in use before is loaded again on next need.
+    async fn ap_swap_in(&self, target: &KnownModel) -> Result<(), CoreError> {
+        let _pass = self.autopilot.pass.lock().await;
+        let _model = self.autopilot.model_use.write().await;
+        let checked = match self.ap_self_check(target).await {
+            Ok(laya) => model::commit(&self.data_dir, target, unix_now()).map(|()| laya),
+            Err(e) => Err(e),
+        };
+        match checked {
+            Ok(laya) => {
+                *lock(&self.autopilot.laya) = Some(laya);
+                for older in self.ap_models().iter().filter(|m| m.id != target.id) {
+                    if model::installed(&self.data_dir, older)
+                        && let Err(e) = model::remove(&self.data_dir, &older.id)
+                    {
+                        log::warn!("Autopilot could not remove an older model: {e}");
+                    }
+                }
+                if self.ap_rejected(&target.id) {
+                    self.store.meta_set(REJECTED_KEY, "").ok();
+                }
+                Ok(())
+            }
+            Err(e) => {
+                log::warn!("a new model failed its self-check; the previous one stays in use: {e}");
+                *lock(&self.autopilot.laya) = None;
+                if self.autopilot.loaded.swap(false, Ordering::SeqCst)
+                    && let Some(rt) = lock(&self.autopilot.runtime).clone()
+                {
+                    // Not waited for: a runtime that hangs must not hold every decision up.
+                    drop(tokio::task::spawn_blocking(move || rt.unload()));
+                }
+                model::remove(&self.data_dir, &target.id).ok();
+                self.ap_reject(&target.id);
+                Err(CoreError::service("the new model did not pass its check; the previous one is kept"))
+            }
+        }
+    }
+
+    /// Opens a staged package (hashing its small files again) and, when the app has a runtime, loads it and runs it
+    /// once on [`SELF_CHECK_STATE`]: it must answer in the expected shape, with numbers. The model in use is let go
+    /// first, so that only one is in memory.
+    async fn ap_self_check(&self, target: &KnownModel) -> Result<Arc<Laya>, CoreError> {
+        let dir = self.data_dir.clone();
+        let staged = target.clone();
+        let laya = tokio::task::spawn_blocking(move || Laya::open_staged(&dir, &staged))
+            .await
+            .map_err(|e| CoreError::service(e.to_string()))??;
+        let laya = Arc::new(laya);
+        let Some(runtime) = lock(&self.autopilot.runtime).clone() else {
+            return Ok(laya);
+        };
+        *lock(&self.autopilot.laya) = None;
+        // From here the runtime holds the new model, or nothing: a failure unloads it.
+        self.autopilot.loaded.store(true, Ordering::SeqCst);
+        let (rt, checked) = (Arc::clone(&runtime), Arc::clone(&laya));
+        let path = laya.model_path.to_string_lossy().into_owned();
+        let work = tokio::task::spawn_blocking(move || {
+            rt.load(path).map_err(|e| CoreError::service(format!("the model could not be loaded ({e})")))?;
+            checked.run(rt.as_ref(), &[SELF_CHECK_STATE])
+        });
+        let passes = tokio::time::timeout(MODEL_TIMEOUT * 2, work)
+            .await
+            .map_err(|_| CoreError::service("the new model took too long"))?
+            .map_err(|e| CoreError::service(e.to_string()))??;
+        let sane = passes.len() == 1
+            && passes.iter().all(|p| {
+                let sum: f32 = p.probs.iter().sum();
+                p.probs.iter().all(|x| x.is_finite() && *x >= 0.0) && (sum - 1.0).abs() < 1e-3 && p.escalate.is_finite()
+            });
+        if !sane {
+            return Err(CoreError::service("the new model answered something impossible"));
+        }
+        Ok(laya)
     }
 
     /// What Overnight does with what is too risky (the user's setting).
@@ -1694,31 +1907,12 @@ impl Engine {
         self.store.meta_set(super::store::OVERNIGHT_RISKY_KEY, risky.as_str())
     }
 
-    /// Downloads and verifies the model; on any failure nothing is kept.
+    /// Downloads and verifies the newest model this build trusts, and puts it in use once it passed its self-check
+    /// (the older one stays in use until then, and stays if it fails). A failed check keeps nothing of it; a dropped
+    /// connection keeps what arrived for the next attempt.
     pub async fn download_model(&self, progress: Arc<dyn DownloadProgress>) -> Result<ModelStatus, CoreError> {
-        let state = &self.autopilot.download;
-        if state.running.swap(true, Ordering::SeqCst) {
-            return Err(CoreError::invalid("the model is already being downloaded"));
-        }
-        *lock(&state.error) = None;
-        state.done.store(0, Ordering::SeqCst);
-        self.ap_unload();
         let known = self.ap_default();
-        let result =
-            model::download(&self.http, &self.cfg.models_base, &self.data_dir, &known, progress.as_ref(), state).await;
-        if result.is_ok() {
-            // the older trusted packages make room for it
-            for older in self.ap_models().iter().skip(1).filter(|m| model::installed(&self.data_dir, m)) {
-                if let Err(e) = model::remove(&self.data_dir, &older.id) {
-                    log::warn!("Autopilot could not remove an older model: {e}");
-                }
-            }
-        }
-        if let Err(e) = &result {
-            *lock(&state.error) = Some(e.to_string());
-        }
-        state.running.store(false, Ordering::SeqCst);
-        result.map(|()| self.model_status())
+        self.ap_fetch_and_install(&known, progress).await.map(|()| self.model_status())
     }
 
     pub fn delete_model(&self) -> Result<(), CoreError> {
@@ -1727,6 +1921,11 @@ impl Engine {
         }
         self.ap_unload();
         *lock(&self.autopilot.download.error) = None;
+        let default = self.ap_default();
+        if !model::installed(&self.data_dir, &default) {
+            // what an interrupted download of the newest left
+            model::remove(&self.data_dir, &default.id)?;
+        }
         model::remove(&self.data_dir, &self.ap_known().id)
     }
 
@@ -1779,6 +1978,7 @@ impl Engine {
             overnight_when_risky: self.ap_overnight_risky()?,
             default_profile_id,
             wifi_only: self.store.meta_get(WIFI_ONLY_KEY)?.is_none_or(|v| v != "0"),
+            auto_update: self.ap_auto_update()?,
             model: self.model_status(),
             connections,
         })

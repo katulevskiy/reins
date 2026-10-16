@@ -182,6 +182,9 @@ pub struct AutopilotSettings {
     pub default_profile_id: String,
     /// Download the model on Wi-Fi only (the app's download job honours it).
     pub wifi_only: bool,
+    /// A newer model this build trusts is downloaded and put in use by itself (on Wi-Fi; the app decides when).
+    #[uniffi(default = true)]
+    pub auto_update: bool,
     pub model: ModelStatus,
     /// Connections with a mode or a profile of their own.
     pub connections: Vec<ConnectionAutopilot>,
@@ -239,6 +242,26 @@ pub struct ModelStatus {
     /// then removes the older).
     #[uniffi(default)]
     pub update: bool,
+    /// When the installed model was put in use (unix seconds), if known.
+    #[uniffi(default)]
+    pub updated_at: Option<i64>,
+}
+
+/// What `update_model` did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum ModelUpdateOutcome {
+    /// The model in use is the newest this build trusts.
+    UpToDate,
+    /// No model is installed: the first download is the user's to start.
+    NotInstalled,
+    /// Updating automatically is off (an automatic check only).
+    Off,
+    /// The host does not have the newer model yet (or has another package under its name).
+    Unavailable,
+    /// The newer model failed its check before; automatic checks leave it alone until "Check now".
+    Rejected,
+    /// The newer model was downloaded, verified, passed its self-check and is in use.
+    Updated,
 }
 
 /// One decision personality (spec §5.1).

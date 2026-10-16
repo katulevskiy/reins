@@ -5,7 +5,10 @@ import androidx.lifecycle.viewModelScope
 import dev.reins.android.AppContainer
 import dev.reins.android.autopilot.AutopilotDraft
 import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.autopilot.CheckNow
 import dev.reins.android.autopilot.DownloadJob
+import dev.reins.android.autopilot.ModelUpdateGate
+import dev.reins.android.autopilot.NoProgress
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.platform.AuthResult
@@ -23,6 +26,7 @@ import dev.reins.core.Preset
 import dev.reins.core.ProfileView
 import dev.reins.core.SuggestionView
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class AutopilotUi(
     val profiles: List<ProfileView> = emptyList(),
@@ -49,6 +54,10 @@ data class AutopilotUi(
     val stats: AutopilotStats? = null,
     /** A profile's last 30 days at the thresholds being set (profile id to the answer). */
     val replay: Pair<String, ThresholdReplay>? = null,
+    /** "Check now" is asking the core (and maybe downloading the newer model). */
+    val checking: Boolean = false,
+    /** What the last "Check now" found ("Up to date", "Waiting for Wi-Fi", an error). */
+    val checkResult: String? = null,
 )
 
 /** Settings > Autopilot, its profiles and "Try it", and the Autopilot part of a connection's page. */
@@ -341,6 +350,67 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** "Update automatically" (on Wi-Fi, quietly). */
+    fun setAutoUpdate(on: Boolean) {
+        draft { it.copy(autoUpdate = on) }
+        perform {
+            container.core.setAutopilotAutoUpdate(on)
+            container.refreshAutopilot()
+        }
+    }
+
+    private var checkJob: Job? = null
+
+    /**
+     * The user's "Check now": looks for a newer model and, when there is one, downloads, checks and puts it in use.
+     * Battery Saver and Data Saver do not stop it; without the network "Download on Wi-Fi only" allows, it waits for
+     * Wi-Fi in the background instead.
+     */
+    fun checkNow() {
+        if (checkJob?.isActive == true) return
+        _ui.update { it.copy(checking = true, checkResult = null, error = null) }
+        checkJob = viewModelScope.launch {
+            val wifiOnly = settings.value?.wifiOnly ?: true
+            val conditions = withContext(Dispatchers.IO) { container.networkConditions() }
+            if (!ModelUpdateGate.checkNowAllows(conditions, wifiOnly)) {
+                withContext(Dispatchers.IO) { container.modelUpdates.checkOnWifi() }
+                _ui.update { it.copy(checking = false, checkResult = CheckNow.WAITING) }
+                return@launch
+            }
+            // The bytes show on the model's card while the newer model comes.
+            val watch = launch {
+                while (true) {
+                    delay(POLL_MS)
+                    try {
+                        refreshModel()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+            val result = try {
+                CheckNow.outcome(container.core.updateModel(automatic = false, progress = NoProgress))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A newer model that failed its check, or one already on its way: the core's words, as a sentence.
+                val refused = e is dev.reins.core.CoreException.Service || e is dev.reins.core.CoreException.Invalid
+                if (refused) AutopilotText.modelError(e.userMessage()) else e.userMessage()
+            } finally {
+                watch.cancel()
+            }
+            try {
+                refreshModel()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+            container.refreshAutopilot()
+            _ui.update { it.copy(checking = false, checkResult = result) }
+        }
+    }
+
     private suspend fun refreshModel() {
         val model = container.core.modelStatus()
         _ui.update { it.copy(model = model) }
@@ -350,7 +420,10 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
     private fun pollModel() {
         if (polling?.isActive == true) return
         polling = viewModelScope.launch {
+            // Only a download the user started sounds when it ends; an automatic update stays quiet.
+            var started = false
             do {
+                if (_ui.value.job != DownloadJob.Idle) started = true
                 try {
                     refreshModel()
                 } catch (e: CancellationException) {
@@ -358,10 +431,11 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
                 } catch (_: Exception) {
                 }
                 delay(POLL_MS)
+                if (_ui.value.job != DownloadJob.Idle) started = true
             } while (_ui.value.job != DownloadJob.Idle || _ui.value.model?.state == ModelState.DOWNLOADING)
             val finished = _ui.value.model?.state
-            if (finished == ModelState.INSTALLED) container.feedback.play(Event.GrantCreated)
-            if (finished == ModelState.FAILED) container.feedback.play(Event.Error)
+            if (started && finished == ModelState.INSTALLED) container.feedback.play(Event.GrantCreated)
+            if (started && finished == ModelState.FAILED) container.feedback.play(Event.Error)
             container.refreshAutopilot()
         }
     }

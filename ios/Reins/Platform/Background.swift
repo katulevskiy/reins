@@ -81,7 +81,7 @@ enum BackgroundRefresh {
     }
 
     /// The task is completed exactly once, by whichever comes first.
-    private final class Once: @unchecked Sendable {
+    final class Once: @unchecked Sendable {
         private let lock = NSLock()
         private var claimed = false
 
@@ -90,6 +90,65 @@ enum BackgroundRefresh {
                 defer { claimed = true }
                 return !claimed
             }
+        }
+    }
+}
+
+/// `com.reins2fa.app.model-update`: about once a day, on a network, Autopilot's model updates itself if a newer one
+/// is due (`ModelAutoUpdater`, which still waits for Wi-Fi outside Low Data and Low Power Mode). A processing task, so
+/// iOS gives it minutes rather than seconds; one cut short goes on from what arrived next time.
+@MainActor
+enum BackgroundModelUpdate {
+    static let identifier = "com.reins2fa.app.model-update"
+    /// iOS decides when; this is the earliest it may.
+    static let interval: TimeInterval = 24 * 60 * 60
+    /// How long a run waits for the session to be read when it is why the app launched.
+    static let sessionWait: Duration = .seconds(10)
+
+    /// Must run before the app finishes launching.
+    static func register(host: AppHost) {
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { task in
+            MainActor.assumeIsolated {
+                guard let task = task as? BGProcessingTask else {
+                    task.setTaskCompleted(success: false)
+                    return
+                }
+                run(task, host: host)
+            }
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { schedule() }
+        }
+    }
+
+    static func schedule() {
+        let request = BGProcessingTaskRequest(identifier: identifier)
+        request.requiresNetworkConnectivity = true
+        request.requiresExternalPower = false
+        request.earliestBeginDate = Date(timeIntervalSinceNow: interval)
+        try? BGTaskScheduler.shared.submit(request)
+    }
+
+    private static func run(_ task: BGProcessingTask, host: AppHost) {
+        schedule()
+        let done = BackgroundRefresh.Once()
+        let work = Task { @MainActor in
+            // The task may be why the app launched: the store may still be opening, the session still being read.
+            if let model = await host.ready() {
+                let end = ContinuousClock.now + sessionWait
+                while model.session == .loading, ContinuousClock.now < end, !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                if case .signedIn = model.session, !Task.isCancelled {
+                    await model.modelAutoUpdate.check(.background)
+                }
+            }
+            if done.claim() { task.setTaskCompleted(success: !Task.isCancelled) }
+        }
+        task.expirationHandler = {
+            // The core keeps what arrived; the next run (or launch) goes on from there.
+            work.cancel()
+            if done.claim() { task.setTaskCompleted(success: false) }
         }
     }
 }

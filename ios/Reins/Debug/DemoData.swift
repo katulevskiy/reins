@@ -789,12 +789,13 @@ enum DemoData {
 
     /// `update`: an older model is installed and a newer one can be downloaded.
     static func model(
-        _ state: ModelState, downloaded: UInt64 = 0, error: String? = nil, risk: Bool = false, update: Bool = false
+        _ state: ModelState, downloaded: UInt64 = 0, error: String? = nil, risk: Bool = false, update: Bool = false,
+        version: String = "1", updatedAt: Int64? = nil
     ) -> ModelStatus {
         ModelStatus(
-            state: state, id: "laya-approvals-base-v1", label: "Laya approvals (base)", version: "1",
+            state: state, id: "laya-approvals-base-v\(version)", label: "Laya approvals (base)", version: version,
             sizeBytes: state == .notInstalled ? 0 : modelSize, downloadedBytes: downloaded, error: error, runtimeReady: true,
-            risk: risk, update: update
+            risk: risk, update: update, updatedAt: updatedAt
         )
     }
 

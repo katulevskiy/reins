@@ -103,10 +103,15 @@ fn sha256(bytes: &[u8]) -> String {
 
 /// A model entry pinning exactly these files.
 pub fn known_model(id: &str, files: &[(String, Vec<u8>)]) -> KnownModel {
+    known_model_version(id, "test", files)
+}
+
+/// The same with a version ("1", "2": a newer one is an update).
+pub fn known_model_version(id: &str, version: &str, files: &[(String, Vec<u8>)]) -> KnownModel {
     KnownModel {
         id: Cow::Owned(id.to_owned()),
         label: Cow::Borrowed("Fake Laya"),
-        version: Cow::Borrowed("test"),
+        version: Cow::Owned(version.to_owned()),
         files: Cow::Owned(
             files
                 .iter()
@@ -118,6 +123,11 @@ pub fn known_model(id: &str, files: &[(String, Vec<u8>)]) -> KnownModel {
                 .collect(),
         ),
     }
+}
+
+/// `SHA256SUMS` of these files, as the model host serves it.
+pub fn sums(files: &[(String, Vec<u8>)]) -> String {
+    files.iter().flat_map(|(name, bytes)| [sha256(bytes), "  ".to_owned(), name.clone(), "\n".to_owned()]).collect()
 }
 
 /// Installs a package as a finished download would.

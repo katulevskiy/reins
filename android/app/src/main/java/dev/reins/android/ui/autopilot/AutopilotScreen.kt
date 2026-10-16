@@ -38,7 +38,8 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Memory
@@ -427,7 +428,7 @@ fun ProfilesSection(viewModel: AutopilotViewModel, s: AutopilotSettings, connect
     }
 }
 
-/** The on-device model (Ready, Update, how far its download is) and Try it. */
+/** The on-device model (its version and when it was updated, how far a download is) and Try it. */
 @Composable
 fun ModelRows(viewModel: AutopilotViewModel, s: AutopilotSettings, sheets: AutopilotSheetsState, onTryIt: () -> Unit) {
     val c = LocalColors.current
@@ -441,7 +442,7 @@ fun ModelRows(viewModel: AutopilotViewModel, s: AutopilotSettings, sheets: Autop
         leading = { PlainTile(Glyph.Chip) },
         trailing = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ModelValue(model, ui.job, onUpdate = viewModel::download)
+                ModelValue(model, ui.job)
                 GlyphIcon(Glyph.ChevronRight, c.inkFaint, modifier = Modifier.padding(start = 6.dp), size = 14.dp)
             }
         },
@@ -502,6 +503,11 @@ fun BoxScope.AutopilotSheets(viewModel: AutopilotViewModel, sheets: AutopilotShe
             onCancel = viewModel::cancelDownload,
             onDelete = { sheets.deleteModel = true },
             onWifiOnly = viewModel::setWifiOnly,
+            autoUpdate = settings?.autoUpdate ?: true,
+            onAutoUpdate = viewModel::setAutoUpdate,
+            checking = ui.checking,
+            checkResult = ui.checkResult,
+            onCheckNow = viewModel::checkNow,
         )
     }
     if (sheets.deleteModel) {
@@ -554,32 +560,20 @@ internal fun SectionHeader(text: String, modifier: Modifier = Modifier, trailing
 }
 
 
-/** The model row's value: Ready, Update (a tap downloads the newer model), how far the download is, or Download. */
+/**
+ * The model row's value: its version and when it was updated ("v2 · Updated today"), how far a download is (a newer
+ * model updating by itself too), or Download.
+ */
 @Composable
-private fun ModelValue(model: ModelStatus?, job: DownloadJob, onUpdate: () -> Unit) {
+private fun ModelValue(model: ModelStatus?, job: DownloadJob) {
     val c = LocalColors.current
     when {
         model == null -> Unit
-        AutopilotText.modelUpdatable(model) && job == DownloadJob.Waiting ->
-            RText("Waiting", RType.sans(15f, FontWeight.Medium), c.secondary, Modifier.testTag("modelUpdateWaiting"), maxLines = 1)
-        AutopilotText.modelUpdatable(model) && job == DownloadJob.Running ->
-            RText("…", RType.mono(14f), c.secondary, maxLines = 1)
-        AutopilotText.modelUpdatable(model) -> Row(
-            Modifier
-                .clip(CircleShape)
-                .pressable(shape = CircleShape, onClick = onUpdate)
-                .testTag("updateModel")
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Rounded.Download, null, Modifier.size(16.dp), tint = c.accent)
-            Spacer(Modifier.width(5.dp))
-            RText("Update", RType.sans(15f, FontWeight.Medium), c.accent, maxLines = 1)
-        }
         model.state == ModelState.INSTALLED -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.testTag("modelInstalled")) {
             Icon(Icons.Rounded.CheckCircle, null, Modifier.size(16.dp), tint = c.success)
             Spacer(Modifier.width(5.dp))
-            RText("Ready", RType.sans(15f, FontWeight.Medium), c.success, maxLines = 1)
+            val now = rememberNowMillis(60_000) / 1000
+            RText(AutopilotText.modelRowValue(model, now), RType.sans(15f, FontWeight.Medium), c.secondary, Modifier.testTag("modelVersion"), maxLines = 1)
         }
         model.state == ModelState.DOWNLOADING || job == DownloadJob.Running ->
             RText(AutopilotText.fraction(model)?.let(AutopilotText::percent) ?: "…", RType.mono(14f), c.secondary, maxLines = 1)
@@ -694,16 +688,24 @@ internal fun ModelCard(
     onCancel: () -> Unit,
     onDelete: () -> Unit,
     onWifiOnly: (Boolean) -> Unit,
+    autoUpdate: Boolean,
+    onAutoUpdate: (Boolean) -> Unit,
+    checking: Boolean,
+    checkResult: String?,
+    onCheckNow: () -> Unit,
 ) {
     Group(
         header = "On-device model",
         footer = "Runs on this phone, nothing leaves it. Without it, every request is left to you, without hints.",
     ) {
-        ModelDetails(model, job, wifiOnly, onDownload, onCancel, onDelete, onWifiOnly)
+        ModelDetails(model, job, wifiOnly, onDownload, onCancel, onDelete, onWifiOnly, autoUpdate, onAutoUpdate, checking, checkResult, onCheckNow)
     }
 }
 
-/** The model's details: version and size, its state, getting or deleting it, and Wi-Fi only. */
+/**
+ * The model's details: version and size, its state, getting or deleting it, updating by itself and Wi-Fi only, and
+ * behind More, "Check now".
+ */
 @Composable
 internal fun ModelDetails(
     model: ModelStatus?,
@@ -713,6 +715,11 @@ internal fun ModelDetails(
     onCancel: () -> Unit,
     onDelete: () -> Unit,
     onWifiOnly: (Boolean) -> Unit,
+    autoUpdate: Boolean,
+    onAutoUpdate: (Boolean) -> Unit,
+    checking: Boolean,
+    checkResult: String?,
+    onCheckNow: () -> Unit,
 ) {
     val c = LocalColors.current
     if (model == null) return
@@ -733,7 +740,7 @@ internal fun ModelDetails(
             when {
                 downloading -> Unit
                 waiting -> Pill("Waiting", c.warning)
-                model.state == ModelState.INSTALLED -> Pill(if (model.update) "Update" else "Ready", if (model.update) c.violet else c.success)
+                model.state == ModelState.INSTALLED -> Pill("Ready", c.success)
                 model.state == ModelState.FAILED -> Pill("Failed", c.danger)
                 else -> Unit
             }
@@ -744,9 +751,6 @@ internal fun ModelDetails(
             if (model.state == ModelState.FAILED) c.danger else c.ink2,
             Modifier.padding(top = 12.dp),
         )
-        if (AutopilotText.modelUpdatable(model) && !waiting) {
-            RText(AutopilotText.MODEL_UPDATE_LINE, RType.meta, c.inkMeta, Modifier.padding(top = 4.dp).testTag("modelUpdateLine"))
-        }
         if (downloading) {
             val fraction = AutopilotText.fraction(model)
             if (fraction != null) {
@@ -759,6 +763,7 @@ internal fun ModelDetails(
             Banner(AutopilotText.modelError(model.error), Modifier.padding(top = 12.dp), BannerKind.Error)
         }
     }
+    SwitchRow("Update automatically", autoUpdate, onAutoUpdate, tag = "autoUpdate")
     SwitchRow(
         "Download on Wi-Fi only",
         wifiOnly,
@@ -776,19 +781,63 @@ internal fun ModelDetails(
         when {
             downloading -> Unit
             waiting -> SignalButton("Cancel", Modifier.fillMaxWidth().testTag("cancelDownload"), style = dev.reins.android.design.ButtonStyle.Soft, onClick = onCancel)
-            model.state == ModelState.INSTALLED -> {
-                // #90's Update stays: a newer model, fetched the same way.
-                if (model.update) {
-                    SignalButton("Update", Modifier.fillMaxWidth().testTag("updateModelDetails"), glyph = Glyph.Download, onClick = onDownload)
-                }
+            model.state == ModelState.INSTALLED ->
                 SignalButton("Delete model", Modifier.fillMaxWidth().testTag("deleteModel"), style = dev.reins.android.design.ButtonStyle.DangerWash, onClick = onDelete)
-            }
             else -> SignalButton(
                 if (model.state == ModelState.FAILED) "Try again" else "Download",
                 Modifier.fillMaxWidth().testTag("downloadModel"),
                 glyph = if (model.state == ModelState.FAILED) Glyph.Refresh else Glyph.Download,
                 onClick = onDownload,
             )
+        }
+    }
+    if (AutopilotText.modelUsable(model)) CheckNowMore(checking, model.state == ModelState.DOWNLOADING, checkResult, onCheckNow)
+}
+
+/**
+ * "More" under the model's details (closed at first): "Check now" and what it found. While a newer model downloads,
+ * its bytes show on the card above.
+ */
+@Composable
+private fun CheckNowMore(checking: Boolean, downloading: Boolean, result: String?, onCheckNow: () -> Unit) {
+    val c = LocalColors.current
+    val feedback = dev.reins.android.feedback.LocalFeedback.current
+    var open by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.padding(horizontal = 22.dp).padding(top = 6.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .pressable(highlight = c.controlFill, shape = RoundedCornerShape(14.dp)) {
+                    open = !open
+                    feedback.play(dev.reins.android.feedback.Event.expand(open))
+                }
+                .semantics { role = Role.Button }
+                .testTag("modelMore")
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RText("More", RType.sans(15f, FontWeight.Medium), c.accent, Modifier.weight(1f), maxLines = 1)
+            Icon(
+                if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                null,
+                Modifier.size(20.dp),
+                tint = c.accent,
+            )
+        }
+        if (open) {
+            SignalButton(
+                "Check now",
+                Modifier.fillMaxWidth().testTag("checkNow"),
+                style = ButtonStyle.Soft,
+                enabled = !checking && !downloading,
+                onClick = onCheckNow,
+            )
+            if (checking && !downloading) {
+                IndeterminateBar(Modifier.padding(top = 10.dp).testTag("checking"))
+            } else if (result != null && !checking) {
+                RText(result, RType.sans(13f), c.secondary, Modifier.padding(top = 8.dp).testTag("checkResult"))
+            }
         }
     }
 }

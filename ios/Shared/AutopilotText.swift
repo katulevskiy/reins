@@ -252,6 +252,28 @@ enum AutopilotText {
         total > 0 ? min(max(Double(downloaded) / Double(total), 0), 1) : nil
     }
 
+    /// When the model in use was put in use, by calendar day: "Updated today", "Updated yesterday", "Updated 3 days
+    /// ago" (up to 6), then "Updated Oct 3" ("Updated Oct 3, 2025" in another year). nil when not known.
+    static func updatedAgo(_ updatedAt: Int64?, now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let updatedAt else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(updatedAt))
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        switch days {
+        // A clock set back counts as today.
+        case ...0: return "Updated today"
+        case 1: return "Updated yesterday"
+        case 2...6: return "Updated \(days) days ago"
+        default:
+            let format = DateFormatter()
+            format.locale = Locale(identifier: "en_US_POSIX")
+            format.calendar = calendar
+            format.timeZone = calendar.timeZone
+            let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+            format.dateFormat = sameYear ? "MMM d" : "MMM d, yyyy"
+            return "Updated " + format.string(from: date)
+        }
+    }
+
     /// The model error as the user reads it; a download that fails its check says that plainly.
     static func modelError(_ error: String?) -> String {
         let e = (error ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -633,11 +655,12 @@ extension AutopilotText {
         return m.state == .installed || (m.state == .downloading && m.update)
     }
 
-    /// An older model is installed and a newer one can be downloaded.
-    static func modelUpdatable(_ m: ModelStatus?) -> Bool { m?.state == .installed && m?.update == true }
-
-    /// Under the model's details when a newer one is there to download.
-    static let modelUpdateLine = "A newer model is available: it also rates risk, which Overnight needs."
+    /// The model's row once it is installed: "v2 · Updated today", or just "v2" when the day is not known.
+    static func modelInstalledLine(_ m: ModelStatus, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let version = "v\(m.version)"
+        guard let ago = updatedAgo(m.updatedAt, now: now, calendar: calendar) else { return version }
+        return version + " · " + ago
+    }
 
     /// The model card's state line.
     static func modelState(_ m: ModelStatus, waitingForNetwork: Bool, wifiOnly: Bool) -> String {

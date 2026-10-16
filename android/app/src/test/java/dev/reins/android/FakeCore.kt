@@ -824,6 +824,18 @@ class FakeCore : ReinsCoreInterface {
     @Volatile var downloadFailure: CoreException? = null
     @Volatile var downloadError: String? = null
     @Volatile var runtime: ModelRuntime? = null
+    /** "Update automatically". */
+    @Volatile var autoUpdate = true
+    /** What `modelUpdatePending` answers; null: as the core (on, an older model installed, its update not rejected). */
+    @Volatile var updatePending: Boolean? = null
+    /** What `updateModel` answers; null: as the core (the newer model when there is one, else up to date). */
+    @Volatile var updateOutcome: dev.reins.core.ModelUpdateOutcome? = null
+    /** Thrown by `updateModel` (a dropped connection, a model that failed its check). */
+    @Volatile var updateFailure: CoreException? = null
+    /** `updateModel` calls: whether each was automatic. */
+    val updateCalls = CopyOnWriteArrayList<Boolean>()
+    /** `setAutopilotAutoUpdate` calls. */
+    val autoUpdateCalls = CopyOnWriteArrayList<Boolean>()
 
     val modeCalls = CopyOnWriteArrayList<Triple<String?, AutopilotMode?, UInt?>>()
     val classLocks = CopyOnWriteArrayList<Triple<String, String, Boolean?>>()
@@ -862,6 +874,12 @@ class FakeCore : ReinsCoreInterface {
         modeFailure = null
         downloadFailure = null
         downloadError = null
+        autoUpdate = true
+        updatePending = null
+        updateOutcome = null
+        updateFailure = null
+        updateCalls.clear()
+        autoUpdateCalls.clear()
         listOf(modeCalls, classLocks, presets, corrections, evaluations, assigned, profileCalls, thresholdCalls, bypassCalls, overnightCalls, whenRiskyCalls, overnightOwners).forEach { it.clear() }
         whenRisky = dev.reins.core.OvernightRisky.WAIT
         stats = dev.reins.core.AutopilotStats(7u, 142u, 0.94f, 120u, 2u, 9u)
@@ -897,6 +915,7 @@ class FakeCore : ReinsCoreInterface {
             overnightWhenRisky = whenRisky,
             defaultProfileId = defaultProfile().id,
             wifiOnly = wifiOnly,
+            autoUpdate = autoUpdate,
             model = model,
             connections = apConnections.map { (id, row) ->
                 // `modes::effective`: lockdowns, bypasses, its Overnight, a global one unless kept on Manual, its mode.
@@ -1087,6 +1106,29 @@ class FakeCore : ReinsCoreInterface {
             update = false,
         )
         return model
+    }
+
+    override suspend fun updateModel(automatic: Boolean, progress: DownloadProgress): dev.reins.core.ModelUpdateOutcome {
+        updateCalls += automatic
+        updateFailure?.let { throw it }
+        updateOutcome?.let { return it }
+        return when {
+            automatic && !autoUpdate -> dev.reins.core.ModelUpdateOutcome.OFF
+            !installed() -> dev.reins.core.ModelUpdateOutcome.NOT_INSTALLED
+            !model.update -> dev.reins.core.ModelUpdateOutcome.UP_TO_DATE
+            else -> {
+                progress.progress(412_000_000u, 412_000_000u)
+                model = model.copy(state = ModelState.INSTALLED, version = "2", risk = true, update = false, updatedAt = now())
+                dev.reins.core.ModelUpdateOutcome.UPDATED
+            }
+        }
+    }
+
+    override suspend fun modelUpdatePending(): Boolean = updatePending ?: (autoUpdate && installed() && model.update)
+
+    override suspend fun setAutopilotAutoUpdate(on: Boolean) {
+        autoUpdateCalls += on
+        autoUpdate = on
     }
 
     override suspend fun deleteModel() {

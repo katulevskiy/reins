@@ -50,7 +50,11 @@ class MainActivity : FragmentActivity() {
         }
         if (savedInstanceState == null) handleIntent(intent)
         // WorkManager starts on first use: here, off the main thread and after the first frame is under way.
-        if (container.updates != null) lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { UpdateWorker.schedule(applicationContext) }
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            if (container.updates != null) UpdateWorker.schedule(applicationContext)
+            // Autopilot's model updates itself on Wi-Fi: a run as soon as it may, then one a day.
+            container.modelUpdates.schedule()
+        }
 
         // Long-poll only while the screen is on and someone is signed in whose keys this phone can open (a phone
         // waiting on the Unlock screen is not the approval device).
