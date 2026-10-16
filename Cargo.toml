@@ -325,6 +325,14 @@ strip = "symbols"
 lto = "thin"
 codegen-units = 16
 
+# uniffi-bindgen as ios/scripts/build-core.sh builds it: a host tool that only reads the bindings' metadata out of the
+# built core library and is never shipped, so it is compiled unoptimized, without debug info or LTO. It still builds
+# the core and its dependencies for the host, which in an optimized profile cost as much as the shipped build again.
+[profile.host-tool]
+inherits = "dev"
+debug = false
+incremental = false
+
 # Used for profiling and debugging like valgrind or heaptrack
 # Inherits release to be sure all optimizations have been done
 [profile.dbg]
