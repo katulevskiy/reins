@@ -45,7 +45,7 @@ async fn connected(relay_wait: u64, offline: u64) -> (Server, Phone, AiClient) {
     assert_eq!(item.title, "Connect Claude to Reins?");
     let view = phone.core.pairing_view(item.id.clone()).await.unwrap();
     assert!(view.choices.contains(&code));
-    phone.core.answer_pairing(item.id, true, Some(code), Some("My Claude".to_owned())).await.unwrap();
+    phone.core.answer_pairing(item.id, true, Some(code), Some("My Claude".to_owned()), true).await.unwrap();
     ai.finish_authorization(&wait_url).await;
     (server, phone, ai)
 }

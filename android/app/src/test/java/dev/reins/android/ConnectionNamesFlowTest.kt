@@ -92,6 +92,21 @@ class ConnectionNamesFlowTest : FlowHarness() {
         rule.onNodeWithTag("label").assertTextEquals("Claude 2").assertIsFocused()
     }
 
+    /** "Claude 2" left as it was is sent as not edited: the core keeps it as no one's name. */
+    @Test
+    fun anUntouchedSuggestionIsSentAsNotEdited() {
+        core.pairingAnswers.clear()
+        core.pending = listOf(TestData.pairingItem("p2"))
+        core.pairing = PairingView("p2", "Claude", "claude.ai", byteArrayOf(7, 42, 88), 1_700_000_200, null, "Claude 2", 1u)
+        launch(link("pairing", "p2"))
+        awaitTag("code:42")
+        tap("code:42")
+        tap("approve")
+        awaitCore { core.pairingAnswers.isNotEmpty() }
+        assertEquals("Claude 2", core.pairingAnswers.single()[3])
+        assertEquals(false, core.pairingNameEdited.last())
+    }
+
     @Test
     fun aFirstConnectionStartsWithItsOwnName() {
         core.pending = listOf(TestData.pairingItem("p1"))

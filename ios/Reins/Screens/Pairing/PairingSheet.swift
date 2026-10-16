@@ -77,6 +77,14 @@ final class PairingModel {
     var label = "" {
         didSet { if label.count > Self.maxLabel { label = String(label.prefix(Self.maxLabel)) } }
     }
+    /// The user changed the name field: only then is its name the user's (the core still refuses the client's own).
+    private(set) var nameEdited = false
+
+    /// The user typing in the name field.
+    func edit(_ name: String) {
+        label = name
+        nameEdited = true
+    }
     private(set) var busy = false
     var error: String?
     private(set) var finished = false
@@ -133,7 +141,9 @@ final class PairingModel {
             app.feedback.play(.connected)
             do {
                 let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-                try await app.core.answerPairing(pairingId: pairingId, approve: true, chosenCode: code, label: trimmed.isEmpty ? nil : trimmed)
+                try await app.core.answerPairing(
+                    pairingId: pairingId, approve: true, chosenCode: code, label: trimmed.isEmpty ? nil : trimmed, nameEdited: nameEdited
+                )
                 await app.refreshPending()
                 await app.refreshConnections()
                 // A computer: say it worked, since the sheet that connected it closes now.
@@ -162,7 +172,7 @@ final class PairingModel {
         error = nil
         app.feedback.play(.denied)
         do {
-            try await app.core.answerPairing(pairingId: pairingId, approve: false, chosenCode: nil, label: nil)
+            try await app.core.answerPairing(pairingId: pairingId, approve: false, chosenCode: nil, label: nil, nameEdited: false)
             await app.refreshPending()
             busy = false
             finished = true
@@ -214,7 +224,7 @@ private struct PairingContent: View {
                     .padding(.bottom, 8)
                     .accessibilityIdentifier("pairSameClient")
                 }
-                TextField(untrustedName(view.clientName, limit: 48), text: $vm.label)
+                TextField(untrustedName(view.clientName, limit: 48), text: Binding(get: { vm.label }, set: { vm.edit($0) }))
                     .font(RFont.sans(16))
                     .focused($naming)
                     .submitLabel(.done)

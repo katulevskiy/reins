@@ -621,6 +621,7 @@ impl Engine {
         approve: bool,
         chosen_code: Option<u8>,
         label: Option<String>,
+        name_edited: bool,
     ) -> Result<(), CoreError> {
         let session = self.session()?;
         let Some(_claim) = self.claim(id) else {
@@ -635,7 +636,14 @@ impl Engine {
                 return Err(CoreError::invalid("that number was not offered"));
             }
         }
-        let given = given_name(&pairing.client_name, label.as_deref());
+        // What the field started with: the suggestion ("Claude 2") is made from the client's name, so it is no more the
+        // user's than that name is.
+        let suggested = if approve && name_edited && label.is_some() {
+            self.named_pairing(views::pairing_view(&pairing)).await.suggested_name
+        } else {
+            String::new()
+        };
+        let given = given_name(&pairing.client_name, &suggested, label.as_deref(), name_edited);
         let response = PairingResponse {
             v: PROTOCOL_VERSION,
             approved: approve,
@@ -716,12 +724,20 @@ impl Engine {
     }
 }
 
-/// The name the user gave a new connection in the name field (`names::typed_name`), unless it is the client's own
-/// (the field starts with it): then the connection goes by its own name, which stays untrusted.
-fn given_name(client_name: &str, typed: Option<&str>) -> Option<String> {
+/// The name the user gave a new connection in the name field (`names::typed_name`): only when the user edited the
+/// field (`name_edited`), and never a name the field was given, the client's own or the suggestion made from it
+/// (`suggested`), however it is spelled: all are cleaned the same way and compared without case, so that spacing,
+/// case or invisible characters cannot pass the client's name off as the user's. Otherwise the connection goes by its
+/// own name, which stays untrusted.
+fn given_name(client_name: &str, suggested: &str, typed: Option<&str>, name_edited: bool) -> Option<String> {
+    if !name_edited {
+        return None;
+    }
     let name = crate::names::typed_name(typed?)?;
-    let own = [crate::avatar::shown_label(client_name), crate::names::original_name(client_name)];
-    (!own.contains(&name)).then_some(name)
+    let key = |s: &str| crate::names::typed_name(s).map(|n| n.to_lowercase());
+    let typed_key = key(&name);
+    let own = [client_name.to_owned(), crate::avatar::shown_label(client_name), suggested.to_owned()];
+    (!own.iter().any(|o| key(o).is_some_and(|k| Some(k) == typed_key))).then_some(name)
 }
 
 /// The name grants show for a new connection: the one the user gave it, else the client's.
@@ -749,6 +765,42 @@ fn count(n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a name the user edited is theirs, and never the client's own or the suggestion, however it is spelled.
+    #[test]
+    fn the_clients_own_name_never_becomes_the_users() {
+        let given = |client: &str, suggested: &str, typed: &str, edited: bool| {
+            given_name(client, suggested, Some(typed), edited)
+        };
+        // Edited into a name of the user's own: theirs, cleaned.
+        assert_eq!(given("Claude", "Claude 2", " Claude (work)\n", true).as_deref(), Some("Claude (work)"));
+        // Not edited: never the user's, whatever the field holds.
+        assert_eq!(given("Claude", "Claude 2", "Claude 2", false), None, "the suggestion, as it came");
+        assert_eq!(given("Claude", "Claude", "Claude", false), None);
+        assert_eq!(given("Evil", "Evil", "Totally mine", false), None, "the flag decides, not the text");
+        // Edited back to the client's own name or the suggestion, spelled any way: still not the user's.
+        for typed in [
+            "Claude",
+            "  claude ",
+            "CLAUDE",
+            "Cl\u{200b}aude",
+            "\u{feff}Claude\u{202e}",
+            "Claude\n",
+            "claude 2",
+            "Claude\u{200d}  2",
+            "CLAUDE 2 ",
+        ] {
+            assert_eq!(given("Claude", "Claude 2", typed, true), None, "{typed:?}");
+        }
+        // The name as a computer registers it, or as the lists show it.
+        assert_eq!(given("M2A (macOS)", "M2A", "m2a", true), None);
+        assert_eq!(given("M2A (macOS)", "M2A", "m2a (MACOS)", true), None);
+        // A client whose own name is odd is compared cleaned too.
+        assert_eq!(given("  Gro\u{200b}k ", "Grok", "grok", true), None);
+        // Nothing typed, or nothing left once cleaned: no name.
+        assert_eq!(given_name("Claude", "Claude", None, true), None);
+        assert_eq!(given("Claude", "Claude", "\u{200b} ", true), None);
+    }
 
     fn conn() -> ConnectionId {
         "c1".into()

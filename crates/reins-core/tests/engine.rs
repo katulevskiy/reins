@@ -601,7 +601,7 @@ async fn a_second_account_of_the_same_ai_is_offered_a_name_of_its_own_kept_with_
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing("p2".to_owned(), true, Some(47), Some("Claude (work)".to_owned())).await.unwrap();
+    env.core.answer_pairing("p2".to_owned(), true, Some(47), Some("Claude (work)".to_owned()), true).await.unwrap();
     let requests = env.server.received_requests().await.unwrap();
     let answer = requests.iter().find(|r| r.url.path() == "/reins/api/pairings/p2/response").unwrap();
     let body: Value = serde_json::from_slice(&answer.body).unwrap();
@@ -634,7 +634,7 @@ async fn a_second_account_of_the_same_ai_is_offered_a_name_of_its_own_kept_with_
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing("p3".to_owned(), true, Some(47), Some("Claude".to_owned())).await.unwrap();
+    env.core.answer_pairing("p3".to_owned(), true, Some(47), Some("Claude".to_owned()), true).await.unwrap();
     Mock::given(method("GET"))
         .and(path("/reins/api/connections"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": [
@@ -644,6 +644,54 @@ async fn a_second_account_of_the_same_ai_is_offered_a_name_of_its_own_kept_with_
         .mount(&env.server)
         .await;
     assert_eq!(env.core.connections().await.unwrap()[0].name, None, "its own name is not the user's");
+}
+
+/// Only a name the user edited becomes theirs: the suggestion left as it was, or the client's own name with odd
+/// spacing, case or invisible characters, never does.
+#[tokio::test]
+async fn a_name_the_field_was_given_is_never_the_users() {
+    let env = env().await;
+    serve_connections(&env).await;
+    let cases: [(&str, Option<&str>, bool); 4] = [
+        ("p1", Some("Claude 2"), false),
+        ("p2", Some(" claude\u{200b}  2 "), true),
+        ("p3", Some("CLAUDE\u{feff}"), true),
+        ("p4", Some("Claude (personal)"), false),
+    ];
+    for (i, (id, typed, edited)) in cases.iter().enumerate() {
+        let pairing = json!({"v": 1, "id": id, "client_name": "Claude", "client_host": "claude.ai",
+            "choices": [12, 47, 83], "created_at": 50});
+        serve_pending(&env, &[], &[pairing]).await;
+        env.core.sync(0).await.unwrap();
+        let view = env.core.pairing_view((*id).to_owned()).await.unwrap();
+        assert_eq!(view.suggested_name, "Claude 2");
+        let connection = format!("n{i}");
+        Mock::given(method("POST"))
+            .and(path(format!("/reins/api/pairings/{id}/response")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connection_id": connection})))
+            .with_priority(1)
+            .mount(&env.server)
+            .await;
+        env.core.answer_pairing((*id).to_owned(), true, Some(47), typed.map(str::to_owned), *edited).await.unwrap();
+    }
+    let rows: Vec<Value> = (0..4)
+        .map(|i| {
+            json!({"id": format!("n{i}"), "label": "Claude", "client_name": "Claude", "client_host": "claude.ai",
+            "created_at": 10 + i})
+        })
+        .chain([json!({"id": "c1", "label": "Claude", "client_name": "Claude", "client_host": "claude.ai",
+            "created_at": 1})])
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/reins/api/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"connections": rows})))
+        .with_priority(1)
+        .mount(&env.server)
+        .await;
+    let listed = env.core.connections().await.unwrap();
+    for c in &listed {
+        assert_eq!((c.id.as_str(), c.name.as_deref(), c.label.as_str()), (c.id.as_str(), None, "Claude"), "{c:?}");
+    }
 }
 
 /// A computer pairs (`client_name` as its desktop app registered) and the user approves it as `connection`.
@@ -659,7 +707,7 @@ async fn pair_computer(env: &Env, id: &str, client_name: &str, key_byte: u8, con
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing(id.to_owned(), true, Some(47), None).await.unwrap();
+    env.core.answer_pairing(id.to_owned(), true, Some(47), None, false).await.unwrap();
 }
 
 #[tokio::test]
@@ -941,9 +989,9 @@ async fn pairing_requests_are_cleaned_and_answered() {
     let view = env.core.pairing_view("p1".to_owned()).await.unwrap();
     assert_eq!((view.client_name.as_str(), view.choices.clone()), ("Claude", vec![12, 47, 83]));
     // Not answerable with a number that was not offered, or without a number.
-    let err = env.core.answer_pairing("p1".to_owned(), true, Some(99), None).await.unwrap_err();
+    let err = env.core.answer_pairing("p1".to_owned(), true, Some(99), None, false).await.unwrap_err();
     assert!(matches!(err, CoreError::Invalid { .. }));
-    assert!(env.core.answer_pairing("p1".to_owned(), true, None, None).await.is_err());
+    assert!(env.core.answer_pairing("p1".to_owned(), true, None, None, false).await.is_err());
 
     Mock::given(method("POST"))
         .and(path("/reins/api/pairings/p1/response"))
@@ -951,7 +999,10 @@ async fn pairing_requests_are_cleaned_and_answered() {
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing("p1".to_owned(), true, Some(47), Some("  Work \u{202E}Claude ".to_owned())).await.unwrap();
+    env.core
+        .answer_pairing("p1".to_owned(), true, Some(47), Some("  Work \u{202E}Claude ".to_owned()), true)
+        .await
+        .unwrap();
     let posted: Vec<Value> = env
         .server
         .received_requests()
@@ -987,7 +1038,7 @@ async fn a_wrong_number_cancels_the_pairing_and_reports_it() {
         .with_priority(1)
         .mount(&env.server)
         .await;
-    let err = env.core.answer_pairing("p2".to_owned(), true, Some(20), None).await.unwrap_err();
+    let err = env.core.answer_pairing("p2".to_owned(), true, Some(20), None, false).await.unwrap_err();
     assert_eq!(
         err,
         CoreError::Server {
@@ -1006,7 +1057,7 @@ async fn a_wrong_number_cancels_the_pairing_and_reports_it() {
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing("p3".to_owned(), false, None, None).await.unwrap();
+    env.core.answer_pairing("p3".to_owned(), false, None, None, false).await.unwrap();
     assert_eq!(env.core.activity(1).await.unwrap()[0].outcome, "denied");
 }
 
@@ -1640,7 +1691,7 @@ async fn pair_as(env: &Env, id: &str, connection: &str) {
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing(id.to_owned(), true, Some(47), Some("Claude".to_owned())).await.unwrap();
+    env.core.answer_pairing(id.to_owned(), true, Some(47), Some("Claude".to_owned()), true).await.unwrap();
 }
 
 #[tokio::test]

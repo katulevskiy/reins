@@ -99,8 +99,12 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun activity(limit: UInt) = activity
 
-    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?) {
+    /** Whether the user edited the name field, for each answer in [pairingAnswers]. */
+    val pairingNameEdited = CopyOnWriteArrayList<Boolean>()
+
+    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?, nameEdited: Boolean) {
         pairingAnswers += listOf(pairingId, approve, chosenCode, label)
+        pairingNameEdited += nameEdited
         pending = pending.filterNot { it.id == pairingId }
     }
 

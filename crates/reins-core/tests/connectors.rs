@@ -704,7 +704,7 @@ async fn pair_as(env: &Env, id: &str, connection: &str) {
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing(id.to_owned(), true, Some(47), Some("Claude".to_owned())).await.unwrap();
+    env.core.answer_pairing(id.to_owned(), true, Some(47), Some("Claude".to_owned()), true).await.unwrap();
 }
 
 #[tokio::test]

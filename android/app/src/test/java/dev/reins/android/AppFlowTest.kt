@@ -784,6 +784,7 @@ class AppFlowTest {
         assertEquals(true, answer[1])
         assertEquals(42.toUByte(), answer[2])
         assertEquals("Claude Work", answer[3])
+        assertEquals("typed: the user's name", listOf(true), core.pairingNameEdited.takeLast(1))
     }
 
     @Test

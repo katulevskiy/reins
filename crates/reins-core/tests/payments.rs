@@ -247,7 +247,7 @@ async fn pair_desktop(env: &Env, connection: &str, label: &str) -> SecretKey {
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing(id, true, Some(47), None).await.unwrap();
+    env.core.answer_pairing(id, true, Some(47), None, false).await.unwrap();
     key
 }
 

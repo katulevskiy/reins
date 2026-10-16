@@ -728,7 +728,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?) async throws {
+    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws {
         try await latency()
         try locked { s in
             guard let p = s.pairings[pairingId] else { throw CoreError.NotFound }
@@ -736,9 +736,11 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             s.pairings[pairingId] = nil
             guard approve else { return }
             s.nextConnection += 1
-            let name = label.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } ?? p.clientName
-            // As the core: the name the field started with is the client's own, anything else the user's.
-            let given: String? = name == p.clientName ? nil : name
+            let typed = label.map { untrustedName($0, limit: 64) }.flatMap { $0.isEmpty ? nil : $0 }
+            // As the core: only a name the user edited is theirs, and never the client's own or the suggestion.
+            let own = [p.clientName, p.suggestedName].map { untrustedName($0, limit: 64).lowercased() }
+            let given: String? = nameEdited ? typed.flatMap { own.contains($0.lowercased()) ? nil : $0 } : nil
+            let name = given ?? p.clientName
             let id = "c\(s.nextConnection)"
             // The demo's computers are Macs (a real one says its platform in the name it registers with).
             let platform: String? = p.keyFingerprint != nil ? "macos" : nil

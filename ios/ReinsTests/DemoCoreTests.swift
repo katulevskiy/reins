@@ -79,7 +79,7 @@ final class DemoCoreTests: XCTestCase {
     func testPairingAddsAConnection() async throws {
         let c = core()
         let before = try await c.connections().count
-        try await c.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: "Work Gemini")
+        try await c.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: "Work Gemini", nameEdited: true)
         let connections = try await c.connections()
         XCTAssertEqual(connections.count, before + 1)
         XCTAssertEqual(connections.last?.label, "Work Gemini")
@@ -107,13 +107,22 @@ final class DemoCoreTests: XCTestCase {
         let first = try await c.pairingView(pairingId: "pair1")
         XCTAssertEqual(first.sameClient, 0)
         XCTAssertEqual(first.suggestedName, "Gemini")
-        try await c.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: nil)
+        try await c.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: nil, nameEdited: false)
         let added = try await c.connections().last
         XCTAssertNil(added?.name, "kept as it came: its own name")
         let again = try await c.addDemoPairing(clientName: "Gemini", clientHost: "gemini.google.com")
         let second = try await c.pairingView(pairingId: again)
         XCTAssertEqual(second.sameClient, 1)
         XCTAssertEqual(second.suggestedName, "Gemini 2")
+        // The suggestion left as it was, or the client's own name typed back, is not the user's.
+        try await c.answerPairing(pairingId: again, approve: true, chosenCode: 42, label: "Gemini 2", nameEdited: false)
+        let untouched = try await c.connections().last
+        XCTAssertNil(untouched?.name)
+        let third = try await c.addDemoPairing(clientName: "Gemini", clientHost: "gemini.google.com")
+        _ = try await c.pairingView(pairingId: third)
+        try await c.answerPairing(pairingId: third, approve: true, chosenCode: 42, label: " gemini ", nameEdited: true)
+        let typedBack = try await c.connections().last
+        XCTAssertNil(typedBack?.name)
     }
 
     func testBypassRunsForTheMinutesAsked() async throws {

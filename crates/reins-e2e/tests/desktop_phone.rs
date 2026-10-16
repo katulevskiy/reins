@@ -147,7 +147,7 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         let view = phone.core.pairing_view(item.id.clone()).await.unwrap();
         assert_eq!(view.key_fingerprint.as_deref(), Some(fingerprint.as_str()), "the phone shows the app's key");
         let code = code_rx.await.unwrap();
-        phone.core.answer_pairing(item.id, true, Some(code), Some("Laptop".to_owned())).await.unwrap();
+        phone.core.answer_pairing(item.id, true, Some(code), Some("Laptop".to_owned()), true).await.unwrap();
     };
     let (logged_in, (), ()) = tokio::join!(login, browser, user);
     assert_eq!(logged_in.unwrap(), server.base);

@@ -79,8 +79,8 @@ class MainSafeCore(
 
     override suspend fun activity(limit: UInt): List<ActivityEntry> = io { activity(limit) }
 
-    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?) =
-        io { answerPairing(pairingId, approve, chosenCode, label) }
+    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?, nameEdited: Boolean) =
+        io { answerPairing(pairingId, approve, chosenCode, label, nameEdited) }
 
     override suspend fun approvalView(requestId: String): ApprovalView = io { approvalView(requestId) }
 

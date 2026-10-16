@@ -2801,7 +2801,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func answerJoin(id: String, approve: Bool) async throws 
     
-    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?) async throws 
+    /**
+     * Answers a pairing. `label` is what the name field holds; it becomes the user's name for the connection only
+     * when `name_edited` (the user changed the field) and it is not the name the field started with.
+     */
+    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws 
     
     func approvalView(requestId: String) async throws  -> ApprovalView
     
@@ -3744,12 +3748,16 @@ open func answerJoin(id: String, approve: Bool)async throws   {
         )
 }
     
-open func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?)async throws   {
+    /**
+     * Answers a pairing. `label` is what the name field holds; it becomes the user's name for the connection only
+     * when `name_edited` (the user changed the field) and it is not the name the field started with.
+     */
+open func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_answer_pairing(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(pairingId),FfiConverterBool.lower(approve),FfiConverterOptionUInt8.lower(chosenCode),FfiConverterOptionString.lower(label)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(pairingId),FfiConverterBool.lower(approve),FfiConverterOptionUInt8.lower(chosenCode),FfiConverterOptionString.lower(label),FfiConverterBool.lower(nameEdited)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -20813,7 +20821,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_answer_join() != 45029) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_answer_pairing() != 8400) {
+    if (uniffi_reins_core_checksum_method_reinscore_answer_pairing() != 16934) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_approval_view() != 29546) {
