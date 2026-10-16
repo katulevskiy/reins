@@ -5,7 +5,12 @@
 #   SKIP   comma-separated -skip-testing identifiers (optional)
 #
 # Expects DEVELOPER_DIR, GITHUB_WORKSPACE and RUNNER_TEMP. The Rust core is the one ios-core already built
-# (target/ios-core/iphonesimulator, REINS_SKIP_CORE=1). Simulator only: CODE_SIGNING_ALLOWED=NO, no retries.
+# (target/ios-core/iphonesimulator, REINS_SKIP_CORE=1). Simulator only, no retries.
+#
+# Ad-hoc identity "-" (CODE_SIGNING_ALLOWED=YES, no certificate, no team, no profile). An unsigned build
+# never gets its entitlements, and SealedSnapshot's data-protection keychain item then fails to be created.
+# Device status and the keys lock are dropped, which is not how a local simulator build (empty REINS_TEAM,
+# still ad-hoc signed) behaves.
 set -euo pipefail
 
 python3 - <<'PY'
@@ -102,8 +107,11 @@ xcodebuild test \
   -resultBundlePath "$GITHUB_WORKSPACE/results.xcresult" \
   -parallel-testing-enabled NO \
   "${args[@]}" \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_ALLOWED=YES \
   CODE_SIGNING_REQUIRED=NO \
-  CODE_SIGN_IDENTITY="" \
-  DEVELOPMENT_TEAM="" \
+  CODE_SIGN_IDENTITY=- \
+  CODE_SIGN_STYLE=Manual \
+  DEVELOPMENT_TEAM= \
+  PROVISIONING_PROFILE_SPECIFIER= \
+  PROVISIONING_PROFILE= \
   COMPILER_INDEX_STORE_ENABLE=NO

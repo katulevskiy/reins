@@ -494,7 +494,8 @@ jobs:
   # that macos-26 stops at Xcode 26.6, and this project is generated for the 27.0 SDK (deployment target iOS 26).
   #
   # No `environment:` and no secrets. These jobs cannot read the testflight or production environments.
-  # Simulator only (CODE_SIGNING_ALLOWED=NO). The core is arm64: build-core.sh builds aarch64-apple-ios-sim,
+  # Simulator only. Tests ad-hoc sign (CODE_SIGN_IDENTITY=-, no certificate, team, or profile) so entitlements
+  # apply, matching a local simulator build with an empty REINS_TEAM. The core is arm64: build-core.sh builds aarch64-apple-ios-sim,
   # and the Xcode project excludes x86_64 from the simulator. That is the runner's own simulator slice.
   #
   # Caches are written from main only, same as the other lanes. The built core is also uploaded so the test
