@@ -440,6 +440,21 @@ class FakeCore : ReinsCoreInterface {
         createdGrantAccounts += account
     }
 
+    /** The renames, in order: "c1=Claude (work)", "c1=" (cleared). */
+    val renames = CopyOnWriteArrayList<String>()
+
+    /** As the core: one clean line of at most 64 characters; blank takes the name away (its own name again). */
+    override suspend fun renameConnection(connectionId: String, name: String?): String? {
+        val clean = name?.let { dev.reins.android.ui.common.untrustedName(it, 64) }?.ifEmpty { null }
+        renames += "$connectionId=${clean.orEmpty()}"
+        connections = connections.map {
+            if (it.id != connectionId) return@map it
+            val own = it.ownLabel.ifEmpty { if (it.name == null) it.label else it.clientName }
+            it.copy(name = clean, label = clean ?: own, ownLabel = own, clientName = it.clientName.ifEmpty { own })
+        }
+        return clean
+    }
+
     override suspend fun setConnectionIcon(connectionId: String, icon: String?) {
         icons[connectionId] = icon ?: "auto"
         connections = connections.map { if (it.id == connectionId) it.copy(icon = icon) else it }

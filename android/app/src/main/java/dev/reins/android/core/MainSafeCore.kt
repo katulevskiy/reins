@@ -166,6 +166,7 @@ class MainSafeCore(
         io { serviceAccountStatus(service, account) }
 
     override suspend fun setConnectionIcon(connectionId: String, icon: String?) = io { setConnectionIcon(connectionId, icon) }
+    override suspend fun renameConnection(connectionId: String, name: String?): String? = io { renameConnection(connectionId, name) }
 
     override suspend fun setConnectionBlobatar(connectionId: String, shape: UByte, colour: UByte): Blobatar =
         io { setConnectionBlobatar(connectionId, shape, colour) }

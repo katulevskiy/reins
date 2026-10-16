@@ -17,9 +17,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -70,6 +73,7 @@ import dev.reins.android.ui.autopilot.ProfilePicker
 import dev.reins.android.ui.common.relativeTime
 import dev.reins.android.ui.common.formatDate
 import dev.reins.android.ui.common.untrusted
+import dev.reins.android.ui.common.untrustedName
 import dev.reins.core.ConnectionView
 
 /**
@@ -110,6 +114,9 @@ fun ConnectionDetailScreen(
                     maxLines = 2,
                     align = TextAlign.Center,
                 )
+                calledItself(connection)?.let {
+                    RText(it, RType.meta, c.inkMeta, Modifier.padding(top = 2.dp).testTag("connectionCalledItself"), maxLines = 1)
+                }
                 RText(
                     connectionHeadline(connection),
                     RType.mono(13f),
@@ -140,9 +147,22 @@ fun ConnectionDetailScreen(
                     value = formatDate(connection.createdAt),
                     chevron = false,
                 )
+                SettingsRow(
+                    "Last used",
+                    Modifier.testTag("lastUsed"),
+                    icon = Icons.Rounded.Schedule,
+                    value = lastUsed(connection),
+                    chevron = false,
+                )
             }
 
             SettingsGroup(header = null, gap = 12.dp) {
+                SettingsRow(
+                    "Name",
+                    Modifier.testTag("connectionRename"),
+                    icon = Icons.Rounded.Edit,
+                    value = untrustedName(connection.label, 28),
+                ) { picking = Picker.Name }
                 SettingsRow(
                     "Icon",
                     Modifier.testTag("connectionIcon"),
@@ -179,6 +199,9 @@ fun ConnectionDetailScreen(
                 )
             }
         }
+        BottomSheet(shown == Picker.Name && connection != null, "Name", onClose = { picking = null }, tag = "renameSheet") {
+            if (connection != null) RenameField(connection) { name -> viewModel.rename(connection.id, name) { picking = null } }
+        }
         BottomSheet(shown == Picker.Profile && autopilot != null, "Learns into", onClose = { picking = null }, tag = "profileSheet") {
             if (connection != null && autopilot != null) ProfilePicker(connection.id, autopilot) { picking = null }
         }
@@ -204,7 +227,68 @@ fun ConnectionDetailScreen(
     }
 }
 
-private enum class Picker { Icon, Profile }
+private enum class Picker { Icon, Profile, Name }
+
+/**
+ * The quiet line under a renamed connection's name: what it calls itself, quoted ("Calls itself “Claude”"), so that a
+ * name the user gave never hides what it is. Null while it goes by its own name.
+ */
+internal fun calledItself(connection: ConnectionView): String? {
+    if (connection.name == null) return null
+    val own = untrustedName(connection.clientName.ifEmpty { connection.ownLabel }, 48)
+    return if (own.isEmpty()) null else "Calls itself “$own”"
+}
+
+/** "5 min ago", "Never": the Last used row. */
+internal fun lastUsed(connection: ConnectionView): String = connection.lastUsedAt?.let { relativeTime(it) } ?: "Never"
+
+/**
+ * The name field: the user's name for it, its own as the placeholder; the clear button (or an empty field) gives it
+ * its own name back. What it calls itself stays under the field.
+ */
+@Composable
+private fun RenameField(connection: ConnectionView, onSave: (String?) -> Unit) {
+    val c = LocalColors.current
+    var text by remember(connection.id) { mutableStateOf(connection.name.orEmpty()) }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(connection.id) { runCatching { focus.requestFocus() } }
+    val own = untrustedName(connection.ownLabel.ifEmpty { connection.label }, 64)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+            dev.reins.android.design.RTextField(
+                text,
+                { text = it.take(64) },
+                own,
+                Modifier.weight(1f),
+                tag = "renameField",
+                focusRequester = focus,
+            )
+            if (text.isNotEmpty()) {
+                Box(
+                    Modifier.padding(start = 8.dp).size(40.dp).clip(CircleShape)
+                        .pressable(shape = CircleShape, label = "Use its own name", onClick = { text = "" })
+                        .testTag("renameClear"),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.Cancel, "Use its own name", tint = c.tertiary) }
+            }
+        }
+        RText(
+            "Calls itself “${untrustedName(connection.clientName.ifEmpty { own }, 48)}”",
+            RType.meta,
+            c.inkMeta,
+            Modifier.padding(top = 10.dp, start = 4.dp).testTag("renameItself"),
+            maxLines = 1,
+        )
+        SignalButton(
+            "Save",
+            onClick = { onSave(text.trim().ifEmpty { null }) },
+            modifier = Modifier.padding(top = 18.dp).fillMaxWidth().testTag("renameSave"),
+            style = ButtonStyle.Inverse,
+            size = ButtonSize.Large,
+            glyph = Glyph.Check,
+        )
+    }
+}
 
 /** "claude.ai · used 5 min ago"; for a computer its key, compared when it paired: "Key 4821 9930 · used just now". */
 internal fun connectionHeadline(connection: ConnectionView): String {

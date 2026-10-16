@@ -179,6 +179,26 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /**
+     * Gives a connection the user's own name (null or blank: it goes by its own again), kept with the account and
+     * synced by the core; then reads the connections and everything that shows their names. [onDone] after it is kept.
+     */
+    fun rename(connectionId: String, name: String?, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                container.core.renameConnection(connectionId, name?.trim()?.ifEmpty { null })
+                container.refreshConnections()
+                container.refreshPending()
+                onDone()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                container.feedback.play(Event.Error)
+                _ui.value = SettingsUi(error = e.userMessage())
+            }
+        }
+    }
+
     /** Sets (or with null, clears) the icon of an AI connection. */
     fun pickIcon(connectionId: String, icon: String?) {
         viewModelScope.launch {
