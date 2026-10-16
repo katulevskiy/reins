@@ -329,8 +329,11 @@ final class AutopilotUITests: XCTestCase {
 
         XCTAssertTrue(app.openTab("connections"))
         for _ in 0..<8 { app.swipeUp() }
-        XCTAssertLessThanOrEqual(waitFor("addMcp").frame.maxY, app.tab("connections").frame.minY, "Add MCP server clears the tab bar")
-        XCTAssertTrue(element("addMcp").isHittable)
+        // The button itself: its list cell carries the same identifier and has no frame of its own.
+        let add = app.buttons["addMcp"].firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 8), "Add MCP server never showed")
+        XCTAssertLessThanOrEqual(add.frame.maxY, app.tab("connections").frame.minY, "Add MCP server clears the tab bar")
+        XCTAssertTrue(add.isHittable)
         shot("connections-bottom")
     }
 
