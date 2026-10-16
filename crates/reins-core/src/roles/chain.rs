@@ -87,13 +87,14 @@ impl LocalRoster {
         self.at(epoch).and_then(|e| e.primary.sign_key().ok())
     }
 
-    /// The key that may sign a view-key grant of key id `kid`: the primary of the entry at that epoch, and only when
-    /// that entry brought a view key (`create`, `remove`, `recovery`). Any other signer, or a key id no such entry
-    /// names, is refused ([`super::sealed::open_view_grant`]).
+    /// The key that may sign a view-key grant of key id `kid`: the current primary's (of the newest entry this phone
+    /// verified), and only for a key id an entry that brought a view key names (`create`, `remove`, `recovery`). A
+    /// replaced primary grants nothing, and no one grants a key id no such entry names
+    /// ([`super::sealed::open_view_grant`]).
     pub fn view_key_signer(&self, kid: u64) -> Option<[u8; 32]> {
         let entry = self.at(kid)?;
         matches!(entry.reason, RosterReason::Create | RosterReason::Remove | RosterReason::Recovery)
-            .then(|| entry.primary.sign_key().ok())
+            .then(|| self.current().primary.sign_key().ok())
             .flatten()
     }
 
@@ -239,8 +240,10 @@ pub(crate) mod tests {
         assert_eq!(local.standing("p", &member("x", 9).sign_pub), Standing::Removed, "another key");
         assert_eq!(local.primary_key_at(2), Some(member("p", 1).sign_key().unwrap()));
         assert_eq!(local.primary_key_at(9), None);
-        // Only an entry that brought a view key names who may grant it: genesis yes, an enrollment or handover no.
-        assert_eq!(local.view_key_signer(1), Some(member("p", 1).sign_key().unwrap()));
+        // Only the current primary grants, and only key ids an entry that brought a view key names: genesis yes, an
+        // enrollment or handover no. The replaced primary grants nothing, not even the key its own entry brought.
+        assert_eq!(local.view_key_signer(1), Some(member("v", 2).sign_key().unwrap()));
+        assert_ne!(local.view_key_signer(1), Some(member("p", 1).sign_key().unwrap()));
         assert_eq!(local.view_key_signer(2), None);
         assert_eq!(local.view_key_signer(3), None);
         assert_eq!(local.view_key_signer(9), None);

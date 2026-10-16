@@ -1233,14 +1233,9 @@ impl Engine {
         self.keep_owner_seed(&account.slot, &seed)?;
         self.keep_wrap_key(&account.slot, &wrap_key)?;
         self.save_keyring(&account.slot, &ring)?;
-        // The view keys the old primary brought were granted by it: this phone owes grants only for its own.
-        let made: BTreeSet<u64> = roster
-            .entries
-            .iter()
-            .filter(|e| matches!(e.reason, RosterReason::Create | RosterReason::Remove | RosterReason::Recovery))
-            .map(|e| e.epoch)
-            .collect();
-        self.save(GRANTS_MADE, &account.slot, &made)?;
+        // Only the current primary's grants open on the viewers, so the old primary's undelivered ones no longer do:
+        // this phone grants every view key again (a key a viewer already holds is kept as it is).
+        self.save(GRANTS_MADE, &account.slot, &BTreeSet::<u64>::new())?;
         for carried in &payload.device_secrets {
             if MOVING_SECRETS.contains(&carried.service.as_str()) {
                 let value = Zeroizing::new(

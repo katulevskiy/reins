@@ -7,8 +7,8 @@
 //! writes no checkpoint anyone loads. Loading one compares its applied hash with this phone's own at that `seq` (a
 //! difference is a fork), and its state digest ([`super::state_digest`]) with what it holds once loaded.
 //!
-//! Heartbeats are checked for a fork first, whoever of the roster's primaries signed them; only one from the current
-//! primary at the current epoch counts for liveness.
+//! Only a heartbeat from the current primary at the current epoch counts: for liveness, and as proof of a fork (an
+//! applied hash other than this phone's). Another primary's that differs is a warning, never a halt.
 
 use reins_proto::canon::{Canon, decode_payload, encode_payload, hex32, parse_hex32, parse_sig};
 use reins_proto::oplog::{Checkpoint, Heartbeat, Table};
@@ -351,13 +351,17 @@ pub enum HeartbeatCheck {
     Behind,
     /// This phone no longer keeps its hash at that `seq`.
     Unknown,
-    /// Not from the current primary at the current epoch: no news of liveness (checked for a fork all the same).
+    /// Not from the current primary at the current epoch, and nothing it says differs from this phone: no news.
     Stale,
+    /// Not from the current primary at the current epoch, and it names another history at a `seq` this phone applied.
+    /// A warning for the user ("your devices may disagree"), never a halt and never kept: a replaced primary's key
+    /// (a stolen old phone) must not stop every phone.
+    Disagrees,
 }
 
-/// Checks a heartbeat: signed by the primary of its epoch (as this phone verified the roster). At a `seq` this phone
-/// applied, the applied hash must be this phone's (else the history forked, and applying stops), whichever epoch it
-/// came from; only the current primary's heartbeat at the current epoch then counts.
+/// Checks a heartbeat: signed by the primary of its epoch (as this phone verified the roster). From the current primary
+/// at the current epoch, an applied hash other than this phone's at that `seq` is a fork, and applying stops for good.
+/// From anyone else (a replaced primary, an older epoch) it is only [`HeartbeatCheck::Disagrees`].
 pub fn check_heartbeat(conn: &Connection, ctx: &Context<'_>, hb: &Heartbeat) -> Result<HeartbeatCheck, Halt> {
     let bad = |why: &str| Halt::Core(CoreError::invalid(format!("The heartbeat is refused: {why}.")));
     hb.validate().map_err(|e| bad(&e.to_string()))?;
@@ -374,22 +378,25 @@ pub fn check_heartbeat(conn: &Connection, ctx: &Context<'_>, hb: &Heartbeat) -> 
     if let Some(why) = &s.forked {
         return Err(Halt::Forked(why.clone()));
     }
+    let current = current_primary_key(ctx, hb.epoch, &hb.author)?.is_some() && hb.epoch >= s.log_epoch;
     let theirs = parse_hex32(&hb.applied_hash).ok_or_else(|| bad("invalid applied hash"))?;
     let compared = if hb.head_seq > s.seq {
         HeartbeatCheck::Behind
     } else {
         match applied_at(conn, hb.head_seq)? {
             Some(mine) if mine == theirs => HeartbeatCheck::Matches,
-            Some(_) => {
+            Some(_) if current => {
                 return Err(fork(conn, &format!("the primary saw another history up to seq {}", hb.head_seq)));
             }
+            Some(_) => return Ok(HeartbeatCheck::Disagrees),
             None => HeartbeatCheck::Unknown,
         }
     };
-    if current_primary_key(ctx, hb.epoch, &hb.author)?.is_none() || hb.epoch < s.log_epoch {
-        return Ok(HeartbeatCheck::Stale);
-    }
-    Ok(compared)
+    Ok(if current {
+        compared
+    } else {
+        HeartbeatCheck::Stale
+    })
 }
 
 /// The primary's heartbeat for where this phone's log stands.

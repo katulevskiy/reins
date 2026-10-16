@@ -773,10 +773,20 @@ fn only_the_current_primary_checkpoints_and_vouches_for_liveness() {
     assert_eq!(check_heartbeat(&viewer, &w.ctx(), &live).unwrap(), HeartbeatCheck::Matches);
     let old = checkpoint::heartbeat(&primary, &w.ctx(), &key_of("p"), "p", 3).unwrap();
     assert_eq!(check_heartbeat(&viewer, &w.ctx(), &old).unwrap(), HeartbeatCheck::Stale);
+    // The replaced primary (a stolen old phone) signs another history: a warning, nothing kept, applying goes on.
     let mut diverged = old;
     diverged.applied_hash = hex32(&[7; 32]);
     diverged.sig = key_of("p").sign_b64(&diverged.signing_bytes().unwrap());
-    assert!(matches!(check_heartbeat(&viewer, &w.ctx(), &diverged), Err(Halt::Forked(_))));
+    assert_eq!(check_heartbeat(&viewer, &w.ctx(), &diverged).unwrap(), HeartbeatCheck::Disagrees);
+    assert_eq!(state(&viewer).unwrap().forked, None);
+    let after = w.op("v", 4, OpClass::Primary, put(Table::Meta, "c", None, json!(3)));
+    assert_eq!(run(&mut viewer, &w, 3, &[after]), [Outcome::Applied]);
+    // Signed at the current epoch by the replaced primary's key, as itself: no primary then, refused.
+    let mut as_current = diverged;
+    as_current.epoch = 4;
+    as_current.sig = key_of("p").sign_b64(&as_current.signing_bytes().unwrap());
+    assert!(check_heartbeat(&viewer, &w.ctx(), &as_current).is_err());
+    assert_eq!(state(&viewer).unwrap().forked, None);
     // Signed as the primary of an epoch it was not: refused.
     let mut posing = checkpoint::heartbeat(&primary, &w.ctx(), &key_of("p"), "p", 4).unwrap();
     posing.sig = key_of("p").sign_b64(&posing.signing_bytes().unwrap());
@@ -806,11 +816,17 @@ fn heartbeats_tell_live_from_behind_and_catch_a_fork() {
     let mut tampered = hb.clone();
     tampered.head_seq = 1;
     assert!(check_heartbeat(&viewer, &w.ctx(), &tampered).is_err());
-    // From an epoch older than the log showed: stale, ignored.
+    // From an epoch older than the log showed: stale, ignored; one naming another history there only a warning.
     viewer.execute("UPDATE oplog_state SET log_epoch = 9", []).unwrap();
     assert_eq!(check_heartbeat(&viewer, &w.ctx(), &hb).unwrap(), HeartbeatCheck::Stale);
+    let mut older = hb.clone();
+    older.applied_hash = hex32(&[7; 32]);
+    older.sig = key_of("p").sign_b64(&older.signing_bytes().unwrap());
+    assert_eq!(check_heartbeat(&viewer, &w.ctx(), &older).unwrap(), HeartbeatCheck::Disagrees);
     viewer.execute("UPDATE oplog_state SET log_epoch = 3", []).unwrap();
-    // The primary signs another hash for seq 2 than this phone has: a fork, and applying stops.
+    assert_eq!(state(&viewer).unwrap().forked, None);
+    // The current primary at the current epoch signs another hash for seq 2 than this phone has: a fork, kept, and
+    // applying stops.
     let mut other = hb;
     other.applied_hash = hex32(&[7; 32]);
     other.sig = key_of("p").sign_b64(&other.signing_bytes().unwrap());
