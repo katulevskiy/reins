@@ -2437,6 +2437,47 @@ async fn overnight_never_approves_what_autos_risk_check_holds_outside_its_floor(
     assert_eq!(env.decided(), [("calm".to_owned(), Verdict::Approve, "overnight".to_owned())]);
 }
 
+/// A push to the default branch always asks in Overnight as in Auto, whether the desktop app's git proxy asks for it or
+/// a hook asks about the command, and however benign the model rates it; a feature push is still decided.
+#[tokio::test]
+async fn a_push_to_the_default_branch_always_asks_in_auto_and_overnight() {
+    use reins_proto::desktop::RefChange;
+    let (env, _github) = env_git(true).await;
+    env.model.set_risk_default(testing::risk(0.95, 0.03, 0.015, 0.005));
+    env.model.set_default(logits(0.99, 0.005, 0.005));
+    let key = desktop_key(&env);
+    // the user approved each target once, by hand, in Manual; both kinds unlocked by hand
+    env.relay("seed-main", OLD, push_to(&key, "seed-main", "main", RefChange::Update, true)).await;
+    env.approve("seed-main").await;
+    env.relay("seed-feature", OLD, push_to(&key, "seed-feature", "feature/x", RefChange::Update, true)).await;
+    env.approve("seed-feature").await;
+    env.unlock("github/write/code").await;
+    for (mode, tag) in [(AutopilotMode::Auto, "auto"), (AutopilotMode::Overnight, "night")] {
+        env.mode(None, mode).await;
+        let id = format!("{tag}-main");
+        env.relay(&id, OLD, push_to(&key, &id, "main", RefChange::Update, true)).await;
+        let s = env.suggestion(&id).await;
+        assert!(s.floor && s.reason.contains("default branch"), "{mode:?}: {s:?}");
+        let id = format!("{tag}-feature");
+        env.relay(&id, OLD, push_to(&key, &id, "feature/x", RefChange::Update, true)).await;
+        assert!(env.decided().iter().any(|(d, v, _)| *d == id && *v == Verdict::Approve), "{mode:?} {id}");
+    }
+    // A hook asking about the command reads the same way, in either mode.
+    for (i, command) in ["git push origin main", "git push origin HEAD:main", "git push", "git push --all origin"]
+        .into_iter()
+        .enumerate()
+    {
+        for mode in [AutopilotMode::Auto, AutopilotMode::Overnight] {
+            env.mode(None, mode).await;
+            let id = format!("hook-{i}-{mode:?}");
+            env.relay(&id, OLD, hook_ask(&key, "", "command:git push", command)).await;
+            let s = env.suggestion(&id).await;
+            assert!(s.floor && !env.decided().iter().any(|(d, _, _)| *d == id), "{mode:?} {command}: {s:?}");
+            assert!(s.reason.contains("default branch"), "{mode:?} {command}: {}", s.reason);
+        }
+    }
+}
+
 // ---- profiles --------------------------------------------------------------------------------------------------------
 
 #[tokio::test]

@@ -819,6 +819,7 @@ impl Engine {
             None => risk::upload_context(),
         };
         let certain = matches!(reading.outcome(), risk::Outcome::Read);
+        let pushes_default_branch = reading.pushes_default_branch();
         let context = if rates_risk {
             if subject.view.is_some() {
                 s.label = situation::label_of(&for_risk.facts.operation, &for_risk.facts.target);
@@ -868,11 +869,12 @@ impl Engine {
         // wait, as in Auto.
         let weighed = mode == AutopilotMode::Overnight && rates_risk && subject.floor_weighable;
         let floor = subject.floor.clone().filter(|_| !weighed);
-        // Auto never decides a push to the default branch on the model (a force push or a branch delete is on the
-        // floor above): it always asks. Overnight keeps its own floor rules.
-        let default_branch = (mode == AutopilotMode::Auto
-            && subject.view.as_ref().and_then(|v| v.git.as_ref()).is_some_and(risk::changes_default_branch))
-        .then(|| "a push to the default branch is always asked in Auto".to_owned());
+        // Auto and Overnight never decide on the model a push to the default branch or a protected one, or one whose
+        // destination is not known (a git push of the desktop app, or a command a hook asks about: the core's own
+        // reading, risk::Context::pushes_default_branch): it always asks. It is not a floor Overnight weighs. (A force
+        // push or a branch delete is on the floor above.)
+        let default_branch = (matches!(mode, AutopilotMode::Auto | AutopilotMode::Overnight) && pushes_default_branch)
+            .then(|| "a push to the default branch is always asked".to_owned());
         if let Some(floor) = floor.or(young).or(default_branch) {
             s.reason = format!("Always asks: {floor}");
             s.floor = Some(floor);
@@ -926,9 +928,10 @@ impl Engine {
         let overnight = mode == AutopilotMode::Overnight && judged.risk_declared;
         if overnight {
             // Overnight's own rule, as it always was (the earned classes, the rule of before the cold start), and
-            // whatever Auto would approve on its own (never a floor, which Auto always asks). Outside the floor it
-            // weighs, its own rule passes Auto's risk check too (the severe veto, clearly benign until measured
-            // agreement): Overnight is never looser than Auto but on that floor.
+            // whatever Auto would approve on its own (never a floor, which Auto always asks; a push to the default
+            // branch asked above, in both). Outside the floor it weighs, its own rule passes Auto's risk check too
+            // (the severe veto, clearly benign until measured agreement): Overnight is never looser than Auto but on
+            // that floor.
             let (earned_approve, may_deny) = gates::unlocked(&stats, manual_open);
             let auto_approves = s.verdict == Verdict::Approve && gate.approve && subject.floor.is_none();
             let risk_passes = subject.floor.is_some() || decide::risk_ok(readable, evidence.trust);

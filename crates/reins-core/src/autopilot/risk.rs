@@ -41,7 +41,8 @@ use crate::types::{ApprovalView, AskView, GitPushView};
 /// The longest an agent-controlled value appears in the context line.
 pub const MAX_VALUE_CHARS: usize = 60;
 /// Branch names taken for the default branch when the repository's own is not known (and `release…`).
-const LONG_LIVED_BRANCHES: [&str; 6] = ["main", "master", "trunk", "develop", "production", "prod"];
+const LONG_LIVED_BRANCHES: [&str; 10] =
+    ["main", "master", "trunk", "develop", "dev", "production", "prod", "staging", "stable", "gh-pages"];
 /// Installers commonly piped into a shell, matched exactly (a host anyone can publish under, such as
 /// `raw.githubusercontent.com`, is not one).
 const KNOWN_INSTALLERS: [&str; 7] =
@@ -154,6 +155,7 @@ impl<T> Reading<T> {
             tripwire: None,
             doubt: None,
             deletes: false,
+            default_push: false,
         };
         let value = self.into_value(&mut c);
         (value, c)
@@ -182,9 +184,18 @@ pub struct Context {
     doubt: Option<String>,
     /// It deletes, moves away or overwrites something (counted in the connection's last hour).
     deletes: bool,
+    /// It pushes to the default branch or a protected one, or may (a push whose destination is the current branch, or
+    /// is not named): Auto and Overnight always ask ([`Context::pushes_default_branch`]).
+    default_push: bool,
 }
 
 impl Context {
+    /// A push to the default branch or a protected one, or one that may be (its destination not known): never decided
+    /// on the model in Auto or Overnight.
+    pub fn pushes_default_branch(&self) -> bool {
+        self.default_push
+    }
+
     /// A tripwire first (it is catastrophic, held under either setting), then a doubt (held, waits), else read.
     pub fn outcome(&self) -> Outcome {
         match (&self.tripwire, &self.doubt) {
@@ -224,7 +235,7 @@ impl Context {
         self.add(why);
     }
 
-    /// Only what holds: a tripwire, a doubt.
+    /// Only what holds: a tripwire, a doubt, a push to the default branch.
     fn merge_holds(&mut self, other: Self) {
         if let Some(t) = other.tripwire {
             self.trip(t);
@@ -232,6 +243,7 @@ impl Context {
         if let Some(d) = other.doubt {
             self.doubt(&d);
         }
+        self.default_push |= other.default_push;
     }
 
     fn merge(&mut self, other: Self) {
@@ -242,6 +254,7 @@ impl Context {
             self.doubt(&d);
         }
         self.deletes |= other.deletes;
+        self.default_push |= other.default_push;
         for l in other.lines {
             self.add(l);
         }
@@ -894,13 +907,15 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 
 // ---- branches --------------------------------------------------------------------------------------------------------
 
-/// How a branch counts: the repository's own default (when known), a long-lived name (when the default is not known,
-/// any of `main`, `master`, `trunk`, `develop`, `production`, `prod`, `release…`), or neither.
+/// How a branch counts: the repository's own default (when known), a long-lived name (`main`, `master`, `trunk`,
+/// `develop`, `dev`, `production`, `prod`, `staging`, `stable`, `gh-pages`, `release…`), or neither. Names are compared
+/// without regard to case (`Main`, `Release/1.0`).
 fn branch_kind(name: &str, default: Option<&str>) -> Option<&'static str> {
     // The repository's own default (the desktop's fact) counts, and so do the long-lived names whatever it is: knowing
     // the default can only add a branch, never take one away.
-    let long_lived = LONG_LIVED_BRANCHES.contains(&name) || name.starts_with("release");
-    (default == Some(name) || long_lived).then_some("the default branch")
+    let lower = name.to_ascii_lowercase();
+    let long_lived = LONG_LIVED_BRANCHES.contains(&lower.as_str()) || lower.starts_with("release");
+    (default.is_some_and(|d| d.eq_ignore_ascii_case(name)) || long_lived).then_some("the default branch")
 }
 
 /// A force push (`force`) or a delete of a branch: tripwire on the default branch (or a long-lived one when the default
@@ -946,12 +961,12 @@ pub fn push_context(git: &GitPushView) -> Context {
             }
         }
     }
+    c.default_push = changes_default_branch(git);
     c
 }
 
-/// A push changes the default branch, or a long-lived one when the default is not known (`main`, `master`, `trunk`,
-/// `develop`, `production`, `prod`, `release…`): Auto always asks for it, whatever the model says. (A force push or a
-/// delete of any branch is on the hard floor already.)
+/// A push changes the repository's default branch or a long-lived one ([`branch_kind`]): Auto and Overnight always ask
+/// for it, whatever the model says. (A force push or a delete of any branch is on the hard floor already.)
 pub fn changes_default_branch(git: &GitPushView) -> bool {
     let default = git.default_branch.as_deref();
     git.refs.iter().any(|r| r.kind == "branch" && branch_kind(&r.short_name, default).is_some())
@@ -998,6 +1013,11 @@ fn git_context(seg: &[String], moved: bool, c: &mut Context) {
             if refs.is_empty() && (force || delete) {
                 c.trip("force push to the current branch, which may be the default branch");
             }
+            // Every branch at once, or no destination named (the current branch, whichever it is; `--tags` alone
+            // pushes only tags): it may be the default branch.
+            if a.has(&[], &["all", "branches", "mirror"]) || (refs.is_empty() && !a.has(&[], &["tags"])) {
+                c.default_push = true;
+            }
             for r in refs {
                 let (plus, colon_delete, name) = if let Some(n) = r.strip_prefix('+') {
                     (true, false, n)
@@ -1007,6 +1027,12 @@ fn git_context(seg: &[String], moved: bool, c: &mut Context) {
                     (false, false, r)
                 };
                 let name = name.rsplit_once(':').map_or(name, |(_, dst)| dst).trim_start_matches("refs/heads/");
+                // the destination of this refspec: the default branch or a protected one, or the current branch
+                if matches!(name, "HEAD" | "@" | "")
+                    || (!name.starts_with("refs/") && branch_kind(name, None).is_some())
+                {
+                    c.default_push = true;
+                }
                 if matches!(name, "HEAD" | "@" | "") && (delete || colon_delete || force || plus) {
                     c.trip("force push to the current branch, which may be the default branch");
                 } else if delete || colon_delete || force || plus {
@@ -2291,6 +2317,78 @@ mod tests {
                 })
                 .collect(),
         })
+    }
+
+    /// What Auto and Overnight always ask: a push to the default branch or a protected one, from the desktop app's
+    /// summary or from a command a hook asks about, and a push whose destination is not known.
+    #[test]
+    fn pushes_to_the_default_branch_or_a_protected_one_always_ask() {
+        let to = |names: &[&str], default: Option<&str>| {
+            let refs: Vec<(&str, &str, bool)> = names.iter().map(|n| (*n, "update", false)).collect();
+            push(&refs, default).pushes_default_branch()
+        };
+        let list = ["main", "master", "trunk", "develop", "dev", "production", "prod", "staging", "stable", "gh-pages"];
+        for name in list.iter().chain(&["release", "release/1.0", "release-2", "releases/x"]) {
+            assert!(to(&[name], None), "{name}");
+            assert!(to(&[name], Some("deploy")), "{name}: a protected name, whatever the default");
+        }
+        for name in ["Main", "MASTER", "Release/1.0", "GH-Pages", "Staging", "DEV"] {
+            assert!(to(&[name], None), "{name}: case does not matter");
+        }
+        assert!(to(&["deploy"], Some("deploy")) && to(&["Deploy"], Some("deploy")), "the repository's own default");
+        assert!(!to(&["feature/x"], Some("deploy")), "a known default that is another branch");
+        for name in ["feature/x", "devops", "development", "fix/main-menu", "mainline-docs"] {
+            assert!(!to(&[name], None), "{name} is not protected");
+        }
+        assert!(to(&["feature/a", "main", "feature/b"], None), "one of several refs is main");
+        assert!(!to(&["feature/a", "feature/b"], None));
+        let nothing = GitPushView {
+            repo: "me/app".to_owned(),
+            pack_bytes: 0,
+            notes: vec![],
+            default_branch: None,
+            refs: vec![],
+        };
+        assert!(!changes_default_branch(&nothing), "a summary without a branch");
+
+        let cmd = |c: &str| command_context(c).pushes_default_branch();
+        for c in [
+            "git push origin main",
+            "git push origin HEAD:main",
+            "git push origin HEAD:refs/heads/main",
+            "git push origin +main",
+            "git push origin main:main",
+            "git push -u origin Main",
+            "git push origin feature/x main",
+            "git push origin feature:Staging",
+            "git push origin :release/1.0",
+            "git push --all origin",
+            "git push --branches origin",
+            "git push --mirror origin",
+            "git push origin :",
+            "git push origin HEAD",
+            "git push origin @",
+            "git push origin",
+            "git push",
+            "git push --follow-tags",
+            "git -C ~/dev/app push origin main",
+            "cd app && git push origin gh-pages",
+        ] {
+            assert!(cmd(c), "{c}: the default branch, or a destination not known");
+        }
+        for c in [
+            "git push origin feature/x",
+            "git push origin HEAD:feature/x",
+            "git push -u origin feature/x",
+            "git push origin refs/heads/feature/x",
+            "git push origin feature/a feature/b",
+            "git push --tags origin",
+            "git push origin v1.0:refs/tags/v1.0",
+            "git status",
+            "git pull origin main",
+        ] {
+            assert!(!cmd(c), "{c}");
+        }
     }
 
     #[test]
