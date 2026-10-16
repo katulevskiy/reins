@@ -44,8 +44,9 @@ defaults:
 # apply, matching a local simulator build with an empty REINS_TEAM. The core is arm64. No test retries.
 #
 # Run 38858281608 kept five xcode-27 jobs busy and started the sixth seven seconds after one finished.
-# The build is one job before those five, not a sixth shard beside them. A sixth test shard would wait
-# for a whole shard. ActivityFlowTests is divided by method. ReinsTests shares the rest shard.
+# The build is one job before the shards, not a sixth shard beside them. A pull request runs at most
+# three shards at once, so two runners stay free for ci.yml and for a release. The nightly is off peak
+# and may take all five. ActivityFlowTests is divided by method. ReinsTests shares the rest shard.
 # scripts/ios-ui-plan.py owns that list. A mapped pull request leaves a shard empty instead of borrowing
 # tests. Classes added later still land on rest when the full suite runs.
 #
@@ -306,6 +307,8 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # Three at a time on a pull request, a main push, or a hand run. The nightly uses all five.
+      max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}
       matrix:
         shard: [autopilot, grants, onboarding, field, rest]
     env:
