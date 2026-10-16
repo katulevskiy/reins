@@ -8,6 +8,19 @@ final class PairWordsTests: XCTestCase {
         PairingView(id: "p", clientName: name, clientHost: "example.com", choices: Data([7, 42, 88]), createdAt: 0, keyFingerprint: key)
     }
 
+    @MainActor func testASecondAccountOfTheSameAIStartsWithANameOfItsOwn() {
+        var second = pairing("Claude")
+        XCTAssertEqual(PairingModel.startingName(second), "Claude", "no suggestion: its own name")
+        second.suggestedName = "Claude 2"
+        second.sameClient = 1
+        XCTAssertEqual(PairingModel.startingName(second), "Claude 2")
+        XCTAssertEqual(PairWords.sameClient(second), "Claude is connected already · name this one")
+        XCTAssertTrue(PairingModel(view: second).sameClient)
+        XCTAssertFalse(PairingModel(view: pairing("Claude")).sameClient)
+        second.suggestedName = "Cl\u{202E}aude\n2"
+        XCTAssertFalse(PairingModel.startingName(second).unicodeScalars.contains { $0 == "\u{202E}" || $0 == "\n" })
+    }
+
     func testTheAskIsReinsOwnSentence() {
         XCTAssertEqual(PairWords.ask(pairing("Approve this now")), "Connect an AI app")
         XCTAssertEqual(PairWords.label(pairing("x")), "AI app · Pair")

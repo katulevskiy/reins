@@ -145,7 +145,13 @@ unfolding keeps what is open. On the iPhone Duo, `UIHingeInteraction` (iOS 27.1)
   ("Sound when open", on by default): only for a request that waits for you, once per request, at most once every 3 s
   (`ArrivalPolicy`), in the `.ambient` session, so the ring/silent switch mutes it and music keeps playing.
 - When Autopilot needs its model (Manual, Auto), the extension parks the request without judging it
-  (`handle_push_deferring_autopilot`) and the app judges it when it next runs; the push also wakes the app.
+  (`handle_push_deferring_autopilot`) and the app judges it when it next runs; the push also wakes the app. In the
+  background the app does the same unless the model is already loaded (`set_background`): it is judged in front.
+- Background time: the store's file lock in the App Group container is only ever held under a background task (the
+  app) or an expiring activity (the extension), through `SuspensionGuard` (`install_store_lock_guard`); iOS ends a
+  process suspended with it held (`0xdead10cc`). A lock the other process keeps fails the call as busy after a few
+  seconds instead of waiting. A background push or refresh completes within `BackgroundBudget.limit` (20 s) whatever
+  is still running, and reads only what waits; the rest is read when the app comes to the front.
 - Widgets: what waits (with countdowns), Autopilot (Lock down, Stop bypass), latest activity; Lock Screen gauges.
 - Live Activities: requests waiting (Deny / Review in the Dynamic Island), a running bypass (Stop), the model download.
 - Controls and Siri: "Lock down Reins", "Stop the Reins bypass", "Show what is waiting in Reins".

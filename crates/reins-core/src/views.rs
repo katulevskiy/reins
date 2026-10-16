@@ -337,25 +337,11 @@ fn connector_subject(call: &ConnectorCall, held: Option<&ParkedConnector>) -> St
     )
 }
 
-/// "gmail" → "Gmail".
+/// "gmail" → "Gmail" (the server names integrations the same way: [`reins_proto::connector::service_name`]).
 pub fn service_name(service: &str) -> &str {
     match service {
-        "gmail" => "Gmail",
-        "telegram" => "Telegram",
-        "gcalendar" => "Google Calendar",
-        "gcontacts" => "Google Contacts",
-        "device_calendar" => "Phone calendar",
-        "device_contacts" => "Phone contacts",
-        "sms" => "Text messages",
-        "github" => "GitHub",
-        "gitlab" => "GitLab",
-        "codeberg" => "Codeberg",
-        "bitbucket" => "Bitbucket",
-        "desktop" => "Desktop app",
-        "vault" => "Password vault",
-        "payments" => "Payments",
         crate::blob::SERVICE_FILES => "Files",
-        other => other,
+        other => reins_proto::connector::service_name(other),
     }
 }
 
@@ -404,6 +390,8 @@ pub fn pairing_view(p: &PairingRequest) -> PairingView {
         choices: p.choices.to_vec(),
         created_at: p.created_at,
         key_fingerprint: p.client_key.as_deref().and_then(desktop::key_fingerprint),
+        suggested_name: crate::avatar::shown_label(&p.client_name),
+        same_client: 0,
     }
 }
 

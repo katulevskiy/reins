@@ -840,7 +840,10 @@ impl Engine {
 
     /// An upload waiting for the user.
     pub fn blob_view(&self, id: &str) -> Result<BlobView, CoreError> {
-        Ok(blob_view(&self.parked_blob(id)?))
+        let info = self.parked_blob(id)?;
+        let mut view = blob_view(&info);
+        self.names().blob(&info.connection_id.0, &mut view);
+        Ok(view)
     }
 
     /// The user decided on an upload: approved, it can be downloaded with its link (and used); refused, the server

@@ -17,6 +17,54 @@ pub fn name() -> String {
     name.unwrap_or_else(|| "Computer".to_owned())
 }
 
+/// The longest name shown, as the phone keeps it.
+const MAX_NAME_CHARS: usize = 64;
+
+/// The name the user gave this computer on their phone, from the copy the phone boxed from its key to this app's
+/// (`sealed`, from `GET /reins/desktop/phone`): one clean line. Opened only with the phone key this app pinned
+/// (`phone_key`, checked by the user once), so that neither the server nor anyone else who can seal to this app names
+/// it. `None` when it has none (it goes by [`name`]), no phone key is pinned yet, or the box is not that phone's.
+#[must_use]
+pub fn given_name(
+    identity: &crate::identity::Identity,
+    phone_key: Option<&str>,
+    sealed: Option<&str>,
+) -> Option<String> {
+    let plain = identity.open_box_from(phone_key?, sealed?).ok()?;
+    let given: reins_proto::device::ComputerName = serde_json::from_slice(&plain).ok()?;
+    let clean: String = given
+        .name?
+        .chars()
+        .map(|c| {
+            if c.is_control() {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let line: String = clean.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MAX_NAME_CHARS).collect();
+    let line = line.trim();
+    (!line.is_empty()).then(|| line.to_owned())
+}
+
+/// Asks the server for the name the user gave this computer on their phone ([`given_name`]). `Ok(None)`: it has
+/// none, or this app has not pinned the phone's key yet.
+pub async fn phone_name(
+    paths: &crate::config::Paths,
+    identity: &crate::identity::Identity,
+) -> Result<Option<String>, String> {
+    let Some(server) = crate::server::oauth::logged_in_server(paths) else {
+        return Ok(None);
+    };
+    let Some(phone_key) = crate::vault_cli::pinned(paths, &server) else {
+        return Ok(None);
+    };
+    let client = crate::server::client::DesktopClient::new(paths)?;
+    let seen = client.phone().await.map_err(|e| e.to_string())?;
+    Ok(given_name(identity, Some(&phone_key), seen.sealed_name.as_deref()))
+}
+
 /// The name this app registers with the server, which the phone shows: "M2A (macOS)" (the phone shows "M2A" and the
 /// Apple logo).
 #[must_use]
@@ -75,6 +123,34 @@ fn pretty_hostname(machine_info: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_name_is_taken_only_from_the_pinned_phone() {
+        let me = crate::identity::Identity::generate();
+        let phone = crate::identity::Identity::generate();
+        let phone_key = phone.public_key();
+        let plain = |name: Option<&str>| {
+            serde_json::to_vec(&reins_proto::device::ComputerName::padded(name.map(str::to_owned))).unwrap()
+        };
+        let boxed = |from: &crate::identity::Identity, name: Option<&str>| from.box_to(&me.public_key(), &plain(name));
+        let from_phone = |name: Option<&str>| boxed(&phone, name).unwrap();
+        let pinned = Some(phone_key.as_str());
+        assert_eq!(given_name(&me, pinned, Some(&from_phone(Some("Work Mac")))).as_deref(), Some("Work Mac"));
+        assert_eq!(given_name(&me, pinned, Some(&from_phone(Some(" Home\n\u{7}Mac ")))).as_deref(), Some("Home Mac"));
+        let long = from_phone(Some(&"x".repeat(90)));
+        assert_eq!(given_name(&me, pinned, Some(&long)).map(|n| n.chars().count()), Some(64));
+        assert_eq!(given_name(&me, pinned, Some(&from_phone(None))), None, "no name: its own");
+        assert_eq!(given_name(&me, pinned, None), None);
+        // Anyone can seal to this app's key (the server too): that is no name.
+        let anonymous = crate::identity::seal_to(&me.public_key(), &plain(Some("Evil"))).unwrap();
+        assert_eq!(given_name(&me, pinned, Some(&anonymous)), None, "not from the phone");
+        let stranger = crate::identity::Identity::generate();
+        assert_eq!(given_name(&me, pinned, Some(&boxed(&stranger, Some("Evil")).unwrap())), None, "another key");
+        assert_eq!(given_name(&me, None, Some(&from_phone(Some("Work Mac")))), None, "no phone key pinned yet");
+        let other_app = crate::identity::Identity::generate();
+        assert_eq!(given_name(&other_app, pinned, Some(&from_phone(Some("Work Mac")))), None, "boxed to another app");
+        assert_eq!(given_name(&me, pinned, Some("not boxed")), None);
+    }
 
     #[test]
     fn the_pretty_hostname_is_read_from_machine_info() {

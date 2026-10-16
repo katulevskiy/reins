@@ -33,7 +33,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             GIT_PUSH_OP,
             Effect::Write,
             "Push with git",
-            "Pushes commits to branches of one repository from git on the user's computer.",
+            "Push commits to branches of one repository from git on the user's computer.",
             vec![REPO, CLIENT_KEY, NONCE, DIGEST, SUMMARY],
             Some("repo"),
         )
@@ -45,7 +45,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             GIT_TAG_PUSH_OP,
             Effect::Write,
             "Push tags with git",
-            "Pushes tags to one repository from git on the user's computer.",
+            "Push tags to one repository from git on the user's computer.",
             vec![REPO, CLIENT_KEY, NONCE, DIGEST, SUMMARY],
             Some("repo"),
         )

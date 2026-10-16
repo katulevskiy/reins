@@ -247,7 +247,7 @@ impl Store {
     /// kept, too large, pruned, or not about a request).
     pub fn audit_snapshot(&self, seq: i64) -> Result<Option<crate::views::ParkedRequest>, CoreError> {
         let blob: Option<Vec<u8>> = {
-            let conn = self.lock()?;
+            let conn = self.read()?;
             // Extra like its writing: an entry whose approval cannot be read still opens.
             conn.query_row("SELECT data FROM audit_snapshots WHERE seq = ?1", params![seq], |r| r.get(0))
                 .optional()
@@ -273,7 +273,7 @@ impl Store {
     }
 
     pub(super) fn audit_rows(&self, clause: &str, param: impl rusqlite::Params) -> Result<Vec<AuditRecord>, CoreError> {
-        let rows = sealed_rows(&*self.lock()?, clause, param)?;
+        let rows = sealed_rows(&*self.read()?, clause, param)?;
         Ok(rows.into_iter().map(|row| self.open_audit(row)).collect())
     }
 

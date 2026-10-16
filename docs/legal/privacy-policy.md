@@ -48,7 +48,7 @@ to that computer's key. We relay them but cannot read them.
 
 **What your phone reports.** Which kinds of integrations you have connected (for example "gmail", "github", without
 account names), and the names and tool lists of MCP servers you added on your phone. This is kept in memory, so that
-AI tools see the right tools. It is replaced when your phone reports again, and lost when the server restarts.
+AI tools can be told which integrations are connected and see your MCP servers' tools. It is replaced when your phone reports again, and lost when the server restarts.
 
 **Large files.** Files too large to pass through a tool call (for example a release asset you upload to GitHub, or a
 large download) are stored on our server's disk for that one operation. Each is deleted when the operation is done,

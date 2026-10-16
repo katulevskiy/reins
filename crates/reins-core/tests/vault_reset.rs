@@ -95,7 +95,7 @@ async fn a_fresh_sign_in_resets_the_vault_and_makes_new_keys() {
     assert_eq!(outcome.session.email, EMAIL);
     let code = app.account_recovery_code().await.expect("the new keys' recovery code");
     assert!(AccountSecret::from_recovery_code(&code).is_some());
-    assert!(app.session().await.is_some());
+    assert!(app.session().await.unwrap().is_some());
 }
 
 #[tokio::test]
@@ -114,7 +114,7 @@ async fn a_sign_in_to_another_account_resets_nothing() {
     let (callback, state, verifier) = sign_in(&app, &server, "other").await;
     let err = app.reset_account(server.uri(), callback, state, verifier).await.unwrap_err();
     assert!(matches!(&err, CoreError::Invalid { reason } if reason.contains("else@example.com")), "{err:?}");
-    assert_eq!(app.session().await.unwrap().email, EMAIL, "still signed in, still locked");
+    assert_eq!(app.session().await.unwrap().unwrap().email, EMAIL, "still signed in, still locked");
 }
 
 #[tokio::test]
@@ -134,7 +134,7 @@ async fn a_refused_reset_keeps_the_account_signed_in_and_locked() {
     let (callback, state, verifier) = sign_in(&app, &server, "again").await;
     let err = app.reset_account(server.uri(), callback, state, verifier).await.unwrap_err();
     assert!(matches!(&err, CoreError::Invalid { reason } if reason.contains("ran out")), "{err:?}");
-    assert_eq!(app.session().await.unwrap().email, EMAIL, "signed in with the new sign-in's tokens");
+    assert_eq!(app.session().await.unwrap().unwrap().email, EMAIL, "signed in with the new sign-in's tokens");
     assert_eq!(
         app.account_recovery_code().await.unwrap_err(),
         CoreError::invalid("This account has no recovery code: it was made with a master password."),

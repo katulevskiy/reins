@@ -458,7 +458,10 @@ async fn bypass_approves_everything_and_ends_by_itself() {
     let grants = env.store().grants().unwrap();
     assert_eq!(grants.len(), 1);
     let expires = grants[0].grant.expires_at.unwrap();
-    assert!(expires <= settings.bypass_until.unwrap() && expires > unix_now() + 29 * 60, "{expires}");
+    // Its length is set from the bypass's end when the cap is read and stamped a moment later, so the expiry can
+    // land a second or two past the end; the bypass's own expiry takes such permissions back (`ap_expire_bypasses`).
+    let end = settings.bypass_until.unwrap();
+    assert!(expires <= end + 5 && expires > unix_now() + 29 * 60, "{expires} vs {end}");
     let entry = env.core.activity(5).await.unwrap().into_iter().find(|e| e.outcome == "sent").unwrap();
     assert_eq!(entry.decided_by, "bypass");
 
@@ -651,6 +654,40 @@ async fn hook_questions_are_judged_by_the_rule_the_phone_reads() {
     for id in ["r2", "r4", "r5"] {
         assert_eq!(env.answer(id).await.unwrap()["outcome"], "result", "{id}");
     }
+}
+
+/// In the background (iOS ends a process that grows there) the app's pass does not load the model: a push waits
+/// unjudged, as from the notification extension, and the pass in front judges it. A model already loaded still judges.
+#[tokio::test]
+async fn in_the_background_a_push_does_not_load_the_model() {
+    let env = env(true).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("gmail/send").await;
+    env.model.set_default(logits(0.999, 0.0005, 0.0005));
+    for id in ["r1", "r2"] {
+        let relayed = serde_json::to_value(request(id, OLD, email("friend@x.com", "hi"))).unwrap();
+        mount(&env.server, "GET", &format!("/reins/api/requests/{id}"), 200, relayed).await;
+    }
+
+    env.core.set_background(true);
+    env.core.handle_push("req".to_owned(), "r1".to_owned()).await.unwrap();
+    assert_eq!(env.waiting().await, ["r1"]);
+    assert!(env.core.autopilot_suggestion("r1".to_owned()).await.unwrap().is_none(), "left for the pass in front");
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), 0, "the model was not loaded");
+    assert_eq!(env.sent().await, 0);
+
+    // In front: the next pass loads the model and judges what waited.
+    env.core.set_background(false);
+    env.deliver(json!({"requests": [], "pairings": [], "blobs": []})).await;
+    assert!(env.suggestion("r1").await.judged);
+    let loads = env.model.loads.load(Ordering::SeqCst);
+    assert!(loads > 0);
+
+    // Loaded now: a push in the background is judged at once, without loading it again.
+    env.core.set_background(true);
+    env.core.handle_push("req".to_owned(), "r2".to_owned()).await.unwrap();
+    assert!(env.suggestion("r2").await.judged);
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), loads);
 }
 
 /// Android's push entry point (FCM in the background, or its retry job): the pass runs there, so a bypass answers
@@ -2224,7 +2261,7 @@ async fn every_decision_goes_through_on_a_store_sealed_before_entry_snapshots() 
     store.meta_set("sealed-by", "an older version").unwrap();
     drop(store);
     let core = restart(&env);
-    assert!(core.session().await.is_some(), "still signed in");
+    assert!(core.session().await.unwrap().is_some(), "still signed in");
     assert_eq!(core.autopilot_settings().await.unwrap().mode, AutopilotMode::Manual);
     let relay = |id: &'static str, conn: &'static str| {
         let core = Arc::clone(&core);

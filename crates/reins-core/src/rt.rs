@@ -39,6 +39,22 @@ where
     }
 }
 
+/// [`run`] for work that can fail: a panic in it comes back as an error instead of unwinding into the caller (through
+/// a binding that does not expect one, it would end the app).
+pub async fn run_caught<F, T>(fut: F) -> Result<T, crate::CoreError>
+where
+    F: Future<Output = Result<T, crate::CoreError>> + Send + 'static,
+    T: Send + 'static,
+{
+    match runtime().spawn(fut).await {
+        Ok(output) => output,
+        Err(e) => {
+            log::error!("reins-core task failed: {e}");
+            Err(crate::CoreError::storage("the app's core failed; try again"))
+        }
+    }
+}
+
 /// Spawns detached background work on the core runtime.
 pub fn spawn<F>(fut: F)
 where
@@ -93,5 +109,12 @@ mod tests {
     #[should_panic(expected = "boom")]
     fn panics_propagate_to_the_caller() {
         futures::executor::block_on(run(async { panic!("boom") }));
+    }
+
+    #[test]
+    fn a_caught_panic_is_an_error() {
+        let failed: Result<u8, crate::CoreError> = futures::executor::block_on(run_caught(async { panic!("boom") }));
+        assert!(matches!(failed, Err(crate::CoreError::Storage { .. })), "{failed:?}");
+        assert_eq!(futures::executor::block_on(run_caught(async { Ok(3) })), Ok(3));
     }
 }

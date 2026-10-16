@@ -19,13 +19,16 @@ final class AppNotifier: Notifier, @unchecked Sendable {
     func itemPending(item: PendingItem) {
         Task { @MainActor in
             guard let model else { return }
-            await model.refreshPending()
             if model.isActive {
+                await model.refreshPending()
                 // The chime still sounds (once per request and per burst), for a phone left open on the desk.
                 model.feedback.requestArrived(item.id, needsUser: true)
                 return
             }
+            // Posted before the refresh: in the background the app may be suspended any moment, and the notification
+            // is what the user needs; it never waits on reading the lists.
             self.post(item.id, NotificationContent.pending(item, settings: self.settings()))
+            await model.refreshPending()
         }
     }
 
@@ -41,14 +44,15 @@ final class AppNotifier: Notifier, @unchecked Sendable {
     func autoDecided(decision: AutoDecisionView) {
         Task { @MainActor in
             guard let model else { return }
-            await model.refreshPending()
             if model.isActive {
+                await model.refreshPending()
                 // In front the list changes before the user's eyes; a quiet sound says why. Never the request chime.
                 model.feedback.requestArrived(decision.requestId, needsUser: false)
                 model.feedback.play(decision.verdict == .approve ? .autoApproved : .autoDenied)
                 return
             }
             self.post(Self.decisionId(decision.requestId), NotificationContent.decision(decision, settings: self.settings()))
+            await model.refreshPending()
         }
     }
 

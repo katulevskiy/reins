@@ -6,6 +6,23 @@ import UIKit
 /// the push announced and tells `AppNotifier`, which notifies or chimes.
 @MainActor
 enum PushReceiver {
+    /// Handles the push and calls `completion` exactly once: with what the work found, or `.failed` when the budget
+    /// runs out or iOS takes the background time back first.
+    static func receive(_ userInfo: [AnyHashable: Any], host: AppHost, completion: @escaping (UIBackgroundFetchResult) -> Void) {
+        let app = UIApplication.shared
+        let task = BackgroundTaskToken { app.endBackgroundTask($0) }
+        let budget = Budgeted(limit: BackgroundBudget.limit, fallback: UIBackgroundFetchResult.failed, work: {
+            await handle(userInfo, host: host)
+        }, finish: { result in
+            completion(result)
+            task.end()
+        })
+        task.started(app.beginBackgroundTask(withName: "push") {
+            budget.expire()
+            task.end()
+        })
+    }
+
     static func handle(_ userInfo: [AnyHashable: Any], host: AppHost) async -> UIBackgroundFetchResult {
         guard let payload = PushPayload(userInfo: userInfo), let model = await host.ready() else { return .noData }
         if payload.kind == "replaced" {
@@ -14,8 +31,6 @@ enum PushReceiver {
         }
         do {
             try await model.core.handlePush(kind: payload.kind, id: payload.id)
-            await model.refreshPending()
-            return .newData
         } catch CoreError.Network {
             // Transient: the next push, refresh or the foreground poll picks it up.
             return .failed
@@ -24,6 +39,10 @@ enum PushReceiver {
         } catch {
             return .noData
         }
+        if Task.isCancelled { return .newData }
+        // In the background this reads only what waits (`AppModel.inBackground`); the rest when the app is opened.
+        await model.refreshPending()
+        return .newData
     }
 }
 
@@ -59,37 +78,32 @@ enum BackgroundRefresh {
 
     private static func run(_ task: BGAppRefreshTask, host: AppHost) {
         schedule()
-        let done = Once()
-        let work = Task { @MainActor in
-            // The refresh may be why the app launched: the store may still be opening.
-            if let model = await host.ready(), case .signedIn = model.session, !model.deviceReplaced {
-                do {
-                    _ = try await model.core.sync(waitSecs: 0)
-                } catch let CoreError.Server(status, _) where status == 403 {
-                    model.markReplaced()
-                } catch {
-                    // Offline: next time.
-                }
-                await model.refreshPending()
-            }
-            if done.claim() { task.setTaskCompleted(success: !Task.isCancelled) }
-        }
+        let budget = Budgeted(limit: BackgroundBudget.limit, fallback: false, work: {
+            await refresh(host: host)
+        }, finish: { success in
+            task.setTaskCompleted(success: success)
+        })
         task.expirationHandler = {
-            work.cancel()
-            if done.claim() { task.setTaskCompleted(success: false) }
+            // Called on a queue of its own: the task is completed on the main queue, where it was registered (and
+            // where `budget` completes it exactly once), and the work in flight is cancelled.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { budget.expire() }
+            }
         }
     }
 
-    /// The task is completed exactly once, by whichever comes first.
-    private final class Once: @unchecked Sendable {
-        private let lock = NSLock()
-        private var claimed = false
-
-        func claim() -> Bool {
-            lock.withLock {
-                defer { claimed = true }
-                return !claimed
-            }
+    /// The refresh itself; true when it ran to the end.
+    private static func refresh(host: AppHost) async -> Bool {
+        // The refresh may be why the app launched: the store may still be opening.
+        guard let model = await host.ready(), case .signedIn = model.session, !model.deviceReplaced else { return true }
+        do {
+            _ = try await model.core.sync(waitSecs: 0)
+        } catch let CoreError.Server(status, _) where status == 403 {
+            model.markReplaced()
+        } catch {
+            // Offline: next time.
         }
+        if !Task.isCancelled { await model.refreshPending() }
+        return !Task.isCancelled
     }
 }

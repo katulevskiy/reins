@@ -370,6 +370,7 @@ private fun TabContent(
             onNewGrant = { app.open(Route.NewGrant) },
             onEnded = { app.open(Route.EndedGrants) },
             onStartingPolicy = container::chooseStartingPolicy,
+            onOpenEntry = { app.open(Route.ActivityDetail(it)) },
             onCovered = onCovered,
         )
         Tab.Connections -> ConnectionsScreen(

@@ -47,11 +47,17 @@ async fn an_ai_buys_a_cart_the_user_approved_with_a_virtual_card() {
     let wait_url = ai.start_authorization(EMAIL).await;
     let code = ai.browser_code(&wait_url).await;
     let item = phone.wait_for_item(Duration::from_secs(20)).await;
-    phone.core.answer_pairing(item.id, true, Some(code), Some("My Claude".to_owned())).await.unwrap();
+    phone.core.answer_pairing(item.id, true, Some(code), Some("My Claude".to_owned()), true).await.unwrap();
     ai.finish_authorization(&wait_url).await;
 
-    // Payments is off: the AI has no payment tools. The user switches it on with a Privacy.com key.
-    assert!(!tool_names(&ai).await.iter().any(|t| t.starts_with("payments_")));
+    // Payments is off: its tools are listed all the same (a chat reads the list once), and the phone answers a call
+    // with how to switch it on. The user switches it on with a Privacy.com key.
+    let no_arguments = json!({});
+    let off = ai.tool("payments_methods_list", &no_arguments);
+    let app_open = async { phone.core.sync(10).await.unwrap() };
+    let (off, _) = tokio::join!(off, app_open);
+    assert_eq!(off["isError"], true);
+    assert!(off.to_string().contains("Payments is not connected in Reins yet"), "{off}");
     phone.core.add_service_account("payments".to_owned(), String::new()).await.unwrap();
     phone.core.payments_connect_provider("privacy".into(), "personal-key".into(), false, false).await.unwrap();
     phone.core.sync(0).await.unwrap();

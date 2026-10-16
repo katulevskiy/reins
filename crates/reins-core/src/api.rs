@@ -28,7 +28,15 @@ use crate::types::{
 };
 use crate::vault_editor::{VaultItemDetail, VaultItemInput, VaultItemSummary, VaultSshKey};
 use crate::vault_passkey::{VaultPasskeyOptions, VaultPasskeyView};
-use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck, rt};
+use crate::{CoreError, GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck, StoreLockGuard, rt};
+
+/// Installs the platform's guard over the store's cross-process file lock, and how long taking the lock may wait for
+/// another process before a call fails as busy (iOS: the app and its notification extension share the store in the
+/// App Group container; see [`StoreLockGuard`]). Call once, before the first `ReinsCore` in the process.
+#[uniffi::export]
+pub fn install_store_lock_guard(guard: Arc<dyn StoreLockGuard>, wait_ms: u32) {
+    crate::store::install_lock_guard(guard, std::time::Duration::from_millis(u64::from(wait_ms)));
+}
 
 #[derive(uniffi::Object)]
 pub struct ReinsCore {
@@ -108,10 +116,19 @@ impl ReinsCore {
         Self::with_connectors(&data_dir, keys.as_ref(), google, notifier, cfg, Self::device_connectors(device))
     }
 
-    /// The signed-in session, if any.
-    pub async fn session(&self) -> Option<SessionInfo> {
+    /// The signed-in session; `None` when signed out. An error says the data could not be read now (another process
+    /// holds it, the app is being suspended, a failure in the core): it says nothing about the session, and the same
+    /// call later does.
+    pub async fn session(&self) -> Result<Option<SessionInfo>, CoreError> {
         let runtime = Arc::clone(&self.runtime);
-        rt::run(async move { runtime.session().await }).await
+        rt::run_caught(async move { runtime.session().await }).await
+    }
+
+    /// Whether the app is in the background, where iOS gives it seconds and ends a process that grows: Autopilot's
+    /// pass then does not load the model; what it would judge waits for the next pass in front (Bypass and Lockdown
+    /// still decide, and a model already loaded still judges).
+    pub fn set_background(&self, background: bool) {
+        self.runtime.set_background(background);
     }
 
     pub async fn login(
@@ -189,12 +206,15 @@ impl ReinsCore {
 
     /// A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
     /// Sync never keeps the app closed or signed out; this is all it ever shows.
-    pub async fn account_sync_notice(&self) -> Option<String> {
+    pub async fn account_sync_notice(&self) -> Result<Option<String>, CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
-        rt::run(async move {
-            let engine = runtime.prepare(generation).await.ok()?;
-            engine.account_sync_notice().ok().flatten()
+        rt::run_caught(async move {
+            let engine = match runtime.prepare(generation).await {
+                Err(CoreError::NotLoggedIn) => return Ok(None),
+                engine => engine?,
+            };
+            engine.account_sync_notice()
         })
         .await
     }
@@ -989,7 +1009,7 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.pairing_view(&pairing_id) }).await;
+            let result = engine.run_account(async { engine.pairing_view(&pairing_id).await }).await;
             runtime.finish(&engine, result)
         })
         .await
@@ -1010,12 +1030,15 @@ impl ReinsCore {
         .await
     }
 
+    /// Answers a pairing. `label` is what the name field holds; it becomes the user's name for the connection only
+    /// when `name_edited` (the user changed the field) and it is not the name the field started with.
     pub async fn answer_pairing(
         &self,
         pairing_id: String,
         approve: bool,
         chosen_code: Option<u8>,
         label: Option<String>,
+        name_edited: bool,
     ) -> Result<(), CoreError> {
         let runtime = Arc::clone(&self.runtime);
         let generation = runtime.generation();
@@ -1024,7 +1047,9 @@ impl ReinsCore {
             engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine
-                .run_account(async { engine.answer_pairing(&pairing_id, approve, chosen_code, label).await })
+                .run_account(async {
+                    engine.answer_pairing(&pairing_id, approve, chosen_code, label, name_edited).await
+                })
                 .await;
             runtime.finish(&engine, result)
         })
@@ -1305,6 +1330,26 @@ impl ReinsCore {
             engine.require_decider()?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.shuffle_connection_blobatar(&connection_id) }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Gives a connection the user's own name for it ("Claude (work)"), kept with the account and shown everywhere
+    /// instead of its own; `None` or an empty name takes it away. One line of at most 64 characters, without control
+    /// or invisible characters. Returns the name kept (`None`: it goes by its own name).
+    pub async fn rename_connection(
+        &self,
+        connection_id: String,
+        name: Option<String>,
+    ) -> Result<Option<String>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(async { engine.rename_connection(&connection_id, name).await }).await;
             runtime.finish(&engine, result)
         })
         .await

@@ -2729,7 +2729,7 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
      * Sync never keeps the app closed or signed out; this is all it ever shows.
      */
-    func accountSyncNotice() async  -> String?
+    func accountSyncNotice() async throws  -> String?
     
     /**
      * The accounts the user connected, oldest first.
@@ -2801,7 +2801,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func answerJoin(id: String, approve: Bool) async throws 
     
-    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?) async throws 
+    /**
+     * Answers a pairing. `label` is what the name field holds; it becomes the user's name for the connection only
+     * when `name_edited` (the user changed the field) and it is not the name the field started with.
+     */
+    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws 
     
     func approvalView(requestId: String) async throws  -> ApprovalView
     
@@ -3115,6 +3119,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     func removeVaultPasskey(credentialId: Data) async throws  -> [VaultPasskeyView]
     
+    /**
+     * Gives a connection the user's own name for it ("Claude (work)"), kept with the account and shown everywhere
+     * instead of its own; `None` or an empty name takes it away. One line of at most 64 characters, without control
+     * or invisible characters. Returns the name kept (`None`: it goes by its own name).
+     */
+    func renameConnection(connectionId: String, name: String?) async throws  -> String?
+    
     func renameProfile(profileId: String, name: String, icon: String?) async throws 
     
     /**
@@ -3218,9 +3229,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func services() async throws  -> [ServiceView]
     
     /**
-     * The signed-in session, if any.
+     * The signed-in session; `None` when signed out. An error says the data could not be read now (another process
+     * holds it, the app is being suspended, a failure in the core): it says nothing about the session, and the same
+     * call later does.
      */
-    func session() async  -> SessionInfo?
+    func session() async throws  -> SessionInfo?
     
     /**
      * Sets the global mode (`connection_id` = `None`) or one connection's. `mode` = `None` returns the global mode to
@@ -3234,6 +3247,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Whether the app's download job waits for Wi-Fi (kept here; the job honours it).
      */
     func setAutopilotWifiOnly(wifiOnly: Bool) async throws 
+    
+    /**
+     * Whether the app is in the background, where iOS gives it seconds and ends a process that grows: Autopilot's
+     * pass then does not load the model; what it would judge waits for the next pass in front (Bypass and Lockdown
+     * still decide, and a model already loaded still judges).
+     */
+    func setBackground(background: Bool) 
     
     /**
      * Locks (`Some(true)`) or unlocks (`Some(false)`, with a warning in the app) a class by hand; `None` lets the
@@ -3605,9 +3625,9 @@ open func accountStatus(account: String)async  -> GmailStatus  {
      * A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
      * Sync never keeps the app closed or signed out; this is all it ever shows.
      */
-open func accountSyncNotice()async  -> String?  {
+open func accountSyncNotice()async throws  -> String?  {
     return
-        try!  await uniffiRustCallAsync(
+        try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_account_sync_notice(
                         self.uniffiCloneHandle()
@@ -3617,8 +3637,7 @@ open func accountSyncNotice()async  -> String?  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionString.lift,
-            errorHandler: nil
-            
+            errorHandler: FfiConverterTypeCoreError_lift
         )
 }
     
@@ -3874,12 +3893,16 @@ open func answerJoin(id: String, approve: Bool)async throws   {
         )
 }
     
-open func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?)async throws   {
+    /**
+     * Answers a pairing. `label` is what the name field holds; it becomes the user's name for the connection only
+     * when `name_edited` (the user changed the field) and it is not the name the field started with.
+     */
+open func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_answer_pairing(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(pairingId),FfiConverterBool.lower(approve),FfiConverterOptionUInt8.lower(chosenCode),FfiConverterOptionString.lower(label)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(pairingId),FfiConverterBool.lower(approve),FfiConverterOptionUInt8.lower(chosenCode),FfiConverterOptionString.lower(label),FfiConverterBool.lower(nameEdited)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -5142,6 +5165,27 @@ open func removeVaultPasskey(credentialId: Data)async throws  -> [VaultPasskeyVi
         )
 }
     
+    /**
+     * Gives a connection the user's own name for it ("Claude (work)"), kept with the account and shown everywhere
+     * instead of its own; `None` or an empty name takes it away. One line of at most 64 characters, without control
+     * or invisible characters. Returns the name kept (`None`: it goes by its own name).
+     */
+open func renameConnection(connectionId: String, name: String?)async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_rename_connection(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterOptionString.lower(name)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
 open func renameProfile(profileId: String, name: String, icon: String?)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -5512,11 +5556,13 @@ open func services()async throws  -> [ServiceView]  {
 }
     
     /**
-     * The signed-in session, if any.
+     * The signed-in session; `None` when signed out. An error says the data could not be read now (another process
+     * holds it, the app is being suspended, a failure in the core): it says nothing about the session, and the same
+     * call later does.
      */
-open func session()async  -> SessionInfo?  {
+open func session()async throws  -> SessionInfo?  {
     return
-        try!  await uniffiRustCallAsync(
+        try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_session(
                         self.uniffiCloneHandle()
@@ -5526,8 +5572,7 @@ open func session()async  -> SessionInfo?  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeSessionInfo.lift,
-            errorHandler: nil
-            
+            errorHandler: FfiConverterTypeCoreError_lift
         )
 }
     
@@ -5570,6 +5615,20 @@ open func setAutopilotWifiOnly(wifiOnly: Bool)async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
+}
+    
+    /**
+     * Whether the app is in the background, where iOS gives it seconds and ends a process that grows: Autopilot's
+     * pass then does not load the model; what it would judge waits for the next pass in front (Bypass and Lockdown
+     * still decide, and a model already loaded still judges).
+     */
+open func setBackground(background: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_reinscore_set_background(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(background),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -6574,6 +6633,260 @@ public func FfiConverterTypeReinsCore_lift(_ handle: UInt64) throws -> ReinsCore
 #endif
 public func FfiConverterTypeReinsCore_lower(_ value: ReinsCore) -> UInt64 {
     return FfiConverterTypeReinsCore.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Keeps the process from being suspended while it holds the store's cross-process file lock (iOS: a file in the App
+ * Group container, shared with the notification extension; iOS ends a process suspended with such a lock held,
+ * `0xdead10cc`). Installed once per process with `install_store_lock_guard`, before the first `ReinsCore`.
+ */
+public protocol StoreLockGuard: AnyObject, Sendable {
+    
+    /**
+     * The process is about to take the lock: hold off suspension (a background task, an expiring activity) until
+     * `unlocked`. False when that cannot be promised (the process is being suspended): the lock is not taken and the
+     * call that needed it fails with a storage error.
+     */
+    func locking()  -> Bool
+    
+    /**
+     * The lock was given back (each `locking` that returned true is followed by exactly one of these).
+     */
+    func unlocked() 
+    
+}
+/**
+ * Keeps the process from being suspended while it holds the store's cross-process file lock (iOS: a file in the App
+ * Group container, shared with the notification extension; iOS ends a process suspended with such a lock held,
+ * `0xdead10cc`). Installed once per process with `install_store_lock_guard`, before the first `ReinsCore`.
+ */
+open class StoreLockGuardImpl: StoreLockGuard, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_reins_core_fn_clone_storelockguard(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_reins_core_fn_free_storelockguard(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * The process is about to take the lock: hold off suspension (a background task, an expiring activity) until
+     * `unlocked`. False when that cannot be promised (the process is being suspended): the lock is not taken and the
+     * call that needed it fails with a storage error.
+     */
+open func locking() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_storelockguard_locking(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The lock was given back (each `locking` that returned true is followed by exactly one of these).
+     */
+open func unlocked()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_storelockguard_unlocked(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceStoreLockGuard {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceStoreLockGuard = UniffiVTableCallbackInterfaceStoreLockGuard(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeStoreLockGuard.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface StoreLockGuard: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeStoreLockGuard.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface StoreLockGuard: handle missing in uniffiClone")
+            }
+        },
+        locking: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<Int8>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> Bool in
+                guard let uniffiObj = try? FfiConverterTypeStoreLockGuard.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.locking(
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterBool.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        unlocked: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeStoreLockGuard.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.unlocked(
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceStoreLockGuard> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceStoreLockGuard>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitStoreLockGuard() {
+    uniffi_reins_core_fn_init_callback_vtable_storelockguard(UniffiCallbackInterfaceStoreLockGuard.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStoreLockGuard: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<StoreLockGuard>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = StoreLockGuard
+
+    public static func lift(_ handle: UInt64) throws -> StoreLockGuard {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return StoreLockGuardImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: StoreLockGuard) -> UInt64 {
+         if let rustImpl = value as? StoreLockGuardImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StoreLockGuard {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: StoreLockGuard, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStoreLockGuard_lift(_ handle: UInt64) throws -> StoreLockGuard {
+    return try FfiConverterTypeStoreLockGuard.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStoreLockGuard_lower(_ value: StoreLockGuard) -> UInt64 {
+    return FfiConverterTypeStoreLockGuard.lower(value)
 }
 
 
@@ -9929,8 +10242,8 @@ public func FfiConverterTypeConnectionAutopilot_lower(_ value: ConnectionAutopil
 public struct ConnectionView: Equatable, Hashable {
     public var id: String
     /**
-     * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
-     * name it was given (`avatar::shown_label`).
+     * Its name as every screen shows it: the one the user gave it ([`Self::name`]), else its own
+     * ([`Self::own_label`]).
      */
     public var label: String
     public var clientHost: String
@@ -9959,13 +10272,35 @@ public struct ConnectionView: Equatable, Hashable {
      * changed by the user).
      */
     public var blobatar: Blobatar?
+    /**
+     * The name the user gave it (`names::typed_name`), synced to every phone of the account; `None`: it goes by its
+     * own.
+     */
+    public var name: String?
+    /**
+     * Its own name as the lists show it without the user's: a computer's ("M2A", not "Reins desktop app on
+     * Mac.localdomain"), else the name it was given (`avatar::shown_label`). The name field's placeholder; clearing
+     * the name brings it back.
+     */
+    public var ownLabel: String
+    /**
+     * The number the core tells a second connection of the same client apart by ("Claude 2", already in
+     * [`Self::own_label`]): set when it paired and the same client was connected, never from the client's text, and
+     * never the user's name. `None` for the first of its client.
+     */
+    public var number: UInt32?
+    /**
+     * What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
+     * (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
+     */
+    public var clientName: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(id: String, 
         /**
-         * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
-         * name it was given (`avatar::shown_label`).
+         * Its name as every screen shows it: the one the user gave it ([`Self::name`]), else its own
+         * ([`Self::own_label`]).
          */label: String, clientHost: String, createdAt: Int64, lastUsedAt: Int64?, 
         /**
          * The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
@@ -9984,7 +10319,25 @@ public struct ConnectionView: Equatable, Hashable {
         /**
          * Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
          * changed by the user).
-         */blobatar: Blobatar? = nil) {
+         */blobatar: Blobatar? = nil, 
+        /**
+         * The name the user gave it (`names::typed_name`), synced to every phone of the account; `None`: it goes by its
+         * own.
+         */name: String? = nil, 
+        /**
+         * Its own name as the lists show it without the user's: a computer's ("M2A", not "Reins desktop app on
+         * Mac.localdomain"), else the name it was given (`avatar::shown_label`). The name field's placeholder; clearing
+         * the name brings it back.
+         */ownLabel: String = "", 
+        /**
+         * The number the core tells a second connection of the same client apart by ("Claude 2", already in
+         * [`Self::own_label`]): set when it paired and the same client was connected, never from the client's text, and
+         * never the user's name. `None` for the first of its client.
+         */number: UInt32? = nil, 
+        /**
+         * What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
+         * (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
+         */clientName: String = "") {
         self.id = id
         self.label = label
         self.clientHost = clientHost
@@ -9995,6 +10348,10 @@ public struct ConnectionView: Equatable, Hashable {
         self.autoIcon = autoIcon
         self.platform = platform
         self.blobatar = blobatar
+        self.name = name
+        self.ownLabel = ownLabel
+        self.number = number
+        self.clientName = clientName
     }
 
     
@@ -10022,7 +10379,11 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
                 keyFingerprint: FfiConverterOptionString.read(from: &buf), 
                 autoIcon: FfiConverterString.read(from: &buf), 
                 platform: FfiConverterOptionString.read(from: &buf), 
-                blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf)
+                blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf), 
+                ownLabel: FfiConverterString.read(from: &buf), 
+                number: FfiConverterOptionUInt32.read(from: &buf), 
+                clientName: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -10037,6 +10398,10 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
         FfiConverterString.write(value.autoIcon, into: &buf)
         FfiConverterOptionString.write(value.platform, into: &buf)
         FfiConverterOptionTypeBlobatar.write(value.blobatar, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterString.write(value.ownLabel, into: &buf)
+        FfiConverterOptionUInt32.write(value.number, into: &buf)
+        FfiConverterString.write(value.clientName, into: &buf)
     }
 }
 
@@ -13138,6 +13503,16 @@ public struct PairingView: Equatable, Hashable {
      * too. `None` for an AI client (or a key that cannot be used).
      */
     public var keyFingerprint: String?
+    /**
+     * The name the name field starts with: its own, or one of its own ("Claude 2") when a connection of the same
+     * client is there already (`names::suggested_name`).
+     */
+    public var suggestedName: String
+    /**
+     * How many connections of the same client there are already: two accounts of one AI (two Claude.ai accounts)
+     * look the same to Reins, so the app puts the cursor in the name field for the user to tell this one apart.
+     */
+    public var sameClient: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13145,13 +13520,23 @@ public struct PairingView: Equatable, Hashable {
         /**
          * The Reins desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
          * too. `None` for an AI client (or a key that cannot be used).
-         */keyFingerprint: String?) {
+         */keyFingerprint: String?, 
+        /**
+         * The name the name field starts with: its own, or one of its own ("Claude 2") when a connection of the same
+         * client is there already (`names::suggested_name`).
+         */suggestedName: String = "", 
+        /**
+         * How many connections of the same client there are already: two accounts of one AI (two Claude.ai accounts)
+         * look the same to Reins, so the app puts the cursor in the name field for the user to tell this one apart.
+         */sameClient: UInt32 = UInt32(0)) {
         self.id = id
         self.clientName = clientName
         self.clientHost = clientHost
         self.choices = choices
         self.createdAt = createdAt
         self.keyFingerprint = keyFingerprint
+        self.suggestedName = suggestedName
+        self.sameClient = sameClient
     }
 
     
@@ -13175,7 +13560,9 @@ public struct FfiConverterTypePairingView: FfiConverterRustBuffer {
                 clientHost: FfiConverterString.read(from: &buf), 
                 choices: FfiConverterData.read(from: &buf), 
                 createdAt: FfiConverterInt64.read(from: &buf), 
-                keyFingerprint: FfiConverterOptionString.read(from: &buf)
+                keyFingerprint: FfiConverterOptionString.read(from: &buf), 
+                suggestedName: FfiConverterString.read(from: &buf), 
+                sameClient: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -13186,6 +13573,8 @@ public struct FfiConverterTypePairingView: FfiConverterRustBuffer {
         FfiConverterData.write(value.choices, into: &buf)
         FfiConverterInt64.write(value.createdAt, into: &buf)
         FfiConverterOptionString.write(value.keyFingerprint, into: &buf)
+        FfiConverterString.write(value.suggestedName, into: &buf)
+        FfiConverterUInt32.write(value.sameClient, into: &buf)
     }
 }
 
@@ -23082,6 +23471,19 @@ public func uniffiForeignFutureHandleCountReinsCore() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
 /**
+ * Installs the platform's guard over the store's cross-process file lock, and how long taking the lock may wait for
+ * another process before a call fails as busy (iOS: the app and its notification extension share the store in the
+ * App Group container; see [`StoreLockGuard`]). Call once, before the first `ReinsCore` in the process.
+ */
+public func installStoreLockGuard(`guard`: StoreLockGuard, waitMs: UInt32)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_install_store_lock_guard(
+        FfiConverterTypeStoreLockGuard_lower(`guard`),
+        FfiConverterUInt32.lower(waitMs),uniffiCallStatus
+    )
+}
+}
+/**
  * Minor units as the user reads them ("$19.98").
  */
 public func paymentsFormatAmount(minor: Int64, currency: String) -> String  {
@@ -23121,6 +23523,9 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_reins_core_checksum_func_install_store_lock_guard() != 42374) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_func_payments_format_amount() != 50711) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -23136,7 +23541,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_account_status() != 62124) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_account_sync_notice() != 55961) {
+    if (uniffi_reins_core_checksum_method_reinscore_account_sync_notice() != 34339) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_accounts() != 48644) {
@@ -23178,7 +23583,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_answer_join() != 45029) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_answer_pairing() != 8400) {
+    if (uniffi_reins_core_checksum_method_reinscore_answer_pairing() != 16934) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_approval_view() != 29546) {
@@ -23382,6 +23787,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_remove_vault_passkey() != 31346) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_rename_connection() != 945) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_rename_profile() != 43478) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -23439,13 +23847,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_services() != 31924) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_session() != 8809) {
+    if (uniffi_reins_core_checksum_method_reinscore_session() != 56857) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_mode() != 21760) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_wifi_only() != 5322) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_set_background() != 57933) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_class_lock() != 43604) {
@@ -23664,6 +24075,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_ownercheck_confirm() != 63799) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_storelockguard_locking() != 18347) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_storelockguard_unlocked() != 15014) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_constructor_reinscore_new() != 41877) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -23675,6 +24092,7 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitModelRuntime()
     uniffiCallbackInitNotifier()
     uniffiCallbackInitOwnerCheck()
+    uniffiCallbackInitStoreLockGuard()
     return InitializationResult.ok
 }()
 

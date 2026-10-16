@@ -99,8 +99,12 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun activity(limit: UInt) = activity
 
-    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?) {
+    /** Whether the user edited the name field, for each answer in [pairingAnswers]. */
+    val pairingNameEdited = CopyOnWriteArrayList<Boolean>()
+
+    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?, nameEdited: Boolean) {
         pairingAnswers += listOf(pairingId, approve, chosenCode, label)
+        pairingNameEdited += nameEdited
         pending = pending.filterNot { it.id == pairingId }
     }
 
@@ -440,6 +444,21 @@ class FakeCore : ReinsCoreInterface {
         createdGrantAccounts += account
     }
 
+    /** The renames, in order: "c1=Claude (work)", "c1=" (cleared). */
+    val renames = CopyOnWriteArrayList<String>()
+
+    /** As the core: one clean line of at most 64 characters; blank takes the name away (its own name again). */
+    override suspend fun renameConnection(connectionId: String, name: String?): String? {
+        val clean = name?.let { dev.reins.android.ui.common.untrustedName(it, 64) }?.ifEmpty { null }
+        renames += "$connectionId=${clean.orEmpty()}"
+        connections = connections.map {
+            if (it.id != connectionId) return@map it
+            val own = it.ownLabel.ifEmpty { if (it.name == null) it.label else it.clientName }
+            it.copy(name = clean, label = clean ?: own, ownLabel = own, clientName = it.clientName.ifEmpty { own })
+        }
+        return clean
+    }
+
     override suspend fun setConnectionIcon(connectionId: String, icon: String?) {
         icons[connectionId] = icon ?: "auto"
         connections = connections.map { if (it.id == connectionId) it.copy(icon = icon) else it }
@@ -565,7 +584,10 @@ class FakeCore : ReinsCoreInterface {
         ssoFinishError = null
         ssoFinishErrorAfterSignIn = null
         syncNotice = null
+        syncNoticeError = null
         syncNoticeDismissals.set(0)
+        sessionError = null
+        sessionThrows = 0
         ssoBegins.clear()
         serverInfos.clear()
         ssoFinishes.clear()
@@ -621,8 +643,13 @@ class FakeCore : ReinsCoreInterface {
     /** The core's sync notice, and how often it was dismissed. */
     @Volatile var syncNotice: String? = null
     val syncNoticeDismissals = java.util.concurrent.atomic.AtomicInteger()
+    /** Thrown by [accountSyncNotice] while set. A failed read is not "no notice". */
+    @Volatile var syncNoticeError: CoreException? = null
 
-    override suspend fun accountSyncNotice(): String? = syncNotice
+    override suspend fun accountSyncNotice(): String? {
+        syncNoticeError?.let { throw it }
+        return syncNotice
+    }
 
     override suspend fun restoreAccountSyncBackup(): Boolean = false
 
@@ -872,7 +899,21 @@ class FakeCore : ReinsCoreInterface {
         alwaysAsk[project to env] = always
     }
 
-    override suspend fun session() = session
+    /**
+     * Thrown by [session] while set. [sessionThrows] is how many of the next calls throw, after which the read
+     * succeeds; 0 throws every time. A throw is a busy or failed store, not "signed out".
+     */
+    @Volatile var sessionError: CoreException? = null
+    @Volatile var sessionThrows: Int = 0
+
+    override suspend fun session(): SessionInfo? {
+        val error = sessionError ?: return session
+        if (sessionThrows > 0) {
+            sessionThrows -= 1
+            if (sessionThrows == 0) sessionError = null
+        }
+        throw error
+    }
 
     /** The foreground poll: returns quickly with what is pending. */
     override suspend fun sync(waitSecs: UInt): List<PendingItem> {
@@ -1058,6 +1099,9 @@ class FakeCore : ReinsCoreInterface {
     override fun setModelRuntime(runtime: ModelRuntime) {
         this.runtime = runtime
     }
+
+    /** The fake does not load a model either way. */
+    override fun setBackground(background: Boolean) = Unit
 
     override suspend fun autopilotSettings(): AutopilotSettings {
         val now = now()

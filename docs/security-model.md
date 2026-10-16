@@ -326,8 +326,11 @@ computer ask again.
 The server is a relay, and it is in a position to read what it relays.
 
 **Stored in its database:** your Vaultwarden account (email, master password hash, encrypted vault, devices), the
-phone's push token, the AI clients that registered, your AI connections (name, label, host, creation and last-use
-times), and hashed refresh tokens.
+phone's push token, the AI clients that registered, your AI connections (the name each gave itself, the label it
+paired with, host, creation and last-use times), and hashed refresh tokens. The names you give connections on the
+phone are not among them: they live in the phone's encrypted account state. A renamed computer's name is kept for its
+desktop app in a box from the phone's key to the app's key, padded to one length; the server cannot read or forge it,
+and the app ignores it until it has pinned the phone's key.
 
 **In memory only:** waiting requests and their results (at most 10 minutes), pairings and sign-in sessions (minutes),
 sealed "drop your secrets" notes for paired computers (a day at most),

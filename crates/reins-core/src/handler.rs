@@ -24,7 +24,9 @@ use crate::{CoreError, text};
 pub(crate) fn ai_message(e: &CoreError) -> String {
     match e {
         CoreError::GmailNeedsConsent => {
-            "Gmail is not connected on the phone. Ask the user to open the Reins app and connect Gmail.".to_owned()
+            "Gmail is not connected in Reins, or needs the user's permission again. Ask the user to connect Gmail in \
+             the Reins app on their phone (Connections), then call the tool again. No new chat is needed."
+                .to_owned()
         }
         CoreError::Network {
             ..

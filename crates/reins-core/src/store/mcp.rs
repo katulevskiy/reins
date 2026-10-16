@@ -77,7 +77,7 @@ fn json<T: Serialize>(value: &T) -> Result<String, CoreError> {
 impl Store {
     /// Every added server, oldest first.
     pub fn mcp_servers(&self) -> Result<Vec<StoredMcpServer>, CoreError> {
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let mut stmt = conn.prepare(&format!("SELECT {COLUMNS} FROM mcp_servers ORDER BY added_at, id"))?;
         let rows = stmt.query_map([], from_row)?.collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
@@ -85,7 +85,7 @@ impl Store {
 
     pub fn mcp_server(&self, id: &str) -> Result<Option<StoredMcpServer>, CoreError> {
         Ok(self
-            .lock()?
+            .read()?
             .query_row(&format!("SELECT {COLUMNS} FROM mcp_servers WHERE id = ?1"), params![id], from_row)
             .optional()?)
     }

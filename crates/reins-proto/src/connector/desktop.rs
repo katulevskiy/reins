@@ -60,7 +60,7 @@ fn host_tools(service: &'static str, fetch: &'static str, push: &'static str, ta
             crate::desktop::GIT_PUSH_OP,
             Effect::Write,
             "Push with git",
-            "Pushes commits to branches of one repository from git on the user's computer.",
+            "Push commits to branches of one repository from git on the user's computer.",
             vec![REPO, CLIENT_KEY, NONCE, DIGEST, SUMMARY],
             Some("repo"),
         )
@@ -72,7 +72,7 @@ fn host_tools(service: &'static str, fetch: &'static str, push: &'static str, ta
             crate::desktop::GIT_TAG_PUSH_OP,
             Effect::Write,
             "Push tags with git",
-            "Pushes tags to one repository from git on the user's computer.",
+            "Push tags to one repository from git on the user's computer.",
             vec![REPO, CLIENT_KEY, NONCE, DIGEST, SUMMARY],
             Some("repo"),
         )
@@ -151,7 +151,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             SESSION_END_OP,
             Effect::Write,
             "End a work session",
-            "Ends the permissions of a work session now. Takes access away only, so it is never asked.",
+            "End the permissions of a work session now. Takes access away only, so it is never asked.",
             vec![list_p("grants", 50, 64, "The session's permission ids."), CLIENT_KEY, NONCE],
             None,
         )
@@ -164,7 +164,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             TOKEN_STORE_OP,
             Effect::Write,
             "Add a git host account from the computer",
-            "Hands a git host's token found on the computer (gh, .git-credentials) to the phone's integration of that \
+            "Hand a git host's token found on the computer (gh, .git-credentials) to the phone's integration of that \
              host, in a box only the phone opens.",
             vec![
                 choice_p("service", &["github", "gitlab", "codeberg", "bitbucket"], true, "The integration."),

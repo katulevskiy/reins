@@ -27,7 +27,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             METHODS_LIST_OP,
             Effect::List,
             "List payment methods",
-            "Lists the payment methods the user allows AIs to use: an id, the kind (virtual_card: a new card made for \
+            "List the payment methods the user allows AIs to use: an id, the kind (virtual_card: a new card made for \
              each purchase, locked to the store and capped at the approved total; card: a card from the user's vault; \
              merchant_account: the payment method saved in the user's account at the store; pay_on_phone: the user \
              pays on their phone at the store's checkout), a nickname, and for cards the brand, the last four digits \
@@ -41,7 +41,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             ADDRESSES_LIST_OP,
             Effect::List,
             "List shipping addresses",
-            "Lists the user's shipping addresses: an id, a label (Home, Work), the city, the region and the country. \
+            "List the user's shipping addresses: an id, a label (Home, Work), the city, the region and the country. \
              The street is never shown; the full address comes with an approved purchase. Use an id as ship_to in \
              payments_purchase_request.",
             vec![],
@@ -53,7 +53,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             PURCHASE_REQUEST_OP,
             Effect::Write,
             "Buy something",
-            "Asks the user to approve one purchase, exactly as the store's checkout shows it: the store, its page, \
+            "Ask the user to approve one purchase, exactly as the store's checkout shows it: the store, its page, \
              every item with its quantity and unit price, shipping, tax, a discount, and the total, which must be \
              exactly the items plus shipping and tax minus the discount. The user sees it on their phone like a \
              receipt and approves with biometrics (or a spend limit they set approves it). When approved, the answer \
@@ -115,8 +115,8 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             PURCHASE_COMPLETE_OP,
             Effect::Write,
             "Report how a purchase went",
-            "After checking out an approved purchase: says whether the order went through, with the store's order \
-             number, the amount actually charged and the receipt page, for the user's spending history. A virtual \
+            "Report how an approved purchase went, after checking out: whether the order went through, with the \
+             store's order number, the amount actually charged and the receipt page, for the user's spending history. A virtual \
              card made for a purchase that failed or was cancelled is closed. Does not ask the user.",
             vec![
                 str_p("purchase_id", 64, true, "The purchase_id of the approved purchase."),

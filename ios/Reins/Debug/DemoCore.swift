@@ -171,6 +171,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
             default: break
             }
+            // `-demoRunningEntries N`: N requests that mode decided, one every few seconds of its 12 minutes.
+            if let j = args.firstIndex(of: "-demoRunningEntries"), j + 1 < args.count, let n = Int(args[j + 1]) {
+                let decidedBy = args[i + 1]
+                let firstId = (s.activity.map(\.id).max() ?? 0) + 1
+                let decided = (0..<n).map { k in
+                    DemoData.entry(
+                        firstId + Int64(k), at: now - 700 + Int64(k * 600 / max(n, 1)), action: "read",
+                        outcome: decidedBy == "lockdown" ? "denied" : "released", detail: "Request \(k + 1)", decidedBy: decidedBy
+                    )
+                }
+                s.activity = decided.reversed() + s.activity
+            }
         }
         if args.contains("-demoSyncedPush") || args.contains("-demoSyncedPushFails"), let push = s.views["req20"], let git = push.git,
            let i = s.activity.firstIndex(where: { $0.id == 14 }) {
@@ -581,6 +593,23 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// An AI app asks to connect, parked like a pushed pairing (a second account of one already connected, for one).
+    /// Returns its id.
+    func addDemoPairing(clientName: String, clientHost: String) async throws -> String {
+        locked { s in
+            s.nextConnection += 1
+            let id = "pair-demo-\(s.nextConnection)"
+            let p = PairingView(
+                id: id, clientName: clientName, clientHost: clientHost, choices: Data([7, 42, 88]),
+                createdAt: Self.now(), keyFingerprint: nil
+            )
+            s.pairings[id] = p
+            s.pending.insert(DemoData.pairingItem(p), at: 0)
+            s.pendingVersion += 1
+            return id
+        }
+    }
+
     /// A desktop app on "studio" asks to pair, parked like a pushed pairing. Codes starting with "BBBB" have expired.
     func pairingByCode(userCode: String) async throws -> PairingView {
         try await latency()
@@ -588,7 +617,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         if code.hasPrefix("BBBB") { throw CoreError.NotFound }
         return locked { s in
             let id = "code-\(code)"
-            if let parked = s.pairings[id] { return parked }
+            if let parked = s.pairings[id] { return Self.named(parked, in: s).view }
             let p = PairingView(
                 id: id, clientName: "studio", clientHost: "studio", choices: Data([47, 12, 83]),
                 createdAt: Self.now(), keyFingerprint: "3170 6422"
@@ -596,14 +625,55 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             s.pairings[id] = p
             s.pending.insert(DemoData.pairingItem(p), at: 0)
             s.pendingVersion += 1
-            return p
+            // Filled as pairingView fills it: the name field's start and whether the client is connected already.
+            return Self.named(p, in: s).view
         }
     }
 
+    /// As the core: the name field starts with the client's own name, or "Claude 2" when the same client is connected
+    /// already (the same name from the same host).
     func pairingView(pairingId: String) async throws -> PairingView {
         try locked { s in
             guard let p = s.pairings[pairingId] else { throw CoreError.NotFound }
-            return p
+            return Self.named(p, in: s).view
+        }
+    }
+
+    /// As the core's `named_pairing`: the pairing with its suggestion filled from the connections there are now, and
+    /// the number a second of the same client is told apart by (nil for the first).
+    private static func named(_ pairing: PairingView, in s: State) -> (view: PairingView, number: UInt32?) {
+        var p = pairing
+        let same = s.connections.filter {
+            $0.clientHost.lowercased() == p.clientHost.lowercased()
+                && ($0.clientName.isEmpty ? $0.label : $0.clientName).lowercased() == p.clientName.lowercased()
+        }.count
+        p.sameClient = UInt32(same)
+        p.suggestedName = p.clientName
+        guard same > 0 else { return (p, nil) }
+        let taken = Set(s.connections.map { $0.label.lowercased() })
+        var n = same + 1
+        while taken.contains("\(p.clientName) \(n)".lowercased()) { n += 1 }
+        p.suggestedName = "\(p.clientName) \(n)"
+        return (p, UInt32(n))
+    }
+
+    /// As the core: one clean line of at most 64 characters; blank takes the name away.
+    func renameConnection(connectionId: String, name: String?) async throws -> String? {
+        try locked { s in
+            guard let i = s.connections.firstIndex(where: { $0.id == connectionId }) else { throw CoreError.NotFound }
+            let clean = name.map { untrustedName($0, limit: 64) }.flatMap { $0.isEmpty ? nil : $0 }
+            var c = s.connections[i]
+            if c.ownLabel.isEmpty { c.ownLabel = c.name == nil ? c.label : c.clientName }
+            if c.clientName.isEmpty { c.clientName = c.ownLabel }
+            let old = c.label
+            c.name = clean
+            c.label = clean ?? c.ownLabel
+            s.connections[i] = c
+            for j in s.pending.indices where s.pending[j].connectionId == connectionId && s.pending[j].connectionLabel == old {
+                s.pending[j].connectionLabel = c.label
+            }
+            s.pendingVersion += 1
+            return clean
         }
     }
 
@@ -722,22 +792,31 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?) async throws {
+    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws {
         try await latency()
         try locked { s in
-            guard let p = s.pairings[pairingId] else { throw CoreError.NotFound }
+            guard let parked = s.pairings[pairingId] else { throw CoreError.NotFound }
             Self.removePending(&s, pairingId)
             s.pairings[pairingId] = nil
             guard approve else { return }
+            // As the core, the suggestion and number are worked out again now, from the connections there are.
+            let (p, number) = Self.named(parked, in: s)
             s.nextConnection += 1
-            let name = label.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } ?? p.clientName
+            let typed = label.map { untrustedName($0, limit: 64) }.flatMap { $0.isEmpty ? nil : $0 }
+            // As the core: only a name the user edited is theirs, and never the client's own or the suggestion.
+            let own = [p.clientName, p.suggestedName].map { untrustedName($0, limit: 64).lowercased() }
+            let given: String? = nameEdited ? typed.flatMap { own.contains($0.lowercased()) ? nil : $0 } : nil
+            // A second of the same client keeps the suggestion's number as part of its own name ("Claude 2").
+            let ownLabel = number.map { "\(p.clientName) \($0)" } ?? p.clientName
+            let name = given ?? ownLabel
             let id = "c\(s.nextConnection)"
             // The demo's computers are Macs (a real one says its platform in the name it registers with).
             let platform: String? = p.keyFingerprint != nil ? "macos" : nil
             s.connections.append(ConnectionView(
                 id: id, label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil, keyFingerprint: p.keyFingerprint,
-                autoIcon: Self.autoIcon(label: name, computer: p.keyFingerprint != nil, platform: platform), platform: platform,
-                blobatar: Self.firstBlobatar(id, others: s.connections.compactMap(\.blobatar))
+                autoIcon: Self.autoIcon(label: p.clientName, computer: p.keyFingerprint != nil, platform: platform), platform: platform,
+                blobatar: Self.firstBlobatar(id, others: s.connections.compactMap(\.blobatar)),
+                name: given, ownLabel: ownLabel, number: given == nil ? number : nil, clientName: p.clientName
             ))
         }
     }
@@ -1398,6 +1477,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     }
 
     func setModelRuntime(runtime: ModelRuntime) {}
+
+    func setBackground(background: Bool) {}
 
     func autopilotSettings() async throws -> AutopilotSettings {
         locked { s in

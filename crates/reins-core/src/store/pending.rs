@@ -135,7 +135,7 @@ impl Store {
 
     /// True when `id` is parked or was already answered.
     pub fn is_known(&self, id: &str) -> Result<bool, CoreError> {
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let found: Option<i64> = conn
             .query_row(
                 "SELECT 1 FROM pending WHERE id = ?1 UNION ALL SELECT 1 FROM handled WHERE id = ?1 LIMIT 1",

@@ -31,7 +31,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "list_repos",
             List,
             "List GitHub repositories",
-            "Lists repositories (name, visibility, description), most recently pushed first. By default the ones the \
+            "List repositories (name, visibility, description), most recently pushed first. By default the ones the \
              user's GitHub token can reach; `org` lists an organization's, `owner` a user's (public ones).",
             vec![
                 str_p("query", 100, false, "Only repositories whose name contains this text."),
@@ -55,7 +55,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "org_repo_list",
             List,
             "List the repositories of a GitHub organization",
-            "Lists the repositories of one organization that the token can see, most recently pushed first.",
+            "List the repositories of one organization that the token can see, most recently pushed first.",
             vec![
                 str_p("org", 100, true, "The organization."),
                 choice_p("type", &["all", "public", "private", "forks", "sources", "member"], false, "Default: all."),
@@ -70,7 +70,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_get",
             Read,
             "Read a GitHub repository's details",
-            "Reads one repository: description, topics, default branch, visibility, size, languages, counts, license, \
+            "Read one repository: description, topics, default branch, visibility, size, languages, counts, license, \
              whether it is a fork (and of what) and which features are on.",
             vec![REPO],
             Some("repo"),
@@ -81,7 +81,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_create",
             Write,
             "Create a GitHub repository",
-            "Creates a repository for the user, or in an organization with `org`. It is private unless `private` is \
+            "Create a repository for the user, or in an organization with `org`. It is private unless `private` is \
              false. The user sees the name and settings and approves on their phone.",
             vec![
                 str_p("name", 100, true, "The repository name."),
@@ -102,7 +102,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_update",
             Write,
             "Change GitHub repository settings",
-            "Changes the settings given (description, homepage, default branch, features, merge options, archiving); \
+            "Change the settings given (description, homepage, default branch, features, merge options, archiving); \
              everything else stays. Visibility is changed with github_repo_visibility_set and topics with \
              github_repo_topics_set. An archived repository cannot be unarchived through the API. The user sees the old \
              and new values and approves on their phone.",
@@ -130,7 +130,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_fork",
             Write,
             "Fork a GitHub repository",
-            "Forks a repository into the user's account, or into `org`. The fork is made in the background by GitHub. \
+            "Fork a repository into the user's account, or into `org`. The fork is made in the background by GitHub. \
              The user approves on their phone.",
             vec![
                 REPO,
@@ -147,7 +147,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_forks_list",
             List,
             "List forks of a GitHub repository",
-            "Lists the forks of a repository.",
+            "List the forks of a repository.",
             vec![
                 REPO,
                 choice_p("sort", &["newest", "oldest", "stargazers", "watchers"], false, "Default: newest."),
@@ -161,7 +161,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_delete",
             Write,
             "Delete a GitHub repository",
-            "PERMANENTLY deletes a repository with its issues, pull requests and wiki. The token needs the delete \
+            "PERMANENTLY delete a repository with its issues, pull requests and wiki. The token needs the delete \
              permission. The user sees what is deleted and approves on their phone, every time (a standing permission \
              never covers it).",
             vec![REPO],
@@ -175,7 +175,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_transfer",
             Write,
             "Transfer a GitHub repository",
-            "Starts moving a repository to another user or organization (optionally renaming it). The new owner may \
+            "Start moving a repository to another user or organization (optionally renaming it). The new owner may \
              have to accept. The user approves on their phone, every time (a standing permission never covers it).",
             vec![
                 REPO,
@@ -192,7 +192,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_visibility_set",
             Write,
             "Make a GitHub repository public or private",
-            "Changes who can see a repository. Making it public exposes all its code and history. The user approves \
+            "Change who can see a repository. Making it public exposes all its code and history. The user approves \
              on their phone, every time (a standing permission never covers it).",
             vec![REPO, choice_p("visibility", &["public", "private"], true, "The new visibility.")],
             Some("repo"),
@@ -205,7 +205,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_languages",
             Read,
             "Read the languages of a GitHub repository",
-            "Reads the languages used in a repository with their share (bytes and percent).",
+            "Read the languages used in a repository with their share (bytes and percent).",
             vec![REPO],
             Some("repo"),
         ),
@@ -215,7 +215,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_contributors",
             Read,
             "List contributors of a GitHub repository",
-            "Lists the people who committed to a repository with their number of commits, most first.",
+            "List the people who committed to a repository with their number of commits, most first.",
             vec![REPO, LIMIT],
             Some("repo"),
         ),
@@ -225,7 +225,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_topics_get",
             Read,
             "Read the topics of a GitHub repository",
-            "Reads the topics (tags) of a repository.",
+            "Read the topics (tags) of a repository.",
             vec![REPO],
             Some("repo"),
         ),
@@ -235,7 +235,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_topics_set",
             Write,
             "Set the topics of a GitHub repository",
-            "Replaces all topics of a repository with the given ones (lowercase letters, digits and hyphens, at most \
+            "Replace all topics of a repository with the given ones (lowercase letters, digits and hyphens, at most \
              20, 50 characters each; an empty list removes them all). The user approves on their phone.",
             vec![REPO, list_p("topics", 20, 50, "The complete new list of topics.")],
             Some("repo"),
@@ -247,7 +247,7 @@ fn repository_tools() -> Vec<ToolSpec> {
             "repo_readme_get",
             Read,
             "Read the README of a GitHub repository",
-            "Reads the README of a repository (its default branch) as text, at most 100000 characters.",
+            "Read the README of a repository (its default branch) as text, at most 100000 characters.",
             vec![REPO],
             Some("repo"),
         ),
@@ -264,7 +264,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_list",
             List,
             "List branches of a GitHub repository",
-            "Lists the branches of a repository (name, protected or not).",
+            "List the branches of a repository (name, protected or not).",
             vec![REPO, bool_p("protected", "Only protected (true) or only unprotected (false) branches."), LIMIT],
             Some("repo"),
         ),
@@ -274,7 +274,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_get",
             Read,
             "Read a GitHub branch",
-            "Reads one branch: its head commit (sha, message, author, date) and whether it is protected.",
+            "Read one branch: its head commit (sha, message, author, date) and whether it is protected.",
             vec![REPO, BRANCH],
             Some("repo"),
         ),
@@ -284,12 +284,17 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_create",
             Write,
             "Create a GitHub branch",
-            "Creates a new branch pointing at the head of another branch, a tag or a commit sha (default: the default \
+            "Create a new branch pointing at the head of another branch, a tag or a commit sha (default: the default \
              branch). The user approves on their phone.",
             vec![
                 REPO,
                 str_p("branch", 250, true, "The name of the new branch."),
-                str_p("from", 250, false, "A branch, tag or full commit sha to start from. Default: the default branch."),
+                str_p(
+                    "from",
+                    250,
+                    false,
+                    "A branch, tag or full commit sha to start from. Default: the default branch.",
+                ),
             ],
             Some("repo"),
         )
@@ -300,7 +305,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_delete",
             Write,
             "Delete a GitHub branch",
-            "Deletes a branch (not the default branch, not a protected one). The commits stay in git for a while. The \
+            "Delete a branch (not the default branch, not a protected one). The commits stay in git for a while. The \
              user sees the branch's head and approves on their phone.",
             vec![REPO, BRANCH],
             Some("repo"),
@@ -312,7 +317,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_rename",
             Write,
             "Rename a GitHub branch",
-            "Renames a branch; open pull requests follow it. Renaming the default branch is asked for every time. The \
+            "Rename a branch; open pull requests follow it. Renaming the default branch is asked for every time. The \
              user approves on their phone.",
             vec![REPO, BRANCH, str_p("new_name", 250, true, "The new branch name.")],
             Some("repo"),
@@ -324,7 +329,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_merge",
             Write,
             "Merge one GitHub branch into another",
-            "Merges `head` (a branch or commit sha) into the branch `base` with a merge commit, without a pull request. \
+            "Merge `head` (a branch or commit sha) into the branch `base` with a merge commit, without a pull request. \
              The user sees the commits that would be merged and approves on their phone. Conflicts are reported, not \
              resolved.",
             vec![
@@ -342,7 +347,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_protection_get",
             Read,
             "Read the protection of a GitHub branch",
-            "Reads the protection rules of a branch (required checks, reviews, force-push and deletion rules). Needs \
+            "Read the protection rules of a branch (required checks, reviews, force-push and deletion rules). Needs \
              admin access to the repository.",
             vec![REPO, BRANCH],
             Some("repo"),
@@ -353,7 +358,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_protection_set",
             Write,
             "Set the protection of a GitHub branch",
-            "Replaces the protection rules of a branch: every rule not given here is turned off. `required_approvals` \
+            "Replace the protection rules of a branch: every rule not given here is turned off. `required_approvals` \
              (0 to 6) requires pull request reviews; `status_check_contexts` lists checks that must pass. \
              `restrict_push_users` and `restrict_push_teams` (organization repositories) limit who can push. The user \
              sees the old and new rules and approves on their phone, every time (a standing permission never covers \
@@ -363,7 +368,13 @@ fn branch_tools() -> Vec<ToolSpec> {
                 BRANCH,
                 list_p("status_check_contexts", 50, 200, "Names of the checks that must pass before merging."),
                 bool_p("strict_status_checks", "Branches must be up to date before merging (with status checks)."),
-                int_p("required_approvals", 0, 6, None, "Approving reviews required; 0 or missing means no review rule."),
+                int_p(
+                    "required_approvals",
+                    0,
+                    6,
+                    None,
+                    "Approving reviews required; 0 or missing means no review rule.",
+                ),
                 bool_p("dismiss_stale_reviews", "New commits dismiss earlier approvals (with required_approvals)."),
                 bool_p("require_code_owner_reviews", "A code owner must approve (with required_approvals)."),
                 bool_p("enforce_admins", "The rules apply to administrators too."),
@@ -385,7 +396,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "branch_protection_delete",
             Write,
             "Remove the protection of a GitHub branch",
-            "Removes all protection rules of a branch. The user approves on their phone, every time (a standing \
+            "Remove all protection rules of a branch. The user approves on their phone, every time (a standing \
              permission never covers it).",
             vec![REPO, BRANCH],
             Some("repo"),
@@ -398,7 +409,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "ruleset_list",
             Read,
             "List the rulesets of a GitHub repository",
-            "Lists the rulesets of a repository (name, target, enforcement).",
+            "List the rulesets of a repository (name, target, enforcement).",
             vec![REPO, LIMIT],
             Some("repo"),
         ),
@@ -408,7 +419,7 @@ fn branch_tools() -> Vec<ToolSpec> {
             "ruleset_get",
             Read,
             "Read a GitHub ruleset",
-            "Reads one ruleset: which branches or tags it targets and its rules.",
+            "Read one ruleset: which branches or tags it targets and its rules.",
             vec![REPO, required(int_p("ruleset_id", 1, i64::MAX, None, "The ruleset id from github_ruleset_list."))],
             Some("repo"),
         ),
@@ -425,7 +436,7 @@ fn access_tools() -> Vec<ToolSpec> {
             "collaborator_list",
             Read,
             "List collaborators of a GitHub repository",
-            "Lists the people with access to a repository and their permission. Needs push access.",
+            "List the people with access to a repository and their permission. Needs push access.",
             vec![REPO, choice_p("affiliation", &["all", "direct", "outside"], false, "Default: all."), LIMIT],
             Some("repo"),
         ),
@@ -435,7 +446,7 @@ fn access_tools() -> Vec<ToolSpec> {
             "collaborator_add",
             Write,
             "Add a collaborator to a GitHub repository",
-            "Invites a user to a repository with a permission (pull = read, triage, push = write, maintain, admin). \
+            "Invite a user to a repository with a permission (pull = read, triage, push = write, maintain, admin). \
              The user approves on their phone, every time (a standing permission never covers it).",
             vec![
                 REPO,
@@ -452,7 +463,7 @@ fn access_tools() -> Vec<ToolSpec> {
             "collaborator_remove",
             Write,
             "Remove a collaborator from a GitHub repository",
-            "Removes a user's direct access to a repository. The user approves on their phone, every time (a standing \
+            "Remove a user's direct access to a repository. The user approves on their phone, every time (a standing \
              permission never covers it).",
             vec![REPO, str_p("username", 100, true, "The GitHub login to remove.")],
             Some("repo"),
@@ -465,7 +476,7 @@ fn access_tools() -> Vec<ToolSpec> {
             "invitation_list",
             Read,
             "List pending invitations of a GitHub repository",
-            "Lists the collaborator invitations that have not been accepted yet.",
+            "List the collaborator invitations that have not been accepted yet.",
             vec![REPO, LIMIT],
             Some("repo"),
         ),
@@ -475,7 +486,7 @@ fn access_tools() -> Vec<ToolSpec> {
             "invitation_cancel",
             Write,
             "Cancel a GitHub repository invitation",
-            "Cancels a pending collaborator invitation. The user approves on their phone, every time (a standing \
+            "Cancel a pending collaborator invitation. The user approves on their phone, every time (a standing \
              permission never covers it).",
             vec![
                 REPO,
@@ -491,7 +502,7 @@ fn access_tools() -> Vec<ToolSpec> {
             "repo_team_list",
             Read,
             "List the teams of a GitHub repository",
-            "Lists the teams that have access to an organization's repository, with their permission.",
+            "List the teams that have access to an organization's repository, with their permission.",
             vec![REPO, LIMIT],
             Some("repo"),
         ),
@@ -501,7 +512,7 @@ fn access_tools() -> Vec<ToolSpec> {
             "repo_team_add",
             Write,
             "Give a team access to a GitHub repository",
-            "Gives an organization team access to one of the organization's repositories (or changes its permission). \
+            "Give an organization team access to one of the organization's repositories (or change its permission). \
              The user approves on their phone, every time (a standing permission never covers it).",
             vec![
                 REPO,
@@ -518,7 +529,7 @@ fn access_tools() -> Vec<ToolSpec> {
             "repo_team_remove",
             Write,
             "Remove a team's access to a GitHub repository",
-            "Removes an organization team from a repository. The user approves on their phone, every time (a standing \
+            "Remove an organization team from a repository. The user approves on their phone, every time (a standing \
              permission never covers it).",
             vec![REPO, str_p("team", 100, true, "The team slug.")],
             Some("repo"),
@@ -539,7 +550,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "webhook_list",
             Read,
             "List webhooks of a GitHub repository",
-            "Lists the webhooks of a repository (id, events, active, where they deliver to; the address is shortened \
+            "List the webhooks of a repository (id, events, active, where they deliver to; the address is shortened \
              because it may contain a secret). Needs admin access.",
             vec![REPO, LIMIT],
             Some("repo"),
@@ -550,7 +561,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "webhook_get",
             Read,
             "Read a GitHub webhook",
-            "Reads one webhook: events, active, content type, last delivery status. The address is shortened and the \
+            "Read one webhook: events, active, content type, last delivery status. The address is shortened and the \
              secret never shown.",
             vec![REPO, HOOK],
             Some("repo"),
@@ -561,7 +572,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "webhook_create",
             Write,
             "Create a GitHub webhook",
-            "Adds a webhook that sends the chosen events of a repository to an https address. The user sees the \
+            "Add a webhook that sends the chosen events of a repository to an https address. The user sees the \
              address and events and approves on their phone, every time (a standing permission never covers it).",
             vec![
                 REPO,
@@ -582,7 +593,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "webhook_update",
             Write,
             "Change a GitHub webhook",
-            "Changes the fields given of a webhook (address, events, content type, secret, active). The user approves \
+            "Change the fields given of a webhook (address, events, content type, secret, active). The user approves \
              on their phone, every time (a standing permission never covers it).",
             vec![
                 REPO,
@@ -604,7 +615,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "webhook_delete",
             Write,
             "Delete a GitHub webhook",
-            "Deletes a webhook. The user approves on their phone, every time (a standing permission never covers it).",
+            "Delete a webhook. The user approves on their phone, every time (a standing permission never covers it).",
             vec![REPO, HOOK],
             Some("repo"),
         )
@@ -616,7 +627,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "webhook_ping",
             Write,
             "Ping a GitHub webhook",
-            "Makes GitHub send a test delivery to a webhook's address. The user approves on their phone, every time (a \
+            "Make GitHub send a test delivery to a webhook's address. The user approves on their phone, every time (a \
              standing permission never covers it).",
             vec![REPO, HOOK],
             Some("repo"),
@@ -629,7 +640,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "deploy_key_list",
             Read,
             "List deploy keys of a GitHub repository",
-            "Lists the deploy keys (public SSH keys) of a repository.",
+            "List the deploy keys (public SSH keys) of a repository.",
             vec![REPO, LIMIT],
             Some("repo"),
         ),
@@ -639,7 +650,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "deploy_key_add",
             Write,
             "Add a deploy key to a GitHub repository",
-            "Adds a public SSH key that can read (or, with read_only false, also write to) a repository. The user \
+            "Add a public SSH key that can read (or, with read_only false, also write to) a repository. The user \
              approves on their phone, every time (a standing permission never covers it).",
             vec![
                 REPO,
@@ -657,7 +668,7 @@ fn integration_tools() -> Vec<ToolSpec> {
             "deploy_key_delete",
             Write,
             "Delete a deploy key of a GitHub repository",
-            "Removes a deploy key. The user approves on their phone, every time (a standing permission never covers \
+            "Remove a deploy key. The user approves on their phone, every time (a standing permission never covers \
              it).",
             vec![REPO, required(int_p("key_id", 1, i64::MAX, None, "The key id from github_deploy_key_list."))],
             Some("repo"),
@@ -676,7 +687,7 @@ fn traffic_tools() -> Vec<ToolSpec> {
             "traffic_clones",
             Read,
             "Read the clone traffic of a GitHub repository",
-            "Reads how often a repository was cloned in the last 14 days (total and unique, per day or week). Needs \
+            "Read how often a repository was cloned in the last 14 days (total and unique, per day or week). Needs \
              push access.",
             vec![REPO, choice_p("per", &["day", "week"], false, "Default: day.")],
             Some("repo"),
@@ -687,7 +698,7 @@ fn traffic_tools() -> Vec<ToolSpec> {
             "traffic_views",
             Read,
             "Read the page views of a GitHub repository",
-            "Reads how often a repository's page was viewed in the last 14 days (total and unique, per day or week). \
+            "Read how often a repository's page was viewed in the last 14 days (total and unique, per day or week). \
              Needs push access.",
             vec![REPO, choice_p("per", &["day", "week"], false, "Default: day.")],
             Some("repo"),
@@ -698,7 +709,7 @@ fn traffic_tools() -> Vec<ToolSpec> {
             "commit_activity",
             Read,
             "Read the commit activity of a GitHub repository",
-            "Reads the number of commits per week over the last year. GitHub computes this in the background: if it \
+            "Read the number of commits per week over the last year. GitHub computes this in the background: if it \
              says so, ask again in a moment.",
             vec![REPO],
             Some("repo"),

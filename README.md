@@ -1,59 +1,206 @@
-<p align="center"><img src="docs/assets/logo.svg" width="112" alt="Reins logo: a shield with a check"></p>
+<p align="center"><img src="docs/assets/logo.svg" width="96" alt="Reins logo: a shield with a check"></p>
 
 <h1 align="center">Reins</h1>
 
-[![CI](https://github.com/katulevskiy/reins/actions/workflows/ci.yml/badge.svg)](https://github.com/katulevskiy/reins/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/katulevskiy/reins?sort=semver)](https://github.com/katulevskiy/reins/releases/latest)
-[![License: Apache-2.0 / AGPL-3.0 (server)](https://img.shields.io/badge/license-Apache--2.0%20%2F%20AGPL--3.0%20%28server%29-blue)](LICENSING.md)
-[![Status: alpha](https://img.shields.io/badge/status-alpha-orange)](#project-status)
+<p align="center"><b>Your AI agents ask. Your phone decides.</b></p>
 
-**Give your AI agents real power without handing them control of your life.**
+<p align="center">
+  Let AI work on your GitHub, your email, your calendar and your terminal.<br>
+  Everything that matters shows up on your phone first, exactly as it will happen.<br>
+  One tap approves it. One tap stops it.
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.webp">
+    <img src="docs/assets/readme/hero-light.webp" width="860" alt="The Reins desktop app: Claude Code wants to run git push --force origin main in acme-web, waiting on the phone. Beside it, the phone asks about the same command, with No and Hold to yes.">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://testflight.apple.com/join/2p31yYvf"><img src="https://img.shields.io/badge/iPhone_%26_iPad-TestFlight-0D96F6?style=for-the-badge&logo=apple&logoColor=white" alt="iPhone and iPad: TestFlight"></a>
+  <a href="https://reins2fa.com/download/android"><img src="https://img.shields.io/badge/Android-APK-34A853?style=for-the-badge&logo=android&logoColor=white" alt="Android: APK"></a>
+  <a href="https://reins2fa.com/download/macos"><img src="https://img.shields.io/badge/macOS-.dmg-16151B?style=for-the-badge&logo=apple&logoColor=white" alt="macOS: .dmg"></a>
+  <a href="https://reins2fa.com/download/windows"><img src="https://img.shields.io/badge/Windows-.msi-0078D4?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS40djExLjRIMHpNMTIuNiAwSDI0djExLjRIMTIuNnpNMCAxMi42aDExLjRWMjRIMHpNMTIuNiAxMi42SDI0VjI0SDEyLjZ6Ii8+PC9zdmc+" alt="Windows: .msi"></a>
+  <a href="https://reins2fa.com/download/linux"><img src="https://img.shields.io/badge/Linux-AppImage-E95420?style=for-the-badge&logo=linux&logoColor=white" alt="Linux: AppImage"></a>
+</p>
+
+<p align="center">
+  <a href="https://reins2fa.com"><b>reins2fa.com</b></a>
+  &nbsp;·&nbsp; <a href="https://reins2fa.com/developers">For developers</a>
+  &nbsp;·&nbsp; <a href="#downloads">Every platform</a>
+  &nbsp;·&nbsp; <a href="https://github.com/katulevskiy/reins/releases/latest">Latest release</a>
+</p>
+
+<p align="center">Free and open source. In beta.</p>
+
+<p align="center">
+  <a href="https://github.com/katulevskiy/reins/actions/workflows/ci.yml"><img src="https://github.com/katulevskiy/reins/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/katulevskiy/reins/releases/latest"><img src="https://img.shields.io/github/v/release/katulevskiy/reins?sort=semver" alt="Release"></a>
+  <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-Apache--2.0%20%2F%20AGPL--3.0%20%28server%29-blue" alt="License: Apache-2.0 / AGPL-3.0 (server)"></a>
+  <a href="#project-status"><img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: alpha"></a>
+</p>
+
+---
 
 ## Why Reins
 
-AI agents are finally useful. They write code, push it, answer email, book meetings and run commands for you. To do
-that, they need access to your accounts, and today that usually means handing them everything: your GitHub token,
-your inbox, your shell. One bad guess, one misread instruction or one malicious web page later, an agent can delete
-your production database with `rm -rf`, force-push over a week of work, or send an email you never meant to send.
+AI agents are finally useful. They write code, push it, answer email and run commands. To do that, they need your
+accounts. Today that usually means handing them everything.
 
-An AI can't be held responsible for that. You can, so you should be the one deciding.
+One bad guess later, an agent force-pushes over a week of work, runs `rm -rf` in the wrong place, or sends an email
+you never meant to send. An AI can't be held responsible for that. You can, so you should decide.
 
-Reins puts you back in charge. Your agents keep their power, but you hold the reins:
+Reins keeps the power with the agent and the keys with you.
 
-- **Nothing important happens without your OK.** Every action that matters shows up on your phone first, exactly as it
-  will happen: the email with its recipients and text, the commits that will be pushed, the command that will run. One
-  tap approves it, one tap stops it.
-- **Agents never get your keys.** Passwords and tokens stay on your phone. The phone does the work and hands the agent
-  only the result, so there is nothing for an agent to leak or misuse later.
-- **It doesn't nag you.** Allow routine things for a while ("read my email for the next hour"), and let Autopilot, a
-  small model that runs on your phone, learn which requests you always approve and which you never would.
-- **You can always see what happened.** Every request, approval and denial is in your activity log.
+## What it does
 
-## What's in it
+### Approve on your phone
 
-| Part | What it does |
-| --- | --- |
-| **Phone app** (Android, iPhone and iPad) | Your remote control. Shows each request, approves or denies it, keeps your passwords and tokens, and does the actual work: sends the email, calls GitHub, reads the calendar. |
-| **Desktop app** (`reins`) | Sits between the AI agents on your computer and the outside world: it stops risky commands until you approve them, and lets `git push` reach GitHub without the agent ever seeing your token. Works with Claude Code, Codex, Cursor and Gemini CLI. |
-| **Server** | A small relay that carries requests from agents (including Claude.ai and ChatGPT in the browser) to your phone and the answers back. It never stores your credentials. Use the hosted one or [run your own](docs/self-hosting.md). |
-| **Autopilot** (optional) | An AI model that runs entirely on your phone and learns your decisions. It approves what you'd clearly approve, blocks what you'd clearly block, and asks you about everything else. Risky things (passwords, deletions, new connections) always wait for you. |
+The email with its recipients and text. The commits about to be pushed. The command about to run. You see it before
+it happens, and answer with Face ID or your fingerprint: once, for an hour, or for a day.
 
-In short: the agent asks, your phone shows you exactly what will happen, you decide, and the phone does it with keys the
-agent never sees.
+No standing permission covers payments, deletions or history rewrites. Each one asks.
+
+<p align="center"><img src="docs/assets/readme/approve.webp" width="440" alt="Two approvals on an iPhone: a push of 8 commits to octo/app with Autopilot's 97% suggestion, and a $63.29 payment at acme.com with Hold to approve"></p>
+
+### Agents never get your keys
+
+Your tokens and passwords stay on your phone. The phone makes the call and hands the agent only the result. There is
+nothing for an agent to leak.
+
+Need a secret for a dev server? It's released for that one run. Want an agent to read your bank's emails for an hour?
+That's a grant, and it ends on time.
+
+<p align="center"><img src="docs/assets/readme/keys.webp" width="440" alt="Left: Claude Code asks to release two variables of web/dev for one command. Right: a grant that lets an agent read emails from @bank.com, 49 minutes left"></p>
+
+### Autopilot
+
+A small model on your phone learns what you approve. It answers the routine ones and shows how sure it is. Nothing
+you approve leaves the phone to train anything.
+
+- **Manual**: everything waits for you, with a suggestion.
+- **Auto**: Autopilot answers what it's sure of. The rest asks.
+- **Overnight**: for agents working while you sleep. Risky actions are weighed in context. Anything catastrophic is held.
+- **Bypass**: approve everything for a while. Stop is one tap.
+- **Lockdown**: every AI stops at once.
+
+<p align="center"><img src="docs/assets/readme/autopilot.webp" width="440" alt="Left: Overnight running, 5:59:51 left, with Stop now. Right: a commit to main held by Overnight, risk severe, Autopilot unsure at 61%"></p>
+
+### See every push before it lands
+
+Each commit, each file, each line. Open any push on your phone, before you approve it or long after.
+
+<p align="center"><img src="docs/assets/readme/inspect.webp" width="580" alt="Left: a push of 3 commits on Android, with authors and line counts. Right: one commit's diff on an iPhone"></p>
+
+### Everything in one place
+
+Activity lists what every AI asked for, day by day, and who said yes: you, a grant or Autopilot. Search all of it, and
+filter by service, AI or outcome.
 
 <p align="center">
-  <img src="docs/assets/git-push.png" width="200" alt="A git push waiting for approval: branch, commits, authors">
-  <img src="docs/assets/suggestion.png" width="200" alt="The same approval with Autopilot's suggestion: would approve, 97%">
-  <img src="docs/assets/autopilot.png" width="200" alt="The Autopilot screen: Manual, Auto, Bypass, Lockdown">
-  <img src="docs/assets/pairing.png" width="200" alt="Pairing the desktop app: the phone shows the app's key to compare">
-</p>
-<p align="center">
-  <img src="docs/assets/activity.png" width="200" alt="Activity: requests waiting for you and everything that happened">
-  <img src="docs/assets/grants.png" width="200" alt="Grants: what each AI may do on its own, and for how long">
-  <img src="docs/assets/settings.png" width="200" alt="Settings: account, approval device, Autopilot, AI connections">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/activity-dark.webp">
+    <img src="docs/assets/readme/activity-light.webp" width="440" alt="Activity on Android: today's requests grouped by day, and a search for invoice filtered to Gmail with the matches highlighted">
+  </picture>
 </p>
 
-## How it works, in detail
+### A desktop app for coding agents
+
+Reins sits between your coding agent and the outside world. It works with Claude Code, Codex, Cursor and Gemini CLI.
+
+- Risky commands wait for your phone: force pushes, `rm -rf`, `terraform apply`, reading `.env`.
+- `git push` goes through Reins. The agent never sees your GitHub token.
+- Secrets for a script come from your phone's vault, for that run only.
+
+For Mac, Windows and Linux.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/desktop-dark.webp">
+    <img src="docs/assets/readme/desktop-light.webp" width="720" alt="The Reins desktop app: Activity with a push of 3 commits to acme/web approved on the phone, its commits and diff, and the note that the token stays on the phone">
+  </picture>
+</p>
+
+## Works with
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/works-with-dark.webp">
+    <img src="docs/assets/readme/works-with-light.webp" width="760" alt="Agents: Claude Code, Codex, Cursor, Gemini CLI, Claude.ai, ChatGPT and other MCP clients. Your accounts: GitHub, Gmail, Google Calendar, Google Contacts, Telegram, SMS, passwords, payments, GitLab and any MCP server">
+  </picture>
+</p>
+
+Also git on GitLab, Codeberg and Bitbucket, your phone's own calendar and contacts, and any remote MCP server you add
+on the phone. Cloud AIs need no desktop app: add `https://app.reins2fa.com/mcp` as a custom connector in Claude.ai or
+ChatGPT.
+
+## Get started in 2 minutes
+
+1. **Get the phone app.** [iPhone and iPad](https://testflight.apple.com/join/2p31yYvf) (TestFlight beta) or
+   [Android](https://reins2fa.com/download/android) (APK). Tap **Continue** to sign in, and allow notifications.
+2. **Install Reins on your computer.** Download it for [Mac](https://reins2fa.com/download/macos),
+   [Windows](https://reins2fa.com/download/windows) or [Linux](https://reins2fa.com/download/linux), or in a terminal:
+
+   ```sh
+   curl -fsSL https://reins2fa.com/install.sh | sh
+   ```
+
+3. **Pair them.** Open Reins on the computer and scan its code with your phone. It finds your AI tools and connects
+   them. In a terminal, `reins setup` does the same, and `reins doctor` checks it.
+
+The full walkthrough is in the [quick start](docs/quick-start.md).
+
+## Downloads
+
+| | Get it | Needs |
+| --- | --- | --- |
+| **iPhone and iPad** | [TestFlight public beta](https://testflight.apple.com/join/2p31yYvf) | iOS 26 |
+| **Android** | [APK](https://reins2fa.com/download/android) (updates itself) | Android 12 |
+| **macOS** | [.dmg](https://reins2fa.com/download/macos), or `brew install --cask katulevskiy/tap/reins` | Apple silicon or Intel |
+| **Windows** | [.msi installer](https://reins2fa.com/download/windows) (x64), or in PowerShell: `irm https://reins2fa.com/install.ps1 \| iex` (x64 and Arm) | Windows 10 or 11 |
+| **Linux** | [AppImage](https://reins2fa.com/download/linux) (x86_64), [APT and RPM repositories](docs/linux-packages.md), or `curl -fsSL https://reins2fa.com/install.sh \| sh` (x86_64 and aarch64) | x86_64 or aarch64 |
+
+Every file, with its SHA-256, is on the [latest release](https://github.com/katulevskiy/reins/releases/latest). The
+desktop app installs only releases signed with its built-in key, and `reins update` keeps it current.
+
+<details>
+<summary><b>Debian, Ubuntu and Fedora packages</b></summary>
+
+The packages `reins` (the command) and `reins-app` (the app) come from signed repositories, so the system keeps them
+up to date.
+
+Debian and Ubuntu:
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings \
+  && curl -fsSL https://reins2fa.com/releases/packages/reins.gpg | sudo tee /etc/apt/keyrings/reins.gpg >/dev/null \
+  && echo "deb [signed-by=/etc/apt/keyrings/reins.gpg] https://reins2fa.com/releases/packages/apt stable main" | sudo tee /etc/apt/sources.list.d/reins.list \
+  && sudo apt update && sudo apt install reins reins-app
+```
+
+Fedora:
+
+```sh
+sudo curl -fsSL https://reins2fa.com/releases/packages/rpm/reins.repo -o /etc/yum.repos.d/reins.repo \
+  && sudo dnf install reins reins-app
+```
+
+On Arch Linux, use the install script for now: the `reins-bin` AUR package is not published yet. Details:
+[Linux packages](docs/linux-packages.md).
+
+</details>
+
+---
+
+## Under the hood
+
+The rest of this page is for developers: how Reins works, what it protects against, and how to run and build it.
+
+<details>
+<summary><b>How it works</b></summary>
+
+<br>
 
 ```mermaid
 flowchart LR
@@ -76,6 +223,13 @@ flowchart LR
     daemon -- "git with a credential<br/>sealed to this computer" --> remotes
 ```
 
+| Part | What it does |
+| --- | --- |
+| **Phone app** (Android, iPhone and iPad) | Your remote control. Shows each request, approves or denies it, keeps your passwords and tokens, and does the actual work: sends the email, calls GitHub, reads the calendar. |
+| **Desktop app** (`reins`) | Sits between the AI agents on your computer and the outside world: it stops risky commands until you approve them, and lets `git push` reach GitHub without the agent ever seeing your token. Works with Claude Code, Codex, Cursor and Gemini CLI. |
+| **Server** | A small relay that carries requests from agents (including Claude.ai and ChatGPT in the browser) to your phone and the answers back. It never stores your credentials. Use the hosted one or [run your own](docs/self-hosting.md). |
+| **Autopilot** (optional) | An AI model that runs entirely on your phone and learns your decisions. It approves what you'd clearly approve, blocks what you'd clearly block, and asks you about everything else. |
+
 1. An agent asks for something: an MCP tool call (`gmail_send`, `github_pr_merge`, ...), a `git push`, or a risky shell
    command caught by a harness hook.
 2. The request goes to the Reins server, which holds it in memory and wakes your phone.
@@ -84,34 +238,12 @@ flowchart LR
    phone instead seals a short-lived credential to the desktop app's key; git talks to the host directly and the agent
    never sees the token.
 
-## Quick start
+More: [architecture](docs/architecture.md).
 
-You need an Android phone or an iPhone and an account on a Reins server (the hosted one or [your own](docs/self-hosting.md)).
+</details>
 
-1. **Phone.** Install the app from <https://reins2fa.com/app> (Android; on an iPhone, build it from [`ios/`](ios/README.md)
-   for now) and tap **Continue** to sign in or create your account. Add a passkey if you like, write down the recovery
-   code it shows, and allow notifications. The phone becomes your approval device. Connect services under
-   **Activity → Integrations**.
-2. **Desktop app** (Linux or macOS; on Windows, in PowerShell: `irm https://reins2fa.com/install.ps1 | iex` instead of
-   the first line):
-   ```sh
-   curl -fsSL https://reins2fa.com/install.sh | sh
-   reins login     # scan the QR code with the phone; compare the key shown here with the one on the phone
-   reins resume    # start the background service; send GitHub git through it
-   ```
-   On Debian, Ubuntu and Fedora, the packages `reins` and `reins-app` from Reins's signed APT and RPM
-   repositories install it instead of the first line: see
-   [Linux packages](docs/linux-packages.md). On Arch Linux, use the install script above.
-3. **Connect your agent:**
-   ```sh
-   reins harness add claude-code    # or codex, gemini, cursor
-   ```
-   Restart the harness. It now has Reins's tools, and risky commands wait for your phone.
-
-Cloud AIs connect without the desktop app: add `https://app.reins2fa.com/mcp` as a custom connector in Claude.ai
-or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md).
-
-## Features
+<details>
+<summary><b>Every feature</b></summary>
 
 **Approvals on the phone**
 - One-time approvals, or standing permissions limited by target, time and number of uses.
@@ -121,9 +253,10 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 - A starting rule chosen at setup: a new AI asks for everything (recommended), or may see headlines (sender, subject
   and date) for its first hour while opening anything still asks. Codes and passwords are never released without your
   tick.
-- Previews of exactly what runs: full emails, git pushes (commits, files, line counts, force pushes), MCP arguments,
-  attached files.
-- Approving needs the phone's screen lock or biometrics. Activity log on the phone.
+- Previews of exactly what runs: full emails, git pushes (commits, files, line counts, diffs, force pushes), MCP
+  arguments, attached files.
+- Approving needs the phone's screen lock or biometrics. Activity on the phone, grouped by day, with search and
+  filters.
 - Vault secrets an AI asks to see, destructive changes and history rewrites are asked every time. They cannot be
   covered by a standing permission.
 
@@ -153,12 +286,17 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 - Without a phone, a local policy with desktop prompts decides about git instead.
 
 **Autopilot** (optional, on the phone)
-- Modes: Manual (you decide, with suggestions), Auto, Bypass (time-boxed), Lockdown.
+- Modes: Manual (you decide, with suggestions), Auto, Overnight, Bypass (time-boxed or until you stop it), Lockdown.
 - A small model (Laya, about 370 MB) runs on the phone. It learns from your own decisions in per-profile memory.
-- A hard floor that is never automatic. Text written by the AI can only make it more cautious.
+- A hard floor that is never automatic in Manual and Auto. Text written by the AI can only make it more cautious.
 - See [docs/autopilot.md](docs/autopilot.md).
 
-## Supported harnesses
+</details>
+
+<details>
+<summary><b>Supported harnesses</b></summary>
+
+<br>
 
 | Harness | MCP server | Hook | Set up with |
 |---|---|---|---|
@@ -170,7 +308,12 @@ or ChatGPT. The full walkthrough is in [docs/quick-start.md](docs/quick-start.md
 
 Details, the guard rules and how to undo everything: [docs/harnesses.md](docs/harnesses.md).
 
-## Security model in brief
+</details>
+
+<details>
+<summary><b>Security model in brief</b></summary>
+
+<br>
 
 - **Credentials stay on the phone.** Gmail, GitHub, Telegram, vault and MCP server tokens are stored encrypted on the
   phone. The server never stores them. One exception: for files too large to pass through a tool call, and for MCP tools
@@ -190,13 +333,12 @@ Details, the guard rules and how to undo everything: [docs/harnesses.md](docs/ha
 Full threat model: [docs/security-model.md](docs/security-model.md). Report vulnerabilities as described in
 [SECURITY.md](SECURITY.md).
 
-## Self-hosting
+</details>
 
-The server is a single Rust binary (a fork of Vaultwarden) with SQLite, MySQL or PostgreSQL. Set
-`REINS_ENABLED=true` and a public `DOMAIN`, and add a Firebase service account for push. One instance per
-deployment, because relay state is in memory. See [docs/self-hosting.md](docs/self-hosting.md).
+<details>
+<summary><b>Autopilot: what it can and cannot do</b></summary>
 
-## Autopilot: what it can and cannot do
+<br>
 
 Autopilot reads a short text description of each request and answers approve, deny or ask. On held-out synthetic tests
 it made no unsafe automatic approvals. It decided about a quarter to a half of requests on its own and asked about the
@@ -204,22 +346,24 @@ rest. Those numbers come from **synthetic data**. Wording that no one has tested
 mode, the default, only suggests. Auto mode unlocks one kind of request at a time,
 and only after it has agreed with you often enough. Model card: [tools/laya/MODEL_CARD.md](tools/laya/MODEL_CARD.md).
 
-## Project status
+</details>
 
-**Alpha.** Expect rough edges, and breaking changes between releases.
+<details>
+<summary><b>Self-hosting</b></summary>
 
-- Phone: Android (Android 12 or later) and iOS / iPadOS 26 or later (iPhone, iPad, iPhone Duo; build it from
-  [`ios/`](ios/README.md), no App Store release yet). iOS has no text messages integration: apps cannot read SMS there.
-- Desktop app: Linux (x86_64, aarch64; also as [.deb and .rpm packages](docs/linux-packages.md)), macOS (Apple
-  silicon, Intel) and Windows (x86_64, and Arm when it builds) builds are published with every release. macOS and Windows are alpha: built and tested on GitHub's runners, not yet
-  field-tested end to end ([macOS](crates/reins-desktop/README.md#macos-alpha),
-  [Windows](crates/reins-desktop/README.md#windows-alpha)).
-- Gmail and Google Calendar/Contacts use Google scopes that need Google's app verification before the general public
-  can use them.
-- Push notifications need an app build that matches the server's Firebase project. With a self-hosted server and the
-  published APK, requests arrive only while the app is open.
+<br>
 
-## Building from source
+The server is a single Rust binary (a fork of Vaultwarden) with SQLite, MySQL or PostgreSQL. Set
+`REINS_ENABLED=true` and a public `DOMAIN`, and add a Firebase service account for push. One instance per
+deployment, because relay state is in memory. Point the apps at it and nothing passes through the hosted server. See
+[docs/self-hosting.md](docs/self-hosting.md).
+
+</details>
+
+<details>
+<summary><b>Building from source</b></summary>
+
+<br>
 
 ```sh
 git clone https://github.com/katulevskiy/reins
@@ -233,19 +377,67 @@ The desktop app also builds on Windows, with the Rust MSVC toolchain (Visual Stu
 Linux and macOS can check the Windows code with `cargo clippy -p reins-desktop --target x86_64-pc-windows-gnu`
 (rustup's target and MinGW-w64).
 
-The Android app builds with Gradle from `android/`; the iOS app with Xcode from `ios/` ([ios/README.md](ios/README.md)). [CONTRIBUTING.md](CONTRIBUTING.md) has the full build and test
-commands; [docs/self-hosting.md](docs/self-hosting.md) covers running the server, including with Docker.
+The Android app builds with Gradle from `android/`; the iOS app with Xcode from `ios/` ([ios/README.md](ios/README.md)).
+[CONTRIBUTING.md](CONTRIBUTING.md) has the full build and test commands; [docs/self-hosting.md](docs/self-hosting.md)
+covers running the server, including with Docker.
+
+</details>
+
+<details>
+<summary><b>Repository layout</b></summary>
+
+<br>
+
+| Path | What |
+| --- | --- |
+| `src/`, `macros/`, `migrations/`, `tests/` | the server: Vaultwarden plus the AI permission relay (`src/api/reins/`) |
+| `crates/reins-core` | the phone's core (Rust, through UniFFI): vault, connectors, approvals, Autopilot |
+| `crates/reins-desktop` | the desktop app (`reins`): daemon, git/SSH/API proxies, harness hooks |
+| `crates/reins-desktop-app` | the Reins app window and tray icon; installers via `scripts/package/` |
+| `crates/reins-proto`, `crates/reins-policy` | wire types, and the standing-permission engine |
+| `crates/reins-laya` | Autopilot's model on the desktop (ONNX Runtime) |
+| `crates/reins-e2e` | end-to-end tests: the real server, phone core and desktop daemon |
+| `android/`, `ios/` | the phone apps (Kotlin and Jetpack Compose; Swift and SwiftUI) |
+| `tools/laya/` | training and export of the Autopilot model |
+| `design/signal/` | the Signal design system: screens, tokens, fonts, icons |
+| `docs/` | user guides, the security model, design specs |
+
+Which license covers each part: [LICENSING.md](LICENSING.md).
+
+</details>
+
+## Project status
+
+**Alpha.** Expect rough edges, and breaking changes between releases.
+
+- Phone: Android (Android 12 or later) and iOS / iPadOS 26 or later (iPhone, iPad, iPhone Duo), as a
+  [public TestFlight beta](https://testflight.apple.com/join/2p31yYvf); no App Store or Google Play release yet. iOS
+  has no text messages integration: apps cannot read SMS there.
+- Desktop app: Linux (x86_64, aarch64; also as [.deb and .rpm packages](docs/linux-packages.md)), macOS (Apple
+  silicon, Intel) and Windows (x86_64, and Arm when it builds) builds are published with every release. macOS and
+  Windows are alpha: built and tested on GitHub's runners, not yet field-tested end to end
+  ([macOS](crates/reins-desktop/README.md#macos-alpha), [Windows](crates/reins-desktop/README.md#windows-alpha)).
+- Gmail and Google Calendar/Contacts use Google scopes that need Google's app verification before the general public
+  can use them.
+- Push notifications need an app build that matches the server's Firebase project. With a self-hosted server and the
+  published APK, requests arrive only while the app is open.
 
 ## Documentation
 
 [docs/README.md](docs/README.md) lists every page: quick start, troubleshooting, harnesses, self-hosting, security
-model, Autopilot, architecture.
+model, Autopilot, architecture. What changed in each release: [reins2fa.com/new](https://reins2fa.com/new).
+
+## Contributing
+
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers building, testing, the commit style
+and the [Contributor License Agreement](CLA.md). Please report security issues privately, as described in
+[SECURITY.md](SECURITY.md).
 
 ## License
 
 Reins uses two licenses:
 
-- **Apache-2.0** (the default, [LICENSE](LICENSE)): the phone app and its core, the desktop app, the protocol, the
+- **Apache-2.0** (the default, [LICENSE](LICENSE)): the phone apps and their core, the desktop app, the protocol, the
   policy engine, the model tooling and the Autopilot model.
 - **AGPL-3.0** ([LICENSE-AGPL](LICENSE-AGPL)): the server, a fork of Vaultwarden.
 
@@ -260,3 +452,6 @@ Reins uses two licenses:
 - Sound design from Zeron.
 - Bitwarden, whose client API and web vault the server stays compatible with. Reins is not affiliated with
   Bitwarden, Inc.
+- Agent and service marks in the "Works with" image come from [Simple Icons](https://simpleicons.org) (CC0) and the
+  Signal design package ([design/signal/assets/logos](design/signal/assets/logos)). They name the products Reins works
+  with; Reins is not affiliated with their owners.

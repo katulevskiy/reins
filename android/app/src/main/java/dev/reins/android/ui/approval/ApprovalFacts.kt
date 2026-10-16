@@ -218,7 +218,8 @@ private fun MessagesFacts(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
     } else {
         val allIds = view.messages.map { it.id }
         val allTicked = view.messages.all { it.coveredByGrant || it.id in draft.selected }
-        GroupHeader(if (ui.readOnly) "${view.messages.size} found · ${view.messages.count { it.coveredByGrant || it.id in draft.selected }} shared" else "${view.messages.size} found") {
+        val shared = if (ui.readOnly) view.messages.count { it.coveredByGrant || it.id in draft.selected } else null
+        GroupHeader(mailHeader(view.messages, view.service, shared), Modifier.testTag("messagesHeader")) {
             if (!ui.readOnly) {
                 TextAction(if (allTicked) "Clear" else "Select all", if (allTicked) "clearAll" else "selectAll") {
                     viewModel.edit { it.copy(selected = if (allTicked) emptySet() else allIds.toSet(), allMail = null) }
@@ -226,7 +227,8 @@ private fun MessagesFacts(view: ApprovalView, ui: ApprovalUi, viewModel: Approva
             }
         }
         FactGroup(
-            rows = view.messages.map { m ->
+            // Flagged first: rows are keyed by id, so the order on screen is all that changes.
+            rows = attentionOrder(view.messages) { mailMark(it, view.service)?.level }.map { (_, m) ->
                 {
                     MailRow(
                         m,
@@ -295,22 +297,24 @@ private fun MailRow(m: MessageView, checked: Boolean, enabled: Boolean, service:
         ) {
             TickBox(checked, enabled)
             Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f).graphicsLayer { alpha = dim }) {
-                RText(
-                    title,
-                    RType.row.copy(textDecoration = if (checked) null else TextDecoration.LineThrough),
-                    c.text,
-                    maxLines = 1,
-                )
-                if (meta.isNotEmpty()) RText(meta, RType.meta, c.inkMeta, maxLines = 1)
+            Column(Modifier.weight(1f)) {
+                Column(Modifier.graphicsLayer { alpha = dim }) {
+                    RText(
+                        title,
+                        RType.row.copy(textDecoration = if (checked) null else TextDecoration.LineThrough),
+                        c.text,
+                        maxLines = 1,
+                    )
+                    if (meta.isNotEmpty()) RText(meta, RType.meta, c.inkMeta, maxLines = 1)
+                }
+                // One chip: a code or a password keeps its word ("Code") among the other reasons.
+                mailMark(m, service)?.let {
+                    AttentionTag(it, Modifier.padding(top = 6.dp).testTag(if (m.sensitive) "sensitive:${m.id}" else "attention:${m.id}"))
+                }
             }
             if (m.coveredByGrant) {
                 Spacer(Modifier.width(8.dp))
                 Icon(Icons.Rounded.Lock, "Already allowed", Modifier.size(15.dp).testTag("covered:${m.id}"), tint = c.tertiary)
-            }
-            if (m.sensitive) {
-                Spacer(Modifier.width(8.dp))
-                WarnTag(if (service == "vault") "Password" else "Code", c.warning, Modifier.testTag("sensitive:${m.id}"), small = true)
             }
         }
     }

@@ -81,7 +81,7 @@ class LiveServerTest {
             val code = codeFile.readText().trim().toInt()
             assertTrue("browser code $code not among $choices", code in choices)
 
-            core.answerPairing(item.id, true, code.toUByte(), "Emulator")
+            core.answerPairing(item.id, true, code.toUByte(), "Emulator", true)
             assertTrue(core.pending().none { it.id == item.id })
             assertEquals(listOf("Emulator"), core.connections().map { it.label })
 

@@ -18,6 +18,10 @@ struct TrustScreen: View {
     // The grants'.
     @State private var revoking: GrantView?
     @State private var grantError: String?
+    // How far the page has scrolled, for a running mode's field to fold by.
+    @State private var fold = TrustFold()
+    /// The running mode's list shows all its entries; folded to the latest three each time Trust opens.
+    @State private var runningListOpen = false
 
     private var running: [GrantView] { model.grants.filter(\.active).sorted { $0.createdAt > $1.createdAt } }
     private var endedCount: Int { model.grants.filter { !$0.active }.count }
@@ -54,10 +58,15 @@ struct TrustScreen: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .contentMargins(.bottom, 24, for: .scrollContent)
+        // Only the field reads it: scrolling redraws the field, not the page.
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
+            fold.scroll(to: y)
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
+            // Pinned: the field stays on top and folds into a compact bar as the page scrolls under it.
             if let running = runningMode, let s = ap.settings {
                 TrustRunningField(
-                    running: running, settings: s, top: 0,
+                    running: running, settings: s, fold: fold,
                     onStopBypass: { Task { await ap.stopBypass() } },
                     onStopOvernight: { Task { await ap.stopOvernight() } },
                     onEndLockdown: { Task { await ap.endLockdown() } }
@@ -66,6 +75,9 @@ struct TrustScreen: View {
             }
         }
         .animation(Motion.of(.smooth(duration: 0.32), reduce: reduceMotion), value: runningMode)
+        // Trust opens with the running mode's list folded (a tab keeps its page, so fold it when the tab is chosen).
+        .onChange(of: model.section) { _, section in if section == .trust { runningListOpen = false } }
+        .onChange(of: runningMode) { runningListOpen = false }
         .pageBackground()
         .navigationTitle("Trust")
         .rootNavigationBar()
@@ -155,7 +167,11 @@ struct TrustScreen: View {
 
     @ViewBuilder
     private func autopilot(_ s: AutopilotSettings) -> some View {
-        Text(TrustText.decided(model.activity, now: Timers.nowSeconds()))
+        let now = Timers.nowSeconds()
+        // While a bypass or an Overnight runs, what it did today (from the same entries as its list); else Autopilot's.
+        let mood = runningMode.flatMap { TrustText.running($0, listed: $0.entries(model.activity, settings: s), now: now) }
+            ?? TrustText.decided(model.activity, now: now)
+        Text(mood)
             .textRole(.mood)
             .foregroundStyle(Palette.ink2)
             .accessibilityIdentifier("trustMood")
@@ -334,14 +350,35 @@ struct TrustScreen: View {
             PageSectionHeader(running.listTitle) { EmptyView() }
                 .padding(.top, 14)
                 .plainRow(EdgeInsets(top: 0, leading: 2, bottom: 0, trailing: 8))
-            ForEach(entries, id: \.id) { entry in
+            // The latest three; the rest open in place.
+            ForEach(entries.prefix(RunningListFold.shown(entries.count, expanded: runningListOpen)), id: \.id) { entry in
                 Button {
                     model.show(.activityDetail(entry.id), in: .activity)
                 } label: {
                     HistoryRow(entry: entry)
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("runningEntry:\(entry.id)")
                 .plainRow(EdgeInsets())
+            }
+            if let showAll = RunningListFold.showAll(entries.count) {
+                Button {
+                    feedback.play(.tap)
+                    withAnimation(Motion.of(Motion.easeOut(Motion.sheetRise), reduce: reduceMotion)) { runningListOpen.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(runningListOpen ? "Show less" : showAll)
+                        GlyphIcon(runningListOpen ? .chevronUp : .chevronDown, size: 13).foregroundStyle(Palette.inkFaint)
+                    }
+                    .font(RFont.sans(14.5, .medium))
+                    .foregroundStyle(Palette.ink2)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(runningListOpen ? "Show less" : showAll)
+                .accessibilityIdentifier(runningListOpen ? "runningShowLess" : "runningShowAll")
+                .plainRow(EdgeInsets(top: 2, leading: 24, bottom: 6, trailing: 24))
             }
         }
     }
@@ -367,6 +404,22 @@ enum TrustText {
         case 1: return "Autopilot decided 1 thing today."
         default: return "Autopilot decided \(n) things today."
         }
+    }
+
+    /// The mood line while a bypass or an Overnight runs: what it did today, counted from the list under its field
+    /// (`listed`, `TrustRunning.entries`): "Bypass approved 100 today.", "Overnight decided 12 today.". Nil for a
+    /// lockdown, which keeps Autopilot's line.
+    static func running(_ running: TrustRunning, listed: [ActivityEntry], now: Int64) -> String? {
+        let who: String, did: String
+        switch running {
+        case .bypass: (who, did) = ("Bypass", "approved")
+        case .overnight: (who, did) = (AutopilotText.overnightName, "decided")
+        case .lockdown: return nil
+        }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(now)))
+        let n = listed.filter { calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval($0.at))) == today }.count
+        return n == 0 ? "\(who) \(did) nothing yet today." : "\(who) \(did) \(n) today."
     }
 
     /// The mood line under the title: what Autopilot did this week, when its model runs ("Autopilot scored 87 requests

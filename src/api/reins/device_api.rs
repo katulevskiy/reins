@@ -13,7 +13,8 @@ use reins_proto::{
     check_version,
     device::{
         ApiError, Connections, DEVICE_KEY_HEADER, DeviceInfo, DeviceRegistered, DeviceRegistration, DeviceSignOut,
-        Devices, MAX_PENDING_WAIT_SECS, PairingResult, Pending, TAKEOVER_REFUSED, codes, device_key_hash,
+        Devices, MAX_PENDING_WAIT_SECS, MAX_SEALED_NAME_CHARS, PairingResult, Pending, SealedName, TAKEOVER_REFUSED,
+        codes, device_key_hash,
     },
     ids::{ConnectionId, PairingId, RequestId},
     pairing::{PairingClaim, PairingRequest, PairingResponse, PushKind, PushMessage},
@@ -44,7 +45,7 @@ use crate::{
         DbConn, DbPool,
         models::{
             Device, DeviceId, ROLE_PRIMARY, ReinsConnection, ReinsDevice, ReinsDeviceSignout, ReinsMember, ReinsRoster,
-            ReinsSsoSession,
+            ReinsSsoSession, UserId,
         },
     },
 };
@@ -66,6 +67,7 @@ pub fn routes() -> Vec<Route> {
         post_pairing_claim,
         get_connections,
         delete_connection,
+        put_connection_name,
         get_devices,
         delete_device,
         post_logout,
@@ -155,10 +157,35 @@ pub fn user_key(headers: &Headers) -> String {
     headers.user.uuid.to_string()
 }
 
+/// Drops the recovery-proof exemption of `device_uuid`: the device key it presented, the key its member row keeps,
+/// the approval device's key when this is that device, and any key this device id proved with.
+pub async fn clear_proven_device(user: &str, device_uuid: &str, presented: Option<&str>, conn: &DbConn) {
+    if let Some(key) = presented {
+        super::limits::forget_proven(user, key);
+    }
+    match ReinsMember::find(user, device_uuid, conn).await {
+        Ok(Some(member)) => {
+            if let Some(key) = member.key_hash.as_deref() {
+                super::limits::forget_proven(user, key);
+            }
+        }
+        Ok(None) => {}
+        Err(e) => warn!("Reins: reading a device key to drop its proof exemption failed: {e:?}"),
+    }
+    if let Some(row) = ReinsDevice::find_by_user(&UserId::from(user.to_owned()), conn).await
+        && row.device_uuid.to_string() == device_uuid
+        && let Some(key) = row.key_hash.as_deref()
+    {
+        super::limits::forget_proven(user, key);
+    }
+    super::limits::PROVEN_DEVICES.forget_device(user, device_uuid);
+}
+
 /// Return the provider's logout URL to the native app. Visiting it in the same browser as sign-in clears
 /// AuthKit's cookie; a server-side HTTP request cannot do that. The caller cannot supply a session id or redirect.
 #[post("/reins/api/logout")]
-async fn post_logout(headers: Headers, conn: DbConn) -> PhoneResult<Json<Value>> {
+async fn post_logout(headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Json<Value>> {
+    clear_proven_device(&user_key(&headers), &headers.device.uuid.to_string(), key.hash(), &conn).await;
     let browser_url = if crate::sso_workos::enabled() {
         ReinsSsoSession::latest_for_device(&headers.user.uuid, &headers.device.uuid, &conn)
             .await
@@ -315,7 +342,7 @@ async fn put_device(
 }
 
 /// The integrations that have an account on the phone (ids only) and the MCP servers added there (tools, never
-/// tokens); the server lists just their tools to the AI.
+/// tokens): the server names the integrations to the AI and lists the MCP servers' tools.
 #[put("/reins/api/services", data = "<data>")]
 async fn put_services(data: Data<'_>, headers: Headers, key: DeviceKey, conn: DbConn) -> PhoneResult<Status> {
     require_approval_device(&headers, &key, &conn).await?;
@@ -533,6 +560,34 @@ async fn delete_connection(id: &str, headers: Headers, key: DeviceKey, conn: DbC
     Ok(Status::NoContent)
 }
 
+/// A11: the name the user gave a computer, boxed on the phone from its inbox key to the desktop app's key, kept for the
+/// app to pick up (`GET /reins/desktop/phone`). The approval device only, like every other change to a connection; the
+/// server can neither read it nor make one the app accepts, and every boxed name is the same length.
+#[put("/reins/api/connections/<id>/name", data = "<data>")]
+async fn put_connection_name(
+    id: &str,
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Status> {
+    require_approval_device(&headers, &key, &conn).await?;
+    let body: SealedName = serde_json::from_slice(&read_body_limited(data, 4096).await?)
+        .map_err(|e| bad_request(format!("invalid body: {e}")))?;
+    if let Some(sealed) = &body.sealed
+        && (sealed.is_empty()
+            || sealed.len() > MAX_SEALED_NAME_CHARS
+            || !sealed.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+    {
+        return Err(bad_request("the sealed name must be base64url, at most 1024 characters"));
+    }
+    let Some(connection) = ReinsConnection::find_by_uuid_and_user(id, &headers.user.uuid, &conn).await else {
+        return Err(not_found());
+    };
+    ReinsConnection::set_sealed_name(&connection.uuid, body.sealed, &conn).await.map_err(|e| internal(&e))?;
+    Ok(Status::NoContent)
+}
+
 /// Reins Secrets: "Revoke on all computers". The phone posts a revocation sealed to each paired computer's key; each
 /// waits (in memory, a day at most) until that computer's daemon picks it up. Only for this account's connections.
 #[post("/reins/api/desktop/revocations", data = "<data>")]
@@ -636,6 +691,7 @@ async fn delete_device(
         warn!("Reins: unregistering a signed-out device from push failed: {e:?}");
     }
     signout.sign_out(&conn).await.map_err(|e| internal(&e))?;
+    clear_proven_device(&user, &target.uuid.to_string(), None, &conn).await;
     HUB.joins.forget_device(&user, &target.uuid.to_string());
     // A roster member signed out gets no more sync pushes (the roster itself changes only by the primary's signature).
     if let Err(e) = ReinsMember::set_token(&user, &target.uuid.to_string(), None, now_unix(), &conn).await {

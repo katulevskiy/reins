@@ -28,6 +28,7 @@ pub mod http;
 pub mod join;
 pub mod live_sync;
 pub mod mcp;
+pub mod names;
 pub mod phone_api;
 pub mod quick;
 pub mod roles;
@@ -64,7 +65,7 @@ pub use roles::{
     EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview,
     RosterMemberView, RosterSummary,
 };
-pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck};
+pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck, StoreLockGuard};
 pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, ServerInfo, SsoOutcome, SsoStart};
 pub use types::{
     AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ActivityPush, ActivityRequest, ApprovalChoice,
