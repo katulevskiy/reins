@@ -16,7 +16,7 @@ use super::types::{
     AutoDecisionView, AutopilotEvent, AutopilotMode, ModelState, OvernightRisky, Preset, RiskLevel, SuggestionView,
     Verdict,
 };
-use super::{ModelRuntime, gates};
+use super::{ModelRuntime, decide, gates};
 use crate::api::ReinsCore;
 use crate::engine::CoreConfig;
 use crate::store::tests::FakeKeys;
@@ -578,7 +578,8 @@ async fn turning_a_bypass_on_approves_what_already_waits() {
 
 #[tokio::test]
 async fn a_failing_connection_listing_neither_blocks_a_bypass_nor_makes_a_known_ai_new() {
-    let env = env(true).await;
+    // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env(true)`)
+    let env = env_risk().await;
     env.mode(None, AutopilotMode::Auto).await;
     env.unlock("gmail/send").await;
     env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
@@ -614,7 +615,8 @@ const ENV_RULE: &str = "Rule: .env files · .env\nMatched: .env\nGroup: env-file
 /// learns it); what cannot be undone waits in Manual and Auto, whatever the computer calls it; Bypass answers both.
 #[tokio::test]
 async fn hook_questions_are_judged_by_the_rule_the_phone_reads() {
-    let env = env(true).await;
+    // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env(true)`)
+    let env = env_risk().await;
     let secret = crypto_box::SecretKey::generate(&mut crypto_box::aead::OsRng);
     let key = reins_proto::desktop::encode_key(secret.public_key().as_bytes());
     env.store().pin_desktop_key(OLD, &key, "Laptop", unix_now() - 30 * 86_400).unwrap();
@@ -957,7 +959,7 @@ async fn decision_table(mode: AutopilotMode) -> (std::collections::BTreeMap<Stri
         ("unresolved-target", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf \"$OUT/\"")),
         ("unresolved-relative", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build/$OUT")),
         ("after-cd", OLD, hook_ask(&key, "", "command:rm -r", "cd sub && rm -rf build")),
-        // rated catastrophic by the model, which Auto does not read
+        // rated catastrophic by the model, in a kind unlocked by hand: Auto's severe veto holds it too
         ("catastrophic", OLD, email("friend@x.com", "wire the savings")),
     ];
     for (id, conn, call) in requests {
@@ -992,7 +994,8 @@ async fn overnight_decides_like_auto_but_weighs_part_of_the_floor() {
     let want_auto = [
         ("after-cd", "wait"),
         ("ai-in-lockdown", "deny"),
-        ("catastrophic", "approve"),
+        // was "approve" (a hand unlock switched the risk off): the severe veto holds, warm or unlocked by hand
+        ("catastrophic", "wait"),
         // was "wait" (the class had not earned it): a cold kind no longer needs 20 decisions
         ("cold-benign", "approve"),
         ("cold-not-benign", "wait"),
@@ -1018,8 +1021,6 @@ async fn overnight_decides_like_auto_but_weighs_part_of_the_floor() {
             "delete-in-project" => {
                 assert_eq!((a.as_str(), o.as_str()), ("wait", "approve"), "{id}: {:?}", env.suggestion(id).await);
             }
-            // stricter: rated catastrophic
-            "catastrophic" => assert_eq!((a.as_str(), o.as_str()), ("approve", "wait"), "{id}"),
             _ => assert_eq!(a, o, "Overnight decided {id} unlike Auto"),
         }
     }
@@ -1284,11 +1285,27 @@ async fn without_a_model_that_rates_risk_overnight_decides_like_auto() {
     assert!(s.reason.contains("decided like Auto"), "{}", s.reason);
     assert!(s.risk.is_none());
     assert!(env.suggestion("r2").await.reason.starts_with("Always asks"));
-    // In a class unlocked by hand, to someone approved before, it approves, as Auto would.
+    // In a class unlocked by hand, to someone approved before, it still asks, as Auto would: without a model that rates
+    // risk nothing vouches for the request but the user's measured agreement. (Before, the hand unlock was enough.)
     env.approve("r1").await;
     env.unlock("gmail/send").await;
     env.relay("r3", OLD, email("friend@x.com", "again")).await;
-    assert_eq!(env.decided(), [("r3".to_owned(), Verdict::Approve, "autopilot".to_owned())]);
+    assert!(env.decided().is_empty() && env.waiting().await.contains(&"r3".to_owned()));
+    env.approve("r3").await;
+    // Once Autopilot's shadow verdicts matched 20 of the user's decisions, it approves, as Auto would.
+    let mut answers = 1;
+    loop {
+        let id = format!("r{}", 3 + answers);
+        env.relay(&id, OLD, email("friend@x.com", "again")).await;
+        if !env.decided().is_empty() {
+            assert_eq!(env.decided(), [(id, Verdict::Approve, "autopilot".to_owned())]);
+            break;
+        }
+        env.approve(&id).await;
+        answers += 1;
+        assert!(answers <= decide::TRUSTED_DECIDED, "never trusted");
+    }
+    assert_eq!(answers, decide::TRUSTED_DECIDED, "20 comparable decisions, all agreeing");
 }
 
 /// Overnight with a package that declares the risk output, a just-paired AI aside: whatever goes wrong, a request
@@ -1545,7 +1562,8 @@ async fn the_floor_is_never_automatic_in_manual_or_auto() {
 
 #[tokio::test]
 async fn auto_approves_and_denies_at_the_thresholds_in_unlocked_classes() {
-    let env = env(true).await;
+    // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env(true)`)
+    let env = env_risk().await;
     env.mode(None, AutopilotMode::Auto).await;
     env.unlock("gmail/send").await;
     env.model.rule("friend@x.com", logits(0.97, 0.01, 0.02));
@@ -1586,7 +1604,8 @@ async fn auto_approves_and_denies_at_the_thresholds_in_unlocked_classes() {
 
 #[tokio::test]
 async fn custom_thresholds_are_clamped_kept_and_used_by_auto() {
-    let env = env(true).await;
+    // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env(true)`)
+    let env = env_risk().await;
     env.mode(None, AutopilotMode::Auto).await;
     env.unlock("gmail/send").await;
     env.model.rule("boss@x.com", logits(0.90, 0.02, 0.08));
@@ -1821,7 +1840,8 @@ async fn a_lock_by_hand_wins() {
 
 #[tokio::test]
 async fn a_correction_takes_back_an_unlock_by_hand() {
-    let env = env(true).await;
+    // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env(true)`)
+    let env = env_risk().await;
     env.mode(None, AutopilotMode::Auto).await;
     env.unlock("gmail/send").await;
     env.model.rule("friend@x.com", logits(0.99, 0.005, 0.005));
@@ -1837,7 +1857,8 @@ async fn a_correction_takes_back_an_unlock_by_hand() {
 
 #[tokio::test]
 async fn rate_limits_pause_auto_approvals() {
-    let env = env(true).await;
+    // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env(true)`)
+    let env = env_risk().await;
     env.mode(None, AutopilotMode::Auto).await;
     env.unlock("gmail/send").await;
     env.model.rule("friend@x.com", logits(0.99, 0.005, 0.005));
@@ -2025,7 +2046,9 @@ fn push_call(key: &str, id: &str, path: &str, subject: &str) -> Value {
 /// a deny stays a deny; Bypass still approves the Close one.
 #[tokio::test]
 async fn a_close_commit_the_model_would_approve_waits_and_look_deny_and_bypass_stay() {
-    let (env, _github) = env_git(false).await;
+    // a model that rates risk (calm): a hand unlock no longer switches the risk gate off (it was `env_git(false)`)
+    let (env, _github) = env_git(true).await;
+    env.model.set_risk_default(testing::risk(0.95, 0.03, 0.015, 0.005));
     let key = desktop_key(&env);
     env.mode(None, AutopilotMode::Auto).await;
     env.model.set_default(logits(0.97, 0.01, 0.02));
@@ -2221,6 +2244,112 @@ async fn overnight_still_never_approves_a_weighed_floor_in_a_kind_it_did_not_unl
     // What Auto would approve on its own, Overnight approves too.
     env.relay("feature", OLD, push_to(&key, "feature", "feature/glance", RefChange::Update, true)).await;
     assert_eq!(env.decided().last().unwrap(), &("feature".to_owned(), Verdict::Approve, "overnight".to_owned()));
+}
+
+/// A target is known per kind of request: the user approving a read of a repository never makes a push to it known
+/// (an AI that was let read something cannot then write to it unasked), and a target the user turned down asks again.
+#[tokio::test]
+async fn a_target_approved_for_a_read_still_asks_for_a_write_and_a_denial_forgets_it() {
+    use reins_proto::desktop::RefChange;
+    let (env, github) = env_git(true).await;
+    mount(&github, "GET", "/repos/me/app", 200, json!({"full_name": "me/app", "private": true})).await;
+    env.model.set_risk_default(testing::risk(0.95, 0.03, 0.015, 0.005));
+    env.model.set_default(logits(0.99, 0.005, 0.005));
+    let key = desktop_key(&env);
+    env.mode(None, AutopilotMode::Auto).await;
+    let approve_all = |id: &'static str| {
+        let core = Arc::clone(&env.core);
+        async move {
+            let view = core.approval_view(id.to_owned()).await.unwrap();
+            let all = ApprovalChoice {
+                selected_message_ids: view.messages.iter().map(|m| m.id.clone()).collect(),
+                standing: None,
+            };
+            core.approve(id.to_owned(), all).await.unwrap();
+        }
+    };
+    // The user lets the AI read me/app once; the next read is Autopilot's.
+    env.relay("read-1", OLD, fetch_call(&key, "read-1", "me/app")).await;
+    approve_all("read-1").await;
+    env.relay("read-2", OLD, fetch_call(&key, "read-2", "me/app")).await;
+    assert_eq!(env.decided(), [("read-2".to_owned(), Verdict::Approve, "autopilot".to_owned())]);
+    // A push to the same repository is another kind: never approved there, it asks.
+    env.relay("push-1", OLD, push_to(&key, "push-1", "feature/glance", RefChange::Update, true)).await;
+    let s = env.suggestion("push-1").await;
+    assert!(s.novel && s.verdict == Verdict::Ask && s.reason.contains("never approved"), "{s:?}");
+    assert_eq!(env.decided().len(), 1);
+    // Approved once, the next push is Autopilot's; turned down once, it asks again.
+    env.approve("push-1").await;
+    env.relay("push-2", OLD, push_to(&key, "push-2", "feature/glance", RefChange::Update, true)).await;
+    assert_eq!(env.decided().last().unwrap(), &("push-2".to_owned(), Verdict::Approve, "autopilot".to_owned()));
+    env.mode(None, AutopilotMode::Manual).await;
+    env.relay("push-3", OLD, push_to(&key, "push-3", "feature/glance", RefChange::Update, true)).await;
+    env.core.deny("push-3".to_owned()).await.unwrap();
+    env.mode(None, AutopilotMode::Auto).await;
+    env.relay("push-4", OLD, push_to(&key, "push-4", "feature/glance", RefChange::Update, true)).await;
+    assert!(env.suggestion("push-4").await.novel, "a target the user turned down is new again");
+    assert_eq!(env.decided().len(), 2);
+}
+
+/// "This was wrong" on an approval Overnight made pauses its kind and takes back an unlock by hand, as one Auto made
+/// does.
+#[tokio::test]
+async fn a_correction_of_overnight_pauses_the_kind_and_takes_back_an_unlock_by_hand() {
+    use reins_proto::desktop::RefChange;
+    let (env, _github) = env_git(true).await;
+    env.model.set_risk_default(testing::risk(0.95, 0.03, 0.015, 0.005));
+    env.model.set_default(logits(0.99, 0.005, 0.005));
+    let key = desktop_key(&env);
+    env.unlock("github/write/code").await;
+    env.relay("seed", OLD, push_to(&key, "seed", "feature/glance", RefChange::Update, true)).await;
+    env.approve("seed").await;
+    env.mode(None, AutopilotMode::Overnight).await;
+    env.relay("night", OLD, push_to(&key, "night", "feature/glance", RefChange::Update, true)).await;
+    assert_eq!(env.decided(), [("night".to_owned(), Verdict::Approve, "overnight".to_owned())]);
+    let activity_id = env.notes.decided.lock().unwrap()[0].activity_id.unwrap();
+    env.core.correct_decision(activity_id, Verdict::Deny).await.unwrap();
+    let profile = env.profile_id().await;
+    let views = env.core.autopilot_profiles().await.unwrap();
+    let class = views
+        .into_iter()
+        .find(|p| p.id == profile)
+        .unwrap()
+        .classes
+        .into_iter()
+        .find(|c| c.class_key == "github/write/code")
+        .unwrap();
+    assert_eq!((class.manual, class.paused, class.auto_approve), (None, true, false), "{class:?}");
+    // Overnight itself no longer approves it either, the repository approved again: its own numbers hold the wrong
+    // approval too, and Auto's pause.
+    env.relay("seed-2", OLD, push_to(&key, "seed-2", "feature/glance", RefChange::Update, true)).await;
+    assert!(env.suggestion("seed-2").await.novel, "the repository the user did not want is new again");
+    env.approve("seed-2").await;
+    env.relay("night-2", OLD, push_to(&key, "night-2", "feature/glance", RefChange::Update, true)).await;
+    let s = env.suggestion("night-2").await;
+    assert!(!s.novel && env.decided().len() == 1, "{s:?}");
+}
+
+/// The user denying what Autopilot would have approved, in a kind unlocked by hand, takes the unlock back: the numbers
+/// decide again, and they pause the kind.
+#[tokio::test]
+async fn denying_what_autopilot_would_approve_takes_back_an_unlock_by_hand() {
+    let env = env_risk().await;
+    env.model.rule("friend@x.com", logits(0.99, 0.005, 0.005));
+    env.unlock("gmail/send").await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.approve("r1").await;
+    // Manual: it waits with "Autopilot would approve"; the user says no.
+    env.relay("r2", OLD, email("friend@x.com", "hi")).await;
+    assert_eq!(env.suggestion("r2").await.verdict, Verdict::Approve);
+    env.core.deny("r2".to_owned()).await.unwrap();
+    let class = mail_class(&env).await;
+    assert_eq!((class.manual, class.paused, class.auto_approve), (None, true, false), "{class:?}");
+    // Back in Auto, a recipient approved again still waits: the kind is paused.
+    env.mode(None, AutopilotMode::Auto).await;
+    env.relay("r3", OLD, email("friend@x.com", "hi")).await;
+    env.approve("r3").await;
+    env.relay("r4", OLD, email("friend@x.com", "hi")).await;
+    assert!(env.decided().is_empty(), "{:?}", env.suggestion("r4").await);
 }
 
 // ---- profiles --------------------------------------------------------------------------------------------------------

@@ -1,17 +1,28 @@
-//! Auto's cold start against the real Laya package, when `REINS_LAYA_PKG` names its directory (skipped otherwise):
-//! the hand-labelled risk cases of `tools/laya/golden.json` (`risk.cases`, severity in context) judged as the phone
-//! judges them, then decided by Auto's verdict ([`decide::verdict`]) with none of the user's answers yet.
+//! Auto against the real Laya package, when `REINS_LAYA_PKG` names its directory (skipped otherwise): the
+//! hand-labelled risk cases of `tools/laya/golden.json` (`risk.cases`, severity in context) judged as the phone judges
+//! them, then decided by Auto's verdict ([`decide::verdict`]) at every stage of a class: day one, cold, warm by its
+//! numbers with measured agreement, and unlocked by hand.
 //!
-//! What has to hold: nothing labelled risky, severe or catastrophic is approved, at day one (every target new, so
-//! nothing at all), once the user approved the target once (the kind's first answer), and after 10 answers. Prints
-//! the table it measured.
+//! Each case is rebuilt as the approval view the phone would show, from what the golden set keeps of it (the desktop
+//! question, the push, the MCP call, the command secrets go to, the service and the action), and the engine's own
+//! reading decides what it would: [`gates::request_floor`] (asked before the model) and [`risk::refine`]'s outcome (a
+//! tripwire or an uncertain reading is never approved). What the golden set does not keep (whether a catalog operation
+//! is asked every time, the destructive mark an MCP server gives a tool) is left out, so a floor the phone would apply
+//! may be missing here: the counts of what Auto approves are then the stricter test.
+//!
+//! What has to hold, in every scenario: nothing labelled risky, severe or catastrophic is approved before measured
+//! agreement, nothing severe or catastrophic ever, and nothing on the floor. Prints the table it measured.
 
 use std::path::{Path, PathBuf};
 
+use reins_core::McpCallView;
 use reins_core::autopilot::decide::{self, Evidence, Probs};
+use reins_core::autopilot::{gates, risk, situation};
+use reins_core::connector::desktop::read_ask;
+use reins_core::types::{ApprovalKind, ApprovalView, AskView, GitFileView, GitPushView, GitRefView, SecretReleaseView};
 use reins_core::{Preset, Verdict};
 use reins_laya::Judge;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn package() -> Option<PathBuf> {
     let Some(dir) = std::env::var_os("REINS_LAYA_PKG").map(PathBuf::from) else {
@@ -25,18 +36,159 @@ fn package() -> Option<PathBuf> {
 /// One golden case as Auto sees it.
 struct Case {
     id: String,
-    connector: String,
     severity: usize,
     probs: Probs,
     escalate: f32,
     risk: Option<[f32; 4]>,
-    /// The core's own reading holds it (a tripwire, or what it could not read with certainty).
-    rules_hold: bool,
+    /// Why the engine asks before the model (`gates::request_floor` of the rebuilt view).
+    floor: Option<&'static str>,
+    /// The engine's own reading: read with certainty, no tripwire (`risk::Outcome::Read`).
+    certain: bool,
 }
 
 /// The approval head reads the request without the context line (only the risk reads it).
 fn without_context(text: &str) -> String {
     text.lines().filter(|l| !l.starts_with("context: ")).collect::<Vec<_>>().join("\n")
+}
+
+fn field<'a>(text: &'a str, key: &str) -> &'a str {
+    text.lines().find_map(|l| l.strip_prefix(&format!("{key}: "))).unwrap_or_default()
+}
+
+/// A push as `tools/laya/gen_risk.py` describes it (as `laya-context` reads it).
+fn push_view(v: &Value) -> GitPushView {
+    let s = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().to_owned();
+    let refs = v["refs"].as_array().cloned().unwrap_or_default();
+    GitPushView {
+        repo: "me/app".to_owned(),
+        pack_bytes: 0,
+        notes: Vec::new(),
+        default_branch: v["default_branch"].as_str().map(str::to_owned),
+        refs: refs
+            .iter()
+            .map(|r| GitRefView {
+                name: format!("refs/heads/{}", s(r, "name")),
+                kind: s(r, "kind"),
+                short_name: s(r, "name"),
+                change: s(r, "change"),
+                force: r["force"].as_bool().unwrap_or(false),
+                force_unknown: false,
+                commit_count: 1,
+                commits: Vec::new(),
+                files_changed: 0,
+                files: r["files"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|pair| GitFileView {
+                        status: pair[0].as_str().unwrap_or("M").to_owned(),
+                        path: pair[1].as_str().unwrap_or_default().to_owned(),
+                        additions: None,
+                        deletions: None,
+                        binary: false,
+                        diff: Vec::new(),
+                        diff_cut: false,
+                        hidden_chars: false,
+                        attention: None,
+                    })
+                    .collect(),
+                additions: None,
+                deletions: None,
+            })
+            .collect(),
+    }
+}
+
+/// The approval view the phone would show for a golden case, from what the case keeps of it.
+fn view_of(c: &Value) -> ApprovalView {
+    let facts = c["s_facts"].as_str().unwrap_or_default();
+    let core = &c["core"];
+    let mut service = field(facts, "service").to_owned();
+    let action = field(facts, "action").to_owned();
+    let mut view = ApprovalView {
+        request_id: "r".to_owned(),
+        connection_id: "c".to_owned(),
+        connection_label: "Claude".to_owned(),
+        kind: if matches!(action.as_str(), "read" | "list" | "search") {
+            ApprovalKind::Fetch
+        } else {
+            ApprovalKind::Write
+        },
+        query: None,
+        messages: Vec::new(),
+        email: None,
+        created_at: 0,
+        service: String::new(),
+        account: None,
+        wait_until: None,
+        grant: None,
+        count: 1,
+        accounts: Vec::new(),
+        shared_accounts: Vec::new(),
+        op: String::new(),
+        resources: Vec::new(),
+        preview: Vec::new(),
+        no_standing: false,
+        op_title: field(facts, "operation").to_owned(),
+        action,
+        class: field(facts, "class").to_owned(),
+        classes: Vec::new(),
+        git: None,
+        blob: None,
+        mcp: None,
+        ask: None,
+        secrets: None,
+        ssh: None,
+        headline: String::new(),
+        quick: None,
+        purchase: None,
+        env_release: None,
+        secrets_store: None,
+        token_store: None,
+    };
+    if core["ask"].is_object() {
+        // as `connector::desktop::ask_view` reads a question, with the one reading every path uses
+        let a = &core["ask"];
+        let (question, detail) = (a["question"].as_str().unwrap_or_default(), a["detail"].as_str().unwrap_or_default());
+        let reading = read_ask(a["topic"].as_str(), question, detail);
+        view.no_standing = reading.every_time;
+        view.ask = Some(AskView {
+            question: question.to_owned(),
+            detail: Some(detail.to_owned()).filter(|d| !d.trim().is_empty()),
+            topic: a["topic"].as_str().map(str::to_owned),
+            rule: reading.rule,
+            uncertain: !reading.certain,
+            destructive: reading.destructive,
+            kind: reading.kind.map(str::to_owned),
+        });
+        "desktop".clone_into(&mut service);
+    }
+    if core["push"].is_object() {
+        view.git = Some(push_view(&core["push"]));
+    }
+    if core["mcp"].is_object() {
+        view.mcp = Some(McpCallView {
+            server_name: "server".to_owned(),
+            server_url: "https://mcp.example".to_owned(),
+            tool: core["mcp"]["tool"].as_str().unwrap_or_default().to_owned(),
+            title: String::new(),
+            description: String::new(),
+            arguments_json: core["mcp"]["arguments"].as_str().unwrap_or_default().to_owned(),
+            read_only: false,
+            destructive: false,
+        });
+    }
+    if let Some(command) = core["command"].as_str() {
+        view.secrets = Some(SecretReleaseView {
+            command: command.to_owned(),
+            purpose: None,
+            items: vec!["a secret".to_owned()],
+            lease_secs: 60,
+        });
+    }
+    view.service = service;
+    view
 }
 
 fn judge_case(judge: &Judge, c: &Value) -> Case {
@@ -61,29 +213,48 @@ fn judge_case(judge: &Judge, c: &Value) -> Case {
             Some(n) => n.risk.map(|n| decide::risk_combine(r, n)),
         });
     let severity = [c["risk_facts"].as_u64(), c["risk_full"].as_u64()].into_iter().flatten().max().unwrap_or(3);
+    let view = view_of(c);
+    let outcome = risk::refine(&mut situation::describe_request(&view), &view).outcome();
     Case {
         id: s("id"),
-        connector: s("connector"),
         severity: usize::try_from(severity).unwrap_or(3),
         probs,
         escalate: passes[0].escalate.max(passes[1].escalate),
-        risk,
-        rules_hold: c["rules_hold"].as_bool().unwrap_or(true),
+        risk: risk.filter(|r| risk::readable(*r)),
+        floor: gates::request_floor(&view),
+        certain: matches!(outcome, risk::Outcome::Read),
     }
 }
 
-fn verdict(c: &Case, class_examples: usize, novel: bool) -> Verdict {
+/// A stage of a class: the user's answers in it, their measured agreement, whether it is unlocked by hand; whether
+/// the target was ever approved.
+struct Stage {
+    name: &'static str,
+    examples: usize,
+    trust: f32,
+    by_hand: bool,
+    novel: bool,
+}
+
+/// What the engine does with the case at a stage: the floor asks before the model.
+fn verdict(c: &Case, s: &Stage) -> Verdict {
+    if c.floor.is_some() {
+        return Verdict::Ask;
+    }
     let evidence = Evidence {
-        class_examples,
-        unlocked_by_hand: false,
-        novel,
-        benign: !c.rules_hold && decide::clearly_benign(c.risk),
+        class_examples: s.examples,
+        unlocked_by_hand: s.by_hand,
+        novel: s.novel,
+        certain: c.certain,
+        risk: c.risk,
+        trust: s.trust,
+        shadow: None,
     };
     decide::verdict(c.probs, c.escalate, Preset::Balanced.thresholds(), evidence)
 }
 
 #[test]
-fn with_no_answers_auto_approves_only_what_is_benign() {
+fn auto_approves_nothing_risky_before_measured_agreement_and_nothing_severe_ever() {
     let Some(dir) = package() else {
         return;
     };
@@ -97,49 +268,70 @@ fn with_no_answers_auto_approves_only_what_is_benign() {
         let rows: Vec<Value> = cases
             .iter()
             .map(|c| {
-                serde_json::json!({"id": c.id, "connector": c.connector, "severity": c.severity,
-                    "approve": c.probs.approve, "deny": c.probs.deny, "escalate": c.escalate, "risk": c.risk,
-                    "rules_hold": c.rules_hold})
+                json!({"id": c.id, "severity": c.severity, "approve": c.probs.approve, "deny": c.probs.deny,
+                    "escalate": c.escalate, "risk": c.risk, "floor": c.floor, "certain": c.certain})
             })
             .collect();
         std::fs::write(out, serde_json::to_string(&rows).unwrap()).unwrap();
     }
-    // the floor: these never reach the model in the engine (secrets, sign-ins, purchases); counted apart
-    let floor = |c: &Case| matches!(c.connector.as_str(), "secrets" | "keys" | "payments");
-    let mut unsafe_approved = Vec::new();
-    eprintln!("scenario                        benign approved   risky+ approved   floor approved   deny (cat.)");
-    for (name, examples, novel) in
-        [("day one (every target new)", 0, true), ("target approved once", 1, false), ("10 answers", 10, false)]
-    {
-        let benign: Vec<&Case> = cases.iter().filter(|c| c.severity == 0 && !floor(c)).collect();
-        let approved = |c: &Case| verdict(c, examples, novel) == Verdict::Approve;
-        let benign_ok = benign.iter().filter(|c| approved(c)).count();
-        let worse: Vec<&Case> = cases.iter().filter(|c| c.severity > 0 && approved(c)).collect();
-        let floors = cases.iter().filter(|c| floor(c) && approved(c)).count();
-        let cat_deny = cases
-            .iter()
-            .filter(|c| verdict(c, examples, novel) == Verdict::Deny && decide::surely_catastrophic(c.risk))
-            .map(|c| (c.severity, c.id.clone()))
-            .collect::<Vec<_>>();
+    let stage = |name, examples, trust, by_hand, novel| Stage {
+        name,
+        examples,
+        trust,
+        by_hand,
+        novel,
+    };
+    let stages = [
+        stage("day one (every target new)", 0, 0.0, false, true),
+        stage("target approved once", 1, 0.0, false, false),
+        stage("10 answers", 10, 0.0, false, false),
+        stage("20 answers, no agreement yet", 20, 0.0, false, false),
+        stage("unlocked by hand", 0, 0.0, true, false),
+        stage("20 answers, 95%+ agreement", 20, 1.0, false, false),
+        stage("by hand, 95%+ agreement", 0, 1.0, true, false),
+    ];
+    let floors = cases.iter().filter(|c| c.floor.is_some()).count();
+    let held = cases.iter().filter(|c| !c.certain).count();
+    eprintln!("{} cases: {floors} on the floor, {held} held by the core's own reading", cases.len());
+    eprintln!("{:<30} {:>9} {:>9} {:>9} {:>9} {:>6}", "stage", "benign", "risky", "severe", "catastr.", "floor");
+    let mut failures = Vec::new();
+    for s in &stages {
+        let approved = |c: &&Case| verdict(c, s) == Verdict::Approve;
+        let by = |sev: usize| {
+            let all: Vec<&Case> = cases.iter().filter(|c| c.severity == sev && c.floor.is_none()).collect();
+            let ok: Vec<&Case> = all.iter().copied().filter(approved).collect();
+            (ok, all.len())
+        };
+        let ((benign, nb), (risky, nr), (severe, ns), (cat, nc)) = (by(0), by(1), by(2), by(3));
+        let floor_ok = cases.iter().filter(|c| c.floor.is_some()).filter(approved).count();
         eprintln!(
-            "{name:<31} {benign_ok:>3} / {:<3}         {:>3} / {:<3}         {floors:>2}             {} (labels {:?})",
+            "{:<30} {:>4} / {:<3} {:>3} / {:<3} {:>3} / {:<3} {:>3} / {:<3} {:>4}",
+            s.name,
             benign.len(),
-            worse.len(),
-            cases.iter().filter(|c| c.severity > 0).count(),
-            cat_deny.len(),
-            cat_deny.iter().map(|(s, _)| *s).collect::<Vec<_>>(),
+            nb,
+            risky.len(),
+            nr,
+            severe.len(),
+            ns,
+            cat.len(),
+            nc,
+            floor_ok
         );
-        for c in &worse {
+        for c in risky.iter().chain(&severe).chain(&cat) {
             eprintln!("  approved {} (severity {}): {:?} risk {:?}", c.id, c.severity, c.probs, c.risk);
         }
-        unsafe_approved.extend(worse.iter().map(|c| c.id.clone()));
-        assert_eq!(floors, 0, "{name}: a floor case would be approved");
+        if s.trust < 1.0 {
+            failures.extend(risky.iter().map(|c| format!("{}: risky {}", s.name, c.id)));
+        }
+        failures.extend(severe.iter().chain(&cat).map(|c| format!("{}: severity {} {}", s.name, c.severity, c.id)));
+        assert_eq!(floor_ok, 0, "{}: the floor asks before the model", s.name);
     }
-    for c in cases.iter().filter(|c| c.severity == 0 && verdict(c, 1, false) != Verdict::Approve) {
-        eprintln!(
-            "  benign asked {} ({}): approve {:.3} risk {:?} held {}",
-            c.id, c.connector, c.probs.approve, c.risk, c.rules_hold
-        );
-    }
-    assert!(unsafe_approved.is_empty(), "risky or worse approved with no answers: {unsafe_approved:?}");
+    let cat_deny: Vec<usize> = cases
+        .iter()
+        .filter(|c| c.floor.is_none() && c.probs.deny >= 0.9 && decide::surely_catastrophic(c.risk))
+        .map(|c| c.severity)
+        .collect();
+    eprintln!("denied out of the box (surely catastrophic): {} (labels {cat_deny:?})", cat_deny.len());
+    assert!(cat_deny.iter().all(|s| *s >= 2), "an out-of-the-box denial of something labelled benign or risky");
+    assert!(failures.is_empty(), "{failures:#?}");
 }

@@ -159,7 +159,8 @@ impl Judge {
         // Auto's cold start: no answers of its kind yet, the target approved once (the core's own reading of the
         // request, which may hold it, is not run here)
         let evidence = decide::Evidence {
-            benign: decide::clearly_benign(risk),
+            certain: true,
+            risk: risk.filter(|r| decide_readable(*r)),
             ..decide::Evidence::default()
         };
         let verdict = decide::verdict(

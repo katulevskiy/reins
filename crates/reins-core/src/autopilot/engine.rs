@@ -324,6 +324,11 @@ fn reason_of(j: &Judged, verdict: Verdict, novel: bool, approve_at: f32) -> Stri
             .unwrap_or_else(|| format!("Looks harmful ({}% deny)", pct(j.probs[1]))),
         Verdict::Ask if novel => "New for this connection: never approved before".to_owned(),
         Verdict::Ask if j.escalate >= decide::ESCALATE_LIMIT => "The model wants you to look at this".to_owned(),
+        // the core's own reading holds it, warm or not
+        Verdict::Ask if j.evidence.is_some_and(|e| !e.certain) => "The phone's own reading holds this".to_owned(),
+        Verdict::Ask if j.evidence.and_then(|e| e.risk).is_some_and(|r| r[2] + r[3] >= decide::SEVERE_VETO) => {
+            "Too risky to decide alone".to_owned()
+        }
         // sure enough for the profile, not yet for a kind it is still learning
         Verdict::Ask if j.probs[0] >= approve_at => format!("Still learning this kind ({}% approve)", pct(j.probs[0])),
         Verdict::Ask => format!("Not sure ({}% approve, {}% deny)", pct(j.probs[0]), pct(j.probs[1])),
@@ -756,7 +761,11 @@ impl Engine {
         let stored = self.ap_profile_of(&subject.connection_id)?;
         let thresholds = stored.profile.thresholds();
         let (profile_id, profile_name) = (stored.id, stored.profile.name);
-        let target_key = self.store.ap_target_key(&subject.connection_id, &subject.described.facts.target)?;
+        let target_key = self.store.ap_target_key(
+            &subject.connection_id,
+            &subject.described.class_key,
+            &subject.described.facts.target,
+        )?;
         let novel = target_key.is_empty() || !self.store.ap_target_seen(&target_key)?;
         let mut s = Suggestion {
             deletes: false,
@@ -802,21 +811,23 @@ impl Engine {
         // (Read from the package's configuration: opening it, which verifies it, is the judging's job. This reading
         // only decides what the model is shown; nothing is decided on it.)
         let rates_risk = mode != AutopilotMode::Bypass && model::rates_risk(&self.data_dir, &self.ap_known());
+        // The core's own reading (its tripwires, what it could not read with certainty) is worked out whatever the
+        // model: Auto never approves what it holds (decide::verdict).
         let mut for_risk = subject.described.clone();
+        let reading = match &subject.view {
+            Some(view) => risk::refine(&mut for_risk, view),
+            None => risk::upload_context(),
+        };
+        let certain = matches!(reading.outcome(), risk::Outcome::Read);
         let context = if rates_risk {
-            let context = match &subject.view {
-                Some(view) => {
-                    let c = risk::refine(&mut for_risk, view);
-                    s.label = situation::label_of(&for_risk.facts.operation, &for_risk.facts.target);
-                    c
-                }
-                None => risk::upload_context(),
-            };
-            s.deletes = context.deletes();
-            if let Some(line) = self.ap_recent_line(&subject, context.deletes(), now)? {
+            if subject.view.is_some() {
+                s.label = situation::label_of(&for_risk.facts.operation, &for_risk.facts.target);
+            }
+            s.deletes = reading.deletes();
+            if let Some(line) = self.ap_recent_line(&subject, reading.deletes(), now)? {
                 for_risk.facts.context.push(line);
             }
-            Some(context)
+            Some(reading)
         } else {
             None
         };
@@ -892,8 +903,10 @@ impl Engine {
         let evidence = decide::Evidence {
             unlocked_by_hand: gate.unlocked_by_hand,
             novel,
-            // read with certainty, no tripwire, and the risk head sure it is harmless
-            benign: matches!(outcome, Some(risk::Outcome::Read)) && decide::clearly_benign(readable),
+            certain,
+            risk: readable,
+            trust: gates::trust(&stats),
+            shadow: Some(decide::would(probs, novel, judged.escalate, thresholds)),
             ..judged.evidence.unwrap_or_default()
         };
         judged.evidence = Some(evidence);
@@ -1071,8 +1084,10 @@ impl Engine {
     /// target) is best effort here: none of it may keep the request waiting.
     async fn ap_bypass_item(&self, mut subject: Subject, now: i64) -> Result<(), CoreError> {
         let stored = self.ap_profile_of(&subject.connection_id).ok();
-        let target_key =
-            self.store.ap_target_key(&subject.connection_id, &subject.described.facts.target).unwrap_or_default();
+        let target_key = self
+            .store
+            .ap_target_key(&subject.connection_id, &subject.described.class_key, &subject.described.facts.target)
+            .unwrap_or_default();
         let mut facts = subject.described.facts.clone();
         facts.connection.clone_from(&subject.connection_label);
         facts.connection_history = self.store.ap_history(&subject.connection_id).ok();
@@ -1631,12 +1646,33 @@ impl Engine {
         });
         if verdict == Verdict::Approve {
             self.store.ap_target_add(&s.target_key, now)?;
+        } else {
+            // A target the user turned down is no longer "seen approved" (it asks once again).
+            self.store.ap_target_forget(&s.target_key)?;
         }
+        let shadow = shadow_of(&s);
         if let Some(j) = &s.judged {
-            let row = memory_row(&s, j, verdict, Source::User, 1.0, s.verdict, now);
+            let row = memory_row(&s, j, verdict, Source::User, 1.0, shadow, now);
             self.ap_remember(&s, &row)?;
         }
+        if verdict == Verdict::Deny && (shadow == Verdict::Approve || s.verdict == Verdict::Approve) {
+            // The user denied what Autopilot would have approved: the numbers decide again, and they pause the class.
+            self.ap_take_back_unlock(&s.profile_id, &s.class_key)?;
+        }
         self.store.ap_put_suggestion(&s)
+    }
+
+    /// An unlock by hand of a class goes (a lock by hand stays): the numbers decide again, and after a wrong approval
+    /// they pause it (`gates::ClassStats::demoted`).
+    fn ap_take_back_unlock(&self, profile_id: &str, class_key: &str) -> Result<(), CoreError> {
+        match self.ap_update_profile(profile_id, |p| {
+            if p.manual.get(class_key) == Some(&false) {
+                p.manual.remove(class_key);
+            }
+        }) {
+            Ok(()) | Err(CoreError::NotFound) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     fn ap_remember(&self, s: &Suggestion, row: &MemoryRow) -> Result<(), CoreError> {
@@ -1648,8 +1684,9 @@ impl Engine {
         self.ap_update_profile(&profile.id, |p| p.since_train += 1)
     }
 
-    /// "This was wrong" on an activity entry: remembered with weight 3; an automatic decision gone wrong pauses its
-    /// class until enough answers that agree with the user follow (`gates::ClassStats::demoted`).
+    /// "This was wrong" on an activity entry: remembered with weight 3. An automatic decision gone wrong (Auto's or
+    /// Overnight's) takes back an unlock by hand of its class and pauses the class until enough answers that agree with
+    /// the user follow (`gates::ClassStats::demoted`).
     pub async fn correct_decision(&self, activity_id: i64, should_have: Verdict) -> Result<(), CoreError> {
         if should_have == Verdict::Ask {
             return Err(CoreError::invalid("say whether it should have been approved or denied"));
@@ -1682,25 +1719,16 @@ impl Engine {
             }
             None => return Err(CoreError::invalid("Autopilot kept nothing to learn from for this request")),
         };
-        let automatic = decided.by == "autopilot";
+        let automatic = matches!(decided.by.as_str(), "autopilot" | "overnight");
         let would = if automatic {
             decided.verdict
         } else {
-            s.verdict
+            shadow_of(&s)
         };
         let row = memory_row(&s, &judged, should_have, Source::Correction, CORRECTION_WEIGHT, would, now);
         self.ap_remember(&s, &row)?;
         if automatic {
-            // Back to the numbers, which now hold a wrong automatic answer: auto-approve (or auto-deny) pauses in the
-            // class. An unlock by hand is taken back; a lock by hand stays.
-            match self.ap_update_profile(&s.profile_id, |p| {
-                if p.manual.get(&s.class_key) == Some(&false) {
-                    p.manual.remove(&s.class_key);
-                }
-            }) {
-                Ok(()) | Err(CoreError::NotFound) => {}
-                Err(e) => return Err(e),
-            }
+            self.ap_take_back_unlock(&s.profile_id, &s.class_key)?;
         }
         if should_have == Verdict::Deny {
             // A target the user did not want is no longer "seen approved".
@@ -2107,11 +2135,15 @@ impl Engine {
         let memory = self.store.ap_memory(&stored.id)?;
         let mut profile = (stored, memory);
         let manual_open = profile.0.profile.manual.get(&s.class_key).map(|locked| !locked);
+        let stats = gates::class_stats(&profile.1.iter().collect::<Vec<_>>(), &s.class_key);
         let (mut judged, probs) = self.ap_judge(&s, None, &mut profile, s.at).await.map_err(CoreError::service)?;
-        // As Auto would judge it, benign as the risk head reads it.
+        // As Auto would judge it (a typed situation has no core reading to hold it), the risk as the model rates it.
         let evidence = decide::Evidence {
             unlocked_by_hand: manual_open == Some(true),
-            benign: decide::clearly_benign(judged.risk),
+            certain: true,
+            risk: judged.risk.filter(|p| risk::readable(*p)),
+            trust: gates::trust(&stats),
+            shadow: Some(decide::would(probs, s.novel, judged.escalate, thresholds)),
             ..judged.evidence.unwrap_or_default()
         };
         judged.evidence = Some(evidence);
@@ -2129,7 +2161,8 @@ impl Engine {
         let profiles = self.ap_profiles()?;
         let default_id = self.ap_default_profile_id(&profiles)?;
         let assigned = self.store.ap_mode_rows()?;
-        // Without a model that rates risk nothing vouches for a kind the user has not taught yet: it asks until then.
+        // Without a model that rates risk nothing vouches for a kind until the user's answers show full measured
+        // agreement in it (decide::risk_ok): it asks until then. The engine reads the same numbers.
         let rates_risk = self.ap_installed() && model::rates_risk(&self.data_dir, &self.ap_known());
         let mut views = Vec::with_capacity(profiles.len());
         for p in profiles {
@@ -2147,8 +2180,7 @@ impl Engine {
                     let stats = gates::class_stats(&refs, &key);
                     let open = p.profile.manual.get(&key).map(|locked| !locked);
                     let gate = gates::auto_gate(&stats, open);
-                    let vouched =
-                        rates_risk || gate.unlocked_by_hand || stats.decisions >= decide::FULL_WEIGHT_EXAMPLES;
+                    let vouched = rates_risk || gates::trust(&stats) >= 1.0;
                     ClassView {
                         label: class_label(self, &key),
                         decisions: u32::try_from(stats.decisions).unwrap_or(u32::MAX),
@@ -2361,6 +2393,12 @@ impl Engine {
             kinds: count(profiles.iter().map(|p| p.classes.len()).sum()),
         })
     }
+}
+
+/// What the shadow accuracy compares with the user's decision: the verdict at the profile's thresholds, before the
+/// cold-start bar and the risk gate (`decide::Evidence::shadow`); for evaluations without it, the verdict itself.
+fn shadow_of(s: &Suggestion) -> Verdict {
+    s.judged.as_ref().and_then(|j| j.evidence).and_then(|e| e.shadow).unwrap_or(s.verdict)
 }
 
 fn verb_infinitive(v: Verdict) -> &'static str {

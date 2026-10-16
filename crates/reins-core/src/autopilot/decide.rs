@@ -17,12 +17,24 @@ pub const ESCALATE_LIMIT: f32 = 0.5;
 /// profile's own threshold by [`FULL_WEIGHT_EXAMPLES`] answers ([`approve_bar`]). A profile stricter than this keeps
 /// its own.
 pub const COLD_APPROVE: f32 = 0.97;
-/// While the bar is not the profile's own, the risk head must call the request clearly benign: P(benign) at least
-/// this…
+/// Until the user's answers show measured agreement in a class ([`trust`]), the risk head must call the request
+/// clearly benign: P(benign) at least this…
 pub const COLD_BENIGN: f32 = 0.9;
 /// …and P(severe) + P(catastrophic) below this: just above where the head rests on harmless requests (up to about
 /// 0.049 on the golden set of `tools/laya`), so any more sign of harm asks.
 pub const COLD_SEVERE_MAX: f32 = 0.05;
+/// P(severe) + P(catastrophic) at or above which Auto never approves, however warm, trusted or unlocked by hand the
+/// class. On the golden set of `tools/laya` (378 hand-labelled cases, the shipped model): every catastrophic case is at
+/// 0.63 or more and 50 of the 54 severe ones above 0.3, while 90% of the benign ones are under 0.07; 0.3 stops as few
+/// benign cases as 0.5 does (4 of 122) and one severe case more.
+pub const SEVERE_VETO: f32 = 0.3;
+/// Comparable decisions (Autopilot's shadow verdict against the user's) at which measured agreement has fully relaxed
+/// the benign requirement ([`trust`]); it starts relaxing at the 10 the shadow accuracy needs to count.
+pub const TRUSTED_DECIDED: usize = 20;
+/// The shadow accuracy that counts as agreement.
+pub const TRUSTED_ACCURACY: f32 = 0.95;
+/// The fewest comparable decisions the shadow accuracy is measured on.
+pub const MEASURED_DECIDED: usize = 10;
 /// Auto denies on its own, in a class that has not earned auto-deny, only what the risk head rates catastrophic at
 /// least this sure (and the deny probability reaches the profile's threshold).
 pub const CATASTROPHIC_DENY: f32 = 0.9;
@@ -190,15 +202,39 @@ pub fn approve_bar(class_examples: usize, normal: f32) -> f32 {
     normal + (cold - normal) * left
 }
 
-/// The risk head calls a request clearly benign (after the two-pass rule): P(benign) ≥ [`COLD_BENIGN`] and
-/// P(severe) + P(catastrophic) < [`COLD_SEVERE_MAX`]. Not without a readable risk.
+/// Four finite probabilities in 0..1 that sum to one.
+fn readable(r: [f32; 4]) -> bool {
+    r.iter().all(|p| p.is_finite() && (0.0..=1.0).contains(p)) && (r.iter().sum::<f32>() - 1.0).abs() < 1e-3
+}
+
+/// How far the user's measured agreement in a class relaxes the benign requirement, 0 to 1: nothing until Autopilot's
+/// shadow verdicts matched at least [`TRUSTED_ACCURACY`] of the user's decisions over at least [`MEASURED_DECIDED`]
+/// comparable ones, then in a straight line to all of it at [`TRUSTED_DECIDED`]. Never from a count of answers alone.
+#[expect(clippy::cast_precision_loss, reason = "counts of at most 50")]
+pub fn trust(accuracy: Option<f32>, decided: usize) -> f32 {
+    if !accuracy.is_some_and(|a| a >= TRUSTED_ACCURACY) || decided < MEASURED_DECIDED {
+        return 0.0;
+    }
+    ((decided - MEASURED_DECIDED) as f32 / (TRUSTED_DECIDED - MEASURED_DECIDED) as f32).min(1.0)
+}
+
+/// The risk Auto accepts at `trust` (0 to 1): P(benign) at least [`COLD_BENIGN`] · (1 − trust) and P(severe) +
+/// P(catastrophic) under [`COLD_SEVERE_MAX`], rising in a line to [`SEVERE_VETO`]; never at or above the veto. Without
+/// a readable risk (a model that does not rate it) only full trust, and then nothing is vetoed by the risk head.
+pub fn risk_ok(risk: Option<[f32; 4]>, trust: f32) -> bool {
+    let t = trust.clamp(0.0, 1.0);
+    match risk.filter(|r| readable(*r)) {
+        Some(r) => {
+            r[0] >= COLD_BENIGN * (1.0 - t) && r[2] + r[3] < COLD_SEVERE_MAX + (SEVERE_VETO - COLD_SEVERE_MAX) * t
+        }
+        None => t >= 1.0,
+    }
+}
+
+/// The risk head calls a request clearly benign (after the two-pass rule): what [`risk_ok`] asks with no measured
+/// agreement. Not without a readable risk.
 pub fn clearly_benign(risk: Option<[f32; 4]>) -> bool {
-    risk.is_some_and(|r| {
-        r.iter().all(|p| p.is_finite() && (0.0..=1.0).contains(p))
-            && (r.iter().sum::<f32>() - 1.0).abs() < 1e-3
-            && r[0] >= COLD_BENIGN
-            && r[2] + r[3] < COLD_SEVERE_MAX
-    })
+    risk.is_some() && risk_ok(risk, 0.0)
 }
 
 /// The risk head rates a request catastrophic at least [`CATASTROPHIC_DENY`] sure.
@@ -208,31 +244,40 @@ pub fn surely_catastrophic(risk: Option<[f32; 4]>) -> bool {
 
 /// What Auto's verdict on a request rests on besides the probabilities (kept with an evaluation, so that it can be
 /// replayed at other thresholds).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Evidence {
     /// The user's answers remembered for its class (with this model): the bar relaxes as they grow.
+    #[serde(default)]
     pub class_examples: usize,
     /// The user unlocked the class by hand: the profile's own threshold from the first request.
+    #[serde(default)]
     pub unlocked_by_hand: bool,
-    /// Its target was never approved for this connection: it always asks, reads included.
+    /// Its target was never approved for this connection in this class: it always asks, reads included.
+    #[serde(default)]
     pub novel: bool,
-    /// Read with certainty, no tripwire, and the risk head calls it clearly benign ([`clearly_benign`]).
-    pub benign: bool,
-}
-
-impl Evidence {
-    /// The user's answers dominate the class (or the user unlocked it): the profile's own threshold applies.
-    pub fn warm(&self) -> bool {
-        self.unlocked_by_hand || self.class_examples >= FULL_WEIGHT_EXAMPLES
-    }
+    /// The core read it with certainty and no tripwire fired (`risk::Outcome::Read`): never approved otherwise.
+    #[serde(default)]
+    pub certain: bool,
+    /// The risk head's rating after the two-pass rule, when the model rates risk.
+    #[serde(default)]
+    pub risk: Option<[f32; 4]>,
+    /// The user's measured agreement in the class ([`trust`]).
+    #[serde(default)]
+    pub trust: f32,
+    /// The verdict at the profile's thresholds with no cold-start bar and no risk gate ([`would`]): what the shadow
+    /// accuracy compares with the user's decisions, so that agreement can be measured while Auto still asks.
+    #[serde(default)]
+    pub shadow: Option<Verdict>,
 }
 
 /// What Autopilot would do in Auto mode, the class gates aside (spec §5.4, from the first request):
 ///
-/// - approve a target this connection had approved before, when the approve probability reaches [`approve_bar`] and
-///   the act head does not ask to escalate; while the class is not warm, only what the risk head calls clearly
-///   benign. A target never approved always asks once, whatever it is (the user is never surprised by a first time:
-///   an agent reading their email for the first time asks);
+/// - approve a target this connection had approved before in this class, when the approve probability reaches
+///   [`approve_bar`] (the profile's own threshold when unlocked by hand) and the act head does not ask to escalate,
+///   the core read the request with certainty and no tripwire fired, and the risk is acceptable ([`risk_ok`]: clearly
+///   benign until the user's answers show measured agreement, never at or above [`SEVERE_VETO`]). A target never
+///   approved always asks once, whatever it is (the user is never surprised by a first time: an agent reading their
+///   email for the first time asks);
 /// - else deny at the profile's deny threshold;
 /// - else ask.
 pub fn verdict(p: Probs, escalate: f32, thresholds: (f32, f32), e: Evidence) -> Verdict {
@@ -241,7 +286,7 @@ pub fn verdict(p: Probs, escalate: f32, thresholds: (f32, f32), e: Evidence) -> 
     } else {
         approve_bar(e.class_examples, thresholds.0)
     };
-    if p.approve >= bar && escalate < ESCALATE_LIMIT && !e.novel && (e.warm() || e.benign) {
+    if p.approve >= bar && escalate < ESCALATE_LIMIT && !e.novel && e.certain && risk_ok(e.risk, e.trust) {
         Verdict::Approve
     } else if p.deny >= thresholds.1 {
         Verdict::Deny
@@ -301,13 +346,18 @@ mod tests {
     }
 
     const CALM: [f32; 4] = [0.95, 0.02, 0.02, 0.01];
+    /// Not clearly benign, well under the veto: what measured agreement lets through.
+    const RISKY: [f32; 4] = [0.2, 0.7, 0.07, 0.03];
+    /// At the severe veto.
+    const SEVERE: [f32; 4] = [0.1, 0.6, 0.2, 0.1];
 
-    fn seen(class_examples: usize, benign: bool) -> Evidence {
+    /// A request to a known target, read with certainty, with this risk.
+    fn seen(class_examples: usize, risk: [f32; 4]) -> Evidence {
         Evidence {
             class_examples,
-            unlocked_by_hand: false,
-            novel: false,
-            benign,
+            certain: true,
+            risk: Some(risk),
+            ..Evidence::default()
         }
     }
 
@@ -336,27 +386,69 @@ mod tests {
     }
 
     #[test]
+    fn trust_comes_only_from_measured_agreement_and_grows_smoothly() {
+        assert!(trust(None, 40) == 0.0, "not measured");
+        assert!(trust(Some(0.94), 40) == 0.0, "under 95%");
+        assert!(trust(Some(1.0), 9) == 0.0 && trust(Some(1.0), 10) == 0.0, "starts at 10");
+        assert!((trust(Some(1.0), 15) - 0.5).abs() < 1e-6);
+        assert!((trust(Some(0.96), 20) - 1.0).abs() < 1e-6 && (trust(Some(1.0), 50) - 1.0).abs() < 1e-6);
+        // the accepted risk moves in a line, and the veto never moves
+        assert!(risk_ok(Some(CALM), 0.0) && !risk_ok(Some(RISKY), 0.0) && !risk_ok(Some(RISKY), 0.5));
+        assert!(risk_ok(Some(RISKY), 1.0), "full trust: no benign requirement");
+        assert!(!risk_ok(Some(SEVERE), 1.0), "the severe veto holds at full trust");
+        assert!(risk_ok(Some([0.9, 0.0, 0.05, 0.05]), 0.3) && !risk_ok(Some([0.9, 0.0, 0.05, 0.05]), 0.1));
+        assert!(!risk_ok(None, 0.99) && risk_ok(None, 1.0), "without a risk head, only full trust");
+    }
+
+    #[test]
     fn cold_auto_approves_a_benign_request_to_a_known_target_and_nothing_else() {
         let t = (0.95, 0.90);
-        assert_eq!(verdict(p(0.975, 0.0), 0.0, t, seen(0, true)), Verdict::Approve, "benign, sure, target known");
-        assert_eq!(verdict(p(0.965, 0.0), 0.0, t, seen(0, true)), Verdict::Ask, "under the cold bar");
-        assert_eq!(verdict(p(0.965, 0.0), 0.0, t, seen(10, true)), Verdict::Approve, "the bar relaxed to 0.96");
-        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, seen(0, false)), Verdict::Ask, "not clearly benign: asks");
-        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, seen(19, false)), Verdict::Ask, "still cold at 19");
-        assert_eq!(verdict(p(0.96, 0.0), 0.0, t, seen(20, false)), Verdict::Approve, "warm: the user's answers rule");
-        assert_eq!(verdict(p(0.999, 0.0), 0.7, t, seen(0, true)), Verdict::Ask, "the model asked to escalate");
+        assert_eq!(verdict(p(0.975, 0.0), 0.0, t, seen(0, CALM)), Verdict::Approve, "benign, sure, target known");
+        assert_eq!(verdict(p(0.965, 0.0), 0.0, t, seen(0, CALM)), Verdict::Ask, "under the cold bar");
+        assert_eq!(verdict(p(0.965, 0.0), 0.0, t, seen(10, CALM)), Verdict::Approve, "the bar relaxed to 0.96");
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, seen(0, RISKY)), Verdict::Ask, "not clearly benign: asks");
+        assert_eq!(verdict(p(0.999, 0.0), 0.7, t, seen(0, CALM)), Verdict::Ask, "the model asked to escalate");
         let novel = Evidence {
             novel: true,
-            ..seen(500, true)
+            ..seen(500, CALM)
         };
         assert_eq!(verdict(p(0.999, 0.0), 0.0, t, novel), Verdict::Ask, "a target never approved asks, reads too");
-        let by_hand = Evidence {
-            unlocked_by_hand: true,
-            ..seen(0, false)
-        };
-        assert_eq!(verdict(p(0.951, 0.0), 0.0, t, by_hand), Verdict::Approve, "unlocked by hand: the profile's bar");
         assert_eq!(verdict(p(0.0, 0.91), 0.0, t, novel), Verdict::Deny, "the deny verdict is as before");
-        assert_eq!(verdict(p(0.0, 0.89), 0.0, t, seen(0, true)), Verdict::Ask);
+        assert_eq!(verdict(p(0.0, 0.89), 0.0, t, seen(0, CALM)), Verdict::Ask);
+    }
+
+    /// Warm by numbers or unlocked by hand, the risk still counts: no approval without a certain reading, never at the
+    /// severe veto, and the benign requirement only goes with measured agreement.
+    #[test]
+    fn warmth_and_hand_unlocks_never_switch_the_risk_gate_off() {
+        let t = (0.95, 0.90);
+        let warm = |risk, trust| Evidence {
+            trust,
+            ..seen(20, risk)
+        };
+        assert_eq!(verdict(p(0.99, 0.0), 0.0, t, warm(RISKY, 0.0)), Verdict::Ask, "20 answers, no measured agreement");
+        assert_eq!(verdict(p(0.96, 0.0), 0.0, t, warm(RISKY, 1.0)), Verdict::Approve, "measured agreement");
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, warm(SEVERE, 1.0)), Verdict::Ask, "the veto");
+        let tripwire = Evidence {
+            certain: false,
+            ..warm(CALM, 1.0)
+        };
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, tripwire), Verdict::Ask, "a tripwire or an uncertain reading");
+        let by_hand = |risk| Evidence {
+            unlocked_by_hand: true,
+            ..seen(0, risk)
+        };
+        assert_eq!(verdict(p(0.951, 0.0), 0.0, t, by_hand(CALM)), Verdict::Approve, "the profile's bar, benign");
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, by_hand(RISKY)), Verdict::Ask, "unlocked, still not benign");
+        let catastrophic = [0.01, 0.01, 0.03, 0.95];
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, warm(catastrophic, 1.0)), Verdict::Ask);
+        // a model that rates no risk: only full measured agreement, and a certain reading
+        let no_risk = |trust| Evidence {
+            risk: None,
+            ..warm(CALM, trust)
+        };
+        assert_eq!(verdict(p(0.96, 0.0), 0.0, t, no_risk(0.9)), Verdict::Ask);
+        assert_eq!(verdict(p(0.96, 0.0), 0.0, t, no_risk(1.0)), Verdict::Approve);
     }
 
     #[test]

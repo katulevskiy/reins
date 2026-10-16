@@ -16,11 +16,11 @@ pub const APPROVE_UNLOCK_DECISIONS: usize = 20;
 /// Human decisions in a class before auto-deny can unlock by itself.
 pub const DENY_UNLOCK_DECISIONS: usize = 10;
 /// Shadow accuracy below which auto-approve pauses in a class (and which Overnight's unlock needs).
-pub const APPROVE_UNLOCK_ACCURACY: f32 = 0.95;
+pub const APPROVE_UNLOCK_ACCURACY: f32 = super::decide::TRUSTED_ACCURACY;
 /// The window of the shadow accuracy…
 const ACCURACY_WINDOW: usize = 50;
 /// …in which Autopilot must have decided at least this many on its own for the accuracy to count.
-const ACCURACY_MIN_DECIDED: usize = 10;
+const ACCURACY_MIN_DECIDED: usize = super::decide::MEASURED_DECIDED;
 /// The window in which a single wrong automatic answer keeps the class paused.
 pub const STRICT_WINDOW: usize = 20;
 
@@ -204,6 +204,11 @@ pub fn unlocked(stats: &ClassStats, manual: Option<bool>) -> (bool, bool) {
         Some(open) => (open, open),
         None => (stats.approve_earned(), stats.deny_earned()),
     }
+}
+
+/// The user's measured agreement in a class ([`super::decide::trust`]): how far it relaxes the benign requirement.
+pub fn trust(stats: &ClassStats) -> f32 {
+    super::decide::trust(stats.accuracy(), stats.decided)
 }
 
 /// What Auto may do on its own in one class.

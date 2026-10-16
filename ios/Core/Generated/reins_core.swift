@@ -8997,8 +8997,8 @@ public struct ClassView: Equatable, Hashable {
     public var shadowAccuracy: Float?
     /**
      * Auto mode approves on its own in this class when it is sure (from the first request: the bar is stricter while
-     * the user's answers are few). False when paused, locked by hand, or with no model that rates risk before the
-     * user's answers are enough.
+     * the user's answers are few). False when paused, locked by hand, or, with no model that rates risk, before the
+     * user's answers show full measured agreement (`decide::trust`), as the engine reads it.
      */
     public var autoApprove: Bool
     /**
@@ -9037,8 +9037,8 @@ public struct ClassView: Equatable, Hashable {
          */shadowAccuracy: Float?, 
         /**
          * Auto mode approves on its own in this class when it is sure (from the first request: the bar is stricter while
-         * the user's answers are few). False when paused, locked by hand, or with no model that rates risk before the
-         * user's answers are enough.
+         * the user's answers are few). False when paused, locked by hand, or, with no model that rates risk, before the
+         * user's answers show full measured agreement (`decide::trust`), as the engine reads it.
          */autoApprove: Bool, 
         /**
          * Auto mode may deny any request of this class it would deny (else only what it rates surely catastrophic).

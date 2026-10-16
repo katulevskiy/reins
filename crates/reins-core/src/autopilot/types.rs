@@ -284,8 +284,8 @@ pub struct ClassView {
     /// decided on its own); `None` until it would have decided at least 10.
     pub shadow_accuracy: Option<f32>,
     /// Auto mode approves on its own in this class when it is sure (from the first request: the bar is stricter while
-    /// the user's answers are few). False when paused, locked by hand, or with no model that rates risk before the
-    /// user's answers are enough.
+    /// the user's answers are few). False when paused, locked by hand, or, with no model that rates risk, before the
+    /// user's answers show full measured agreement (`decide::trust`), as the engine reads it.
     pub auto_approve: bool,
     /// Auto mode may deny any request of this class it would deny (else only what it rates surely catastrophic).
     pub auto_deny: bool,

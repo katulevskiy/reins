@@ -127,25 +127,30 @@ harness hook's question is of its guard group, `desktop/ask/env-files`, only whe
 does falls in that group as the phone reads it, else `desktop/ask`; its target is exactly that file, or exactly that
 command in that folder, so a learnt answer never covers another command). There is no break-in period per kind:
 
-- A request to a **target you have never approved for that AI** (a new repository, a new recipient, a first read of
-  your mail) always asks, reads included. Once you approve it, Auto can handle that target from the next request.
+- A request to a **target you have never approved for that AI, in that kind of request** (a new repository, a new
+  recipient, a first read of your mail) always asks, reads included. Once you approve it, Auto can handle that target
+  in that kind from the next request. Approving a read of something never makes a send or a push to it known, and a
+  target you deny asks again.
 - **Auto-approve** works from the first request of a kind, with a stricter bar while your answers to that kind are
-  few: the model must be at least 97% sure (or your profile's own threshold, if stricter), and its risk rating must
-  call the request clearly benign (at least 90% benign, under 5% severe or catastrophic, and read with certainty). The
-  bar comes down in a straight line to your profile's threshold by 20 answers, as memory and the adapter take over
-  from the base model; from then on your answers decide and the risk rating is no longer required. Without a model
-  that rates risk, a kind asks until it has 20 answers.
-- **Paused:** when you say an automatic approval was wrong, or deny something Autopilot would have approved, auto-approve
-  pauses for that kind until the wrong one is out of your last 20 answers there and Autopilot again agrees with at
-  least 95% of what you decided.
+  few: the model must be at least 97% sure (or your profile's own threshold, if stricter). The bar comes down in a
+  straight line to your profile's threshold by 20 answers, as memory and the adapter take over from the base model.
+- **Risk** counts at every stage. Auto never approves what the phone could not read with certainty or what trips one
+  of its certain facts (deleting your home directory, force-pushing the default branch), and never what the risk model
+  rates 30% or more likely severe or catastrophic, not even in a kind you trust by hand. Until your answers show
+  measured agreement (Autopilot's suggestions matched at least 95% of your decisions, over at least 10 of them), it
+  also needs the request rated clearly benign (at least 90% benign, under 5% severe or catastrophic); that requirement
+  eases in a straight line from 10 to 20 agreeing decisions. Without a model that rates risk, a kind asks until then.
+- **Paused:** when you say an automatic approval was wrong (Auto's or Overnight's), or deny something Autopilot would
+  have approved, auto-approve pauses for that kind, and a trust you gave it by hand is taken back. It resumes once the
+  wrong one is out of your last 20 answers there and Autopilot again agrees with at least 95% of what you decided.
 - **Auto-deny** stays cautious: a kind can deny on its own after at least 10 of your decisions, when it never
   suggested denying something you approved in the last 20. Before that, it denies only what its risk rating is at
   least 90% sure is catastrophic and its deny probability reaches your threshold.
 - **Rate limit:** at most 30 automatic approvals per connection per 10 minutes, and 200 per day. Beyond that it asks,
   and tells you that it paused for that connection.
 - On the profile screen each kind shows **Auto**, **Asks**, **Paused** or **Locked by you**. You can lock a kind
-  (it always asks) or trust it now (your profile's threshold from the first request, without the cautious start); a
-  lock always wins.
+  (it always asks) or trust it now (your profile's threshold from the first request, without the cautious start; the
+  risk checks above still apply); a lock always wins.
 
 Thresholds come from a preset per profile:
 

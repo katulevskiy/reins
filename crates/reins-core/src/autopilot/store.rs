@@ -585,13 +585,16 @@ impl Store {
     }
 
     /// The keyed hash of a connection's target ("" without a target).
-    pub fn ap_target_key(&self, connection_id: &str, target: &str) -> Result<String, CoreError> {
+    /// The keyed hash of a target as one connection reaches it in one class (`service/action/class`): approving a
+    /// read of something never makes a send or a write to it known. (Keys made before the class was part of it no
+    /// longer match: those targets ask once again.)
+    pub fn ap_target_key(&self, connection_id: &str, class_key: &str, target: &str) -> Result<String, CoreError> {
         let target = target.trim().to_lowercase();
         if target.is_empty() {
             return Ok(String::new());
         }
         let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &self.ap_salt()?);
-        let tag = ring::hmac::sign(&key, format!("{connection_id}\0{target}").as_bytes());
+        let tag = ring::hmac::sign(&key, format!("{connection_id}\0{class_key}\0{target}").as_bytes());
         Ok(data_encoding::HEXLOWER.encode(tag.as_ref()))
     }
 
