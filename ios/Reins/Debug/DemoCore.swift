@@ -171,6 +171,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
             default: break
             }
+            // `-demoRunningEntries N`: N requests that mode decided, one every few seconds of its 12 minutes.
+            if let j = args.firstIndex(of: "-demoRunningEntries"), j + 1 < args.count, let n = Int(args[j + 1]) {
+                let decidedBy = args[i + 1]
+                let firstId = (s.activity.map(\.id).max() ?? 0) + 1
+                let decided = (0..<n).map { k in
+                    DemoData.entry(
+                        firstId + Int64(k), at: now - 700 + Int64(k * 600 / max(n, 1)), action: "read",
+                        outcome: decidedBy == "lockdown" ? "denied" : "released", detail: "Request \(k + 1)", decidedBy: decidedBy
+                    )
+                }
+                s.activity = decided.reversed() + s.activity
+            }
         }
         if args.contains("-demoSyncedPush") || args.contains("-demoSyncedPushFails"), let push = s.views["req20"], let git = push.git,
            let i = s.activity.firstIndex(where: { $0.id == 14 }) {
