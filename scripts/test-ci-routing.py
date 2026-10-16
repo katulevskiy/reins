@@ -131,7 +131,7 @@ assert "41 5 * * 1" not in ios_workflow
 assert "github.event_name != 'push'" not in ios_workflow
 # A pull request must not take every macOS runner. The nightly still may.
 assert "max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}" in ios_workflow
-assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in ios_workflow
+assert "cancel-in-progress: false" in ios_workflow
 # A main push of this workflow must not satisfy the release gate. That gate names ci.yml only.
 gate = (ROOT / "scripts/wait-for-ci.sh").read_text()
 assert "--workflow ci.yml" in gate

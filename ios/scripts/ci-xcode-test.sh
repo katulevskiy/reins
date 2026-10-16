@@ -188,6 +188,7 @@ if [[ "$MODE" == test-without-building ]]; then
     -resultBundlePath "$GITHUB_WORKSPACE/results.xcresult" \
     -collect-test-diagnostics never \
     -parallel-testing-enabled NO \
+    -testenv CI=1 \
     "${args[@]}" \
     "${sign[@]}"
   exit 0
