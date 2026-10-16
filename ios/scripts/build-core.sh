@@ -19,7 +19,8 @@ case "$PLATFORM" in
   iphoneos) TARGET=aarch64-apple-ios ;;
   *) echo "error: unsupported platform $PLATFORM" >&2; exit 1 ;;
 esac
-# Debug builds still optimise the core (argon2 and the tokenizer are unusable at opt-level 0); Release is fat LTO.
+# Debug builds still optimise the core (argon2 and the tokenizer are unusable at opt-level 0); Release is the
+# workspace's release profile (thin LTO, Cargo.toml).
 PROFILE=release-low
 if [[ "${CONFIGURATION:-Debug}" == "Release" ]]; then PROFILE=release; fi
 
@@ -53,14 +54,16 @@ cd "$ROOT"
 rustup target add "$TARGET" >/dev/null 2>&1 || true
 # The crate builds a cdylib for Android; iOS links a static library, asked for here so other builds stay as they are.
 run_cargo rustc --locked -q -p reins-core --lib --crate-type staticlib --profile "$PROFILE" --target "$TARGET"
-run_cargo build --locked -q -p reins-core --bin uniffi-bindgen --features bindgen --profile release-low
+# uniffi-bindgen runs on this machine and only reads the bindings' metadata out of the library: the cheap host-tool
+# profile (unoptimized, no LTO) builds it, so the core's dependencies are not compiled optimized a second time.
+run_cargo build --locked -q -p reins-core --bin uniffi-bindgen --features bindgen --profile host-tool
 
 LIB="$ROOT/target/$TARGET/$PROFILE/libreins_core.a"
 cp -p "$LIB" "$OUT/libreins_core.a.tmp" && mv "$OUT/libreins_core.a.tmp" "$OUT/libreins_core.a"
 
 GEN="$OUT/gen"
 rm -rf "$GEN"
-"$ROOT/target/release-low/uniffi-bindgen" generate --library "$LIB" --language swift --out-dir "$GEN" >/dev/null
+"$ROOT/target/host-tool/uniffi-bindgen" generate --library "$LIB" --language swift --out-dir "$GEN" >/dev/null
 cmp -s "$GEN/reins_coreFFI.h" "$OUT/include/reins_coreFFI.h" || cp "$GEN/reins_coreFFI.h" "$OUT/include/reins_coreFFI.h"
 cmp -s "$GEN/reins_coreFFI.modulemap" "$OUT/include/module.modulemap" ||
   cp "$GEN/reins_coreFFI.modulemap" "$OUT/include/module.modulemap"

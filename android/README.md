@@ -13,7 +13,7 @@ and `x86_64-linux-android`) and `cargo-ndk`.
 export ANDROID_HOME=$HOME/Android/Sdk
 cd android
 ./gradlew assembleFullDebug                    # builds the Rust core (cargo-ndk) and generates the Kotlin bindings
-./gradlew assembleFullRelease                  # fat-LTO Rust + R8; unsigned without explicit production signing
+./gradlew assembleFullRelease                  # thin-LTO Rust + R8; unsigned without explicit production signing
 ./gradlew assembleFullDebug -Preins.rustProfile=release-low   # faster Rust build while iterating
 ```
 

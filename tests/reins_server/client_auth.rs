@@ -386,7 +386,9 @@ async fn another_clients_flood_does_not_block_chatgpt() {
     phone.register_device().await;
     let chatgpt = JwtClient::start().await;
     let attacker = JwtClient::start().await;
-    for i in 0..300 {
+    // A few dozen invalid grants, still under the 1000 burst, so this checks that the flood does not block ChatGPT
+    // rather than the address limiter (that limiter has its own test).
+    for i in 0..48 {
         let assertion = attacker.assertion(&server, &format!("flood-{i}"));
         let form = if i % 2 == 0 {
             code_form("made-up-code", Some(&attacker.id), Some(&assertion))
