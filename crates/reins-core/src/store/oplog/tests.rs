@@ -5,12 +5,13 @@ use serde_json::json;
 
 use super::checkpoint::{self, CheckpointCheck, HeartbeatCheck};
 use super::*;
-use crate::roles::chain::tests::{genesis, member, next};
+use crate::roles::chain::tests::{genesis, member, next, sign};
 use crate::roles::keys::{OwnerSeed, SigningKey, ViewKeyring};
 
 const NOW: i64 = 1_800_000_000;
 
-/// p primary (key 1) with viewers v (2) and w (3), at epoch 3; `handed`: then a handover to v (epoch 4).
+/// p primary (key 1) with viewers v (2) and w (3), at epoch 3; `handed`: then a handover to v (epoch 4) that vouches
+/// for p's first op.
 struct World {
     owner: OwnerSeed,
     roster: LocalRoster,
@@ -30,15 +31,21 @@ fn key_of(author: &str) -> SigningKey {
 
 impl World {
     fn new(handed: bool) -> Self {
+        Self::with(handed, Some(1))
+    }
+
+    /// `handed`: then the handover to v at epoch 4, naming `primary_counter` as p's last op.
+    fn with(handed: bool, primary_counter: Option<u64>) -> Self {
         let owner = OwnerSeed::generate().unwrap();
         let g = genesis(&owner);
         let e2 = next(&g, RosterReason::Enroll, member("p", 1), vec![member("v", 2)], &owner);
         let e3 = next(&e2, RosterReason::Enroll, member("p", 1), vec![member("v", 2), member("w", 3)], &owner);
         let mut chain = vec![g.clone(), e2, e3];
         if handed {
-            let e4 =
+            let mut e4 =
                 next(&chain[2], RosterReason::Handover, member("v", 2), vec![member("w", 3), member("p", 1)], &owner);
-            chain.push(e4);
+            e4.primary_counter = primary_counter;
+            chain.push(sign(e4, &owner));
         }
         let roster = LocalRoster::created(g).unwrap().updated(&chain).unwrap();
         let mut keyring = ViewKeyring::default();
@@ -207,11 +214,14 @@ fn signatures_counters_seals_and_changes_are_all_checked() {
     // Relabelled after signing (a viewer's op as primary).
     let mut relabelled = w.op("w", 3, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
     relabelled.notify = true;
+    // Neither is its author's: their counters are still to come.
+    w.counters.clear();
     // A replayed counter (p's op 1 again, re-signed with a new body).
     let first = w.op("p", 3, OpClass::Primary, put(Table::Meta, "b", None, json!(1)));
     let mut replay = w.op("p", 3, OpClass::Primary, put(Table::Meta, "c", None, json!(1)));
     replay.counter = first.counter;
     replay.sig = key_of("p").sign_b64(&replay.signing_bytes().unwrap());
+    w.counters.insert("p".to_owned(), first.counter);
     // A body moved under another envelope does not open.
     let mut moved = w.op("p", 3, OpClass::Primary, put(Table::Meta, "d", None, json!(1)));
     moved.body = first.body.clone();
@@ -232,11 +242,36 @@ fn signatures_counters_seals_and_changes_are_all_checked() {
             Outcome::Refused(Refusal::Change(ChangeRefusal::NotOwnProposal)),
         ]
     );
-    // Counters that never arrived are flagged (the forged op's counter 1 never applied: a gap from 1); an op past
-    // them still applies.
-    w.counters.insert("p".to_owned(), 10);
-    let skipped = w.op("p", 3, OpClass::Primary, put(Table::Meta, "e", None, json!(1)));
-    assert_eq!(run(&mut conn, &w, 8, &[skipped]), [Outcome::Applied]);
+    // A forged op never takes its author's counter: p's next op is its 3rd (the moved one took the 2nd).
+    let third = w.op("p", 3, OpClass::Primary, put(Table::Meta, "e", None, json!(1)));
+    assert_eq!(run(&mut conn, &w, 8, &[third]), [Outcome::Applied]);
+    assert!(counter_gaps(&conn).unwrap().is_empty());
+}
+
+#[test]
+fn an_op_ahead_of_its_authors_counter_waits_for_the_ones_before_it() {
+    let mut w = World::new(false);
+    let mut conn = store();
+    // A viewer pulls the brake, then proposes something; the server serves them the other way round.
+    let brake = w.op("w", 3, OpClass::Restrictive, Change::Restrict(Restriction::Lockdown));
+    let proposal = w.op("w", 3, OpClass::Proposal, put(Table::Proposals, "w/1", None, json!({})));
+    assert_eq!(run(&mut conn, &w, 1, &[proposal, brake.clone()]), [Outcome::Held, Outcome::Applied]);
+    // Nothing is lost: the brake holds, and the proposal followed it.
+    assert_eq!(value(&conn, Table::AutopilotSettings, "*").unwrap()["mode"], "lockdown");
+    assert_eq!(proposals(&conn, NOW).unwrap().len(), 1);
+    assert_eq!(run(&mut conn, &w, 3, &[brake]), [Outcome::Refused(Refusal::CounterReplay)]);
+    assert!(counter_gaps(&conn).unwrap().iter().all(|(author, ..)| author != "w"));
+
+    // An earlier op that never comes: the later one waits HOLD_SEQS ops, then goes ahead, the gap flagged.
+    w.counters.insert("p".to_owned(), 5);
+    let skipped = w.op("p", 3, OpClass::Primary, put(Table::Meta, "k", None, json!(1)));
+    assert_eq!(run(&mut conn, &w, 4, &[skipped]), [Outcome::Held]);
+    assert_eq!(value(&conn, Table::Meta, "k"), None);
+    assert!(counter_gaps(&conn).unwrap().is_empty(), "waiting is no gap yet");
+    conn.execute("UPDATE oplog_state SET seq = ?1", [i64::try_from(3 + HOLD_SEQS).unwrap()]).unwrap();
+    let other = w.op("v", 3, OpClass::Proposal, put(Table::Proposals, "v/1", None, json!({})));
+    assert_eq!(run(&mut conn, &w, 4 + HOLD_SEQS, &[other]), [Outcome::Applied]);
+    assert_eq!(value(&conn, Table::Meta, "k"), Some(json!(1)));
     let gaps = counter_gaps(&conn).unwrap();
     assert!(gaps.iter().any(|(author, _, from)| author == "p" && *from == 1), "{gaps:?}");
 }
@@ -279,7 +314,7 @@ fn epochs_and_view_keys_this_phone_lacks_halt_applying() {
         v: 1,
         change: put(Table::Meta, "a", None, json!(1)),
     };
-    let sealed = seal_op("acct", &newer, &key_of("p"), "p", 3, 50, OpClass::Primary, false, &body).unwrap();
+    let sealed = seal_op("acct", &newer, &key_of("p"), "p", 3, 1, OpClass::Primary, false, &body).unwrap();
     assert_eq!(
         apply(
             &mut conn,
@@ -407,6 +442,11 @@ fn removals_beat_concurrent_edits_and_activity_only_grows() {
         run(&mut conn, &w, 8, &[entry, changed, dropped]),
         [Outcome::Applied, Outcome::Superseded, Outcome::Superseded]
     );
+    // Not even by a writer that saw it (its version as prev).
+    let seen = version(&conn, Table::Audit, "op-1");
+    let rewritten =
+        w.op("p", 3, OpClass::Primary, put(Table::Audit, "op-1", Some(seen), json!({"detail": "rewritten"})));
+    assert_eq!(run(&mut conn, &w, 11, &[rewritten]), [Outcome::Superseded]);
     assert_eq!(value(&conn, Table::Audit, "op-1").unwrap()["detail"], "first");
 }
 
@@ -419,6 +459,15 @@ fn json_settings_merge_by_entry_and_asking_every_time_wins() {
         w.op("p", 3, OpClass::Primary, put(Table::Meta, "secrets.always-ask", None, json!({"a": false, "b": true})));
     run(&mut conn, &w, 1, &[first, other]);
     assert_eq!(value(&conn, Table::Meta, "secrets.always-ask").unwrap(), json!({"a": true, "b": true}));
+    // A concurrent value of another kind (a stale `false` for the whole map) keeps the stored map.
+    let wiped = w.op("p", 3, OpClass::Primary, put(Table::Meta, "secrets.always-ask", None, json!(false)));
+    assert_eq!(run(&mut conn, &w, 3, &[wiped]), [Outcome::Superseded]);
+    assert_eq!(value(&conn, Table::Meta, "secrets.always-ask").unwrap(), json!({"a": true, "b": true}));
+    // Two plain values: the later op's.
+    let one = w.op("p", 3, OpClass::Primary, put(Table::Meta, "theme", None, json!("dark")));
+    let two = w.op("p", 3, OpClass::Primary, put(Table::Meta, "theme", None, json!("light")));
+    run(&mut conn, &w, 4, &[one, two]);
+    assert_eq!(value(&conn, Table::Meta, "theme").unwrap(), "light");
 }
 
 #[test]
@@ -446,6 +495,30 @@ fn a_replaced_primary_keeps_only_the_brake() {
     );
     assert_eq!(value(&conn, Table::AutopilotSettings, "*").unwrap()["mode"], "lockdown");
     assert_eq!(state(&conn).unwrap().log_epoch, 4);
+}
+
+#[test]
+fn a_replaced_primarys_permissive_op_is_refused_even_before_the_log_shows_the_new_epoch() {
+    // The server serves p's op signed at epoch 3, after the handover p's entry did not vouch for, before any op at
+    // epoch 4: the log has not shown epoch 4, the roster has.
+    for vouched in [None, Some(0)] {
+        let mut w = World::with(true, vouched);
+        let mut conn = store();
+        let late = w.op("p", 3, OpClass::Primary, put(Table::Grants, "g1", None, grant_row(false, 99_000)));
+        let late_brake = w.op("p", 3, OpClass::Restrictive, Change::Restrict(Restriction::StopBypass));
+        assert_eq!(
+            run(&mut conn, &w, 1, &[late, late_brake]),
+            [Outcome::Refused(Refusal::NotAuthorized(OpRefusal::NotPrimary)), Outcome::Applied],
+            "{vouched:?}"
+        );
+        assert_eq!(value(&conn, Table::Grants, "g1"), None);
+        assert_eq!(state(&conn).unwrap().log_epoch, 3, "the log never showed epoch 4");
+    }
+    // Vouched for (its counter at most the entry's): history, applied as when p was primary.
+    let mut w = World::with(true, Some(1));
+    let mut conn = store();
+    let history = w.op("p", 3, OpClass::Primary, put(Table::Grants, "g1", None, grant_row(false, 99_000)));
+    assert_eq!(run(&mut conn, &w, 1, &[history]), [Outcome::Applied]);
 }
 
 #[test]
@@ -480,22 +553,104 @@ fn proposals_wait_for_the_primary_and_never_come_back() {
     assert!(proposals(&conn, NOW + PROPOSAL_TTL_SECS).unwrap().is_empty());
 }
 
+/// Moves the log on to `seq` as if that many ops went by (no records change).
+fn skip_to(conn: &Connection, seq: u64) {
+    conn.execute("UPDATE oplog_state SET seq = ?1", [i64::try_from(seq).unwrap()]).unwrap();
+}
+
 #[test]
-fn tombstones_go_once_every_member_passed_them_or_after_the_horizon() {
+fn guarded_removals_are_remembered_for_good_and_others_go_the_same_everywhere() {
     let mut w = World::new(false);
     let mut conn = store();
-    let add = w.op("p", 3, OpClass::Primary, put(Table::Accounts, "a", None, json!({})));
-    let gone = w.op("p", 3, OpClass::Primary, remove(Table::Accounts, "a"));
-    let add_b = w.op("p", 3, OpClass::Primary, put(Table::Accounts, "b", None, json!({})));
-    let gone_b = w.op("p", 3, OpClass::Primary, remove(Table::Accounts, "b"));
-    run(&mut conn, &w, 1, &[add, gone, add_b, gone_b]);
-    // Members acknowledged up to seq 2: the first tombstone goes, the second stays.
-    assert_eq!(gc(&conn, 2, NOW).unwrap(), 1);
-    assert!(record(&conn, Table::Accounts, "a").unwrap().is_none());
-    assert!(record(&conn, Table::Accounts, "b").unwrap().is_some());
-    assert_eq!(gc(&conn, 2, NOW).unwrap(), 0);
-    // Past the horizon, whoever lags.
-    assert_eq!(gc(&conn, 0, NOW + TOMBSTONE_HORIZON_SECS + 1).unwrap(), 1);
+    let ops = [
+        w.op("p", 3, OpClass::Primary, put(Table::Accounts, "a", None, json!({}))),
+        w.op("p", 3, OpClass::Primary, remove(Table::Accounts, "a")),
+        w.op("p", 3, OpClass::Primary, put(Table::Profiles, "m", None, json!({}))),
+        w.op("p", 3, OpClass::Primary, remove(Table::Profiles, "m")),
+        w.op("w", 3, OpClass::Proposal, put(Table::Proposals, "w/1", None, json!({}))),
+        w.op("p", 3, OpClass::Primary, remove(Table::Proposals, "w/1")),
+    ];
+    run(&mut conn, &w, 1, &ops);
+    // Long after: the profile's tombstone went; the account's and the resolved proposal stay.
+    skip_to(&conn, 6 + TOMBSTONE_KEEP_SEQS);
+    let tick = w.op("p", 3, OpClass::Primary, put(Table::Meta, "tick", None, json!(1)));
+    run(&mut conn, &w, 7 + TOMBSTONE_KEEP_SEQS, &[tick]);
+    assert!(record(&conn, Table::Profiles, "m").unwrap().is_none());
+    assert!(record(&conn, Table::Accounts, "a").unwrap().is_some_and(|r| r.value.is_none()));
+    // So a stale put (a writer that never saw the removal), however late, does not bring them back.
+    let stale = w.op("p", 3, OpClass::Primary, put(Table::Accounts, "a", None, json!({"stale": true})));
+    let again = w.op("w", 3, OpClass::Proposal, put(Table::Proposals, "w/1", None, json!({})));
+    assert_eq!(
+        run(&mut conn, &w, 8 + TOMBSTONE_KEEP_SEQS, &[stale, again]),
+        [Outcome::Superseded, Outcome::Superseded]
+    );
+    assert_eq!(value(&conn, Table::Accounts, "a"), None);
+    assert!(proposals(&conn, NOW).unwrap().is_empty());
+}
+
+#[test]
+fn activity_is_trimmed_at_the_same_point_on_every_phone() {
+    let mut w = World::new(false);
+    let (mut a, mut b) = (store(), store());
+    let full = AUDIT_RETENTION + 2;
+    let ops: Vec<Op> = (0..full)
+        .map(|i| w.op("p", 3, OpClass::Primary, put(Table::Audit, &format!("e{i}"), None, json!({"n": i}))))
+        .collect();
+    let outcomes = run(&mut a, &w, 1, &ops);
+    assert!(outcomes.iter().all(|o| *o == Outcome::Applied));
+    // b applied the same ops a while later (other local times): the same entries, the same state.
+    let later = World {
+        owner: OwnerSeed::from_bytes(w.owner.as_bytes()).unwrap(),
+        roster: w.roster.clone(),
+        keyring: w.keyring.clone(),
+        counters: w.counters.clone(),
+    };
+    let ctx = Context {
+        now: NOW + 3_600,
+        ..later.ctx()
+    };
+    for (i, op) in ops.iter().enumerate() {
+        let synced = SyncedOp {
+            seq: 1 + u64::try_from(i).unwrap(),
+            op: op.clone(),
+        };
+        apply(&mut b, &ctx, &synced).unwrap();
+    }
+    assert_eq!(records(&a, Table::Audit).unwrap().len(), usize::try_from(AUDIT_RETENTION).unwrap());
+    assert!(record(&a, Table::Audit, "e1").unwrap().is_none(), "the oldest went");
+    assert!(record(&a, Table::Audit, "e2").unwrap().is_some());
+    assert_eq!(state_digest(&a).unwrap(), state_digest(&b).unwrap());
+    // A store that kept one more entry has another state.
+    b.execute(
+        "INSERT INTO oplog_records (tbl, key, value, epoch, author, counter, seq, at) VALUES ('audit', 'e0', '{}', 3, 'p', 1, 1, 0)",
+        [],
+    )
+    .unwrap();
+    assert_ne!(state_digest(&a).unwrap(), state_digest(&b).unwrap());
+}
+
+#[test]
+fn a_malformed_op_halts_applying_without_stopping_it_for_good() {
+    let mut w = World::new(false);
+    let mut conn = store();
+    let mut bad = w.op("p", 3, OpClass::Primary, put(Table::Meta, "a", None, json!(1)));
+    bad.body = "not base64url!".to_owned();
+    assert_eq!(
+        apply(
+            &mut conn,
+            &w.ctx(),
+            &SyncedOp {
+                seq: 1,
+                op: bad
+            }
+        ),
+        Err(Halt::Malformed(1))
+    );
+    assert_eq!(state(&conn).unwrap(), state(&store()).unwrap(), "nothing of it was kept");
+    // The server serves the real op at that seq: it applies.
+    w.counters.clear();
+    let good = w.op("p", 3, OpClass::Primary, put(Table::Meta, "a", None, json!(1)));
+    assert_eq!(run(&mut conn, &w, 1, &[good]), [Outcome::Applied]);
 }
 
 #[test]
@@ -517,6 +672,9 @@ fn checkpoints_load_on_a_new_phone_and_refuse_forgery_rollback_and_forks() {
     assert_eq!(state(&fresh).unwrap(), state(&primary).unwrap());
     assert_eq!(record(&fresh, Table::Grants, "g1").unwrap(), record(&primary, Table::Grants, "g1").unwrap());
     assert_eq!(proposals(&fresh, NOW).unwrap(), proposals(&primary, NOW).unwrap());
+    assert_eq!(state_digest(&fresh).unwrap(), state_digest(&primary).unwrap());
+    // The op at the checkpoint's seq, served again: a duplicate, not a fork.
+    assert_eq!(run(&mut fresh, &w, 4, &ops[3..]), [Outcome::Duplicate]);
     // It applies the next op as the primary does, counters included.
     let more = w.op("p", 3, OpClass::Primary, put(Table::Meta, "x", None, json!(1)));
     assert_eq!(run(&mut fresh, &w, 5, std::slice::from_ref(&more)), run(&mut primary, &w, 5, &[more]));
@@ -559,6 +717,70 @@ fn checkpoints_load_on_a_new_phone_and_refuse_forgery_rollback_and_forks() {
         (0..4).map(|i| x.op("p", 3, OpClass::Primary, put(Table::Meta, &format!("o{i}"), None, json!(i)))).collect();
     run(&mut other, &x, 1, &others);
     assert!(matches!(checkpoint::load(&mut other, &w.ctx(), &cp), Err(Halt::Forked(_))));
+}
+
+#[test]
+fn a_checkpoint_must_hold_the_state_it_names() {
+    let mut w = World::new(false);
+    let mut primary = store();
+    let mut viewer = store();
+    let ops = [
+        w.op("p", 3, OpClass::Primary, put(Table::Grants, "g1", None, grant_row(false, 9_000))),
+        w.op("p", 3, OpClass::Primary, put(Table::Accounts, "a", None, json!({}))),
+        w.op("p", 3, OpClass::Primary, remove(Table::Accounts, "a")),
+    ];
+    run(&mut primary, &w, 1, &ops);
+    run(&mut viewer, &w, 1, &ops);
+    let s = state(&primary).unwrap();
+    // A body missing a record (the account's tombstone, so the account could come back): refused, nothing loaded.
+    let mut short = checkpoint::dump(&primary, &s).unwrap();
+    short.records.retain(|r| r.key != "a");
+    let short = checkpoint::sign_body(&w.ctx(), &key_of("p"), "p", 3, &short).unwrap();
+    let mut fresh = store();
+    assert!(checkpoint::load(&mut fresh, &w.ctx(), &short).is_err());
+    assert_eq!(state(&fresh).unwrap().seq, 0);
+    assert!(record(&fresh, Table::Grants, "g1").unwrap().is_none());
+    // Naming another state at a seq this phone is at, with the same history: a fork.
+    let mut other = checkpoint::dump(&primary, &s).unwrap();
+    other.state_hash = hex32(&[9; 32]);
+    let other = checkpoint::sign_body(&w.ctx(), &key_of("p"), "p", 3, &other).unwrap();
+    assert!(matches!(checkpoint::load(&mut viewer, &w.ctx(), &other), Err(Halt::Forked(_))));
+    // The real one matches.
+    let real = checkpoint::produce(&primary, &w.ctx(), &key_of("p"), "p", 3).unwrap();
+    assert_eq!(checkpoint::load(&mut primary, &w.ctx(), &real).unwrap(), CheckpointCheck::Matches);
+}
+
+#[test]
+fn only_the_current_primary_checkpoints_and_vouches_for_liveness() {
+    let mut w = World::new(true);
+    let mut primary = store();
+    let ops = [
+        w.op("p", 3, OpClass::Primary, put(Table::Meta, "a", None, json!(1))),
+        w.op("v", 4, OpClass::Primary, put(Table::Meta, "b", None, json!(2))),
+    ];
+    run(&mut primary, &w, 1, &ops);
+    // The replaced primary, at its old epoch or the new one: no checkpoint of its is loaded.
+    for epoch in [3, 4] {
+        let old = checkpoint::produce(&primary, &w.ctx(), &key_of("p"), "p", epoch).unwrap();
+        assert!(checkpoint::load(&mut store(), &w.ctx(), &old).is_err(), "{epoch}");
+    }
+    let current = checkpoint::produce(&primary, &w.ctx(), &key_of("v"), "v", 4).unwrap();
+    assert_eq!(checkpoint::load(&mut store(), &w.ctx(), &current).unwrap(), CheckpointCheck::Loaded);
+    // Heartbeats: the current primary's counts; the replaced one's is stale, yet still checked for a fork first.
+    let mut viewer = store();
+    run(&mut viewer, &w, 1, &ops);
+    let live = checkpoint::heartbeat(&primary, &w.ctx(), &key_of("v"), "v", 4).unwrap();
+    assert_eq!(check_heartbeat(&viewer, &w.ctx(), &live).unwrap(), HeartbeatCheck::Matches);
+    let old = checkpoint::heartbeat(&primary, &w.ctx(), &key_of("p"), "p", 3).unwrap();
+    assert_eq!(check_heartbeat(&viewer, &w.ctx(), &old).unwrap(), HeartbeatCheck::Stale);
+    let mut diverged = old;
+    diverged.applied_hash = hex32(&[7; 32]);
+    diverged.sig = key_of("p").sign_b64(&diverged.signing_bytes().unwrap());
+    assert!(matches!(check_heartbeat(&viewer, &w.ctx(), &diverged), Err(Halt::Forked(_))));
+    // Signed as the primary of an epoch it was not: refused.
+    let mut posing = checkpoint::heartbeat(&primary, &w.ctx(), &key_of("p"), "p", 4).unwrap();
+    posing.sig = key_of("p").sign_b64(&posing.signing_bytes().unwrap());
+    assert!(check_heartbeat(&store(), &w.ctx(), &posing).is_err());
 }
 
 #[test]

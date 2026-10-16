@@ -2,9 +2,13 @@
 //! "I applied up to here").
 //!
 //! A checkpoint's body is sealed with the newest view key, with its signed envelope (account, epoch, author, `seq`,
-//! applied hash, time) as associated data, so the body opens only as the checkpoint its signature covers. Loading one
-//! checks the primary's signature at its epoch against the verified roster, refuses one older than the log already
-//! showed (epoch floor), and compares its applied hash with this phone's own at that `seq`: a difference is a fork.
+//! applied hash, time) as associated data, so the body opens only as the checkpoint its signature covers. Only the
+//! primary of the newest roster entry this phone verified, signing at that entry's epoch, is taken: a replaced primary
+//! writes no checkpoint anyone loads. Loading one compares its applied hash with this phone's own at that `seq` (a
+//! difference is a fork), and its state digest ([`super::state_digest`]) with what it holds once loaded.
+//!
+//! Heartbeats are checked for a fork first, whoever of the roster's primaries signed them; only one from the current
+//! primary at the current epoch counts for liveness.
 
 use reins_proto::canon::{Canon, decode_payload, encode_payload, hex32, parse_hex32, parse_sig};
 use reins_proto::oplog::{Checkpoint, Heartbeat, Table};
@@ -13,16 +17,15 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     Context, Halt, LogState, RECORD_COLUMNS, Version, applied_at, as_i64, as_u64, fork, record_from_row, record_of,
-    save_state, state, table_name,
+    save_state, state, state_digest, table_name,
 };
 use crate::CoreError;
 use crate::roles::keys::{SigningKey, contexts, ed25519_verify, sealed_kid};
-use crate::store::AUDIT_RETENTION;
 
 #[derive(Serialize, Deserialize)]
-struct RecordRow {
+pub(super) struct RecordRow {
     table: Table,
-    key: String,
+    pub(super) key: String,
     value: Option<serde_json::Value>,
     version: Version,
     seq: u64,
@@ -30,7 +33,7 @@ struct RecordRow {
 }
 
 #[derive(Serialize, Deserialize)]
-struct ProposalRow {
+pub(super) struct ProposalRow {
     key: String,
     author: String,
     value: Option<serde_json::Value>,
@@ -39,23 +42,36 @@ struct ProposalRow {
 }
 
 #[derive(Serialize, Deserialize)]
-struct AuthorRow {
+pub(super) struct AuthorRow {
     author: String,
     sign_pub: String,
     counter: u64,
     gap_from: Option<u64>,
 }
 
-/// What a checkpoint's body holds: the whole store at `seq`.
 #[derive(Serialize, Deserialize)]
-struct Body {
-    v: u32,
+pub(super) struct HeldRow {
+    author: String,
+    sign_pub: String,
+    counter: u64,
     seq: u64,
-    applied_hash: String,
-    log_epoch: u64,
-    records: Vec<RecordRow>,
-    proposals: Vec<ProposalRow>,
-    authors: Vec<AuthorRow>,
+    op: String,
+}
+
+/// What a checkpoint's body holds: the whole store at `seq`, and its state digest.
+#[derive(Serialize, Deserialize)]
+pub(super) struct Body {
+    pub(super) v: u32,
+    pub(super) seq: u64,
+    pub(super) applied_hash: String,
+    pub(super) log_epoch: u64,
+    /// [`state_digest`] of the store this body holds, hex.
+    pub(super) state_hash: String,
+    pub(super) records: Vec<RecordRow>,
+    pub(super) proposals: Vec<ProposalRow>,
+    pub(super) authors: Vec<AuthorRow>,
+    #[serde(default)]
+    pub(super) held: Vec<HeldRow>,
 }
 
 /// The associated data a checkpoint's body is sealed with: its signed envelope but the body.
@@ -66,17 +82,11 @@ fn body_aad(cp: &Checkpoint) -> Result<Vec<u8>, CoreError> {
     Ok(c.finish())
 }
 
-/// Keeps the newest [`AUDIT_RETENTION`] Activity entries (by the op that wrote them).
-fn trim_audit(conn: &Connection) -> Result<(), CoreError> {
-    conn.execute(
-        "DELETE FROM oplog_records WHERE tbl = ?1 AND key NOT IN
-             (SELECT key FROM oplog_records WHERE tbl = ?1 ORDER BY seq DESC LIMIT ?2)",
-        params![table_name(Table::Audit), AUDIT_RETENTION],
-    )?;
-    Ok(())
+fn json_of(value: Option<String>, what: &str) -> Result<Option<serde_json::Value>, CoreError> {
+    value.map(|v| serde_json::from_str(&v)).transpose().map_err(|_| CoreError::storage(format!("corrupt {what}")))
 }
 
-fn dump(conn: &Connection, s: &LogState) -> Result<Body, CoreError> {
+pub(super) fn dump(conn: &Connection, s: &LogState) -> Result<Body, CoreError> {
     let mut stmt = conn.prepare(&format!("SELECT {RECORD_COLUMNS} FROM oplog_records ORDER BY tbl, key"))?;
     let raws = stmt.query_map([], record_from_row)?.collect::<Result<Vec<_>, _>>()?;
     let records = raws
@@ -104,10 +114,7 @@ fn dump(conn: &Connection, s: &LogState) -> Result<Body, CoreError> {
             Ok(ProposalRow {
                 key,
                 author,
-                value: value
-                    .map(|v| serde_json::from_str(&v))
-                    .transpose()
-                    .map_err(|_| CoreError::storage("corrupt proposal"))?,
+                value: json_of(value, "proposal")?,
                 seq: as_u64(seq),
                 received_at,
             })
@@ -124,19 +131,33 @@ fn dump(conn: &Connection, s: &LogState) -> Result<Body, CoreError> {
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    let mut stmt =
+        conn.prepare("SELECT author, sign_pub, counter, seq, op FROM oplog_held ORDER BY author, counter")?;
+    let held = stmt
+        .query_map([], |r| {
+            Ok(HeldRow {
+                author: r.get(0)?,
+                sign_pub: r.get(1)?,
+                counter: as_u64(r.get(2)?),
+                seq: as_u64(r.get(3)?),
+                op: r.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Body {
         v: reins_proto::PROTOCOL_VERSION,
         seq: s.seq,
         applied_hash: hex32(&s.applied_hash),
         log_epoch: s.log_epoch,
+        state_hash: hex32(&state_digest(conn)?),
         records,
         proposals,
         authors,
+        held,
     })
 }
 
-/// The primary's checkpoint of everything up to the last applied op (Activity trimmed to its retention first),
-/// signed by `signer` as `author` at `epoch`.
+/// The primary's checkpoint of everything up to the last applied op, signed by `signer` as `author` at `epoch`.
 pub fn produce(
     conn: &Connection,
     ctx: &Context<'_>,
@@ -148,20 +169,30 @@ pub fn produce(
     if s.forked.is_some() {
         return Err(CoreError::invalid("the account's history forked; no checkpoint is made"));
     }
-    trim_audit(conn)?;
-    let body = serde_json::to_vec(&dump(conn, &s)?).map_err(|e| CoreError::storage(e.to_string()))?;
+    sign_body(ctx, signer, author, epoch, &dump(conn, &s)?)
+}
+
+/// `body` sealed and signed as a checkpoint.
+pub(super) fn sign_body(
+    ctx: &Context<'_>,
+    signer: &SigningKey,
+    author: &str,
+    epoch: u64,
+    body: &Body,
+) -> Result<Checkpoint, CoreError> {
+    let plain = serde_json::to_vec(body).map_err(|e| CoreError::storage(e.to_string()))?;
     let mut cp = Checkpoint {
         v: reins_proto::PROTOCOL_VERSION,
         account: ctx.account.to_owned(),
         epoch,
         author: author.to_owned(),
-        seq: s.seq,
-        applied_hash: hex32(&s.applied_hash),
+        seq: body.seq,
+        applied_hash: body.applied_hash.clone(),
         at: ctx.now,
         body: String::new(),
         sig: String::new(),
     };
-    cp.body = encode_payload(&ctx.keyring.seal(&body_aad(&cp)?, &body)?);
+    cp.body = encode_payload(&ctx.keyring.seal(&body_aad(&cp)?, &plain)?);
     cp.sig = signer.sign_b64(&cp.signing_bytes().map_err(|e| CoreError::invalid(e.to_string()))?);
     Ok(cp)
 }
@@ -171,14 +202,26 @@ pub fn produce(
 pub enum CheckpointCheck {
     /// It was ahead of this phone: the store is the checkpoint's now.
     Loaded,
-    /// This phone is at or past it, and saw the same history up to it.
+    /// This phone is at or past it, and saw the same history up to it (at its very `seq`, the same state too).
     Matches,
     /// This phone is past it and no longer keeps its hash at that `seq`: nothing to compare.
     Unknown,
 }
 
-/// The primary that signed at `epoch` (the roster entry this phone verified), or why it cannot be checked.
-fn primary_key(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Option<[u8; 32]>, Halt> {
+/// The signing key of the primary of the newest roster entry this phone verified, when `author` at `epoch` is it:
+/// the only signer whose checkpoints are loaded and whose heartbeats count.
+fn current_primary_key(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Option<[u8; 32]>, Halt> {
+    let current = ctx.roster.current();
+    if epoch > current.epoch {
+        return Err(Halt::UnknownEpoch(epoch));
+    }
+    Ok((epoch == current.epoch && current.primary.device_id == author)
+        .then(|| current.primary.sign_key().ok())
+        .flatten())
+}
+
+/// The signing key of the primary at `epoch` (any epoch this phone verified), for a heartbeat's fork evidence.
+fn primary_key_at(ctx: &Context<'_>, epoch: u64, author: &str) -> Result<Option<[u8; 32]>, Halt> {
     if epoch > ctx.roster.epoch() {
         return Err(Halt::UnknownEpoch(epoch));
     }
@@ -195,7 +238,8 @@ pub fn load(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result
     if cp.account != ctx.account {
         return Err(bad("it is another account's"));
     }
-    let key = primary_key(ctx, cp.epoch, &cp.author)?.ok_or_else(|| bad("its author was not the primary"))?;
+    let key = current_primary_key(ctx, cp.epoch, &cp.author)?
+        .ok_or_else(|| bad("it is not from the current primary at the current epoch"))?;
     let message = cp.signing_bytes().map_err(|e| bad(&e.to_string()))?;
     let sig = parse_sig(&cp.sig).ok_or_else(|| bad("not a signature"))?;
     if !ed25519_verify(&key, &message, &sig) {
@@ -206,7 +250,7 @@ pub fn load(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result
         return Err(Halt::Forked(why.clone()));
     }
     let applied = parse_hex32(&cp.applied_hash).ok_or_else(|| bad("invalid applied hash"))?;
-    if cp.seq <= s.seq {
+    if cp.seq < s.seq {
         return match applied_at(conn, cp.seq)? {
             Some(mine) if mine == applied => Ok(CheckpointCheck::Matches),
             Some(_) => Err(fork(conn, &format!("the checkpoint at seq {} saw another history", cp.seq))),
@@ -214,7 +258,6 @@ pub fn load(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result
         };
     }
     if cp.epoch < s.log_epoch {
-        // Ahead in seq, behind in epoch: the log already showed a later roster than its signer's.
         return Err(Halt::Rollback);
     }
     let sealed = decode_payload(&cp.body).ok_or_else(|| bad("its body is malformed"))?;
@@ -227,8 +270,21 @@ pub fn load(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result
     if body.v != reins_proto::PROTOCOL_VERSION || body.seq != cp.seq || body.applied_hash != cp.applied_hash {
         return Err(bad("its body is for another seq"));
     }
+    let digest = parse_hex32(&body.state_hash).ok_or_else(|| bad("its state hash is malformed"))?;
+    if cp.seq == s.seq {
+        // The same seq: the same history, and so the same state, or they forked.
+        if s.applied_hash != applied {
+            return Err(fork(conn, &format!("the checkpoint at seq {} saw another history", cp.seq)));
+        }
+        if state_digest(conn)? != digest {
+            return Err(fork(conn, &format!("the checkpoint at seq {} holds another state", cp.seq)));
+        }
+        return Ok(CheckpointCheck::Matches);
+    }
     let tx = conn.transaction()?;
-    tx.execute_batch("DELETE FROM oplog_records; DELETE FROM oplog_proposals; DELETE FROM oplog_authors;")?;
+    tx.execute_batch(
+        "DELETE FROM oplog_records; DELETE FROM oplog_proposals; DELETE FROM oplog_authors; DELETE FROM oplog_held;",
+    )?;
     for r in &body.records {
         let value = r.value.as_ref().map(serde_json::to_string).transpose().map_err(|e| bad(&e.to_string()))?;
         tx.execute(
@@ -259,6 +315,16 @@ pub fn load(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result
             params![a.author, a.sign_pub, as_i64(a.counter), a.gap_from.map(as_i64)],
         )?;
     }
+    for h in &body.held {
+        tx.execute(
+            "INSERT OR REPLACE INTO oplog_held (author, sign_pub, counter, seq, op) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![h.author, h.sign_pub, as_i64(h.counter), as_i64(h.seq), h.op],
+        )?;
+    }
+    // The state the body holds must be the one its digest names (else nothing is kept: the transaction goes).
+    if state_digest(&tx)? != digest {
+        return Err(bad("its records are not the state it names"));
+    }
     let loaded = LogState {
         seq: cp.seq,
         applied_hash: applied,
@@ -267,6 +333,7 @@ pub fn load(conn: &mut Connection, ctx: &Context<'_>, cp: &Checkpoint) -> Result
     };
     save_state(&tx, &loaded)?;
     tx.execute("DELETE FROM oplog_seqs", [])?;
+    // No op hash for the checkpoint's seq (''): a later copy of that op is a duplicate, never a fork.
     tx.execute(
         "INSERT INTO oplog_seqs (seq, op_hash, applied_hash) VALUES (?1, '', ?2)",
         params![as_i64(cp.seq), cp.applied_hash],
@@ -284,19 +351,20 @@ pub enum HeartbeatCheck {
     Behind,
     /// This phone no longer keeps its hash at that `seq`.
     Unknown,
-    /// Signed at an epoch older than the log already showed: ignored.
+    /// Not from the current primary at the current epoch: no news of liveness (checked for a fork all the same).
     Stale,
 }
 
-/// Checks the primary's heartbeat: signed by the primary of its epoch (as this phone verified the roster), and, at
-/// a `seq` this phone applied, the same applied hash (else the history forked, and applying stops).
+/// Checks a heartbeat: signed by the primary of its epoch (as this phone verified the roster). At a `seq` this phone
+/// applied, the applied hash must be this phone's (else the history forked, and applying stops), whichever epoch it
+/// came from; only the current primary's heartbeat at the current epoch then counts.
 pub fn check_heartbeat(conn: &Connection, ctx: &Context<'_>, hb: &Heartbeat) -> Result<HeartbeatCheck, Halt> {
     let bad = |why: &str| Halt::Core(CoreError::invalid(format!("The heartbeat is refused: {why}.")));
     hb.validate().map_err(|e| bad(&e.to_string()))?;
     if hb.account != ctx.account {
         return Err(bad("it is another account's"));
     }
-    let key = primary_key(ctx, hb.epoch, &hb.author)?.ok_or_else(|| bad("its author was not the primary"))?;
+    let key = primary_key_at(ctx, hb.epoch, &hb.author)?.ok_or_else(|| bad("its author was not the primary"))?;
     let message = hb.signing_bytes().map_err(|e| bad(&e.to_string()))?;
     let sig = parse_sig(&hb.sig).ok_or_else(|| bad("not a signature"))?;
     if !ed25519_verify(&key, &message, &sig) {
@@ -306,18 +374,22 @@ pub fn check_heartbeat(conn: &Connection, ctx: &Context<'_>, hb: &Heartbeat) -> 
     if let Some(why) = &s.forked {
         return Err(Halt::Forked(why.clone()));
     }
-    if hb.epoch < s.log_epoch {
+    let theirs = parse_hex32(&hb.applied_hash).ok_or_else(|| bad("invalid applied hash"))?;
+    let compared = if hb.head_seq > s.seq {
+        HeartbeatCheck::Behind
+    } else {
+        match applied_at(conn, hb.head_seq)? {
+            Some(mine) if mine == theirs => HeartbeatCheck::Matches,
+            Some(_) => {
+                return Err(fork(conn, &format!("the primary saw another history up to seq {}", hb.head_seq)));
+            }
+            None => HeartbeatCheck::Unknown,
+        }
+    };
+    if current_primary_key(ctx, hb.epoch, &hb.author)?.is_none() || hb.epoch < s.log_epoch {
         return Ok(HeartbeatCheck::Stale);
     }
-    if hb.head_seq > s.seq {
-        return Ok(HeartbeatCheck::Behind);
-    }
-    let theirs = parse_hex32(&hb.applied_hash).ok_or_else(|| bad("invalid applied hash"))?;
-    match applied_at(conn, hb.head_seq)? {
-        Some(mine) if mine == theirs => Ok(HeartbeatCheck::Matches),
-        Some(_) => Err(fork(conn, &format!("the primary saw another history up to seq {}", hb.head_seq))),
-        None => Ok(HeartbeatCheck::Unknown),
-    }
+    Ok(compared)
 }
 
 /// The primary's heartbeat for where this phone's log stands.

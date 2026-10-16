@@ -4,13 +4,14 @@
 //! |---|---|---|---|
 //! | `grants` | replaces it | [`join_grants`]: revoked wins, the earlier expiry and smaller limit, a scope change revokes, the most uses | a tombstone a put never lifts (ids are not reused) |
 //! | `autopilot_settings` | replaces it | Lockdown wins, else the less permissive mode; the earlier bypass end, a stopped one stays stopped | a tombstone |
-//! | `meta` | replaces it | merged entry by entry, "ask every time" wins | a tombstone |
-//! | `audit` | kept (an entry never changes) | kept | ignored (grow-only; trimmed at checkpoints) |
+//! | `meta` | replaces it | merged entry by entry, "ask every time" wins; a value of another kind keeps the stored one | a tombstone |
+//! | `audit` | kept (an entry never changes) | kept | ignored (grow-only; the newest entries kept as the log goes) |
 //! | the others | replaces it | the later op's (last writer in `seq` order) | a tombstone |
 //!
 //! A put on a tombstone lifts it only when it names the tombstone's version (its writer saw the removal and adds the
 //! record again on purpose); otherwise the removal beats the concurrent edit. A put on a record this phone does not
-//! have (never seen, or a tombstone dropped once every member passed it) is a new record.
+//! have is a new record: never seen, or a tombstone dropped long after the removal, which happens only to records whose
+//! removal is no security decision (grants, accounts, secrets, MCP servers, desktop keys and targets keep theirs).
 //!
 //! Restrictive ops ([`Restriction`]) only tighten, whoever sends them, and take the record's version, so the
 //! primary's next put of it is a concurrent one (joined) unless it saw the restriction: revoke one grant, Lockdown
@@ -109,6 +110,10 @@ fn put_record(
     now: i64,
 ) -> Result<Outcome, CoreError> {
     let current = record(tx, table, key)?;
+    // An Activity entry never changes, whoever writes it and whatever it names as replaced.
+    if table == Table::Audit && current.is_some() {
+        return Ok(Outcome::Superseded);
+    }
     let saw = |r: &Record| put.prev.as_ref() == Some(&r.version);
     let row = match current {
         None => put.row,
@@ -143,13 +148,19 @@ fn join(table: Table, key: &str, live: &Json, newer: Json) -> Option<Json> {
         }
         Table::AutopilotSettings => Some(join_settings(live, newer)),
         // Meta records are keyed as the app reads them (without the store's `app.` prefix).
-        Table::Meta => Some(
+        // Two objects or two lists merge entry by entry; two values of one other kind, the later op's; values of
+        // different kinds (a stale `false` against `{"a": true}`) keep the stored one.
+        Table::Meta => {
             crate::store::lattice::merge_json(None, live, &newer, Some(key) == ALWAYS_ASK_KEY.strip_prefix("app."))
-                .unwrap_or(newer),
-        ),
+                .or_else(|| same_kind(live, &newer).then_some(newer))
+        }
         Table::Audit => None,
         _ => Some(newer),
     }
+}
+
+fn same_kind(a: &Json, b: &Json) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
 }
 
 /// A grant row: an object with the grant under `"grant"`.

@@ -760,6 +760,12 @@ impl Engine {
     }
 
     /// Seals a new recovery wrap for `entry` (unsigned yet), at its place in the chain, and names it in the entry.
+    /// The last op of the outgoing `primary` this phone took, for the handover or recovery entry to name: its ops up to
+    /// there stay its history; any later one is a replaced primary's (the brake only).
+    fn last_counter(&self, primary: &Member) -> Result<u64, CoreError> {
+        self.store.oplog(|c| crate::store::oplog::last_counter(c, primary))?
+    }
+
     fn rewrap_entry(
         account: &Account,
         entry: &mut RosterEntry,
@@ -1069,6 +1075,7 @@ impl Engine {
         let mut entry = latest
             .successor(RosterReason::Recovery, me, viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
+        entry.primary_counter = Some(self.last_counter(&latest.primary)?);
         entry.owner_pub = seed.owner_key()?.public_b64();
         entry.credential_pub = seed.credential_key().public_b64();
         let new_wrap = Self::rewrap_entry(&account, &mut entry, &wrap_key, &seed, &ring)?;
@@ -1337,6 +1344,7 @@ impl Engine {
         let mut entry = current
             .successor(RosterReason::Handover, new_primary, viewers, unix_now())
             .map_err(|e| CoreError::invalid(e.to_string()))?;
+        entry.primary_counter = Some(self.last_counter(&current.primary)?);
         // A new wrap, so the one from before the handover opens for no roster after it.
         let wrap_key = self.wrap_key(&account.slot)?;
         let ring = self.keyring(&account.slot)?;

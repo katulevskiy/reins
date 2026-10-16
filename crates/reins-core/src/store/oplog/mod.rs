@@ -5,17 +5,20 @@
 //!
 //! 1. *Order.* `seq` must be the next one: a lower one is a duplicate (the same op as before, else a fork), a higher
 //!    one means the server withheld something ([`Halt::Gap`]). A phone that saw a fork applies nothing more.
-//! 2. *Roster.* The op's epoch must be one this phone verified ([`Halt::UnknownEpoch`], [`Halt::Unverifiable`]). Its
-//!    author is authorized by [`reins_proto::oplog::authorize_op`] against the roster as it stood at the op's epoch,
-//!    or, for a late op (signed at an epoch older than one the log already showed), against the current roster, where
-//!    only the brake is left to a replaced primary.
-//! 3. *Signature* by the author's key in that roster; *counter* above the author's last (a gap is flagged).
-//! 4. *Body* opened with the view key it names and the signed envelope as associated data; [`check_change`] must allow
-//!    the change for the op's class.
-//! 5. *Rules* per table ([`rules`]).
+//! 2. *Signature.* The op's epoch must be one this phone verified ([`Halt::UnknownEpoch`], [`Halt::Unverifiable`]),
+//!    its author a member then, and its signature that member's.
+//! 3. *Counter.* The next of its author's: a used one is a replay; a later one waits ([`Outcome::Held`]) for those
+//!    before it, so a reordered log loses nothing (a brake least of all), and goes ahead, the gap flagged, after
+//!    [`HOLD_SEQS`] ops. Authentic ops take their counter whatever comes next.
+//! 4. *Role.* [`reins_proto::oplog::authorize_op`] against the newest roster this phone verified: a replaced primary
+//!    keeps only the brake, a removed phone nothing. The outgoing primary's history is judged as it stood before it was
+//!    replaced: its ops up to the `primary_counter` the handover or recovery entry names.
+//! 5. *Body* opened with the view key it names and the signed envelope as associated data; [`check_change`] must allow
+//!    the change for the op's class. Then the *rules* per table ([`rules`]).
 //!
 //! An op refused at steps 2 to 5 is skipped but still counted: every phone hashes every op the server sequenced
 //! ([`applied_hash_step`]), so the primary's heartbeats and checkpoints can tell whether two phones saw one history.
+//! An op that cannot even be hashed halts applying ([`Halt::Malformed`]) without stopping it for good.
 //!
 //! **Versions.** A record's version is the op that last wrote it: `(epoch, author, counter)`. A put says which version
 //! it replaces (`prev`, [`RecordPut`]): a writer that saw the record as it is replaces it (last writer wins, exact,
@@ -25,8 +28,11 @@
 //! **Floors.** The applied `seq`, the highest epoch the log showed (`log_epoch`, also refusing an older checkpoint),
 //! each author's counter, and the applied hash per `seq` ([`check_heartbeat`], [`checkpoint::load`]).
 //!
-//! **Tombstones** stay until every member acknowledged them, or [`TOMBSTONE_HORIZON_SECS`] ([`gc`]).
-//! **Proposals** live in their own table, keyed `<author>/<id>`, until resolved, withdrawn or expired.
+//! **Housekeeping** is part of applying, the same on every phone at the same `seq` ([`state_digest`] covers it): a
+//! removed grant, account, secret, MCP server, desktop key or target is remembered for good; other tombstones go
+//! [`TOMBSTONE_KEEP_SEQS`] ops later; Activity keeps its newest [`AUDIT_RETENTION`] entries.
+//! **Proposals** live in their own table, keyed `<author>/<id>`, until resolved or withdrawn (remembered, so they never
+//! come back); one older than [`PROPOSAL_TTL_SECS`] is no longer shown.
 
 pub mod checkpoint;
 mod rules;
@@ -38,12 +44,12 @@ use reins_proto::oplog::{
     ChangeRefusal, GENESIS_APPLIED_HASH, Op, OpBody, OpClass, OpRefusal, SyncedOp, Table, applied_hash_step,
     authorize_op, body_associated_data, check_change,
 };
-use reins_proto::roster::Member;
+use reins_proto::roster::{Member, RosterReason};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use super::TOMBSTONE_HORIZON_SECS;
+use super::AUDIT_RETENTION;
 use crate::CoreError;
 use crate::roles::LocalRoster;
 use crate::roles::keys::{SigningKey, ViewKeyring, ed25519_verify, sealed_kid};
@@ -54,6 +60,13 @@ pub use checkpoint::{CheckpointCheck, HeartbeatCheck, check_heartbeat};
 pub const PROPOSAL_TTL_SECS: i64 = 7 * 86_400;
 /// Applied hashes kept per `seq` behind the head (to compare heartbeats and checkpoints with).
 const KEPT_SEQS: u64 = 4_096;
+/// How many ops an op waits for an earlier counter of its author before it is applied anyway (with the gap flagged).
+pub const HOLD_SEQS: u64 = 1_000;
+/// How many ops a tombstone of a record whose removal is no security decision is kept after the removal.
+pub const TOMBSTONE_KEEP_SEQS: u64 = 10_000;
+/// The tables whose removals are remembered for good (`super::GUARDED`'s records).
+const GUARDED_TABLES: [Table; 6] =
+    [Table::Grants, Table::Accounts, Table::Secrets, Table::McpServers, Table::DesktopKeys, Table::Targets];
 
 /// The tables of the op-log store.
 pub(crate) const SCHEMA: &str = "
@@ -68,6 +81,7 @@ CREATE TABLE IF NOT EXISTS oplog_records (
     at INTEGER NOT NULL,
     PRIMARY KEY (tbl, key)
 );
+CREATE INDEX IF NOT EXISTS oplog_records_by_seq ON oplog_records (tbl, seq);
 CREATE TABLE IF NOT EXISTS oplog_proposals (
     key TEXT PRIMARY KEY,
     author TEXT NOT NULL,
@@ -86,6 +100,14 @@ CREATE TABLE IF NOT EXISTS oplog_seqs (
     seq INTEGER PRIMARY KEY,
     op_hash TEXT NOT NULL,
     applied_hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oplog_held (
+    author TEXT NOT NULL,
+    sign_pub TEXT NOT NULL,
+    counter INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    op TEXT NOT NULL,
+    PRIMARY KEY (author, sign_pub, counter)
 );
 CREATE TABLE IF NOT EXISTS oplog_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -169,6 +191,8 @@ pub enum Outcome {
     Refused(Refusal),
     /// The op at this `seq` was applied already.
     Duplicate,
+    /// Authentic, counted, and waiting for an earlier op of its author ([`HOLD_SEQS`]).
+    Held,
 }
 
 /// Why an op the server sequenced was not applied.
@@ -205,6 +229,9 @@ pub enum Halt {
     /// The server showed this phone two histories.
     #[error("the account's history forked: {0}")]
     Forked(String),
+    /// The op at this `seq` cannot even be hashed (its body is not base64url): the server must serve another.
+    #[error("the op at seq {0} is malformed")]
+    Malformed(u64),
     /// A checkpoint or heartbeat older than what this phone applied.
     #[error("the server sent an older state than this phone has (a rollback)")]
     Rollback,
@@ -390,24 +417,45 @@ pub fn counter_gaps(conn: &Connection) -> Result<Vec<(String, String, u64)>, Cor
     Ok(rows.into_iter().map(|(a, k, g)| (a, k, as_u64(g))).collect())
 }
 
-/// Who may have written `op`, judged against the roster as it stood at the op's epoch, or against the current one
-/// for a late op (`op.epoch` before `log_epoch`).
-fn authorize<'a>(op: &Op, ctx: &'a Context<'_>, log_epoch: u64) -> Result<Result<&'a Member, Refusal>, Halt> {
-    let entries = &ctx.roster.entries;
-    let first = entries.first().map_or(0, |e| e.epoch);
+/// The member who signed `op` (as the roster stood at its epoch), whatever it may write.
+fn signer_of<'a>(op: &Op, ctx: &'a Context<'_>) -> Result<Result<&'a Member, Refusal>, Halt> {
+    let first = ctx.roster.entries.first().map_or(0, |e| e.epoch);
     if op.epoch > ctx.roster.epoch() {
         return Err(Halt::UnknownEpoch(op.epoch));
     }
     if op.epoch < first {
         return Err(Halt::Unverifiable(op.epoch));
     }
-    let view = if op.epoch < log_epoch {
-        &entries[..]
+    if op.account != ctx.account {
+        return Ok(Err(Refusal::NotAuthorized(OpRefusal::WrongAccount)));
+    }
+    let at = ctx.roster.at(op.epoch).ok_or(Halt::Unverifiable(op.epoch))?;
+    Ok(at.role_of(&op.author).map(|(_, m)| m).ok_or(Refusal::NotAuthorized(OpRefusal::NotAMember)))
+}
+
+/// Whether `op`'s author may make it. An op is judged against the newest roster this phone verified ([`authorize_op`]
+/// over the whole chain: a replaced primary keeps only the brake, a removed phone nothing), unless it is history the
+/// entry that replaced its author vouched for: an op of the outgoing primary whose counter is at most the
+/// `primary_counter` of the `handover` or `recovery` entry that replaced it is judged as the roster stood before.
+fn authorize(op: &Op, ctx: &Context<'_>) -> Result<(), Refusal> {
+    let entries = &ctx.roster.entries;
+    let view = if let Some(at) = ctx.roster.at(op.epoch)
+        && at.primary.device_id == op.author
+        && let Some(i) = entries.iter().position(|e| e.epoch > op.epoch && !e.primary.same_keys(&at.primary))
+        && matches!(entries[i].reason, RosterReason::Handover | RosterReason::Recovery)
+        && entries[i].primary_counter.is_some_and(|last| op.counter <= last)
+    {
+        &entries[..i]
     } else {
-        let end = entries.iter().position(|e| e.epoch == op.epoch).map_or(entries.len(), |i| i + 1);
-        &entries[..end]
+        &entries[..]
     };
-    Ok(authorize_op(op, view).map_err(Refusal::NotAuthorized))
+    authorize_op(op, view).map(|_| ()).map_err(Refusal::NotAuthorized)
+}
+
+/// The last counter of `member`'s ops this phone took (0: none): what a handover or recovery entry names as the
+/// outgoing primary's `primary_counter`.
+pub fn last_counter(conn: &Connection, member: &Member) -> Result<u64, CoreError> {
+    author_counter(conn, &member.device_id, &member.sign_pub)
 }
 
 /// Applies the op the server sequenced at `synced.seq` (see the module docs).
@@ -446,15 +494,19 @@ fn apply_in(tx: &Transaction<'_>, ctx: &Context<'_>, synced: &SyncedOp) -> Resul
     }
     let op = &synced.op;
     let Ok(op_hash) = op.hash() else {
-        // An op the server's own checks would refuse: it cannot be hashed into the history either.
-        return Err(fork(tx, &format!("the op at seq {} is malformed", synced.seq)));
+        // An op the server's own checks would refuse: it cannot be hashed into the history. Nothing is kept; the
+        // server must serve another (this phone does not stop for good over one op).
+        return Err(Halt::Malformed(synced.seq));
     };
     if synced.seq <= s.seq {
         let kept: Option<String> = tx
             .query_row("SELECT op_hash FROM oplog_seqs WHERE seq = ?1", params![as_i64(synced.seq)], |r| r.get(0))
             .optional()?;
+        // A seq a checkpoint covered has no op hash here ('').
         return match kept {
-            Some(h) if h != hex32(&op_hash) => Err(fork(tx, &format!("two different ops at seq {}", synced.seq))),
+            Some(h) if !h.is_empty() && h != hex32(&op_hash) => {
+                Err(fork(tx, &format!("two different ops at seq {}", synced.seq)))
+            }
             _ => Ok(Outcome::Duplicate),
         };
     }
@@ -465,6 +517,9 @@ fn apply_in(tx: &Transaction<'_>, ctx: &Context<'_>, synced: &SyncedOp) -> Resul
         });
     }
     let outcome = judge_and_apply(tx, ctx, op, synced.seq, &mut s)?;
+    // Held ops whose wait is over apply now, in counter order (the gap stays flagged).
+    release_held(tx, ctx, synced.seq)?;
+    prune(tx, synced.seq)?;
     let applied = applied_hash_step(&s.applied_hash, synced.seq, op).map_err(|e| CoreError::invalid(e.to_string()))?;
     s.seq = synced.seq;
     s.applied_hash = applied;
@@ -488,7 +543,7 @@ fn judge_and_apply(
     if let Err(e) = op.validate() {
         return Ok(Outcome::Refused(Refusal::Invalid(e.to_string())));
     }
-    let signer = match authorize(op, ctx, s.log_epoch)? {
+    let signer = match signer_of(op, ctx)? {
         Ok(member) => member,
         Err(refusal) => return Ok(Outcome::Refused(refusal)),
     };
@@ -499,25 +554,69 @@ fn judge_and_apply(
     if !verified {
         return Ok(Outcome::Refused(Refusal::BadSignature));
     }
-    // Authentic from here: the author's counter and the log's epoch move.
-    let last: Option<(i64, Option<i64>)> = tx
-        .query_row(
-            "SELECT counter, gap_from FROM oplog_authors WHERE author = ?1 AND sign_pub = ?2",
-            params![op.author, signer.sign_pub],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    let (last_counter, gap) = last.map_or((0, None), |(c, g)| (as_u64(c), g.map(as_u64)));
-    if op.counter <= last_counter {
+    // Authentic from here: the log's epoch moves, and the author's counter.
+    s.log_epoch = s.log_epoch.max(op.epoch);
+    // A view key this phone lacks halts here, whenever the op's turn comes.
+    if let Some(kid) = decode_payload(&op.body).and_then(|sealed| sealed_kid(&sealed))
+        && ctx.keyring.get(kid).is_none()
+    {
+        return Err(Halt::MissingKey(kid));
+    }
+    let last = author_counter(tx, &op.author, &signer.sign_pub)?;
+    if op.counter <= last {
         return Ok(Outcome::Refused(Refusal::CounterReplay));
     }
-    let gap = gap.or_else(|| (op.counter > last_counter + 1).then_some(last_counter + 1));
+    if op.counter > last + 1 {
+        // Something of this author's came before it and is not here yet (the server reordered or withheld it): the
+        // op waits for it, so that nothing (a brake least of all) is lost to a counter that moved on.
+        let raw = serde_json::to_string(op).map_err(|e| CoreError::storage(e.to_string()))?;
+        tx.execute(
+            "INSERT OR REPLACE INTO oplog_held (author, sign_pub, counter, seq, op) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![op.author, signer.sign_pub, as_i64(op.counter), as_i64(seq), raw],
+        )?;
+        return Ok(Outcome::Held);
+    }
+    set_counter(tx, &op.author, &signer.sign_pub, op.counter)?;
+    let outcome = take_turn(tx, ctx, op, seq)?;
+    // The ops of this author that waited for this one follow it.
+    drain_held(tx, ctx, &op.author, &signer.sign_pub)?;
+    Ok(outcome)
+}
+
+fn author_counter(conn: &Connection, author: &str, sign_pub: &str) -> Result<u64, CoreError> {
+    let last: Option<i64> = conn
+        .query_row(
+            "SELECT counter FROM oplog_authors WHERE author = ?1 AND sign_pub = ?2",
+            params![author, sign_pub],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(last.map_or(0, as_u64))
+}
+
+fn set_counter(tx: &Transaction<'_>, author: &str, sign_pub: &str, counter: u64) -> Result<(), CoreError> {
     tx.execute(
-        "INSERT INTO oplog_authors (author, sign_pub, counter, gap_from) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (author, sign_pub) DO UPDATE SET counter = ?3, gap_from = ?4",
-        params![op.author, signer.sign_pub, as_i64(op.counter), gap.map(as_i64)],
+        "INSERT INTO oplog_authors (author, sign_pub, counter) VALUES (?1, ?2, ?3)
+             ON CONFLICT (author, sign_pub) DO UPDATE SET counter = ?3",
+        params![author, sign_pub, as_i64(counter)],
     )?;
-    s.log_epoch = s.log_epoch.max(op.epoch);
+    Ok(())
+}
+
+fn flag_gap(tx: &Transaction<'_>, author: &str, sign_pub: &str, from: u64) -> Result<(), CoreError> {
+    tx.execute(
+        "INSERT INTO oplog_authors (author, sign_pub, counter, gap_from) VALUES (?1, ?2, 0, ?3)
+             ON CONFLICT (author, sign_pub) DO UPDATE SET gap_from = coalesce(gap_from, ?3)",
+        params![author, sign_pub, as_i64(from)],
+    )?;
+    Ok(())
+}
+
+/// Steps 4 and 5 for an authentic op whose turn it is: may its author make it; open the body, check the change, apply.
+fn take_turn(tx: &Transaction<'_>, ctx: &Context<'_>, op: &Op, seq: u64) -> Result<Outcome, Halt> {
+    if let Err(refusal) = authorize(op, ctx) {
+        return Ok(Outcome::Refused(refusal));
+    }
     let Some(sealed) = decode_payload(&op.body) else {
         return Ok(Outcome::Refused(Refusal::Unopenable));
     };
@@ -538,24 +637,151 @@ fn judge_and_apply(
     rules::apply_change(tx, op, &body.change, seq, ctx.now).map_err(Halt::from)
 }
 
-/// Drops tombstones every member has passed (`min_acked_seq`, from the server's sync answer) or that are older than
-/// [`TOMBSTONE_HORIZON_SECS`], resolved proposals the same way, and proposals past [`PROPOSAL_TTL_SECS`] (they become
-/// resolved first, so a late copy cannot bring them back). Returns how many rows went.
-pub fn gc(conn: &Connection, min_acked_seq: u64, now: i64) -> Result<usize, CoreError> {
-    let horizon = now - TOMBSTONE_HORIZON_SECS;
-    let mut n = conn.execute(
-        "DELETE FROM oplog_records WHERE value IS NULL AND (seq <= ?1 OR at < ?2)",
-        params![as_i64(min_acked_seq), horizon],
+fn held_op(raw: &str) -> Result<Op, CoreError> {
+    serde_json::from_str(raw).map_err(|_| CoreError::storage("corrupt held op"))
+}
+
+/// Applies `author`'s held ops whose turn has come (each the next counter), in counter order.
+fn drain_held(tx: &Transaction<'_>, ctx: &Context<'_>, author: &str, sign_pub: &str) -> Result<(), Halt> {
+    loop {
+        let next = author_counter(tx, author, sign_pub)? + 1;
+        let held: Option<(i64, String)> = tx
+            .query_row(
+                "SELECT seq, op FROM oplog_held WHERE author = ?1 AND sign_pub = ?2 AND counter = ?3",
+                params![author, sign_pub, as_i64(next)],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((seq, raw)) = held else {
+            return Ok(());
+        };
+        tx.execute(
+            "DELETE FROM oplog_held WHERE author = ?1 AND sign_pub = ?2 AND counter = ?3",
+            params![author, sign_pub, as_i64(next)],
+        )?;
+        set_counter(tx, author, sign_pub, next)?;
+        take_turn(tx, ctx, &held_op(&raw)?, as_u64(seq))?;
+    }
+}
+
+/// Ops held longer than [`HOLD_SEQS`] (the missing ones never came): applied anyway, in counter order, with the gap
+/// flagged ([`counter_gaps`]). The same seq releases them on every phone.
+fn release_held(tx: &Transaction<'_>, ctx: &Context<'_>, seq: u64) -> Result<(), Halt> {
+    let mut stmt = tx.prepare(
+        "SELECT author, sign_pub, counter, seq, op FROM oplog_held WHERE seq + ?1 <= ?2 ORDER BY author, sign_pub, counter",
     )?;
-    conn.execute(
-        "UPDATE oplog_proposals SET value = NULL WHERE value IS NOT NULL AND received_at <= ?1",
-        params![now - PROPOSAL_TTL_SECS],
+    let due = stmt
+        .query_map(params![as_i64(HOLD_SEQS), as_i64(seq)], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+    for (author, sign_pub, counter, at, raw) in due {
+        tx.execute(
+            "DELETE FROM oplog_held WHERE author = ?1 AND sign_pub = ?2 AND counter = ?3",
+            params![author, sign_pub, counter],
+        )?;
+        let last = author_counter(tx, &author, &sign_pub)?;
+        if as_u64(counter) <= last {
+            continue;
+        }
+        // The ops before it never came: a gap, for good.
+        flag_gap(tx, &author, &sign_pub, last + 1)?;
+        set_counter(tx, &author, &sign_pub, as_u64(counter))?;
+        take_turn(tx, ctx, &held_op(&raw)?, as_u64(at))?;
+        drain_held(tx, ctx, &author, &sign_pub)?;
+    }
+    Ok(())
+}
+
+/// Deterministic housekeeping after each op (the same on every phone at the same seq, so their states stay alike):
+/// - tombstones of records whose removal is no security decision (settings, profiles, memory, preferences) go
+///   [`TOMBSTONE_KEEP_SEQS`] ops after the removal; a removed grant, account, secret, MCP server, desktop key or target
+///   is remembered for good, and a resolved proposal too, so none can come back;
+/// - Activity keeps its newest [`AUDIT_RETENTION`] entries (by the op that wrote them).
+fn prune(tx: &Transaction<'_>, seq: u64) -> Result<(), CoreError> {
+    let guarded = GUARDED_TABLES.iter().map(|t| format!("'{}'", table_name(*t))).collect::<Vec<_>>().join(",");
+    tx.execute(
+        &format!("DELETE FROM oplog_records WHERE value IS NULL AND tbl NOT IN ({guarded}) AND seq + ?1 <= ?2"),
+        params![as_i64(TOMBSTONE_KEEP_SEQS), as_i64(seq)],
     )?;
-    n += conn.execute(
-        "DELETE FROM oplog_proposals WHERE value IS NULL AND (seq <= ?1 OR received_at < ?2)",
-        params![as_i64(min_acked_seq), horizon],
+    tx.execute(
+        "DELETE FROM oplog_records WHERE tbl = ?1 AND seq <
+             (SELECT seq FROM oplog_records WHERE tbl = ?1 ORDER BY seq DESC LIMIT 1 OFFSET ?2)",
+        params![table_name(Table::Audit), AUDIT_RETENTION - 1],
     )?;
-    Ok(n)
+    Ok(())
+}
+
+/// A digest of the store's state as the log built it (records with their versions and tombstones, proposals and their
+/// resolutions, authors' counters, held ops), without this phone's own times: two phones that applied the same ops
+/// have the same digest. Checkpoints carry it ([`checkpoint`]).
+pub fn state_digest(conn: &Connection) -> Result<[u8; 32], CoreError> {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    let mut stmt = conn.prepare(
+        "SELECT tbl, key, coalesce(value, ''), value IS NULL, epoch, author, counter, seq FROM oplog_records ORDER BY tbl, key",
+    )?;
+    for row in stmt.query_map([], |r| {
+        Ok(serde_json::json!([
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, bool>(3)?,
+            r.get::<_, i64>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, i64>(6)?,
+            r.get::<_, i64>(7)?
+        ]))
+    })? {
+        writeln!(text, "r{}", row?).map_err(|e| CoreError::storage(e.to_string()))?;
+    }
+    let mut stmt =
+        conn.prepare("SELECT key, author, coalesce(value, ''), value IS NULL, seq FROM oplog_proposals ORDER BY key")?;
+    for row in stmt.query_map([], |r| {
+        Ok(serde_json::json!([
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, bool>(3)?,
+            r.get::<_, i64>(4)?
+        ]))
+    })? {
+        writeln!(text, "p{}", row?).map_err(|e| CoreError::storage(e.to_string()))?;
+    }
+    let mut stmt = conn.prepare(
+        "SELECT author, sign_pub, counter, coalesce(gap_from, 0) FROM oplog_authors ORDER BY author, sign_pub",
+    )?;
+    for row in stmt.query_map([], |r| {
+        Ok(serde_json::json!([
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?
+        ]))
+    })? {
+        writeln!(text, "a{}", row?).map_err(|e| CoreError::storage(e.to_string()))?;
+    }
+    let mut stmt =
+        conn.prepare("SELECT author, sign_pub, counter, seq, op FROM oplog_held ORDER BY author, sign_pub, counter")?;
+    for row in stmt.query_map([], |r| {
+        Ok(serde_json::json!([
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, String>(4)?
+        ]))
+    })? {
+        writeln!(text, "h{}", row?).map_err(|e| CoreError::storage(e.to_string()))?;
+    }
+    Ok(reins_proto::canon::sha256(text.as_bytes()))
 }
 
 impl super::Store {

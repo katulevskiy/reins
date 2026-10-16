@@ -584,6 +584,8 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     let b_id = device_of(&b).await;
     assert_eq!(asks[0].device_id, b_id);
     a.handover_approve(id, b_id).await.unwrap();
+    // The entry names the outgoing primary's last op (none yet): its later ones are a replaced primary's.
+    assert_eq!(w.state().roster.last().unwrap().primary_counter, Some(0));
     assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
     assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Primary);
     assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Viewer);
@@ -611,6 +613,7 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     // B's late answer is refused: it is not the primary now.
     let entries = w.state().roster.clone();
     assert_eq!(entries.last().unwrap().reason, RosterReason::Recovery);
+    assert_eq!(entries.last().unwrap().primary_counter, Some(0));
 
     // A rewraps for the (same) password; a mistyped one is refused before anything is sealed.
     assert!(a.roster_rewrap("not it".to_owned()).await.is_err());
