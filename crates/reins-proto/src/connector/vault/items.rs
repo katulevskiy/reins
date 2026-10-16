@@ -48,7 +48,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "search",
             Search,
             "Search the password vault",
-            "Finds items in the user's vault by name, username, holder or website. By default only logins that are not \
+            "Find items in the user's vault by name, username, holder or website. By default only logins that are not \
              in the trash or the archive are searched; use `type`, `folder`, `state` and `favorite` to narrow or \
              widen. Shows names, usernames and websites only, never passwords, codes or other secrets. Leave `query` \
              out to list everything that matches the filters. The user ticks what to show you on their phone.",
@@ -83,7 +83,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "folders_list",
             List,
             "List vault folders",
-            "Lists the user's folders (id, name and how many items of each type they hold), including `none` for \
+            "List the user's folders (id, name and how many items of each type they hold), including `none` for \
              items without a folder. Use the ids with vault_search, vault_item_move and vault_item_create.",
             vec![],
             None,
@@ -94,7 +94,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_view",
             Read,
             "View a vault item without its secrets",
-            "Shows an overview of one item: type, name, folder, favorite, state, dates, websites, username, the length \
+            "Show an overview of one item: type, name, folder, favorite, state, dates, websites, username, the length \
              of the notes, card brand, last four digits and expiry, the main identity fields (no ID numbers), the SSH \
              public key and fingerprint, custom field names and types, attachment names and sizes and how many old \
              passwords are kept. Never any secret. Use vault_get for a secret.",
@@ -107,7 +107,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "get",
             Read,
             "Get a field from the password vault",
-            "Fetches one field of one item: a login's username, password, one-time code or website; the notes; a \
+            "Fetch one field of one item: a login's username, password, one-time code or website; the notes; a \
              card's number, security code, holder or expiry; an identity as text or its social security, passport or \
              license number; an SSH key's public key or fingerprint (its private key is never given out: the desktop \
              app's SSH agent has the phone sign); custom fields; the old passwords. The user approves every time on their phone and sees which field, not its value, and secrets are never \
@@ -131,7 +131,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "attachment_get",
             Read,
             "Get a file attached to a vault item",
-            "Downloads one attachment of an item and decrypts it on the phone. The content arrives base64-encoded \
+            "Download one attachment of an item and decrypt it on the phone. The content arrives base64-encoded \
              (files over 2 MB are not sent, only their name and size). The user approves every time on their phone \
              and sees the file name, and it is never covered by a standing permission.",
             vec![
@@ -146,7 +146,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_create",
             Write,
             "Create a vault item",
-            "Adds a login, secure note, card, identity or SSH key to the user's vault. Give `type`, `name` and the \
+            "Add a login, secure note, card, identity or SSH key to the user's vault. Give `type`, `name` and the \
              type's content in `fields`. The user sees every field on their phone except secrets, of which only the \
              length is shown, and approves unless a standing permission covers the folder and type.",
             vec![
@@ -168,7 +168,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_update",
             Write,
             "Edit a vault item",
-            "Changes the given parts of an item and leaves the rest as it is; give at least one. `fields` holds only \
+            "Change the given parts of an item and leave the rest as it is; give at least one. `fields` holds only \
              the type-specific values to change (an empty string clears one; `uris` replaces the list of websites). \
              `custom_fields` adds or changes custom fields by name; `remove_custom_fields` removes some. The user \
              sees old and new values on their phone, secrets only as 'changes'. An item's type cannot change.",
@@ -192,7 +192,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "attachment_add",
             Write,
             "Attach a file to a vault item",
-            "Adds a file to an item. `content_base64` is the file in base64 (at most 2 MB once decoded, 3,000,000 \
+            "Add a file to an item. `content_base64` is the file in base64 (at most 2 MB once decoded, 3,000,000 \
              characters of base64). The phone encrypts it before upload. The user sees the file name and size and \
              approves.",
             vec![
@@ -215,7 +215,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "attachment_delete",
             Write,
             "Delete a file attached to a vault item",
-            "Removes one attachment from an item for good. The user approves on their phone.",
+            "Remove one attachment from an item for good. The user approves on their phone.",
             vec![
                 str_p("item", 100, true, ITEM_HELP),
                 str_p("attachment", 300, true, "The attachment: its id or exact file name, from vault_item_view."),
@@ -229,7 +229,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_favorite",
             Write,
             "Favorite or unfavorite a vault item",
-            "Marks an item as a favorite, or removes the mark. The user approves on their phone unless a standing \
+            "Mark an item as a favorite, or remove the mark. The user approves on their phone unless a standing \
              permission covers it.",
             vec![str_p("item", 100, true, ITEM_HELP), bool_p("favorite", "false removes the mark. Default: true.")],
             Some("item"),
@@ -241,7 +241,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_move",
             Write,
             "Move a vault item to a folder",
-            "Moves one item to a folder, or out of all folders with `none`.",
+            "Move one item to a folder, or out of all folders with `none`.",
             vec![
                 str_p("item", 100, true, ITEM_HELP),
                 str_p("folder", 100, true, "The target folder: its id or exact name, or `none`."),
@@ -255,7 +255,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_trash",
             Write,
             "Move a vault item to the trash",
-            "Moves one item to the trash, from where the user (or vault_item_restore) can get it back.",
+            "Move one item to the trash, from where the user (or vault_item_restore) can get it back.",
             vec![str_p("item", 100, true, ITEM_HELP)],
             Some("item"),
         )
@@ -266,7 +266,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_restore",
             Write,
             "Restore a vault item from the trash",
-            "Takes one item out of the trash.",
+            "Take one item out of the trash.",
             vec![str_p("item", 100, true, "The id of the item in the trash, from vault_search with state=trash.")],
             Some("item"),
         )
@@ -277,7 +277,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_archive",
             Write,
             "Archive a vault item",
-            "Moves one item to the archive, out of the everyday lists.",
+            "Move one item to the archive, out of the everyday lists.",
             vec![str_p("item", 100, true, ITEM_HELP)],
             Some("item"),
         )
@@ -288,7 +288,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_unarchive",
             Write,
             "Unarchive a vault item",
-            "Takes one item out of the archive.",
+            "Take one item out of the archive.",
             vec![str_p("item", 100, true, "The id of the archived item, from vault_search with state=archived.")],
             Some("item"),
         )
@@ -299,7 +299,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_delete",
             Write,
             "Delete a vault item permanently",
-            "Deletes one item for good, with its attachments; it cannot be brought back. The user must approve on \
+            "Delete one item for good, with its attachments; it cannot be brought back. The user must approve on \
              their phone every time; no standing permission covers this.",
             vec![str_p("item", 100, true, ITEM_HELP)],
             Some("item"),
@@ -312,7 +312,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "trash_empty",
             Write,
             "Empty the vault trash",
-            "Permanently deletes every item in the trash. The user must approve on their phone every time and sees \
+            "Permanently delete every item in the trash. The user must approve on their phone every time and sees \
              how many items go; no standing permission covers this.",
             vec![],
             None,
@@ -325,7 +325,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "folder_create",
             Write,
             "Create a vault folder",
-            "Adds a folder. The user approves on their phone unless a standing permission covers it.",
+            "Add a folder. The user approves on their phone unless a standing permission covers it.",
             vec![str_p("name", 100, true, "The folder's name.")],
             None,
         )
@@ -336,7 +336,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "folder_rename",
             Write,
             "Rename a vault folder",
-            "Gives a folder a new name.",
+            "Give a folder a new name.",
             vec![
                 str_p("folder", 100, true, "The folder: its id or exact name, from vault_folders_list."),
                 str_p("name", 100, true, "The new name."),
@@ -350,7 +350,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "folder_delete",
             Write,
             "Delete a vault folder",
-            "Deletes a folder. The items in it are kept and end up without a folder.",
+            "Delete a folder. The items in it are kept and end up without a folder.",
             vec![str_p("folder", 100, true, "The folder: its id or exact name, from vault_folders_list.")],
             Some("folder"),
         )
@@ -361,7 +361,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "item_clone",
             Write,
             "Copy a vault item",
-            "Makes a new item from an existing one, with a new name (default: the old name with ' - Clone'). The \
+            "Make a new item from an existing one, with a new name (default: the old name with ' - Clone'). The \
              secrets are copied on the phone and never shown or sent to you; attachments and old passwords are not \
              copied. The user approves on their phone.",
             vec![

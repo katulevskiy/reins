@@ -617,6 +617,8 @@ make_config! {
         reins_apple_team_id:         String, false,  def,    String::new();
         /// Android signing certificates (app links) |> SHA-256 fingerprints (`AB:CD:...`, comma-separated) of the certificates the Reins Android app is signed with, so that pairing links open the app (`/.well-known/assetlinks.json`). Empty: links open the page.
         reins_android_cert_sha256:   String, false,  def,    String::new();
+        /// OpenAI domain verification token |> The challenge token the OpenAI Platform shows when submitting the MCP server to the ChatGPT directory, served as plain text at `/.well-known/openai-apps-challenge`. Empty: that path is not found.
+        reins_openai_apps_challenge: String, false,  def,    String::new();
         /// Outbound requests per account (per minute) |> Requests the server makes for one account's phone (file sends and fetches, proxied MCP calls) per minute. 0 disables the limit.
         reins_outbound_requests_per_minute: u32, false, def, 60;
         /// Concurrent outbound requests per account |> Requests the server makes for one account's phone at the same time. 0 disables the limit.

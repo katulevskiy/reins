@@ -368,7 +368,21 @@ pub fn app_link_routes() -> Vec<rocket::Route> {
     for item in bad {
         warn!("`REINS_ANDROID_CERT_SHA256`: `{item}` is not a SHA-256 fingerprint (32 bytes of hex); ignored");
     }
-    routes![apple_app_site_association_doc, asset_links_doc]
+    routes![apple_app_site_association_doc, asset_links_doc, openai_apps_challenge]
+}
+
+/// The token alone, as OpenAI's domain verification wants it; `None` (not found) when none is configured or it is not
+/// one token-like word (letters, digits, `-`, `_`, `.`, `~`, `=`, `+`, `/`).
+pub fn openai_challenge_body(configured: &str) -> Option<String> {
+    let token = configured.trim();
+    let token_char = |c: char| c.is_ascii_alphanumeric() || "-_.~=+/".contains(c);
+    (!token.is_empty() && token.len() <= 512 && token.chars().all(token_char)).then(|| token.to_owned())
+}
+
+/// OpenAI's domain verification for a ChatGPT directory submission (`REINS_OPENAI_APPS_CHALLENGE`).
+#[get("/.well-known/openai-apps-challenge")]
+fn openai_apps_challenge() -> Option<(rocket::http::ContentType, String)> {
+    openai_challenge_body(&crate::CONFIG.reins_openai_apps_challenge()).map(|t| (rocket::http::ContentType::Plain, t))
 }
 
 #[get("/pair?<code>")]
@@ -627,5 +641,14 @@ S.browser_fallback_url=https%3A%2F%2Fapp.reins2fa.com%2Fget;end\""
         }
         let hostile = wait_page("x", 47, Some(EVIL));
         assert!(!hostile.contains("<script") && hostile.contains("&lt;script&gt;"), "{hostile}");
+    }
+
+    #[test]
+    fn the_openai_challenge_is_the_bare_token_or_nothing() {
+        assert_eq!(openai_challenge_body("  abc-123_XYZ \n").as_deref(), Some("abc-123_XYZ"));
+        assert_eq!(openai_challenge_body(""), None);
+        assert_eq!(openai_challenge_body("two words"), None);
+        assert_eq!(openai_challenge_body(EVIL), None);
+        assert_eq!(openai_challenge_body(&"x".repeat(513)), None);
     }
 }

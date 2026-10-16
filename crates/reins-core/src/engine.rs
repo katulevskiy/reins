@@ -659,8 +659,8 @@ impl Engine {
     }
 
     /// Tells the server which integrations have an account here and which MCP servers were added with their tools,
-    /// when that changed since the last report, so that it lists only those tools to the AIs. A failure is retried
-    /// with the next sync.
+    /// when that changed since the last report, so that it can tell the AIs what is connected (and lists the MCP
+    /// servers' tools). A failure is retried with the next sync.
     pub(crate) async fn report_services(&self, session: &Session) {
         let mut services = self.integrations();
         services.sort();

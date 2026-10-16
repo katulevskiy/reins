@@ -37,11 +37,15 @@ for up to {minutes} minutes. Then call reins_get_result with request_id={id}."
 
 pub fn pending_text(id: &RequestId) -> String {
     format!(
-        "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this \
-message), call reins_get_result with request_id={id}, or repeat the same request: a one-time approval may \
-already cover it."
+        "Waiting for the user to approve on their phone; nothing has happened yet. Tell the user to approve it in \
+the Reins app. Do not call the tool again: that would ask a second time. After the user responds (they can still \
+approve after this message), call reins_get_result with request_id={id}."
     )
 }
+
+/// Listed in no `tools/list` but still callable: `github_request_*` duplicates `github_api_*` (same GitHub REST API,
+/// read and write), and every listed tool counts against the clients that cap how many a connector may have.
+pub const UNLISTED_TOOLS: [&str; 2] = ["github_request_read", "github_request_write"];
 
 fn account_property() -> Value {
     json!({
@@ -51,20 +55,27 @@ fn account_property() -> Value {
     })
 }
 
-/// The tools in a fixed order (`tools/list` must be deterministic).
-#[cfg(test)]
-pub fn tool_definitions() -> Vec<Value> {
-    tool_definitions_for(None)
+/// The annotations of a tool that only reads the user's own data, all four set (the directories check them).
+fn read_hints() -> Value {
+    json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false})
 }
 
-/// The tools for a user whose phone reported these integrations (`None`: not reported, so every tool). Gmail and
-/// the connector tools are listed only for integrations that have an account; the `reins_*` tools always.
-pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
+/// The annotations of a tool that changes something or sends something out (never idempotent here).
+fn write_hints(destructive: bool, open_world: bool) -> Value {
+    json!({"readOnlyHint": false, "destructiveHint": destructive, "idempotentHint": false, "openWorldHint": open_world})
+}
+
+/// Every tool in a fixed order (`tools/list` must be deterministic), whatever the user has connected: an AI client
+/// reads the list once per chat, so a tool left out stays missing even after the user connects its integration.
+/// A call to an integration that is not connected goes to the phone like any other, which answers at once with how
+/// to connect it: the phone knows the moment an account is added, the server only at the phone's next report.
+/// Desktop-only tools are never listed.
+pub fn tool_definitions() -> Vec<Value> {
     let mut tools = vec![
         json!({
             "name": "gmail_read",
             "title": "Read Gmail messages",
-            "description": "Reads the full text of specific Gmail messages by id (ids come from gmail_search). \
+            "description": "Read the full text of specific Gmail messages by id (ids come from gmail_search). \
         Attached files are not included: list them with gmail_list_attachments. The user may have to approve on their \
         phone.",
             "inputSchema": {
@@ -82,12 +93,12 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
                 "required": ["message_ids"],
                 "additionalProperties": false
             },
-            "annotations": {"readOnlyHint": true, "openWorldHint": false}
+            "annotations": read_hints()
         }),
         json!({
             "name": "gmail_search",
             "title": "Search Gmail",
-            "description": "Searches the user's Gmail with Gmail search syntax (for example `from:bank newer_than:7d`) and \
+            "description": "Search the user's Gmail with Gmail search syntax (for example `from:bank newer_than:7d`) and \
         returns sender, recipients, subject, date and a snippet for each match. The user may have to approve on their phone.",
             "inputSchema": {
                 "type": "object",
@@ -105,13 +116,14 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
                 "required": ["query"],
                 "additionalProperties": false
             },
-            "annotations": {"readOnlyHint": true, "openWorldHint": false}
+            "annotations": read_hints()
         }),
         json!({
             "name": "gmail_send",
             "title": "Send an email",
-            "description": "Sends an email from the user's Gmail account. The user always sees the recipients and the \
-        full text on their phone and must approve unless they granted a standing permission. Bcc is not supported.",
+            "description": "Send an email from the user's Gmail account. Call it directly for each email: the user \
+        sees the recipients and the full text on their phone and approves it there (unless a standing permission \
+        already covers it), so no permission is needed first. Bcc is not supported.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -128,17 +140,20 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
                 "required": ["to", "subject", "body"],
                 "additionalProperties": false
             },
-            "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true}
+            "annotations": write_hints(true, true)
         }),
         json!({
             "name": "reins_request_access",
-            "title": "Ask for a standing permission",
-            "description": "Asks the user, on their phone, for a time-limited permission so that later gmail_* calls \
-        need no approval. Ask for the NARROWEST permission that completes your task: name the exact senders \
+            "title": "Ask for a standing Gmail permission",
+            "description": "Ask the user, on their phone, for a time-limited standing permission so that many similar \
+        gmail_search, gmail_read or gmail_send calls over a while need no approval each (for example reading every \
+        email from one sender this week). Do NOT use it for a single action, and never as a step before one: to send \
+        one email, call gmail_send directly and the user approves that email; to read, call gmail_search. No tool \
+        needs a permission first. When you do need one, ask for the NARROWEST permission: name the exact senders \
         (`a@b.com`) or domains (`@b.com`) or a subject text for reads, the exact recipients for sends, and the \
-        SHORTEST duration you need. Prefer this over repeated single requests when you will make several related \
-        calls. `any: true` (all mail, at most 7 days) and long durations are shown to the user as broad requests and \
-        are often refused. Always give a short, honest `reason`. Sending to everyone cannot be requested.",
+        SHORTEST duration. `any: true` (all mail, at most 7 days) and long durations are shown to the user as broad \
+        requests and are often refused. Always give a short, honest `reason`. Sending to everyone cannot be \
+        requested.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -164,16 +179,16 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
                 "required": ["action", "duration_seconds", "reason"],
                 "additionalProperties": false
             },
-            "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}
+            "annotations": write_hints(false, false)
         }),
         json!({
             "name": "reins_list_accounts",
-            "title": "List integrations and their accounts",
-            "description": "Without `service`: lists the integrations the user has connected (for example gmail); \
-        needs no approval and shows no accounts. With `service`: asks the user, on their phone, to let you see that \
-        integration's accounts (for example the Gmail addresses). Once they agree (usually for a month) you can \
-        pass the address you want as `account` to gmail_search, gmail_read, gmail_send or reins_request_access. \
-        Only ask for the accounts when you need to choose between several.",
+            "title": "List connected services and accounts",
+            "description": "List the services the user has connected in Reins (for example gmail, github) when called \
+        without `service`; needs no approval and shows no accounts. With `service`: asks the user, on their phone, to \
+        let you see that service's accounts (for example the Gmail addresses). Once they agree (usually for a month) \
+        you can pass the one you want as `account` to that service's tools. Only ask for the accounts when you need \
+        to choose between several.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -186,26 +201,28 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
                 "required": [],
                 "additionalProperties": false
             },
-            "annotations": {"readOnlyHint": true, "openWorldHint": false}
+            // With `service` it asks the phone for a permission to see the accounts (usually for a month): a write.
+            "annotations": write_hints(false, false)
         }),
         json!({
             "name": "reins_get_result",
-            "title": "Get a pending Reins result",
-            "description": "Returns the result of an earlier request that was still waiting for the user's approval \
-        (use the request_id from that answer). Waits a while if it is still pending.",
+            "title": "Get the result of an approved request",
+            "description": "Get the result of an earlier request that was waiting for the user's approval on their \
+        phone (use the request_id from that answer). Waits a while if it is still pending. Until this returns the \
+        result, the action has not happened.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"request_id": {"type": "string", "description": "The request_id to look up."}},
                 "required": ["request_id"],
                 "additionalProperties": false
             },
-            "annotations": {"readOnlyHint": true, "openWorldHint": false}
+            "annotations": read_hints()
         }),
         json!({
             "name": UPLOAD_TOOL,
             "title": "Upload a file to pass on as a link",
-            "description": "For passing a file to another tool as a link (for example a large file another tool should \
-        download). The phone answers with an upload link: upload the file there (`curl -T <file> '<upload_url>'`). The \
+            "description": "Upload a file to pass to another tool as a link (for example a large file another tool \
+        should download). The phone answers with an upload link: upload the file there (`curl -T <file> '<upload_url>'`). The \
         user approves it on their phone when it arrives; then the download link from the same answer works. For files \
         a Reins tool takes directly (release assets, repository files, attachments) call that tool instead: it \
         answers with its own upload link when it needs one.",
@@ -223,12 +240,12 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
                 "required": ["name", "size", "reason"],
                 "additionalProperties": false
             },
-            "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}
+            "annotations": write_hints(false, false)
         }),
     ];
     // The other integrations describe their tools as data (reins-proto).
     // Desktop-only tools answer with credentials for the paired desktop app: never offered to an AI.
-    tools.extend(connector::specs().iter().filter(|s| !s.desktop_only).map(|s| {
+    tools.extend(connector::specs().iter().filter(|s| !s.desktop_only && !UNLISTED_TOOLS.contains(&s.tool)).map(|s| {
         json!({
             "name": s.tool,
             "title": s.title,
@@ -237,23 +254,12 @@ pub fn tool_definitions_for(services: Option<&[String]>) -> Vec<Value> {
             "annotations": s.annotations()
         })
     }));
-    if let Some(services) = services {
-        tools.retain(|t| {
-            let name = t["name"].as_str().unwrap_or_default();
-            let service = if name.starts_with("gmail_") {
-                Some("gmail")
-            } else {
-                connector::spec_for_tool(name).map(|s| s.service)
-            };
-            service.is_none_or(|s| services.iter().any(|known| known == s))
-        });
-    }
     tools
 }
 
-/// [`tool_definitions_for`] plus the tools of the MCP servers the user added on the phone, after Reins's own.
-pub fn tool_definitions_with(services: Option<&[String]>, mcp: &[McpServerReport]) -> Vec<Value> {
-    let mut tools = tool_definitions_for(services);
+/// [`tool_definitions`] plus the tools of the MCP servers the user added on the phone, after Reins's own.
+pub fn tool_definitions_with(mcp: &[McpServerReport]) -> Vec<Value> {
+    let mut tools = tool_definitions();
     tools.extend(mcp_tools::tool_definitions(mcp));
     tools
 }
@@ -595,7 +601,9 @@ fn structured(result: &ToolResult) -> Value {
             summary,
             expires_at,
             max_uses,
-        } => json!({"granted": true, "summary": summary, "expires_at": rfc3339(*expires_at), "max_uses": max_uses}),
+        } => json!({"granted": true, "summary": summary, "expires_at": rfc3339(*expires_at), "max_uses": max_uses,
+            "note": "Nothing has been done yet. Now call the tool itself (gmail_search, gmail_read or gmail_send); \
+            the calls this permission covers run without asking the user again until it expires."}),
     }
 }
 
@@ -659,7 +667,8 @@ mod tests {
     #[test]
     fn tool_definitions_are_strict_and_well_formed() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 7 + connector::specs().iter().filter(|s| !s.desktop_only).count());
+        let listed = connector::specs().iter().filter(|s| !s.desktop_only).count() - UNLISTED_TOOLS.len();
+        assert_eq!(tools.len(), 7 + listed);
         for tool in &tools {
             assert!(tool["name"].is_string() && tool["description"].is_string(), "{tool}");
             assert_eq!(tool["inputSchema"]["type"], "object");
@@ -671,6 +680,94 @@ mod tests {
         assert_eq!(tools[1]["inputSchema"]["properties"]["max_results"]["maximum"], 50);
         assert_eq!(tools[0]["inputSchema"]["properties"]["message_ids"]["maxItems"], 20);
         assert!(tools[2]["inputSchema"]["properties"].get("bcc").is_none());
+    }
+
+    /// The Claude and ChatGPT directories require a human title and every annotation on each tool.
+    #[test]
+    fn every_tool_has_a_title_and_all_annotations_and_reads_are_read_only() {
+        let tools = tool_definitions();
+        for tool in &tools {
+            let name = tool["name"].as_str().unwrap();
+            let title = tool["title"].as_str().unwrap_or_default();
+            assert!(!title.trim().is_empty() && title != name, "{name} needs a human title");
+            assert!(name.len() <= 64, "{name} is longer than the directories allow");
+            for hint in ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] {
+                assert!(tool["annotations"][hint].is_boolean(), "{name} lacks {hint}");
+            }
+            let a = &tool["annotations"];
+            assert!(
+                !(a["readOnlyHint"] == true && a["destructiveHint"] == true),
+                "{name} cannot be read-only and destructive"
+            );
+            // Descriptions start with the verb a user would search for ("Send an email ..."), not "Sends".
+            let first = tool["description"].as_str().unwrap().split([' ', ',']).next().unwrap();
+            assert!(
+                !first.ends_with('s') || first == "Dismiss" || first == "Access",
+                "{name}: the description should start with an imperative verb, not `{first}`"
+            );
+        }
+        let annotations = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap()["annotations"].clone();
+        for spec in connector::specs().iter().filter(|s| !s.desktop_only && !UNLISTED_TOOLS.contains(&s.tool)) {
+            let read = spec.effect != connector::Effect::Write;
+            assert_eq!(annotations(spec.tool)["readOnlyHint"], read, "{}", spec.tool);
+        }
+        for read in ["gmail_read", "gmail_search", "reins_get_result"] {
+            assert_eq!(annotations(read)["readOnlyHint"], true, "{read}");
+        }
+        // reins_list_accounts with a service asks the phone for a permission to see accounts.
+        for write in ["gmail_send", "reins_request_access", "reins_list_accounts", UPLOAD_TOOL] {
+            assert_eq!(annotations(write)["readOnlyHint"], false, "{write}");
+        }
+        assert_eq!(annotations("reins_list_accounts")["destructiveHint"], false);
+        for runs_code in ["github_workflow_dispatch", "github_run_rerun", "github_branch_rename"] {
+            assert_eq!(annotations(runs_code)["destructiveHint"], true, "{runs_code}");
+        }
+        assert_eq!(annotations("vault_send_create")["openWorldHint"], true, "a Send is a public link");
+        // Sends that cannot be taken back, deletions and overwrites are destructive; adding things is not.
+        for destructive in [
+            "gmail_send",
+            "telegram_send",
+            "sms_send",
+            "gmail_trash",
+            "calendar_delete_event",
+            "github_repo_delete",
+            "github_file_put",
+            "github_pr_merge",
+            "vault_item_delete",
+            "github_api_write",
+            "payments_purchase_request",
+        ] {
+            assert_eq!(annotations(destructive)["destructiveHint"], true, "{destructive}");
+        }
+        for additive in ["github_create_issue", "github_star_add", "vault_item_create", "gmail_create_draft"] {
+            assert_eq!(annotations(additive)["destructiveHint"], false, "{additive}");
+        }
+        assert_eq!(annotations("github_star_add")["idempotentHint"], true);
+        assert_eq!(annotations("github_create_issue")["idempotentHint"], false);
+        assert_eq!(annotations("gmail_send")["openWorldHint"], true);
+        assert_eq!(annotations("gmail_search")["openWorldHint"], false);
+        assert_eq!(annotations("github_search_repos")["openWorldHint"], true);
+    }
+
+    #[test]
+    fn every_tool_is_listed_and_a_granted_permission_says_nothing_happened_yet() {
+        // Listing never depends on what the phone reported: a chat keeps the list it read first.
+        let names: Vec<String> = tool_definitions().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
+        for expected in ["gmail_send", "github_create_issue", "telegram_send", "vault_search", "reins_request_access"] {
+            assert!(names.iter().any(|n| n == expected), "{expected}");
+        }
+        let granted = render_outcome(&RelayOutcome::Result {
+            result: ToolResult::Granted {
+                summary: "Send emails to a@b.com".into(),
+                expires_at: 1_700_003_600,
+                max_uses: Some(1),
+            },
+        });
+        let note = granted["structuredContent"]["note"].as_str().unwrap();
+        assert!(note.starts_with("Nothing has been done yet") && note.contains("gmail_send"), "{note}");
+        // reins_request_access tells the model when not to use it.
+        let access = tool_definitions().into_iter().find(|t| t["name"] == "reins_request_access").unwrap();
+        assert!(access["description"].as_str().unwrap().contains("Do NOT use it for a single action"));
     }
 
     #[test]
@@ -922,7 +1019,7 @@ mod tests {
         assert!(offline_text(&id, PhoneSeen::Never).contains("(last seen not since the Reins server last restarted)"));
         assert_eq!(
             pending_text(&id),
-            "Waiting for the user to approve on their phone. When they confirm (the user can approve even after this message), call reins_get_result with request_id=req-9, or repeat the same request: a one-time approval may already cover it."
+            "Waiting for the user to approve on their phone; nothing has happened yet. Tell the user to approve it in the Reins app. Do not call the tool again: that would ask a second time. After the user responds (they can still approve after this message), call reins_get_result with request_id=req-9."
         );
         let seen = PhoneSeen::Ago(90);
         for wait in [WaitResult::Offline, WaitResult::Pending, WaitResult::NotFound] {
@@ -992,9 +1089,7 @@ mod tests {
 
     #[test]
     fn the_upload_tool_is_always_listed_and_relays_a_request_upload() {
-        let none: Vec<String> = Vec::new();
-        let listed = tool_definitions_for(Some(&none));
-        assert!(listed.iter().any(|t| t["name"] == UPLOAD_TOOL), "listed even with no integration");
+        assert!(tool_definitions().iter().any(|t| t["name"] == UPLOAD_TOOL));
         assert_eq!(
             parse_invocation(
                 UPLOAD_TOOL,
@@ -1050,7 +1145,13 @@ mod tests {
             }],
         };
         let reports = [report];
-        let tools = tool_definitions_with(None, &reports);
+        let tools = tool_definitions_with(&reports);
+        let added = tools.last().unwrap();
+        assert_eq!(added["title"], "Linear: search issues");
+        assert_eq!(
+            added["annotations"],
+            json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": true})
+        );
         assert_eq!(tools.len(), tool_definitions().len() + 1);
         assert_eq!(tools.last().unwrap()["name"], "linear__search_issues");
         let ToolInvocation::Relay(ToolCall::Mcp(call), None) =
@@ -1081,7 +1182,15 @@ mod tests {
         let tools = tool_definitions();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for spec in connector::specs() {
-            assert_eq!(names.contains(&spec.tool), !spec.desktop_only, "{} is listed wrongly", spec.tool);
+            let listed = !spec.desktop_only && !UNLISTED_TOOLS.contains(&spec.tool);
+            assert_eq!(names.contains(&spec.tool), listed, "{} is listed wrongly", spec.tool);
+        }
+        // Unlisted is not unavailable: a client that knows the name can still call it.
+        let read = parse_invocation("github_request_read", &json!({"path": "/user"})).unwrap();
+        assert!(matches!(read, ToolInvocation::Relay(ToolCall::Connector(_), _)));
+        for unlisted in UNLISTED_TOOLS {
+            assert!(connector::spec_for_tool(unlisted).is_some_and(|s| !s.desktop_only), "{unlisted}");
+            assert_ne!(parse_invocation(unlisted, &json!({})), Err(ToolArgError::UnknownTool(unlisted.to_owned())));
         }
         for desktop in connector::specs().iter().filter(|s| s.desktop_only) {
             assert_eq!(

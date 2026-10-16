@@ -47,7 +47,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "file_get",
             Read,
             "Read a file from GitHub",
-            "Reads one file of a repository. Text comes back as text (at most 100000 characters, `truncated` says when \
+            "Read one file of a repository. Text comes back as text (at most 100000 characters, `truncated` says when \
              it was cut); a binary file comes back as base64 in `content_base64` when it is at most 2 MB, otherwise \
              only its size and sha. The user chooses what to share.",
             vec![REPO, PATH, REF],
@@ -59,7 +59,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "dir_list",
             List,
             "List a directory of a GitHub repository",
-            "Lists the files and folders directly inside one directory (name, kind, size). Use github_tree_get for the \
+            "List the files and folders directly inside one directory (name, kind, size). Use github_tree_get for the \
              whole tree.",
             vec![
                 REPO,
@@ -75,7 +75,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "tree_get",
             Read,
             "Read the file tree of a GitHub repository",
-            "Lists the paths of a repository at a ref as one text (one `type size path` line each), recursively by \
+            "List the paths of a repository at a ref as one text (one `type size path` line each), recursively by \
              default. Cut when the repository is large (`truncated`).",
             vec![
                 REPO,
@@ -92,7 +92,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "blob_get",
             Read,
             "Read a git blob from GitHub",
-            "Reads the raw content of a git blob by its sha (from a tree or a commit). Text comes back as text, binary \
+            "Read the raw content of a git blob by its sha (from a tree or a commit). Text comes back as text, binary \
              as base64 when at most 2 MB, otherwise only its size.",
             vec![REPO, str_p("sha", 64, true, "The blob sha (40 hexadecimal characters).")],
             Some("repo"),
@@ -103,7 +103,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "archive_link",
             Read,
             "Get a download link for a GitHub repository",
-            "Returns a short-lived URL that downloads the repository at a ref as a zip or tar.gz archive. Nothing is \
+            "Return a short-lived URL that downloads the repository at a ref as a zip or tar.gz archive. Nothing is \
              downloaded here.",
             vec![
                 REPO,
@@ -119,7 +119,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "commit_list",
             Read,
             "List GitHub commits",
-            "Lists commits, newest first, optionally only those touching a path, by an author, or in a time range.",
+            "List commits, newest first, optionally only those touching a path, by an author, or in a time range.",
             vec![
                 REPO,
                 str_p("ref", 250, false, "Branch, tag or commit SHA to start from. Default: the default branch."),
@@ -137,7 +137,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "commit_get",
             Read,
             "Read a GitHub commit",
-            "Reads one commit: message, author, statistics and the changed files with their patches (at most 60000 \
+            "Read one commit: message, author, statistics and the changed files with their patches (at most 60000 \
              characters in all, `truncated` says when).",
             vec![REPO, str_p("ref", 250, true, "A commit SHA, or a branch or tag name.")],
             Some("repo"),
@@ -148,7 +148,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "commit_compare",
             Read,
             "Compare two GitHub refs",
-            "Compares two branches, tags or commits: how far `head` is ahead of and behind `base`, the commits and the \
+            "Compare two branches, tags or commits: how far `head` is ahead of and behind `base`, the commits and the \
              changed files with patches (at most 60000 characters, `truncated` says when).",
             vec![
                 REPO,
@@ -163,7 +163,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "checks_get",
             Read,
             "Read the checks and statuses of a GitHub ref",
-            "Summarises the commit statuses and check runs (CI results) of a commit, branch or tag: overall state and \
+            "Summarise the commit statuses and check runs (CI results) of a commit, branch or tag: overall state and \
              each check with its outcome.",
             vec![REPO, str_p("ref", 250, true, "A commit SHA, or a branch or tag name.")],
             Some("repo"),
@@ -175,7 +175,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "file_put",
             Write,
             "Create or change a file on GitHub",
-            "Commits one file to a branch: creates it, or replaces it when it exists (the current version is looked up \
+            "Commit one file to a branch: create it, or replace it when it exists (the current version is looked up \
              for you; pass `sha` to guard against a change you have not seen). Give the content either as `content` \
              (text) or `content_base64` (at most 2 MB decoded). This is how a workflow file under .github/workflows is \
              edited. It never forces anything and never creates the branch (use github_commit_files with base_branch \
@@ -201,7 +201,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "file_delete",
             Write,
             "Delete a file on GitHub",
-            "Commits the deletion of one file on a branch. The user approves on their phone and sees the file and the branch.",
+            "Commit the deletion of one file on a branch. The user approves on their phone and sees the file and the branch.",
             vec![
                 REPO,
                 PATH,
@@ -220,7 +220,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "commit_files",
             Write,
             "Commit several files to GitHub at once",
-            "Makes one commit that adds, changes and deletes several files, through the git data API. `files` is a list \
+            "Make one commit that adds, changes and deletes several files, through the git data API. `files` is a list \
              (at most 100) of objects: {\"path\": \"src/a.rs\", \"content\": \"text\"} or {\"path\": ..., \
              \"content_base64\": \"...\"} to write a file (each at most 2 MB decoded, 4 MB in all), or {\"path\": ..., \
              \"delete\": true} to delete one; an optional \"mode\" is \"100644\" (default) or \"100755\" (executable). \
@@ -246,7 +246,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "tag_list",
             List,
             "List the tags of a GitHub repository",
-            "Lists the tags of a repository (name and the commit each points to), newest first as GitHub orders them.",
+            "List the tags of a repository (name and the commit each points to), newest first as GitHub orders them.",
             vec![REPO, LIMIT],
             Some("repo"),
         ),
@@ -256,7 +256,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "tag_get",
             Read,
             "Read a GitHub tag",
-            "Reads one tag: the commit it points to and, for an annotated tag, its message and tagger.",
+            "Read one tag: the commit it points to and, for an annotated tag, its message and tagger.",
             vec![REPO, TAG],
             Some("repo"),
         ),
@@ -266,7 +266,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "tag_create",
             Write,
             "Create a GitHub tag",
-            "Creates a tag on a commit. Without `message` it is a lightweight tag; with `message` it is an annotated tag. \
+            "Create a tag on a commit. Without `message` it is a lightweight tag; with `message` it is an annotated tag. \
              `target` is a commit SHA, branch or tag; default: the head of the default branch. An existing tag is never \
              moved. The user approves on their phone.",
             vec![
@@ -286,7 +286,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "tag_delete",
             Write,
             "Delete a GitHub tag",
-            "Deletes a tag. A release made from it stays (delete it separately). The user approves on their phone.",
+            "Delete a tag. A release made from it stays (delete it separately). The user approves on their phone.",
             vec![REPO, TAG],
             Some("repo"),
         )
@@ -298,7 +298,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_list",
             Read,
             "List GitHub releases",
-            "Lists the releases of a repository, newest first (id, tag, name, draft and prerelease flags, asset count).",
+            "List the releases of a repository, newest first (id, tag, name, draft and prerelease flags, asset count).",
             vec![REPO, LIMIT],
             Some("repo"),
         ),
@@ -308,7 +308,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_get",
             Read,
             "Read a GitHub release",
-            "Reads one release by id: name, tag, notes and its assets.",
+            "Read one release by id: name, tag, notes and its assets.",
             vec![REPO, RELEASE_ID],
             Some("repo"),
         ),
@@ -318,7 +318,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_latest",
             Read,
             "Read the latest GitHub release",
-            "Reads the latest published release (not a draft or prerelease) of a repository.",
+            "Read the latest published release (not a draft or prerelease) of a repository.",
             vec![REPO],
             Some("repo"),
         ),
@@ -328,7 +328,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_by_tag",
             Read,
             "Read the GitHub release of a tag",
-            "Reads the release made from a tag.",
+            "Read the release made from a tag.",
             vec![REPO, TAG],
             Some("repo"),
         ),
@@ -338,7 +338,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_notes_generate",
             Read,
             "Generate GitHub release notes",
-            "Asks GitHub to write release notes (a name and a Markdown body listing the changes) for a tag between two \
+            "Ask GitHub to write release notes (a name and a Markdown body listing the changes) for a tag between two \
              points. Nothing is created; use the text with github_release_create.",
             vec![
                 REPO,
@@ -354,7 +354,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_create",
             Write,
             "Create a GitHub release",
-            "Creates a release for a tag. When the tag does not exist, GitHub creates it at `target_commitish` (default: \
+            "Create a release for a tag. When the tag does not exist, GitHub creates it at `target_commitish` (default: \
              the head of the default branch). Set `generate_release_notes` to let GitHub write the body. Publishes \
              immediately unless `draft` is true. The user approves on their phone.",
             vec![
@@ -377,7 +377,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_update",
             Write,
             "Change a GitHub release",
-            "Changes the fields given of a release (tag, target, name, notes, draft, prerelease, latest); everything \
+            "Change the fields given of a release (tag, target, name, notes, draft, prerelease, latest); everything \
              else stays. At least one field is required. The user approves on their phone.",
             vec![
                 REPO,
@@ -399,7 +399,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_delete",
             Write,
             "Delete a GitHub release",
-            "Deletes a release and its assets; the tag stays. The user approves on their phone.",
+            "Delete a release and its assets; the tag stays. The user approves on their phone.",
             vec![REPO, RELEASE_ID],
             Some("repo"),
         )
@@ -410,7 +410,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_asset_list",
             List,
             "List the files attached to a GitHub release",
-            "Lists the assets of a release (id, name, size, content type, download count).",
+            "List the assets of a release (id, name, size, content type, download count).",
             vec![REPO, RELEASE_ID],
             Some("repo"),
         ),
@@ -420,7 +420,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_asset_upload",
             Write,
             "Attach a file to a GitHub release",
-            "Uploads a file as an asset of a release. Small files: `content_base64` (at most 2 MB decoded). Larger \
+            "Upload a file as an asset of a release. Small files: `content_base64` (at most 2 MB decoded). Larger \
              files: call without content and the phone answers with an upload link; upload there and call again with \
              `blob`. An asset with the same name must not exist yet. The user approves on their phone.",
             vec![
@@ -441,7 +441,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_asset_update",
             Write,
             "Rename a GitHub release asset",
-            "Changes the name and/or label of an asset; at least one is required. The user approves on their phone.",
+            "Change the name and/or label of an asset; at least one is required. The user approves on their phone.",
             vec![
                 REPO,
                 ASSET_ID,
@@ -457,7 +457,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_asset_delete",
             Write,
             "Delete a GitHub release asset",
-            "Deletes one file attached to a release. The user approves on their phone.",
+            "Delete one file attached to a release. The user approves on their phone.",
             vec![REPO, ASSET_ID],
             Some("repo"),
         )
@@ -468,7 +468,7 @@ pub(super) fn tools() -> Vec<ToolSpec> {
             "release_asset_download",
             Read,
             "Download a GitHub release asset",
-            "Downloads one asset of a release: text as text (at most 100000 characters), binary as base64 when at most \
+            "Download one asset of a release: text as text (at most 100000 characters), binary as base64 when at most \
              2 MB, otherwise only its metadata. The user chooses what to share.",
             vec![REPO, ASSET_ID],
             Some("repo"),
