@@ -5,6 +5,7 @@
 use std::{
     collections::HashMap,
     io::Cursor,
+    net::IpAddr,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::Duration,
@@ -35,7 +36,7 @@ use super::{
         parse_registration, parse_token_request, precheck_client_assertion, redirect_host, registration_response,
         success_redirect, token_response, validate_authorize, verify_client_assertion,
     },
-    oauth_state::{AuthSession, OAUTH, StartedPairing},
+    oauth_state::{AuthSession, FetchKind, OAUTH, StartedPairing},
     outbound, pages,
     pairing::{PairingClient, PairingStatus, sanitize_client_name},
     push,
@@ -55,10 +56,15 @@ use crate::{
 
 const MAX_FORM_BYTES: u64 = 16 * 1024;
 /// The whole fetch of a client's metadata document or key set: connecting, the answer and its body.
-const CIMD_TIMEOUT: Duration = Duration::from_secs(5);
-/// Client documents fetched at once, all clients together; a request that finds them all busy waits this long.
-const MAX_CONCURRENT_FETCHES: usize = 16;
-const FETCH_SLOT_WAIT: Duration = Duration::from_secs(2);
+const CIMD_TIMEOUT: Duration = Duration::from_secs(4);
+/// Client documents fetched at once from one site (registrable domain, roughly; or one address): a site that is
+/// slow, or many requests naming it, can only ever hold this many fetches.
+const FETCHES_PER_SITE: usize = 2;
+/// Client documents fetched at once over all sites: the global bound.
+const MAX_CONCURRENT_FETCHES: usize = 32;
+/// How long a request queues for its turns (site and global together) before it is refused, alone; nothing is
+/// remembered, it can try again. Queued requests hold no database connection.
+const FETCH_QUEUE_WAIT: Duration = Duration::from_secs(2);
 const MAX_EMAIL_BYTES: usize = 254;
 /// Authorize parameter carrying the desktop app's public key (spec: desktop git proxy, keys and pairing).
 pub const CLIENT_KEY_PARAM: &str = "reins_client_key";
@@ -167,26 +173,50 @@ async fn read_limited(data: Data<'_>, limit: u64) -> Option<Vec<u8>> {
 
 /// Why a client document could not be had.
 enum FetchError {
-    /// The document is unusable (unreachable, an error status, too large, invalid): remembered for a short while.
-    Failed(String),
-    /// Too many fetches are running already; nothing is remembered, the next request tries again.
-    Busy,
+    /// The URL's own answer makes it unusable, whenever it is asked: refused address, a redirect, a client error
+    /// status, too large, not a valid document. Remembered for 30 s for this kind and exact URL.
+    Definitive(String),
+    /// Timing or load: the host did not answer in time, the connection broke, a server error or "slow down", no
+    /// turn, or the request's address is over its fetch budget. Not remembered for a request's own fetch.
+    Transient(String),
 }
 
 impl FetchError {
-    fn describe(self) -> String {
+    fn why(&self) -> &str {
         match self {
-            Self::Failed(why) => why,
-            Self::Busy => "the server is busy fetching other client documents; try again in a moment".to_owned(),
+            Self::Definitive(why) | Self::Transient(why) => why,
         }
     }
 }
 
-/// Fetches running at once across all clients, and how long a request waits for a turn.
+/// The global bound on fetches at once.
 static FETCH_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_CONCURRENT_FETCHES);
 /// One fetch per URL at a time: concurrent requests for the same document wait for that fetch and use its result.
 static FETCHES_IN_FLIGHT: LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(Default::default);
+/// Fetch turns per site, so one site's slowness, or an attacker's many names under one domain, holds only its own.
+static SITE_TURNS: LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>> =
+    LazyLock::new(Default::default);
+
+/// The site a URL belongs to, for [`FETCHES_PER_SITE`]: the last two labels of its host name (three when the second
+/// to last is a short public-suffix-like label, as in `example.co.uk`), or the address itself. Many subdomains of
+/// one domain are one site. An approximation of the registrable domain: it may group more than one owner together
+/// (only stricter for them), never split one owner's subdomains apart.
+fn fetch_site(url: &str) -> String {
+    let Some(host) = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)) else {
+        return String::new();
+    };
+    let host = host.trim_end_matches('.');
+    if host.parse::<IpAddr>().is_ok() || host.starts_with('[') {
+        return host.to_owned();
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    let keep = match labels.as_slice() {
+        [.., second, top] if top.len() == 2 && second.len() <= 3 && labels.len() >= 3 => 3,
+        _ => 2,
+    };
+    labels[labels.len().saturating_sub(keep)..].join(".")
+}
 
 /// The turn to fetch one URL; dropping it lets the next request for that URL go (and forgets the URL when nobody
 /// else is waiting).
@@ -205,119 +235,276 @@ impl Drop for FetchTurn {
     }
 }
 
-async fn fetch_turn(url: &str) -> FetchTurn {
-    let lock = {
-        let mut in_flight = FETCHES_IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        Arc::clone(in_flight.entry(url.to_owned()).or_default())
-    };
-    FetchTurn {
+fn url_lock(url: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut in_flight = FETCHES_IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    Arc::clone(in_flight.entry(url.to_owned()).or_default())
+}
+
+/// The turn to fetch `url`, waiting at most for one fetch of it plus the queue: `None` if it does not come.
+async fn fetch_turn(url: &str) -> Option<FetchTurn> {
+    let turn = tokio::time::timeout(CIMD_TIMEOUT + FETCH_QUEUE_WAIT, url_lock(url).lock_owned()).await.ok()?;
+    Some(FetchTurn {
         url: url.to_owned(),
-        _turn: lock.lock_owned().await,
+        _turn: turn,
+    })
+}
+
+/// The turn to fetch `url` if nobody is fetching it right now (for background refreshes).
+fn try_fetch_turn(url: &str) -> Option<FetchTurn> {
+    let turn = url_lock(url).try_lock_owned().ok()?;
+    Some(FetchTurn {
+        url: url.to_owned(),
+        _turn: turn,
+    })
+}
+
+/// A turn among its site's [`FETCHES_PER_SITE`]; the site is forgotten once nobody holds or waits for a turn.
+struct SiteTurn {
+    site: String,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl Drop for SiteTurn {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        let mut sites = SITE_TURNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if sites.get(&self.site).is_some_and(|turns| Arc::strong_count(turns) == 1) {
+            sites.remove(&self.site);
+        }
     }
 }
 
 /// Fetches a small JSON document a client names (its Client ID Metadata Document, Decision 25, or its `jwks_uri`):
 /// through the outbound guard (https, public addresses only, checked again on every resolved address), no redirects,
-/// at most `limit` bytes, [`CIMD_TIMEOUT`] in all, and at most [`MAX_CONCURRENT_FETCHES`] at once. Anyone may name
-/// any URL here, so it is the same guard as for the phone's requests, independent of
-/// `HTTP_REQUEST_BLOCK_NON_GLOBAL_IPS`. Callers hold no database connection while this runs.
+/// at most `limit` bytes and [`CIMD_TIMEOUT`] in all. It queues at most [`FETCH_QUEUE_WAIT`] for a turn of its site
+/// ([`FETCHES_PER_SITE`]) and of all sites ([`MAX_CONCURRENT_FETCHES`]). Anyone may name any URL here, so it is the
+/// same guard as for the phone's requests, independent of `HTTP_REQUEST_BLOCK_NON_GLOBAL_IPS`. Callers hold no
+/// database connection while this runs.
 async fn fetch_document(url: &str, limit: usize, what: &str) -> Result<Vec<u8>, FetchError> {
-    let Ok(Ok(_slot)) = tokio::time::timeout(FETCH_SLOT_WAIT, FETCH_SLOTS.acquire()).await else {
-        return Err(FetchError::Busy);
+    let busy =
+        || FetchError::Transient("the server is busy fetching client documents; try again in a moment".to_owned());
+    let deadline = tokio::time::Instant::now() + FETCH_QUEUE_WAIT;
+    let site = fetch_site(url);
+    let turns = {
+        let mut sites = SITE_TURNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Arc::clone(sites.entry(site.clone()).or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(FETCHES_PER_SITE))))
     };
-    let failed = |why: String| FetchError::Failed(why);
-    let mut response = outbound::get_once(url, "application/json", CIMD_TIMEOUT)
-        .await
-        .map_err(|e| failed(format!("could not fetch the {what}: {e}")))?;
-    if response.status().is_redirection() {
-        return Err(failed(format!("the {what} URL redirected")));
+    let permit = tokio::time::timeout_at(deadline, turns.acquire_owned()).await;
+    let site_turn = SiteTurn {
+        site,
+        permit: permit.ok().and_then(Result::ok),
+    };
+    if site_turn.permit.is_none() {
+        return Err(busy());
     }
-    if !response.status().is_success() {
-        return Err(failed(format!("the {what} answered {}", response.status())));
+    let Ok(Ok(_slot)) = tokio::time::timeout_at(deadline, FETCH_SLOTS.acquire()).await else {
+        return Err(busy());
+    };
+    let definitive = |why: String| FetchError::Definitive(why);
+    let transient = |why: String| FetchError::Transient(why);
+    let mut response = match outbound::get_once(url, "application/json", CIMD_TIMEOUT).await {
+        Ok(response) => response,
+        Err(e @ outbound::OutboundError::Refused(_)) => {
+            return Err(definitive(format!("could not fetch the {what}: {e}")));
+        }
+        Err(e @ outbound::OutboundError::Failed(_)) => {
+            return Err(transient(format!("could not fetch the {what}: {e}")));
+        }
+    };
+    let status = response.status();
+    if status.is_redirection() {
+        return Err(definitive(format!("the {what} URL redirected")));
+    }
+    if status.is_server_error() || status.as_u16() == 429 || status.as_u16() == 408 {
+        return Err(transient(format!("the {what} answered {status}")));
+    }
+    if !status.is_success() {
+        return Err(definitive(format!("the {what} answered {status}")));
     }
     let mut body = Vec::new();
     let read = async {
-        while let Some(chunk) = response.chunk().await.map_err(|e| failed(format!("could not read the {what}: {e}")))? {
+        while let Some(chunk) =
+            response.chunk().await.map_err(|e| transient(format!("could not read the {what}: {e}")))?
+        {
             if body.len() + chunk.len() > limit {
-                return Err(failed(format!("the {what} is too large")));
+                return Err(definitive(format!("the {what} is too large")));
             }
             body.extend_from_slice(&chunk);
         }
         Ok(())
     };
     // get_once's timeout covers the whole response, the body too; this bound is only belt and braces.
-    tokio::time::timeout(CIMD_TIMEOUT, read).await.map_err(|_| failed(format!("the {what} took too long")))??;
+    tokio::time::timeout(CIMD_TIMEOUT, read).await.map_err(|_| transient(format!("the {what} took too long")))??;
     Ok(body)
 }
 
-/// A client's metadata document: from the cache, from a failure remembered within the last seconds, or fetched
-/// (once per URL at a time). A document that declares `private_key_jwt` marks its client for good.
-async fn client_metadata(client_id: &str, pool: &DbPool) -> Result<ClientInfo, String> {
-    let known = || match (OAUTH.cached_client(client_id), OAUTH.failed_fetch(client_id)) {
-        (Some(client), _) => Some(Ok(client)),
-        (None, Some(why)) => Some(Err(why)),
-        (None, None) => None,
-    };
-    if let Some(known) = known() {
-        return known;
-    }
-    let _turn = fetch_turn(client_id).await;
-    if let Some(known) = known() {
-        return known;
-    }
-    let fetched = match fetch_document(client_id, oauth::MAX_CLIENT_METADATA_BYTES, "client metadata document").await {
-        Ok(body) => parse_client_metadata(client_id, &body),
-        Err(FetchError::Busy) => return Err(FetchError::Busy.describe()),
-        Err(FetchError::Failed(why)) => Err(why),
-    };
-    match fetched {
-        Ok(client) => {
-            if client.auth.method() == AuthMethod::PrivateKeyJwt {
-                mark_seen_with_keys(client_id, pool).await;
-            }
-            OAUTH.cache_client(client.clone());
-            Ok(client)
+/// Who pays for a fetch: the requesting IPv4 address, or the /64 network of an IPv6 address (one host usually holds
+/// a whole /64, so single addresses in it would be free to rotate through).
+fn fetch_payer(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(std::net::Ipv6Addr::from(octets))
         }
-        Err(why) => {
-            OAUTH.remember_failed_fetch(client_id, &why);
-            Err(why)
-        }
+        v4 @ IpAddr::V4(_) => v4,
     }
 }
 
-/// A client's key set from its `jwks_uri`: cached for a few minutes, fetched once per URL at a time, failures
-/// remembered briefly. `force` skips the cache (an unknown `kid`; the caller rate-limits that per URI).
-async fn client_jwks(jwks_uri: &str, force: bool) -> Result<jsonwebtoken::jwk::JwkSet, OAuthError> {
-    let known = |force: bool| match (OAUTH.cached_jwks(jwks_uri).filter(|_| !force), OAUTH.failed_fetch(jwks_uri)) {
-        (Some(set), _) => Some(Ok(set)),
-        (None, Some(why)) => Some(Err(OAuthError::invalid_client(why))),
-        (None, None) => None,
-    };
-    if let Some(known) = known(force) {
-        return known;
-    }
-    let _turn = fetch_turn(jwks_uri).await;
-    // Whoever waited for the same fetch takes its result rather than fetching again.
-    if !force && let Some(known) = known(false) {
-        return known;
-    }
-    let fetched = match fetch_document(jwks_uri, oauth::MAX_JWKS_BYTES, "client's JWKS").await {
-        Ok(body) => parse_jwks(&body),
-        Err(FetchError::Busy) => {
-            return Err(OAuthError::new(503, "temporarily_unavailable", FetchError::Busy.describe()));
+/// Charges one fetch to the requesting address ([`limits::CLIENT_DOCUMENT_FETCHES`], see [`fetch_payer`]).
+fn charge_fetch(ip: IpAddr) -> Result<(), FetchError> {
+    limits::CLIENT_DOCUMENT_FETCHES.check(&fetch_payer(ip)).map_err(|wait| {
+        FetchError::Transient(rate_limited_text("too many client documents fetched for this address", wait))
+    })
+}
+
+/// Fetches and parses a metadata document now, and caches it (and its client's `private_key_jwt`, for good). A
+/// definitive failure is remembered for this exact URL as a metadata document.
+async fn fetch_metadata_now(client_id: &str, pool: &DbPool) -> Result<ClientInfo, FetchError> {
+    let fetched = fetch_document(client_id, oauth::MAX_CLIENT_METADATA_BYTES, "client metadata document")
+        .await
+        .and_then(|body| parse_client_metadata(client_id, &body).map_err(FetchError::Definitive));
+    let client = match fetched {
+        Ok(client) => client,
+        Err(error) => {
+            if let FetchError::Definitive(why) = &error {
+                OAUTH.remember_failed_fetch(FetchKind::Metadata, client_id, why);
+            }
+            return Err(error);
         }
-        Err(FetchError::Failed(why)) => Err(why),
     };
+    if client.auth.method() == AuthMethod::PrivateKeyJwt {
+        mark_seen_with_keys(client_id, pool).await.map_err(FetchError::Transient)?;
+    }
+    OAUTH.cache_client(client.clone());
+    Ok(client)
+}
+
+/// Starts a background refresh of a known client's metadata document, unless one is running or failed within 30 s.
+/// Not charged to anyone: only documents the server already holds are refreshed, at most once per URL at a time.
+fn refresh_metadata_in_background(client_id: &str, pool: &DbPool) {
+    if OAUTH.failed_fetch(FetchKind::Metadata, client_id).is_some() {
+        return;
+    }
+    let Some(turn) = try_fetch_turn(client_id) else {
+        return;
+    };
+    let (client_id, pool) = (client_id.to_owned(), pool.clone());
+    tokio::spawn(async move {
+        let _turn = turn;
+        if let Err(error) = fetch_metadata_now(&client_id, &pool).await {
+            // Within its grace the last good copy goes on standing in; not asked again for 30 s.
+            OAUTH.remember_failed_fetch(FetchKind::Metadata, &client_id, error.why());
+            warn!("Could not refresh a client metadata document: {}", error.why());
+        }
+    });
+}
+
+/// A client's metadata document. A known client (its document fetched within the last hour) is served from the
+/// cache, or within the grace period (10 minutes) past that from its last good copy while a background refresh runs: it never waits for a
+/// fetch and is never charged. Otherwise the document is fetched once (per URL at a time), charged to `ip`. Errors
+/// refuse the request.
+async fn client_metadata(client_id: &str, pool: &DbPool, ip: IpAddr) -> Result<ClientInfo, String> {
+    let held = || {
+        OAUTH
+            .cached_client(client_id)
+            .map(|client| (client, true))
+            .or_else(|| OAUTH.last_good_client(client_id).map(|client| (client, false)))
+    };
+    if let Some((client, fresh)) = held() {
+        if !fresh {
+            refresh_metadata_in_background(client_id, pool);
+        }
+        return Ok(client);
+    }
+    if let Some(failed) = OAUTH.failed_fetch(FetchKind::Metadata, client_id) {
+        return Err(failed.why);
+    }
+    let Some(_turn) = fetch_turn(client_id).await else {
+        return Err("the server is busy fetching client documents; try again in a moment".to_owned());
+    };
+    if let Some((client, _)) = held() {
+        return Ok(client);
+    }
+    if let Some(failed) = OAUTH.failed_fetch(FetchKind::Metadata, client_id) {
+        return Err(failed.why);
+    }
+    charge_fetch(ip).map_err(|e| e.why().to_owned())?;
+    fetch_metadata_now(client_id, pool).await.map_err(|e| e.why().to_owned())
+}
+
+/// Fetches and parses a key set now, and caches it (replacing the last good copy, so a key it no longer lists is
+/// gone at once). A definitive failure is remembered for this exact URL as a key set.
+async fn fetch_jwks_now(jwks_uri: &str) -> Result<jsonwebtoken::jwk::JwkSet, FetchError> {
+    let fetched = fetch_document(jwks_uri, oauth::MAX_JWKS_BYTES, "client's JWKS")
+        .await
+        .and_then(|body| parse_jwks(&body).map_err(FetchError::Definitive));
     match fetched {
         Ok(set) => {
             OAUTH.cache_jwks(jwks_uri, set.clone());
             Ok(set)
         }
-        Err(why) => {
-            OAUTH.remember_failed_fetch(jwks_uri, &why);
-            Err(OAuthError::invalid_client(why))
+        Err(error) => {
+            if let FetchError::Definitive(why) = &error {
+                OAUTH.remember_failed_fetch(FetchKind::KeySet, jwks_uri, why);
+            }
+            Err(error)
         }
     }
+}
+
+fn refresh_jwks_in_background(jwks_uri: &str) {
+    if OAUTH.failed_fetch(FetchKind::KeySet, jwks_uri).is_some() {
+        return;
+    }
+    let Some(turn) = try_fetch_turn(jwks_uri) else {
+        return;
+    };
+    let jwks_uri = jwks_uri.to_owned();
+    tokio::spawn(async move {
+        let _turn = turn;
+        if let Err(error) = fetch_jwks_now(&jwks_uri).await {
+            OAUTH.remember_failed_fetch(FetchKind::KeySet, &jwks_uri, error.why());
+            warn!("Could not refresh a client's JWKS: {}", error.why());
+        }
+    });
+}
+
+fn jwks_error(error: &FetchError) -> OAuthError {
+    match error {
+        FetchError::Definitive(why) => OAuthError::invalid_client(why.clone()),
+        FetchError::Transient(why) => OAuthError::new(503, "temporarily_unavailable", why.clone()),
+    }
+}
+
+/// A client's key set from its `jwks_uri`, served like [`client_metadata`]: the cache, or within the grace period (10 minutes) its last
+/// good copy while a background refresh runs, or one fetch charged to `ip`. `force` (an unknown `kid`, rate-limited
+/// per client and URI by the caller) always fetches, charged to `ip`, and never falls back to an older copy.
+async fn client_jwks(jwks_uri: &str, force: bool, ip: IpAddr) -> Result<jsonwebtoken::jwk::JwkSet, OAuthError> {
+    let held = || {
+        OAUTH
+            .cached_jwks(jwks_uri)
+            .map(|set| (set, true))
+            .or_else(|| OAUTH.last_good_jwks(jwks_uri).map(|set| (set, false)))
+    };
+    if !force && let Some((set, fresh)) = held() {
+        if !fresh {
+            refresh_jwks_in_background(jwks_uri);
+        }
+        return Ok(set);
+    }
+    if let Some(failed) = OAUTH.failed_fetch(FetchKind::KeySet, jwks_uri) {
+        return Err(OAuthError::invalid_client(failed.why));
+    }
+    let Some(_turn) = fetch_turn(jwks_uri).await else {
+        return Err(jwks_error(&FetchError::Transient("the server is busy fetching client documents".to_owned())));
+    };
+    // Whoever waited for the same fetch takes its result rather than fetching again.
+    if !force && let Some((set, _)) = held() {
+        return Ok(set);
+    }
+    charge_fetch(ip).map_err(|e| jwks_error(&e))?;
+    fetch_jwks_now(jwks_uri).await.map_err(|e| jwks_error(&e))
 }
 
 /// A `client_id` that names a metadata document (in the test mode also `http://` on loopback, for mock servers).
@@ -333,9 +520,9 @@ async fn db(pool: &DbPool) -> Result<DbConn, OAuthError> {
         .map_err(|_| OAuthError::new(503, "temporarily_unavailable", "the server is busy, try again in a moment"))
 }
 
-async fn resolve_client(client_id: &str, pool: &DbPool) -> Result<ClientInfo, String> {
+async fn resolve_client(client_id: &str, pool: &DbPool, ip: IpAddr) -> Result<ClientInfo, String> {
     if is_metadata_client_id(client_id) {
-        return client_metadata(client_id, pool).await;
+        return client_metadata(client_id, pool, ip).await;
     }
     let conn = db(pool).await.map_err(|e| e.description)?;
     let client = ReinsClient::find(client_id, &conn).await.ok_or_else(|| "unknown client_id".to_owned())?;
@@ -359,35 +546,36 @@ async fn seen_with_keys(client_id: &str, pool: &DbPool) -> Result<bool, OAuthErr
         .map_err(|_| OAuthError::new(503, "temporarily_unavailable", "the server is busy, try again in a moment"))
 }
 
-async fn mark_seen_with_keys(client_id: &str, pool: &DbPool) {
-    let marked = match db(pool).await {
-        Ok(conn) => ReinsJwtClient::mark(client_id, now_unix(), &conn).await.map_err(|e| format!("{e:?}")),
-        Err(e) => Err(e.description),
-    };
-    if let Err(e) = marked {
-        // The grant still records the method, and the next fetch of the document marks the client again.
-        warn!("Could not record that an OAuth client uses private_key_jwt: {e}");
-    }
+/// Records that `client_id` declared `private_key_jwt`. A failure fails the request (its document is not used), so a
+/// client is never handled as one whose keys were not seen just because the record could not be written.
+async fn mark_seen_with_keys(client_id: &str, pool: &DbPool) -> Result<(), String> {
+    let conn = db(pool).await.map_err(|e| e.description)?;
+    ReinsJwtClient::mark(client_id, now_unix(), &conn).await.map_err(|e| {
+        warn!("Could not record that an OAuth client uses private_key_jwt: {e:?}");
+        "the server could not record the client's authentication method; try again in a moment".to_owned()
+    })
 }
 
 /// The method `client_id` must authenticate with now ([`oauth::required_method`]) and its current metadata
-/// document, if it has one. A document that cannot be fetched counts as unknown: it can then only raise the method
-/// (through what was seen before), never lower it, and a `private_key_jwt` client without its document is refused.
+/// document, if it has one. Fails closed: if what was seen before or the current document cannot be determined (a
+/// database error, a document that cannot be fetched and has no last good copy), the request is refused, never
+/// treated as a public client's.
 async fn method_for(
     client_id: &str,
     bound: AuthMethod,
     pool: &DbPool,
+    ip: IpAddr,
 ) -> Result<(AuthMethod, Option<ClientInfo>), OAuthError> {
     let seen = seen_with_keys(client_id, pool).await?;
     let current = if is_metadata_client_id(client_id) {
-        match client_metadata(client_id, pool).await {
-            Ok(client) => Some(client),
-            Err(why) if bound == AuthMethod::None && !seen => {
-                warn!("Could not check the metadata document of a public OAuth client: {why}");
-                None
-            }
-            Err(why) => return Err(OAuthError::invalid_client(why)),
-        }
+        let client = client_metadata(client_id, pool, ip).await.map_err(|why| {
+            OAuthError::new(
+                503,
+                "temporarily_unavailable",
+                format!("could not check the client's metadata document, try again later: {why}"),
+            )
+        })?;
+        Some(client)
     } else {
         None
     };
@@ -472,7 +660,7 @@ async fn authorize_get(params: HashMap<String, String>, ip: ClientIp, pool: &Sta
     };
     let cannot_connect =
         |message: &str| error_flow(pages::at::AUTHORIZE, Status::BadRequest, "Cannot connect", message);
-    let client = match resolve_client(client_id, pool).await {
+    let client = match resolve_client(client_id, pool, ip.ip).await {
         Ok(c) => c,
         Err(e) => return cannot_connect(&format!("The client could not be verified: {e}")),
     };
@@ -714,7 +902,7 @@ async fn device_authorization(data: Data<'_>, ip: ClientIp, pool: &State<DbPool>
         Ok(r) => r,
         Err(e) => return oauth_error(&e),
     };
-    let client = match resolve_client(&request.client_id, pool).await {
+    let client = match resolve_client(&request.client_id, pool, ip.ip).await {
         Ok(c) => c,
         Err(e) => return oauth_error(&OAuthError::invalid_client(e)),
     };
@@ -758,7 +946,7 @@ async fn device_authorization(data: Data<'_>, ip: ClientIp, pool: &State<DbPool>
 }
 
 /// RFC 8628 §3.5: one poll of the desktop app.
-async fn poll_device_code(device_code: &str, client_id: &str, pool: &DbPool) -> Result<Value, OAuthError> {
+async fn poll_device_code(device_code: &str, client_id: &str, pool: &DbPool, ip: IpAddr) -> Result<Value, OAuthError> {
     let pending = |error: &'static str, description: &str| OAuthError::new(400, error, description);
     match DEVICE_GRANTS.poll(device_code, client_id, &HUB.pairings) {
         Poll::Pending => Err(pending("authorization_pending", "waiting for the phone to approve")),
@@ -773,7 +961,7 @@ async fn poll_device_code(device_code: &str, client_id: &str, pool: &DbPool) -> 
             connection,
         } => {
             // A client that has taken up private_key_jwt since it asked for the code gets no tokens this way.
-            let (method, _) = method_for(client_id, AuthMethod::None, pool).await?;
+            let (method, _) = method_for(client_id, AuthMethod::None, pool, ip).await?;
             if method != AuthMethod::None {
                 return Err(OAuthError::invalid_client("this client authenticates with private_key_jwt"));
             }
@@ -798,6 +986,7 @@ async fn verify_with_client_keys(
     jwks: &JwksSource,
     alg: Option<jsonwebtoken::Algorithm>,
     assertion: &str,
+    ip: IpAddr,
 ) -> Result<VerifiedAssertion, OAuthError> {
     let audiences = assertion_audiences(&CONFIG.domain());
     let verify = |set: &jsonwebtoken::jwk::JwkSet| {
@@ -807,9 +996,9 @@ async fn verify_with_client_keys(
         JwksSource::Inline(set) => verify(set).map_err(AssertionError::into_oauth),
         JwksSource::Uri(uri) => {
             let was_cached = OAUTH.cached_jwks(uri).is_some();
-            match verify(&client_jwks(uri, false).await?) {
-                Err(AssertionError::UnknownKey) if was_cached && OAUTH.may_refetch_jwks(uri) => {
-                    verify(&client_jwks(uri, true).await?).map_err(AssertionError::into_oauth)
+            match verify(&client_jwks(uri, false, ip).await?) {
+                Err(AssertionError::UnknownKey) if was_cached && OAUTH.may_refetch_jwks(client_id, uri) => {
+                    verify(&client_jwks(uri, true, ip).await?).map_err(AssertionError::into_oauth)
                 }
                 result => result.map_err(AssertionError::into_oauth),
             }
@@ -832,12 +1021,13 @@ async fn verify_client(
     bound: AuthMethod,
     assertion: Option<&str>,
     pool: &DbPool,
+    ip: IpAddr,
 ) -> Result<(AuthMethod, Option<VerifiedAssertion>), OAuthError> {
     if let Some(assertion) = assertion {
         let audiences = assertion_audiences(&CONFIG.domain());
         precheck_client_assertion(assertion, client_id, &audiences, now_unix()).map_err(AssertionError::into_oauth)?;
     }
-    let (method, current) = method_for(client_id, bound, pool).await?;
+    let (method, current) = method_for(client_id, bound, pool, ip).await?;
     let assertion = match (method, assertion) {
         (AuthMethod::None, None) => return Ok((method, None)),
         (AuthMethod::None, Some(_)) => {
@@ -862,7 +1052,7 @@ async fn verify_client(
             "this client must use private_key_jwt, and its metadata document does not declare it (any more)",
         ));
     };
-    let verified = verify_with_client_keys(client_id, jwks, *alg, assertion).await?;
+    let verified = verify_with_client_keys(client_id, jwks, *alg, assertion, ip).await?;
     Ok((method, Some(verified)))
 }
 
@@ -915,7 +1105,7 @@ async fn issue_tokens(
 /// fetched or recorded), check that it belongs to the requesting client, verify the client, and only then burn the
 /// assertion's `jti` and use up the grant. Database connections are held only around queries, never while a client
 /// document or key set is fetched.
-async fn exchange(request: TokenRequest, pool: &DbPool) -> Result<Value, OAuthError> {
+async fn exchange(request: TokenRequest, pool: &DbPool, ip: IpAddr) -> Result<Value, OAuthError> {
     let assertion = request.client_assertion.as_deref();
     match request.grant {
         TokenGrant::AuthorizationCode {
@@ -933,7 +1123,7 @@ async fn exchange(request: TokenRequest, pool: &DbPool) -> Result<Value, OAuthEr
             }
             // The client the code was issued to, authenticating at least the way it did when it started the flow. A
             // failure here leaves the code alone: whoever lacks the client's key can neither use it nor take it away.
-            let (method, verified) = verify_client(&issued.client_id, issued.client_auth, assertion, pool).await?;
+            let (method, verified) = verify_client(&issued.client_id, issued.client_auth, assertion, pool, ip).await?;
             record_assertion(&issued.client_id, verified.as_ref())?;
             let issued = OAUTH.redeem_code(&code).ok_or_else(unknown)?;
             let user = UserId::from(issued.user_uuid.clone());
@@ -965,7 +1155,7 @@ async fn exchange(request: TokenRequest, pool: &DbPool) -> Result<Value, OAuthEr
             }
             // Authenticated before the token is used up, so a request without the client's key cannot burn it.
             let bound = AuthMethod::from_stored(&row.client_auth);
-            let (method, verified) = verify_client(&connection.client_id, bound, assertion, pool).await?;
+            let (method, verified) = verify_client(&connection.client_id, bound, assertion, pool, ip).await?;
             record_assertion(&connection.client_id, verified.as_ref())?;
             let conn = db(pool).await?;
             ReinsRefreshToken::take(&token_hash, now_unix(), &conn).await.ok_or_else(invalid)?;
@@ -979,7 +1169,7 @@ async fn exchange(request: TokenRequest, pool: &DbPool) -> Result<Value, OAuthEr
             if assertion.is_some() {
                 return Err(OAuthError::invalid_client("this client is public and must not send a client assertion"));
             }
-            poll_device_code(&device_code, &client_id, pool).await
+            poll_device_code(&device_code, &client_id, pool, ip).await
         }
     }
 }
@@ -998,7 +1188,7 @@ async fn token(data: Data<'_>, ip: ClientIp, pool: &State<DbPool>) -> JsonRespon
         Ok(r) => r,
         Err(e) => return oauth_error(&e),
     };
-    match exchange(request, pool).await {
+    match exchange(request, pool, ip.ip).await {
         Ok(tokens) => JsonResponse(Status::Ok, tokens),
         Err(e) => oauth_error(&e),
     }
@@ -1058,7 +1248,7 @@ async fn revoke(data: Data<'_>, ip: ClientIp, pool: &State<DbPool>) -> JsonRespo
     } else {
         bound
     };
-    let authenticated = match verify_client(&connection.client_id, bound, assertion.as_deref(), pool).await {
+    let authenticated = match verify_client(&connection.client_id, bound, assertion.as_deref(), pool, ip.ip).await {
         // The token exists and is this client's: only now is the assertion's jti burnt.
         Ok((_, verified)) => record_assertion(&connection.client_id, verified.as_ref()),
         Err(e) => Err(e),
@@ -1083,6 +1273,27 @@ async fn revoke(data: Data<'_>, ip: ClientIp, pool: &State<DbPool>) -> JsonRespo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fetches_are_paid_per_address_and_per_ipv6_network() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        assert_eq!(fetch_payer(ip("203.0.113.7")), ip("203.0.113.7"));
+        assert_eq!(fetch_payer(ip("2001:db8:1:2:aaaa::1")), ip("2001:db8:1:2::"));
+        assert_eq!(fetch_payer(ip("2001:db8:1:2:ffff:ffff:ffff:ffff")), ip("2001:db8:1:2::"), "one /64 is one payer");
+        assert_ne!(fetch_payer(ip("2001:db8:1:3::1")), fetch_payer(ip("2001:db8:1:2::1")));
+        assert_eq!(fetch_payer(ip("::ffff:203.0.113.7")), ip("203.0.113.7"), "IPv4-mapped is the IPv4 address");
+    }
+
+    #[test]
+    fn fetch_sites_group_subdomains() {
+        assert_eq!(fetch_site("https://chatgpt.com/oauth/client.json"), "chatgpt.com");
+        assert_eq!(fetch_site("https://a.b.evil.example/x"), "evil.example");
+        assert_eq!(fetch_site("https://x.evil.EXAMPLE./x"), "evil.example");
+        assert_eq!(fetch_site("https://login.example.co.uk/x"), "example.co.uk");
+        assert_eq!(fetch_site("https://203.0.113.7/x"), "203.0.113.7");
+        assert_eq!(fetch_site("https://[2001:db8::1]/x"), "[2001:db8::1]");
+        assert_ne!(fetch_site("https://chatgpt.com/x"), fetch_site("https://chatgpt.com.evil.example/x"));
+    }
 
     #[test]
     fn path_inserted_well_known_suffixes() {

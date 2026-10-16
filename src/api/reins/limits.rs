@@ -232,6 +232,11 @@ pub static DEVICE_AUTHORIZATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(||
     RateLimit::with_period(CONFIG.reins_pairing_ratelimit_seconds(), CONFIG.reins_pairing_ratelimit_max_burst())
 });
 
+/// Client documents (OAuth client metadata documents and key sets) fetched because of requests from one IP address:
+/// a burst of 20, then one every 3 s. Every fetch a request makes the server do is charged to the request's address;
+/// refreshes of documents the server already holds (known clients) are not. A request over budget is refused alone.
+pub static CLIENT_DOCUMENT_FETCHES: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(3, 20));
+
 /// OAuth dynamic client registrations per IP address.
 pub static REGISTRATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
     RateLimit::with_period(CONFIG.reins_register_ratelimit_seconds(), CONFIG.reins_register_ratelimit_max_burst())
@@ -265,6 +270,7 @@ pub fn retain_recent() {
     PAIRINGS.retain_recent();
     DEVICE_AUTHORIZATIONS.retain_recent();
     REGISTRATIONS.retain_recent();
+    CLIENT_DOCUMENT_FETCHES.retain_recent();
     OUTBOUND_REQUESTS.retain_recent();
     DEVICE_PROOFS.retain_recent();
 }

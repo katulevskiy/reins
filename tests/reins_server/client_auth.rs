@@ -503,8 +503,8 @@ async fn cheap_checks_come_before_any_key_fetch() {
 }
 
 /// A host that accepts connections and never answers.
-async fn silent_host() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+async fn silent_host(ip: &str) -> u16 {
+    let listener = tokio::net::TcpListener::bind((ip, 0)).await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
     tokio::spawn(async move {
         let mut held = Vec::new();
@@ -525,7 +525,7 @@ async fn slow_metadata_hosts_do_not_hold_database_connections() {
         ..Options::default()
     })
     .await;
-    let port = silent_host().await;
+    let port = silent_host("127.0.0.1").await;
     let mut waiting = Vec::new();
     for i in 0..6 {
         let url = server.authorize_url(&format!("http://127.0.0.1:{port}/client-{i}.json"));
@@ -562,5 +562,149 @@ async fn a_failing_metadata_document_is_fetched_once_for_many_requests() {
         let r = client().get(server.authorize_url(&client_id)).send().await.unwrap();
         assert_eq!(r.status(), StatusCode::BAD_REQUEST);
     }
-    assert_eq!(mock.requests().len(), 1, "one fetch for twelve requests");
+    let fetches = mock.requests().iter().filter(|r| r.path == "/missing/client.json").count();
+    assert_eq!(fetches, 1, "one fetch for twelve requests");
+}
+
+/// Anyone can name ChatGPT's key-set URL as a client_id at /authorize. It is fetched as a metadata document and
+/// fails as one; that failure must not count against the same URL fetched as ChatGPT's key set.
+#[tokio::test]
+async fn a_failure_cannot_be_recorded_for_another_clients_key_set() {
+    let server = start_server().await;
+    let phone = server.phone("rita@example.com").await;
+    phone.register_device().await;
+    let chatgpt = JwtClient::start().await;
+    let code = authorize_code(&server, &phone, "rita@example.com", &chatgpt.id).await;
+    assert_eq!(chatgpt.jwks_fetches(), 0, "the key set is not fetched yet");
+    let jwks_url = chatgpt.mock.url("/oauth/jwks.json");
+    let r = client().get(server.authorize_url(&jwks_url)).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST, "not a metadata document");
+    let (status, tokens) = server.token(&code_form(&code, None, Some(&chatgpt.assertion(&server, "k1")))).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+}
+
+/// Many requests naming documents on another site that never answers hold only that site's fetch turns: ChatGPT's
+/// own document and key set are fetched at once.
+#[tokio::test]
+async fn a_flood_from_another_site_does_not_block_chatgpt() {
+    let server = Server::start_with(Options {
+        allow_loopback: true,
+        env: vec![("UNAUTHENTICATED_RATELIMIT_MAX_BURST", "1000".to_owned())],
+        ..Options::default()
+    })
+    .await;
+    let phone = server.phone("sami@example.com").await;
+    phone.register_device().await;
+    let chatgpt = JwtClient::start().await;
+    // The other site: 127.0.0.2, a different address from the mocks' 127.0.0.1; the flood comes from another
+    // client address too (X-Real-IP, trusted from loopback).
+    let port = silent_host("127.0.0.2").await;
+    let mut flood = Vec::new();
+    for i in 0..40 {
+        let url = server.authorize_url(&format!("http://127.0.0.2:{port}/client-{i}.json"));
+        flood.push(tokio::spawn(async move {
+            client().get(url).header("X-Real-IP", "203.0.113.7").send().await.map(|r| r.status())
+        }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let started = std::time::Instant::now();
+    let code = authorize_code(&server, &phone, "sami@example.com", &chatgpt.id).await;
+    let (status, tokens) = server.token(&code_form(&code, None, Some(&chatgpt.assertion(&server, "f1")))).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "took {:?}", started.elapsed());
+    for request in flood {
+        assert_eq!(request.await.unwrap().unwrap(), StatusCode::BAD_REQUEST);
+    }
+}
+
+/// Fetches a request makes the server do are charged to the request's address: past its budget, that address's
+/// requests for documents the server does not hold are refused (without a fetch), while other addresses, and
+/// clients whose documents the server holds, go on as usual.
+#[tokio::test]
+async fn the_fetch_budget_is_per_address_and_spares_known_clients() {
+    let server = Server::start_with(Options {
+        allow_loopback: true,
+        env: vec![("UNAUTHENTICATED_RATELIMIT_MAX_BURST", "1000".to_owned())],
+        ..Options::default()
+    })
+    .await;
+    let chatgpt = JwtClient::start().await;
+    let missing = MockServer::start(|_| Reply::json(404, &json!({}))).await;
+    let from = |address: &'static str, client_id: String| {
+        let url = server.authorize_url(&client_id);
+        async move { client().get(url).header("X-Real-IP", address).send().await.unwrap().status() }
+    };
+    let attacker = "203.0.113.9";
+    assert_eq!(from(attacker, chatgpt.id.clone()).await, StatusCode::OK, "one fetch, charged to the attacker");
+    for i in 0..30 {
+        assert_eq!(from(attacker, missing.url(&format!("/c{i}.json"))).await, StatusCode::BAD_REQUEST);
+    }
+    // A burst of 20 (one went to ChatGPT's document), plus at most one refilled while the loop ran.
+    let gets = || missing.requests().iter().filter(|r| r.method == "GET").count();
+    let fetched = gets();
+    assert!((19..=20).contains(&fetched), "{fetched} fetches for that address, then none");
+    assert_eq!(from(attacker, chatgpt.id.clone()).await, StatusCode::OK, "a held document costs nothing");
+    assert_eq!(from("198.51.100.4", missing.url("/other.json")).await, StatusCode::BAD_REQUEST);
+    assert_eq!(gets(), fetched + 1, "another address has its own budget");
+}
+
+/// A public client named by a metadata document: if the document cannot be had (and there is no last good copy,
+/// as after a restart), the server cannot tell whether the client has taken up keys since, so it refuses rather
+/// than accept the refresh as a public client's. Once the document is back, the client refreshes as before.
+#[tokio::test]
+async fn a_document_that_cannot_be_fetched_refuses_rather_than_downgrading() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut server = start_server().await;
+    let phone = server.phone("uma@example.com").await;
+    phone.register_device().await;
+    let failing = Arc::new(AtomicBool::new(false));
+    let fails = Arc::clone(&failing);
+    let mock = MockServer::start(move |req| {
+        if fails.load(Ordering::SeqCst) {
+            return Reply::json(503, &json!({}));
+        }
+        let origin = format!("http://{}", req.header("host").unwrap_or_default());
+        Reply::json(
+            200,
+            &json!({"client_id": format!("{origin}/public/client.json"), "client_name": "Public",
+                "redirect_uris": [REDIRECT], "token_endpoint_auth_method": "none"}),
+        )
+    })
+    .await;
+    let client_id = mock.url("/public/client.json");
+    let code = authorize_code(&server, &phone, "uma@example.com", &client_id).await;
+    let (status, tokens) = server.token(&code_form(&code, Some(&client_id), None)).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    let refresh = tokens["refresh_token"].as_str().unwrap().to_owned();
+
+    server.restart().await;
+    failing.store(true, Ordering::SeqCst);
+    let (status, body) = server.token(&refresh_form(&refresh, None)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"], "temporarily_unavailable");
+    failing.store(false, Ordering::SeqCst);
+    let (status, body) = server.token(&refresh_form(&refresh, None)).await;
+    assert_eq!(status, StatusCode::OK, "the refresh token was not used up: {body}");
+}
+
+/// If what a client was seen with cannot be looked up, its request is refused, never handled as a public client's.
+#[cfg(feature = "sqlite_system")]
+#[tokio::test]
+async fn a_lookup_error_refuses_rather_than_downgrading() {
+    use diesel::{Connection, RunQueryDsl, sqlite::SqliteConnection};
+    let server = start_server().await;
+    let phone = server.phone("tara@example.com").await;
+    phone.register_device().await;
+    let chatgpt = JwtClient::start().await;
+    let code = authorize_code(&server, &phone, "tara@example.com", &chatgpt.id).await;
+    let (status, tokens) = server.token(&code_form(&code, None, Some(&chatgpt.assertion(&server, "l1")))).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    let refresh = tokens["refresh_token"].as_str().unwrap().to_owned();
+    store_every_refresh_token_as_public(&server);
+    let path = server.data_dir().join("db.sqlite3");
+    let mut db = SqliteConnection::establish(path.to_str().expect("path")).expect("open the test database");
+    diesel::sql_query("DROP TABLE reins_jwt_clients").execute(&mut db).expect("drop");
+    let (status, body) = server.token(&refresh_form(&refresh, None)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"], "temporarily_unavailable");
 }

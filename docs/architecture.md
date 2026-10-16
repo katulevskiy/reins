@@ -163,9 +163,13 @@ prefilter, so query syntax cannot widen what a grant allows.
    5 minutes, fetched again once for an unknown `kid`), `iss` = `sub` = `client_id`, `aud` the token endpoint or the
    issuer, at most 5 minutes of lifetime, and a `jti` that is accepted once. The method is bound to the code and stored
    with each refresh token, and a client once seen with `private_key_jwt` (document or grant) is recorded and never
-   accepted without an assertion again. Client documents and key sets are fetched without holding a database
-   connection, once per URL at a time, at most 16 at once, 5 s each; failures are remembered for 30 s. Dynamic
-   registration stays public-only.
+   accepted without an assertion again; anything that cannot be determined refuses the request. A client whose
+   document or key set the server holds is served from it, and up to 10 minutes past its freshness from the last good
+   copy while it is refreshed in the background (a refetch that no longer lists a key drops it at once). Other
+   fetches are charged to the requesting address (IPv6: its /64; 20, then one per 3 s), run once per URL at a time,
+   at most 2 per site and 32 in all, queue at most 2 s, take at most 4 s, and hold no database connection; only
+   failures that do not depend on timing are remembered (30 s, per kind and exact URL). Dynamic registration stays
+   public-only.
 
 `reins login` pairs without a browser by default (OAuth device authorization, RFC 8628):
 
