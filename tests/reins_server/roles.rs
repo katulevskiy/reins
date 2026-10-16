@@ -242,6 +242,19 @@ async fn post_ops(phone: &Phone, ops: &[Op]) -> (StatusCode, Value) {
     phone.post("/ops", &json!({"ops": ops})).await
 }
 
+/// A10: the approval device signs `id` out, with the recovery code.
+async fn sign_out_device(by: &Phone, id: &str) -> (StatusCode, Value) {
+    let response = by
+        .raw(reqwest::Method::DELETE, &format!("/devices/{id}"))
+        .json(&json!({"master_password_hash": PASSWORD_HASH}))
+        .send()
+        .await
+        .expect("sign out device");
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
 #[tokio::test]
 async fn roster_create_enroll_handover_and_recovery() {
     let server = Server::start().await;
@@ -957,6 +970,91 @@ async fn one_devices_wrong_proofs_leave_another_devices_tries_alone() {
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "wrong_proof"));
     let (status, body) = other.post("/roster/recovery-wrap", &json!({"master_password_hash": PASSWORD_HASH})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn proven_exemption_follows_the_device_key_and_ends_when_the_device_is_gone() {
+    let options = Options {
+        env: vec![("REINS_DEVICE_PROOF_MAX_FAILURES", "2".to_owned())],
+        ..Options::default()
+    };
+    let mut acct = Account::new_with("willa@example.com", options).await;
+    let email = "willa@example.com";
+    let right = json!({"master_password_hash": PASSWORD_HASH});
+    let viewer = acct.server.second_device(email).await;
+    acct.enroll(&viewer, &keys(2), "Pixel").await;
+    assert_eq!(viewer.post("/roster/recovery-wrap", &right).await.0, StatusCode::OK, "the viewer proves its key");
+
+    // A right proof with no device key is accepted and grants no exemption.
+    let nokey = acct.server.device_with_id(email, &uuid::Uuid::new_v4().to_string(), None).await;
+    assert_eq!(nokey.post("/roster/recovery-wrap", &right).await.0, StatusCode::OK);
+
+    // Deleted, or signed out, before the account's tries are used up: the key they proved with is not exempt after.
+    let gone = acct.server.second_device(email).await;
+    let gone_key = gone.key.clone().expect("device key");
+    assert_eq!(gone.post("/roster/recovery-wrap", &right).await.0, StatusCode::OK);
+    let (status, body) = sign_out_device(&acct.primary, &gone.device_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let signed_out = acct.server.second_device(email).await;
+    let signed_out_id = signed_out.device_id.clone();
+    let signed_out_key = signed_out.key.clone().expect("device key");
+    assert_eq!(signed_out.post("/roster/recovery-wrap", &right).await.0, StatusCode::OK);
+    // Logout deletes the device row, so this token dies. A later sign-in with the same key must not still be exempt.
+    assert_eq!(signed_out.post("/logout", &json!({})).await.0, StatusCode::OK);
+
+    let guess = json!({"master_password_hash": "guess"});
+    for _ in 0..2 {
+        let device = acct.server.second_device(email).await;
+        assert_eq!(device.post("/roster/recovery-wrap", &guess).await.0, StatusCode::FORBIDDEN);
+    }
+
+    let (status, body) = viewer.post("/roster/recovery-wrap", &right).await;
+    assert_eq!(status, StatusCode::OK, "the device key that proved keeps its tries: {body}");
+    let other_key = acct.server.device_with_id(email, &viewer.device_id, Some(crate::harness::new_device_key())).await;
+    let (status, body) = other_key.post("/roster/recovery-wrap", &right).await;
+    assert_eq!(
+        (status, error(&body)),
+        (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+        "the same device id with another key is not exempt: {body}"
+    );
+    let (status, body) = nokey.post("/roster/recovery-wrap", &right).await;
+    assert_eq!(
+        (status, error(&body)),
+        (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+        "no device key is never exempt: {body}"
+    );
+    let revived = acct.server.device_with_id(email, &uuid::Uuid::new_v4().to_string(), Some(gone_key)).await;
+    let (status, body) = revived.post("/roster/recovery-wrap", &right).await;
+    assert_eq!(
+        (status, error(&body)),
+        (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+        "deleting the device clears the key it proved with: {body}"
+    );
+    let signed_in_again = acct.server.device_with_id(email, &signed_out_id, Some(signed_out_key)).await;
+    let (status, body) = signed_in_again.post("/roster/recovery-wrap", &right).await;
+    assert_eq!(
+        (status, error(&body)),
+        (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+        "signing out clears the exemption: {body}"
+    );
+
+    let removal = signed(
+        rewrapped(
+            acct.current().successor(RosterReason::Remove, acct.current().primary.clone(), vec![], 5).expect("next"),
+            NEW_WRAP,
+        ),
+        &acct.owner,
+    );
+    let (status, body) = acct.primary.post("/roster", &json!({"entry": removal, "recovery_wrap": NEW_WRAP})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = viewer.post("/roster/recovery-wrap", &right).await;
+    assert_eq!(
+        (status, error(&body)),
+        (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+        "leaving the roster clears the exemption: {body}"
+    );
+    let (status, body) = acct.primary.post("/roster/recovery-wrap", &right).await;
+    assert_eq!(status, StatusCode::OK, "the primary, still on the roster, keeps its own: {body}");
 }
 
 #[tokio::test]

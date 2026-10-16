@@ -36,8 +36,8 @@ use rocket::{Data, Route, State, http::Status, serde::json::Json};
 use super::{
     HUB, ITEM_TTL,
     device_api::{
-        DeviceKey, PhoneResult, api_err, bad_request, internal, normalize_fcm_token, not_found, parse_versioned,
-        rate_limited, read_body_limited, require_approval_device, user_key,
+        DeviceKey, PhoneResult, api_err, bad_request, clear_proven_device, internal, normalize_fcm_token, not_found,
+        parse_versioned, rate_limited, read_body_limited, require_approval_device, user_key,
     },
     now_unix, push,
     relay::ItemSignal,
@@ -256,7 +256,7 @@ async fn post_roster(
             require_approval_device(&headers, &key, &conn).await?;
             // The wrap is sealed under the master key: the creating phone proves it holds that key, so a mistyped
             // master password never seals a wrap that opens for nobody.
-            check_recovery_proof(&headers, append.master_password_hash.as_deref())?;
+            check_recovery_proof(&headers, &key, append.master_password_hash.as_deref())?;
             if entry.primary.device_id != caller {
                 return Err(bad_roster("The approval device creates the roster as its primary"));
             }
@@ -272,7 +272,7 @@ async fn post_roster(
             if caller_key.is_none() {
                 return Err(bad_request("A recovery needs the device key header"));
             }
-            check_recovery_proof(&headers, append.master_password_hash.as_deref())?;
+            check_recovery_proof(&headers, &key, append.master_password_hash.as_deref())?;
         }
         (_, Some(_)) => {
             // The roster's primary, with its enrolled device key (`require_approval_device` checks the roster).
@@ -359,6 +359,12 @@ async fn post_roster(
             key_hash,
         });
     }
+    // Current members this entry drops. Captured before `listed` moves into the append.
+    let leaving: Vec<(String, Option<String>)> = members
+        .iter()
+        .filter(|m| m.is_current() && !listed.iter().any(|l| l.device_uuid == m.device_uuid))
+        .map(|m| (m.device_uuid.clone(), m.key_hash.clone()))
+        .collect();
 
     let hash = entry.hash_hex().map_err(|e| bad_request(e.to_string()))?;
     let epoch = i64::try_from(entry.epoch).map_err(|_| bad_request("epoch out of range"))?;
@@ -389,6 +395,9 @@ async fn post_roster(
         }
     };
     info!("Reins: roster of user {user} is at epoch {} ({})", entry.epoch, entry.reason.as_str());
+    for (device, key) in &leaving {
+        clear_proven_device(&user, device, key.as_deref(), &conn).await;
+    }
 
     if primary_moved {
         announce_new_primary(&headers, &entry, replaced, now, &conn, pool.inner()).await?;
@@ -456,13 +465,12 @@ async fn announce_new_primary(
 
 /// A proof that the caller knows the recovery code or master password: its master password hash, counted against the
 /// account like takeover proofs.
-fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()> {
+fn check_recovery_proof(headers: &Headers, device_key: &DeviceKey, hash: Option<&str>) -> PhoneResult<()> {
     let user = user_key(headers);
-    // Counted twice: per device (one stolen token cannot use up everyone's tries at once) and against the account's
-    // limit shared with every other proof (new device ids never get more guesses). A device that proved itself before
-    // keeps its own tries when others used up the account's.
+    // Counted twice: per device id (one stolen token cannot use up everyone's tries at once) and against the account's
+    // limit shared with every other proof (new device ids never get more guesses). A device key that proved itself
+    // before keeps its own tries when others used up the account's. No device key, no exemption.
     let device = format!("{user}/{}", headers.device.uuid);
-    let proven = || super::limits::PROVEN_DEVICES.lock().unwrap_or_else(PoisonError::into_inner).contains(&device);
     let Some(hash) = hash.filter(|h| !h.is_empty()) else {
         return Err(api_err(
             Status::Forbidden,
@@ -474,12 +482,14 @@ fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()
         return Err(rate_limited("too many wrong recovery codes or passwords from this device", wait));
     }
     if let Err(wait) = super::limits::DEVICE_PROOFS.check(&user)
-        && !proven()
+        && !device_key.hash().is_some_and(|key| super::limits::PROVEN_DEVICES.is_proven(&user, key))
     {
         return Err(rate_limited("too many wrong recovery codes or passwords for this account", wait));
     }
     if headers.user.check_valid_password(hash) {
-        super::limits::PROVEN_DEVICES.lock().unwrap_or_else(PoisonError::into_inner).insert(device);
+        if let Some(key) = device_key.hash() {
+            super::limits::PROVEN_DEVICES.remember(&user, key, &headers.device.uuid.to_string());
+        }
         return Ok(());
     }
     super::limits::DEVICE_PROOFS_PER_DEVICE.fail(&device);
@@ -492,12 +502,17 @@ fn check_recovery_proof(headers: &Headers, hash: Option<&str>) -> PhoneResult<()
 /// (wrong ones count with the takeover proofs). The wrap opens only with the master key, but it is not handed to any
 /// device of the account that merely asks.
 #[post("/reins/api/roster/recovery-wrap", data = "<data>")]
-async fn post_recovery_wrap(data: Data<'_>, headers: Headers, conn: DbConn) -> PhoneResult<Json<RecoveryWrap>> {
+async fn post_recovery_wrap(
+    data: Data<'_>,
+    headers: Headers,
+    key: DeviceKey,
+    conn: DbConn,
+) -> PhoneResult<Json<RecoveryWrap>> {
     let request: RecoveryWrapRequest = serde_json::from_slice(&read_body_limited(data, 4096).await?)
         .map_err(|e| bad_request(format!("invalid body: {e}")))?;
     let latest =
         ReinsRoster::latest(&user_key(&headers), &conn).await.map_err(|e| internal(&e))?.ok_or_else(no_roster)?;
-    check_recovery_proof(&headers, Some(&request.master_password_hash))?;
+    check_recovery_proof(&headers, &key, Some(&request.master_password_hash))?;
     let recovery_wrap = latest.recovery_wrap.ok_or_else(not_found)?;
     Ok(Json(RecoveryWrap {
         epoch: u64::try_from(latest.epoch).unwrap_or(0),
