@@ -186,6 +186,14 @@ class AppFlowTest {
         rule.waitUntil(10_000) { !has(tag) }
     }
 
+    /** A tag inside a merged row (a mail row's chip, which the row reads out with it). */
+    private fun awaitDeep(tag: String) {
+        rule.waitUntil(10_000) {
+            settle()
+            rule.onAllNodes(hasTestTag(tag), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     private fun awaitText(text: String) {
         rule.waitUntil(10_000) {
             settle()
@@ -1714,7 +1722,7 @@ class AppFlowTest {
         openItem("req7")
         rule.onNodeWithTag("what").assertTextContains("Read Telegram messages", substring = true)
         awaitTag("check:100:2")
-        awaitTag("sensitive:100:9")
+        awaitDeep("sensitive:100:9")
         rule.onNodeWithTag("approve").assertTextContains("Share 2")
         tap("approve")
         awaitCore { core.approvals.isNotEmpty() }
@@ -1764,7 +1772,7 @@ class AppFlowTest {
         openItem("req8")
         rule.onNodeWithTag("what").assertTextContains("Get a login from the vault", substring = true)
         awaitText("Password for GitHub")
-        awaitTag("sensitive:git:password")
+        awaitDeep("sensitive:git:password")
         awaitTag("noStanding")
         rule.onAllNodes(hasTestTag("lifetime:HOUR")).assertCountEquals(0)
         tap("check:git:password")
