@@ -29,6 +29,9 @@ pub struct ReinsConnection {
     pub label: String,
     pub created_at: i64,
     pub last_used_at: Option<i64>,
+    /// A computer's name as the user gave it on the phone, sealed to its desktop app's key
+    /// ([`reins_proto::device::SealedName`]): kept for the app, never readable here.
+    pub sealed_name: Option<String>,
 }
 
 /// An MCP refresh token, stored only as its SHA-256 hex digest.
@@ -62,7 +65,20 @@ impl ReinsConnection {
             label,
             created_at: now,
             last_used_at: None,
+            sealed_name: None,
         }
+    }
+
+    /// Keeps (or with `None` drops) the computer's sealed name.
+    pub async fn set_sealed_name(uuid: &str, sealed: Option<String>, conn: &DbConn) -> EmptyResult {
+        conn.run(move |c| {
+            diesel::update(reins_connections::table.filter(reins_connections::uuid.eq(uuid)))
+                .set(reins_connections::sealed_name.eq(sealed))
+                .execute(c)
+                .map(|_| ())
+        })
+        .await
+        .map_res("Error updating Reins connection")
     }
 
     pub fn to_info(&self) -> ConnectionInfo {
