@@ -79,6 +79,7 @@ struct WarnTag: View {
     var tint: Color
     var small = false
     var symbol = "exclamationmark.triangle.fill"
+    var lines = 1
 
     var body: some View {
         Label(text, systemImage: symbol)
@@ -87,7 +88,26 @@ struct WarnTag: View {
             .foregroundStyle(tint)
             .padding(.horizontal, small ? 8 : 12)
             .padding(.vertical, small ? 4 : 7)
-            .background(tint.opacity(0.14), in: Capsule())
-            .lineLimit(1)
+            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: small ? 11 : 16, style: .continuous))
+            .lineLimit(lines)
+            .fixedSize(horizontal: false, vertical: lines > 1)
+    }
+}
+
+/// What deserves a closer look in one commit, file or email: the warning sign and its 1 to 3 reasons. Close is the
+/// filled sign in the warning colour; Look is quieter, the outline sign in a muted ink, so "Changes CI" reads as more
+/// serious than "Runs on build". Red stays for danger. VoiceOver reads "Look closer: Changes CI".
+struct AttentionTag: View {
+    var mark: AttentionMark
+    var id: String
+
+    var body: some View {
+        WarnTag(
+            text: mark.text, tint: mark.level == .close ? Palette.warning : Palette.ink2, small: true,
+            symbol: mark.level == .close ? "exclamationmark.triangle.fill" : "exclamationmark.triangle", lines: 2
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(mark.spoken)
+        .accessibilityIdentifier(id)
     }
 }

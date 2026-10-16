@@ -227,6 +227,66 @@ enum DemoData {
         )
     }
 
+    // ---- what deserves a closer look (`-demoAttention`, Android's TestData.attentionPushView) ----------------------
+
+    static func attention(_ level: AttentionLevel, _ reasons: (ReasonCode, String)...) -> Attention {
+        Attention(level: level, reasons: reasons.map { AttentionReason(code: $0.0, label: $0.1) })
+    }
+
+    /// 8 commits, all listed, as the core marks them: the 6th changes CI (Close), the 3rd deletes a file (Look).
+    static func attentionCommits(_ now: Int64) -> [GitCommitView] {
+        let ci = attention(.close, (.changesCi, "Changes CI"))
+        let deletes = attention(.look, (.deletesFile, "Deletes a file"))
+        func commit(_ sha: String, _ subject: String, _ author: String, _ hours: Int64, _ files: [GitFileView], attention: Attention? = nil) -> GitCommitView {
+            GitCommitView(
+                shortSha: sha, subject: subject, author: author, date: now - hours * 3_600, filesChanged: UInt32(files.count), files: files,
+                additions: UInt64(files.compactMap(\.additions).reduce(0, +)), deletions: UInt64(files.compactMap(\.deletions).reduce(0, +)),
+                attention: attention
+            )
+        }
+        func file(_ path: String, _ status: String, _ additions: UInt32, _ deletions: UInt32, attention: Attention? = nil) -> GitFileView {
+            GitFileView(path: path, status: status, additions: additions, deletions: deletions, binary: false, attention: attention)
+        }
+        let ada = "Ada Lovelace <ada@example.com>"
+        let grace = "Grace Hopper <grace@example.com>"
+        return [
+            commit("9f3c2a1", "Log in with a passkey when the browser offers one", ada, 1, [file("src/auth/passkey.ts", "added", 121, 0)]),
+            commit("c07a9e3", "Keep the session for 30 days", grace, 2, [file("src/session/store.ts", "modified", 12, 4)]),
+            commit("4be81d0", "Remove the old login form", ada, 3, [file("src/ui/LoginForm.tsx", "deleted", 0, 120, attention: deletes)], attention: deletes),
+            commit("17d0f5b", "Document the login flow", ada, 4, [file("docs/login.md", "added", 40, 0)]),
+            commit("e2a4c66", "Bump dependencies", "dependabot[bot] <support@github.com>", 5, [file("package-lock.json", "modified", 30, 12)]),
+            commit("5d91b07", "Run the release on every tag", grace, 6, [file(".github/workflows/release.yml", "modified", 14, 3, attention: ci)], attention: ci),
+            commit("88b13f2", "Fix a typo", grace, 7, [file("README.md", "modified", 1, 1)]),
+            commit("a41e6c2", "Show the passkey prompt in dark mode", ada, 8, [file("src/ui/PasskeyPrompt.css", "modified", 9, 2)]),
+        ]
+    }
+
+    /// 12 emails found, 2 flagged by the core: a password reset (Close) and an invoice (Look). Both start ticked.
+    static func attentionEmails(_ now: Int64) -> [MessageView] {
+        let plain = [
+            ("Dana Wu <dana@corp.example>", "Offsite agenda", "Day one starts at 9 with the roadmap review."),
+            ("IT <it@corp.example>", "Laptop refresh", "Your new laptop is ready for pick-up at the front desk."),
+            ("Sam Ortiz <sam@corp.example>", "Lunch on Friday?", "There is a new place by the station."),
+            ("Product <product@corp.example>", "Roadmap notes", "The notes from Tuesday are in the shared folder."),
+            ("Mia Chen <mia@corp.example>", "Design review moved", "We moved it to 3pm so Leo can join."),
+            ("Calendar <calendar@corp.example>", "Weekly sync", "Updated: the room changed to Atlas."),
+            ("Leo Park <leo@corp.example>", "Re: slides", "Looks good, two small comments on slide 4."),
+            ("HR <hr@corp.example>", "Holiday schedule", "The office closes on the 24th and the 31st."),
+            ("Ops <ops@corp.example>", "Maintenance window", "The build servers restart on Sunday at 2am."),
+            ("Ana Silva <ana@corp.example>", "Team photo", "The photos from the offsite are up."),
+        ]
+        var messages = plain.enumerated().map { i, m in
+            message("n\(i)", m.0, m.1, m.2, now - 3_600 * Int64(i + 2))
+        }
+        var reset = message("n10", "Acme <no-reply@acme.example>", "Reset your password", "Someone asked to reset your password. The link works for an hour.", now - 1_800)
+        reset.attention = attention(.close, (.passwordReset, "Password reset"))
+        var invoice = message("n11", "Acme Billing <billing@acme.example>", "Invoice #2291", "Your invoice for September is attached.", now - 86_400)
+        invoice.attention = attention(.look, (.finance, "Bank or invoice"))
+        messages.insert(reset, at: 3)
+        messages.insert(invoice, at: 8)
+        return messages
+    }
+
     static let blobSha = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 
     /// A small drawn picture, so the upload sheet has an image preview to show.
@@ -422,6 +482,27 @@ enum DemoData {
                 limitMethods: [], delivery: nil
             )
             add(buy, "Claude wants to buy at acme.com", "Acme Supply · $63.29")
+        }
+
+        // `-demoAttention` (screenshots): a push and a search where 2 items deserve a closer look. Off by default so
+        // the waiting count stays as tests expect.
+        if ProcessInfo.processInfo.arguments.contains("-demoAttention") {
+            let commits = attentionCommits(now)
+            add(view(
+                "req23", conn: "c6", label: desktop, kind: .write, action: "write", service: "github", account: "octo-cat",
+                createdAt: now - 15, waitUntil: now + 600,
+                op: "git_push", resources: pushResources,
+                preview: ["Push 8 commits to feature/passkeys", "Log in with a passkey when the browser offers one", "+227 −142 in 8 files"],
+                opTitle: "Push with git", klass: "code", classes: repoClasses,
+                git: GitPushView(repo: "octo/app", packBytes: 48_213, notes: [], refs: [
+                    gitRef("feature/passkeys", commitCount: 8, commits: commits, filesChanged: 8, files: commits.flatMap(\.files), additions: 227, deletions: 142),
+                ])
+            ), "\(desktop) wants to push with git", "octo/app · feature/passkeys")
+            add(view(
+                "req12", conn: "c1", label: "Claude", kind: .search, action: "search", service: "gmail", account: "work@corp.example",
+                createdAt: now - 8, waitUntil: now + 300, count: 12, query: "newer_than:7d",
+                messages: attentionEmails(now)
+            ), "Claude wants to search your emails", "newer_than:7d")
         }
 
         // A tool of an MCP server.
