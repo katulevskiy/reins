@@ -2,7 +2,7 @@
 //! the deterministic fake model of [`super::testing`].
 
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use reins_proto::relay::RelayRequest;
@@ -39,16 +39,61 @@ impl GoogleTokenProvider for Google {
     }
 }
 
+/// Keeps a decision inside its pass until [`PendingHold::release`]: the swap waits on that pass.
+struct PendingHold {
+    release: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl PendingHold {
+    fn new() -> Self {
+        Self {
+            release: Mutex::new(false),
+            cv: Condvar::new(),
+        }
+    }
+
+    fn wait(&self) {
+        let mut release = self.release.lock().unwrap();
+        while !*release {
+            release = self.cv.wait(release).unwrap();
+        }
+    }
+
+    fn release(&self) {
+        *self.release.lock().unwrap() = true;
+        self.cv.notify_all();
+    }
+}
+
+/// Releases the hold when dropped, including when an assertion fails first.
+struct ReleaseHold(Arc<PendingHold>);
+
+impl Drop for ReleaseHold {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
 #[derive(Default)]
 struct Notes {
     pending: Mutex<Vec<PendingItem>>,
     decided: Mutex<Vec<AutoDecisionView>>,
     events: Mutex<Vec<AutopilotEvent>>,
+    /// When set, `item_pending` does not return until it is released. The pass (and its lock) stays held, so a test
+    /// can watch a download finish while a decision is still in progress.
+    hold_pending: Mutex<Option<Arc<PendingHold>>>,
 }
 
 impl Notifier for Notes {
     fn item_pending(&self, item: PendingItem) {
         self.pending.lock().unwrap().push(item);
+        let hold = self.hold_pending.lock().unwrap().as_ref().map(Arc::clone);
+        if let Some(hold) = hold {
+            // The decision that arms this runs on its own thread. Waiting here keeps the pass lock and leaves the
+            // test runtime free to watch the download and release the hold.
+            hold.wait();
+        }
     }
 
     fn item_resolved(&self, _id: String) {}
@@ -2890,22 +2935,33 @@ async fn a_paused_update_stays_to_do_and_goes_on_later() {
     let env = update_env().await;
     let files = package_v2();
     serve(&env.server, "fake-laya-2", &files).await;
-    // The model file is slow to come.
+    // Long enough that the body cannot arrive before the pause once this request is in flight. The pause is sent
+    // only then: a fixed wait can fire before the download starts, and the download then clears that pause.
     Mock::given(method("GET"))
         .and(path("/models/fake-laya-2/model.onnx"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(files[0].1.clone()).set_delay(Duration::from_secs(5)))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(files[0].1.clone()).set_delay(Duration::from_secs(60)))
         .with_priority(1)
         .up_to_n_times(1)
         .mount(&env.server)
         .await;
     let core = Arc::clone(&env.core);
     let update = tokio::spawn(async move { core.update_model(true, progress()).await });
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let paused_at = std::time::Instant::now();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let asked = env.server.received_requests().await.unwrap().iter().any(|r| r.url.path().ends_with("/model.onnx"));
+        if asked {
+            break;
+        }
+        assert!(!update.is_finished(), "the download ended before the model file was asked for");
+        assert!(std::time::Instant::now() < deadline, "the model file was not asked for within 30s");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     env.core.pause_model_download().await;
-    let r = update.await.unwrap();
-    assert!(paused_at.elapsed() < Duration::from_secs(2), "stopped at once");
+    // The body is still held. Returning while it has not arrived is the pause; waiting the delay out would finish
+    // the file.
+    let r = tokio::time::timeout(Duration::from_secs(30), update).await.expect("pause stops the download").unwrap();
     assert!(matches!(&r, Err(CoreError::Network { reason }) if reason.contains("paused")), "{r:?}");
+    assert!(!model_dir(&env, "fake-laya-2").join("model.onnx").exists(), "the slow file was not waited for");
     let status = env.core.model_status().await;
     assert_eq!((status.state, status.id.as_str()), (ModelState::Installed, "fake-laya-1"));
     assert!(env.core.model_update_pending().await, "not rejected: still to do");
@@ -3042,28 +3098,42 @@ async fn automatic_updates_follow_the_switch_and_never_go_back() {
 async fn the_new_model_waits_for_the_decision_in_progress() {
     let env = update_env().await;
     serve(&env.server, "fake-laya-2", &package_v2()).await;
-    env.model.stall_ms.store(1_500, Ordering::SeqCst);
+    // The pass holds its lock until `item_pending` returns. Holding that keeps the decision in progress after the
+    // old model has run, for as long as the download takes, and the swap cannot land in the middle of it. The test
+    // runtime is single-threaded, so the decision runs on its own thread: waiting in `item_pending` must not stall
+    // the loop that watches the download.
+    let hold = Arc::new(PendingHold::new());
+    *env.notes.hold_pending.lock().unwrap() = Some(Arc::clone(&hold));
+    let _release = ReleaseHold(Arc::clone(&hold));
     let core = Arc::clone(&env.core);
-    let decision = tokio::spawn(async move {
-        core.engine().process_relayed(request("r1", OLD, email("friend@x.com", "hi"))).await.unwrap();
+    let decision = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(core.engine().process_relayed(request("r1", OLD, email("friend@x.com", "hi")))).unwrap();
     });
-    for _ in 0..100 {
-        if env.model.loads.load(Ordering::SeqCst) > 0 {
-            break;
-        }
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while env.model.loads.load(Ordering::SeqCst) == 0 {
+        assert!(!decision.is_finished(), "the decision ended before it loaded the model");
+        assert!(std::time::Instant::now() < deadline, "the decision did not load the model within 30s");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    // The decision is in its (slow) run; the new model's own run would be quick.
-    env.model.stall_ms.store(0, Ordering::SeqCst);
     let core = Arc::clone(&env.core);
     let update = tokio::spawn(async move { core.update_model(true, progress()).await });
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let staged = model_dir(&env, "fake-laya-2").join("staged.json");
+    let installed_new = model_dir(&env, "fake-laya-2").join("installed.json");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !staged.exists() {
+        assert!(!decision.is_finished(), "the decision ended before the new model was downloaded");
+        assert!(!update.is_finished(), "waits for the decision");
+        assert!(!installed_new.exists(), "not swapped mid-decision");
+        assert!(std::time::Instant::now() < deadline, "downloaded and verified");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert!(!update.is_finished(), "waits for the decision");
-    assert!(model_dir(&env, "fake-laya-2").join("staged.json").exists(), "downloaded and verified");
-    assert!(!model_dir(&env, "fake-laya-2").join("installed.json").exists(), "not in use yet");
+    assert!(staged.exists(), "downloaded and verified");
+    assert!(!installed_new.exists(), "not in use yet");
     assert!(model_dir(&env, "fake-laya-1").join("installed.json").exists());
-    decision.await.unwrap();
+    hold.release();
+    decision.join().unwrap();
     assert_eq!(update.await.unwrap().unwrap(), super::ModelUpdateOutcome::Updated);
     assert!(env.suggestion("r1").await.judged, "the decision finished with the old model");
     let seen = env.model.seen.lock().unwrap().clone();
