@@ -617,34 +617,54 @@ pub fn columns(left: Div, right: Div, min: f32) -> Div {
         .child(right.flex_1().min_w(px(min)))
 }
 
-/// The facts of a request as hairline rows: the key in `ink-2` (`key_width` wide, or pushing the value right), the
-/// value in `ink`, mono for the machine's.
-pub fn fact_rows(rows: &[super::story::Fact], min_h: f32, key_width: Option<f32>, pal: Palette) -> Div {
+/// Where a request's facts are shown, and so how: the rows' height and text, the hairlines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FactLook {
+    /// Home, under "What will happen" beside the latest requests: rows at least 48 px tall, a hairline between rows.
+    Home,
+    /// A request's page in Activity: a hairline under every row.
+    Detail,
+}
+
+/// The facts' key column: as wide as the longest key ("Answered in", "Repository") and no wider.
+const FACT_KEY_WIDTH: f32 = 96.0;
+
+/// The narrowest a fact's value gets beside its key; with less room left, the value goes under the key, the row's
+/// whole width.
+const FACT_VALUE_MIN: f32 = 160.0;
+
+/// The facts of a request as hairline rows: the key in `ink-2` in a column of its own width, the value in `ink` (mono
+/// for the machine's) taking the rest of the row, or the whole row under the key when the row is narrow.
+pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, pal: Palette) -> Div {
+    let (min_h, text_size) = match look {
+        FactLook::Home => (48.0, 13.5),
+        FactLook::Detail => (0.0, 14.0),
+    };
     let mut list = div().flex().flex_col();
     for (i, f) in rows.iter().enumerate() {
-        let key = div().flex_none().text_color(pal.ink_2()).child(f.key.clone());
-        let key = match key_width {
-            Some(w) => key.w(px(w)),
-            None => key.flex_1(),
-        };
-        let text_size = if key_width.is_some() {
-            px(14.0)
-        } else {
-            px(13.5)
-        };
-        let value = div().min_w(px(0.0)).text_color(pal.ink()).when(key_width.is_some(), gpui::Styled::flex_1);
+        let key = div().flex_none().w(px(FACT_KEY_WIDTH)).text_color(pal.ink_2()).child(f.key.clone());
+        let value = div().flex_1().min_w(px(FACT_VALUE_MIN)).text_color(pal.ink());
         let value = match f.style {
-            FactStyle::Text => value.text_size(text_size).child(
-                div().flex().flex_wrap().items_baseline().gap_x(px(6.0)).child(f.value.clone()).when_some(
-                    f.tail.clone(),
-                    |v, t| {
+            // Each part may wrap inside the row (`min_w(0)`) rather than push past it.
+            FactStyle::Text => value.text_size(px(text_size)).child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_baseline()
+                    .gap_x(px(6.0))
+                    .child(div().min_w(px(0.0)).child(f.value.clone()))
+                    .when_some(f.tail.clone(), |v, t| {
                         v.child(
-                            div().font_family(MONO).text_size(px(13.0)).text_color(pal.ink_2()).child(format!("· {t}")),
+                            div()
+                                .min_w(px(0.0))
+                                .font_family(MONO)
+                                .text_size(px(13.0))
+                                .text_color(pal.ink_2())
+                                .child(wrap_points(&format!("· {t}"))),
                         )
-                    },
-                ),
+                    }),
             ),
-            // The machine's, whole: long values wrap at any character, never cut.
+            // The machine's, whole: long values wrap after a `/`, a `-`, a `=`..., never cut.
             FactStyle::Mono => {
                 value.font_family(MONO).text_size(px(13.0)).line_height(px(19.0)).child(wrapped(&f.value))
             }
@@ -653,12 +673,14 @@ pub fn fact_rows(rows: &[super::story::Fact], min_h: f32, key_width: Option<f32>
         list = list.child(
             div()
                 .flex()
+                .flex_wrap()
                 .items_start()
-                .gap(px(12.0))
+                .gap_x(px(12.0))
+                .gap_y(px(2.0))
                 .min_h(px(min_h))
                 .py(px(6.0))
                 .text_size(px(14.0))
-                .when(i + 1 < rows.len() || key_width.is_some(), |r| r.border_b_1().border_color(pal.rule()))
+                .when(i + 1 < rows.len() || look == FactLook::Detail, |r| r.border_b_1().border_color(pal.rule()))
                 .child(key)
                 .child(value),
         );
@@ -666,15 +688,40 @@ pub fn fact_rows(rows: &[super::story::Fact], min_h: f32, key_width: Option<f32>
     list
 }
 
-/// Mono text that may be long (a command, a path): each line its own block, breakable anywhere, so it wraps whole.
+/// Mono text that may be long (a command, a path): each line its own block, wrapped whole where the line may break
+/// ([`wrap_points`]), at any character only inside a run too long for the width.
 pub fn wrapped(text: &str) -> Div {
     let mut block = div().flex().flex_col().min_w(px(0.0));
     for line in text.lines() {
-        // A zero-width space after each character lets a line without spaces break anywhere.
-        let breakable: String = line.chars().flat_map(|c| [c, '\u{200B}']).collect();
-        block = block.child(div().min_w(px(0.0)).child(breakable));
+        block = block.child(div().min_w(px(0.0)).child(wrap_points(line)));
     }
     block
+}
+
+/// Characters a path, a command or a URL may break after: `/home/dana/` `code/`, `acme-` `web`, `--branch=` `main`,
+/// `android.` `service.` `Tile`.
+const BREAK_AFTER: &[char] = &['/', '\\', '-', '_', '.', '=', ',', ';', ':', '&', '|', '?'];
+
+/// `line` with a place to break after each separator ([`BREAK_AFTER`]) that ends a run of them and has more text after
+/// it: `https://` stays together, and a `-`, `_` or `.` breaks only between letters or digits (`acme-web`, never
+/// `--force` or `./`). GPUI's wrapper breaks before a non-word character that follows another one, so two zero-width
+/// spaces make a break that shows nothing; a line with nowhere to break still breaks at the character that does not
+/// fit.
+pub fn wrap_points(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len() + 8);
+    for (i, &c) in chars.iter().enumerate() {
+        out.push(c);
+        let next = chars.get(i + 1).copied();
+        let before = i.checked_sub(1).map(|p| chars[p]);
+        let more = next.is_some_and(|n| !n.is_whitespace() && !BREAK_AFTER.contains(&n));
+        let between_words = !matches!(c, '-' | '_' | '.')
+            || (before.is_some_and(char::is_alphanumeric) && next.is_some_and(char::is_alphanumeric));
+        if BREAK_AFTER.contains(&c) && more && between_words {
+            out.push_str("\u{200B}\u{200B}");
+        }
+    }
+    out
 }
 
 /// `+128 −31 · 9 files` with the additions green and the removals red.
@@ -829,4 +876,34 @@ pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette)
                 .child(italic(words)),
         )
         .when_some(help, ParentElement::child)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_points;
+
+    /// Where `line` may break, as `|`.
+    fn breaks(line: &str) -> String {
+        let marked = wrap_points(line).replace("\u{200B}\u{200B}", "|");
+        assert!(!marked.contains('\u{200B}'), "{marked:?}");
+        marked
+    }
+
+    #[test]
+    fn paths_and_commands_break_after_their_separators() {
+        assert_eq!(breaks("/home/dana/code/acme-web"), "/|home/|dana/|code/|acme-|web");
+        assert_eq!(breaks("git push --force origin main"), "git push --force origin main");
+        assert_eq!(breaks("rm -rf ./build_out"), "rm -rf ./|build_|out");
+        assert_eq!(breaks("git push origin HEAD:refs/heads/main"), "git push origin HEAD:|refs/|heads/|main");
+        assert_eq!(breaks("curl https://example.com/a?b=1&c=2"), "curl https://|example.|com/|a?|b=|1&|c=|2");
+        assert_eq!(breaks(r"C:\Users\dana"), r"C:\|Users\|dana");
+        assert_eq!(breaks("javap android.service.Tile"), "javap android.|service.|Tile");
+    }
+
+    #[test]
+    fn nothing_to_break_after_is_left_as_it_is() {
+        for line in ["", "-", "/", "a3f9c2e1b7d4", "trailing/", "dash-", "x --", "a - b", "cd ..", "end."] {
+            assert_eq!(breaks(line), line);
+        }
+    }
 }

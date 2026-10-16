@@ -920,7 +920,9 @@ mod tests {
         assert_ne!(email_cap_key("ada@example.com"), email_cap_key("bob@example.com"));
         let key = email_cap_key("ada@example.com");
         assert_eq!(key.len(), 64, "{key}");
-        assert!(!key.contains("ada"), "{key}");
+        // A hex digest, so the address cannot appear in it (a check for "ada" would match random hex now and then).
+        assert!(key.bytes().all(|b| b.is_ascii_hexdigit()), "{key}");
+        assert!(!key.contains('@') && !key.contains("example"), "{key}");
     }
 
     fn fill_email(h: &PairingHub, key: &str, network: &str, user: Option<&str>) -> Vec<PairingId> {

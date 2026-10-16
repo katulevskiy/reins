@@ -14,7 +14,7 @@ use reins_desktop::doctor::Level;
 use reins_desktop::journal::{Entry, Outcome, Tally};
 
 use super::icons::{Glyph, Mark, glyph};
-use super::parts::{caption, dots, fact_rows, italic, link, mood, sentence};
+use super::parts::{FactLook, caption, dots, fact_rows, italic, link, mood, sentence};
 use super::sidebar::clock_left;
 use super::story::{Ask, Words, who_from};
 use super::{Data, Root, kit};
@@ -30,6 +30,8 @@ const RECENT: usize = 5;
 const RECENT_WAITING: usize = 3;
 /// The page's sides (the boards' `.main`).
 pub const SIDE: f32 = 44.0;
+/// Under a waiting request, "What will happen" and the latest requests sit side by side while each has this much.
+const WAITING_COLUMN_MIN: f32 = 300.0;
 
 /// Today's requests (since local midnight).
 #[must_use]
@@ -591,15 +593,24 @@ impl Root {
             .flex()
             .flex_col()
             .child(kit::section_label("What will happen", pal))
-            .child(fact_rows(&rows, 48.0, None, pal).mt(px(6.0)))
+            .child(fact_rows(&rows, FactLook::Home, pal).mt(px(6.0)))
             .when_some(commits, |w, c| w.child(c.mt(px(18.0))));
         let recent: Vec<&Entry> =
             d.activity().iter().filter(|e| e.outcome != Outcome::Waiting).take(RECENT_WAITING).collect();
         let mut below = div().flex().flex_col().gap(px(24.0));
         below = below.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
         below = below.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
+        // Side by side while each has room, else the latest under what will happen (a narrow window).
         below = below.child(
-            div().grid().grid_cols(2).gap(px(32.0)).child(what).child(Self::latest(&recent, "waiting", d, pal, cx)),
+            div()
+                .flex()
+                .flex_wrap()
+                .items_start()
+                .gap(px(32.0))
+                .child(what.flex_1().min_w(px(WAITING_COLUMN_MIN)))
+                .child(
+                    div().flex_1().min_w(px(WAITING_COLUMN_MIN)).child(Self::latest(&recent, "waiting", d, pal, cx)),
+                ),
         );
         div()
             .w_full()

@@ -591,6 +591,8 @@ struct RenameSheet: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(Palette.paper)
         .onAppear { focused = true }
+        // A container: its own id must not replace the field's, Save's and "Use its own name"'s.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("renameSheet")
     }
 
