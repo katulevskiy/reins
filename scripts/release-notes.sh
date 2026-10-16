@@ -134,8 +134,9 @@ On macOS, a binary downloaded with a browser is quarantined; \`curl\` downloads 
 **Linux packages**: \`reins_${version}_amd64.deb\` (\`arm64\`) and \`reins-$version-1.x86_64.rpm\` (\`aarch64\`), plus
 \`reins-app_${version}_amd64.deb\` and \`reins-app-$version-1.x86_64.rpm\` for the desktop app
 (\`sudo apt install ./reins_${version}_amd64.deb\`, \`sudo dnf install ./reins-$version-1.x86_64.rpm\`). The signed APT
-and RPM repositories and the AUR package \`reins-bin\` bring updates with the system's:
-[Linux packages]($repo/blob/$tag/docs/linux-packages.md).
+and RPM repositories bring updates with the system's:
+[Linux packages]($repo/blob/$tag/docs/linux-packages.md). On Arch Linux:
+\`curl -fsSL https://reins2fa.com/install.sh | sh\`.
 
 On Windows (PowerShell), the install script downloads this release's zip, checks it against \`SHA256SUMS\` and puts
 \`reins.exe\` on your \`PATH\`:

@@ -174,11 +174,14 @@ prefilter, so query syntax cannot widen what a grant allows.
    with each refresh token, and a client once seen with `private_key_jwt` (document or grant) is recorded and never
    accepted without an assertion again; anything that cannot be determined refuses the request. A client whose
    document or key set the server holds is served from it, and up to 10 minutes past its freshness from the last good
-   copy while it is refreshed in the background (a refetch that no longer lists a key drops it at once). Other
-   fetches are charged to the requesting address (IPv6: its /64; 20, then one per 3 s), run once per URL at a time,
-   at most 2 per site and 32 in all, queue at most 2 s, take at most 4 s, and hold no database connection; only
-   failures that do not depend on timing are remembered (30 s, per kind and exact URL). Dynamic registration stays
-   public-only.
+   copy while it is refreshed in the background (a refetch that no longer lists a key drops it at once). Refreshes
+   have a reserved pool (4, one per site), are spaced 5 s per document with back-off after failures (at most a
+   minute; failures neither stop them nor extend the grace) and are limited per requesting address. Other fetches
+   are charged to the requesting address (IPv6: its /64; 20, then one per 3 s), run once per URL at a time, at most 2
+   per site (registrable domain under its ICANN public suffix, by the Public Suffix List) and 32
+   in all, queue at most 2 s, take at most 4 s, and hold no database connection; only failures that do not depend on
+   timing are remembered (30 s, per kind and exact URL). Documents and key sets must be named by a domain, never an
+   IP address. Dynamic registration stays public-only.
 
 `reins login` pairs without a browser by default (OAuth device authorization, RFC 8628):
 

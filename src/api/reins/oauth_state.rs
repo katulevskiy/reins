@@ -5,7 +5,7 @@
 //! instance, so in memory is enough. No map here refuses when full (see the constants).
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{LazyLock, Mutex, MutexGuard, PoisonError},
     time::Duration,
 };
@@ -43,6 +43,73 @@ pub const JWKS_REFETCH_INTERVAL: Duration = Duration::from_secs(30);
 /// A metadata document or key set that could not be fetched is not fetched again for this long (see
 /// [`OAuthState::remember_failed_fetch`] for which failures are remembered).
 pub const FAILED_FETCH_TTL: Duration = Duration::from_secs(30);
+/// Background refreshes of one document start at most this often, whatever became of the last one: a host that is
+/// down is asked again soon, but never in a tight loop.
+pub const REFRESH_SPACING: Duration = Duration::from_secs(5);
+/// After failed background refreshes of a document, the spacing doubles per failure up to this. Far below the
+/// grace period: back-off never holds a refresh back long enough to matter, and the grace itself never grows.
+pub const MAX_REFRESH_BACKOFF: Duration = Duration::from_secs(60);
+
+/// When the next background refresh of each document may start (per kind and URL), with back-off after failures.
+/// Never refuses: when it holds too many documents it forgets those that may start now, then the soonest ones.
+pub struct RefreshSchedule {
+    capacity: usize,
+    /// Key -> (earliest next start, failures in a row).
+    next: HashMap<String, (Instant, u32)>,
+}
+
+impl RefreshSchedule {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            next: HashMap::new(),
+        }
+    }
+
+    /// Whether a refresh of `key` would be allowed now, without marking it.
+    pub fn due(&self, key: &str) -> bool {
+        self.next.get(key).is_none_or(|(next, _)| Instant::now() >= *next)
+    }
+
+    /// Whether a refresh of `key` may start now; if so, the next one waits at least the current spacing.
+    pub fn may_start(&mut self, key: &str) -> bool {
+        let now = Instant::now();
+        let failures = match self.next.get(key) {
+            Some((next, _)) if now < *next => return false,
+            Some((_, failures)) => *failures,
+            None => 0,
+        };
+        if self.next.len() >= self.capacity && !self.next.contains_key(key) {
+            self.next.retain(|_, (next, _)| now < *next);
+            if self.next.len() >= self.capacity
+                && let Some(soonest) = self.next.iter().min_by_key(|(_, (next, _))| *next).map(|(k, _)| k.clone())
+            {
+                self.next.remove(&soonest);
+            }
+        }
+        self.next.insert(key.to_owned(), (now + REFRESH_SPACING, failures));
+        true
+    }
+
+    /// A refresh of `key` failed: the next waits twice as long as the last (up to [`MAX_REFRESH_BACKOFF`]).
+    pub fn failed(&mut self, key: &str) {
+        let failures = self.next.get(key).map_or(0, |(_, failures)| *failures).saturating_add(1);
+        let backoff = REFRESH_SPACING.saturating_mul(1 << failures.min(10)).min(MAX_REFRESH_BACKOFF);
+        self.next.insert(key.to_owned(), (Instant::now() + backoff, failures));
+    }
+
+    /// A refresh of `key` worked: back to the plain spacing.
+    pub fn succeeded(&mut self, key: &str) {
+        if let Some((_, failures)) = self.next.get_mut(key) {
+            *failures = 0;
+        }
+    }
+
+    pub fn purge(&mut self) {
+        let now = Instant::now();
+        self.next.retain(|_, (next, failures)| now < *next || *failures > 0);
+    }
+}
 /// How long past its freshness a document or key set may still be used, while it is refreshed in the background (or
 /// its host is down). A hard limit counted from the last successful fetch: a key the client rotated out stops being
 /// accepted at the latest this long after the fresh copy expired, and at once when a refetch no longer lists it.
@@ -182,6 +249,7 @@ pub struct OAuthState {
     clients: Mutex<TtlMap<String, ClientInfo>>,
     jwks: Mutex<TtlMap<String, JwkSet>>,
     jwks_refetches: Mutex<TtlMap<String, ()>>,
+    refresh_schedule: Mutex<RefreshSchedule>,
     failed_fetches: Mutex<TtlMap<String, FailedFetch>>,
     last_good_clients: Mutex<TtlMap<String, ClientInfo>>,
     last_good_jwks: Mutex<TtlMap<String, JwkSet>>,
@@ -200,6 +268,7 @@ impl OAuthState {
             clients: Mutex::new(TtlMap::new(CIMD_TTL, clients)),
             jwks: Mutex::new(TtlMap::new(JWKS_TTL, MAX_JWKS_CACHE)),
             jwks_refetches: Mutex::new(TtlMap::new(JWKS_REFETCH_INTERVAL, MAX_JWKS_CACHE)),
+            refresh_schedule: Mutex::new(RefreshSchedule::new(MAX_JWKS_CACHE)),
             failed_fetches: Mutex::new(TtlMap::new(FAILED_FETCH_TTL, MAX_JWKS_CACHE)),
             last_good_clients: Mutex::new(TtlMap::new(CLIENT_LAST_GOOD_TTL, clients)),
             last_good_jwks: Mutex::new(TtlMap::new(JWKS_LAST_GOOD_TTL, MAX_JWKS_CACHE)),
@@ -329,6 +398,26 @@ impl OAuthState {
         Self::lock(&self.failed_fetches).insert_evicting(kind.key(url), failed);
     }
 
+    /// Whether a background refresh of `url` as `kind` may start now: once per [`REFRESH_SPACING`], or after failed
+    /// refreshes once per back-off (doubling, at most [`MAX_REFRESH_BACKOFF`]). Only spacing: a refresh that failed
+    /// never stops later ones for long, and never changes how long the last good copy may be used.
+    pub fn may_refresh(&self, kind: FetchKind, url: &str) -> bool {
+        Self::lock(&self.refresh_schedule).may_start(&kind.key(url))
+    }
+
+    /// Whether a background refresh of `url` as `kind` would be allowed now (nothing is marked).
+    pub fn refresh_due(&self, kind: FetchKind, url: &str) -> bool {
+        Self::lock(&self.refresh_schedule).due(&kind.key(url))
+    }
+
+    pub fn refresh_failed(&self, kind: FetchKind, url: &str) {
+        Self::lock(&self.refresh_schedule).failed(&kind.key(url));
+    }
+
+    pub fn refresh_succeeded(&self, kind: FetchKind, url: &str) {
+        Self::lock(&self.refresh_schedule).succeeded(&kind.key(url));
+    }
+
     /// Whether an unknown `kid` from `client_id` may fetch `jwks_uri` again now: once per [`JWKS_REFETCH_INTERVAL`],
     /// per client and URI, so made-up key ids cannot turn this server into a fetcher of the key set, and another
     /// client naming the same `jwks_uri` cannot use up this client's refetch. The oldest mark is dropped when there
@@ -355,6 +444,7 @@ impl OAuthState {
         self.clients().purge();
         Self::lock(&self.jwks).purge();
         Self::lock(&self.jwks_refetches).purge();
+        Self::lock(&self.refresh_schedule).purge();
         Self::lock(&self.failed_fetches).purge();
         Self::lock(&self.last_good_clients).purge();
         Self::lock(&self.last_good_jwks).purge();
@@ -518,6 +608,52 @@ mod tests {
         assert!(state.may_refetch_jwks(A, "https://b.example/jwks.json"), "per URI");
         tokio::time::advance(JWKS_REFETCH_INTERVAL).await;
         assert!(state.may_refetch_jwks(A, uri));
+    }
+
+    /// Background refreshes are spaced, never stopped: the next one may start 5 s later, per kind and URL, and a full
+    /// set of marks drops its oldest rather than refusing.
+    #[tokio::test(start_paused = true)]
+    async fn background_refreshes_are_spaced_but_never_stopped() {
+        let state = OAuthState::new();
+        let uri = "https://chatgpt.com/oauth/jwks.json";
+        assert!(state.may_refresh(FetchKind::KeySet, uri));
+        assert!(!state.may_refresh(FetchKind::KeySet, uri));
+        assert!(state.may_refresh(FetchKind::Metadata, uri), "per kind");
+        tokio::time::advance(REFRESH_SPACING).await;
+        assert!(state.may_refresh(FetchKind::KeySet, uri), "tried again 5 s later");
+        for i in 0..2 * MAX_JWKS_CACHE {
+            state.may_refresh(FetchKind::KeySet, &format!("https://evil-{i}.example/jwks.json"));
+        }
+        tokio::time::advance(REFRESH_SPACING).await;
+        assert!(state.may_refresh(FetchKind::KeySet, uri));
+    }
+
+    /// Failed refreshes back off (10 s, 20 s, 40 s, then at most a minute), far below the grace period, and a
+    /// working refresh returns to the plain spacing.
+    #[tokio::test(start_paused = true)]
+    async fn failed_refreshes_back_off_up_to_a_minute() {
+        let state = OAuthState::new();
+        let uri = "https://slow.example/jwks.json";
+        let waits_for = |secs: u64| {
+            let state = &state;
+            async move {
+                assert!(state.may_refresh(FetchKind::KeySet, uri));
+                state.refresh_failed(FetchKind::KeySet, uri);
+                tokio::time::advance(Duration::from_secs(secs - 1)).await;
+                assert!(!state.may_refresh(FetchKind::KeySet, uri), "still backing off before {secs} s");
+                tokio::time::advance(Duration::from_secs(1)).await;
+            }
+        };
+        waits_for(10).await;
+        waits_for(20).await;
+        waits_for(40).await;
+        waits_for(60).await;
+        waits_for(60).await;
+        assert!(MAX_REFRESH_BACKOFF < GRACE);
+        assert!(state.may_refresh(FetchKind::KeySet, uri));
+        state.refresh_succeeded(FetchKind::KeySet, uri);
+        tokio::time::advance(REFRESH_SPACING).await;
+        assert!(state.may_refresh(FetchKind::KeySet, uri), "plain spacing again");
     }
 
     /// Another client naming ChatGPT's `jwks_uri` as its own cannot use up ChatGPT's refetch.

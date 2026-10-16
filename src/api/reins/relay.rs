@@ -2,7 +2,10 @@
 //!
 //! Nothing here touches disk: tool arguments and results live only in these maps.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+};
 
 use reins_proto::{
     PROTOCOL_VERSION,
@@ -18,7 +21,9 @@ use super::{
 };
 use crate::util::get_uuid;
 
-/// Upper bound on relay requests held in memory at once.
+/// Upper bound on relay requests held in memory at once. When it is reached, the oldest request of another account
+/// that holds more than the caller (an already-answered one first) is dropped, so one account cannot lock the
+/// others out. An account that already holds as many as everyone else is refused instead of dropping its own call.
 pub const MAX_REQUESTS: usize = 10_000;
 /// Default for the unanswered requests one account may have queued for its phone (`REINS_ACCOUNT_MAX_QUEUED`).
 pub const DEFAULT_MAX_QUEUED: usize = 100;
@@ -26,7 +31,8 @@ pub const DEFAULT_MAX_QUEUED: usize = 100;
 /// Why a request was not queued.
 #[derive(Debug, PartialEq, Eq)]
 pub enum QueueFull {
-    /// The relay holds [`MAX_REQUESTS`] already.
+    /// This account already holds as many as anyone else, so nothing of another account's can be dropped to make
+    /// room. An account over its own unanswered cap is [`QueueFull::Account`] instead.
     Server,
     /// This account has as many unanswered requests as it may.
     Account,
@@ -111,6 +117,23 @@ pub struct RelayHub {
     requests: Mutex<TtlMap<RequestId, RequestEntry>>,
 }
 
+/// Drops one request of another account that holds more than `user` (answered first). `false` when no other
+/// account holds more, so `user` cannot push someone else's call out once they hold the same number.
+fn evict_other(map: &mut TtlMap<RequestId, RequestEntry>, user: &str) -> bool {
+    let mine = map.values().filter(|e| e.user == user).count();
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for entry in map.values() {
+        if entry.user != user {
+            *counts.entry(entry.user.clone()).or_default() += 1;
+        }
+    }
+    let Some(hog) = counts.into_iter().filter(|(_, n)| *n > mine).max_by_key(|(_, n)| *n).map(|(owner, _)| owner)
+    else {
+        return false;
+    };
+    map.evict_where(|e| e.user == hog && e.state.borrow().outcome.is_some()) || map.evict_where(|e| e.user == hog)
+}
+
 fn mark_delivered(state: &mut RequestState) -> bool {
     if state.delivered {
         false
@@ -147,11 +170,13 @@ impl RelayHub {
         self.requests.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Queues a normalized tool call for `user`'s approval device and wakes long-polls. Refused when the relay is full,
-    /// or when `user` already has as many unanswered requests as an account may (a phone that is away should not let
-    /// one account fill the relay for everyone). The same call from the same connection while an earlier one is still
-    /// unanswered (a client retrying after a timeout) is that earlier request: the phone shows it once, and both
-    /// callers get its answer.
+    /// Queues a normalized tool call for `user`'s approval device and wakes long-polls. Refused when `user` already
+    /// has as many unanswered requests as an account may (a phone that is away should not let one account fill the
+    /// relay for everyone), or when the relay is full of this account's own requests. Another account is not refused
+    /// because the relay is full: the account holding the most loses its oldest request (an answered one first, so a
+    /// call the phone has not decided yet stays when a finished one can go). The same call from the same connection
+    /// while an earlier one is still unanswered (a client retrying after a timeout) is that earlier request: the
+    /// phone shows it once, and both callers get its answer.
     #[cfg(test)]
     pub fn submit(
         &self,
@@ -214,6 +239,10 @@ impl RelayHub {
                 if queued >= self.max_queued {
                     return Err(QueueFull::Account);
                 }
+            }
+            map.purge();
+            if !map.has_room() && !evict_other(&mut map, user) {
+                return Err(QueueFull::Server);
             }
             map.insert(request.id.clone(), entry)?;
         }
@@ -635,5 +664,66 @@ mod tests {
         h.requeue(USER);
         assert!(h.take_undelivered(USER).is_empty(), "an answered request stays answered");
         assert!(h.peek_waiting("someone-else").is_empty());
+    }
+
+    fn small() -> RelayHub {
+        RelayHub::with_capacity(
+            Timing {
+                relay_wait: secs(45),
+                offline: secs(10),
+            },
+            Arc::new(ItemSignal::new()),
+            2,
+        )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_account_filling_the_relay_does_not_block_another() {
+        let h = small().with_max_queued(10);
+        let oldest = h.submit("attacker", &conn(), "ChatGPT", search(), None, 1).unwrap();
+        let newer = h.submit("attacker", &conn(), "ChatGPT", search(), None, 2).unwrap();
+        assert_eq!(
+            h.submit("attacker", &conn(), "ChatGPT", search(), None, 3).unwrap_err(),
+            QueueFull::Server,
+            "it does not drop its own call"
+        );
+        assert!(h.fetch("attacker", &oldest.id).is_some());
+        let victim = h.submit("victim", &conn(), "Claude", search(), None, 4).unwrap();
+        assert!(h.fetch("victim", &victim.id).is_some());
+        assert!(h.fetch("attacker", &oldest.id).is_none(), "the account that held the most loses its oldest");
+        assert!(h.fetch("attacker", &newer.id).is_some());
+        // Tied: the attacker cannot push the victim back out.
+        assert_eq!(h.submit("attacker", &conn(), "ChatGPT", search(), None, 5).unwrap_err(), QueueFull::Server);
+        assert!(h.fetch("victim", &victim.id).is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_relay_drops_an_answered_request_before_an_open_one() {
+        let h = small().with_max_queued(10);
+        let open = h.submit("attacker", &conn(), "ChatGPT", search(), None, 1).unwrap();
+        let done = h.submit("attacker", &conn(), "ChatGPT", search(), None, 2).unwrap();
+        h.answer("attacker", &done.id, found()).unwrap();
+        let victim = h.submit("victim", &conn(), "Claude", search(), None, 3).unwrap();
+        assert!(h.fetch("attacker", &open.id).is_some(), "the call the phone has not decided stays");
+        assert!(h.fetch("attacker", &done.id).is_none());
+        assert!(h.fetch("victim", &victim.id).is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_account_with_no_queue_cap_still_cannot_lock_the_relay() {
+        let h = RelayHub::with_capacity(
+            Timing {
+                relay_wait: secs(45),
+                offline: secs(10),
+            },
+            Arc::new(ItemSignal::new()),
+            1,
+        )
+        .with_max_queued(0);
+        let hog = h.submit("attacker", &conn(), "ChatGPT", search(), None, 0).unwrap();
+        assert_eq!(h.submit("attacker", &conn(), "ChatGPT", search(), None, 1).unwrap_err(), QueueFull::Server);
+        let victim = h.submit("victim", &conn(), "Claude", search(), None, 2).unwrap();
+        assert!(h.fetch("attacker", &hog.id).is_none());
+        assert!(h.fetch("victim", &victim.id).is_some());
     }
 }

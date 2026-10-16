@@ -13,8 +13,11 @@
 //! Everything is in memory for at most [`DEVICE_GRANT_TTL`], like the rest of the relay. Device codes are stored only
 //! as SHA-256 hashes.
 
-use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex, MutexGuard, PoisonError},
+    time::Duration,
+};
 
 use rand::RngExt;
 use reins_proto::{
@@ -24,8 +27,8 @@ use reins_proto::{
 use tokio::time::Instant;
 
 use super::{
-    pairing::{PairingClient, PairingHub, PairingStatus, generate_choices},
-    ttl::{Full, TtlMap},
+    pairing::{PairingClient, PairingHub, PairingStatus, StartError as PairingStart, generate_choices},
+    ttl::TtlMap,
 };
 use crate::auth::reins::{hash_token, random_token};
 
@@ -36,8 +39,22 @@ pub const DEVICE_GRANT_TTL: Duration = Duration::from_secs(600);
 /// Seconds the desktop app waits between polls; each `slow_down` adds [`SLOW_DOWN_STEP`] (RFC 8628 §3.5).
 pub const POLL_INTERVAL: Duration = Duration::from_secs(5);
 pub const SLOW_DOWN_STEP: Duration = Duration::from_secs(5);
-/// Upper bound on grants held in memory.
+/// Upper bound on grants held in memory. One address is capped separately ([`MAX_PER_ADDRESS`]). A full map drops
+/// the oldest grant nobody has claimed, of the address that holds the most of those, so one address cannot lock
+/// the others out. A grant a phone has claimed is an approval in progress and is not dropped.
 pub const MAX_DEVICE_GRANTS: usize = 5_000;
+/// Grants one address may have open at once, claimed or not. Above the default device-authorization burst of 5, so
+/// one burst still fits, and far below [`MAX_DEVICE_GRANTS`].
+pub const MAX_PER_ADDRESS: usize = 8;
+
+/// Why a grant was not started.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StartError {
+    /// This address already has [`MAX_PER_ADDRESS`] grants. Other addresses are not affected.
+    Party,
+    /// The map is full of this address's own grants, or of grants a phone has already claimed.
+    Busy,
+}
 
 /// A fresh user code, `BCDF-GHJK`: eight letters of [`USER_CODE_ALPHABET`].
 pub fn generate_user_code() -> String {
@@ -65,6 +82,8 @@ struct Claim {
 }
 
 struct Grant {
+    /// The requester's address ([`super::limits::client_network`]).
+    party: String,
     client: PairingClient,
     user_code: String,
     code: u8,
@@ -81,7 +100,9 @@ pub enum ClaimError {
     NotFound,
     /// Another account's phone claimed it first.
     Taken,
-    /// The pairing could not be started (the hub is full).
+    /// This account already has as many open pairings as it may.
+    Limited,
+    /// The pairing could not be started without dropping another account's (or this account already fills the hub).
     Busy,
 }
 
@@ -126,10 +147,17 @@ impl DeviceGrants {
         self.grants.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Starts a grant for `client` (its name and key are what the phone will show).
-    pub fn start(&self, client: PairingClient) -> Result<StartedGrant, Full> {
+    /// Starts a grant for `client` (its name and key are what the phone will show). `party` is the requester's
+    /// address ([`super::limits::client_network`]).
+    pub fn start(&self, client: PairingClient, party: &str) -> Result<StartedGrant, StartError> {
         let mut grants = self.lock();
         grants.purge();
+        if grants.values().filter(|g| g.party == party).count() >= MAX_PER_ADDRESS {
+            return Err(StartError::Party);
+        }
+        if !grants.has_room() && !evict_other_unclaimed(&mut grants, party) {
+            return Err(StartError::Busy);
+        }
         // 20^8 codes: a collision with a live one is all but impossible, but cheap to rule out.
         let user_code = loop {
             let candidate = generate_user_code();
@@ -139,18 +167,21 @@ impl DeviceGrants {
         };
         let (code, choices) = generate_choices();
         let device_code = random_token();
-        grants.insert(
-            hash_token(&device_code),
-            Grant {
-                client,
-                user_code: user_code.clone(),
-                code,
-                choices,
-                interval: POLL_INTERVAL,
-                last_poll: None,
-                claim: None,
-            },
-        )?;
+        grants
+            .insert(
+                hash_token(&device_code),
+                Grant {
+                    party: party.to_owned(),
+                    client,
+                    user_code: user_code.clone(),
+                    code,
+                    choices,
+                    interval: POLL_INTERVAL,
+                    last_poll: None,
+                    claim: None,
+                },
+            )
+            .map_err(|_| StartError::Busy)?;
         Ok(StartedGrant {
             device_code,
             user_code,
@@ -176,9 +207,12 @@ impl DeviceGrants {
             }
             return pairings.fetch(user, &claim.pairing).ok_or(ClaimError::NotFound);
         }
-        let request = pairings
-            .start_claimed(user, grant.client.clone(), grant.code, grant.choices, now_unix)
-            .map_err(|Full| ClaimError::Busy)?;
+        let request = pairings.start_claimed(user, grant.client.clone(), grant.code, grant.choices, now_unix).map_err(
+            |error| match error {
+                PairingStart::Party => ClaimError::Limited,
+                PairingStart::Busy => ClaimError::Busy,
+            },
+        )?;
         grant.claim = Some(Claim {
             user: user.to_owned(),
             pairing: request.id.clone(),
@@ -227,6 +261,24 @@ impl DeviceGrants {
     pub fn purge(&self) {
         self.lock().purge();
     }
+}
+
+/// Drops the oldest unclaimed grant of another address, when that address has more unclaimed grants than `party`.
+/// A claimed grant stays: a phone may be approving it. This address's own grants stay too, so a second grant of
+/// the address that already fills the map is refused and someone else's is not pushed out by it.
+fn evict_other_unclaimed(map: &mut TtlMap<String, Grant>, party: &str) -> bool {
+    let mine = map.values().filter(|g| g.party == party && g.claim.is_none()).count();
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for grant in map.values() {
+        if grant.party != party && grant.claim.is_none() {
+            *counts.entry(grant.party.clone()).or_default() += 1;
+        }
+    }
+    let Some(hog) = counts.into_iter().filter(|(_, n)| *n > mine).max_by_key(|(_, n)| *n).map(|(owner, _)| owner)
+    else {
+        return false;
+    };
+    map.evict_where(|g| g.party == hog && g.claim.is_none())
 }
 
 impl Default for DeviceGrants {
@@ -294,7 +346,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_phone_claims_the_code_and_its_approval_logs_the_desktop_in_once() {
         let (grants, pairings) = (DeviceGrants::new(), hub());
-        let started = grants.start(desktop()).unwrap();
+        let started = grants.start(desktop(), "203.0.113.10").unwrap();
         assert_ne!(started.device_code, started.user_code);
         assert_eq!(grants.poll(&started.device_code, "desktop-client", &pairings), Poll::Pending);
 
@@ -332,7 +384,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_denial_or_the_wrong_number_is_access_denied() {
         let (grants, pairings) = (DeviceGrants::new(), hub());
-        let started = grants.start(desktop()).unwrap();
+        let started = grants.start(desktop(), "203.0.113.10").unwrap();
         let request = grants.claim("u1", &started.user_code, &pairings, 0).unwrap();
         let wrong = *request.choices.iter().find(|c| **c != started.confirm_code).unwrap();
         assert_eq!(pairings.answer("u1", &request.id, &answer(wrong)), Ok(PairingAnswer::WrongCode));
@@ -343,7 +395,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn only_one_account_can_claim_a_code() {
         let (grants, pairings) = (DeviceGrants::new(), hub());
-        let started = grants.start(desktop()).unwrap();
+        let started = grants.start(desktop(), "203.0.113.10").unwrap();
         let request = grants.claim("u1", &started.user_code, &pairings, 0).unwrap();
         assert_eq!(grants.claim("u2", &started.user_code, &pairings, 0), Err(ClaimError::Taken));
         assert_eq!(
@@ -358,7 +410,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn polling_too_fast_slows_the_desktop_down() {
         let (grants, pairings) = (DeviceGrants::new(), hub());
-        let started = grants.start(desktop()).unwrap();
+        let started = grants.start(desktop(), "203.0.113.10").unwrap();
         assert_eq!(grants.poll(&started.device_code, "desktop-client", &pairings), Poll::Pending);
         let slower = |secs| Poll::SlowDown {
             interval: Duration::from_secs(secs),
@@ -373,7 +425,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_device_code_works_only_for_its_client_and_for_ten_minutes() {
         let (grants, pairings) = (DeviceGrants::new(), hub());
-        let started = grants.start(desktop()).unwrap();
+        let started = grants.start(desktop(), "203.0.113.10").unwrap();
         assert_eq!(grants.poll(&started.device_code, "someone-else", &pairings), Poll::WrongClient);
         assert_eq!(grants.poll("a-guess", "desktop-client", &pairings), Poll::Expired);
         tokio::time::advance(DEVICE_GRANT_TTL).await;
@@ -384,12 +436,46 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_full_server_says_so() {
         let (grants, pairings) = (DeviceGrants::new(), PairingHub::with_capacity(Arc::new(ItemSignal::new()), 1));
-        let first = grants.start(desktop()).unwrap();
-        let second = grants.start(desktop()).unwrap();
+        let first = grants.start(desktop(), "203.0.113.10").unwrap();
+        let second = grants.start(desktop(), "203.0.113.10").unwrap();
         grants.claim("u1", &first.user_code, &pairings, 0).unwrap();
         assert_eq!(grants.claim("u1", &second.user_code, &pairings, 0), Err(ClaimError::Busy), "the hub is full");
         let capped = DeviceGrants::with_capacity(1);
-        capped.start(desktop()).unwrap();
-        assert!(capped.start(desktop()).is_err());
+        capped.start(desktop(), "203.0.113.10").unwrap();
+        assert_eq!(capped.start(desktop(), "203.0.113.10").unwrap_err(), StartError::Busy);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_address_cannot_fill_the_grants_for_everyone() {
+        let grants = DeviceGrants::with_capacity(MAX_PER_ADDRESS + 2);
+        let mut attacker_code = String::new();
+        for i in 0..MAX_PER_ADDRESS {
+            let started = grants.start(desktop(), "attacker").unwrap();
+            if i == 0 {
+                attacker_code = started.device_code;
+            }
+        }
+        assert_eq!(grants.start(desktop(), "attacker").unwrap_err(), StartError::Party);
+        let victim = grants.start(desktop(), "victim").unwrap();
+        let pairings = hub();
+        assert_eq!(grants.poll(&victim.device_code, "desktop-client", &pairings), Poll::Pending);
+        assert_eq!(grants.poll(&attacker_code, "desktop-client", &pairings), Poll::Pending, "the flood stays");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_full_map_drops_another_address_unclaimed_grant_but_not_a_claimed_one() {
+        let pairings = hub();
+        let grants = DeviceGrants::with_capacity(1);
+        let claimed = grants.start(desktop(), "attacker").unwrap();
+        grants.claim("u1", &claimed.user_code, &pairings, 0).unwrap();
+        assert_eq!(grants.start(desktop(), "victim").unwrap_err(), StartError::Busy);
+        assert_eq!(grants.poll(&claimed.device_code, "desktop-client", &pairings), Poll::Pending);
+
+        let grants = DeviceGrants::with_capacity(1);
+        let old = grants.start(desktop(), "attacker").unwrap();
+        assert_eq!(grants.start(desktop(), "attacker").unwrap_err(), StartError::Busy, "not its own");
+        let victim = grants.start(desktop(), "victim").unwrap();
+        assert_eq!(grants.poll(&old.device_code, "desktop-client", &pairings), Poll::Expired);
+        assert_eq!(grants.poll(&victim.device_code, "desktop-client", &pairings), Poll::Pending);
     }
 }

@@ -981,7 +981,7 @@ async fn self_update(paths: &Paths, config: &Config, check_only: bool) -> Result
             if update::installed_by_package_manager(&exe) {
                 out!(
                     "Update available: {} → {}. This reins came with a system package: update it with the package \
-                     manager (apt, dnf, or your AUR helper).",
+                     manager (apt or dnf).",
                     update::BUILD,
                     latest.build
                 );

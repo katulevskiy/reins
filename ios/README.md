@@ -44,9 +44,12 @@ server. It prints one line per target and exits non-zero with the compiler's err
 Needs Swift 6.4 ([swiftly](https://www.swift.org/install/linux/)) and the Darwin Swift SDK that
 [xtool](https://github.com/xtool-org/xtool) makes from an Xcode .xip (`xtool setup`; it lands in
 `~/.config/swiftpm/swift-sdks/darwin.artifactbundle`, or set `REINS_DARWIN_SDK`). The first run (about 1.5 min) also
-builds the Rust core for the host once, to generate `reins_coreFFI.h` with uniffi-bindgen as `build-core.sh` does, and
-fetches ONNX Runtime's headers at the version `Package.resolved` pins (checksum checked); both are cached in
-`~/.cache/reins-ios-typecheck`. Nothing is stubbed. Asset symbols (`ImageResource.foo`) are generated from the asset
+builds the Rust core for the host, to generate `reins_coreFFI.h` with uniffi-bindgen as `build-core.sh` does, and
+fetches ONNX Runtime's headers at the version `Package.resolved` pins (checksum checked). Both are cached in
+`~/.cache/reins-ios-typecheck` (or `$REINS_IOS_TYPECHECK_CACHE`). The core build is keyed by a content hash of the
+core's sources, the crates it depends on, Cargo.lock, the UniFFI config and the toolchain, one directory per hash,
+and the last three builds are kept, so worktrees that share the cache each use the build for their own sources.
+Nothing is stubbed. Asset symbols (`ImageResource.foo`) are generated from the asset
 catalogs as Xcode does.
 
 It does not link, sign or run anything: no simulator, no unit or UI tests run, no asset catalog, storyboard or

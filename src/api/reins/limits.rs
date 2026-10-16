@@ -8,12 +8,14 @@
 //! - an AI connection: requests to `/mcp` and the desktop API per minute, calls waiting for the phone at once;
 //! - an account: calls relayed to its phone per minute (each may wake it with a push), outbound requests the server
 //!   makes for its phone (per minute and at once), connection requests (pairings) naming its email or scanned by its
-//!   phone, wrong proofs sent to take its approval role;
+//!   phone (at most [`super::pairing::MAX_PER_PARTY`] open per account), wrong proofs sent to take its approval role;
 //! - a device: concurrent `GET /pending` and `GET /sync` long-polls;
 //! - a phone of an account with phone roles (key: account and device): op uploads per minute, proposals per hour;
 //! - an account with phone roles: roster changes per hour, ops and bytes its log holds (`REINS_ACCOUNT_LOG_*`);
-//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer), "add
-//!   another phone" join requests (with at most [`super::join::MAX_PER_USER`] open per account).
+//! - an IP address: OAuth dynamic client registrations, device authorizations (QR codes to pair a computer, at most
+//!   [`super::device_flow::MAX_PER_ADDRESS`] open), "add another phone" join requests (with at most
+//!   [`super::join::MAX_PER_USER`] open per account). Unknown-email pairing decoys are capped per address too
+//!   ([`super::pairing::MAX_PER_PARTY`]). The address is [`client_network`].
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -201,6 +203,19 @@ impl<K: Hash + Eq + Clone> FailureLimit<K> {
     }
 }
 
+/// The address a limit sees: the IPv4 address, or the /64 of an IPv6 address (one host usually holds a whole /64, so
+/// single addresses in it would each get their own quota). IPv4-mapped IPv6 is the IPv4 address.
+pub fn client_network(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            IpAddr::V6(std::net::Ipv6Addr::from(octets))
+        }
+        v4 @ IpAddr::V4(_) => v4,
+    }
+}
+
 /// Whole seconds to wait, rounded up, at least 1 (what error messages and `Retry-After` show).
 pub fn retry_secs(wait: Duration) -> u64 {
     (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1)
@@ -239,6 +254,10 @@ pub static DEVICE_AUTHORIZATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(||
 /// a burst of 20, then one every 3 s. Every fetch a request makes the server do is charged to the request's address;
 /// refreshes of documents the server already holds (known clients) are not. A request over budget is refused alone.
 pub static CLIENT_DOCUMENT_FETCHES: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(3, 20));
+
+/// Background refreshes of client documents the server holds that requests from one IP address may start: a burst
+/// of 10, then one every 6 s. Over it, the request is served from what the server holds, without a refresh.
+pub static CLIENT_DOCUMENT_REFRESHES: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| RateLimit::with_period(6, 10));
 
 /// OAuth dynamic client registrations per IP address.
 pub static REGISTRATIONS: LazyLock<RateLimit<IpAddr>> = LazyLock::new(|| {
@@ -326,6 +345,7 @@ pub fn retain_recent() {
     DEVICE_AUTHORIZATIONS.retain_recent();
     REGISTRATIONS.retain_recent();
     CLIENT_DOCUMENT_FETCHES.retain_recent();
+    CLIENT_DOCUMENT_REFRESHES.retain_recent();
     OUTBOUND_REQUESTS.retain_recent();
     DEVICE_PROOFS.retain_recent();
     MEMBER_OP_REQUESTS.retain_recent();

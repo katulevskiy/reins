@@ -225,7 +225,7 @@ async fn startup_rejects_a_mock_answering_alive_on_the_reserved_port() {
     };
     assert!(error.contains("Address already in use"), "{error}");
     assert!(started.elapsed() < Duration::from_secs(20), "did not notice the child exited");
-    assert!(mock.requests().is_empty(), "probed a server the child never bound");
+    assert!(mock.requests_not_probes().is_empty(), "probed a server the child never bound");
 }
 
 impl Drop for Server {

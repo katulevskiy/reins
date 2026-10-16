@@ -596,12 +596,12 @@ async fn a_flood_from_another_site_does_not_block_chatgpt() {
     let phone = server.phone("sami@example.com").await;
     phone.register_device().await;
     let chatgpt = JwtClient::start().await;
-    // The other site: 127.0.0.2, a different address from the mocks' 127.0.0.1; the flood comes from another
+    // The other site: 127.0.1.2, another /24 than the mocks' 127.0.0.1; the flood comes from another
     // client address too (X-Real-IP, trusted from loopback).
-    let port = silent_host("127.0.0.2").await;
+    let port = silent_host("127.0.1.2").await;
     let mut flood = Vec::new();
     for i in 0..40 {
-        let url = server.authorize_url(&format!("http://127.0.0.2:{port}/client-{i}.json"));
+        let url = server.authorize_url(&format!("http://127.0.1.2:{port}/client-{i}.json"));
         flood.push(tokio::spawn(async move {
             client().get(url).header("X-Real-IP", "203.0.113.7").send().await.map(|r| r.status())
         }));
