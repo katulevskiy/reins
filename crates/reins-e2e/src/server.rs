@@ -23,10 +23,15 @@ fn repo_root() -> PathBuf {
 fn binary() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
-        if let Some(path) = std::env::var_os("REINS_TEST_SERVER_BINARY") {
-            let binary = PathBuf::from(path).canonicalize().expect("the prebuilt test server must exist");
-            assert!(binary.is_file(), "REINS_TEST_SERVER_BINARY must be a file");
-            return binary;
+        // A prebuilt server, then the path Nextest relocates when tests run from an archive, then
+        // Cargo's own runtime path. Building here is the local fallback.
+        for key in ["REINS_TEST_SERVER_BINARY", "NEXTEST_BIN_EXE_vaultwarden", "CARGO_BIN_EXE_vaultwarden"] {
+            if let Some(path) = std::env::var_os(key) {
+                let binary =
+                    PathBuf::from(path).canonicalize().unwrap_or_else(|error| panic!("{key} must be a file: {error}"));
+                assert!(binary.is_file(), "{key} must be a file");
+                return binary;
+            }
         }
         let root = repo_root();
         let status = Command::new("cargo")

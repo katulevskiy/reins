@@ -6,6 +6,8 @@
 //! point at a stand-in for the user's own, whose `git/config` holds Reins' rules. Afterwards that stand-in must be
 //! byte for byte as it was.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -94,7 +96,7 @@ fn flows() {
     std::fs::write(config_dir.join("config.toml"), format!("listen = \"127.0.0.1:{port}\"\nmode = \"local\"\n"))
         .unwrap();
     let run = |args: &[&str]| -> Output {
-        let out = Command::new(env!("CARGO_BIN_EXE_reins"))
+        let out = Command::new(common::reins_exe())
             .args(args)
             .envs(home_env(&home))
             .env("REINS_CONFIG_DIR", &config_dir)

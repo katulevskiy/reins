@@ -141,7 +141,7 @@ jobs:
           docker build --check . -f docker/Dockerfile.alpine
 
   rust:
-    name: Server and core tests (Nextest)
+    name: Server and core tests (build)
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
@@ -159,19 +159,60 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.146
-      # Cargo builds the normal server binary for tests/reins_server (CARGO_BIN_EXE_vaultwarden).
-      # Nextest compiles all targets before starting E2E tests, so a separate server build is redundant.
+      # One compile, then two runners execute the archive. The archive holds the test binaries and the
+      # non-test binaries they link; the end-to-end tests start vaultwarden from REINS_TEST_SERVER_BINARY.
+      - name: Archive Rust tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/nextest-out"
+          cargo nextest archive --locked --workspace --exclude reins-desktop-app --features sqlite \
+            --archive-file "$RUNNER_TEMP/nextest-out/nextest-archive.tar.zst"
+          cp -a target/debug/vaultwarden "$RUNNER_TEMP/nextest-out/vaultwarden"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nextest-archive
+          path: ${{ runner.temp }}/nextest-out/
+          if-no-files-found: error
+          retention-days: 1
+      # Nextest does not run doctests; retain Cargo's separate documentation test pass on this compile.
+      - name: Documentation tests
+        run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --doc
+
+  rust-tests:
+    name: Server and core tests (${{ matrix.partition }}/2)
+    needs: [changes, rust]
+    if: needs.changes.outputs.rust == 'true' && needs.rust.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The run phase does not compile. cargo-nextest is enough; the archive was built with nextest 0.9.146.
+      - run: mkdir -p "$HOME/.cargo/bin"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.146
+      - uses: actions/download-artifact@v8
+        with:
+          name: nextest-archive
+          path: nextest-ci
       # The tests' temporary directories on tmpfs: the encrypted store rewrites and syncs its whole file on every change.
-      - name: Run all Rust tests
+      - name: Run partition
         env:
-          REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/target/debug/vaultwarden
+          REINS_TEST_SERVER_BINARY: ${{ github.workspace }}/nextest-ci/vaultwarden
         run: |
           export TMPDIR=/dev/shm/reins-tests
           mkdir -p "$TMPDIR"
-          cargo nextest run --locked --workspace --exclude reins-desktop-app --features sqlite --no-fail-fast --test-threads 8
-      # Nextest does not run doctests; retain Cargo's separate documentation test pass.
-      - name: Documentation tests
-        run: cargo test --locked --workspace --exclude reins-desktop-app --features sqlite --doc
+          chmod +x nextest-ci/vaultwarden
+          "$HOME/.cargo/bin/cargo-nextest" nextest run \
+            --archive-file nextest-ci/nextest-archive.tar.zst \
+            --partition hash:${{ matrix.partition }}/2 \
+            --no-fail-fast \
+            --test-threads 8
 
   rust-clippy:
     name: Server and core Clippy

@@ -1,5 +1,6 @@
 //! `reins mcp`: stdio JSON-RPC to the Reins server's `/mcp` with the app's session, against a mock server.
 
+mod common;
 mod d1_mock;
 
 use d1_mock::{Mock, logged_in, logged_out};
@@ -189,7 +190,7 @@ async fn lines_that_are_not_json_get_a_parse_error() {
 fn the_command_line_bridges_stdin_and_stdout() {
     use std::io::Write as _;
     let app = logged_out();
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reins"))
+    let mut child = std::process::Command::new(common::reins_exe())
         .args(["mcp", "--via", "Gemini CLI"])
         .envs(reins_desktop::config::home_env(app.dir.path()))
         .env("REINS_CONFIG_DIR", &app.paths.config_dir)

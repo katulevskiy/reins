@@ -2,6 +2,7 @@
 //! the command, its output and exit code pass through, and answers that do not fit the request are refused before
 //! anything runs.
 
+mod common;
 mod d2_support;
 
 use std::process::Output;
@@ -14,7 +15,7 @@ fn command(app: &App, config: &str, args: &[&str]) -> tokio::process::Command {
     std::fs::write(app.paths.config_file(), format!("{config}\n[notify]\nphone = false\n")).unwrap();
     let home = app.dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    let mut c = tokio::process::Command::new(env!("CARGO_BIN_EXE_reins"));
+    let mut c = tokio::process::Command::new(common::reins_exe());
     c.arg("run")
         .args(args)
         .envs(reins_desktop::config::home_env(&home))
