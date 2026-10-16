@@ -38,10 +38,14 @@ for up to {minutes} minutes. Then call reins_get_result with request_id={id}."
 pub fn pending_text(id: &RequestId) -> String {
     format!(
         "Waiting for the user to approve on their phone; nothing has happened yet. Tell the user to approve it in \
-the Reins app. When they confirm (the user can approve even after this message), call reins_get_result with \
-request_id={id}, or repeat the same request: a one-time approval may already cover it."
+the Reins app. Do not call the tool again: that would ask a second time. After the user responds (they can still \
+approve after this message), call reins_get_result with request_id={id}."
     )
 }
+
+/// Listed in no `tools/list` but still callable: `github_request_*` duplicates `github_api_*` (same GitHub REST API,
+/// read and write), and every listed tool counts against the clients that cap how many a connector may have.
+pub const UNLISTED_TOOLS: [&str; 2] = ["github_request_read", "github_request_write"];
 
 fn account_property() -> Value {
     json!({
@@ -197,7 +201,8 @@ pub fn tool_definitions() -> Vec<Value> {
                 "required": [],
                 "additionalProperties": false
             },
-            "annotations": read_hints()
+            // With `service` it asks the phone for a permission to see the accounts (usually for a month): a write.
+            "annotations": write_hints(false, false)
         }),
         json!({
             "name": "reins_get_result",
@@ -240,7 +245,7 @@ pub fn tool_definitions() -> Vec<Value> {
     ];
     // The other integrations describe their tools as data (reins-proto).
     // Desktop-only tools answer with credentials for the paired desktop app: never offered to an AI.
-    tools.extend(connector::specs().iter().filter(|s| !s.desktop_only).map(|s| {
+    tools.extend(connector::specs().iter().filter(|s| !s.desktop_only && !UNLISTED_TOOLS.contains(&s.tool)).map(|s| {
         json!({
             "name": s.tool,
             "title": s.title,
@@ -662,7 +667,8 @@ mod tests {
     #[test]
     fn tool_definitions_are_strict_and_well_formed() {
         let tools = tool_definitions();
-        assert_eq!(tools.len(), 7 + connector::specs().iter().filter(|s| !s.desktop_only).count());
+        let listed = connector::specs().iter().filter(|s| !s.desktop_only).count() - UNLISTED_TOOLS.len();
+        assert_eq!(tools.len(), 7 + listed);
         for tool in &tools {
             assert!(tool["name"].is_string() && tool["description"].is_string(), "{tool}");
             assert_eq!(tool["inputSchema"]["type"], "object");
@@ -701,16 +707,22 @@ mod tests {
             );
         }
         let annotations = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap()["annotations"].clone();
-        for spec in connector::specs().iter().filter(|s| !s.desktop_only) {
+        for spec in connector::specs().iter().filter(|s| !s.desktop_only && !UNLISTED_TOOLS.contains(&s.tool)) {
             let read = spec.effect != connector::Effect::Write;
             assert_eq!(annotations(spec.tool)["readOnlyHint"], read, "{}", spec.tool);
         }
-        for read in ["gmail_read", "gmail_search", "reins_list_accounts", "reins_get_result"] {
+        for read in ["gmail_read", "gmail_search", "reins_get_result"] {
             assert_eq!(annotations(read)["readOnlyHint"], true, "{read}");
         }
-        for write in ["gmail_send", "reins_request_access", UPLOAD_TOOL] {
+        // reins_list_accounts with a service asks the phone for a permission to see accounts.
+        for write in ["gmail_send", "reins_request_access", "reins_list_accounts", UPLOAD_TOOL] {
             assert_eq!(annotations(write)["readOnlyHint"], false, "{write}");
         }
+        assert_eq!(annotations("reins_list_accounts")["destructiveHint"], false);
+        for runs_code in ["github_workflow_dispatch", "github_run_rerun", "github_branch_rename"] {
+            assert_eq!(annotations(runs_code)["destructiveHint"], true, "{runs_code}");
+        }
+        assert_eq!(annotations("vault_send_create")["openWorldHint"], true, "a Send is a public link");
         // Sends that cannot be taken back, deletions and overwrites are destructive; adding things is not.
         for destructive in [
             "gmail_send",
@@ -1007,7 +1019,7 @@ mod tests {
         assert!(offline_text(&id, PhoneSeen::Never).contains("(last seen not since the Reins server last restarted)"));
         assert_eq!(
             pending_text(&id),
-            "Waiting for the user to approve on their phone; nothing has happened yet. Tell the user to approve it in the Reins app. When they confirm (the user can approve even after this message), call reins_get_result with request_id=req-9, or repeat the same request: a one-time approval may already cover it."
+            "Waiting for the user to approve on their phone; nothing has happened yet. Tell the user to approve it in the Reins app. Do not call the tool again: that would ask a second time. After the user responds (they can still approve after this message), call reins_get_result with request_id=req-9."
         );
         let seen = PhoneSeen::Ago(90);
         for wait in [WaitResult::Offline, WaitResult::Pending, WaitResult::NotFound] {
@@ -1170,7 +1182,15 @@ mod tests {
         let tools = tool_definitions();
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for spec in connector::specs() {
-            assert_eq!(names.contains(&spec.tool), !spec.desktop_only, "{} is listed wrongly", spec.tool);
+            let listed = !spec.desktop_only && !UNLISTED_TOOLS.contains(&spec.tool);
+            assert_eq!(names.contains(&spec.tool), listed, "{} is listed wrongly", spec.tool);
+        }
+        // Unlisted is not unavailable: a client that knows the name can still call it.
+        let read = parse_invocation("github_request_read", &json!({"path": "/user"})).unwrap();
+        assert!(matches!(read, ToolInvocation::Relay(ToolCall::Connector(_), _)));
+        for unlisted in UNLISTED_TOOLS {
+            assert!(connector::spec_for_tool(unlisted).is_some_and(|s| !s.desktop_only), "{unlisted}");
+            assert_ne!(parse_invocation(unlisted, &json!({})), Err(ToolArgError::UnknownTool(unlisted.to_owned())));
         }
         for desktop in connector::specs().iter().filter(|s| s.desktop_only) {
             assert_eq!(

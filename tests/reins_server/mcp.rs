@@ -144,7 +144,13 @@ async fn both_protocol_eras_are_served() {
             "reins_upload"
         ]
         .into_iter()
-        .chain(reins_proto::connector::specs().iter().filter(|s| !s.desktop_only).map(|s| s.tool))
+        .chain(
+            reins_proto::connector::specs()
+                .iter()
+                // The duplicates of github_api_* stay callable but are not listed.
+                .filter(|s| !s.desktop_only && !matches!(s.tool, "github_request_read" | "github_request_write"))
+                .map(|s| s.tool)
+        )
         .collect::<Vec<_>>()
     );
 
@@ -260,7 +266,7 @@ async fn a_fetched_but_undecided_request_is_pending_then_delivered_late_exactly_
     assert_eq!(
         text_of(&pending),
         format!(
-            "Waiting for the user to approve on their phone; nothing has happened yet. Tell the user to approve it in the Reins app. When they confirm (the user can approve even after this message), call reins_get_result with request_id={request_id}, or repeat the same request: a one-time approval may already cover it."
+            "Waiting for the user to approve on their phone; nothing has happened yet. Tell the user to approve it in the Reins app. Do not call the tool again: that would ask a second time. After the user responds (they can still approve after this message), call reins_get_result with request_id={request_id}."
         )
     );
     // The user approves after the AI gave up.

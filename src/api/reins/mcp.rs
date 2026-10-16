@@ -17,13 +17,15 @@ pub const SERVER_NAME: &str = "reins";
 /// How to use Reins, for every client: the flow in a few lines. [`instructions`] adds what the user has connected.
 pub const INSTRUCTIONS: &str = "Reins lets you act in the user's accounts (Gmail, Google Calendar and Contacts, \
 GitHub, Telegram, text messages, the password vault, and MCP servers the user added in Reins) through their phone, \
-where the user approves what you do. Credentials never reach you: you only get results.
+where the user approves what you do. Secrets (a vault password, card details) are released only when the user \
+approves each one on their phone.
 - For a single action, call its tool directly (gmail_send, github_create_issue, calendar_create_event, ...). Reins \
 asks the user on their phone. Do not ask for a standing permission first.
 - reins_request_access is only for doing the same kind of Gmail call many times over a while; it is never a step \
 before a single action.
 - If a result says the request is waiting, tell the user to approve it on their phone, then call reins_get_result \
-with the request_id. Never say an action is done until a result confirms it.
+with the request_id after the user confirms. Do not call the tool again: that would ask twice. Never say an action \
+is done until a result confirms it.
 - If a result says the device is offline, tell the user to open the Reins app on their phone.
 - If a result says a service is not connected, ask the user to add it in the Reins app, then call the tool again; \
 no new chat is needed.
@@ -33,7 +35,8 @@ no new chat is needed.
 pub fn instructions(services: Option<&[String]>) -> String {
     match services {
         Some([]) => format!(
-            "{INSTRUCTIONS}\nRight now no service is connected: the user adds them in the Reins app (Connections)."
+            "{INSTRUCTIONS}\nNo connected services are reported yet; you can still try a tool, and the user adds \
+             services in the Reins app (Connections)."
         ),
         Some(services) => {
             let names: Vec<&str> = services.iter().map(|s| reins_proto::connector::service_name(s)).collect();
@@ -377,7 +380,12 @@ mod tests {
                 "reins_upload"
             ]
             .into_iter()
-            .chain(reins_proto::connector::specs().iter().filter(|s| !s.desktop_only).map(|s| s.tool))
+            .chain(
+                reins_proto::connector::specs()
+                    .iter()
+                    .filter(|s| !s.desktop_only && !tools::UNLISTED_TOOLS.contains(&s.tool))
+                    .map(|s| s.tool)
+            )
             .collect::<Vec<_>>()
         );
         assert!(legacy["result"].get("ttlMs").is_none());
@@ -409,7 +417,7 @@ mod tests {
         ));
         let (_, unknown) = reply(call(&McpHeaders::default(), rpc(3, "initialize", json!({}))));
         assert_eq!(unknown["result"]["instructions"], INSTRUCTIONS);
-        assert!(instructions(Some(&[])).contains("no service is connected"));
+        assert!(instructions(Some(&[])).contains("No connected services are reported yet; you can still try a tool"));
         // The core flow, in the words the model reads.
         for must in [
             "call its tool directly",
@@ -417,7 +425,9 @@ mod tests {
             "reins_get_result",
             "Never say an action is done",
             "offline",
-            "Credentials never reach you",
+            "released only when the user approves each one",
+            "after the user confirms",
+            "Do not call the tool again",
             "reins_list_accounts",
         ] {
             assert!(INSTRUCTIONS.contains(must), "{must}");

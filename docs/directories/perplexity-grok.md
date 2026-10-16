@@ -48,7 +48,7 @@ else. The server must be reachable from the public internet, which `app.reins2fa
 
 ## Notes for both
 
-- **Many tools.** Reins lists 281 tools. Clients without on-demand tool loading may truncate the list or spend
+- **Many tools.** Reins lists 279 tools. Clients without on-demand tool loading may truncate the list or spend
   context on it. If a client struggles, a narrower tool set per connection is the fix (not built).
 - **Origin header.** Reins accepts browser `Origin` headers only from Claude and ChatGPT. Server-to-server calls send
   none, and that is how these clients are expected to connect. If a connection fails with "Origin not allowed", add the

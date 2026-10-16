@@ -54,7 +54,8 @@ longDescription:
 > happen: the recipients and the full text, or the diff. Nothing happens until you approve. For repeated work you
 > can give a narrow, time-limited permission, and you can revoke it at any time.
 >
-> Your passwords and tokens stay on your phone. ChatGPT only receives the results you approve.
+> Your service sign-ins stay on your phone. Secrets, such as a vault password or card details, are released only
+> when you approve each one on your phone. ChatGPT only receives the results you approve.
 >
 > Who it is for: people who want an assistant to handle email, calendar and code chores without handing it their
 > accounts.
@@ -82,8 +83,13 @@ definitions:
 - `destructiveHint` is true for deletions, overwrites, cancellations and sends that cannot be taken back (emails,
   Telegram and SMS messages, purchases). An undo does not make a tool non-destructive.
 - `openWorldHint` is true for GitHub (public repositories and users), purchases, and writes that reach other people:
-  messages, invitations, the vacation reply and forwarding filters. It is false for the user's own mail, calendars,
-  contacts and vault.
+  messages, invitations, the vacation reply, and Bitwarden Sends (public links). It is false for the user's own mail
+  (filters never forward), calendars, contacts and vault.
+- `destructiveHint` is also true for writes that run code or cannot be withdrawn: running or re-running a workflow,
+  renaming a branch and submitting a review. These per-tool decisions are listed in `DESTRUCTIVE_OVERRIDES`
+  (`crates/reins-proto/src/connector.rs`).
+- `reins_list_accounts` is not read-only: with a service, it asks the phone for permission to see that service's
+  accounts.
 
 Tests in `src/api/reins/tools.rs` check that every tool has a title and all four hints, and spot-check their values.
 
@@ -143,9 +149,13 @@ and Edu. Check with a Plus account before promising write actions there.
 2. **Commerce.** OpenAI limits commerce to physical goods and asks for a commerce declaration (`review.commerce`).
    `payments_purchase_request` buys at a store's checkout with a virtual card, so declare it. Money transfers are
    prohibited, but a purchase is not a transfer. The alternative is to leave the payments tools off the listed server.
-3. **Restricted data.** The guidelines bar collecting "access credentials and authentication secrets". Reins never
-   sends credentials to the AI, but the vault tools can return a password the user approves (`vault_get`). Explain
-   this in the review notes, or leave the vault tools off a directory listing.
+3. **Restricted data.** The guidelines bar collecting "access credentials and authentication secrets". The user's
+   service sign-ins stay on the phone, but some tools can return a secret once the user approves that one release:
+   - a vault password (`vault_get`);
+   - payment card details;
+   - a leaked secret in a secret scanning alert.
+
+   Explain this in the review notes, or leave those tools off a directory listing.
 4. **Support URL** must be HTTPS; there is no support page yet.
 5. **Domain token:** set `REINS_OPENAI_APPS_CHALLENGE` (code is in place).
 

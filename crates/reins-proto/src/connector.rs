@@ -311,7 +311,8 @@ impl ToolSpec {
     ///   every time ([`ToolSpec::once_only`]);
     /// - `idempotentHint`: reads, and writes that leave the same state when repeated (a delete, a set, a star);
     /// - `openWorldHint`: GitHub (public repositories, any user), purchases, and writes that reach other people
-    ///   (messages, invitations, automatic replies). The user's own mail, chats, calendars and vault are closed.
+    ///   (messages, invitations, automatic replies, public Send links). The user's own mail, chats, calendars and vault
+    ///   are closed.
     #[must_use]
     pub fn annotations(&self) -> Value {
         let read_only = self.effect != Effect::Write;
@@ -327,15 +328,15 @@ impl ToolSpec {
         self.tool.split('_').any(|part| words.contains(&part))
     }
 
-    /// See [`ToolSpec::annotations`]. Pinging a webhook is asked for every time but changes nothing; reporting how a
-    /// purchase went changes nothing either.
+    /// See [`ToolSpec::annotations`]: [`DESTRUCTIVE_OVERRIDES`] where a tool's name says otherwise, else a write asked
+    /// for every time, or one whose name deletes, overwrites, cancels or sends.
     fn is_destructive(&self) -> bool {
         const DESTRUCTIVE: &[&str] = &[
             "delete", "remove", "trash", "cancel", "empty", "update", "set", "merge", "transfer", "dismiss", "put",
             "edit", "send", "commit", "write",
         ];
-        if matches!(self.tool, "github_webhook_ping" | "payments_purchase_complete") {
-            return false;
+        if let Some((_, destructive)) = DESTRUCTIVE_OVERRIDES.iter().find(|(tool, _)| *tool == self.tool) {
+            return *destructive;
         }
         self.once_only || self.name_has(DESTRUCTIVE)
     }
@@ -365,6 +366,8 @@ impl ToolSpec {
         !self.name_has(NOT_IDEMPOTENT)
     }
 
+    /// GitHub, and the writes that reach other people or the public. Gmail filters never forward mail, so they stay
+    /// closed; a Bitwarden Send is a public link.
     fn is_open_world(&self) -> bool {
         self.service == GITHUB
             || matches!(
@@ -374,7 +377,9 @@ impl ToolSpec {
                     | "calendar_create_event"
                     | "calendar_delete_event"
                     | "gmail_set_vacation"
-                    | "gmail_create_filter"
+                    | "vault_send_create"
+                    | "vault_send_update"
+                    | "vault_send_remove_password"
                     | "payments_purchase_request"
             )
     }
@@ -688,6 +693,25 @@ pub fn specs() -> &'static [ToolSpec] {
 pub fn spec_for_tool(name: &str) -> Option<&'static ToolSpec> {
     specs().iter().find(|s| s.tool == name)
 }
+
+/// The writes whose `destructiveHint` is not what their name suggests, each decided on its own (every GitHub write was
+/// checked). `true`: it runs code, rewrites history or leaves something that cannot be taken back. `false`: asked for
+/// every time, but changes nothing lasting.
+pub const DESTRUCTIVE_OVERRIDES: &[(&str, bool)] = &[
+    // Renaming a branch breaks every clone, link and script that names it.
+    ("github_branch_rename", true),
+    // Running a workflow runs its code with the repository's secrets: deploys, releases, publishing.
+    ("github_workflow_dispatch", true),
+    ("github_run_rerun", true),
+    ("github_run_rerun_failed", true),
+    ("github_job_rerun", true),
+    // A submitted review (an approval can unblock a merge) cannot be withdrawn, only dismissed.
+    ("github_pr_review_create", true),
+    // A test delivery to the webhook's own address.
+    ("github_webhook_ping", false),
+    // Reports how a purchase went; the purchase itself was approved before.
+    ("payments_purchase_complete", false),
+];
 
 /// An integration's name as the user knows it ("Google Calendar" for `gcalendar`); the id itself for one it does not
 /// know.
@@ -1054,6 +1078,23 @@ mod tests {
         assert_eq!(Effect::Search.access(), "read");
         assert_eq!(Effect::Write.access(), "write");
         assert_eq!(Effect::List.access(), "list");
+    }
+
+    #[test]
+    fn destructive_overrides_name_writes_and_win() {
+        for (tool, destructive) in DESTRUCTIVE_OVERRIDES {
+            let spec = spec_for_tool(tool).unwrap_or_else(|| panic!("{tool} is not a tool"));
+            assert_eq!(spec.effect, Effect::Write, "{tool}");
+            assert_eq!(spec.annotations()["destructiveHint"], *destructive, "{tool}");
+        }
+        let hint = |tool: &str, name: &str| spec_for_tool(tool).unwrap().annotations()[name].clone();
+        assert_eq!(hint("github_branch_rename", "destructiveHint"), true);
+        assert_eq!(hint("github_workflow_dispatch", "destructiveHint"), true);
+        assert_eq!(hint("github_create_issue", "destructiveHint"), false);
+        assert_eq!(hint("vault_send_create", "openWorldHint"), true);
+        assert_eq!(hint("vault_send_update", "openWorldHint"), true);
+        assert_eq!(hint("gmail_create_filter", "openWorldHint"), false, "filters never forward mail");
+        assert_eq!(hint("vault_item_create", "openWorldHint"), false);
     }
 
     #[test]

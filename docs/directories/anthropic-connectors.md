@@ -47,8 +47,9 @@ Description (at most 2,000 characters):
 > approve it. For repeated work you can give a narrow, time-limited permission, for example "read emails from my bank
 > for an hour". You can revoke it at any time.
 >
-> Your passwords and tokens never leave your phone. Claude only gets the results you approve, and the Reins server
-> only relays them: it keeps requests in memory for at most ten minutes and logs no content.
+> Your service sign-ins stay on your phone. Secrets, such as a vault password or card details, are released only
+> when you approve each one on your phone. Claude only gets the results you approve, and the Reins server only
+> relays them: it keeps requests in memory for at most ten minutes and logs no content.
 >
 > To use it, install the Reins app (iOS or Android), connect the services you want, then add this connector and sign
 > in with your Reins account.
@@ -140,7 +141,7 @@ first (see the gaps below).
 | Every tool has a `title` | Done; a test checks it |
 | Every tool has `readOnlyHint` / `destructiveHint` (Reins sets all four hints) | Done; a test checks it |
 | Tool names at most 64 characters | Done; a test checks it |
-| Read and write split into separate tools (no catch-all with a `method`) | Done: `github_api_read` / `github_api_write` and `github_request_read` / `github_request_write` are separate. The write tools take a method, but only unsafe ones. |
+| Read and write split into separate tools (no catch-all with a `method`) | Done: `github_api_read` / `github_api_write` are separate, and the write tool takes only unsafe methods. The duplicate `github_request_*` tools are not listed. |
 | Custom query tools name the target API | Done: the GitHub API tools link `https://docs.github.com/rest` |
 | Descriptions say what the tool does, no prompt injection | Done. Descriptions start with the verb. The server instructions describe only how to use Reins's own tools. |
 | Actionable errors | Done: denied, offline, waiting, not connected, and invalid arguments each say what to do |
@@ -161,9 +162,9 @@ first (see the gaps below).
 2. **Reviewer access.** Approvals need a phone. A demo account kept in Autopilot Bypass with sandbox accounts
    (Option A) is the practical way. It needs a dedicated Google Workspace or Gmail account, a GitHub user and a
    phone or emulator that stays online.
-3. **Tool count.** 281 tools are listed (210 for GitHub). Claude loads tools on demand when there are many, so this
-   works, but reviewers weigh "token use proportionate to the task". Merging rarely used GitHub tools, or leaving
-   `github_request_*` (which overlaps `github_api_*`) off the list, would help.
+3. **Tool count.** 279 tools are listed (208 for GitHub; the duplicate `github_request_*` are no longer listed but
+   stay callable). Claude loads tools on demand when there are many, so this works, but reviewers weigh "token use
+   proportionate to the task". Merging rarely used GitHub tools would help further.
 4. **DCR volume.** Each new Claude connection registers a client. Reins supports CIMD, which Claude prefers when both
    values are advertised, as they are. No action is needed, but check after launch.
 5. **Icon.** A 512 x 512 PNG and the SVG exist. The portal does not state a size; use the SVG, or the 512 PNG.
