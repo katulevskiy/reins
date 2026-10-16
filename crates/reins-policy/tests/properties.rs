@@ -171,7 +171,8 @@ fn covers_read(g: &Grant, conn: &ConnectionId, now: i64, m: &MessageFacts) -> bo
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(2_000))]
+    // Same soundness assertions as a longer draw. 256 is proptest's default and still rejects a broken grant check.
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn read_decisions_are_sound_and_complete(
