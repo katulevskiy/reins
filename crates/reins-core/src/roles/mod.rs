@@ -372,7 +372,7 @@ impl Engine {
             .map_or_else(|| Ok(ViewKeyring::default()), |raw| ViewKeyring::from_bytes(&raw))
     }
 
-    fn save_keyring(&self, slot: &str, ring: &ViewKeyring) -> Result<(), CoreError> {
+    pub(crate) fn save_keyring(&self, slot: &str, ring: &ViewKeyring) -> Result<(), CoreError> {
         self.store.device_secret_put(VIEW_KEYS, slot, &ring.to_bytes()?)
     }
 
@@ -387,6 +387,11 @@ impl Engine {
     /// The view-key grants this phone owes members (after a removal or a recovery); the sync delivers them.
     pub(crate) fn outgoing_grants(&self, slot: &str) -> Result<Vec<OutgoingGrant>, CoreError> {
         Ok(self.load(VIEW_GRANTS, slot)?.unwrap_or_default())
+    }
+
+    /// The sync queued them: none owed now.
+    pub(crate) fn clear_outgoing_grants(&self, slot: &str) -> Result<(), CoreError> {
+        self.store.device_secret_delete(VIEW_GRANTS, slot)
     }
 
     fn owe_grants(&self, slot: &str, grants: Vec<OutgoingGrant>) -> Result<(), CoreError> {
@@ -499,7 +504,7 @@ impl Engine {
         })
     }
 
-    fn standing_in(&self, roster: &LocalRoster) -> Result<Standing, CoreError> {
+    pub(crate) fn standing_in(&self, roster: &LocalRoster) -> Result<Standing, CoreError> {
         Ok(roster.standing(&self.store.device_id()?, &self.sign_key()?.public_b64()))
     }
 
@@ -516,9 +521,21 @@ impl Engine {
             return Ok(None);
         };
         let fetched = api_call!(session, |api| api.roster()).map_err(ApiFailure::into_core)?;
-        let updated = local.updated_seen(&fetched.entries, |m| self.seen_counter(m))?;
+        let mut updated = local.updated_seen(&fetched.entries, |m| self.seen_counter(m))?;
         if updated != local {
             self.save_roster(&account.slot, &updated)?;
+        }
+        if fetched.entries.last().is_some_and(|tip| tip.epoch > updated.epoch()) {
+            // An entry names more of the outgoing primary's ops than this phone applied: the log first (with the
+            // entries before it known), then again.
+            if let Err(e) = Box::pin(self.catch_up_log(session, account)).await {
+                log::debug!("the log did not catch up before the roster: {e}");
+            }
+            let again = updated.updated_seen(&fetched.entries, |m| self.seen_counter(m))?;
+            if again != updated {
+                self.save_roster(&account.slot, &again)?;
+                updated = again;
+            }
         }
         self.reconcile_roles(account, &updated)?;
         Ok(Some(updated))
@@ -633,6 +650,11 @@ impl Engine {
     /// A seed no entry names yet (a recovery the server has not confirmed) is kept. Never called because the server
     /// answered an empty roster: that is no reason to drop anything.
     pub(crate) fn reconcile_roles(&self, account: &Account, roster: &LocalRoster) -> Result<(), CoreError> {
+        // A viewer, or a phone no longer in the roster, holds no integration token nor the mandate key (the primary
+        // opens them): forgotten as soon as this phone sees it is not the primary.
+        if self.standing_in(roster)? != Standing::Primary {
+            self.store.wipe_tokens()?;
+        }
         let Some(seed) = self.owner_seed(&account.slot)? else {
             return Ok(());
         };
@@ -763,6 +785,10 @@ impl Engine {
     /// The last op of the outgoing `primary` this phone took, for the handover or recovery entry to name: its ops up to
     /// there stay its history; any later one is a replaced primary's (the brake only).
     fn last_counter(&self, primary: &Member) -> Result<u64, CoreError> {
+        // This phone's own: what it queued counts too, sent or not, so no op it numbered falls outside the bound.
+        if primary.device_id == self.store.device_id()? && primary.sign_pub == self.sign_key()?.public_b64() {
+            return self.own_last_counter();
+        }
         self.store.oplog(|c| crate::store::oplog::last_counter(c, primary))?
     }
 
@@ -1323,6 +1349,16 @@ impl Engine {
     /// This phone becomes a viewer and drops the owner seed and the keys that moved.
     pub async fn handover_approve(&self, id: &str, device_id: &str) -> Result<(), CoreError> {
         let session = self.session()?;
+        // This phone's last changes go into the log first: the entry names its last op, and the server takes no entry
+        // naming an op it does not have.
+        if let Err(e) = self.live_sync_now().await {
+            log::warn!("the last changes did not reach the server before the handover: {e}");
+        }
+        if self.has_unsent_ops()? {
+            return Err(CoreError::invalid(
+                "This phone's last changes have not reached the server yet. Try the handover again once online.",
+            ));
+        }
         let _one = self.roles.changing.lock().await;
         let account = self.roles_account(&session).await?;
         let request = api_call!(&session, |api| api.handover_request(id)).map_err(ApiFailure::into_core)?;

@@ -440,6 +440,19 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     // Phone roles: the demo account has none (legacy), so the role calls report that and the changes refuse.
     func phoneRole() async throws -> PhoneRole { .legacy }
     func rosterSummary(refresh: Bool) async throws -> RosterSummary? { nil }
+    func liveSync(waitSecs: UInt32) async throws -> LiveSyncState { Self.legacyLive }
+    func liveSyncState() async throws -> LiveSyncState { Self.legacyLive }
+    func proposalCreate(kind: String, title: String, rowsJson: String) async throws -> String {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func proposalWithdraw(id: String) async throws { throw CoreError.NotFound }
+    func proposals() async throws -> [ProposalView] { [] }
+    func proposalKeep(id: String) async throws { throw CoreError.NotFound }
+    func proposalDiscard(id: String) async throws { throw CoreError.NotFound }
+    private static let legacyLive = LiveSyncState(
+        role: .legacy, epoch: 0, appliedSeq: 0, headSeq: 0, primaryName: "", primarySeenAt: nil, live: false,
+        forked: nil, disagrees: false, waitingForKey: false, queued: 0, notice: nil
+    )
     func rosterCreate(deviceName: String, codeOrPassword: String?) async throws -> RosterSummary {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }

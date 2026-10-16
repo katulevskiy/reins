@@ -26,6 +26,7 @@ pub mod google;
 pub mod handler;
 pub mod http;
 pub mod join;
+pub mod live_sync;
 pub mod mcp;
 pub mod phone_api;
 pub mod quick;

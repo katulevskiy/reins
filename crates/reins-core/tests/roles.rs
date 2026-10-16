@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use data_encoding::BASE64URL_NOPAD;
+use reins_core::autopilot::AutopilotMode;
 use reins_core::crypto::{Kdf, master_key, master_password_hash};
 use reins_core::{
     CoreConfig, CoreError, EnrollProgress, GoogleTokenProvider, HandoverProgress, Notifier, PhoneRole, ReinsCore,
@@ -18,6 +19,7 @@ use reins_proto::answer::{AnswerKind, SignedAnswer, answer_message};
 use reins_proto::canon::parse_sig;
 use reins_proto::enroll::{EnrollChallenge, EnrollReveal, check_commitment, parse_nonce};
 use reins_proto::join::{JoinAnswer, JoinCreated, JoinRequest, JoinState, JoinStatus, NewJoin};
+use reins_proto::oplog::{Checkpoint, Heartbeat, OpBatch, OpsAppended, SyncResponse, SyncedOp, Waiting, authorize_op};
 use reins_proto::roster::{
     HandoverCreated, HandoverRequest, HandoverState, HandoverStatus, NewHandover, RecoveryWrap, RecoveryWrapRequest,
     Roster, RosterAppend, RosterAppended, RosterEntry, RosterReason, recovery_wrap_hash, verify_step,
@@ -97,6 +99,15 @@ struct State {
     /// Recovery-wrap requests that reached the server.
     wrap_requests: u32,
     deleted: bool,
+    // The op log, kept as the real server does: each op checked against the roster and its author's counter.
+    ops: Vec<SyncedOp>,
+    counters: HashMap<(String, String), u64>,
+    checkpoint: Option<Checkpoint>,
+    heartbeat: Option<Heartbeat>,
+    /// Ops up to here were dropped (behind the checkpoint).
+    floor: u64,
+    /// `POST /ops` answers 503 (the phone is offline for its uploads).
+    ops_down: bool,
 }
 
 #[derive(Clone)]
@@ -188,6 +199,80 @@ impl State {
         ok(appended)
     }
 
+    fn post_ops(&mut self, me: &str, batch: OpBatch) -> ResponseTemplate {
+        if self.ops_down {
+            return err(503, "unavailable");
+        }
+        let mut seqs = Vec::new();
+        for op in batch.ops {
+            if op.author != me {
+                return err(403, "op_refused");
+            }
+            let Ok(signer) = authorize_op(&op, &self.roster) else {
+                return err(403, "op_refused");
+            };
+            let ok_sig = parse_sig(&op.sig)
+                .zip(op.signing_bytes().ok())
+                .is_some_and(|(sig, msg)| verify(&signer.sign_key().unwrap(), &msg, &sig));
+            if !ok_sig {
+                return err(403, "bad_signature");
+            }
+            let last = self.counters.entry((op.author.clone(), signer.sign_pub.clone())).or_insert(0);
+            if op.counter <= *last {
+                match self.ops.iter().find(|o| o.op == op) {
+                    Some(stored) => {
+                        seqs.push(stored.seq);
+                        continue;
+                    }
+                    None => return err(409, "counter_replay"),
+                }
+            }
+            *last = op.counter;
+            let seq = self.ops.last().map_or(self.floor, |o| o.seq) + 1;
+            self.ops.push(SyncedOp {
+                seq,
+                op,
+            });
+            seqs.push(seq);
+        }
+        ok(OpsAppended {
+            seqs,
+            head_seq: self.head(),
+        })
+    }
+
+    fn head(&self) -> u64 {
+        self.ops.last().map_or(self.floor, |o| o.seq)
+    }
+
+    fn sync(&self, req: &Request) -> ResponseTemplate {
+        let after: u64 =
+            req.url.query_pairs().find(|(k, _)| k == "after").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
+        let from = after.max(self.floor);
+        let ops: Vec<SyncedOp> = self.ops.iter().filter(|o| o.seq > from).take(500).cloned().collect();
+        ok(SyncResponse {
+            epoch: self.roster.last().map_or(0, |e| e.epoch),
+            head_seq: self.head(),
+            floor_seq: self.floor,
+            more: self.ops.iter().filter(|o| o.seq > from).count() > ops.len(),
+            ops,
+            checkpoint_seq: self.checkpoint.as_ref().map(|c| c.seq),
+            heartbeat: self.heartbeat.clone(),
+            min_acked_seq: 0,
+            waiting: Waiting::default(),
+            answered: Vec::new(),
+            cursor: format!("{}-{}", self.roster.len(), self.head()),
+        })
+    }
+
+    /// Drops the ops the latest checkpoint covers (what the real server does with the older of its two).
+    fn drop_behind_checkpoint(&mut self) {
+        if let Some(cp) = &self.checkpoint {
+            self.floor = cp.seq;
+            self.ops.retain(|o| o.seq > cp.seq);
+        }
+    }
+
     fn id(&mut self, prefix: &str) -> String {
         self.next += 1;
         format!("{prefix}{}", self.next)
@@ -243,7 +328,7 @@ impl State {
                     recovery_wrap: self.stale_wrap.clone().or_else(|| self.wrap.clone()).unwrap(),
                 })
             }
-            ("PUT", ["services" | "member"]) => ResponseTemplate::new(204),
+            ("PUT", ["services" | "member"]) | ("POST", ["ack"]) => ResponseTemplate::new(204),
             ("PUT", ["device"]) => ok(json!({"replaced_previous": false})),
             ("GET", ["pending"]) => {
                 let joins: Vec<&JoinRequest> = self
@@ -420,6 +505,28 @@ impl State {
                     None => err(403, "bad_signature"),
                 }
             }
+            ("POST", ["ops"]) => self.post_ops(&me, req.body_json().unwrap()),
+            ("GET", ["sync"]) => self.sync(req),
+            ("GET", ["checkpoint"]) => match &self.checkpoint {
+                Some(cp) => ok(cp),
+                None => err(404, "not_found"),
+            },
+            ("PUT", ["checkpoint"]) => {
+                let cp: Checkpoint = req.body_json().unwrap();
+                let primary = self.roster.last().map(|e| e.primary.device_id.clone());
+                if primary.as_deref() != Some(me.as_str()) || cp.seq > self.head() {
+                    return err(403, "not_approval_device");
+                }
+                if self.checkpoint.as_ref().is_some_and(|c| c.seq >= cp.seq) {
+                    return err(409, "epoch_conflict");
+                }
+                self.checkpoint = Some(cp);
+                ResponseTemplate::new(204)
+            }
+            ("POST", ["heartbeat"]) => {
+                self.heartbeat = Some(req.body_json().unwrap());
+                ResponseTemplate::new(204)
+            }
             _ => err(404, "not_found"),
         }
     }
@@ -584,8 +691,10 @@ async fn phones_create_enroll_hand_over_remove_and_recover() {
     let b_id = device_of(&b).await;
     assert_eq!(asks[0].device_id, b_id);
     a.handover_approve(id, b_id).await.unwrap();
-    // The entry names the outgoing primary's last op (none yet): its later ones are a replaced primary's.
-    assert_eq!(w.state().roster.last().unwrap().primary_counter, Some(0));
+    // The entry names the outgoing primary's last op: its later ones are a replaced primary's.
+    let a_id = device_of(&a).await;
+    let last = stored_ops(&w, &a_id).iter().map(|(_, counter)| *counter).max().unwrap_or(0);
+    assert_eq!(w.state().roster.last().unwrap().primary_counter, Some(last));
     assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
     assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Primary);
     assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Viewer);
@@ -1058,4 +1167,186 @@ async fn a_viewer_changes_nothing_but_may_pull_the_brake() {
     a.roster_remove_member(b_id).await.unwrap();
     b.roster_summary(true).await.unwrap();
     assert_eq!(b.start_bypass(None, Some(30)).await, Err(CoreError::ViewerOnly));
+}
+
+// ---- the live sync (stage 5) ---------------------------------------------------------------------------------------
+
+/// The ops the server stored, by author: (class, counter).
+fn stored_ops(w: &World, author: &str) -> Vec<(reins_proto::oplog::OpClass, u64)> {
+    w.state().ops.iter().filter(|o| o.op.author == author).map(|o| (o.op.class, o.op.counter)).collect()
+}
+
+#[tokio::test]
+async fn the_primarys_changes_reach_the_viewer_and_the_viewers_brake_reaches_the_primary() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    // The primary runs a bypass: it goes out with the next cycle, and the viewer sees it.
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    let state = b.live_sync(0).await.unwrap();
+    assert_eq!(state.role, PhoneRole::Viewer);
+    assert!(state.forked.is_none() && !state.waiting_for_key && !state.disagrees, "{state:?}");
+    assert!(b.autopilot_settings().await.unwrap().bypass_until.is_some(), "the viewer sees the bypass");
+    assert!(state.live, "the primary's heartbeat is fresh and matches: {state:?}");
+    assert_eq!(state.applied_seq, state.head_seq);
+    // The viewer pulls the brake: Lockdown at once on it, and on the primary with its next cycle.
+    b.set_autopilot_mode(None, Some(AutopilotMode::Lockdown), None).await.unwrap();
+    let b_id = device_of(&b).await;
+    assert!(
+        stored_ops(&w, &b_id).iter().all(|(class, _)| *class == reins_proto::oplog::OpClass::Restrictive),
+        "a viewer sends only the brake"
+    );
+    a.live_sync(0).await.unwrap();
+    let settings = a.autopilot_settings().await.unwrap();
+    assert_eq!((settings.mode, settings.bypass_until), (AutopilotMode::Lockdown, None));
+    // A viewer changes nothing else, and a change it makes locally never goes out.
+    assert_eq!(b.start_bypass(None, Some(30)).await, Err(CoreError::ViewerOnly));
+    let before = stored_ops(&w, &b_id).len();
+    b.live_sync(0).await.unwrap();
+    assert_eq!(stored_ops(&w, &b_id).len(), before, "nothing new from the viewer");
+}
+
+#[tokio::test]
+async fn after_a_removal_the_viewers_left_get_the_new_key_and_the_removed_one_nothing() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    let c = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    enroll(&a, &c, "Tablet").await;
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    for viewer in [&b, &c] {
+        viewer.live_sync(0).await.unwrap();
+        assert!(viewer.autopilot_settings().await.unwrap().bypass_until.is_some());
+    }
+    // C is removed: the view key rotates, and what the primary writes next is sealed with the new one.
+    let c_id = device_of(&c).await;
+    a.roster_remove_member(c_id).await.unwrap();
+    a.set_autopilot_mode(None, Some(AutopilotMode::Lockdown), None).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    // B opens the grant the log brought it (sealed under the key it had) and reads on.
+    let state = b.live_sync(0).await.unwrap();
+    assert!(!state.waiting_for_key && state.forked.is_none(), "{state:?}");
+    assert_eq!(b.autopilot_settings().await.unwrap().mode, AutopilotMode::Lockdown);
+    // C was given no key: it reads nothing written since.
+    let state = c.live_sync(0).await.unwrap();
+    assert!(state.waiting_for_key, "{state:?}");
+    assert_ne!(c.autopilot_settings().await.unwrap().mode, AutopilotMode::Lockdown);
+}
+
+#[tokio::test]
+async fn a_phone_enrolled_later_starts_from_the_checkpoint_at_its_epoch() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    let c = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    // Written before any viewer: ops at an epoch a phone enrolled later cannot verify.
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    // The primary marks the new epoch and writes a checkpoint at it.
+    a.live_sync(0).await.unwrap();
+    let cp_epoch = w.state().checkpoint.as_ref().map(|cp| cp.epoch);
+    assert_eq!(cp_epoch, Some(2));
+    let state = b.live_sync(0).await.unwrap();
+    assert!(state.forked.is_none() && state.notice.is_none(), "{state:?}");
+    assert!(b.autopilot_settings().await.unwrap().bypass_until.is_some(), "from the checkpoint");
+    // Once the server dropped the ops behind it, a phone enrolled after that starts from it too.
+    enroll(&a, &c, "Tablet").await;
+    a.live_sync(0).await.unwrap();
+    w.state().drop_behind_checkpoint();
+    let state = c.live_sync(0).await.unwrap();
+    assert!(state.forked.is_none() && state.notice.is_none(), "{state:?}");
+    assert!(c.autopilot_settings().await.unwrap().bypass_until.is_some());
+    assert_eq!(state.applied_seq, state.head_seq);
+}
+
+#[tokio::test]
+async fn a_handover_waits_for_the_primarys_queued_changes_and_names_them() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    a.live_sync(0).await.unwrap();
+    // A change the server never got: queued, numbered, signed.
+    w.state().ops_down = true;
+    a.start_bypass(None, Some(60)).await.unwrap();
+    let state = a.live_sync(0).await.unwrap();
+    assert!(state.queued > 0 && state.notice.is_some(), "{state:?}");
+    let id = b.handover_request().await.unwrap();
+    a.sync(0).await.unwrap();
+    let b_id = device_of(&b).await;
+    assert!(a.handover_approve(id.clone(), b_id.clone()).await.is_err(), "not before its changes are in the log");
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
+    // Online again: the changes go first, and the handover names the last of them.
+    w.state().ops_down = false;
+    a.handover_approve(id, b_id).await.unwrap();
+    let a_id = device_of(&a).await;
+    let last = stored_ops(&w, &a_id).iter().map(|(_, counter)| *counter).max().unwrap();
+    assert_eq!(w.state().roster.last().unwrap().primary_counter, Some(last));
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+    b.live_sync(0).await.unwrap();
+    assert!(
+        b.autopilot_settings().await.unwrap().bypass_until.is_some(),
+        "the new primary has the old one's last change"
+    );
+    // The old primary sends nothing as primary any more.
+    let state = a.live_sync(0).await.unwrap();
+    assert_eq!((state.role, state.queued), (PhoneRole::Viewer, 0));
+}
+
+#[tokio::test]
+async fn a_viewer_proposes_the_primary_keeps_and_tokens_never_reach_a_viewer() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    // B held a token before phone roles; as a viewer it keeps none.
+    b.engine().keep_token("github", "old", b"ghp_old").unwrap();
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    b.live_sync(0).await.unwrap();
+    assert!(!b.engine().holds_token("github", "old").unwrap(), "a viewer forgets its tokens");
+    // B proposes a GitHub account with its token; never a grant or a setting.
+    let rows = json!([
+        {"table": "accounts", "value": {"service": "github", "account": "octo", "added_at": 5}},
+        {"table": "secrets", "value": {"service": "github", "account": "octo",
+            "value": {"$b64": BASE64URL_NOPAD.encode(b"ghp_new")}}},
+    ]);
+    let forbidden = json!([{"table": "grants", "value": {"id": "g1"}}]);
+    assert!(b.proposal_create("github".into(), "x".into(), forbidden.to_string()).await.is_err());
+    assert!(
+        a.proposal_create("github".into(), "x".into(), rows.to_string()).await.is_err(),
+        "the primary adds it itself"
+    );
+    let id = b.proposal_create("github".into(), "GitHub · octo".into(), rows.to_string()).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    let waiting = a.proposals().await.unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(
+        (waiting[0].id.as_str(), waiting[0].author_name.as_str(), waiting[0].mine),
+        (id.as_str(), "Pixel", false)
+    );
+    assert!(b.proposal_keep(id.clone()).await.is_err(), "a viewer keeps nothing");
+    // The primary keeps it: the account and its token are its own now, and the token never reaches the viewer.
+    a.proposal_keep(id).await.unwrap();
+    assert!(a.engine().holds_token("github", "octo").unwrap());
+    b.live_sync(0).await.unwrap();
+    assert!(b.proposals().await.unwrap().is_empty(), "resolved");
+    assert!(!b.engine().holds_token("github", "octo").unwrap(), "a viewer never holds a token");
+    // Another, discarded: nothing of it is added.
+    let mcp = json!([{"table": "mcp_servers", "value": {"id": "m1", "name": "Notes", "url": "https://notes.example",
+        "auth": "none", "added_at": 8}}]);
+    let other = b.proposal_create("mcp".into(), "Notes".into(), mcp.to_string()).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    a.proposal_discard(other).await.unwrap();
+    b.live_sync(0).await.unwrap();
+    assert!(b.proposals().await.unwrap().is_empty());
+    assert!(a.proposals().await.unwrap().is_empty());
 }

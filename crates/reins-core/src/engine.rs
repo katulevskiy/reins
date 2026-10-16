@@ -123,6 +123,8 @@ pub struct Engine {
     pub(crate) autopilot: crate::autopilot::State,
     /// Phone roles: roster changes one at a time, the handover requests seen.
     pub(crate) roles: crate::roles::State,
+    /// The live sync: the cursor, heartbeat times and warnings it keeps in memory.
+    pub(crate) live: crate::live_sync::State,
 }
 
 impl Engine {
@@ -265,6 +267,7 @@ impl Engine {
             data_dir: data_dir.to_path_buf(),
             autopilot: crate::autopilot::State::default(),
             roles: crate::roles::State::default(),
+            live: crate::live_sync::State::default(),
         }))
     }
 
@@ -779,7 +782,14 @@ impl Engine {
                 log::warn!("could not park a request from another phone: {e}");
             }
         }
-        self.park_blobs(pending.blobs)
+        self.park_blobs(pending.blobs)?;
+        // On an account with phone roles, the log comes with the poll (proposals and brakes from the viewers).
+        if self.holds_roster_now().unwrap_or(false)
+            && let Err(e) = Box::pin(self.live_sync_now()).await
+        {
+            log::warn!("the account's log did not sync: {e}");
+        }
+        Ok(())
     }
 
     // ---- read-only views -----------------------------------------------------------

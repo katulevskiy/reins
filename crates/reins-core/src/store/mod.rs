@@ -18,6 +18,7 @@ mod merge;
 pub mod oplog;
 mod pending;
 mod protected;
+pub(crate) mod records;
 mod snapshot;
 pub(crate) use protected::Owner;
 mod secrets;
@@ -158,7 +159,7 @@ fn drop_tombstone_triggers(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 /// Columns and tables added after the first release, applied once each (`PRAGMA user_version`). A table added to
 /// [`SCHEMA`] needs one here too: a sealed database restored from disk keeps the tables it was written with.
-const MIGRATIONS: [&str; 11] = [
+const MIGRATIONS: [&str; 12] = [
     "
 ALTER TABLE audit ADD COLUMN connection_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit ADD COLUMN service TEXT NOT NULL DEFAULT 'gmail';
@@ -297,6 +298,9 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
     // Phone roles' op-log store (`oplog`): records with their versions and tombstones, the proposals, each author's
     // counter, the applied hash per seq, and where the log stands. This phone's own bookkeeping: never in a snapshot.
     oplog::SCHEMA,
+    // The sync engine's own bookkeeping next to the log (`oplog::local`): the outbox of this phone's ops, the mirror of
+    // what each record was in the store, and its marks.
+    oplog::local::SCHEMA,
 ];
 const DROP_TOPIC_DESKTOP_GRANTS: &str = "
 DELETE FROM grants WHERE json_extract(grant_json, '$.scope.action') = 'service'
@@ -856,7 +860,7 @@ pub(crate) mod tests {
         assert_eq!((old[0].at, old[0].connection_label.as_str(), old[0].service.as_str()), (7, "Old", "gmail"));
         assert_eq!(old[0].detail, DETAIL_UNAVAILABLE, "rows from before the details existed have none");
         let version: i64 = store.lock().unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
         assert_eq!(store.desktop_key("c1").unwrap(), None, "the desktop keys table exists");
         assert!(store.ap_profiles().unwrap().is_empty(), "the Autopilot tables exist");
         assert_eq!(store.ap_mode_row("").unwrap(), crate::autopilot::modes::ModeRow::default());

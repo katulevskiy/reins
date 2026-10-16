@@ -7,6 +7,7 @@ mod payments;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use reins_proto::oplog::Restriction;
 use zeroize::Zeroizing;
 
 use crate::autopilot::{
@@ -16,6 +17,7 @@ use crate::autopilot::{
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
+use crate::live_sync::{LiveSyncState, ProposalView};
 use crate::roles::{
     EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview, RosterSummary,
 };
@@ -420,6 +422,99 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.run_account(engine.phone_role()).await
+        })
+        .await
+    }
+
+    /// One cycle of the live sync on an account with phone roles: sends this phone's changes, applies the log, checks
+    /// the roster and the primary's heartbeat. `wait_secs` (at most 25) long-polls for news when there is none; a
+    /// viewer's foreground loop calls it again and again. On an account without phone roles it only says so.
+    pub async fn live_sync(&self, wait_secs: u32) -> Result<LiveSyncState, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.live_sync(wait_secs)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// Where the live view stood after the last cycle (no network): the "Live" / "last seen" bar.
+    pub async fn live_sync_state(&self) -> Result<LiveSyncState, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(async { engine.live_sync_state() }).await
+        })
+        .await
+    }
+
+    /// On a viewer: proposes an account, a token, an MCP server or an icon (`rows_json`: a list of
+    /// `{"table", "value"}`) for the primary to keep or discard. Returns its id.
+    pub async fn proposal_create(&self, kind: String, title: String, rows_json: String) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.proposal_create(&kind, &title, &rows_json)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the viewer that proposed it: takes a proposal back.
+    pub async fn proposal_withdraw(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.proposal_withdraw(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// The proposals waiting for the primary (on every phone of the roster).
+    pub async fn proposals(&self) -> Result<Vec<ProposalView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.proposals()).await
+        })
+        .await
+    }
+
+    /// On the primary, behind biometrics: keeps a proposal (what it adds becomes the primary's own, unopened by
+    /// anyone else).
+    pub async fn proposal_keep(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.proposal_keep(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the primary: discards a proposal.
+    pub async fn proposal_discard(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.require_decider()?;
+            engine.ensure_active()?;
+            let result = engine.run_account(engine.proposal_discard(&id)).await;
+            runtime.finish(&engine, result)
         })
         .await
     }
@@ -940,7 +1035,16 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.revoke_grant(&grant_id) }).await;
+            let result = engine
+                .run_account(async {
+                    engine.revoke_grant(&grant_id)?;
+                    engine
+                        .brake_out(Restriction::RevokeGrant {
+                            grant_id: grant_id.clone(),
+                        })
+                        .await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -1275,7 +1379,16 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
-            let result = engine.run_account(async { engine.delete_grant(&grant_id) }).await;
+            let result = engine
+                .run_account(async {
+                    engine.delete_grant(&grant_id)?;
+                    engine
+                        .brake_out(Restriction::RevokeGrant {
+                            grant_id: grant_id.clone(),
+                        })
+                        .await
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await
@@ -1568,12 +1681,25 @@ impl ReinsCore {
         rt::run(async move {
             let engine = runtime.prepare(generation).await?;
             // Lockdown and stopping a running bypass are the brake: any member may pull it (Q2).
-            if !engine.is_brake(connection_id.as_deref(), mode)? {
+            let brake = engine.is_brake(connection_id.as_deref(), mode)?;
+            if !brake {
                 engine.require_decider()?;
             }
             engine.ensure_active()?;
-            let result =
-                engine.run_account(async { engine.set_autopilot_mode(connection_id, mode, minutes).await }).await;
+            let restriction = if mode == Some(AutopilotMode::Lockdown) {
+                Restriction::Lockdown
+            } else {
+                Restriction::StopBypass
+            };
+            let result = engine
+                .run_account(async {
+                    engine.set_autopilot_mode(connection_id, mode, minutes).await?;
+                    if brake {
+                        engine.brake_out(restriction).await?;
+                    }
+                    Ok(())
+                })
+                .await;
             runtime.finish(&engine, result)
         })
         .await

@@ -11,7 +11,7 @@ use crate::autopilot::{AutopilotMode, Verdict};
 pub const AUDIT_RETENTION: i64 = 5_000;
 /// Shown when a detail can no longer be decrypted (data key lost).
 pub const DETAIL_UNAVAILABLE: &str = "(details unavailable)";
-const DETAIL_AAD: &str = "audit.detail";
+pub(super) const DETAIL_AAD: &str = "audit.detail";
 pub(super) const INFO_AAD: &str = "audit.info";
 const SNAPSHOT_AAD: &str = "audit.snapshot";
 /// The most bytes an entry's snapshot may take (JSON, before sealing); a larger one is not kept.

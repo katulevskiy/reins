@@ -750,6 +750,25 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun rosterSummary(refresh: Boolean): dev.reins.core.RosterSummary? = null
 
+    private val legacyLive = dev.reins.core.LiveSyncState(
+        dev.reins.core.PhoneRole.LEGACY, 0u, 0u, 0u, "", null, false, null, false, false, 0u, null,
+    )
+
+    override suspend fun liveSync(waitSecs: UInt): dev.reins.core.LiveSyncState = legacyLive
+
+    override suspend fun liveSyncState(): dev.reins.core.LiveSyncState = legacyLive
+
+    override suspend fun proposalCreate(kind: String, title: String, rowsJson: String): String =
+        throw CoreException.NotFound()
+
+    override suspend fun proposalWithdraw(id: String): Unit = throw CoreException.NotFound()
+
+    override suspend fun proposals(): List<dev.reins.core.ProposalView> = emptyList()
+
+    override suspend fun proposalKeep(id: String): Unit = throw CoreException.NotFound()
+
+    override suspend fun proposalDiscard(id: String): Unit = throw CoreException.NotFound()
+
     override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): dev.reins.core.RosterSummary =
         throw CoreException.NotFound()
 

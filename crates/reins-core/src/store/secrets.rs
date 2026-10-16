@@ -10,7 +10,7 @@ use crate::CoreError;
 /// One secret of a service: its account and value.
 pub(crate) type Secret = (String, Zeroizing<Vec<u8>>);
 
-fn aad(service: &str, account: &str) -> String {
+pub(super) fn aad(service: &str, account: &str) -> String {
     format!("secret.{service}.{account}")
 }
 

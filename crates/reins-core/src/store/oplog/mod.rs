@@ -35,6 +35,7 @@
 //! come back); one older than [`PROPOSAL_TTL_SECS`] is no longer shown.
 
 pub mod checkpoint;
+pub(crate) mod local;
 mod rules;
 #[cfg(test)]
 mod tests;
@@ -372,6 +373,18 @@ pub fn record(conn: &Connection, table: Table, key: &str) -> Result<Option<Recor
         )
         .optional()?;
     raw.map(record_of).transpose()
+}
+
+/// Every record, tombstones included (the sync engine compares them with the store).
+pub fn all_records(conn: &Connection) -> Result<Vec<Record>, CoreError> {
+    let mut stmt = conn.prepare(&format!("SELECT {RECORD_COLUMNS} FROM oplog_records ORDER BY tbl, key"))?;
+    let raws = stmt.query_map([], record_from_row)?.collect::<Result<Vec<_>, _>>()?;
+    raws.into_iter().map(record_of).collect()
+}
+
+/// The last counter this phone took of the ops `author` signed with `sign_pub` (0: none).
+pub fn author_last_counter(conn: &Connection, author: &str, sign_pub: &str) -> Result<u64, CoreError> {
+    author_counter(conn, author, sign_pub)
 }
 
 /// The live records of `table`, by key.

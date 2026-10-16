@@ -3004,6 +3004,18 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func joinView(id: String) async throws  -> JoinView
     
+    /**
+     * One cycle of the live sync on an account with phone roles: sends this phone's changes, applies the log, checks
+     * the roster and the primary's heartbeat. `wait_secs` (at most 25) long-polls for news when there is none; a
+     * viewer's foreground loop calls it again and again. On an account without phone roles it only says so.
+     */
+    func liveSync(waitSecs: UInt32) async throws  -> LiveSyncState
+    
+    /**
+     * Where the live view stood after the last cycle (no network): the "Live" / "last seen" bar.
+     */
+    func liveSyncState() async throws  -> LiveSyncState
+    
     func login(serverUrl: String, email: String, password: String, totp: String?) async throws  -> SessionInfo
     
     /**
@@ -3055,6 +3067,33 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * it), else `Primary`, `Viewer` or `Removed`. From what this phone verified last; no network.
      */
     func phoneRole() async throws  -> PhoneRole
+    
+    /**
+     * On a viewer: proposes an account, a token, an MCP server or an icon (`rows_json`: a list of
+     * `{"table", "value"}`) for the primary to keep or discard. Returns its id.
+     */
+    func proposalCreate(kind: String, title: String, rowsJson: String) async throws  -> String
+    
+    /**
+     * On the primary: discards a proposal.
+     */
+    func proposalDiscard(id: String) async throws 
+    
+    /**
+     * On the primary, behind biometrics: keeps a proposal (what it adds becomes the primary's own, unopened by
+     * anyone else).
+     */
+    func proposalKeep(id: String) async throws 
+    
+    /**
+     * On the viewer that proposed it: takes a proposal back.
+     */
+    func proposalWithdraw(id: String) async throws 
+    
+    /**
+     * The proposals waiting for the primary (on every phone of the roster).
+     */
+    func proposals() async throws  -> [ProposalView]
     
     func registerDevice(fcmToken: String?) async throws 
     
@@ -4649,6 +4688,46 @@ open func joinView(id: String)async throws  -> JoinView  {
         )
 }
     
+    /**
+     * One cycle of the live sync on an account with phone roles: sends this phone's changes, applies the log, checks
+     * the roster and the primary's heartbeat. `wait_secs` (at most 25) long-polls for news when there is none; a
+     * viewer's foreground loop calls it again and again. On an account without phone roles it only says so.
+     */
+open func liveSync(waitSecs: UInt32)async throws  -> LiveSyncState  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_live_sync(
+                        self.uniffiCloneHandle(),FfiConverterUInt32.lower(waitSecs)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLiveSyncState_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Where the live view stood after the last cycle (no network): the "Live" / "last seen" bar.
+     */
+open func liveSyncState()async throws  -> LiveSyncState  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_live_sync_state(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLiveSyncState_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
 open func login(serverUrl: String, email: String, password: String, totp: String?)async throws  -> SessionInfo  {
     return
         try  await uniffiRustCallAsync(
@@ -4866,6 +4945,103 @@ open func phoneRole()async throws  -> PhoneRole  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePhoneRole_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On a viewer: proposes an account, a token, an MCP server or an icon (`rows_json`: a list of
+     * `{"table", "value"}`) for the primary to keep or discard. Returns its id.
+     */
+open func proposalCreate(kind: String, title: String, rowsJson: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_proposal_create(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(kind),FfiConverterString.lower(title),FfiConverterString.lower(rowsJson)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary: discards a proposal.
+     */
+open func proposalDiscard(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_proposal_discard(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary, behind biometrics: keeps a proposal (what it adds becomes the primary's own, unopened by
+     * anyone else).
+     */
+open func proposalKeep(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_proposal_keep(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the viewer that proposed it: takes a proposal back.
+     */
+open func proposalWithdraw(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_proposal_withdraw(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The proposals waiting for the primary (on every phone of the roster).
+     */
+open func proposals()async throws  -> [ProposalView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_proposals(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeProposalView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -11901,6 +12077,157 @@ public func FfiConverterTypeJoinView_lower(_ value: JoinView) -> RustBuffer {
 
 
 /**
+ * Where the live view stands on this phone.
+ */
+public struct LiveSyncState: Equatable, Hashable {
+    public var role: PhoneRole
+    public var epoch: UInt64
+    /**
+     * The last op this phone applied, and the log's head.
+     */
+    public var appliedSeq: UInt64
+    public var headSeq: UInt64
+    /**
+     * The primary's name.
+     */
+    public var primaryName: String
+    /**
+     * When the primary's latest heartbeat was signed (unix seconds), if one came.
+     */
+    public var primarySeenAt: Int64?
+    /**
+     * The primary's heartbeat is under two minutes old and matches what this phone applied.
+     */
+    public var live: Bool
+    /**
+     * Why this phone stopped applying (the log forked), if it did: show it, and recover or reinstall.
+     */
+    public var forked: String?
+    /**
+     * A replaced primary (or an older epoch) signed another history: "Your devices may disagree".
+     */
+    public var disagrees: Bool
+    /**
+     * The log is sealed with a view key this phone was not given yet.
+     */
+    public var waitingForKey: Bool
+    /**
+     * This phone's changes not yet in the log.
+     */
+    public var queued: UInt32
+    /**
+     * Something to show, if the last cycle did not finish.
+     */
+    public var notice: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(role: PhoneRole, epoch: UInt64, 
+        /**
+         * The last op this phone applied, and the log's head.
+         */appliedSeq: UInt64, headSeq: UInt64, 
+        /**
+         * The primary's name.
+         */primaryName: String, 
+        /**
+         * When the primary's latest heartbeat was signed (unix seconds), if one came.
+         */primarySeenAt: Int64?, 
+        /**
+         * The primary's heartbeat is under two minutes old and matches what this phone applied.
+         */live: Bool, 
+        /**
+         * Why this phone stopped applying (the log forked), if it did: show it, and recover or reinstall.
+         */forked: String?, 
+        /**
+         * A replaced primary (or an older epoch) signed another history: "Your devices may disagree".
+         */disagrees: Bool, 
+        /**
+         * The log is sealed with a view key this phone was not given yet.
+         */waitingForKey: Bool, 
+        /**
+         * This phone's changes not yet in the log.
+         */queued: UInt32, 
+        /**
+         * Something to show, if the last cycle did not finish.
+         */notice: String?) {
+        self.role = role
+        self.epoch = epoch
+        self.appliedSeq = appliedSeq
+        self.headSeq = headSeq
+        self.primaryName = primaryName
+        self.primarySeenAt = primarySeenAt
+        self.live = live
+        self.forked = forked
+        self.disagrees = disagrees
+        self.waitingForKey = waitingForKey
+        self.queued = queued
+        self.notice = notice
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension LiveSyncState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLiveSyncState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LiveSyncState {
+        return
+            try LiveSyncState(
+                role: FfiConverterTypePhoneRole.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                appliedSeq: FfiConverterUInt64.read(from: &buf), 
+                headSeq: FfiConverterUInt64.read(from: &buf), 
+                primaryName: FfiConverterString.read(from: &buf), 
+                primarySeenAt: FfiConverterOptionInt64.read(from: &buf), 
+                live: FfiConverterBool.read(from: &buf), 
+                forked: FfiConverterOptionString.read(from: &buf), 
+                disagrees: FfiConverterBool.read(from: &buf), 
+                waitingForKey: FfiConverterBool.read(from: &buf), 
+                queued: FfiConverterUInt32.read(from: &buf), 
+                notice: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LiveSyncState, into buf: inout [UInt8]) {
+        FfiConverterTypePhoneRole.write(value.role, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterUInt64.write(value.appliedSeq, into: &buf)
+        FfiConverterUInt64.write(value.headSeq, into: &buf)
+        FfiConverterString.write(value.primaryName, into: &buf)
+        FfiConverterOptionInt64.write(value.primarySeenAt, into: &buf)
+        FfiConverterBool.write(value.live, into: &buf)
+        FfiConverterOptionString.write(value.forked, into: &buf)
+        FfiConverterBool.write(value.disagrees, into: &buf)
+        FfiConverterBool.write(value.waitingForKey, into: &buf)
+        FfiConverterUInt32.write(value.queued, into: &buf)
+        FfiConverterOptionString.write(value.notice, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLiveSyncState_lift(_ buf: RustBuffer) throws -> LiveSyncState {
+    return try FfiConverterTypeLiveSyncState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLiveSyncState_lower(_ value: LiveSyncState) -> RustBuffer {
+    return FfiConverterTypeLiveSyncState.lower(value)
+}
+
+
+/**
  * A call to a tool of an added MCP server, spelled out for the approval.
  */
 public struct McpCallView: Equatable, Hashable {
@@ -13394,6 +13721,107 @@ public func FfiConverterTypeProfileView_lift(_ buf: RustBuffer) throws -> Profil
 #endif
 public func FfiConverterTypeProfileView_lower(_ value: ProfileView) -> RustBuffer {
     return FfiConverterTypeProfileView.lower(value)
+}
+
+
+/**
+ * A proposal waiting for the primary.
+ */
+public struct ProposalView: Equatable, Hashable {
+    /**
+     * `<author>/<id>`: pass it back to keep, discard or withdraw.
+     */
+    public var id: String
+    public var authorId: String
+    /**
+     * The proposing phone's name in the roster.
+     */
+    public var authorName: String
+    /**
+     * What it adds ("github", "mcp", …) and how the proposing phone named it: display only.
+     */
+    public var kind: String
+    public var title: String
+    public var receivedAt: Int64
+    /**
+     * This phone proposed it.
+     */
+    public var mine: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `<author>/<id>`: pass it back to keep, discard or withdraw.
+         */id: String, authorId: String, 
+        /**
+         * The proposing phone's name in the roster.
+         */authorName: String, 
+        /**
+         * What it adds ("github", "mcp", …) and how the proposing phone named it: display only.
+         */kind: String, title: String, receivedAt: Int64, 
+        /**
+         * This phone proposed it.
+         */mine: Bool) {
+        self.id = id
+        self.authorId = authorId
+        self.authorName = authorName
+        self.kind = kind
+        self.title = title
+        self.receivedAt = receivedAt
+        self.mine = mine
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ProposalView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProposalView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProposalView {
+        return
+            try ProposalView(
+                id: FfiConverterString.read(from: &buf), 
+                authorId: FfiConverterString.read(from: &buf), 
+                authorName: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                receivedAt: FfiConverterInt64.read(from: &buf), 
+                mine: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ProposalView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.authorId, into: &buf)
+        FfiConverterString.write(value.authorName, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterInt64.write(value.receivedAt, into: &buf)
+        FfiConverterBool.write(value.mine, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProposalView_lift(_ buf: RustBuffer) throws -> ProposalView {
+    return try FfiConverterTypeProposalView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProposalView_lower(_ value: ProposalView) -> RustBuffer {
+    return FfiConverterTypeProposalView.lower(value)
 }
 
 
@@ -21754,6 +22182,31 @@ fileprivate struct FfiConverterSequenceTypeProfileView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeProposalView: FfiConverterRustBuffer {
+    typealias SwiftType = [ProposalView]
+
+    public static func write(_ value: [ProposalView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeProposalView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ProposalView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ProposalView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeProposalView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePurchaseLineView: FfiConverterRustBuffer {
     typealias SwiftType = [PurchaseLineView]
 
@@ -22592,6 +23045,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_join_view() != 30242) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_live_sync() != 34964) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_live_sync_state() != 28467) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_login() != 8846) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -22626,6 +23085,21 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_phone_role() != 2718) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_proposal_create() != 54195) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_proposal_discard() != 16377) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_proposal_keep() != 26656) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_proposal_withdraw() != 14929) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_proposals() != 10001) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {

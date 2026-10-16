@@ -492,10 +492,17 @@ Details: [autopilot.md](autopilot.md).
     Autopilot modes or grants say. But it can still open the vault and, with the master key, the recovery wrap, and so
     recover to primary. Only rotating the account secret (a vault reset now; recovery-code rotation is a follow-up)
     revokes it for good.
-  - **A demoted primary keeps its tokens until the sync engine stage.** After a handover or a recovery the old
-    primary drops the owner seed, the recovery wrap's key and the card provider's key at once, but its integration
-    tokens and the payment mandate key stay in its local store until the sync engine (the next stage) wipes them on
-    every phone that is not the primary. Until then they are as safe as that phone's lock.
+  - **Tokens stay with the primary.** In the op log a token (and the payment mandate key) is sealed to the
+    credential key on top of the view key, so a viewer syncs "GitHub · octocat" and never the token. A phone that sees
+    it is not the primary (a viewer, a removed phone, a primary replaced by a handover or a recovery) deletes every
+    integration token and the mandate key it holds, at once; until it runs once after the change, they are as safe as
+    that phone's lock.
+  - **What a viewer adds is a proposal.** It is inert until the primary keeps it; what the primary keeps is what the
+    proposal's payload holds (sealed to the credential key), limited to an account, its token, an MCP server or an
+    icon, never a grant, a mode, a paired computer or a setting.
+  - **A replaced primary cannot stop the others.** Only the current primary's heartbeat at the current epoch can show a
+    fork (and stop applying for good); one from a replaced primary or an older epoch that disagrees is a warning ("Your
+    devices may disagree"), never kept.
   - A phone with no roster of its own that recovers cannot tell a current roster from an older, consistent one a
     server kept (with that time's recovery wrap). The recovery shows the members it would recover into, the epoch and
     the owner key's fingerprint, and signs nothing until the user confirms; a phone that verified the roster before
