@@ -951,38 +951,8 @@ pub fn push_context(git: &GitPushView) -> Context {
 
 /// What a file that a path names holds, when it holds secrets.
 fn secret_path(path: &str) -> Option<&'static str> {
-    // file names compared as people write them: `.ENV`, `ID_RSA` and `Key.PEM` too
-    let p = path.trim().trim_matches(|c| c == '"' || c == '\'').replace('\\', "/").to_lowercase();
-    let name = p.rsplit('/').next().unwrap_or(&p);
-    let extension = name.rsplit_once('.').map(|(_, e)| e);
-    // (no exception by name: `.env.example` or `key.pub` are names the agent chooses, and may hold anything)
-    if ["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"].iter().any(|k| name.starts_with(k)) {
-        return Some("a private key");
-    }
-    if p.split('/').any(|part| part == ".ssh") {
-        return Some("SSH keys");
-    }
-    if matches!(extension, Some("pem" | "key" | "p12" | "pfx" | "jks" | "keystore")) {
-        return Some("a private key");
-    }
-    if p.contains(".aws")
-        || p.contains("gcloud")
-        || p.contains(".azure")
-        || p.contains(".kube/config")
-        || name == "credentials.json"
-    {
-        return Some("cloud credentials");
-    }
-    if name == ".env" || name.starts_with(".env.") {
-        return Some("a secret file (.env)");
-    }
-    if [".git-credentials", ".netrc", ".npmrc", ".pypirc", ".vault-token", "account.txt"].contains(&name)
-        || name.starts_with("secrets.")
-        || extension == Some("tfstate")
-    {
-        return Some("saved tokens or secrets");
-    }
-    None
+    // The table lives in `reins_proto::attention` so a phone and the desktop app share it.
+    reins_proto::attention::secret_file(path).map(reins_proto::attention::SecretKind::phrase)
 }
 
 // ---- commands --------------------------------------------------------------------------------------------------------
