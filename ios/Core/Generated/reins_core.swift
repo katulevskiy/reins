@@ -13862,12 +13862,12 @@ public func FfiConverterTypeProposalPreview_lower(_ value: ProposalPreview) -> R
  */
 public struct ProposalRowView: Equatable, Hashable {
     /**
-     * `accounts`, `secrets`, `mcp_servers` or `connection_prefs`.
+     * `accounts`, `secrets` or `mcp_servers`.
      */
     public var table: String
     public var key: String
     /**
-     * What the row is: the service and account, the server's name and URL, the icon (never a token).
+     * What the row is: the service and account, or the server's name and URL (never a token).
      */
     public var summary: String
     /**
@@ -13879,10 +13879,10 @@ public struct ProposalRowView: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `accounts`, `secrets`, `mcp_servers` or `connection_prefs`.
+         * `accounts`, `secrets` or `mcp_servers`.
          */table: String, key: String, 
         /**
-         * What the row is: the service and account, the server's name and URL, the icon (never a token).
+         * What the row is: the service and account, or the server's name and URL (never a token).
          */summary: String, 
         /**
          * A row with this key exists already: Keep refuses the proposal.

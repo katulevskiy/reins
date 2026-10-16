@@ -555,6 +555,9 @@ pub struct SyncResponse {
     pub cursor: String,
 }
 
+/// The most op bytes one page of the recovery log carries.
+pub const MAX_RECOVERY_LOG_BYTES: usize = 4 * 1024 * 1024;
+
 /// `POST /reins/api/roster/recovery-log`: a phone about to recover (no member yet) reads the log it will vouch for,
 /// with the same proof as the recovery wrap.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -563,6 +566,9 @@ pub struct RecoveryLogRequest {
     /// Ops after this `seq`.
     #[serde(default)]
     pub after: u64,
+    /// Send the latest checkpoint too (only the first page needs it).
+    #[serde(default)]
+    pub with_checkpoint: bool,
 }
 
 impl std::fmt::Debug for RecoveryLogRequest {
@@ -571,12 +577,15 @@ impl std::fmt::Debug for RecoveryLogRequest {
     }
 }
 
-/// What `POST /reins/api/roster/recovery-log` answers: the latest checkpoint and the ops after `after` (from the
-/// floor on), at most [`MAX_SYNC_OPS`].
+/// What `POST /reins/api/roster/recovery-log` answers: the latest checkpoint (when asked) and the ops after `after`
+/// (from the floor on), at most [`MAX_SYNC_OPS`] and [`MAX_RECOVERY_LOG_BYTES`], with the primary's latest heartbeat:
+/// the head the recovering phone must reach.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecoveryLog {
     #[serde(default)]
     pub checkpoint: Option<Checkpoint>,
+    #[serde(default)]
+    pub heartbeat: Option<Heartbeat>,
     pub floor_seq: u64,
     pub head_seq: u64,
     pub ops: Vec<SyncedOp>,

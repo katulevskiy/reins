@@ -506,10 +506,13 @@ Details: [autopilot.md](autopilot.md).
     an op signed before a phone's anchor is skipped once the phone has a state.
   - **A phone that recovers verifies before it signs.** It reads the log with its recovery proof (it is no member
     yet), applies it under the roster before the recovery (the outgoing primary's checkpoint, then the signed ops),
-    and names as the old primary's last op only what it verified; a server that claims the old primary wrote more
-    than it serves is refused, and nothing is signed. A fresh phone that still has no state starts only from the
-    checkpoint of the primary it replaced, at the epoch right before its recovery, and treats it as untrusted: every
-    grant revoked and every mode Manual (Lockdown stays) until the user approves again.
+    and names as the old primary's last op only what it verified, never past a gap; a server that claims the old
+    primary wrote more than it serves, or serves less than the old primary's last heartbeat signed, is refused, and
+    nothing is signed. A phone that started with nothing and took a checkpoint (which a thief holding the old
+    primary could have put just before) treats it as untrusted until the user sets it again: every grant revoked,
+    every mode Manual (Lockdown stays), Autopilot's learning and approved targets forgotten and its profiles reset,
+    paired computers to pair again, MCP servers' tools to be listed again, every "always ask" asking, no spend limit,
+    and no token taken from it.
   - **A replaced primary cannot stop the others.** Only the current primary's heartbeat at the current epoch can show a
     fork (and stop applying for good); one from a replaced primary or an older epoch that disagrees is a warning ("Your
     devices may disagree"), never kept.

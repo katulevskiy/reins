@@ -176,8 +176,29 @@ fn an_untrusted_start_revokes_every_grant_and_tightens_every_mode() {
         .unwrap()
         .execute("INSERT INTO autopilot_settings (scope, mode, updated_at) VALUES ('c2', 'lockdown', 1)", [])
         .unwrap();
+    store.meta_set("secrets.always-ask", r#"{"app/dev":false,"app/prod":true}"#).unwrap();
+    store
+        .meta_set("payments.config", r#"{"limits":[{"id":"l1"}],"budgets":[{"id":"b1"}],"tolerance_pct":10}"#)
+        .unwrap();
+    store
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "UPDATE mcp_servers SET tools = '[{\"name\":\"delete_all\",\"read_only\":true}]', status = 'trusted';",
+        )
+        .unwrap();
     store.tighten_untrusted().unwrap();
     let rows = store.sync_rows().unwrap();
+    // Autopilot's learning and approved targets, paired computers: gone (each set or paired again).
+    for gone in [Table::AutopilotMemory, Table::Targets, Table::DesktopKeys] {
+        assert!(rows.iter().all(|r| r.table != gone), "{gone:?}");
+    }
+    let server = rows.iter().find(|r| r.table == Table::McpServers).unwrap();
+    assert_eq!((server.value["tools"].clone(), server.value["status"].clone()), (json!("[]"), json!("ok")));
+    let meta = |k: &str| rows.iter().find(|r| r.table == Table::Meta && r.key == k).unwrap().value.clone();
+    assert_eq!(meta("secrets.always-ask"), json!({"app/dev": true, "app/prod": true}));
+    assert_eq!(meta("payments.config")["limits"], json!([]));
+    assert_eq!(meta("payments.config")["budgets"], json!([{"id": "b1"}]), "budgets only refuse: kept");
     let get = |t: Table, k: &str| rows.iter().find(|r| r.table == t && r.key == k).unwrap().value.clone();
     assert_eq!(get(Table::Grants, "g1")["grant"]["revoked"], true);
     let global = get(Table::AutopilotSettings, "*");

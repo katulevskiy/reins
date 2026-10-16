@@ -259,8 +259,8 @@ impl Engine {
                 if first.notice.is_some() || first.waiting_for_key {
                     notice = first.notice.or(Some("The account's log is not all here yet.".to_owned()));
                 } else {
-                    self.materialize(account)?;
-                    self.tighten_untrusted_start()?;
+                    let failed = self.materialize(account)?;
+                    self.tighten_untrusted_start(failed)?;
                 }
             }
             self.deliver_grants(account, &keys)?;
@@ -275,7 +275,7 @@ impl Engine {
         let pulled = self.pull_and_apply(session, account, wait).await?;
         notice = notice.or(pulled.notice);
         let failed = self.materialize(account)?;
-        self.tighten_untrusted_start()?;
+        self.tighten_untrusted_start(failed)?;
         if failed > 0 {
             notice = notice.or(Some(format!(
                 "{failed} changes from the account's log could not be written on this phone; the next sync tries again."
@@ -506,6 +506,16 @@ impl Engine {
                 }
             };
             self.set_mirror(&tbl, &row.key, version, digest, Some(row.local))?;
+        }
+        // A row kept aside that is gone now (removed, or trimmed below the limit and sent) is no longer noted.
+        for (mark, _) in self.store.oplog(|c| local::marks(c, UNPUBLISHED))?? {
+            let gone = mark
+                .strip_prefix(UNPUBLISHED)
+                .and_then(|rest| rest.split_once('\u{1f}'))
+                .is_none_or(|(tbl, key)| !present.contains(&(tbl.to_owned(), key.to_owned())));
+            if gone {
+                self.store.oplog(|c| local::clear_mark(c, &mark))??;
+            }
         }
         for ((tbl, key), m) in &mirror {
             let synced =
@@ -800,12 +810,20 @@ impl Engine {
 
     /// After a start from a checkpoint this phone could not verify as its own (a fresh phone that recovered): every grant
     /// revoked, every mode at the tightest, no bypass, before anything is published from it. The user approves again.
-    fn tighten_untrusted_start(&self) -> Result<(), CoreError> {
-        if self.store.oplog(|c| local::mark(c, UNTRUSTED_START))??.is_none() {
+    /// The mark stays until every record of the log wrote (`failed` is 0): what writes later is tightened too.
+    fn tighten_untrusted_start(&self, failed: usize) -> Result<(), CoreError> {
+        if !self.untrusted_start()? {
             return Ok(());
         }
         self.store.tighten_untrusted()?;
-        self.store.oplog(|c| local::clear_mark(c, UNTRUSTED_START))?
+        if failed == 0 {
+            self.store.oplog(|c| local::clear_mark(c, UNTRUSTED_START))??;
+        }
+        Ok(())
+    }
+
+    fn untrusted_start(&self) -> Result<bool, CoreError> {
+        Ok(self.store.oplog(|c| local::mark(c, UNTRUSTED_START))??.is_some())
     }
 
     /// Writes a record into this phone's store as a sign-in or a setting would (tests: a row too large for an op).
@@ -1046,9 +1064,15 @@ impl Engine {
     }
 
     /// Before a recovery is signed: applies the account's log under `roster` (the roster before the recovery) with
-    /// `ring` (every view key of the outgoing owner): the outgoing primary's checkpoint, loaded only when it verifies
-    /// as the current primary's at that roster's epoch, then the signed ops after it. A phone that is no member yet
-    /// reads it with its recovery proof. Fails rather than leave the history half verified.
+    /// `ring` (every view key of the outgoing owner), and returns the last op of `old_primary` it verified, the one the
+    /// entry may name. A phone that is no member yet reads the log with its recovery proof (`proof`).
+    ///
+    /// The outgoing primary's checkpoint loads only when it verifies (the current primary's, at the current epoch or,
+    /// on a phone with nothing, an earlier epoch of its tenure), then the signed ops after it. On a phone that started
+    /// with nothing, whatever a checkpoint brought is untrusted (a thief may have put it just before): it is tightened
+    /// before anything is published. Refused, so that nothing is signed: a history that does not verify, an op of the
+    /// outgoing primary held for one before it (the entry would vouch for a gap), and a log that ends before the head
+    /// the outgoing primary signed in its last heartbeat, or differs from it there.
     pub(crate) async fn recovery_catch_up(
         &self,
         session: &Session,
@@ -1056,9 +1080,19 @@ impl Engine {
         roster: &LocalRoster,
         ring: &ViewKeyring,
         proof: &str,
-    ) -> Result<(), CoreError> {
+        old_primary: &reins_proto::roster::Member,
+    ) -> Result<u64, CoreError> {
+        // One applier at a time: the live loop waits.
+        let _guard = self.account_sync.lock().await;
+        let started_empty = self.store.oplog(|c| -> Result<bool, CoreError> {
+            let s = oplog::state(c)?;
+            Ok(s.seq == 0 && oplog::all_records(c)?.is_empty())
+        })??;
         let mut tried_checkpoint = false;
-        for _ in 0..200 {
+        let mut want_checkpoint = false;
+        let mut heartbeat = None;
+        let mut done = false;
+        for _ in 0..400 {
             let s = self.store.oplog(|c| oplog::state(c))??;
             if let Some(why) = s.forked {
                 return Err(CoreError::invalid(format!("This phone's copy of the account's history forked: {why}")));
@@ -1066,8 +1100,10 @@ impl Engine {
             let request = reins_proto::oplog::RecoveryLogRequest {
                 master_password_hash: proof.to_owned(),
                 after: s.seq,
+                with_checkpoint: want_checkpoint,
             };
             let log = api_call!(session, |api| api.recovery_log(&request)).map_err(ApiFailure::into_core)?;
+            heartbeat = log.heartbeat.clone().or(heartbeat);
             let ctx = Context {
                 account: &account.id,
                 roster,
@@ -1076,25 +1112,42 @@ impl Engine {
             };
             let starts_past = s.seq < log.floor_seq || log.ops.first().is_some_and(|o| o.seq > s.seq + 1);
             if starts_past {
-                let cp = log.checkpoint.as_ref().filter(|cp| cp.seq > s.seq).ok_or_else(|| {
-                    CoreError::invalid("The server holds no checkpoint for the history it dropped; nothing was signed.")
-                })?;
+                let Some(cp) = log.checkpoint.as_ref().filter(|cp| cp.seq > s.seq) else {
+                    if want_checkpoint {
+                        return Err(CoreError::invalid(
+                            "The server holds no checkpoint for the history it dropped; nothing was signed.",
+                        ));
+                    }
+                    want_checkpoint = true;
+                    continue;
+                };
                 if tried_checkpoint {
                     return Err(CoreError::invalid("The account's history does not continue its checkpoint."));
                 }
                 tried_checkpoint = true;
-                self.store
-                    .oplog(|c| checkpoint::load(c, &ctx, cp))?
-                    .map_err(|e| CoreError::invalid(format!("The account's checkpoint does not verify: {e}")))?;
+                want_checkpoint = false;
+                let loaded = match self.store.oplog(|c| checkpoint::load(c, &ctx, cp))? {
+                    Ok(check) => Ok(check),
+                    Err(_) if started_empty => self.store.oplog(|c| checkpoint::load_tenure(c, &ctx, cp))?,
+                    Err(e) => Err(e),
+                };
+                loaded.map_err(|e| CoreError::invalid(format!("The account's checkpoint does not verify: {e}")))?;
+                if started_empty {
+                    self.store.oplog(|c| local::set_mark(c, UNTRUSTED_START, "1"))??;
+                }
                 continue;
             }
             if log.ops.is_empty() {
-                return Ok(());
+                done = true;
+                break;
             }
             let (_, halt) = self.store.oplog(|c| oplog::apply_all(c, &ctx, &log.ops))?;
             match halt {
                 None if log.more => {}
-                None => return Ok(()),
+                None => {
+                    done = true;
+                    break;
+                }
                 Some(halt) => {
                     return Err(CoreError::invalid(format!(
                         "The account's history could not be verified ({halt}); nothing was signed."
@@ -1102,7 +1155,61 @@ impl Engine {
                 }
             }
         }
-        Err(CoreError::invalid("The account's history is too long to verify now; nothing was signed."))
+        if !done {
+            return Err(CoreError::invalid("The account's history is too long to verify now; nothing was signed."));
+        }
+        if let Some(hb) = &heartbeat {
+            self.reaches_signed_head(roster, hb)?;
+        }
+        let sign_pub = old_primary.sign_pub.clone();
+        let (applied, held) = self.store.oplog(|c| -> Result<(u64, u64), CoreError> {
+            Ok((
+                oplog::author_last_counter(c, &old_primary.device_id, &sign_pub)?,
+                oplog::seen_counter(c, old_primary)?,
+            ))
+        })??;
+        if held > applied {
+            return Err(CoreError::invalid(
+                "Some of the lost primary's changes came without the ones before them; nothing was signed. Try again \
+                 later.",
+            ));
+        }
+        Ok(applied)
+    }
+
+    /// Whether this phone's log reaches the head `hb` signs, with the same history there: else the server withheld or
+    /// changed part of the outgoing primary's history (refused). A heartbeat that does not verify against `roster` is
+    /// no evidence either way.
+    fn reaches_signed_head(&self, roster: &LocalRoster, hb: &reins_proto::oplog::Heartbeat) -> Result<(), CoreError> {
+        let Some(entry) = roster.at(hb.epoch) else {
+            return Ok(());
+        };
+        let verifies = entry.primary.device_id == hb.author
+            && entry
+                .primary
+                .sign_key()
+                .ok()
+                .zip(reins_proto::canon::parse_sig(&hb.sig))
+                .zip(hb.signing_bytes().ok())
+                .is_some_and(|((key, sig), message)| crate::roles::keys::ed25519_verify(&key, &message, &sig));
+        if !verifies {
+            return Ok(());
+        }
+        let withheld = || {
+            CoreError::invalid(
+                "The server shows less of the account's history than the lost primary signed it had; nothing was \
+                 signed.",
+            )
+        };
+        let s = self.store.oplog(|c| oplog::state(c))??;
+        if hb.head_seq > s.seq {
+            return Err(withheld());
+        }
+        let theirs = reins_proto::canon::parse_hex32(&hb.applied_hash);
+        match self.store.oplog(|c| oplog::applied_at(c, hb.head_seq))?? {
+            Some(mine) if Some(mine) != theirs => Err(withheld()),
+            _ => Ok(()),
+        }
     }
 
     /// Applies what the log holds, up to the first op this phone cannot take yet (no roster fetch, no store writes;
@@ -1202,6 +1309,7 @@ impl Engine {
             ))
         })??;
         let audit = table_name(Table::Audit);
+        let untrusted = self.untrusted_start()?;
         let mut failed = 0;
         let live_keys: HashSet<(Table, String)> =
             all.iter().filter(|r| r.value.is_some()).map(|r| (r.table, r.key.clone())).collect();
@@ -1215,7 +1323,11 @@ impl Engine {
             {
                 continue;
             }
-            if record.table == Table::Secrets && !primary {
+            // A viewer takes no token; nor does anyone from a start it could not verify (seen, never written).
+            if record.table == Table::Secrets && (!primary || untrusted) {
+                if untrusted && primary {
+                    self.set_mirror(&tbl, &record.key, Some(record.version.clone()), String::new(), None)?;
+                }
                 continue;
             }
             let seen = mirror.get(&(tbl.clone(), record.key.clone()));
@@ -1280,9 +1392,15 @@ impl Engine {
             }
             let failing = failed_mark(&tbl, &record.key);
             let this_version = format!("{}.{}.{}", record.version.epoch, record.version.author, record.version.counter);
-            let tries = write_tries(self.store.oplog(|c| local::mark(c, &failing))??.as_deref(), &this_version);
-            if tries >= MAX_WRITE_TRIES {
-                // Tried enough for this version: waits for the record to change (still counted, so it is shown).
+            let (due, tries) = retry_due(
+                record.table,
+                self.store.oplog(|c| local::mark(c, &failing))??.as_deref(),
+                &this_version,
+                unix_now(),
+            );
+            if !due {
+                // Tried enough for now: waits for the record to change, or (a brake's table) for the next try after a
+                // longer wait each time; still counted, so it is shown.
                 failed += 1;
                 continue;
             }
@@ -1295,7 +1413,8 @@ impl Engine {
                     // Not marked seen: the next syncs try again, a few times (a brake that does not land is an error,
                     // not a note).
                     log::warn!("a {tbl} record from the log is not written here: {e}");
-                    self.store.oplog(|c| local::set_mark(c, &failing, &format!("{this_version}|{}", tries + 1)))??;
+                    let mark = format!("{this_version}|{}|{}", tries + 1, unix_now());
+                    self.store.oplog(|c| local::set_mark(c, &failing, &mark))??;
                     failed += 1;
                 }
             }
@@ -1356,7 +1475,17 @@ impl Engine {
             // since, says nothing of it).
             let applied =
                 q.op.hash().ok().map(|h| self.store.oplog(|c| oplog::holds_op(c, &h))).transpose()?.transpose()?;
-            if applied == Some(true) {
+            // Beyond what this phone keeps of the log (older than its window, or before the checkpoint it loaded), the
+            // record its op wrote is the evidence left: renumbering it would send it twice.
+            let beyond = self.store.oplog(|c| oplog::first_kept_seq(c))??.is_some_and(|first| first > 1);
+            let wrote = || -> Result<bool, CoreError> {
+                let Ok(table) = serde_json::from_value::<Table>(Json::String(q.table.clone())) else {
+                    return Ok(false);
+                };
+                let record = self.store.oplog(|c| oplog::record(c, table, &q.key))??;
+                Ok(record.is_some_and(|r| r.version == Version::of(&q.op)))
+            };
+            if applied == Some(true) || (applied == Some(false) && beyond && wrote()?) {
                 landed.push(q);
             } else {
                 lost.push(q);
@@ -1515,10 +1644,31 @@ fn is_live(check: HeartbeatCheck, t: i64, now: i64) -> bool {
     check == HeartbeatCheck::Matches && now - t < LIVE_SECS
 }
 
-/// How often a record of version `version` failed to write here (the mark is `<version>|<tries>`; another version
-/// starts again at 0).
-fn write_tries(mark: Option<&str>, version: &str) -> u32 {
-    mark.and_then(|m| m.strip_prefix(version)?.strip_prefix('|')?.parse().ok()).unwrap_or(0)
+/// How often a record of version `version` failed to write here, and when last (the mark is
+/// `<version>|<tries>|<at>`; another version starts again at 0).
+fn write_tries(mark: Option<&str>, version: &str) -> (u32, i64) {
+    let Some(rest) = mark.and_then(|m| m.strip_prefix(version)?.strip_prefix('|')) else {
+        return (0, 0);
+    };
+    let mut parts = rest.split('|');
+    let tries = parts.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+    let at = parts.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+    (tries, at)
+}
+
+/// Whether a record of `table` that failed to write is tried again now, and how often it failed. A record of a table
+/// the brake changes (grants, Autopilot settings) is never given up on: after [`MAX_WRITE_TRIES`] it waits longer each
+/// time (at most an hour); any other waits for a newer version.
+fn retry_due(table: Table, mark: Option<&str>, version: &str, now: i64) -> (bool, u32) {
+    let (tries, at) = write_tries(mark, version);
+    if tries < MAX_WRITE_TRIES {
+        return (true, tries);
+    }
+    if !matches!(table, Table::Grants | Table::AutopilotSettings) {
+        return (false, tries);
+    }
+    let wait = 60_i64.saturating_mul(1 << (tries - MAX_WRITE_TRIES).min(6)).min(3_600);
+    (now - at >= wait, tries)
 }
 
 /// The ring a view-key grant of `kid` travels under: the keys older than it (the ones its viewer holds).
@@ -1577,12 +1727,18 @@ mod tests {
     }
 
     #[test]
-    fn a_record_that_does_not_write_is_tried_a_few_times_per_version() {
-        assert_eq!(write_tries(None, "3.p.7"), 0);
-        assert_eq!(write_tries(Some("3.p.7|2"), "3.p.7"), 2);
-        // A newer version of the record starts again.
-        assert_eq!(write_tries(Some("3.p.7|3"), "3.p.8"), 0);
-        assert!(write_tries(Some("3.p.7|3"), "3.p.7") >= MAX_WRITE_TRIES);
+    fn a_record_that_does_not_write_is_tried_a_few_times_and_a_brake_never_given_up() {
+        let now = 1_000_000;
+        assert_eq!(retry_due(Table::Meta, None, "3.p.7", now), (true, 0));
+        assert_eq!(retry_due(Table::Meta, Some("3.p.7|2|5"), "3.p.7", now), (true, 2));
+        // Enough for a setting: it waits for a newer version, which starts again.
+        assert_eq!(retry_due(Table::Meta, Some("3.p.7|3|5"), "3.p.7", now), (false, 3));
+        assert_eq!(retry_due(Table::Meta, Some("3.p.7|3|5"), "3.p.8", now), (true, 0));
+        // A brake's table: tried again after a wait that grows, never given up.
+        assert!(!retry_due(Table::AutopilotSettings, Some(&format!("3.v.1|3|{now}")), "3.v.1", now + 30).0);
+        assert!(retry_due(Table::AutopilotSettings, Some(&format!("3.v.1|3|{now}")), "3.v.1", now + 60).0);
+        assert!(!retry_due(Table::Grants, Some(&format!("3.v.1|9|{now}")), "3.v.1", now + 1_000).0);
+        assert!(retry_due(Table::Grants, Some(&format!("3.v.1|40|{now}")), "3.v.1", now + 3_600).0);
     }
 
     #[test]

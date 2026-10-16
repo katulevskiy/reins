@@ -25,13 +25,15 @@ use data_encoding::BASE64URL_NOPAD;
 use reins_proto::canon::{hex32, sha256};
 use reins_proto::oplog::{MAX_RECORD_KEY_CHARS, Table};
 use rusqlite::types::Value;
-use rusqlite::{Connection, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde_json::{Map, Value as Json};
 
 use super::snapshot::{DEVICE_META, DEVICE_SECRETS};
 use super::{Store, TOMBSTONE_PREFIX};
 use crate::CoreError;
 
+/// Where the payment settings (with their spend limits) are kept.
+const PAYMENTS_CONFIG_KEY: &str = "app.payments.config";
 /// The global Autopilot setting's scope in the store, and its record key.
 const GLOBAL_SCOPE: (&str, &str) = ("", "*");
 /// Record keys the sync keeps for itself (view-key grants): never a store row.
@@ -403,11 +405,47 @@ impl Store {
         Ok(())
     }
 
-    /// After a start this phone could not verify (a fresh primary that loaded its predecessor's checkpoint): every
-    /// grant revoked, every mode at the tightest (Lockdown stays Lockdown, anything else Manual), no bypass. Nothing
-    /// of that state loosens anything until the user approves it again.
+    /// After a start this phone could not verify (a fresh primary that loaded a checkpoint it cannot vouch for): nothing
+    /// of that state loosens anything until the user sets it again.
+    /// - every grant revoked, every mode at the tightest (Lockdown stays Lockdown, anything else Manual), no bypass;
+    /// - Autopilot's learning forgotten (its memory, its approved targets) and its profiles back to their defaults;
+    /// - paired computers' keys forgotten (each pairs again), MCP servers' tool lists and marks to be listed again;
+    /// - every "always ask" entry asking, and no spend limit (budgets, which only refuse, stay).
     pub(crate) fn tighten_untrusted(&self) -> Result<(), CoreError> {
+        for p in self.ap_profiles()? {
+            let reset = crate::autopilot::store::Profile {
+                name: p.profile.name.clone(),
+                icon: p.profile.icon.clone(),
+                ..crate::autopilot::store::Profile::default()
+            };
+            self.ap_put_profile(&p.id, p.created_at, &reset)?;
+        }
         let conn = self.lock()?;
+        conn.execute_batch(
+            "DELETE FROM autopilot_memory;
+             DELETE FROM autopilot_targets;
+             DELETE FROM desktop_keys;
+             UPDATE mcp_servers SET tools = '[]', heavy = '[]', status = 'ok', error = NULL, listed_at = NULL;",
+        )?;
+        let meta = |key: &str| -> Result<Option<Json>, CoreError> {
+            let raw: Option<String> =
+                conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)).optional()?;
+            Ok(raw.and_then(|r| serde_json::from_str(&r).ok()))
+        };
+        let put = |key: &str, value: &Json| -> Result<(), CoreError> {
+            conn.execute("UPDATE meta SET value = ?1 WHERE key = ?2", rusqlite::params![value.to_string(), key])?;
+            Ok(())
+        };
+        if let Some(Json::Object(mut asks)) = meta(super::lattice::ALWAYS_ASK_KEY)? {
+            for v in asks.values_mut() {
+                *v = Json::Bool(true);
+            }
+            put(super::lattice::ALWAYS_ASK_KEY, &Json::Object(asks))?;
+        }
+        if let Some(Json::Object(mut config)) = meta(PAYMENTS_CONFIG_KEY)? {
+            config.insert("limits".to_owned(), Json::Array(Vec::new()));
+            put(PAYMENTS_CONFIG_KEY, &Json::Object(config))?;
+        }
         let grants: Vec<(String, String)> = conn
             .prepare("SELECT id, grant_json FROM grants")?
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?

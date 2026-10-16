@@ -119,6 +119,8 @@ struct State {
     forge_heartbeat: bool,
     /// Claim, with the recovery wrap, that the primary wrote this many ops (more than the log holds).
     inflate_counter: Option<u64>,
+    /// Serve a recovering phone ops only up to this seq.
+    recovery_up_to: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -361,12 +363,19 @@ impl State {
                     return err(403, "wrong_proof");
                 }
                 let from = r.after.max(self.floor);
-                let ops: Vec<SyncedOp> = self.ops.iter().filter(|o| o.seq > from).take(500).cloned().collect();
+                let up_to = self.recovery_up_to.unwrap_or(u64::MAX);
+                let ops: Vec<SyncedOp> =
+                    self.ops.iter().filter(|o| o.seq > from && o.seq <= up_to).take(500).cloned().collect();
                 ok(reins_proto::oplog::RecoveryLog {
-                    checkpoint: self.checkpoint.clone(),
+                    checkpoint: if r.with_checkpoint {
+                        self.checkpoint.clone()
+                    } else {
+                        None
+                    },
+                    heartbeat: self.heartbeat.clone(),
                     floor_seq: self.floor,
                     head_seq: self.head(),
-                    more: self.ops.iter().filter(|o| o.seq > from).count() > ops.len(),
+                    more: self.ops.iter().filter(|o| o.seq > from && o.seq <= up_to).count() > ops.len(),
                     ops,
                 })
             }
@@ -1426,10 +1435,14 @@ async fn a_fresh_phone_that_recovers_is_not_stuck_when_the_log_before_it_was_dro
     assert_eq!(state.role, PhoneRole::Primary);
     assert!(state.notice.is_none() && state.forked.is_none(), "{state:?}");
     assert_eq!(state.applied_seq, state.head_seq);
-    assert!(c.autopilot_settings().await.unwrap().bypass_until.is_some(), "it has the account's state");
-    // And the viewer goes on with it.
+    // It started from a checkpoint it cannot vouch for (a thief could have put it just before): nothing it brought
+    // loosens anything. The bypass is off and the mode Manual, until the user turns them on again.
+    let settings = c.autopilot_settings().await.unwrap();
+    assert_eq!((settings.bypass_until, settings.base_mode), (None, AutopilotMode::Manual));
+    // And the viewer goes on with it, tightened too.
     let state = b.live_sync(0).await.unwrap();
     assert!(state.forked.is_none() && !state.waiting_for_key, "{state:?}");
+    assert_eq!(b.autopilot_settings().await.unwrap().bypass_until, None);
 }
 
 #[tokio::test]
@@ -1727,11 +1740,94 @@ async fn a_handover_waits_for_rows_too_large_to_send_and_a_demoted_phone_keeps_t
     // The handover would leave it behind: refused, and said why.
     let id = b.handover_request().await.unwrap();
     a.sync(0).await.unwrap();
-    let refused = a.handover_approve(id, device_of(&b).await).await.unwrap_err();
+    let refused = a.handover_approve(id.clone(), device_of(&b).await).await.unwrap_err();
     assert!(refused.to_string().contains("too large"), "{refused}");
+    // Once the row is gone, the handover is no longer held back by it.
+    a.engine()
+        .keep_sync_row(
+            "mcp_servers",
+            &json!({"id": "m-small", "name": "S", "url": "https://s.example",
+        "auth": "none", "tools": "[]", "heavy": "[]", "status": "ok", "added_at": 1})
+            .to_string(),
+        )
+        .unwrap();
+    a.mcp_remove("m-big".to_owned()).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    assert!(a.engine().has_sync_row("mcp_servers", "m-small").unwrap());
+    a.engine().keep_sync_row("mcp_servers", &server.to_string()).unwrap();
+    a.live_sync(0).await.unwrap();
     // B recovers instead (A is demoted without a say): A keeps the row, never deleted as a leftover.
     recover(&b, PASSWORD, "Pixel").await.unwrap();
     let state = a.live_sync(0).await.unwrap();
     assert_eq!(state.role, PhoneRole::Removed);
     assert!(a.engine().has_sync_row("mcp_servers", "m-big").unwrap());
+}
+
+// ---- the live sync, security review round 3 ------------------------------------------------------------------------
+
+/// Takes the op at `index` of the log out and closes the seq gap (what a server that drops an op shows).
+fn drop_op(w: &World, index: usize) {
+    let mut st = w.state();
+    st.ops.remove(index);
+    for o in st.ops.iter_mut().skip(index) {
+        o.seq -= 1;
+    }
+}
+
+#[tokio::test]
+async fn a_recovery_starts_from_the_primarys_earlier_checkpoint_when_no_newer_one_exists() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    let c = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    // The roster moves on and the server keeps no checkpoint after that; the old ops are gone.
+    w.state().refuse_checkpoint = true;
+    enroll(&a, &c, "Tablet").await;
+    a.live_sync(0).await.unwrap();
+    w.state().drop_behind_checkpoint();
+    let cp_epoch = w.state().checkpoint.as_ref().unwrap().epoch;
+    assert!(cp_epoch < w.state().roster.last().unwrap().epoch);
+    // A fresh phone still recovers: the primary's own checkpoint from its tenure, as untrusted.
+    let fresh = w.phone().await;
+    recover(&fresh, PASSWORD, "New iPhone").await.unwrap();
+    let state = fresh.live_sync(0).await.unwrap();
+    assert_eq!(state.role, PhoneRole::Primary);
+    assert_eq!(fresh.autopilot_settings().await.unwrap().bypass_until, None, "tightened");
+}
+
+#[tokio::test]
+async fn a_recovery_refuses_to_vouch_for_a_gap_or_a_log_shorter_than_the_primary_signed() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    a.start_bypass(None, Some(60)).await.unwrap();
+    a.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    a.live_sync(0).await.unwrap();
+    let epoch = w.state().roster.last().unwrap().epoch;
+    // The server serves less than the head the primary's last heartbeat signs.
+    let head = w.state().heartbeat.as_ref().unwrap().head_seq;
+    assert!(head > 1);
+    w.state().recovery_up_to = Some(head - 1);
+    let phone = w.phone().await;
+    let refused = recover(&phone, PASSWORD, "New iPhone").await.unwrap_err();
+    assert!(refused.to_string().contains("less"), "{refused}");
+    assert_eq!(w.state().roster.last().unwrap().epoch, epoch, "nothing signed");
+    w.state().recovery_up_to = None;
+    // The server drops one of the primary's ops: a later one waits for it, and the recovery would vouch for a gap.
+    let a_id = device_of(&a).await;
+    let first_of_a = w.state().ops.iter().position(|o| o.op.author == a_id).unwrap();
+    drop_op(&w, first_of_a);
+    w.state().heartbeat = None;
+    let other = w.phone().await;
+    let refused = recover(&other, PASSWORD, "Other").await.unwrap_err();
+    assert!(refused.to_string().contains("without the ones before"), "{refused}");
+    assert_eq!(w.state().roster.last().unwrap().epoch, epoch, "nothing signed");
 }

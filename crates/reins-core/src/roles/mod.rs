@@ -1120,8 +1120,8 @@ impl Engine {
         // The log first, verified under the roster before this recovery (the outgoing primary's checkpoint and the
         // signed ops after it): the entry names only the outgoing primary's ops this phone verified. A server that
         // claims to hold more of them than it serves is refused: nothing is signed.
-        self.recovery_catch_up(&session, &account, &base, &ring, master.hash.as_ref()).await?;
-        let verified = self.seen_counter(&latest.primary);
+        let verified =
+            self.recovery_catch_up(&session, &account, &base, &ring, master.hash.as_ref(), &latest.primary).await?;
         if reported_counter > verified {
             return Err(CoreError::invalid(format!(
                 "The server says the lost primary wrote {reported_counter} changes but shows {verified} of them. Nothing \

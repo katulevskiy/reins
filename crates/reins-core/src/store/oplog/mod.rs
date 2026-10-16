@@ -387,6 +387,12 @@ pub fn all_records(conn: &Connection) -> Result<Vec<Record>, CoreError> {
     raws.into_iter().map(record_of).collect()
 }
 
+/// The oldest `seq` whose op this phone still keeps (`None`: none yet).
+pub fn first_kept_seq(conn: &Connection) -> Result<Option<u64>, CoreError> {
+    let first: Option<i64> = conn.query_row("SELECT min(seq) FROM oplog_seqs", [], |r| r.get(0))?;
+    Ok(first.map(as_u64))
+}
+
 /// Whether the log this phone applied (its last [`KEPT_SEQS`]) holds the op of hash `op_hash`.
 pub fn holds_op(conn: &Connection, op_hash: &[u8; 32]) -> Result<bool, CoreError> {
     Ok(conn

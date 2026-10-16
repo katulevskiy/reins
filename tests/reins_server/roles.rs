@@ -1067,6 +1067,7 @@ async fn the_log_is_read_before_a_recovery_only_with_the_proof() {
     assert_eq!(status, StatusCode::OK, "{log}");
     assert_eq!(log["ops"].as_array().map(Vec::len), Some(2));
     assert_eq!(log["head_seq"], 2);
+    assert!(log.get("checkpoint").is_none_or(Value::is_null), "the checkpoint only when asked");
     let (_, after) =
         fresh.post("/roster/recovery-log", &json!({"master_password_hash": PASSWORD_HASH, "after": 1})).await;
     assert_eq!(after["ops"].as_array().map(Vec::len), Some(1));

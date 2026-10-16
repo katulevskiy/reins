@@ -24,16 +24,17 @@ use crate::store::oplog;
 use crate::store::records;
 use crate::store::unix_now;
 
-/// The tables a proposal may add to: an account, its token, an MCP server, a connection's icon. Never a grant, a
-/// mode, a paired computer or a setting.
-const PROPOSABLE: &[Table] = &[Table::Accounts, Table::Secrets, Table::McpServers, Table::ConnectionPrefs];
+/// The tables a proposal may add to: an account, its token, an MCP server. Never a grant, a mode, a paired computer,
+/// a setting, or how an existing connection looks.
+const PROPOSABLE: &[Table] = &[Table::Accounts, Table::Secrets, Table::McpServers];
+/// An MCP server's id: what the app makes (lowercase letters, digits, `-`), at most this long.
+const MAX_MCP_ID: usize = 64;
 /// The integrations whose accounts and tokens a viewer may propose.
 const INTEGRATIONS: &[&str] = &["github", "gitlab", "codeberg", "bitbucket", "telegram"];
 /// The tokens of MCP servers (their account is the server's id).
 const MCP_TOKENS: &str = crate::store::MCP_SECRET_SERVICE;
-/// A proposal's kind for an MCP server, and for a connection's icon.
+/// A proposal's kind for an MCP server.
 const KIND_MCP: &str = "mcp";
-const KIND_ICON: &str = "icon";
 
 /// A proposal waiting for the primary.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -54,10 +55,10 @@ pub struct ProposalView {
 /// One row a proposal adds, as the primary opened it.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ProposalRowView {
-    /// `accounts`, `secrets`, `mcp_servers` or `connection_prefs`.
+    /// `accounts`, `secrets` or `mcp_servers`.
     pub table: String,
     pub key: String,
-    /// What the row is: the service and account, the server's name and URL, the icon (never a token).
+    /// What the row is: the service and account, or the server's name and URL (never a token).
     pub summary: String,
     /// A row with this key exists already: Keep refuses the proposal.
     pub replaces: bool,
@@ -91,7 +92,6 @@ fn allowed_columns(table: Table) -> &'static [&'static str] {
         // Never `client`: how the primary signs in to the server (its OAuth registration) is the primary's own, or an
         // attacker's token endpoint would receive the authorization code.
         Table::McpServers => &["id", "name", "url", "auth"],
-        Table::ConnectionPrefs => &["connection_id", "icon"],
         _ => &[],
     }
 }
@@ -121,6 +121,13 @@ fn sanitized(rows: &[ProposedRow], now: i64) -> Result<Vec<ProposedRow>, String>
                     value.insert("added_at".to_owned(), Json::from(now));
                 }
                 Table::McpServers => {
+                    let id = text(&r.value, "id");
+                    let well_formed = !id.is_empty()
+                        && id.len() <= MAX_MCP_ID
+                        && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+                    if !well_formed {
+                        return Err("an MCP server's id is lowercase letters, digits and -".to_owned());
+                    }
                     // What the server says of itself (its tools, which are heavy or read-only, its status) is listed
                     // again by the primary, never taken from the proposing phone.
                     for (column, default) in
@@ -151,7 +158,7 @@ fn sanitized(rows: &[ProposedRow], now: i64) -> Result<Vec<ProposedRow>, String>
 }
 
 /// Whether the rows are what a proposal of `kind` adds: an account of that integration with (or without) its token,
-/// an MCP server with (or without) its own token, or one icon. Tokens of anything else are refused.
+/// or an MCP server with (or without) its own token. Tokens of anything else are refused.
 fn check_kind(kind: &str, rows: &[ProposedRow]) -> Result<(), String> {
     let of = |t: Table| rows.iter().filter(move |r| r.table == t);
     for secret in of(Table::Secrets) {
@@ -170,16 +177,8 @@ fn check_kind(kind: &str, rows: &[ProposedRow]) -> Result<(), String> {
     }
     match kind {
         KIND_MCP => {
-            if of(Table::McpServers).count() != 1
-                || of(Table::Accounts).next().is_some()
-                || of(Table::ConnectionPrefs).next().is_some()
-            {
+            if of(Table::McpServers).count() != 1 || of(Table::Accounts).next().is_some() {
                 return Err("an MCP server proposal adds one server and its token".to_owned());
-            }
-        }
-        KIND_ICON => {
-            if rows.len() != 1 || of(Table::ConnectionPrefs).count() != 1 {
-                return Err("an icon proposal adds one icon".to_owned());
             }
         }
         service if INTEGRATIONS.contains(&service) => {
@@ -187,7 +186,6 @@ fn check_kind(kind: &str, rows: &[ProposedRow]) -> Result<(), String> {
             if accounts.len() != 1
                 || text(&accounts[0].value, "service") != service
                 || of(Table::McpServers).next().is_some()
-                || of(Table::ConnectionPrefs).next().is_some()
             {
                 return Err(format!("a {service} proposal adds one {service} account and its token"));
             }
@@ -341,9 +339,6 @@ impl Engine {
                 key: records::key_of_row(r.table, &r.value).unwrap_or_default(),
                 summary: match r.table {
                     Table::McpServers => format!("{} · {}", text(&r.value, "name"), text(&r.value, "url")),
-                    Table::ConnectionPrefs => {
-                        format!("{} · {}", text(&r.value, "connection_id"), text(&r.value, "icon"))
-                    }
                     _ => format!("{} · {}", text(&r.value, "service"), text(&r.value, "account")),
                 },
                 replaces: *replaces,
@@ -460,6 +455,9 @@ mod tests {
         assert_eq!(kept[0].value["client"], Json::Null);
         assert_eq!(kept[0].value["tools"], json!("[]"));
         for (bad, why) in [
+            (json!({"id": "M1"}), "an id the app does not make"),
+            (json!({"id": "x".repeat(65)}), "an id too long"),
+            (json!({"id": "a/../b"}), "a path in the id"),
             (json!({"client": "{\"token_endpoint\":\"https://evil.example/token\"}"}), "a client"),
             (json!({"auth": "oauth"}), "OAuth"),
             (json!({"url": "https://real.example@evil.example/"}), "a user name in the URL"),
@@ -468,5 +466,22 @@ mod tests {
         ] {
             assert!(sanitized(&server(bad), 7).is_err(), "{why}");
         }
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn a_viewer_cannot_restyle_a_connection() {
+        let icon = vec![ProposedRow {
+            table: Table::ConnectionPrefs,
+            value: json!({"connection_id": "c1", "icon": "star"}),
+        }];
+        assert!(check_kind("icon", &icon).is_err());
+        assert!(!PROPOSABLE.contains(&Table::ConnectionPrefs));
     }
 }

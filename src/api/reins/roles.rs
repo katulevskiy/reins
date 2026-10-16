@@ -23,7 +23,7 @@ use reins_proto::{
     PROTOCOL_VERSION,
     answer::{AnswerKind, SignedAnswer, answer_message},
     device::codes,
-    oplog::{Checkpoint, MAX_SYNC_OPS, RecoveryLog, RecoveryLogRequest, SyncedOp},
+    oplog::{Checkpoint, Heartbeat, MAX_RECOVERY_LOG_BYTES, MAX_SYNC_OPS, RecoveryLog, RecoveryLogRequest, SyncedOp},
     pairing::{PushKind, PushMessage},
     roster::{
         HANDOVER_REQUEST_SKEW_SECS, HandoverAnswer, HandoverBundle, HandoverCreated, HandoverRequest,
@@ -529,23 +529,40 @@ async fn post_recovery_log(data: Data<'_>, headers: Headers, conn: DbConn) -> Ph
     let from = i64::try_from(request.after).unwrap_or(i64::MAX).max(state.floor);
     let limit = i64::try_from(MAX_SYNC_OPS).unwrap_or(500);
     let rows = ReinsOps::after(&user, from, limit + 1, &conn).await.map_err(|e| internal(&e))?;
-    let more = rows.len() > MAX_SYNC_OPS;
-    let ops = rows
+    let mut more = rows.len() > MAX_SYNC_OPS;
+    let mut bytes = 0;
+    let mut ops = Vec::new();
+    for row in rows.iter().take(MAX_SYNC_OPS) {
+        bytes += row.op.len();
+        if bytes > MAX_RECOVERY_LOG_BYTES && !ops.is_empty() {
+            more = true;
+            break;
+        }
+        if let (Ok(seq), Ok(op)) = (u64::try_from(row.seq), serde_json::from_str(&row.op)) {
+            ops.push(SyncedOp {
+                seq,
+                op,
+            });
+        }
+    }
+    let checkpoint = if request.with_checkpoint {
+        ReinsOps::latest_checkpoint(&user, &conn)
+            .await
+            .map_err(|e| internal(&e))?
+            .and_then(|row| serde_json::from_str::<Checkpoint>(&row.checkpoint).ok())
+    } else {
+        None
+    };
+    // The primary's latest signed heartbeat: the head the phone must reach before it vouches for anything.
+    let members = ReinsMember::all(&user, &conn).await.map_err(|e| internal(&e))?;
+    let heartbeat = members
         .iter()
-        .take(MAX_SYNC_OPS)
-        .filter_map(|row| {
-            Some(SyncedOp {
-                seq: u64::try_from(row.seq).ok()?,
-                op: serde_json::from_str(&row.op).ok()?,
-            })
-        })
-        .collect();
-    let checkpoint = ReinsOps::latest_checkpoint(&user, &conn)
-        .await
-        .map_err(|e| internal(&e))?
-        .and_then(|row| serde_json::from_str::<Checkpoint>(&row.checkpoint).ok());
+        .find(|m| m.role == ROLE_PRIMARY)
+        .and_then(|m| m.heartbeat.as_deref())
+        .and_then(|h| serde_json::from_str::<Heartbeat>(h).ok());
     Ok(Json(RecoveryLog {
         checkpoint,
+        heartbeat,
         floor_seq: u64::try_from(state.floor).unwrap_or(0),
         head_seq: u64::try_from(state.head).unwrap_or(0),
         ops,
