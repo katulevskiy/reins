@@ -17,7 +17,7 @@ fn aad(service: &str, account: &str) -> String {
 impl Store {
     pub fn secret_get(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, CoreError> {
         let blob: Option<Vec<u8>> = self
-            .lock()?
+            .read()?
             .query_row(
                 "SELECT value FROM secrets WHERE service = ?1 AND account = ?2",
                 params![service, account],
@@ -40,7 +40,7 @@ impl Store {
     /// Every secret of `service`, by account.
     pub(crate) fn secrets_of(&self, service: &str) -> Result<Vec<Secret>, CoreError> {
         let rows: Vec<(String, Vec<u8>)> = {
-            let conn = self.lock()?;
+            let conn = self.read()?;
             let mut stmt = conn.prepare("SELECT account, value FROM secrets WHERE service = ?1 ORDER BY account")?;
             stmt.query_map(params![service], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
         };

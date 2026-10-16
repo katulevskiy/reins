@@ -18,6 +18,8 @@ use std::{
 use zeroize::Zeroizing;
 const KEY_CACHE: &str = "reins.owner-vault-key";
 const SECRET_CACHE: &str = "reins.owner-account-secret";
+/// How long handling a push waits for the account's upload before it returns (the upload goes on).
+const PUSH_UPLOAD_WAIT: std::time::Duration = std::time::Duration::from_secs(8);
 
 pub(crate) struct AccountRuntime {
     pub(crate) current: Mutex<Arc<Engine>>,
@@ -31,6 +33,8 @@ pub(crate) struct AccountRuntime {
     model: Mutex<Option<Arc<dyn crate::autopilot::ModelRuntime>>>,
     initialized: std::sync::atomic::AtomicBool,
     generation: std::sync::atomic::AtomicU64,
+    /// The app is in the background (`set_background`), for every engine this builds.
+    background: std::sync::atomic::AtomicBool,
 }
 impl AccountRuntime {
     pub fn new(
@@ -72,6 +76,7 @@ impl AccountRuntime {
             model: Mutex::new(None),
             generation: std::sync::atomic::AtomicU64::new(0),
             initialized: std::sync::atomic::AtomicBool::new(false),
+            background: std::sync::atomic::AtomicBool::new(false),
         }))
     }
     pub fn engine(&self) -> Arc<Engine> {
@@ -89,35 +94,56 @@ impl AccountRuntime {
         if let Some(model) = self.model.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
             engine.set_model_runtime(Arc::clone(model));
         }
+        engine.set_autopilot_background(self.background.load(std::sync::atomic::Ordering::Acquire));
         Ok(engine)
     }
     pub fn set_model(&self, model: Arc<dyn crate::autopilot::ModelRuntime>) {
         self.engine().set_model_runtime(Arc::clone(&model));
         *self.model.lock().unwrap_or_else(PoisonError::into_inner) = Some(model);
     }
-    pub async fn session(&self) -> Option<SessionInfo> {
+    /// The signed-in session; `None` when signed out (or when the account cannot be opened, which signs it out). An
+    /// error when the data could not be read now (busy in another process, the app being suspended): it says nothing
+    /// about the session, and the same call later does.
+    pub async fn session(&self) -> Result<Option<SessionInfo>, CoreError> {
         let _guard = self.transition.lock().await;
         let engine = self.engine();
-        self.control.load_session().ok().flatten()?;
+        if self.control.load_session()?.is_none() {
+            return Ok(None);
+        }
         if engine.store.owner.is_none()
-            && let Ok(Some(encoded)) = self.control.meta_get("active-owner")
+            && let Some(encoded) = self.control.meta_get("active-owner")?
             && let Ok(owner) = serde_json::from_str::<Owner>(&encoded)
-            && let Ok(Some(key)) = self.control.secret_get(KEY_CACHE, &owner.id())
+            && let Some(key) = self.control.secret_get(KEY_CACHE, &owner.id())?
             && let Ok(key) = VaultKey::from_bytes(&key)
             && let Ok(session) = engine.session()
             && owner.server == session.server.as_str()
-            && self.control.meta_get(&account_id_key(&session.server, &session.email())).ok().flatten().as_deref()
+            && self.control.meta_get(&account_id_key(&session.server, &session.email()))?.as_deref()
                 == Some(&owner.user_id)
-            && self.activate(&engine, owner, &key).await.is_err()
+            && let Err(e) = self.activate(&engine, owner, &key).await
         {
-            return None;
+            if Self::transient(&e) {
+                return Err(e);
+            }
+            return Ok(None);
         }
         self.initialized.store(true, std::sync::atomic::Ordering::Release);
         let current = self.engine();
         if current.ensure_active().is_err() {
-            return None;
+            return Ok(None);
         }
-        current.session_info()
+        Ok(current.session_info())
+    }
+    /// The store could not be read or written now (another process holds it, the app is being suspended): the
+    /// same call succeeds later, so it says nothing about the account.
+    fn transient(e: &CoreError) -> bool {
+        matches!(e, CoreError::Storage { reason } if reason == crate::store::STORE_BUSY
+            || reason == crate::store::STORE_SUSPENDING)
+    }
+    /// Whether the app is in the background, where Autopilot's pass does not load the model (see
+    /// `Engine::set_autopilot_background`).
+    pub fn set_background(&self, background: bool) {
+        self.background.store(background, std::sync::atomic::Ordering::Release);
+        self.engine().set_autopilot_background(background);
     }
     pub fn generation(&self) -> u64 {
         self.generation.load(std::sync::atomic::Ordering::Acquire)
@@ -127,7 +153,8 @@ impl AccountRuntime {
             return Err(CoreError::NotLoggedIn);
         }
         if !self.initialized.load(std::sync::atomic::Ordering::Acquire) {
-            self.session().await;
+            // What it found shows in `ensure_active` below; a read that failed is tried again by the next call.
+            drop(self.session().await);
         }
         if generation != self.generation() {
             return Err(CoreError::NotLoggedIn);
@@ -446,7 +473,9 @@ impl AccountRuntime {
         result
     }
     /// [`Self::finish`] for work done in the background (a push), where the process may be suspended right after:
-    /// the upload is waited for instead of left running.
+    /// the upload is waited for instead of left running, for at most [`PUSH_UPLOAD_WAIT`] (a push has seconds, and
+    /// the app still has to answer iOS); an upload that takes longer goes on, and the next sync carries what it did
+    /// not.
     pub async fn finish_synced<T>(&self, engine: &Arc<Engine>, result: Result<T, CoreError>) -> Result<T, CoreError> {
         engine.ensure_active()?;
         if !Arc::ptr_eq(&self.engine(), engine) {
@@ -454,7 +483,11 @@ impl AccountRuntime {
         }
         engine.store.flush()?;
         if engine.store.owner.is_some() {
-            engine.run_account(engine.sync_account_state()).await.ok();
+            let uploading = Arc::clone(engine);
+            let upload = tokio::spawn(async move {
+                drop(uploading.run_account(uploading.sync_account_state()).await);
+            });
+            drop(tokio::time::timeout(PUSH_UPLOAD_WAIT, upload).await);
         }
         engine.ensure_active()?;
         if !Arc::ptr_eq(&self.engine(), engine) {
@@ -494,5 +527,19 @@ impl Notifier for ScopedNotifier {
         if self.active() {
             self.target.autopilot_changed(event);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_busy_or_suspending_store_is_transient() {
+        assert!(AccountRuntime::transient(&CoreError::storage(crate::store::STORE_BUSY)));
+        assert!(AccountRuntime::transient(&CoreError::storage(crate::store::STORE_SUSPENDING)));
+        // An account that cannot be opened signs it out, as before.
+        assert!(!AccountRuntime::transient(&CoreError::storage("cannot read account data")));
+        assert!(!AccountRuntime::transient(&CoreError::NotLoggedIn));
     }
 }

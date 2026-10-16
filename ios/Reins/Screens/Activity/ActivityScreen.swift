@@ -44,6 +44,13 @@ struct ActivityScreen: View {
         var filters: ActivityFilters
     }
 
+    /// A screen task's key with whether the app is in the background: leaving the app cancels the task (the store
+    /// work it started finishes under its own background task, and no new work starts), and coming back runs it again.
+    private struct InFront<Key: Equatable>: Equatable {
+        var key: Key
+        var background: Bool
+    }
+
     private struct SearchResults {
         var key: SearchKey
         /// The query of the first page (its `since` fixed then), for the pages after it.
@@ -144,8 +151,8 @@ struct ActivityScreen: View {
         .task(id: model.pending.filter { $0.kind == .request }.map(\.id)) { await loadSuggestions() }
         .task(id: model.fold.request?.at) { await model.fold.run(model) }
         // New entries: the days' counts and the open days again.
-        .task(id: model.activity.map(\.id)) { await loadRiver() }
-        .task(id: searchKey) { await search(searchKey) }
+        .task(id: InFront(key: model.activity.map(\.id), background: model.inBackground)) { await loadRiver() }
+        .task(id: InFront(key: searchKey, background: model.inBackground)) { await search(searchKey) }
         .onChange(of: atTop) { markSeenSoon() }
         .animation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion), value: searching)
         .pageBackground()
@@ -348,6 +355,7 @@ struct ActivityScreen: View {
 
     /// The days and their counts from the core, the filter menus' choices, then the open days' entries again.
     private func loadRiver() async {
+        guard model.screensMayReadStore else { return }
         let core = model.core
         do {
             async let stampsRead = core.activityStamps(query: ActivityQuery())
@@ -371,13 +379,14 @@ struct ActivityScreen: View {
 
     /// Reads `day`'s entries until `upTo` are in (or the day ends), from its start (`reset`) or after what was read.
     private func loadDay(_ day: ActivityDay, reset: Bool, upTo: Int) async {
+        guard model.screensMayReadStore else { return }
         if pages[day.key]?.loading == true { return }
         var page = reset ? DayPage() : (pages[day.key] ?? DayPage())
         if page.done || page.entries.count >= upTo { return }
         pages[day.key, default: DayPage()].loading = true
         let query = ActivityQuery(since: day.since, until: day.until)
         do {
-            while page.entries.count < upTo && !page.done {
+            while page.entries.count < upTo && !page.done && model.screensMayReadStore {
                 let limit = UInt32(min(200, max(Self.pageSize, upTo - page.entries.count)))
                 let read = try await model.core.searchActivity(query: query, after: page.next, limit: limit)
                 let entries = read.hits.map(\.entry)
@@ -460,6 +469,8 @@ struct ActivityScreen: View {
             if Task.isCancelled { return }
         }
         let query = key.filters.query(text: key.text, now: Date(timeIntervalSince1970: TimeInterval(Timers.nowSeconds())))
+        // Left in the background: the search runs again when the app comes back (its task's key changes).
+        guard model.screensMayReadStore else { return }
         do {
             let page = try await model.core.searchActivity(query: query, after: nil, limit: UInt32(Self.pageSize))
             if Task.isCancelled { return }
@@ -474,7 +485,7 @@ struct ActivityScreen: View {
 
     /// The next page of matches, when the last one shown appears.
     private func loadMoreResults() async {
-        guard var r = results, let next = r.next, !r.loadingMore else { return }
+        guard var r = results, let next = r.next, !r.loadingMore, model.screensMayReadStore else { return }
         results?.loadingMore = true
         do {
             let page = try await model.core.searchActivity(query: r.query, after: next, limit: UInt32(Self.pageSize))
@@ -545,6 +556,7 @@ struct ActivityScreen: View {
             let ids = model.pending.filter { $0.kind == .request }.map(\.id)
             var next: [String: SuggestionView] = [:]
             for id in ids {
+                guard model.screensMayReadStore, !Task.isCancelled else { return }
                 if let s = try? await core.autopilotSuggestion(requestId: id) { next[id] = s }
             }
             if Task.isCancelled { return }

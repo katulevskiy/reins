@@ -71,6 +71,8 @@ pub struct State {
     /// The opened package, and whether the runtime has loaded its model.
     laya: Mutex<Option<Arc<Laya>>>,
     loaded: AtomicBool,
+    /// The app is in the background: the pass judges with the model only when it is already loaded.
+    background: AtomicBool,
     pub(crate) download: DownloadState,
     /// One pass at a time.
     pass: tokio::sync::Mutex<()>,
@@ -389,6 +391,19 @@ impl Engine {
         }
     }
 
+    /// Whether the app is in the background. There the pass does not load the model (hundreds of megabytes, while iOS
+    /// gives a background wake seconds and ends a process that grows): what the model would judge waits, unjudged,
+    /// for the next pass in front, as it does in the notification extension. A model already loaded still judges.
+    /// Bypass and Lockdown decide either way; nothing is ever approved for want of the model.
+    pub fn set_autopilot_background(&self, background: bool) {
+        self.autopilot.background.store(background, Ordering::SeqCst);
+    }
+
+    /// Whether this pass may run the model (see [`Engine::set_autopilot_background`]).
+    fn ap_may_run_model(&self) -> bool {
+        !self.autopilot.background.load(Ordering::SeqCst) || self.autopilot.loaded.load(Ordering::SeqCst)
+    }
+
     fn ap_unload(&self) {
         *lock(&self.autopilot.laya) = None;
         if self.autopilot.loaded.swap(false, Ordering::SeqCst)
@@ -529,7 +544,7 @@ impl Engine {
     /// and tells the app it waits. Runs after every push and sync; never fails (items just wait).
     pub(crate) async fn autopilot_pass(&self) {
         let _one = self.autopilot.pass.lock().await;
-        if let Err(e) = self.ap_pass(true).await {
+        if let Err(e) = self.ap_pass(self.ap_may_run_model()).await {
             log::warn!("Autopilot could not look at the waiting items: {e}");
         }
     }

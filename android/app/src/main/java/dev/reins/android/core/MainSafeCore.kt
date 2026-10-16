@@ -292,8 +292,10 @@ class MainSafeCore(
     override suspend fun setSecretsAlwaysAsk(project: String, env: String, always: Boolean?) =
         io { setSecretsAlwaysAsk(project, env, always) }
 
+    /** Null when signed out. A failure is thrown: the store could not be read, which is not signed out. */
     override suspend fun session(): SessionInfo? = io { session() }
 
+    /** Null when there is nothing to show. A failure is thrown and leaves any banner already shown. */
     override suspend fun accountSyncNotice(): String? = io { accountSyncNotice() }
 
     override suspend fun dismissAccountSyncNotice() = io { dismissAccountSyncNotice() }
@@ -359,6 +361,9 @@ class MainSafeCore(
 
     /** Not suspending: the runtime is handed over as the core is built (see `AppContainer.createRealCore`). */
     override fun setModelRuntime(runtime: ModelRuntime) = delegate.setModelRuntime(runtime)
+
+    /** Not suspending: the core skips loading Autopilot's model while the app is in the background. */
+    override fun setBackground(background: Boolean) = delegate.setBackground(background)
 
     override suspend fun autopilotSettings(): AutopilotSettings = io { autopilotSettings() }
 

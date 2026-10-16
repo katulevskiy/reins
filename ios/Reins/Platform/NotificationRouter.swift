@@ -199,13 +199,9 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
 
     /// "Deny" or "Approve" from the notification: the app runs in the background for it and plays nothing.
     private func answer(_ payload: PushPayload, approve: Bool, remote: Bool, model: AppModel) async {
-        let app = UIApplication.shared
-        var task = UIBackgroundTaskIdentifier.invalid
-        task = app.beginBackgroundTask(withName: approve ? "approve" : "deny") {
-            app.endBackgroundTask(task)
-            task = .invalid
-        }
-        defer { if task != .invalid { app.endBackgroundTask(task) } }
+        // Ended exactly once: by its expiration handler or when this returns, whichever comes first.
+        let task = BackgroundTaskToken.begin(approve ? "approve" : "deny")
+        defer { task.end() }
         await waitForSession(model)
         do {
             if remote { try? await model.core.handlePush(kind: payload.kind, id: payload.id) }

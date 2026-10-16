@@ -19,7 +19,7 @@ pub mod oplog;
 mod pending;
 mod protected;
 mod snapshot;
-pub(crate) use protected::Owner;
+pub(crate) use protected::{Owner, STORE_BUSY, STORE_SUSPENDING, install_lock_guard};
 mod secrets;
 mod sync;
 pub(crate) use sync::Pulled;
@@ -398,7 +398,15 @@ impl Store {
     pub fn open(data_dir: &Path, keys: &dyn KeyWrapper) -> Result<Self, CoreError> {
         fs::create_dir_all(data_dir).map_err(|e| CoreError::storage(format!("cannot create data directory: {e}")))?;
         let protected_path = data_dir.join("reins.sealed");
-        let disk = if !protected_path.exists() && data_dir.join(DB_FILE).exists() {
+        let legacy = !protected_path.exists() && data_dir.join(DB_FILE).exists();
+        // The legacy database is a file in the shared container, and its connection holds SQLite's file locks while
+        // open: the platform's guard is held until it is closed (iOS ends a process suspended with such a lock).
+        let awake = if legacy {
+            Some(protected::stay_awake()?)
+        } else {
+            None
+        };
+        let disk = if legacy {
             Some(Connection::open(data_dir.join(DB_FILE))?)
         } else {
             None
@@ -448,6 +456,7 @@ impl Store {
             snapshot::import(&mut conn, &legacy, false)?;
             drop(disk);
         }
+        drop(awake);
         let store = Self {
             active: std::sync::atomic::AtomicBool::new(true),
             conn: Mutex::new(Some(conn)),
@@ -520,7 +529,7 @@ impl Store {
             return control.load_session();
         }
         let row: Option<(String, String, Vec<u8>)> = self
-            .lock()?
+            .read()?
             .query_row("SELECT server_url, email, refresh_token FROM session WHERE id = 1", [], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             })
@@ -544,7 +553,7 @@ impl Store {
 
     pub fn meta_get(&self, key: &str) -> Result<Option<String>, CoreError> {
         Ok(self
-            .lock()?
+            .read()?
             .query_row("SELECT value FROM meta WHERE key = ?1", params![format!("app.{key}")], |r| {
                 r.get::<_, String>(0)
             })
@@ -635,7 +644,7 @@ impl Store {
     /// The icon the user picked for a connection (`None` = automatic).
     pub fn connection_icon(&self, connection_id: &str) -> Result<Option<String>, CoreError> {
         Ok(self
-            .lock()?
+            .read()?
             .query_row("SELECT icon FROM connection_prefs WHERE connection_id = ?1", params![connection_id], |r| {
                 r.get::<_, Option<String>>(0)
             })
@@ -656,7 +665,7 @@ impl Store {
     /// travel with the account to every phone (and an older version keeps them as they are).
     pub fn connection_blobatars(&self) -> Result<std::collections::HashMap<String, String>, CoreError> {
         let prefix = format!("app.{BLOBATAR_KEY}");
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let mut stmt = conn.prepare("SELECT key, value FROM meta WHERE substr(key, 1, ?1) = ?2")?;
         let rows = stmt
             .query_map(params![i64::try_from(prefix.len()).unwrap_or(i64::MAX), prefix], |r| {
@@ -715,6 +724,13 @@ fn create_dek(dek_path: &Path, keys: &dyn KeyWrapper) -> Result<Dek, CoreError> 
 }
 
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
+    replace_file(path, bytes)?;
+    sync_parent(path)
+}
+
+/// Writes `bytes` to a temporary file, flushes it to disk and renames it over `path`: readers see the old file or the
+/// new one, never part of either. The rename reaches the disk with [`sync_parent`].
+fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
     let tmp: PathBuf = path.with_extension("tmp");
     let fail = |e: std::io::Error| CoreError::storage(format!("cannot write the data key: {e}"));
     let mut options = fs::OpenOptions::new();
@@ -728,8 +744,15 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
     file.write_all(bytes).map_err(fail)?;
     file.sync_all().map_err(fail)?;
     fs::rename(&tmp, path).map_err(fail)?;
+    Ok(())
+}
+
+/// Makes a rename into `path`'s directory durable.
+fn sync_parent(path: &Path) -> Result<(), CoreError> {
     if let Some(parent) = path.parent() {
-        fs::File::open(parent).and_then(|f| f.sync_all()).map_err(fail)?;
+        fs::File::open(parent)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| CoreError::storage(format!("cannot write the data key: {e}")))?;
     }
     Ok(())
 }

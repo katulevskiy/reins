@@ -63,7 +63,7 @@ impl Store {
 
     /// Every connected account, oldest first.
     pub fn accounts(&self) -> Result<Vec<StoredAccount>, CoreError> {
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let mut stmt = conn.prepare("SELECT service, account, added_at FROM accounts ORDER BY added_at, account")?;
         let rows = stmt
             .query_map([], |r| {
