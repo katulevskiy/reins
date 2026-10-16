@@ -275,13 +275,21 @@ final class AutopilotUITests: XCTestCase {
             if let clock { waitFor(clock) }
             XCTAssertTrue(element("heroMode").exists, "the sentence keeps its label when compact")
             let stop = waitFor(button)
-            XCTAssertTrue(stop.isHittable, "\(button) is reachable in the compact bar")
             XCTAssertGreaterThanOrEqual(stop.frame.height, 44, "\(button) stays a full touch target")
             XCTAssertLessThan(stop.frame.maxY, app.frame.minY + 200, "\(button) moved up into the bar")
             shot("trust-\(mode)-compact")
 
             for _ in 0..<4 { app.swipeDown() }
             waitForFold("open")
+
+            // Compact again, a finger on the button stops the mode. (XCUITest's isHittable says no here: the faded
+            // sentence, kept for VoiceOver and passing touches through, overlaps the button's frame. The tap proves it.)
+            app.swipeUp()
+            app.swipeUp()
+            waitForFold("compact")
+            let compactStop = waitFor(button)
+            compactStop.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            XCTAssertTrue(element("runningField").waitForNonExistence(timeout: 8), "\(button) in the compact bar stopped \(mode)")
             app.terminate()
         }
     }
@@ -299,7 +307,8 @@ final class AutopilotUITests: XCTestCase {
         let hidden = Int(showAll.label.replacingOccurrences(of: "Show all ", with: "")) ?? 0
         XCTAssertGreaterThanOrEqual(hidden, 97, showAll.label)
         showAll.tap()
-        waitFor("runningShowLess")
+        // Open, the list runs on (Show less is at its far end, not yet laid out): more rows than the three, and no Show all.
+        XCTAssertTrue(showAll.waitForNonExistence(timeout: 5), "Show all opened the list")
         XCTAssertGreaterThan(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'runningEntry:'")).count, 3)
         shot("trust-bypass-list-open")
         XCTAssertTrue(app.openTab("activity"))
