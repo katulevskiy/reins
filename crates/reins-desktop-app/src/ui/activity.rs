@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Anchor, AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Anchor, AnyElement, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use reins_desktop::journal::{Decider, Entry, Kind, Outcome};
@@ -518,7 +518,7 @@ impl Root {
                                 .text_color(pal.ink())
                                 .child(visible(&c.subject)),
                         )
-                        .when_some(mark.as_ref(), |s, mark| s.child(flag(reasons(mark), pal))),
+                        .when_some(mark.as_ref(), |s, mark| s.child(flag(reasons(mark), mark.level, pal))),
                 )
                 .when_some(lines(c.additions, c.deletions), |r, (a, d)| r.child(added_removed(&a, &d, pal)))
                 .child(div().flex_none().text_size(px(12.5)).text_color(pal.ink_meta()).child(if files == 1 {
@@ -570,7 +570,7 @@ impl Root {
                     .child(kit::section_label(count, pal))
                     .when_some(look, |h, look| h.child(kit::section_label(look, pal).text_color(pal.warning)))
                     .when(updates.iter().any(rewrites_history), |h| {
-                        h.child(flag("Rewrites history".to_owned(), pal).ml(px(8.0)))
+                        h.child(flag("Rewrites history".to_owned(), Level::Close, pal).ml(px(8.0)))
                     }),
             )
             .when_some(link, |h, link| {
@@ -625,7 +625,7 @@ impl Root {
                                 })
                                 .child(visible(&f.path)),
                         )
-                        .when_some(mark.as_ref(), |s, mark| s.child(flag(reasons(mark), pal))),
+                        .when_some(mark.as_ref(), |s, mark| s.child(flag(reasons(mark), mark.level, pal))),
                 )
                 .when_some(tag, |r, t| r.child(div().flex_none().text_color(pal.ink_meta()).child(t)))
                 .when_some(lines(f.additions.map(u64::from), f.deletions.map(u64::from)), |r, (a, d)| {
@@ -693,8 +693,17 @@ fn rewrites_history(u: &RefUpdate) -> bool {
     u.change == RefChange::Update && u.fast_forward != Some(true)
 }
 
-/// The warning glyph and its words, in `warning`.
-fn flag(text: String, pal: Palette) -> Div {
+/// How a mark reads: Close in `warning` at medium weight; Look quieter, in `ink-2`. Red stays for danger and holds.
+fn flag_style(level: Level, pal: Palette) -> (Hsla, FontWeight) {
+    match level {
+        Level::Close => (pal.warning, FontWeight::MEDIUM),
+        Level::Look => (pal.ink_2(), FontWeight::NORMAL),
+    }
+}
+
+/// The warning glyph and its words, as [`flag_style`] says for `level`.
+fn flag(text: String, level: Level, pal: Palette) -> Div {
+    let (color, weight) = flag_style(level, pal);
     div()
         .flex()
         .flex_none()
@@ -702,10 +711,10 @@ fn flag(text: String, pal: Palette) -> Div {
         .gap(px(5.0))
         .font_family(SANS)
         .text_size(px(12.5))
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(weight)
         .whitespace_nowrap()
-        .text_color(pal.warning)
-        .child(glyph(Glyph::Warning, 14.0, pal.warning))
+        .text_color(color)
+        .child(glyph(Glyph::Warning, 14.0, color))
         .child(text)
 }
 
@@ -914,6 +923,18 @@ mod tests {
         for f in &c.files {
             let label = attention::file(f).map(|m| reasons(&m)).unwrap_or_default();
             assert!(!label.contains(&f.path) && !label.contains(&key), "{label:?}");
+        }
+    }
+
+    /// Close reads as more serious than Look: `warning` at medium weight, Look in the quieter `ink-2`; never red.
+    #[test]
+    fn close_marks_read_heavier_than_look() {
+        for pal in [Palette::light(), Palette::dark()] {
+            assert_eq!(flag_style(Level::Close, pal), (pal.warning, FontWeight::MEDIUM));
+            let (look, weight) = flag_style(Level::Look, pal);
+            assert_eq!((look, weight), (pal.ink_2(), FontWeight::NORMAL));
+            assert_ne!(look, pal.warning);
+            assert!(look != pal.danger && pal.warning != pal.danger);
         }
     }
 
