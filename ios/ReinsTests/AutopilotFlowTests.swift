@@ -460,7 +460,12 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertEqual(stats.days, 7)
         XCTAssertGreaterThan(stats.scored, 0)
         XCTAssertNotNil(stats.matched)
-        XCTAssertEqual(stats.kindsOnAuto, 1, "Personal's push")
+        // On Auto from the start in the demo: Personal's push (earned), Personal's Gmail send (trusted by hand) and Work's
+        // push (on Auto from its first answer, the cold start). The week's number counts exactly those.
+        let onAuto = ap.profiles.flatMap { p in p.classes.filter(\.autoApprove).map { "\(p.id):\($0.classKey)" } }
+        XCTAssertEqual(Set(onAuto), ["personal:github/write/push", "personal:gmail/send", "work:github/write/push"])
+        XCTAssertEqual(stats.kindsOnAuto, 3, "the three kinds on Auto")
+        XCTAssertEqual(stats.kindsOnAuto, UInt32(onAuto.count))
     }
 
     func testAProfileCanBeCreatedMadeDefaultResetAndDeleted() async throws {
