@@ -8,13 +8,16 @@ the project's deployment target and the compilation conditions Xcode would use. 
 The targets, their folders, product types and build settings are read from ios/scripts/gen-project.py and
 ios/Config/Reins.xcconfig, so a new target setting or condition reaches this check by itself. Besides the SDK, it needs:
 - the Rust core's C header and module map (`import reins_coreFFI`): generated with uniffi-bindgen from a host build
-  of crates/reins-core, the way build-core.sh does for iOS, and cached per Rust source;
+  of crates/reins-core, the way build-core.sh does for iOS. The build and the bindings are cached by a content hash
+  of the core's sources, the crates it depends on, Cargo.lock, the UniFFI config and the toolchain: one directory
+  per hash, published under a lock by an atomic rename, with the last three builds kept;
 - ONNX Runtime's headers (`import OnnxRuntimeC`): from the package's release archive pinned by Package.resolved, checked
   against the package's checksum, cached;
 - the asset symbols Xcode generates from the asset catalogs (`ImageResource.foo`, `ColorResource.foo`).
 """
 
 import argparse
+import fcntl
 import fnmatch
 import hashlib
 import json
@@ -209,7 +212,58 @@ def path_crates(crate: Path, seen: set) -> None:
             path_crates(dep_dir, seen)
 
 
-def core_key() -> str:
+# A shared cargo target records one worktree's library under a name every worktree reads. Bindgen then
+# publishes that library's bindings under whatever hash the later worktree computed. Each hash gets its own
+# target directory, so the .so bindgen reads is the one this source tree just built.
+CORE_BUILDS_KEPT = 3
+# Shared flocks held until exit, so a prune in another process leaves a build this one is type-checking.
+core_use_locks: list = []
+
+
+def find_cargo() -> Path:
+    cargo = Path.home() / ".cargo/bin/cargo"  # rustup's, honouring rust-toolchain.toml
+    if not cargo.is_file():
+        cargo = Path(shutil.which("cargo") or "")
+    if not cargo.is_file():
+        die("cargo not found: the Rust core's bindings are generated from a host build of crates/reins-core")
+    return cargo
+
+
+def cargo_env(target_dir: Path | None = None) -> dict:
+    env = {
+        "HOME": str(Path.home()),
+        "USER": os.environ.get("USER", ""),
+        "TERM": "dumb",
+        "PATH": f"{Path.home()}/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
+        # uniffi reads its metadata from the library's symbols; debug info only costs time and disk.
+        "CARGO_PROFILE_DEV_DEBUG": "0",
+    }
+    if target_dir is not None:
+        env["CARGO_TARGET_DIR"] = str(target_dir)
+    return env
+
+
+def toolchain_fingerprint(cargo: Path) -> bytes:
+    """The compiler this build will run. The same env as the build, from the repo, so rustup's toolchain matches."""
+    rustc = cargo.parent / "rustc"
+    if not rustc.is_file():
+        rustc = Path(shutil.which("rustc") or "")
+    if not rustc.is_file():
+        die("rustc not found: the core cache is keyed on the toolchain that builds crates/reins-core")
+    chunks = []
+    env = cargo_env()
+    for cmd in ([str(cargo), "--version"], [str(rustc), "-vV"]):
+        r = subprocess.run(cmd, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if r.returncode != 0:
+            detail = r.stderr.decode(errors="replace").strip()
+            die(f"{' '.join(cmd)} failed{': ' + detail if detail else ''}")
+        chunks.append(r.stdout)
+    return b"\0".join(chunks)
+
+
+def core_key(toolchain: bytes) -> str:
+    """Content hash of what produces the bindings: reins-core, the path crates it depends on (reins-proto,
+    reins-policy, and theirs), Cargo.lock, the UniFFI config and the toolchain. Tests and benches do not."""
     crates: set = set()
     path_crates(ROOT / "crates/reins-core", crates)
     digest = hashlib.sha256()
@@ -221,58 +275,152 @@ def core_key() -> str:
     for f in files:
         if f.is_file():
             digest.update(str(f.relative_to(ROOT)).encode() + b"\0" + f.read_bytes() + b"\0")
+    digest.update(b"toolchain\0" + toolchain + b"\0")
     return digest.hexdigest()[:20]
 
 
-def core_bindings() -> Path:
-    """include/{module.modulemap,reins_coreFFI.h} and reins_core.swift for the current Rust source. uniffi's output
-    does not depend on the target, so a host (Linux) build of the core gives the header the iOS build would."""
-    out = CACHE / "core" / core_key()
-    if (out / "include/module.modulemap").is_file():
-        return out
-    cargo = Path.home() / ".cargo/bin/cargo"  # rustup's, honouring rust-toolchain.toml
-    if not cargo.is_file():
-        cargo = Path(shutil.which("cargo") or "")
-    if not cargo.is_file():
-        die("cargo not found: the Rust core's bindings are generated from a host build of crates/reins-core")
-    note("generating the Rust core's Swift bindings (a host build of crates/reins-core; cached per Rust source)")
-    env = {
-        "HOME": str(Path.home()),
-        "USER": os.environ.get("USER", ""),
-        "TERM": "dumb",
-        "PATH": f"{Path.home()}/.cargo/bin:/usr/local/bin:/usr/bin:/bin",
-        "CARGO_TARGET_DIR": str(CACHE / "cargo-target"),
-        # uniffi reads its metadata from the library's symbols; debug info only costs time and disk.
-        "CARGO_PROFILE_DEV_DEBUG": "0",
-    }
+def bindings_ready(out: Path) -> bool:
+    return all(
+        (out / rel).is_file()
+        for rel in ("include/module.modulemap", "include/reins_coreFFI.h", "reins_core.swift")
+    )
+
+
+def flock_file(path: Path, exclusive: bool, blocking: bool = True):
+    """An open file holding an flock, or None when a non-blocking lock is already held elsewhere."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, "a+")
+    flags = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    if not blocking:
+        flags |= fcntl.LOCK_NB
+    try:
+        fcntl.flock(fh, flags)
+    except BlockingIOError:
+        fh.close()
+        if not blocking:
+            return None
+        raise
+    return fh
+
+
+def reuse_core(out: Path) -> bool:
+    """Take a shared lock on a finished build. The lock is rechecked so a prune cannot remove it underneath."""
+    if not bindings_ready(out):
+        return False
+    fh = flock_file(CACHE / "core-users" / f"{out.name}.lock", exclusive=False)
+    if not bindings_ready(out):
+        fh.close()
+        return False
+    os.utime(out, None)  # recently used builds are the ones prune keeps
+    core_use_locks.append(fh)
+    return True
+
+
+def sweep_partial_core_builds() -> None:
+    root = CACHE / "core"
+    if not root.is_dir():
+        return
+    for path in root.iterdir():
+        if path.name.startswith(".partial-"):
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def prune_core_builds(keep: Path) -> None:
+    """Keep the newest CORE_BUILDS_KEPT builds. A build another process holds a lock on stays until it finishes."""
+    root = CACHE / "core"
+    if not root.is_dir():
+        return
+    builds = [p for p in root.iterdir() if p.is_dir() and re.fullmatch(r"[0-9a-f]{20}", p.name)]
+    builds.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in builds[CORE_BUILDS_KEPT:]:
+        if old.name == keep.name:
+            continue
+        lock_path = CACHE / "core-users" / f"{old.name}.lock"
+        fh = flock_file(lock_path, exclusive=True, blocking=False)
+        if fh is None:
+            continue
+        try:
+            shutil.rmtree(old, ignore_errors=True)
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
+            note(f"dropping core build {old.name} (keeping the last {CORE_BUILDS_KEPT})")
+        finally:
+            fh.close()
+
+
+def build_core(cargo: Path, dest: Path) -> None:
+    target = dest / "cargo-target"
+    env = cargo_env(target)
     common = ["--locked", "-q", "-p", "reins-core", "--features", "bindgen"]
-    started = time.monotonic()
     for args in (["build", *common, "--lib"], ["build", *common, "--bin", "uniffi-bindgen"]):
         r = subprocess.run([str(cargo), *args], cwd=ROOT, env=env)
         if r.returncode != 0:
             die(f"cargo {' '.join(args)} failed")
-    lib = CACHE / "cargo-target/debug/libreins_core.so"
-    bindgen = CACHE / "cargo-target/debug/uniffi-bindgen"
-    with tempfile.TemporaryDirectory(dir=CACHE) as tmp:
-        gen = Path(tmp) / "gen"
-        r = subprocess.run(
-            [str(bindgen), "generate", "--library", str(lib), "--language", "swift", "--out-dir", str(gen)],
-            cwd=ROOT,
-            env=env,
-            stdout=subprocess.DEVNULL,
+    lib = target / "debug/libreins_core.so"
+    bindgen = target / "debug/uniffi-bindgen"
+    gen = dest / ".bindgen"
+    r = subprocess.run(
+        [str(bindgen), "generate", "--library", str(lib), "--language", "swift", "--out-dir", str(gen)],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.DEVNULL,
+    )
+    if r.returncode != 0:
+        die("uniffi-bindgen failed")
+    include = dest / "include"
+    include.mkdir(parents=True)
+    shutil.copy(gen / "reins_coreFFI.h", include / "reins_coreFFI.h")
+    shutil.copy(gen / "reins_coreFFI.modulemap", include / "module.modulemap")
+    shutil.copy(gen / "reins_core.swift", dest / "reins_core.swift")
+    shutil.rmtree(gen)
+
+
+def core_bindings() -> Path:
+    """include/{module.modulemap,reins_coreFFI.h} and reins_core.swift for the current Rust source. uniffi's output
+    does not depend on the target, so a host (Linux) build of the core gives the header the iOS build would.
+
+    The cargo target and the bindings are one directory per content hash. The build and its publish hold
+    CACHE/core.lock; the result is written to a partial directory and renamed into place, which is atomic on one
+    filesystem. A second worktree waits, then reuses that directory when the hash matches."""
+    cargo = find_cargo()
+    out = CACHE / "core" / core_key(toolchain_fingerprint(cargo))
+    if reuse_core(out):
+        return out
+
+    lock = flock_file(CACHE / "core.lock", exclusive=True)
+    started = time.monotonic()
+    try:
+        sweep_partial_core_builds()
+        if reuse_core(out):
+            return out
+        if out.exists():
+            shutil.rmtree(out)
+        note(
+            "generating the Rust core's Swift bindings "
+            "(a host build of crates/reins-core; cached per content hash of the core)"
         )
-        if r.returncode != 0:
-            die("uniffi-bindgen failed")
-        staged = Path(tmp) / "out"
-        (staged / "include").mkdir(parents=True)
-        shutil.copy(gen / "reins_coreFFI.h", staged / "include/reins_coreFFI.h")
-        shutil.copy(gen / "reins_coreFFI.modulemap", staged / "include/module.modulemap")
-        shutil.copy(gen / "reins_core.swift", staged / "reins_core.swift")
-        out.parent.mkdir(parents=True, exist_ok=True)
-        if not out.exists():
-            staged.rename(out)
-    note(f"bindings ready in {time.monotonic() - started:.0f}s")
-    return out
+        (CACHE / "core").mkdir(parents=True, exist_ok=True)
+        partial = CACHE / "core" / f".partial-{out.name}-{os.getpid()}"
+        partial.mkdir()
+        try:
+            build_core(cargo, partial)
+            if not bindings_ready(partial):
+                die("the core build finished without Swift bindings")
+            # Readers open include/ only after this name exists, so they never see a partial build.
+            os.rename(partial, out)
+        except BaseException:
+            shutil.rmtree(partial, ignore_errors=True)
+            raise
+        os.utime(out, None)
+        prune_core_builds(out)
+        if not reuse_core(out):
+            die(f"published core bindings at {out} are incomplete")
+        note(f"bindings ready in {time.monotonic() - started:.0f}s")
+        return out
+    finally:
+        lock.close()
 
 
 # --- Swift packages ----------------------------------------------------------------------------------------------
@@ -446,7 +594,14 @@ def dedupe(output: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="scripts/ios-typecheck.sh",
-        description="Type-check the iOS targets against the iPhoneOS SDK, on Linux (see ios/README.md).",
+        description=(
+            "Type-check the iOS targets against the iPhoneOS SDK, on Linux (see ios/README.md). "
+            "The Rust core build and its UniFFI bindings are cached by a content hash of the core's "
+            "sources, the crates it depends on, Cargo.lock, the UniFFI config and the toolchain "
+            "(REINS_IOS_TYPECHECK_CACHE, default ~/.cache/reins-ios-typecheck). Each hash has its own "
+            "directory. A lock covers the build and publish; the directory is written aside and renamed "
+            "into place. The last three builds are kept."
+        ),
     )
     parser.add_argument("targets", nargs="*", help="Reins ReinsWidgets ReinsNotifications ReinsTests ReinsUITests")
     parser.add_argument("--release", action="store_true", help="Release's conditions (no DEBUG) instead of Debug's")
