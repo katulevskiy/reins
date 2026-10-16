@@ -178,7 +178,7 @@ prefilter, so query syntax cannot widen what a grant allows.
    have a reserved pool (4, one per site), are spaced 5 s per document with back-off after failures (at most a
    minute; failures neither stop them nor extend the grace) and are limited per requesting address. Other fetches
    are charged to the requesting address (IPv6: its /64; 20, then one per 3 s), run once per URL at a time, at most 2
-   per site (registrable domain under its ICANN public suffix, by the Public Suffix List), 8 per ICANN suffix and 32
+   per site (registrable domain under its ICANN public suffix, by the Public Suffix List) and 32
    in all, queue at most 2 s, take at most 4 s, and hold no database connection; only failures that do not depend on
    timing are remembered (30 s, per kind and exact URL). Documents and key sets must be named by a domain, never an
    IP address. Dynamic registration stays public-only.

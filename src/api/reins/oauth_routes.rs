@@ -70,9 +70,6 @@ const FETCH_QUEUE_WAIT: Duration = Duration::from_secs(2);
 const MAX_CONCURRENT_REFRESHES: usize = 4;
 /// How long a background refresh waits for a refresh turn (nobody waits on it but the refresh itself).
 const REFRESH_QUEUE_WAIT: Duration = Duration::from_secs(10);
-/// Of the global fetch turns, how many all sites under one ICANN public suffix (`com`, `io`, `co.uk`) may hold at
-/// once, so names registered under one suffix cannot take every turn.
-const FETCHES_PER_SUFFIX: usize = 8;
 /// Of the reserved refresh turns, how many one site may hold at once.
 const REFRESHES_PER_SITE: usize = 1;
 /// Keys a turn map holds at once; beyond it, idle ones are dropped first (a map never refuses).
@@ -213,19 +210,8 @@ type TurnMap = LazyLock<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Semaph
 /// Request fetch turns per site, so one site's slowness, or an attacker's many names under one domain, holds only its
 /// own ([`FETCHES_PER_SITE`]).
 static SITE_TURNS: TurnMap = LazyLock::new(Default::default);
-/// Request fetch turns per ICANN public suffix ([`FETCHES_PER_SUFFIX`]).
-static SUFFIX_TURNS: TurnMap = LazyLock::new(Default::default);
 /// Refresh turns per site, inside the reserved refresh pool ([`REFRESHES_PER_SITE`]).
 static REFRESH_SITE_TURNS: TurnMap = LazyLock::new(Default::default);
-
-/// Where a URL's fetches are counted.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct FetchSite {
-    /// The host's registrable domain under its ICANN public suffix, or the full host when it has none.
-    site: String,
-    /// The ICANN public suffix (`com`, `co.uk`; a name the list does not know: its last label), or the address.
-    suffix: String,
-}
 
 /// The ICANN public suffix of `host` by the Public Suffix List (compiled into the `psl` crate). Private-section
 /// suffixes (`github.io`, `s3.amazonaws.com`) are looked through: they are run by one company, so their tenants are
@@ -260,37 +246,28 @@ fn address_network(address: IpAddr) -> String {
     }
 }
 
-/// The site and suffix a URL's fetches count against: [`FETCHES_PER_SITE`] per registrable domain (ICANN section
-/// only; the full host when it has none, as for an address or a bare suffix), [`FETCHES_PER_SUFFIX`] per ICANN suffix.
-fn fetch_site(url: &str) -> FetchSite {
+/// The site a URL's fetches count against, [`FETCHES_PER_SITE`] at once: its registrable domain under the ICANN
+/// section of the Public Suffix List, or the full host when it has none (a bare suffix). There is no cap per public
+/// suffix: sites under a busy suffix such as `com` never share turns, so an attacker's `.com` sites cannot starve
+/// anyone else's; the per-address budget and the global bound limit how many sites one party can keep busy.
+fn fetch_site(url: &str) -> String {
     let Some(host) = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)) else {
-        return FetchSite {
-            site: String::new(),
-            suffix: String::new(),
-        };
+        return String::new();
     };
     let host = host.trim_end_matches('.');
     let address = host.trim_start_matches('[').trim_end_matches(']').parse::<IpAddr>();
     if let Ok(address) = address {
         // Addresses only reach a fetch in the test mode (documents must be named by a domain); grouped by network
         // anyway, so rotating through one network's addresses never counts as many sites.
-        let network = address_network(address);
-        return FetchSite {
-            site: network.clone(),
-            suffix: network,
-        };
+        return address_network(address);
     }
     let suffix = icann_suffix(host);
-    let site = match host.strip_suffix(suffix).and_then(|rest| rest.strip_suffix('.')) {
+    match host.strip_suffix(suffix).and_then(|rest| rest.strip_suffix('.')) {
         Some(rest) if !rest.is_empty() => {
             let label = rest.rsplit('.').next().unwrap_or(rest);
             format!("{label}.{suffix}")
         }
         _ => host.to_owned(),
-    };
-    FetchSite {
-        site,
-        suffix: suffix.to_owned(),
     }
 }
 
@@ -390,7 +367,7 @@ fn forget_idle_keys(keys: &mut HashMap<String, Arc<tokio::sync::Semaphore>>) {
 
 /// Housekeeping: forgets idle sites and suffixes, whatever left them behind.
 pub fn purge_fetch_sites() {
-    for map in [&SITE_TURNS, &SUFFIX_TURNS, &REFRESH_SITE_TURNS] {
+    for map in [&SITE_TURNS, &REFRESH_SITE_TURNS] {
         forget_idle_keys(&mut map.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     }
 }
@@ -413,22 +390,18 @@ enum FetchPool {
 async fn fetch_document(url: &str, limit: usize, what: &str, pool: FetchPool) -> Result<Vec<u8>, FetchError> {
     let busy =
         || FetchError::Transient("the server is busy fetching client documents; try again in a moment".to_owned());
-    let FetchSite {
-        site,
-        suffix,
-    } = fetch_site(url);
-    let (_turns, _slot) = match pool {
+    let site = fetch_site(url);
+    let (_turn, _slot) = match pool {
         FetchPool::Request => {
             let deadline = tokio::time::Instant::now() + FETCH_QUEUE_WAIT;
             let mut site_turn = Turn::new(&SITE_TURNS, site, FETCHES_PER_SITE);
-            let mut suffix_turn = Turn::new(&SUFFIX_TURNS, suffix, FETCHES_PER_SUFFIX);
-            if !site_turn.acquire(deadline).await || !suffix_turn.acquire(deadline).await {
+            if !site_turn.acquire(deadline).await {
                 return Err(busy());
             }
             let Ok(Ok(slot)) = tokio::time::timeout_at(deadline, FETCH_SLOTS.acquire()).await else {
                 return Err(busy());
             };
-            (vec![site_turn, suffix_turn], slot)
+            (site_turn, slot)
         }
         FetchPool::Refresh => {
             let deadline = tokio::time::Instant::now() + REFRESH_QUEUE_WAIT;
@@ -439,7 +412,7 @@ async fn fetch_document(url: &str, limit: usize, what: &str, pool: FetchPool) ->
             let Ok(Ok(slot)) = tokio::time::timeout_at(deadline, REFRESH_SLOTS.acquire()).await else {
                 return Err(busy());
             };
-            (vec![site_turn], slot)
+            (site_turn, slot)
         }
     };
     let definitive = |why: String| FetchError::Definitive(why);
@@ -1455,15 +1428,12 @@ mod tests {
 
     #[test]
     fn fetch_sites_are_icann_registrable_domains() {
-        let site = |url: &str| fetch_site(url).site;
-        let suffix = |url: &str| fetch_site(url).suffix;
+        let site = fetch_site;
         assert_eq!(site("https://chatgpt.com/oauth/client.json"), "chatgpt.com");
         assert_eq!(site("https://a.b.c.chatgpt.com/x"), "chatgpt.com", "subdomains are one site");
         assert_eq!(site("https://x.evil.COM./x"), "evil.com");
-        assert_eq!(
-            (site("https://login.example.co.uk/x"), suffix("https://login.example.co.uk/x")),
-            ("example.co.uk".to_owned(), "co.uk".to_owned())
-        );
+        assert_eq!(site("https://login.example.co.uk/x"), "example.co.uk");
+        assert_eq!(icann_suffix("login.example.co.uk"), "co.uk");
         assert_eq!(site("https://a.b.example.com.au/x"), "example.com.au");
         // The old two-letter heuristic split `abc.de` into one site per subdomain.
         assert_eq!(site("https://one.abc.de/x"), "abc.de");
@@ -1473,12 +1443,11 @@ mod tests {
         assert_eq!(site("https://alice.github.io/x"), "github.io");
         assert_eq!(site("https://alice.github.io/x"), site("https://bob.github.io/x"));
         assert_eq!(site("https://bucket.s3.amazonaws.com/x"), "amazonaws.com");
-        assert_eq!(suffix("https://alice.github.io/x"), "io");
+        assert_eq!(icann_suffix("alice.github.io"), "io");
+        // No cap per suffix: two .com sites never share turns.
+        assert_ne!(site("https://chatgpt.com/x"), site("https://evil.com/x"));
         // Names the list does not know count under their last label; no registrable domain: the full host.
-        assert_eq!(
-            (site("https://a.b.evil.example/x"), suffix("https://a.b.evil.example/x")),
-            ("evil.example".to_owned(), "example".to_owned())
-        );
+        assert_eq!(site("https://a.b.evil.example/x"), "evil.example");
         assert_eq!(site("https://co.uk/x"), "co.uk");
         // Addresses (test mode only; documents must be named by a domain) are grouped by network.
         assert_eq!(site("https://203.0.113.7/x"), "203.0.113.0/24");
@@ -1523,23 +1492,6 @@ mod tests {
         assert!(!known(&SITE_TURNS, site), "timed out and abandoned waiters leave nothing behind");
     }
 
-    /// One public suffix holds at most its share of the global turns: sites under it beyond the share wait, sites
-    /// under another suffix do not.
-    #[tokio::test]
-    async fn one_public_suffix_holds_at_most_its_share() {
-        let soon = || tokio::time::Instant::now() + Duration::from_millis(50);
-        let mut held = Vec::new();
-        for _ in 0..FETCHES_PER_SUFFIX {
-            let mut turn = Turn::new(&SUFFIX_TURNS, "share-test".to_owned(), FETCHES_PER_SUFFIX);
-            assert!(turn.acquire(soon()).await);
-            held.push(turn);
-        }
-        let mut one_more = Turn::new(&SUFFIX_TURNS, "share-test".to_owned(), FETCHES_PER_SUFFIX);
-        assert!(!one_more.acquire(soon()).await);
-        let mut elsewhere = Turn::new(&SUFFIX_TURNS, "other-share-test".to_owned(), FETCHES_PER_SUFFIX);
-        assert!(elsewhere.acquire(soon()).await);
-    }
-
     #[test]
     fn idle_keys_are_purged_and_the_maps_are_capped() {
         {
@@ -1552,11 +1504,11 @@ mod tests {
         assert!(!known(&SITE_TURNS, "idle-0.example"), "a full map drops idle keys to make room");
         assert!(known(&SITE_TURNS, "newcomer.example"));
         drop(turn);
-        for map in [&SITE_TURNS, &SUFFIX_TURNS, &REFRESH_SITE_TURNS] {
+        for map in [&SITE_TURNS, &REFRESH_SITE_TURNS] {
             map.lock().unwrap().insert("left-behind".to_owned(), Arc::new(tokio::sync::Semaphore::new(1)));
         }
         purge_fetch_sites();
-        for map in [&SITE_TURNS, &SUFFIX_TURNS, &REFRESH_SITE_TURNS] {
+        for map in [&SITE_TURNS, &REFRESH_SITE_TURNS] {
             assert!(!known(map, "left-behind"));
         }
     }
