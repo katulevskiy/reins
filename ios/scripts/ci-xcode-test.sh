@@ -62,22 +62,27 @@ PY
 # shellcheck disable=SC1091
 source "$RUNNER_TEMP/sim-choice.env"
 rm -f "$RUNNER_TEMP/sim-choice.env"
-UDID="$(xcrun simctl create "Reins CI" "$DEVTYPE" "$RUNTIME")"
-xcrun simctl boot "$UDID"
-xcrun simctl bootstatus "$UDID" -b
-echo "booted $UDID"
 
-mkdir -p "$GITHUB_WORKSPACE/derived" "$GITHUB_WORKSPACE/spm"
+# macOS ships bash 3.2, where `read -a` leaves the array unset on an empty string and `set -u` then
+# rejects "${array[@]}". Declare both first, and only read when there is something to split.
 args=()
-IFS=',' read -ra only_items <<< "${ONLY}"
+only_items=()
+skip_items=()
+[[ -n "${ONLY:-}" ]] && IFS=',' read -ra only_items <<< "$ONLY"
+[[ -n "${SKIP:-}" ]] && IFS=',' read -ra skip_items <<< "$SKIP"
 for item in "${only_items[@]}"; do
   [[ -n "$item" ]] && args+=(-only-testing:"$item")
 done
-IFS=',' read -ra skip_items <<< "${SKIP:-}"
 for item in "${skip_items[@]}"; do
   [[ -n "$item" ]] && args+=(-skip-testing:"$item")
 done
 echo "xcodebuild ${args[*]}"
+
+UDID="$(xcrun simctl create "Reins CI" "$DEVTYPE" "$RUNTIME")"
+xcrun simctl boot "$UDID"
+xcrun simctl bootstatus "$UDID" -b
+echo "booted $UDID"
+mkdir -p "$GITHUB_WORKSPACE/derived" "$GITHUB_WORKSPACE/spm"
 
 # The "Rust core" build phase exits before cargo when this is set and the library is already there.
 export REINS_SKIP_CORE=1
