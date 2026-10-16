@@ -99,6 +99,41 @@ impl<K: Eq + Hash, V> TtlMap<K, V> {
         self.entries.retain(|_, (expires, _, value)| now < *expires && keep(value));
     }
 
+    /// Whether a new key fits. Expired entries do not count.
+    pub fn has_room(&self) -> bool {
+        self.live_count() < self.capacity
+    }
+
+    fn live_count(&self) -> usize {
+        let now = Instant::now();
+        self.entries.iter().filter(|(_, (expires, _, _))| now < *expires).count()
+    }
+
+    /// The live key closest to expiring for which `pred` holds: the oldest such entry.
+    pub fn oldest_where(&self, mut pred: impl FnMut(&V) -> bool) -> Option<K>
+    where
+        K: Clone,
+    {
+        let now = Instant::now();
+        self.entries
+            .iter()
+            .filter(|(_, (expires, _, value))| now < *expires && pred(value))
+            .min_by_key(|(_, (expires, n, _))| (*expires, *n))
+            .map(|(key, _)| key.clone())
+    }
+
+    /// Drops the oldest live entry for which `pred` holds. `false` when none does.
+    pub fn evict_where(&mut self, pred: impl FnMut(&V) -> bool) -> bool
+    where
+        K: Clone,
+    {
+        let Some(key) = self.oldest_where(pred) else {
+            return false;
+        };
+        // `remove` would report an entry that expires this instant as missing, after deleting it. Drop by key.
+        self.entries.remove(&key).is_some()
+    }
+
     /// Number of live entries.
     #[cfg(test)]
     pub fn len(&self) -> usize {
@@ -163,6 +198,24 @@ mod tests {
         let mut none = TtlMap::new(Duration::from_secs(10), 0);
         none.insert_evicting("a", 1);
         assert!(none.is_empty());
+        assert!(!none.has_room());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn oldest_where_is_the_oldest_live_match() {
+        let mut m = TtlMap::new(Duration::from_secs(10), 4);
+        m.insert("a", 1).unwrap();
+        tokio::time::advance(Duration::from_secs(1)).await;
+        m.insert("b", 2).unwrap();
+        m.insert("c", 1).unwrap();
+        assert!(m.has_room());
+        assert_eq!(m.oldest_where(|v| *v == 1), Some("a"));
+        assert_eq!(m.oldest_where(|v| *v == 9), None);
+        assert!(m.evict_where(|v| *v == 1));
+        assert_eq!((m.get(&"a"), m.get(&"b"), m.get(&"c")), (None, Some(&2), Some(&1)));
+        tokio::time::advance(Duration::from_secs(9)).await;
+        assert_eq!(m.oldest_where(|v| *v == 1), Some("c"), "a has expired");
+        assert!(!m.evict_where(|v| *v == 9));
     }
 
     #[tokio::test(start_paused = true)]
