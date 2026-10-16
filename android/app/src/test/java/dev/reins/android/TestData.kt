@@ -685,8 +685,8 @@ object TestData {
         autoApprove: Boolean = false,
         autoDeny: Boolean = false,
         manual: Boolean? = null,
-        toUnlock: UInt = 8u,
-    ) = ClassView(key, label, decisions, approved, denied, accuracy, autoApprove, autoDeny, manual, toUnlock)
+        paused: Boolean = false,
+    ) = ClassView(key, label, decisions, approved, denied, accuracy, autoApprove, autoDeny, manual, 0u, paused)
 
     fun profile(
         id: String = "personal",
@@ -711,15 +711,15 @@ object TestData {
     }
 
     fun defaultClasses() = listOf(
-        classView("github/write/push", "GitHub · write · push", 26u, 25u, 1u, 0.98f, autoApprove = true, toUnlock = 0u),
-        classView("gmail/read", "Gmail · read", 14u, 12u, 2u, 0.93f, autoDeny = true, toUnlock = 6u),
-        classView("desktop/ask/command", "Desktop · ask · command", 5u, 5u, 0u, null, toUnlock = 15u),
-        classView("telegram/send", "Telegram · send", 22u, 20u, 2u, 0.97f, autoApprove = false, manual = false, toUnlock = 0u),
+        classView("github/write/push", "GitHub · write · push", 26u, 25u, 1u, 0.98f, autoApprove = true),
+        classView("gmail/read", "Gmail · read", 14u, 12u, 2u, 0.93f, autoDeny = true, paused = true),
+        classView("desktop/ask/command", "Desktop · ask · command", 5u, 5u, 0u, null),
+        classView("telegram/send", "Telegram · send", 22u, 20u, 2u, 0.97f, autoApprove = false, manual = false),
     )
 
     fun profiles() = listOf(
         profile(),
-        profile("work", "Work", "💼", Preset.CAUTIOUS, isDefault = false, memory = 9u, connections = listOf("c2"), classes = listOf(classView(decisions = 9u, approved = 9u, denied = 0u, toUnlock = 11u)), trainedAt = null),
+        profile("work", "Work", "💼", Preset.CAUTIOUS, isDefault = false, memory = 9u, connections = listOf("c2"), classes = listOf(classView(decisions = 9u, approved = 9u, denied = 0u)), trainedAt = null),
     )
 
     fun neighbours() = listOf(

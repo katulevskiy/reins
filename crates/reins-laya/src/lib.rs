@@ -117,7 +117,8 @@ pub struct Judgement {
     pub full: Pass,
     /// After the prompt-injection rule (approve = the smaller, deny = the larger).
     pub combined: Probs,
-    /// What Autopilot would do with no memory, at the Balanced thresholds, for a target seen before.
+    /// What Auto would do with no memory, at the Balanced thresholds, for a target approved once: its cold-start bar
+    /// (approve at 97%, and only what the risk model calls clearly benign).
     pub verdict: Verdict,
     /// Severity after the two-pass rule (benign, risky, severe, catastrophic), for a model that rates risk.
     pub risk: Option<[f32; 4]>,
@@ -154,13 +155,19 @@ impl Judge {
             ask: pass.probs[2],
         };
         let combined = decide::combine(p(&facts), p(&full));
-        let verdict = decide::would(
+        let risk = facts.risk.zip(full.risk).map(|(f, u)| decide::risk_combine(f, u));
+        // Auto's cold start: no answers of its kind yet, the target approved once (the core's own reading of the
+        // request, which may hold it, is not run here)
+        let evidence = decide::Evidence {
+            benign: decide::clearly_benign(risk),
+            ..decide::Evidence::default()
+        };
+        let verdict = decide::verdict(
             combined,
-            false,
             facts.escalate.max(full.escalate),
             reins_core::Preset::Balanced.thresholds(),
+            evidence,
         );
-        let risk = facts.risk.zip(full.risk).map(|(f, u)| decide::risk_combine(f, u));
         // As the phone decides: a package that declares risk holds what it cannot rate or has no threshold for.
         let held = match (risk, self.laya.config.risk()) {
             (Some(r), Some(cfg)) => cfg.overnight_threshold().is_none_or(|t| !decide_readable(r) || r[3] >= t),

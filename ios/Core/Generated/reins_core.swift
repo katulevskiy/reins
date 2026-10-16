@@ -8458,7 +8458,7 @@ public struct AutopilotStats: Equatable, Hashable {
      */
     public var compared: UInt32
     /**
-     * Kinds of request Auto may approve on its own, over every profile…
+     * Kinds of request Auto approves on its own when sure (not paused or locked), over every profile…
      */
     public var kindsOnAuto: UInt32
     /**
@@ -8483,7 +8483,7 @@ public struct AutopilotStats: Equatable, Hashable {
          * How many decisions `matched` is out of.
          */compared: UInt32, 
         /**
-         * Kinds of request Auto may approve on its own, over every profile…
+         * Kinds of request Auto approves on its own when sure (not paused or locked), over every profile…
          */kindsOnAuto: UInt32, 
         /**
          * …out of the kinds seen.
@@ -8972,7 +8972,8 @@ public func FfiConverterTypeClassOption_lower(_ value: ClassOption) -> RustBuffe
 
 
 /**
- * One action class of a profile and how far it is from running on its own (spec §5.4).
+ * One action class of a profile and where it stands (spec §5.4). Its state, for the app: `manual == Some(false)`
+ * locked by you; else `paused`; else `auto_approve` Auto; else it asks.
  */
 public struct ClassView: Equatable, Hashable {
     /**
@@ -8995,11 +8996,13 @@ public struct ClassView: Equatable, Hashable {
      */
     public var shadowAccuracy: Float?
     /**
-     * Auto mode may approve in this class.
+     * Auto mode approves on its own in this class when it is sure (from the first request: the bar is stricter while
+     * the user's answers are few). False when paused, locked by hand, or with no model that rates risk before the
+     * user's answers are enough.
      */
     public var autoApprove: Bool
     /**
-     * Auto mode may deny in this class.
+     * Auto mode may deny any request of this class it would deny (else only what it rates surely catastrophic).
      */
     public var autoDeny: Bool
     /**
@@ -9007,9 +9010,14 @@ public struct ClassView: Equatable, Hashable {
      */
     public var manual: Bool?
     /**
-     * Human decisions still needed before auto-approve can unlock by itself (0 when the count is reached).
+     * Deprecated, always 0: Auto no longer waits for a number of decisions. Kept for apps that still read it.
      */
     public var decisionsToUnlock: UInt32
+    /**
+     * Auto-approve is paused here after a wrong approval (the user said "This was wrong", or denied what Autopilot
+     * would have approved); it resumes after enough answers that agree with the user.
+     */
+    public var paused: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9028,17 +9036,23 @@ public struct ClassView: Equatable, Hashable {
          * decided on its own); `None` until it would have decided at least 10.
          */shadowAccuracy: Float?, 
         /**
-         * Auto mode may approve in this class.
+         * Auto mode approves on its own in this class when it is sure (from the first request: the bar is stricter while
+         * the user's answers are few). False when paused, locked by hand, or with no model that rates risk before the
+         * user's answers are enough.
          */autoApprove: Bool, 
         /**
-         * Auto mode may deny in this class.
+         * Auto mode may deny any request of this class it would deny (else only what it rates surely catastrophic).
          */autoDeny: Bool, 
         /**
          * The user's override: `Some(true)` unlocked by hand, `Some(false)` locked by hand, `None` automatic.
          */manual: Bool?, 
         /**
-         * Human decisions still needed before auto-approve can unlock by itself (0 when the count is reached).
-         */decisionsToUnlock: UInt32) {
+         * Deprecated, always 0: Auto no longer waits for a number of decisions. Kept for apps that still read it.
+         */decisionsToUnlock: UInt32 = UInt32(0), 
+        /**
+         * Auto-approve is paused here after a wrong approval (the user said "This was wrong", or denied what Autopilot
+         * would have approved); it resumes after enough answers that agree with the user.
+         */paused: Bool = false) {
         self.classKey = classKey
         self.label = label
         self.decisions = decisions
@@ -9049,6 +9063,7 @@ public struct ClassView: Equatable, Hashable {
         self.autoDeny = autoDeny
         self.manual = manual
         self.decisionsToUnlock = decisionsToUnlock
+        self.paused = paused
     }
 
     
@@ -9076,7 +9091,8 @@ public struct FfiConverterTypeClassView: FfiConverterRustBuffer {
                 autoApprove: FfiConverterBool.read(from: &buf), 
                 autoDeny: FfiConverterBool.read(from: &buf), 
                 manual: FfiConverterOptionBool.read(from: &buf), 
-                decisionsToUnlock: FfiConverterUInt32.read(from: &buf)
+                decisionsToUnlock: FfiConverterUInt32.read(from: &buf), 
+                paused: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -9091,6 +9107,7 @@ public struct FfiConverterTypeClassView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.autoDeny, into: &buf)
         FfiConverterOptionBool.write(value.manual, into: &buf)
         FfiConverterUInt32.write(value.decisionsToUnlock, into: &buf)
+        FfiConverterBool.write(value.paused, into: &buf)
     }
 }
 
@@ -16807,7 +16824,9 @@ public enum AutopilotMode: Equatable, Hashable {
      */
     case manual
     /**
-     * Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
+     * Autopilot approves what it is confident about from the first request (stricter while the user's answers to a
+     * kind are few, and only what the risk model calls clearly benign), and denies what it is sure about where it
+     * learned to; the rest waits.
      */
     case auto
     /**

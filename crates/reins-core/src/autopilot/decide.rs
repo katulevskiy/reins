@@ -13,6 +13,19 @@ use super::types::Verdict;
 pub const FULL_WEIGHT_EXAMPLES: usize = 20;
 /// The act head's escalate probability above which Autopilot never approves on its own.
 pub const ESCALATE_LIMIT: f32 = 0.5;
+/// The approve probability Auto needs in a class with no answers of the user yet (the cold start); it relaxes to the
+/// profile's own threshold by [`FULL_WEIGHT_EXAMPLES`] answers ([`approve_bar`]). A profile stricter than this keeps
+/// its own.
+pub const COLD_APPROVE: f32 = 0.97;
+/// While the bar is not the profile's own, the risk head must call the request clearly benign: P(benign) at least
+/// this…
+pub const COLD_BENIGN: f32 = 0.9;
+/// …and P(severe) + P(catastrophic) below this: just above where the head rests on harmless requests (up to about
+/// 0.049 on the golden set of `tools/laya`), so any more sign of harm asks.
+pub const COLD_SEVERE_MAX: f32 = 0.05;
+/// Auto denies on its own, in a class that has not earned auto-deny, only what the risk head rates catastrophic at
+/// least this sure (and the deny probability reaches the profile's threshold).
+pub const CATASTROPHIC_DENY: f32 = 0.9;
 
 /// One forward pass of the model over one situation text.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -150,10 +163,85 @@ pub fn combine(facts: Probs, full: Probs) -> Probs {
     }
 }
 
-/// What Autopilot would do in Auto mode, the class gates aside: approve only a target seen approved before, with
-/// the act head not asking to escalate.
+/// The rule before the cold start, which Overnight keeps: approve only a target seen approved before, at the
+/// profile's thresholds, with the act head not asking to escalate. Auto decides with [`verdict`].
 pub fn would(p: Probs, novel: bool, escalate: f32, thresholds: (f32, f32)) -> Verdict {
     if p.approve >= thresholds.0 && !novel && escalate < ESCALATE_LIMIT {
+        Verdict::Approve
+    } else if p.deny >= thresholds.1 {
+        Verdict::Deny
+    } else {
+        Verdict::Ask
+    }
+}
+
+/// The approve probability Auto needs after `class_examples` answers of the user in a class: [`COLD_APPROVE`] (or
+/// the profile's own threshold `normal` if stricter) with none, down to `normal` in a straight line by
+/// [`FULL_WEIGHT_EXAMPLES`].
+///
+/// The line is the one [`weights`] moves on: the extra margin is in proportion to the share of the blend that still
+/// rests on the base model alone (all of it with no answers, its floor of 0.2 from 20 on). Memory and adapter earn
+/// trust exactly as fast as they earn weight, and a class is never held to a stricter bar than its evidence warrants
+/// once the user's answers dominate it.
+#[expect(clippy::cast_precision_loss, reason = "a count of at most 20")]
+pub fn approve_bar(class_examples: usize, normal: f32) -> f32 {
+    let cold = COLD_APPROVE.max(normal);
+    let left = 1.0 - class_examples.min(FULL_WEIGHT_EXAMPLES) as f32 / FULL_WEIGHT_EXAMPLES as f32;
+    normal + (cold - normal) * left
+}
+
+/// The risk head calls a request clearly benign (after the two-pass rule): P(benign) ≥ [`COLD_BENIGN`] and
+/// P(severe) + P(catastrophic) < [`COLD_SEVERE_MAX`]. Not without a readable risk.
+pub fn clearly_benign(risk: Option<[f32; 4]>) -> bool {
+    risk.is_some_and(|r| {
+        r.iter().all(|p| p.is_finite() && (0.0..=1.0).contains(p))
+            && (r.iter().sum::<f32>() - 1.0).abs() < 1e-3
+            && r[0] >= COLD_BENIGN
+            && r[2] + r[3] < COLD_SEVERE_MAX
+    })
+}
+
+/// The risk head rates a request catastrophic at least [`CATASTROPHIC_DENY`] sure.
+pub fn surely_catastrophic(risk: Option<[f32; 4]>) -> bool {
+    risk.is_some_and(|r| r[3].is_finite() && r[3] >= CATASTROPHIC_DENY)
+}
+
+/// What Auto's verdict on a request rests on besides the probabilities (kept with an evaluation, so that it can be
+/// replayed at other thresholds).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Evidence {
+    /// The user's answers remembered for its class (with this model): the bar relaxes as they grow.
+    pub class_examples: usize,
+    /// The user unlocked the class by hand: the profile's own threshold from the first request.
+    pub unlocked_by_hand: bool,
+    /// Its target was never approved for this connection: it always asks, reads included.
+    pub novel: bool,
+    /// Read with certainty, no tripwire, and the risk head calls it clearly benign ([`clearly_benign`]).
+    pub benign: bool,
+}
+
+impl Evidence {
+    /// The user's answers dominate the class (or the user unlocked it): the profile's own threshold applies.
+    pub fn warm(&self) -> bool {
+        self.unlocked_by_hand || self.class_examples >= FULL_WEIGHT_EXAMPLES
+    }
+}
+
+/// What Autopilot would do in Auto mode, the class gates aside (spec §5.4, from the first request):
+///
+/// - approve a target this connection had approved before, when the approve probability reaches [`approve_bar`] and
+///   the act head does not ask to escalate; while the class is not warm, only what the risk head calls clearly
+///   benign. A target never approved always asks once, whatever it is (the user is never surprised by a first time:
+///   an agent reading their email for the first time asks);
+/// - else deny at the profile's deny threshold;
+/// - else ask.
+pub fn verdict(p: Probs, escalate: f32, thresholds: (f32, f32), e: Evidence) -> Verdict {
+    let bar = if e.unlocked_by_hand {
+        thresholds.0
+    } else {
+        approve_bar(e.class_examples, thresholds.0)
+    };
+    if p.approve >= bar && escalate < ESCALATE_LIMIT && !e.novel && (e.warm() || e.benign) {
         Verdict::Approve
     } else if p.deny >= thresholds.1 {
         Verdict::Deny
@@ -210,6 +298,65 @@ mod tests {
         assert_eq!(would(p(0.96, 0.0), false, 0.7, t), Verdict::Ask, "the model asked to escalate");
         assert_eq!(would(p(0.0, 0.91), true, 0.0, t), Verdict::Deny, "deny still allowed on a new target");
         assert_eq!(would(p(0.0, 0.89), false, 0.0, t), Verdict::Ask);
+    }
+
+    const CALM: [f32; 4] = [0.95, 0.02, 0.02, 0.01];
+
+    fn seen(class_examples: usize, benign: bool) -> Evidence {
+        Evidence {
+            class_examples,
+            unlocked_by_hand: false,
+            novel: false,
+            benign,
+        }
+    }
+
+    #[test]
+    fn the_bar_starts_cold_and_relaxes_in_a_line_to_the_profiles_own() {
+        assert!((approve_bar(0, 0.95) - 0.97).abs() < 1e-6);
+        assert!((approve_bar(10, 0.95) - 0.96).abs() < 1e-6, "halfway, as the blend's base weight");
+        assert!((approve_bar(20, 0.95) - 0.95).abs() < 1e-6);
+        assert!((approve_bar(500, 0.95) - 0.95).abs() < 1e-6);
+        assert!((approve_bar(0, 0.98) - 0.98).abs() < 1e-6, "a stricter profile keeps its own");
+        assert!((approve_bar(0, 0.90) - 0.97).abs() < 1e-6, "Relaxed starts as strict as the rest");
+        let bars: Vec<f32> = (0..=20).map(|n| approve_bar(n, 0.90)).collect();
+        assert!(bars.windows(2).all(|w| w[1] < w[0]), "strictly relaxing: {bars:?}");
+    }
+
+    #[test]
+    fn clearly_benign_needs_a_calm_readable_risk() {
+        assert!(clearly_benign(Some(CALM)));
+        assert!(!clearly_benign(None), "no risk head, nothing vouches");
+        assert!(!clearly_benign(Some([0.85, 0.13, 0.01, 0.01])), "P(benign) under 0.9");
+        assert!(!clearly_benign(Some([0.90, 0.04, 0.03, 0.03])), "severe + catastrophic at 0.06");
+        assert!(!clearly_benign(Some([f32::NAN, 0.0, 0.0, 0.0])));
+        assert!(!clearly_benign(Some([0.95, 0.0, 0.0, 0.0])), "does not sum to one");
+        assert!(surely_catastrophic(Some([0.0, 0.0, 0.05, 0.95])));
+        assert!(!surely_catastrophic(Some([0.0, 0.0, 0.2, 0.8])) && !surely_catastrophic(None));
+    }
+
+    #[test]
+    fn cold_auto_approves_a_benign_request_to_a_known_target_and_nothing_else() {
+        let t = (0.95, 0.90);
+        assert_eq!(verdict(p(0.975, 0.0), 0.0, t, seen(0, true)), Verdict::Approve, "benign, sure, target known");
+        assert_eq!(verdict(p(0.965, 0.0), 0.0, t, seen(0, true)), Verdict::Ask, "under the cold bar");
+        assert_eq!(verdict(p(0.965, 0.0), 0.0, t, seen(10, true)), Verdict::Approve, "the bar relaxed to 0.96");
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, seen(0, false)), Verdict::Ask, "not clearly benign: asks");
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, seen(19, false)), Verdict::Ask, "still cold at 19");
+        assert_eq!(verdict(p(0.96, 0.0), 0.0, t, seen(20, false)), Verdict::Approve, "warm: the user's answers rule");
+        assert_eq!(verdict(p(0.999, 0.0), 0.7, t, seen(0, true)), Verdict::Ask, "the model asked to escalate");
+        let novel = Evidence {
+            novel: true,
+            ..seen(500, true)
+        };
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, novel), Verdict::Ask, "a target never approved asks, reads too");
+        let by_hand = Evidence {
+            unlocked_by_hand: true,
+            ..seen(0, false)
+        };
+        assert_eq!(verdict(p(0.951, 0.0), 0.0, t, by_hand), Verdict::Approve, "unlocked by hand: the profile's bar");
+        assert_eq!(verdict(p(0.0, 0.91), 0.0, t, novel), Verdict::Deny, "the deny verdict is as before");
+        assert_eq!(verdict(p(0.0, 0.89), 0.0, t, seen(0, true)), Verdict::Ask);
     }
 
     #[test]

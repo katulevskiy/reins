@@ -43,7 +43,7 @@ pub struct Profile {
     /// The user's own thresholds; when set, they apply instead of the preset's.
     #[serde(default)]
     pub custom: Option<Thresholds>,
-    /// Class key → unlocked (`true`) or locked (`false`) by hand.
+    /// Class key → locked (`true`) or unlocked (`false`) by hand (`Engine::set_class_lock`).
     #[serde(default)]
     pub manual: BTreeMap<String, bool>,
     #[serde(default)]
@@ -124,6 +124,10 @@ pub struct Judged {
     /// The highest class any view (facts, full, neutral) gave on its own: the class shown is never below it.
     #[serde(default)]
     pub risk_view_max: Option<super::types::RiskLevel>,
+    /// What Auto's verdict rested on besides the probabilities; `None` for evaluations made before the cold start
+    /// (replayed with the rule of then, [`super::decide::would`]).
+    #[serde(default)]
+    pub evidence: Option<super::decide::Evidence>,
 }
 
 /// How a request was finally decided.

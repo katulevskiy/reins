@@ -308,8 +308,8 @@ fn suggestion_view(s: &Suggestion) -> SuggestionView {
     }
 }
 
-/// Why it waits, from what the model and the gates said.
-fn reason_of(j: &Judged, verdict: Verdict, novel: bool) -> String {
+/// Why it waits, from what the model and the gates said. `approve_at`: the profile's own approve threshold.
+fn reason_of(j: &Judged, verdict: Verdict, novel: bool, approve_at: f32) -> String {
     let approvals = j.neighbours.iter().filter(|n| n.verdict == Verdict::Approve).count();
     let denials = j.neighbours.len() - approvals;
     let like = |v: Verdict, n: usize| {
@@ -324,6 +324,8 @@ fn reason_of(j: &Judged, verdict: Verdict, novel: bool) -> String {
             .unwrap_or_else(|| format!("Looks harmful ({}% deny)", pct(j.probs[1]))),
         Verdict::Ask if novel => "New for this connection: never approved before".to_owned(),
         Verdict::Ask if j.escalate >= decide::ESCALATE_LIMIT => "The model wants you to look at this".to_owned(),
+        // sure enough for the profile, not yet for a kind it is still learning
+        Verdict::Ask if j.probs[0] >= approve_at => format!("Still learning this kind ({}% approve)", pct(j.probs[0])),
         Verdict::Ask => format!("Not sure ({}% approve, {}% deny)", pct(j.probs[0]), pct(j.probs[1])),
     }
 }
@@ -795,7 +797,8 @@ impl Engine {
 
         // A model that rates risk reads, for the risk only, a hook's question as the action it is about, with the context
         // line the core works out (docs/autopilot-risk.md §3), the connection's last hour included. The approval head
-        // reads the request as it always did: nothing Overnight adds reaches Manual's or Auto's verdicts.
+        // reads the request as it always did; the risk only ever holds Auto back (its cold-start bar asks for a
+        // clearly benign rating, decide::verdict) or lets it deny what is surely catastrophic.
         // (Read from the package's configuration: opening it, which verifies it, is the judging's job. This reading
         // only decides what the model is shown; nothing is decided on it.)
         let rates_risk = mode != AutopilotMode::Bypass && model::rates_risk(&self.data_dir, &self.ap_known());
@@ -864,18 +867,13 @@ impl Engine {
             let profile = self.ap_profile_loaded(ctx, &subject.connection_id)?;
             Box::pin(self.ap_judge(&s, risk_states.as_ref(), profile, now)).await
         };
-        let (judged, probs) = match judged {
+        let (mut judged, probs) = match judged {
             Ok(j) => j,
             Err(why) => {
                 s.reason = format!("Autopilot could not judge this: {why}");
                 return self.ap_wait(&subject, &s);
             }
         };
-        s.verdict = decide::would(probs, novel, judged.escalate, thresholds);
-        s.reason = reason_of(&judged, s.verdict, novel);
-        // Overnight acts on risk when the verified package that judged this request declares it; it then decides only
-        // through its gate (overnight::gate), the one place an Overnight approval is made.
-        let overnight = mode == AutopilotMode::Overnight && judged.risk_declared;
         let readable = judged.risk.filter(|p| risk::readable(*p));
         let outcome = context.as_ref().map(risk::Context::outcome);
         let tripwire = match &outcome {
@@ -883,13 +881,37 @@ impl Engine {
             _ => None,
         };
         let first_line = subject.described.facts.context.first().cloned();
+        // The class as the profile knows it: Auto approves from the first request unless a wrong approval paused it or
+        // the user locked it (gates::auto_gate).
+        let (stats, manual_open) = {
+            let profile = self.ap_profile_loaded(ctx, &subject.connection_id)?;
+            let refs: Vec<&MemoryRow> = profile.1.iter().collect();
+            (gates::class_stats(&refs, &s.class_key), profile.0.profile.manual.get(&s.class_key).map(|locked| !locked))
+        };
+        let gate = gates::auto_gate(&stats, manual_open);
+        let evidence = decide::Evidence {
+            unlocked_by_hand: gate.unlocked_by_hand,
+            novel,
+            // read with certainty, no tripwire, and the risk head sure it is harmless
+            benign: matches!(outcome, Some(risk::Outcome::Read)) && decide::clearly_benign(readable),
+            ..judged.evidence.unwrap_or_default()
+        };
+        judged.evidence = Some(evidence);
+        s.verdict = decide::verdict(probs, judged.escalate, thresholds, evidence);
+        s.reason = reason_of(&judged, s.verdict, novel, thresholds.0);
+        // Overnight acts on risk when the verified package that judged this request declares it; it then decides only
+        // through its gate (overnight::gate), the one place an Overnight approval is made.
+        let overnight = mode == AutopilotMode::Overnight && judged.risk_declared;
         if overnight {
-            let (stats, manual) = {
-                let profile = self.ap_profile_loaded(ctx, &subject.connection_id)?;
-                let refs: Vec<&MemoryRow> = profile.1.iter().collect();
-                (gates::class_stats(&refs, &s.class_key), profile.0.profile.manual.get(&s.class_key).copied())
+            // Overnight's own rule, as it always was (the earned classes, the rule of before the cold start), and
+            // whatever Auto would approve on its own (never a floor, which Auto always asks).
+            let (earned_approve, may_deny) = gates::unlocked(&stats, manual_open);
+            let auto_approves = s.verdict == Verdict::Approve && gate.approve && subject.floor.is_none();
+            let (verdict, may_approve) = if auto_approves {
+                (Verdict::Approve, true)
+            } else {
+                (decide::would(probs, novel, judged.escalate, thresholds), earned_approve)
             };
-            let (may_approve, may_deny) = gates::unlocked(&stats, manual.map(|locked| !locked));
             let view_max = judged.risk_view_max;
             let level = readable
                 .map_or(RiskLevel::Catastrophic, |p| risk::level(p, false).max(view_max.unwrap_or(RiskLevel::Benign)));
@@ -907,7 +929,7 @@ impl Engine {
                 weighed_floor: subject.floor.is_some(),
                 why: first_line.as_deref(),
                 auto: overnight::AutoChecks {
-                    verdict: s.verdict,
+                    verdict,
                     may_approve,
                     may_deny,
                     young: false,
@@ -1008,22 +1030,14 @@ impl Engine {
             s.reason = format!("{OVERNIGHT_NAME} needs a model that rates risk; decided like Auto: {}", s.reason);
         }
 
-        // Auto's rules: the model's verdict, the class gates, the rate limit.
+        // Auto's rules: the model's verdict (with the cold-start bar), the class gates, the rate limit.
         if matches!(mode, AutopilotMode::Auto | AutopilotMode::Overnight) && s.verdict != Verdict::Ask {
-            let (stats, manual) = {
-                let profile = self.ap_profile_loaded(ctx, &subject.connection_id)?;
-                let refs: Vec<&MemoryRow> = profile.1.iter().collect();
-                (gates::class_stats(&refs, &s.class_key), profile.0.profile.manual.get(&s.class_key).copied())
-            };
-            let (may_approve, may_deny) = gates::unlocked(&stats, manual.map(|locked| !locked));
             match s.verdict {
-                Verdict::Approve if !may_approve => {
-                    s.reason = format!(
-                        "{} — Autopilot has not earned this kind of request yet ({} of {} decisions)",
-                        s.reason,
-                        stats.decisions.min(gates::APPROVE_UNLOCK_DECISIONS),
-                        gates::APPROVE_UNLOCK_DECISIONS
-                    );
+                Verdict::Approve if gate.paused => {
+                    s.reason = format!("{} — paused for this kind after a wrong answer", s.reason);
+                }
+                Verdict::Approve if !gate.approve => {
+                    s.reason = format!("{} — locked by you: always asks", s.reason);
                 }
                 Verdict::Approve => {
                     if self.ap_rate_ok(&subject.connection_id, now)? {
@@ -1037,11 +1051,13 @@ impl Engine {
                     s.reason = format!("{} — paused: unusual volume from this connection", s.reason);
                     self.ap_pause_notice(&subject, now, "unusual volume");
                 }
-                Verdict::Deny if may_deny => {
+                // Denying stays conservative: a class that earned it (10 decisions, no wrong denial), else only what the
+                // risk head is sure is catastrophic.
+                Verdict::Deny if gate.deny || (gate.deny_catastrophic && decide::surely_catastrophic(readable)) => {
                     return Box::pin(self.ap_conclude(&subject, s, Verdict::Deny, By::Autopilot)).await;
                 }
                 Verdict::Deny => {
-                    s.reason = format!("{} — auto-deny is not unlocked for this kind of request", s.reason);
+                    s.reason = format!("{} — denies this kind on its own after more of your answers", s.reason);
                 }
                 Verdict::Ask => {}
             }
@@ -1194,6 +1210,12 @@ impl Engine {
                 risk_declared: risk_config.is_some(),
                 risk_threshold: risk_config.and_then(model::RiskConfig::overnight_threshold),
                 risk_view_max,
+                // the rest is the caller's to fill in (what the request is, and the class gates)
+                evidence: Some(decide::Evidence {
+                    class_examples,
+                    novel: s.novel,
+                    ..decide::Evidence::default()
+                }),
             },
             probs,
         ))
@@ -1626,8 +1648,8 @@ impl Engine {
         self.ap_update_profile(&profile.id, |p| p.since_train += 1)
     }
 
-    /// "This was wrong" on an activity entry: remembered with weight 3; an automatic decision gone wrong re-locks
-    /// its class.
+    /// "This was wrong" on an activity entry: remembered with weight 3; an automatic decision gone wrong pauses its
+    /// class until enough answers that agree with the user follow (`gates::ClassStats::demoted`).
     pub async fn correct_decision(&self, activity_id: i64, should_have: Verdict) -> Result<(), CoreError> {
         if should_have == Verdict::Ask {
             return Err(CoreError::invalid("say whether it should have been approved or denied"));
@@ -1669,9 +1691,12 @@ impl Engine {
         let row = memory_row(&s, &judged, should_have, Source::Correction, CORRECTION_WEIGHT, would, now);
         self.ap_remember(&s, &row)?;
         if automatic {
-            // Back to the numbers, which now hold a wrong automatic answer: the class is locked.
+            // Back to the numbers, which now hold a wrong automatic answer: auto-approve (or auto-deny) pauses in the
+            // class. An unlock by hand is taken back; a lock by hand stays.
             match self.ap_update_profile(&s.profile_id, |p| {
-                p.manual.remove(&s.class_key);
+                if p.manual.get(&s.class_key) == Some(&false) {
+                    p.manual.remove(&s.class_key);
+                }
             }) {
                 Ok(()) | Err(CoreError::NotFound) => {}
                 Err(e) => return Err(e),
@@ -2081,11 +2106,19 @@ impl Engine {
         };
         let memory = self.store.ap_memory(&stored.id)?;
         let mut profile = (stored, memory);
-        let (judged, probs) = self.ap_judge(&s, None, &mut profile, s.at).await.map_err(CoreError::service)?;
-        let verdict = decide::would(probs, s.novel, judged.escalate, thresholds);
+        let manual_open = profile.0.profile.manual.get(&s.class_key).map(|locked| !locked);
+        let (mut judged, probs) = self.ap_judge(&s, None, &mut profile, s.at).await.map_err(CoreError::service)?;
+        // As Auto would judge it, benign as the risk head reads it.
+        let evidence = decide::Evidence {
+            unlocked_by_hand: manual_open == Some(true),
+            benign: decide::clearly_benign(judged.risk),
+            ..judged.evidence.unwrap_or_default()
+        };
+        judged.evidence = Some(evidence);
+        let verdict = decide::verdict(probs, judged.escalate, thresholds, evidence);
         let done = Suggestion {
             verdict,
-            reason: reason_of(&judged, verdict, s.novel),
+            reason: reason_of(&judged, verdict, s.novel, thresholds.0),
             judged: Some(judged),
             ..s
         };
@@ -2096,6 +2129,8 @@ impl Engine {
         let profiles = self.ap_profiles()?;
         let default_id = self.ap_default_profile_id(&profiles)?;
         let assigned = self.store.ap_mode_rows()?;
+        // Without a model that rates risk nothing vouches for a kind the user has not taught yet: it asks until then.
+        let rates_risk = self.ap_installed() && model::rates_risk(&self.data_dir, &self.ap_known());
         let mut views = Vec::with_capacity(profiles.len());
         for p in profiles {
             let memory = self.store.ap_memory(&p.id)?;
@@ -2110,21 +2145,21 @@ impl Engine {
                 .into_iter()
                 .map(|key| {
                     let stats = gates::class_stats(&refs, &key);
-                    let lock = p.profile.manual.get(&key).copied();
-                    let (auto_approve, auto_deny) = gates::unlocked(&stats, lock.map(|locked| !locked));
+                    let open = p.profile.manual.get(&key).map(|locked| !locked);
+                    let gate = gates::auto_gate(&stats, open);
+                    let vouched =
+                        rates_risk || gate.unlocked_by_hand || stats.decisions >= decide::FULL_WEIGHT_EXAMPLES;
                     ClassView {
                         label: class_label(self, &key),
                         decisions: u32::try_from(stats.decisions).unwrap_or(u32::MAX),
                         approved: u32::try_from(stats.approved).unwrap_or(u32::MAX),
                         denied: u32::try_from(stats.denied).unwrap_or(u32::MAX),
                         shadow_accuracy: stats.accuracy(),
-                        auto_approve,
-                        auto_deny,
-                        manual: lock,
-                        decisions_to_unlock: u32::try_from(
-                            gates::APPROVE_UNLOCK_DECISIONS.saturating_sub(stats.decisions),
-                        )
-                        .unwrap_or(0),
+                        auto_approve: gate.approve && vouched,
+                        auto_deny: gate.deny,
+                        manual: open,
+                        decisions_to_unlock: 0,
+                        paused: gate.paused,
                         class_key: key,
                     }
                 })

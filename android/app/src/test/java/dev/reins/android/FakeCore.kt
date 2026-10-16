@@ -1154,7 +1154,8 @@ class FakeCore : ReinsCoreInterface {
             if (p.id != profileId) {
                 p
             } else {
-                p.copy(classes = p.classes.map { c -> if (c.classKey == classKey) c.copy(manual = locked?.not(), autoApprove = locked == false || (locked == null && c.decisionsToUnlock == 0u && (c.shadowAccuracy ?: 0f) >= 0.95f)) else c })
+                // as the core: a lock wins, a trust by hand clears a pause, and otherwise Auto runs unless paused
+                p.copy(classes = p.classes.map { c -> if (c.classKey == classKey) c.copy(manual = locked?.not(), autoApprove = locked == false || (locked == null && !c.paused), paused = locked == null && c.paused) else c })
             }
         }
     }

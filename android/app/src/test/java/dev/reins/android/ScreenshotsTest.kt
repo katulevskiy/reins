@@ -987,7 +987,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         core.connections = listOf(TestData.connection("c1", "Claude Code"), TestData.connection("c2", "ChatGPT"), TestData.connection("c3", "Cursor"))
         core.profiles = listOf(
             TestData.profile("personal", "Default", memory = 140u),
-            TestData.profile("work", "Work", "💼", dev.reins.core.Preset.CAUTIOUS, isDefault = false, memory = 38u, connections = listOf("c3"), classes = listOf(TestData.classView(decisions = 9u, approved = 9u, denied = 0u, toUnlock = 11u)), trainedAt = null),
+            TestData.profile("work", "Work", "💼", dev.reins.core.Preset.CAUTIOUS, isDefault = false, memory = 38u, connections = listOf("c3"), classes = listOf(TestData.classView(decisions = 9u, approved = 9u, denied = 0u)), trainedAt = null),
         )
     }
 
@@ -2017,7 +2017,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         }
         core.activity = core.activity + earlier
         earlier.forEach { core.entryApprovals[it.id] = push }
-        core.profiles = listOf(TestData.profile("personal", "Default", memory = 140u, classes = listOf(TestData.classView(decisions = 12u, approved = 11u, denied = 1u, toUnlock = 0u))))
+        core.profiles = listOf(TestData.profile("personal", "Default", memory = 140u, classes = listOf(TestData.classView(decisions = 12u, approved = 11u, denied = 1u))))
     }
 
     private fun sgWaiting() {

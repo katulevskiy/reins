@@ -11,18 +11,18 @@ pub const NEW_CONNECTION_SECS: i64 = 10 * 60;
 pub const RATE_PER_10_MIN: u32 = 30;
 /// …and this many in a day.
 pub const RATE_PER_DAY: u32 = 200;
-/// Human decisions in a class before auto-approve can unlock by itself.
+/// Human decisions in a class before Overnight's own unlock of auto-approve (Auto needs none: [`auto_gate`]).
 pub const APPROVE_UNLOCK_DECISIONS: usize = 20;
 /// Human decisions in a class before auto-deny can unlock by itself.
 pub const DENY_UNLOCK_DECISIONS: usize = 10;
-/// Shadow accuracy needed over the recent decisions.
+/// Shadow accuracy below which auto-approve pauses in a class (and which Overnight's unlock needs).
 pub const APPROVE_UNLOCK_ACCURACY: f32 = 0.95;
 /// The window of the shadow accuracy…
 const ACCURACY_WINDOW: usize = 50;
 /// …in which Autopilot must have decided at least this many on its own for the accuracy to count.
 const ACCURACY_MIN_DECIDED: usize = 10;
-/// The window in which a single wrong automatic answer keeps the class locked.
-const STRICT_WINDOW: usize = 20;
+/// The window in which a single wrong automatic answer keeps the class paused.
+pub const STRICT_WINDOW: usize = 20;
 
 /// File types an upload is never shared automatically as (executables, scripts, archives that may hold them, and
 /// anything the server could not tell).
@@ -148,11 +148,19 @@ impl ClassStats {
         (self.decided >= ACCURACY_MIN_DECIDED).then(|| self.correct as f32 / self.decided as f32)
     }
 
-    /// Auto-approve unlocked by the numbers (spec §5.4).
+    /// Overnight's unlock of auto-approve by the numbers (before the cold start, Auto's too): 20 decisions, shadow
+    /// accuracy at least 95%, no wrong approval among the last 20.
     pub fn approve_earned(&self) -> bool {
         self.decisions >= APPROVE_UNLOCK_DECISIONS
             && self.accuracy().is_some_and(|a| a >= APPROVE_UNLOCK_ACCURACY)
             && self.wrong_approvals == 0
+    }
+
+    /// Auto-approve is paused in the class: among the last 20 decisions Autopilot approved, or would have approved,
+    /// something the user denied ("This was wrong" on an automatic approval counts), or its shadow accuracy fell
+    /// below 95% once it can be measured. It resumes once enough decisions that agree with the user follow.
+    pub fn demoted(&self) -> bool {
+        self.wrong_approvals > 0 || self.accuracy().is_some_and(|a| a < APPROVE_UNLOCK_ACCURACY)
     }
 
     /// Auto-deny unlocked by the numbers.
@@ -188,11 +196,52 @@ pub fn class_stats(rows: &[&MemoryRow], class_key: &str) -> ClassStats {
     s
 }
 
-/// Whether Auto mode may approve (`.0`) and deny (`.1`) in a class; the user's override wins.
+/// Overnight's class check: whether it may approve (`.0`) and deny (`.1`) in a class by the numbers it always used;
+/// the user's override (`Some(true)` unlocked, `Some(false)` locked by hand) wins. Overnight also approves whatever
+/// Auto would approve on its own ([`auto_gate`]).
 pub fn unlocked(stats: &ClassStats, manual: Option<bool>) -> (bool, bool) {
     match manual {
         Some(open) => (open, open),
         None => (stats.approve_earned(), stats.deny_earned()),
+    }
+}
+
+/// What Auto may do on its own in one class.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[expect(clippy::struct_excessive_bools, reason = "independent facts about one class")]
+pub struct AutoGate {
+    /// It may approve (when the request's own verdict says so: [`super::decide::verdict`]).
+    pub approve: bool,
+    /// It may deny any request its verdict denies (else only a surely catastrophic one: [`AutoGate::deny_catastrophic`]).
+    pub deny: bool,
+    /// It may deny what the risk head rates surely catastrophic, though the class has not earned auto-deny.
+    pub deny_catastrophic: bool,
+    /// Auto-approve paused after a wrong approval ([`ClassStats::demoted`]).
+    pub paused: bool,
+    /// Unlocked by hand: the profile's own thresholds from the first request.
+    pub unlocked_by_hand: bool,
+}
+
+/// Auto's class check: approving needs no decisions first, only no recent wrong approval ([`ClassStats::demoted`]);
+/// denying any request needs the numbers ([`ClassStats::deny_earned`]), else only a surely catastrophic one with no
+/// wrong denial among the last 20. The user's override (`Some(true)` unlocked, `Some(false)` locked by hand) wins.
+pub fn auto_gate(stats: &ClassStats, manual: Option<bool>) -> AutoGate {
+    if let Some(open) = manual {
+        return AutoGate {
+            approve: open,
+            deny: open,
+            deny_catastrophic: open,
+            paused: false,
+            unlocked_by_hand: open,
+        };
+    }
+    let paused = stats.demoted();
+    AutoGate {
+        approve: !paused,
+        deny: stats.deny_earned(),
+        deny_catastrophic: stats.wrong_denials == 0,
+        paused,
+        unlocked_by_hand: false,
     }
 }
 
@@ -209,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_approve_unlocks_after_twenty_accurate_decisions() {
+    fn overnights_own_unlock_needs_twenty_accurate_decisions() {
         let mut rows: Vec<MemoryRow> = (0..19).map(|_| decided(Verdict::Approve, Verdict::Approve)).collect();
         let refs: Vec<&MemoryRow> = rows.iter().collect();
         let s = class_stats(&refs, "github/write/push");
@@ -273,6 +322,62 @@ mod tests {
         assert!(!class_stats(&refs, "github/write/push").deny_earned());
         assert_eq!(unlocked(&class_stats(&refs, "github/write/push"), Some(true)), (true, true), "unlocked by hand");
         assert_eq!(unlocked(&ClassStats::default(), Some(false)), (false, false));
+    }
+
+    #[test]
+    fn auto_approves_from_the_first_request_and_pauses_after_a_wrong_approval() {
+        let empty = class_stats(&[], "github/write/push");
+        assert_eq!(empty.decisions, 0);
+        let gate = auto_gate(&empty, None);
+        assert!(gate.approve && !gate.paused && !gate.deny && gate.deny_catastrophic, "{gate:?}");
+
+        // "This was wrong" on an automatic approval (or a denial of what it would have approved) pauses the class…
+        let mut rows = vec![decided(Verdict::Approve, Verdict::Deny)];
+        rows.extend((0..5).map(|_| decided(Verdict::Approve, Verdict::Approve)));
+        let refs: Vec<&MemoryRow> = rows.iter().collect();
+        let gate = auto_gate(&class_stats(&refs, "github/write/push"), None);
+        assert!(gate.paused && !gate.approve, "{gate:?}");
+        // …until it leaves the strict window behind answers that agree with the user.
+        let mut later: Vec<MemoryRow> =
+            (0..STRICT_WINDOW).map(|_| decided(Verdict::Approve, Verdict::Approve)).collect();
+        later.extend(rows);
+        let refs: Vec<&MemoryRow> = later.iter().collect();
+        let gate = auto_gate(&class_stats(&refs, "github/write/push"), None);
+        assert!(gate.approve && !gate.paused, "{gate:?}");
+
+        // Shadow accuracy under 95% once measurable pauses it too, without one wrong approval in the window.
+        let mut low: Vec<MemoryRow> = (0..STRICT_WINDOW).map(|_| decided(Verdict::Ask, Verdict::Approve)).collect();
+        low.extend((0..10).map(|i| {
+            if i < 2 {
+                decided(Verdict::Deny, Verdict::Approve)
+            } else {
+                decided(Verdict::Approve, Verdict::Approve)
+            }
+        }));
+        let refs: Vec<&MemoryRow> = low.iter().collect();
+        let s = class_stats(&refs, "github/write/push");
+        assert_eq!((s.wrong_approvals, s.wrong_denials), (0, 0), "out of the strict window");
+        assert!(s.accuracy().unwrap() < APPROVE_UNLOCK_ACCURACY && auto_gate(&s, None).paused);
+    }
+
+    #[test]
+    fn locks_by_hand_win_and_auto_deny_stays_conservative() {
+        let mut rows = vec![decided(Verdict::Approve, Verdict::Deny)];
+        rows.extend((0..30).map(|_| decided(Verdict::Deny, Verdict::Deny)));
+        let refs: Vec<&MemoryRow> = rows.iter().collect();
+        let paused = class_stats(&refs, "github/write/push");
+        let locked = auto_gate(&ClassStats::default(), Some(false));
+        assert!(!locked.approve && !locked.deny && !locked.deny_catastrophic && !locked.paused, "{locked:?}");
+        let opened = auto_gate(&paused, Some(true));
+        assert!(opened.approve && opened.unlocked_by_hand && !opened.paused, "an unlock by hand beats the pause");
+        // Deny: 10 decisions without a wrong denial, else only the surely catastrophic, and not after a wrong denial.
+        assert!(!auto_gate(&ClassStats::default(), None).deny);
+        assert!(auto_gate(&paused, None).deny);
+        let mut wrong = vec![decided(Verdict::Deny, Verdict::Approve)];
+        wrong.extend((0..10).map(|_| decided(Verdict::Deny, Verdict::Deny)));
+        let refs: Vec<&MemoryRow> = wrong.iter().collect();
+        let gate = auto_gate(&class_stats(&refs, "github/write/push"), None);
+        assert!(!gate.deny && !gate.deny_catastrophic, "{gate:?}");
     }
 
     #[test]
