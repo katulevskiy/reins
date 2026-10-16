@@ -368,6 +368,8 @@ class MainSafeCore(
 
     override suspend fun modelUpdatePending(): Boolean = io { modelUpdatePending() }
 
+    override suspend fun pauseModelDownload() = io { pauseModelDownload() }
+
     override suspend fun setAutopilotAutoUpdate(on: Boolean) = io { setAutopilotAutoUpdate(on) }
 
     override suspend fun deleteModel() = io { deleteModel() }

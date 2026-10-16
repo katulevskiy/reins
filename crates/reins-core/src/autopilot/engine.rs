@@ -57,6 +57,14 @@ pub const OVERNIGHT_PAUSE_SECS: i64 = 30 * 60;
 const MODEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[cfg(test)]
 const MODEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// A new model's load and first run (its self-check) may take this long before the update fails.
+#[cfg(not(test))]
+const SELF_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(1);
+#[cfg(test)]
+const SELF_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+/// After that, how long the update still waits for the runtime to be done with the new model before it loads the
+/// previous one back (a runtime that never answers would otherwise hold every decision up).
+const SELF_CHECK_GIVE_UP: std::time::Duration = std::time::Duration::from_mins(5);
 const WIFI_ONLY_KEY: &str = "autopilot.wifi_only";
 /// "Update automatically" (on unless turned off).
 const AUTO_UPDATE_KEY: &str = "autopilot.auto_update";
@@ -1774,6 +1782,7 @@ impl Engine {
             return Err(CoreError::invalid("the model is already being downloaded"));
         }
         let _running = Running(&state.running);
+        state.unpause();
         *lock(&state.error) = None;
         state.done.store(0, Ordering::SeqCst);
         let result = async {
@@ -1802,19 +1811,28 @@ impl Engine {
         }
     }
 
+    /// Stops an automatic download running now (the phone left Wi-Fi, or Low Power or Low Data Mode came on): it ends
+    /// as a dropped connection would, keeping what arrived for the next attempt. A model already downloaded and being
+    /// checked is not stopped.
+    pub fn pause_model_download(&self) {
+        self.autopilot.download.pause();
+    }
+
     /// Puts a staged package in use, with no decision running: the pass and every use of the model wait. The new
-    /// model is opened, loaded and run once; only if that works is it committed (one rename) and the older packages
-    /// removed. Else it is deleted, the runtime lets it go, and the model in use before is loaded again on next need.
+    /// model is opened (every file hashed again), loaded and run once; only if that works is it committed (one rename)
+    /// and the older packages removed. Else it is deleted and the model in use before is loaded back before any decision
+    /// runs again ([`Self::ap_restore_previous`]).
     async fn ap_swap_in(&self, target: &KnownModel) -> Result<(), CoreError> {
         let _pass = self.autopilot.pass.lock().await;
         let _model = self.autopilot.model_use.write().await;
         let checked = match self.ap_self_check(target).await {
-            Ok(laya) => model::commit(&self.data_dir, target, unix_now()).map(|()| laya),
+            Ok((laya, loaded)) => model::commit(&self.data_dir, target, unix_now()).map(|()| (laya, loaded)),
             Err(e) => Err(e),
         };
         match checked {
-            Ok(laya) => {
+            Ok((laya, loaded)) => {
                 *lock(&self.autopilot.laya) = Some(laya);
+                self.autopilot.loaded.store(loaded, Ordering::SeqCst);
                 for older in self.ap_models().iter().filter(|m| m.id != target.id) {
                     if model::installed(&self.data_dir, older)
                         && let Err(e) = model::remove(&self.data_dir, &older.id)
@@ -1829,24 +1847,61 @@ impl Engine {
             }
             Err(e) => {
                 log::warn!("a new model failed its self-check; the previous one stays in use: {e}");
-                *lock(&self.autopilot.laya) = None;
-                if self.autopilot.loaded.swap(false, Ordering::SeqCst)
-                    && let Some(rt) = lock(&self.autopilot.runtime).clone()
-                {
-                    // Not waited for: a runtime that hangs must not hold every decision up.
-                    drop(tokio::task::spawn_blocking(move || rt.unload()));
-                }
                 model::remove(&self.data_dir, &target.id).ok();
                 self.ap_reject(&target.id);
+                self.ap_restore_previous().await;
                 Err(CoreError::service("the new model did not pass its check; the previous one is kept"))
             }
         }
     }
 
-    /// Opens a staged package (hashing its small files again) and, when the app has a runtime, loads it and runs it
-    /// once on [`SELF_CHECK_STATE`]: it must answer in the expected shape, with numbers. The model in use is let go
-    /// first, so that only one is in memory.
-    async fn ap_self_check(&self, target: &KnownModel) -> Result<Arc<Laya>, CoreError> {
+    /// After a failed self-check, still under the swap's locks: the runtime gets the model in use before back (or
+    /// nothing, without one), and `loaded` says which.
+    async fn ap_restore_previous(&self) {
+        *lock(&self.autopilot.laya) = None;
+        self.autopilot.loaded.store(false, Ordering::SeqCst);
+        let Some(runtime) = lock(&self.autopilot.runtime).clone() else {
+            return;
+        };
+        let restored = if self.ap_installed() {
+            let (dir, known) = (self.data_dir.clone(), self.ap_known());
+            let rt = Arc::clone(&runtime);
+            let work = tokio::task::spawn_blocking(move || {
+                let laya = Laya::open(&dir, &known)?;
+                rt.load(laya.model_path.to_string_lossy().into_owned())
+                    .map_err(|e| CoreError::service(format!("the model could not be loaded ({e})")))?;
+                Ok::<_, CoreError>(laya)
+            });
+            match tokio::time::timeout(MODEL_TIMEOUT, work).await {
+                Ok(Ok(Ok(laya))) => Some(laya),
+                Ok(Ok(Err(e))) => {
+                    log::warn!("Autopilot could not load its model again after a failed update: {e}");
+                    None
+                }
+                // Loaded on next need instead (the runtime takes one load at a time).
+                _ => None,
+            }
+        } else {
+            None
+        };
+        match restored {
+            Some(laya) => {
+                *lock(&self.autopilot.laya) = Some(Arc::new(laya));
+                self.autopilot.loaded.store(true, Ordering::SeqCst);
+            }
+            None => {
+                tokio::task::spawn_blocking(move || runtime.unload()).await.ok();
+            }
+        }
+    }
+
+    /// Opens a staged package (every file hashed again) and, when the app has a runtime, loads it and runs it once on
+    /// [`SELF_CHECK_STATE`]: it must answer in the expected shape, with numbers. The model in use is let go first, so
+    /// that only one is in memory. Returns the package and whether the runtime holds it now.
+    ///
+    /// A self-check that takes too long fails, but its load and run are still waited for (up to
+    /// [`SELF_CHECK_GIVE_UP`]): the runtime must be done with the new model before the previous one is loaded back.
+    async fn ap_self_check(&self, target: &KnownModel) -> Result<(Arc<Laya>, bool), CoreError> {
         let dir = self.data_dir.clone();
         let staged = target.clone();
         let laya = tokio::task::spawn_blocking(move || Laya::open_staged(&dir, &staged))
@@ -1854,21 +1909,25 @@ impl Engine {
             .map_err(|e| CoreError::service(e.to_string()))??;
         let laya = Arc::new(laya);
         let Some(runtime) = lock(&self.autopilot.runtime).clone() else {
-            return Ok(laya);
+            return Ok((laya, false));
         };
         *lock(&self.autopilot.laya) = None;
-        // From here the runtime holds the new model, or nothing: a failure unloads it.
-        self.autopilot.loaded.store(true, Ordering::SeqCst);
+        self.autopilot.loaded.store(false, Ordering::SeqCst);
         let (rt, checked) = (Arc::clone(&runtime), Arc::clone(&laya));
         let path = laya.model_path.to_string_lossy().into_owned();
-        let work = tokio::task::spawn_blocking(move || {
+        let mut work = tokio::task::spawn_blocking(move || {
             rt.load(path).map_err(|e| CoreError::service(format!("the model could not be loaded ({e})")))?;
             checked.run(rt.as_ref(), &[SELF_CHECK_STATE])
         });
-        let passes = tokio::time::timeout(MODEL_TIMEOUT * 2, work)
-            .await
-            .map_err(|_| CoreError::service("the new model took too long"))?
-            .map_err(|e| CoreError::service(e.to_string()))??;
+        let passes = match tokio::time::timeout(SELF_CHECK_TIMEOUT, &mut work).await {
+            Ok(joined) => joined.map_err(|e| CoreError::service(e.to_string()))??,
+            Err(_) => {
+                if tokio::time::timeout(SELF_CHECK_GIVE_UP, work).await.is_err() {
+                    log::warn!("the new model's self-check still runs; the previous model is loaded after it");
+                }
+                return Err(CoreError::service("the new model took too long"));
+            }
+        };
         let sane = passes.len() == 1
             && passes.iter().all(|p| {
                 let sum: f32 = p.probs.iter().sum();
@@ -1877,7 +1936,7 @@ impl Engine {
         if !sane {
             return Err(CoreError::service("the new model answered something impossible"));
         }
-        Ok(laya)
+        Ok((laya, true))
     }
 
     /// What Overnight does with what is too risky (the user's setting).

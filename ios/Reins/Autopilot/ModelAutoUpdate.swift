@@ -31,10 +31,12 @@ protocol BackgroundTime: AnyObject {
     func end()
 }
 
-/// The two calls an update needs from the core. A protocol so tests can answer them.
+/// The calls an update needs from the core. A protocol so tests can answer them.
 protocol ModelUpdateCore: Sendable {
     func modelUpdatePending() async -> Bool
     func updateModel(automatic: Bool, progress: DownloadProgress) async throws -> ModelUpdateOutcome
+    /// Stops the download running now; `updateModel` then throws `CoreError.Network` and what arrived is kept.
+    func pauseModelDownload() async
 }
 
 /// The real core behind `ModelUpdateCore`.
@@ -46,6 +48,8 @@ struct CoreModelUpdates: ModelUpdateCore {
     func updateModel(automatic: Bool, progress: DownloadProgress) async throws -> ModelUpdateOutcome {
         try await core.updateModel(automatic: automatic, progress: progress)
     }
+
+    func pauseModelDownload() async { await core.pauseModelDownload() }
 }
 
 /// What "Check now" came to, in one line under it.
@@ -88,8 +92,20 @@ final class ModelAutoUpdater {
     private(set) var running = false
     private(set) var downloaded: UInt64 = 0
     private(set) var total: UInt64 = 0
-    /// An automatic update waits for Wi-Fi (or for Low Data or Low Power Mode to end).
-    private(set) var waiting = false
+    /// An automatic update waits for Wi-Fi (or for Low Data or Low Power Mode to end, or for the network to come back
+    /// after a download was cut off). Kept across launches, so that a background run that found mobile data is
+    /// remembered and the next background run comes sooner (`BackgroundModelUpdate`).
+    private(set) var waiting: Bool {
+        didSet { if waiting != oldValue { defaults.set(waiting, forKey: Self.waitingKey) } }
+    }
+
+    nonisolated static let waitingKey = "autopilot.modelUpdateWaiting"
+
+    /// Whether an automatic update was left waiting, as last kept (for scheduling the background run before the app
+    /// model exists).
+    nonisolated static func persistedWaiting(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: waitingKey)
+    }
     /// "Check now" runs (waiting for Wi-Fi does not count).
     private(set) var checking = false
     /// What the last "Check now" came to; nil before the first.
@@ -117,9 +133,15 @@ final class ModelAutoUpdater {
     /// "Check now" waits for a network it may use.
     @ObservationIgnored private var checkWaiting = false
     @ObservationIgnored private var lastShown = Date.distantPast
+    @ObservationIgnored private let defaults: UserDefaults
+    /// An automatic update is downloading now (not "Check now"): it stops when the network or power no longer allow it.
+    @ObservationIgnored private(set) var automaticRunning = false
 
-    init(core: any ModelUpdateCore, network: NetworkWatching? = nil, power: PowerWatching? = nil, background: BackgroundTime? = nil) {
+    init(core: any ModelUpdateCore, network: NetworkWatching? = nil, power: PowerWatching? = nil, background: BackgroundTime? = nil,
+         defaults: UserDefaults = .standard) {
         self.core = core
+        self.defaults = defaults
+        self.waiting = defaults.bool(forKey: Self.waitingKey)
         self.watcher = network ?? PathNetwork()
         self.power = power ?? SystemPower()
         self.background = background ?? SystemBackgroundTime()
@@ -185,10 +207,13 @@ final class ModelAutoUpdater {
             return
         }
         waiting = false
+        automaticRunning = true
+        defer { automaticRunning = false }
         do {
             _ = try await update(automatic: true)
         } catch CoreError.Network {
-            // What arrived is kept: the next network change or launch goes on from there.
+            // Cut off, or paused because the phone left Wi-Fi: what arrived is kept, and the next network change,
+            // launch or background run goes on from there.
             waiting = true
         } catch CoreError.Server {
             waiting = true
@@ -255,8 +280,21 @@ final class ModelAutoUpdater {
         resume()
     }
 
-    /// What waited for the network or the power goes now that they allow it.
+    /// Stops an automatic download in progress (the background task ran out of time); what arrived is kept.
+    func pause() async {
+        guard automaticRunning else { return }
+        await core.pauseModelDownload()
+    }
+
+    /// What waited for the network or the power goes now that they allow it; an automatic download that they no longer
+    /// allow (mobile data, a hotspot, Low Data or Low Power Mode) stops, keeping what arrived, and waits.
     private func resume() {
+        if automaticRunning, !ModelUpdateGate.automatic(network, lowPower: lowPower) {
+            waiting = true
+            let core = core
+            Task { await core.pauseModelDownload() }
+            return
+        }
         if checkWaiting, !checking, ModelUpdateGate.checkNow(network, wifiOnly: wifiOnly()) {
             checkWaiting = false
             checking = true

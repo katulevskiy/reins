@@ -1614,6 +1614,15 @@ impl ReinsCore {
         .await
     }
 
+    /// Stops the model download running now; it ends with `CoreError::Network` and keeps what arrived, so the next
+    /// `update_model` goes on from there. The app calls it when the phone leaves Wi-Fi during an automatic update (or
+    /// Low Power or Low Data Mode comes on). A downloaded model already being checked is not stopped.
+    pub async fn pause_model_download(&self) {
+        let runtime = Arc::clone(&self.runtime);
+        let engine = runtime.engine();
+        rt::run(async move { engine.pause_model_download() }).await;
+    }
+
     /// An automatic update has something to do (asks nobody): the app then waits for Wi-Fi to call `update_model`.
     pub async fn model_update_pending(&self) -> bool {
         let runtime = Arc::clone(&self.runtime);

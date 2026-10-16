@@ -6,6 +6,10 @@ import dev.reins.core.CoreException
 import dev.reins.core.ModelState
 import dev.reins.core.ModelUpdateOutcome
 import dev.reins.core.SessionInfo
+import androidx.work.NetworkType
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -29,8 +33,12 @@ class ModelUpdateTest {
         core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, update = true)
     }
 
-    private fun run(conditions: ModelUpdateGate.Conditions = wifi, downloadRunning: Boolean = false, manual: Boolean = false) =
-        runBlocking { runModelUpdate(core, conditions, downloadRunning, manual) { refreshes++ } }
+    private fun run(
+        conditions: ModelUpdateGate.Conditions = wifi,
+        downloadRunning: Boolean = false,
+        manual: Boolean = false,
+        wifiOnly: Boolean = true,
+    ) = runBlocking { runModelUpdate(core, conditions, downloadRunning, manual, wifiOnly) { refreshes++ } }
 
     // ---- the gate ---------------------------------------------------------------------------------------------------
 
@@ -80,11 +88,43 @@ class ModelUpdateTest {
     }
 
     @Test
-    fun `pending but the network or power does not allow, try again later, nothing downloaded`() {
-        listOf(cellular, offline, wifi.copy(powerSave = true), wifi.copy(dataSaver = true)).forEach {
+    fun `pending but not on wifi, try again later, nothing downloaded`() {
+        listOf(cellular, offline).forEach {
             assertEquals(it.toString(), UpdateRun.Retry, run(it))
         }
         assertTrue(core.updateCalls.isEmpty())
+    }
+
+    @Test
+    fun `battery saver or data saver ends the run without a retry, the daily run looks again`() {
+        listOf(wifi.copy(powerSave = true), wifi.copy(dataSaver = true), cellular.copy(powerSave = true)).forEach {
+            assertEquals(it.toString(), UpdateRun.Done, run(it))
+        }
+        assertTrue("nothing downloaded", core.updateCalls.isEmpty())
+    }
+
+    @Test
+    fun `a run stopped by workmanager pauses the core's download`() {
+        core.updateHangs = true
+        runBlocking {
+            val job = launch { runModelUpdate(core, wifi, downloadRunning = false) }
+            while (core.updateCalls.isEmpty()) delay(5)
+            job.cancelAndJoin()
+        }
+        assertEquals("what arrived is kept for the next run", 1, core.pauses)
+    }
+
+    @Test
+    fun `check now honours download on wifi only`() {
+        core.autoUpdate = false
+        assertEquals("wifi only: mobile data waits", UpdateRun.Retry, run(cellular, manual = true, wifiOnly = true))
+        assertTrue(core.updateCalls.isEmpty())
+        assertEquals("allowed by the user: mobile data will do", UpdateRun.Done, run(cellular, manual = true, wifiOnly = false))
+        assertEquals(listOf(false), core.updateCalls.toList())
+        // What the waiting run asks WorkManager for.
+        assertEquals(NetworkType.UNMETERED, WorkModelUpdates.network(manual = true, wifiOnly = true))
+        assertEquals(NetworkType.CONNECTED, WorkModelUpdates.network(manual = true, wifiOnly = false))
+        assertEquals("automatic runs always wait for wifi", NetworkType.UNMETERED, WorkModelUpdates.network(manual = false, wifiOnly = false))
     }
 
     @Test

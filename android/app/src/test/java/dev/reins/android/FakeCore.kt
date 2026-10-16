@@ -945,6 +945,10 @@ class FakeCore : ReinsCoreInterface {
     @Volatile var updateFailure: CoreException? = null
     /** `updateModel` calls: whether each was automatic. */
     val updateCalls = CopyOnWriteArrayList<Boolean>()
+    /** `updateModel` downloads until its caller is cancelled (WorkManager stopping the worker). */
+    @Volatile var updateHangs = false
+    /** `pauseModelDownload` calls. */
+    @Volatile var pauses = 0
     /** `setAutopilotAutoUpdate` calls. */
     val autoUpdateCalls = CopyOnWriteArrayList<Boolean>()
 
@@ -1221,6 +1225,7 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun updateModel(automatic: Boolean, progress: DownloadProgress): dev.reins.core.ModelUpdateOutcome {
         updateCalls += automatic
+        if (updateHangs) kotlinx.coroutines.awaitCancellation()
         updateFailure?.let { throw it }
         updateOutcome?.let { return it }
         return when {
@@ -1236,6 +1241,10 @@ class FakeCore : ReinsCoreInterface {
     }
 
     override suspend fun modelUpdatePending(): Boolean = updatePending ?: (autoUpdate && installed() && model.update)
+
+    override suspend fun pauseModelDownload() {
+        pauses++
+    }
 
     override suspend fun setAutopilotAutoUpdate(on: Boolean) {
         autoUpdateCalls += on

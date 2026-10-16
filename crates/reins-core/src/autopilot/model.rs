@@ -425,9 +425,42 @@ pub struct DownloadState {
     pub done: AtomicU64,
     pub total: AtomicU64,
     pub error: Mutex<Option<String>>,
+    /// The app asked the download running now to stop (the phone left Wi-Fi): it ends as a dropped connection would.
+    paused: AtomicBool,
+    wake: tokio::sync::Notify,
+}
+
+/// What a paused download ends with: a network error, so that what arrived is kept and the next attempt goes on.
+fn paused_error() -> CoreError {
+    CoreError::Network {
+        reason: "the download was paused; it goes on from here next time".to_owned(),
+    }
 }
 
 impl DownloadState {
+    /// Stops the download running now (if any) at its next step; what arrived is kept.
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+        self.wake.notify_waiters();
+    }
+
+    /// A new download starts: an earlier pause no longer applies.
+    pub fn unpause(&self) {
+        self.paused.store(false, Ordering::SeqCst);
+    }
+
+    async fn until_paused(&self) {
+        loop {
+            let woken = self.wake.notified();
+            tokio::pin!(woken);
+            woken.as_mut().enable();
+            if self.paused.load(Ordering::SeqCst) {
+                return;
+            }
+            woken.await;
+        }
+    }
+
     pub fn status(&self, known: &KnownModel, installed: bool, runtime_ready: bool) -> ModelStatus {
         let error = self.error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         let state = if self.running.load(Ordering::SeqCst) {
@@ -479,7 +512,11 @@ pub async fn download(
     state: &DownloadState,
 ) -> Result<(), CoreError> {
     let dir = model_dir(data_dir, &known.id)?;
-    let result = fetch_all(http, base, &dir, known, progress, state).await;
+    // A pause drops the download between two writes: every chunk written is whole, and the part file goes on from there.
+    let result = tokio::select! {
+        r = fetch_all(http, base, &dir, known, progress, state) => r,
+        () = state.until_paused() => Err(paused_error()),
+    };
     match &result {
         // the connection or the server, not the files: what arrived is kept for next time
         Ok(())
@@ -595,9 +632,10 @@ async fn fetch_all(
             fs::remove_file(&path).map_err(|e| io(&e))?;
         }
         let part = dir.join(format!("{}.part", pin.name));
-        let (mut ctx, mut size) = match fs::metadata(&part) {
-            Ok(md) if md.len() > 0 && md.len() <= limit => hash_prefix(&part)?,
-            _ => (ring::digest::Context::new(&ring::digest::SHA256), 0),
+        // What an earlier attempt left; its bytes are checked with the rest once the file is whole.
+        let mut size = match fs::metadata(&part) {
+            Ok(md) if md.len() <= limit => md.len(),
+            _ => 0,
         };
         if size == 0 || size < limit {
             let url = format!("{}/{}/{}", base.trim_end_matches('/'), known.id, pin.name);
@@ -613,7 +651,6 @@ async fn fetch_all(
                     return Err(refused(status));
                 }
                 // The server sent the whole file: start it again.
-                ctx = ring::digest::Context::new(&ring::digest::SHA256);
                 size = 0;
             }
             if resp.content_length().is_some_and(|n| size + n > limit) {
@@ -641,7 +678,6 @@ async fn fetch_all(
                 if size > limit {
                     return Err(too_large());
                 }
-                ctx.update(&chunk);
                 out.write_all(&chunk).map_err(|e| io(&e))?;
                 state.done.store(done + size, Ordering::SeqCst);
                 if done + size - reported >= PROGRESS_STEP {
@@ -651,7 +687,8 @@ async fn fetch_all(
             }
             out.sync_all().map_err(|e| io(&e))?;
         }
-        let sha = hex(ctx.finish().as_ref());
+        // The whole file as it is on disk (what an earlier attempt left included), not what this attempt saw.
+        let (sha, size) = hash_file(&part)?;
         if !matches_pin(pin, &sha, size) {
             log::warn!("a downloaded model file did not match its pinned hash; the package was deleted");
             return Err(CoreError::service(MISMATCH));
@@ -717,12 +754,23 @@ impl Laya {
         Self::open_verified(data_dir, known)
     }
 
-    /// Opens a staged package (downloaded and verified, not in use yet) for its self-check, the same way.
+    /// Opens a staged package (downloaded and verified, not in use yet) for its self-check, just before it is loaded and
+    /// committed: every file, the model too, is hashed again from disk, so that nothing changed since the download is
+    /// loaded or put in use. A package that does not match is deleted.
     pub fn open_staged(data_dir: &Path, known: &KnownModel) -> Result<Self, CoreError> {
         if !staged(data_dir, known) {
             return Err(CoreError::service("the new model is not ready"));
         }
-        Self::open_verified(data_dir, known)
+        let dir = model_dir(data_dir, &known.id)?;
+        for pin in known.files.iter() {
+            let (sha, size) = hash_file(&dir.join(pin.name.as_ref()))?;
+            if !matches_pin(pin, &sha, size) {
+                log::warn!("a downloaded model file changed before it was put in use; the package was deleted");
+                remove(data_dir, &known.id).ok();
+                return Err(CoreError::service(MISMATCH));
+            }
+        }
+        Self::from_dir(&dir, &known.id)
     }
 
     fn open_verified(data_dir: &Path, known: &KnownModel) -> Result<Self, CoreError> {

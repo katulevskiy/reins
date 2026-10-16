@@ -23,7 +23,9 @@ import dev.reins.core.ModelUpdateOutcome
 import dev.reins.core.ReinsCoreInterface
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 /**
  * When a newer model may be fetched. Automatic updates wait for Wi-Fi (any unmetered network) and stay off Battery
@@ -78,14 +80,20 @@ internal object NoProgress : DownloadProgress {
 
 /**
  * One background run of the model update, without WorkManager so it can be tested. [manual] is a "Check now" that
- * waited for Wi-Fi: it runs even with "Update automatically" off and retries a model that failed before.
- * [downloadRunning]: the first download's own job is running. [refresh] re-reads Autopilot after the core answered.
+ * waited for a network: it runs even with "Update automatically" off and retries a model that failed before;
+ * [wifiOnly] is the "Download on Wi-Fi only" switch it honours. [downloadRunning]: the first download's own job is
+ * running. [refresh] re-reads Autopilot after the core answered.
+ *
+ * Battery Saver and Data Saver end an automatic run without a retry (WorkManager's backoff would only try again every
+ * few minutes while they stay on): the daily run looks again. When WorkManager stops a run (the phone left Wi-Fi), the
+ * core's download is paused too, keeping what arrived.
  */
 suspend fun runModelUpdate(
     core: ReinsCoreInterface,
     conditions: ModelUpdateGate.Conditions,
     downloadRunning: Boolean,
     manual: Boolean = false,
+    wifiOnly: Boolean = true,
     refresh: suspend () -> Unit = {},
 ): UpdateRun {
     try {
@@ -97,13 +105,16 @@ suspend fun runModelUpdate(
     } catch (_: Exception) {
         return UpdateRun.Done
     }
-    val allowed = if (manual) ModelUpdateGate.checkNowAllows(conditions, wifiOnly = true) else ModelUpdateGate.allows(conditions)
+    if (!manual && (conditions.powerSave || conditions.dataSaver)) return UpdateRun.Done
+    val allowed = if (manual) ModelUpdateGate.checkNowAllows(conditions, wifiOnly) else ModelUpdateGate.allows(conditions)
     if (!allowed || downloadRunning) return UpdateRun.Retry
     return try {
         core.updateModel(automatic = !manual, progress = NoProgress)
         refresh()
         UpdateRun.Done
     } catch (e: CancellationException) {
+        // Stopped by WorkManager (its network went away): the core's download stops too, keeping what arrived.
+        withContext(NonCancellable) { runCatching { core.pauseModelDownload() } }
         throw e
     } catch (e: CoreException) {
         refresh()
@@ -120,33 +131,37 @@ interface ModelUpdates {
     /** At launch: one run as soon as Wi-Fi allows, and one a day after that. Leaves existing ones alone. */
     fun schedule()
 
-    /** "Check now" without Wi-Fi: a run that checks as soon as Wi-Fi is there, queued after any waiting one. */
-    fun checkOnWifi()
+    /**
+     * "Check now" without a network it may use: a run that checks as soon as there is one, queued after any waiting
+     * one. [wifiOnly] ("Download on Wi-Fi only"): Wi-Fi, else any network.
+     */
+    fun checkOnWifi(wifiOnly: Boolean)
 }
 
 class WorkModelUpdates(private val context: Context) : ModelUpdates {
     override fun schedule() {
         val work = WorkManager.getInstance(context)
-        work.enqueueUniqueWork(NOW, ExistingWorkPolicy.KEEP, oneTime(manual = false))
+        work.enqueueUniqueWork(NOW, ExistingWorkPolicy.KEEP, oneTime(manual = false, wifiOnly = true))
         val daily = PeriodicWorkRequestBuilder<ModelUpdateWorker>(24, TimeUnit.HOURS)
-            .setConstraints(constraints())
+            .setConstraints(constraints(network(manual = false, wifiOnly = true)))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, BACKOFF_MINUTES, TimeUnit.MINUTES)
             .build()
         work.enqueueUniquePeriodicWork(DAILY, ExistingPeriodicWorkPolicy.KEEP, daily)
     }
 
-    override fun checkOnWifi() {
-        WorkManager.getInstance(context).enqueueUniqueWork(NOW, ExistingWorkPolicy.APPEND_OR_REPLACE, oneTime(manual = true))
+    override fun checkOnWifi(wifiOnly: Boolean) {
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(NOW, ExistingWorkPolicy.APPEND_OR_REPLACE, oneTime(manual = true, wifiOnly = wifiOnly))
     }
 
-    private fun oneTime(manual: Boolean) = OneTimeWorkRequestBuilder<ModelUpdateWorker>()
-        .setConstraints(constraints())
+    private fun oneTime(manual: Boolean, wifiOnly: Boolean) = OneTimeWorkRequestBuilder<ModelUpdateWorker>()
+        .setConstraints(constraints(network(manual, wifiOnly)))
         .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, BACKOFF_MINUTES, TimeUnit.MINUTES)
-        .setInputData(workDataOf(ModelUpdateWorker.MANUAL to manual))
+        .setInputData(workDataOf(ModelUpdateWorker.MANUAL to manual, ModelUpdateWorker.WIFI_ONLY to wifiOnly))
         .build()
 
-    private fun constraints() = Constraints.Builder()
-        .setRequiredNetworkType(NetworkType.UNMETERED)
+    private fun constraints(network: NetworkType) = Constraints.Builder()
+        .setRequiredNetworkType(network)
         .setRequiresBatteryNotLow(true)
         .setRequiresStorageNotLow(true)
         .build()
@@ -155,6 +170,10 @@ class WorkModelUpdates(private val context: Context) : ModelUpdates {
         const val NOW = "autopilot-model-update"
         const val DAILY = "autopilot-model-update-daily"
         private const val BACKOFF_MINUTES = 10L
+
+        /** Automatic runs wait for Wi-Fi; the user's "Check now" with "Download on Wi-Fi only" off takes any network. */
+        fun network(manual: Boolean, wifiOnly: Boolean): NetworkType =
+            if (manual && !wifiOnly) NetworkType.CONNECTED else NetworkType.UNMETERED
     }
 }
 
@@ -178,6 +197,7 @@ class ModelUpdateWorker(context: Context, params: WorkerParameters) : CoroutineW
             conditions = NetworkConditions.read(applicationContext),
             downloadRunning = running,
             manual = inputData.getBoolean(MANUAL, false),
+            wifiOnly = inputData.getBoolean(WIFI_ONLY, true),
             refresh = { container.refreshAutopilot() },
         )
         return if (run == UpdateRun.Retry) Result.retry() else Result.success()
@@ -185,6 +205,7 @@ class ModelUpdateWorker(context: Context, params: WorkerParameters) : CoroutineW
 
     companion object {
         const val MANUAL = "manual"
+        const val WIFI_ONLY = "wifiOnly"
     }
 }
 

@@ -2189,7 +2189,7 @@ async fn a_new_model_that_fails_its_self_check_is_rolled_back() {
     judges_with(&env, "r1", "fake-laya-1").await;
     serve(&env.server, "fake-laya-2", &package_v2()).await;
 
-    // It loads but its run fails: the runtime lets it go and the old model is loaded again on next need.
+    // It loads but its run fails: the old model is loaded back before the update returns.
     env.model.panic.store(true, Ordering::SeqCst);
     let r = env.core.update_model(true, progress()).await;
     env.model.panic.store(false, Ordering::SeqCst);
@@ -2197,14 +2197,11 @@ async fn a_new_model_that_fails_its_self_check_is_rolled_back() {
     let status = env.core.model_status().await;
     assert_eq!((status.state, status.id.as_str()), (ModelState::Installed, "fake-laya-1"));
     assert!(!model_dir(&env, "fake-laya-2").exists());
-    for _ in 0..50 {
-        if env.model.loaded.lock().unwrap().is_none() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(env.model.loaded.lock().unwrap().is_none(), "the new model was let go");
+    let loaded = env.model.loaded.lock().unwrap().clone();
+    assert!(loaded.as_deref().is_some_and(|p| p.ends_with("models/fake-laya-1/model.onnx")), "{loaded:?}");
+    let loads = env.model.loads.load(Ordering::SeqCst);
     judges_with(&env, "r2", "fake-laya-1").await;
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), loads, "already loaded");
     assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Rejected);
 
     // It does not even load.
@@ -2213,6 +2210,139 @@ async fn a_new_model_that_fails_its_self_check_is_rolled_back() {
     env.model.fail.store(false, Ordering::SeqCst);
     assert!(r.is_err());
     judges_with(&env, "r3", "fake-laya-1").await;
+}
+
+/// A self-check that takes too long fails; its load and run are waited for, and the old model is loaded back before
+/// the update returns, so the next decision is judged at once with the old model.
+#[tokio::test]
+async fn a_self_check_that_times_out_leaves_the_old_model_loaded() {
+    let env = update_env().await;
+    judges_with(&env, "r1", "fake-laya-1").await;
+    serve(&env.server, "fake-laya-2", &package_v2()).await;
+    env.model.stall_ms.store(1_500, Ordering::SeqCst);
+    let r = env.core.update_model(true, progress()).await;
+    env.model.stall_ms.store(0, Ordering::SeqCst);
+    assert!(matches!(&r, Err(CoreError::Service { reason }) if reason.contains("did not pass")), "{r:?}");
+    assert!(!model_dir(&env, "fake-laya-2").exists());
+    let loaded = env.model.loaded.lock().unwrap().clone();
+    assert!(loaded.as_deref().is_some_and(|p| p.ends_with("models/fake-laya-1/model.onnx")), "{loaded:?}");
+    let (loads, runs) = (env.model.loads.load(Ordering::SeqCst), env.model.runs.load(Ordering::SeqCst));
+    assert!(runs >= 2, "the slow self-check ran to its end before the old model came back");
+    judges_with(&env, "r2", "fake-laya-1").await;
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), loads, "judged without loading again");
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Rejected);
+}
+
+/// The app pauses an automatic download (the phone left Wi-Fi): it ends as a dropped connection, the old model stays,
+/// and the update is still to do; the next attempt finishes it.
+#[tokio::test]
+async fn a_paused_update_stays_to_do_and_goes_on_later() {
+    let env = update_env().await;
+    let files = package_v2();
+    serve(&env.server, "fake-laya-2", &files).await;
+    // The model file is slow to come.
+    Mock::given(method("GET"))
+        .and(path("/models/fake-laya-2/model.onnx"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(files[0].1.clone()).set_delay(Duration::from_secs(5)))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .mount(&env.server)
+        .await;
+    let core = Arc::clone(&env.core);
+    let update = tokio::spawn(async move { core.update_model(true, progress()).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let paused_at = std::time::Instant::now();
+    env.core.pause_model_download().await;
+    let r = update.await.unwrap();
+    assert!(paused_at.elapsed() < Duration::from_secs(2), "stopped at once");
+    assert!(matches!(&r, Err(CoreError::Network { reason }) if reason.contains("paused")), "{r:?}");
+    let status = env.core.model_status().await;
+    assert_eq!((status.state, status.id.as_str()), (ModelState::Installed, "fake-laya-1"));
+    assert!(env.core.model_update_pending().await, "not rejected: still to do");
+    // A pause before a download does not stop the next one.
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Updated);
+    assert_eq!(env.core.model_status().await.id, "fake-laya-2");
+}
+
+/// A pause keeps what arrived, and the next download goes on from it.
+#[tokio::test]
+async fn a_paused_download_keeps_what_arrived() {
+    use super::model::{self, DownloadState};
+    let files = package_v2();
+    let known = testing::known_model_version("fake-laya-2", "2", &files);
+    let dir = tempfile::tempdir().unwrap();
+    let http = crate::http::client().unwrap();
+    let state = Arc::new(DownloadState::default());
+    let whole = files[0].1.clone();
+    let half = whole.len() / 2;
+    // A server that sends half of the file and then nothing (the connection stays open).
+    let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = tcp.local_addr().unwrap();
+    let (first, len) = (whole[..half].to_vec(), whole.len());
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        while let Ok((mut sock, _)) = tcp.accept().await {
+            let mut buf = vec![0_u8; 4096];
+            if sock.read(&mut buf).await.unwrap_or(0) == 0 {
+                continue;
+            }
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n\r\n");
+            sock.write_all(head.as_bytes()).await.ok();
+            sock.write_all(&first).await.ok();
+            sock.flush().await.ok();
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
+    let part = dir.path().join("models/fake-laya-2/model.onnx.part");
+    let (d, k, s, p) = (dir.path().to_owned(), known.clone(), Arc::clone(&state), part.clone());
+    let download = tokio::spawn(async move {
+        let listener = testing::Progress::default();
+        model::download(&http, &format!("http://{addr}/models"), &d, &k, &listener, &s).await
+    });
+    for _ in 0..200 {
+        if std::fs::metadata(&p).is_ok_and(|m| m.len() == half as u64) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    state.pause();
+    let r = tokio::time::timeout(Duration::from_secs(2), download).await.expect("stopped at once").unwrap();
+    assert!(matches!(&r, Err(CoreError::Network { reason }) if reason.contains("paused")), "{r:?}");
+    assert_eq!(std::fs::read(&part).unwrap(), whole[..half], "what arrived is kept");
+}
+
+/// A staged model file that changed after its download (same size) is caught when it is opened for its self-check,
+/// before it is loaded or put in use.
+#[tokio::test]
+async fn a_staged_model_is_hashed_again_before_it_is_loaded() {
+    let env = update_env().await;
+    let files = package_v2();
+    serve(&env.server, "fake-laya-2", &files).await;
+    // Downloaded and staged as an interrupted update would leave it.
+    let known = testing::known_model_version("fake-laya-2", "2", &files);
+    let state = super::model::DownloadState::default();
+    let listener = testing::Progress::default();
+    let base = format!("{}/models", env.server.uri());
+    let http = crate::http::client().unwrap();
+    super::model::download(&http, &base, env.dir.path(), &known, &listener, &state).await.unwrap();
+    let onnx = model_dir(&env, "fake-laya-2").join("model.onnx");
+    let tamper = || {
+        let mut bytes = std::fs::read(&onnx).unwrap();
+        bytes[0] ^= 1;
+        std::fs::write(&onnx, bytes).unwrap();
+    };
+    tamper();
+    // Opened for its self-check: refused and deleted, never handed to the runtime.
+    let r = super::model::Laya::open_staged(env.dir.path(), &known);
+    assert!(r.as_ref().is_err_and(super::model::failed_check), "the model file is hashed, not only sized");
+    assert!(!model_dir(&env, "fake-laya-2").exists());
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), 0);
+
+    // Changed before the next attempt: that file is fetched again, and the update goes through with the real one.
+    super::model::download(&http, &base, env.dir.path(), &known, &listener, &state).await.unwrap();
+    tamper();
+    assert_eq!(env.core.update_model(true, progress()).await.unwrap(), super::ModelUpdateOutcome::Updated);
+    assert_eq!(std::fs::read(&onnx).unwrap(), files[0].1);
 }
 
 #[tokio::test]

@@ -1670,6 +1670,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         locked { $0.model = DemoData.model(.notInstalled) }
     }
 
+    /// The demo's update is too short to stop.
+    func pauseModelDownload() async {}
+
     /// An older model is in use and "Update automatically" is on.
     func modelUpdatePending() async -> Bool {
         locked { $0.autoUpdate && $0.model.state == .installed && $0.model.update }

@@ -2996,6 +2996,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func pairingView(pairingId: String) async throws  -> PairingView
     
     /**
+     * Stops the model download running now; it ends with `CoreError::Network` and keeps what arrived, so the next
+     * `update_model` goes on from there. The app calls it when the phone leaves Wi-Fi during an automatic update (or
+     * Low Power or Low Data Mode comes on). A downloaded model already being checked is not stopped.
+     */
+    func pauseModelDownload() async 
+    
+    /**
      * Items parked for the user, newest first.
      */
     func pending() async throws  -> [PendingItem]
@@ -4566,6 +4573,28 @@ open func pairingView(pairingId: String)async throws  -> PairingView  {
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePairingView_lift,
             errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Stops the model download running now; it ends with `CoreError::Network` and keeps what arrived, so the next
+     * `update_model` goes on from there. The app calls it when the phone leaves Wi-Fi during an automatic update (or
+     * Low Power or Low Data Mode comes on). A downloaded model already being checked is not stopped.
+     */
+open func pauseModelDownload()async   {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_pause_model_download(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+            
         )
 }
     
@@ -21069,6 +21098,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_pairing_view() != 14669) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_pause_model_download() != 7554) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_pending() != 41948) {

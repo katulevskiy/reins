@@ -373,7 +373,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
             val wifiOnly = settings.value?.wifiOnly ?: true
             val conditions = withContext(Dispatchers.IO) { container.networkConditions() }
             if (!ModelUpdateGate.checkNowAllows(conditions, wifiOnly)) {
-                withContext(Dispatchers.IO) { container.modelUpdates.checkOnWifi() }
+                withContext(Dispatchers.IO) { container.modelUpdates.checkOnWifi(wifiOnly) }
                 _ui.update { it.copy(checking = false, checkResult = CheckNow.WAITING) }
                 return@launch
             }

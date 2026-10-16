@@ -121,15 +121,39 @@ enum BackgroundModelUpdate {
         }
     }
 
-    static func schedule() {
-        let request = BGProcessingTaskRequest(identifier: identifier)
-        request.requiresNetworkConnectivity = true
-        request.requiresExternalPower = false
-        request.earliestBeginDate = Date(timeIntervalSinceNow: interval)
-        try? BGTaskScheduler.shared.submit(request)
+    /// While an update waits (the last run found mobile data, Low Data or Low Power Mode, or was cut off), the next run
+    /// may come this soon.
+    static let retry: TimeInterval = 3 * 60 * 60
+
+    /// When to ask for the next run, or nil to keep the one already asked for (`existing`: its earliest start, or
+    /// `.distantPast` for one without). A waiting update wants one within `retry`, else one a day; a request already
+    /// there is never pushed back, only brought forward.
+    nonisolated static func nextRun(existing: Date?, waiting: Bool, now: Date) -> Date? {
+        let wanted = now.addingTimeInterval(waiting ? retry : interval)
+        guard let existing else { return wanted }
+        return wanted < existing ? wanted : nil
+    }
+
+    /// Asks iOS for the next run if none is asked for, or for a sooner one while an update waits. Requires any network
+    /// (iOS knows no "unmetered" here): the run itself checks for Wi-Fi.
+    static func schedule(waiting: Bool = ModelAutoUpdater.persistedWaiting()) {
+        BGTaskScheduler.shared.getPendingTaskRequests { requests in
+            let mine = requests.first { $0.identifier == identifier }
+            let existing = mine.map { $0.earliestBeginDate ?? .distantPast }
+            Task { @MainActor in
+                guard let at = nextRun(existing: existing, waiting: waiting, now: Date()) else { return }
+                let request = BGProcessingTaskRequest(identifier: identifier)
+                request.requiresNetworkConnectivity = true
+                request.requiresExternalPower = false
+                request.earliestBeginDate = at
+                try? BGTaskScheduler.shared.submit(request)
+            }
+        }
     }
 
     private static func run(_ task: BGProcessingTask, host: AppHost) {
+        // This run's request is used up: the next is asked for now, in case this one is cut short, and again once it
+        // knows whether the update still waits.
         schedule()
         let done = BackgroundRefresh.Once()
         let work = Task { @MainActor in
@@ -141,12 +165,14 @@ enum BackgroundModelUpdate {
                 }
                 if case .signedIn = model.session, !Task.isCancelled {
                     await model.modelAutoUpdate.check(.background)
+                    schedule(waiting: model.modelAutoUpdate.waiting)
                 }
             }
             if done.claim() { task.setTaskCompleted(success: !Task.isCancelled) }
         }
         task.expirationHandler = {
-            // The core keeps what arrived; the next run (or launch) goes on from there.
+            // Out of time: the download stops (the core keeps what arrived) and the next run comes sooner.
+            Task { @MainActor in await host.model?.modelAutoUpdate.pause() }
             work.cancel()
             if done.claim() { task.setTaskCompleted(success: false) }
         }

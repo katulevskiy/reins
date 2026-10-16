@@ -10,6 +10,8 @@ final class ModelAutoUpdateTests: XCTestCase {
     private var power: FakePower!
     private var background: FakeBackground!
     private var updater: ModelAutoUpdater!
+    /// Each test's own, so that the waiting state kept across launches does not leak between tests.
+    private var defaults: UserDefaults!
 
     private static let lowData = NetworkState(online: true, metered: false, constrained: true)
 
@@ -18,7 +20,8 @@ final class ModelAutoUpdateTests: XCTestCase {
         network = FakeNetwork(state)
         power = FakePower(lowPower)
         background = FakeBackground()
-        updater = ModelAutoUpdater(core: core, network: network, power: power, background: background)
+        defaults = UserDefaults(suiteName: "ModelAutoUpdateTests-\(UUID().uuidString)")
+        updater = ModelAutoUpdater(core: core, network: network, power: power, background: background, defaults: defaults)
         updater.wifiOnly = { wifiOnly }
     }
 
@@ -148,6 +151,102 @@ final class ModelAutoUpdateTests: XCTestCase {
         XCTAssertNil(updater.checkResult, "quietly: the old model stays")
     }
 
+    // MARK: Leaving Wi-Fi during a download
+
+    func testLeavingWifiStopsARunningAutomaticDownloadUntilWifiIsBack() async {
+        start()
+        core.hold = true
+        let first = Task { await updater.check(.launch) }
+        await until { updater.automaticRunning }
+        network.set(.cellular)
+        await until { core.pauses == 1 }
+        await first.value
+        XCTAssertFalse(updater.running)
+        XCTAssertTrue(updater.waiting, "what arrived is kept; it waits for Wi-Fi")
+        XCTAssertTrue(ModelAutoUpdater.persistedWaiting(defaults))
+        core.hold = false
+        network.set(.unmetered)
+        await until { core.calls == [true, true] }
+        await until { !updater.running }
+        XCTAssertFalse(updater.waiting)
+        XCTAssertFalse(ModelAutoUpdater.persistedWaiting(defaults))
+    }
+
+    func testLowDataOrLowPowerModeStopsARunningAutomaticDownload() async {
+        start()
+        core.hold = true
+        let lowData = Task { await updater.check(.launch) }
+        await until { updater.automaticRunning }
+        network.set(Self.lowData)
+        await until { core.pauses == 1 }
+        await lowData.value
+        XCTAssertTrue(updater.waiting)
+
+        start()
+        core.hold = true
+        let lowPower = Task { await updater.check(.launch) }
+        await until { updater.automaticRunning }
+        power.set(true)
+        await until { core.pauses == 1 }
+        await lowPower.value
+        XCTAssertTrue(updater.waiting)
+    }
+
+    func testAUsersCheckNowIsNotStoppedOnMobileData() async {
+        start(wifiOnly: false)
+        core.hold = true
+        let check = Task { await updater.checkNow() }
+        await until { core.calls == [false] }
+        network.set(.cellular)
+        await settle()
+        XCTAssertEqual(core.pauses, 0, "the user asked, and mobile data is allowed")
+        core.hold = false
+        await check.value
+        XCTAssertEqual(updater.checkResult, .updated)
+    }
+
+    func testTheBackgroundTaskRunningOutOfTimeStopsTheDownload() async {
+        start()
+        core.hold = true
+        let run = Task { await updater.check(.background) }
+        await until { updater.automaticRunning }
+        await updater.pause()
+        await run.value
+        XCTAssertEqual(core.pauses, 1)
+        XCTAssertTrue(updater.waiting)
+        // Nothing runs: nothing to stop.
+        await updater.pause()
+        XCTAssertEqual(core.pauses, 1)
+    }
+
+    // MARK: Waiting across launches
+
+    func testWaitingForWifiIsKeptAcrossLaunches() async {
+        start(.cellular)
+        await updater.check(.background)
+        XCTAssertTrue(updater.waiting)
+        XCTAssertTrue(ModelAutoUpdater.persistedWaiting(defaults))
+        let relaunched = ModelAutoUpdater(core: core, network: FakeNetwork(.cellular), power: FakePower(false), background: FakeBackground(),
+                                          defaults: defaults)
+        XCTAssertTrue(relaunched.waiting, "a background run that found mobile data is remembered")
+    }
+
+    func testTheNextBackgroundRunComesSoonerWhileWaitingAndIsNeverPushedBack() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let day = BackgroundModelUpdate.interval, soon = BackgroundModelUpdate.retry
+        XCTAssertLessThanOrEqual(soon, 6 * 60 * 60, "a few hours")
+        XCTAssertEqual(BackgroundModelUpdate.nextRun(existing: nil, waiting: false, now: now), now.addingTimeInterval(day))
+        XCTAssertEqual(BackgroundModelUpdate.nextRun(existing: nil, waiting: true, now: now), now.addingTimeInterval(soon))
+        // Leaving the app again does not push an asked-for run back.
+        XCTAssertNil(BackgroundModelUpdate.nextRun(existing: now.addingTimeInterval(60), waiting: false, now: now))
+        XCTAssertNil(BackgroundModelUpdate.nextRun(existing: now.addingTimeInterval(day - 60), waiting: false, now: now))
+        XCTAssertNil(BackgroundModelUpdate.nextRun(existing: .distantPast, waiting: true, now: now), "one without a start date")
+        // A waiting update brings a day-away run forward.
+        XCTAssertEqual(BackgroundModelUpdate.nextRun(existing: now.addingTimeInterval(day), waiting: true, now: now),
+                       now.addingTimeInterval(soon))
+        XCTAssertNil(BackgroundModelUpdate.nextRun(existing: now.addingTimeInterval(soon - 60), waiting: true, now: now))
+    }
+
     // MARK: Check now
 
     func testCheckNowAsksTheCoreAsTheUserAndSaysWhatCameOfIt() async {
@@ -196,19 +295,30 @@ final class ModelAutoUpdateTests: XCTestCase {
 
 // MARK: Fakes
 
-/// Answers `updateModel` with what it was told, in order (then `.updated`), and records each call's `automatic`.
+/// Answers `updateModel` with what it was told, in order (then `.updated`), and records each call's `automatic`. With
+/// `hold`, a download goes on until `hold` is cleared, or until it is paused (then it ends as the core's does, with a
+/// network error).
 private final class FakeUpdateCore: ModelUpdateCore, @unchecked Sendable {
     private let lock = NSLock()
     private var pendingValue = true
     private var answers: [Result<ModelUpdateOutcome, Error>] = []
     private var made: [Bool] = []
+    private var holding = false
+    private var paused = false
+    private var pausedCount = 0
 
     var pending: Bool {
         get { lock.withLock { pendingValue } }
         set { lock.withLock { pendingValue = newValue } }
     }
 
+    var hold: Bool {
+        get { lock.withLock { holding } }
+        set { lock.withLock { holding = newValue } }
+    }
+
     var calls: [Bool] { lock.withLock { made } }
+    var pauses: Int { lock.withLock { pausedCount } }
 
     func answer(_ results: Result<ModelUpdateOutcome, Error>...) {
         lock.withLock { answers += results }
@@ -219,10 +329,22 @@ private final class FakeUpdateCore: ModelUpdateCore, @unchecked Sendable {
     func updateModel(automatic: Bool, progress: DownloadProgress) async throws -> ModelUpdateOutcome {
         let next: Result<ModelUpdateOutcome, Error> = lock.withLock {
             made.append(automatic)
+            paused = false
             return answers.isEmpty ? .success(.updated) : answers.removeFirst()
+        }
+        while lock.withLock({ holding && !paused }) { try? await Task.sleep(for: .milliseconds(10)) }
+        if lock.withLock({ paused }) {
+            throw CoreError.Network(reason: "the download was paused; it goes on from here next time")
         }
         progress.progress(downloaded: 10, total: 10)
         return try next.get()
+    }
+
+    func pauseModelDownload() async {
+        lock.withLock {
+            paused = true
+            pausedCount += 1
+        }
     }
 }
 
