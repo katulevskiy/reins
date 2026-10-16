@@ -8,7 +8,7 @@ name: Release
 # the server mirrors it into reins2fa.com/releases, with the APT and RPM repositories), and SHA256SUMS. Android
 # signing is required for every release. Archives and installers use a
 # versioned name and under a fixed one (reins-desktop-<target>.tar.gz, Reins-macOS.dmg, ...) for "latest" links.
-# After the release, the aur job updates the AUR package reins-bin (optional), and ios-testflight uploads the iOS app
+# After the release, the aur job prepares reins-bin (optional; not published on the AUR yet), and ios-testflight uploads the iOS app
 # to TestFlight.
 
 # Only main pushes and maintainer dispatches can build with release credentials.
@@ -1930,11 +1930,11 @@ jobs:
           rm -f "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/number.txt"
           rm -rf "$dir" "$RUNNER_TEMP/export" "$RUNNER_TEMP/Reins.xcarchive"
 
-  # reins-bin on the AUR (https://aur.archlinux.org/packages/reins-bin): its PKGBUILD and .SRCINFO, written from the
+  # reins-bin is not on the AUR yet. Its PKGBUILD and .SRCINFO are written from the
   # published release's SHA256SUMS (scripts/package/aur.sh) and checked with makepkg in an Arch Linux container
-  # (.SRCINFO as makepkg prints it; the sources download and match), then pushed over SSH. Optional: it runs after the
-  # release is public, and without the key (Infisical reins-release prod /signing/aur: AUR_SSH_PRIVATE_KEY, the
-  # OpenSSH private key of the AUR account that maintains reins-bin; else the repository secret of that name) it only
+  # (.SRCINFO as makepkg prints it; the sources download and match), then pushed over SSH when the key is set.
+  # Optional: it runs after the release is public, and without the key (Infisical reins-release prod /signing/aur:
+  # AUR_SSH_PRIVATE_KEY, the OpenSSH private key of the AUR account; else the repository secret of that name) it only
   # says so. A failure here does not undo or block anything.
   aur:
     name: AUR (reins-bin)

@@ -436,7 +436,7 @@ pub fn installed_with_app(exe: &Path) -> bool {
     exe.parent().is_some_and(|dir| APP_EXECUTABLES.iter().any(|name| dir.join(name).is_file()))
 }
 
-/// Whether `exe` is a Linux distribution package's (the .deb, .rpm and AUR packages put it in `/usr/bin`; the install
+/// Whether `exe` is a Linux distribution package's (the .deb and .rpm packages put it in `/usr/bin`; the install
 /// script and the archives use `~/.local/bin` or wherever the user puts it, `/usr/local/bin` included). The package
 /// manager updates it: writing over its file would leave the package database describing another program.
 #[must_use]
