@@ -655,6 +655,40 @@ async fn hook_questions_are_judged_by_the_rule_the_phone_reads() {
     }
 }
 
+/// In the background (iOS ends a process that grows there) the app's pass does not load the model: a push waits
+/// unjudged, as from the notification extension, and the pass in front judges it. A model already loaded still judges.
+#[tokio::test]
+async fn in_the_background_a_push_does_not_load_the_model() {
+    let env = env(true).await;
+    env.mode(None, AutopilotMode::Auto).await;
+    env.unlock("gmail/send").await;
+    env.model.set_default(logits(0.999, 0.0005, 0.0005));
+    for id in ["r1", "r2"] {
+        let relayed = serde_json::to_value(request(id, OLD, email("friend@x.com", "hi"))).unwrap();
+        mount(&env.server, "GET", &format!("/reins/api/requests/{id}"), 200, relayed).await;
+    }
+
+    env.core.set_background(true);
+    env.core.handle_push("req".to_owned(), "r1".to_owned()).await.unwrap();
+    assert_eq!(env.waiting().await, ["r1"]);
+    assert!(env.core.autopilot_suggestion("r1".to_owned()).await.unwrap().is_none(), "left for the pass in front");
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), 0, "the model was not loaded");
+    assert_eq!(env.sent().await, 0);
+
+    // In front: the next pass loads the model and judges what waited.
+    env.core.set_background(false);
+    env.deliver(json!({"requests": [], "pairings": [], "blobs": []})).await;
+    assert!(env.suggestion("r1").await.judged);
+    let loads = env.model.loads.load(Ordering::SeqCst);
+    assert!(loads > 0);
+
+    // Loaded now: a push in the background is judged at once, without loading it again.
+    env.core.set_background(true);
+    env.core.handle_push("req".to_owned(), "r2".to_owned()).await.unwrap();
+    assert!(env.suggestion("r2").await.judged);
+    assert_eq!(env.model.loads.load(Ordering::SeqCst), loads);
+}
+
 /// Android's push entry point (FCM in the background, or its retry job): the pass runs there, so a bypass answers
 /// without the app on screen.
 #[tokio::test]
@@ -2647,7 +2681,7 @@ async fn every_decision_goes_through_on_a_store_sealed_before_entry_snapshots() 
     store.meta_set("sealed-by", "an older version").unwrap();
     drop(store);
     let core = restart(&env);
-    assert!(core.session().await.is_some(), "still signed in");
+    assert!(core.session().await.unwrap().is_some(), "still signed in");
     assert_eq!(core.autopilot_settings().await.unwrap().mode, AutopilotMode::Manual);
     let relay = |id: &'static str, conn: &'static str| {
         let core = Arc::clone(&core);

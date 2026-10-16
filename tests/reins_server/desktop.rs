@@ -71,6 +71,51 @@ async fn paired() -> (Server, Phone, Tokens) {
     (server, phone, tokens)
 }
 
+/// `GET /reins/desktop/phone` as the app with `token`.
+async fn phone_status(server: &Server, token: &str) -> Value {
+    let (status, _, body) =
+        read(client().get(server.url("/reins/desktop/phone")).bearer_auth(token).send().await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// A11: the phone leaves a computer the name the user gave it, sealed (the server only keeps it); the computer reads
+/// it back, nobody else does, and a body that is not a sealed name is refused.
+#[tokio::test]
+async fn a_computer_gets_the_sealed_name_its_phone_left_and_no_one_else_does() {
+    let (server, phone, tokens) = paired().await;
+    assert_eq!(phone_status(&server, &tokens.access).await["sealed_name"], Value::Null, "none yet");
+    let id = &tokens.connection_id;
+    let sealed = "A".repeat(598);
+    let (status, body) = phone.put(&format!("/connections/{id}/name"), &json!({"sealed": sealed})).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(phone_status(&server, &tokens.access).await["sealed_name"], sealed.as_str());
+
+    for bad in [json!({"sealed": ""}), json!({"sealed": "not base64!"}), json!({"sealed": "A".repeat(1025)})] {
+        let (status, body) = phone.put(&format!("/connections/{id}/name"), &bad).await;
+        assert_eq!((status, body["error"].as_str()), (StatusCode::BAD_REQUEST, Some("bad_request")), "{bad}");
+    }
+    let (status, _) = phone.put("/connections/nope/name", &json!({"sealed": "QQ"})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Another device of the account that is not the approval device cannot either.
+    let second = server.second_device("dev@example.com").await;
+    let (status, body) = second.put(&format!("/connections/{id}/name"), &json!({"sealed": "QQ"})).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("not_approval_device")));
+    assert_eq!(phone_status(&server, &tokens.access).await["sealed_name"], sealed.as_str(), "left as it was");
+    // Another account cannot name this computer.
+    let other = server.phone("eve@example.com").await;
+    other.register_device().await;
+    let (status, _) = other.put(&format!("/connections/{id}/name"), &json!({"sealed": "QQ"})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Another AI of the account does not see it.
+    let ai = server.connect_ai(&phone, "dev@example.com", None).await;
+    assert_eq!(phone_status(&server, &ai.access).await["sealed_name"], Value::Null);
+    // Cleared: the computer goes by its own name again.
+    let (status, _) = phone.put(&format!("/connections/{id}/name"), &json!({"sealed": null})).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(phone_status(&server, &tokens.access).await["sealed_name"], Value::Null);
+}
+
 #[tokio::test]
 async fn the_app_key_reaches_the_phone_and_its_fingerprint_both_pages() {
     let server = Server::start().await;

@@ -12,13 +12,14 @@
 //! |---|---|---|---|---|
 //! | `create` | the approval device (epoch 1 only) | none | new | new |
 //! | `enroll` | unchanged | the previous ones and at least one more | unchanged | unchanged |
-//! | `remove` | unchanged | some of the previous ones, at least one fewer | unchanged | unchanged |
-//! | `handover` | a previous viewer | the previous ones, the new primary out, the old primary may join | unchanged | unchanged |
+//! | `remove` | unchanged | some of the previous ones, at least one fewer | unchanged | new |
+//! | `handover` | a previous viewer | the previous ones, the new primary out, the old primary may join | unchanged | new |
 //! | `recovery` | another device | some of the previous ones; the old primary is gone | a new owner key, any credential key | new |
 //! | `rewrap` | unchanged | unchanged | unchanged | new (the master password changed) |
 //!
 //! Every entry names the SHA-256 of the recovery wrap in force (`recovery_wrap_hash`), so the server can neither
-//! swap the wrap nor serve an older one.
+//! swap the wrap nor serve an older one. Every change of who is primary or who was removed brings a new wrap (sealed
+//! over its place in the chain), so a wrap from before a removal or a handover never fits the roster after it.
 //!
 //! Endpoints (server, `/reins/api`): `GET /roster` ([`Roster`]; any signed-in device of the account, an empty list
 //! before the account has a roster, 404 on a server without phone roles), `POST /roster` ([`RosterAppend`]),
@@ -73,6 +74,13 @@ pub enum RosterReason {
 }
 
 impl RosterReason {
+    /// Whether an entry of this reason brings a new recovery wrap (and must): `create`, `recovery`, `rewrap`, and every
+    /// `remove` and `handover`.
+    #[must_use]
+    pub const fn brings_wrap(self) -> bool {
+        !matches!(self, Self::Enroll)
+    }
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -97,8 +105,9 @@ pub enum Role {
 ///
 /// Signed message ([`crate::canon`], context `reins/roster-entry/v1`): `v` (u32), `account` (string), `epoch`
 /// (u64), `prev_hash` (optional 32 bytes), `reason` (string), `primary` (member), `viewers` (list of members),
-/// `owner_pub` (32 bytes), `credential_pub` (32 bytes), `recovery_wrap_hash` (32 bytes), `at` (i64). A member is `device_id` (string), `name`
-/// (string), `sign_pub` (32 bytes), `box_pub` (32 bytes).
+/// `owner_pub` (32 bytes), `credential_pub` (32 bytes), `recovery_wrap_hash` (32 bytes), `at` (i64), `primary_counter`
+/// (optional u64: `0x00`, or `0x01` and the u64). A member is `device_id` (string), `name` (string), `sign_pub` (32
+/// bytes), `box_pub` (32 bytes).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RosterEntry {
     pub v: u32,
@@ -119,6 +128,12 @@ pub struct RosterEntry {
     pub recovery_wrap_hash: String,
     /// Unix seconds, as the signing phone saw them (shown, never compared).
     pub at: i64,
+    /// `handover` and `recovery` only (else absent): the last counter of the outgoing primary's ops that the roster
+    /// takes as history. Its ops up to it still apply on a phone that sees them late; any later op of its counts only
+    /// as the brake (a restrictive op). Absent there: every op of the outgoing primary signed before this epoch counts
+    /// only as the brake once a phone verified this entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_counter: Option<u64>,
     /// Ed25519 signature by the owner key in force ([`RosterEntry::signer_pub`]), base64url.
     pub sig: String,
 }
@@ -214,6 +229,9 @@ impl RosterEntry {
                 parse_hex32(h).ok_or_else(|| invalid("prev_hash", "must be 64 lowercase hex digits"))?;
             }
         }
+        if self.epoch == 1 && self.primary_counter.is_some() {
+            return Err(invalid("primary_counter", "a new roster has no outgoing primary"));
+        }
         if (self.epoch == 1) != (self.reason == RosterReason::Create) {
             return Err(invalid("reason", "`create` is epoch 1, and epoch 1 is `create`"));
         }
@@ -256,6 +274,10 @@ impl RosterEntry {
             .key(&key32("credential_pub", &self.credential_pub)?)
             .key(&wrap)
             .i64(self.at);
+        match self.primary_counter {
+            None => c.bool(false),
+            Some(n) => c.bool(true).u64(n),
+        };
         Ok(c.finish())
     }
 
@@ -331,9 +353,13 @@ pub fn check_successor(prev: Option<&RosterEntry>, next: &RosterEntry) -> Result
     if !recovery && (next.owner_pub != prev.owner_pub || next.credential_pub != prev.credential_pub) {
         return Err(RosterError::Reason("only a recovery changes the owner or credential key"));
     }
-    let new_wrap = matches!(next.reason, RosterReason::Recovery | RosterReason::Rewrap);
-    if new_wrap == (next.recovery_wrap_hash == prev.recovery_wrap_hash) {
-        return Err(RosterError::Reason("a recovery or a rewrap brings a new recovery wrap, nothing else does"));
+    if next.reason.brings_wrap() == (next.recovery_wrap_hash == prev.recovery_wrap_hash) {
+        return Err(RosterError::Reason(
+            "a recovery, rewrap, removal or handover brings a new recovery wrap, nothing else does",
+        ));
+    }
+    if next.primary_counter.is_some() && !matches!(next.reason, RosterReason::Handover | RosterReason::Recovery) {
+        return Err(RosterError::Reason("only a handover or a recovery names the outgoing primary's last counter"));
     }
     let had = |m: &Member| prev.viewers.iter().any(|p| p.same_keys(m));
     match next.reason {
@@ -465,8 +491,9 @@ pub struct RosterAppend {
     /// entry's primary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle: Option<String>,
-    /// `recovery` only, required: the master password hash of the recovery code or master password, checked and
-    /// counted like the takeover proof of `PUT /reins/api/device`.
+    /// `create` and `recovery`, required: the master password hash of the recovery code or master password, checked
+    /// and counted per device like the takeover proofs (a `create` so proves that its wrap is sealed under the
+    /// account's master key).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub master_password_hash: Option<String>,
 }
@@ -522,6 +549,51 @@ pub struct MemberRegistration {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewHandover {
     pub v: u32,
+    /// The viewer's signature over its request; the server keeps it with the request and the primary verifies it
+    /// against the roster, so a server can neither make a request up nor point one at another phone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed: Option<HandoverSignature>,
+}
+
+/// Most a handover request's `at` may differ from the primary's clock (seconds): a request lives 10 minutes.
+pub const HANDOVER_REQUEST_SKEW_SECS: i64 = 15 * 60;
+
+/// A viewer's signature over its handover request. The server names a request only once it exists, so the viewer
+/// signs a fresh nonce of its own in the id's place.
+///
+/// Signed message (context `reins/handover-request/v1`): `v` (u32), `account` (string), `epoch` (u64), `device_id`
+/// (string), `nonce` (32 bytes), `at` (i64).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoverSignature {
+    /// The roster epoch the viewer signed at: the primary refuses a request from another epoch.
+    pub epoch: u64,
+    /// 32 random bytes, base64url.
+    pub nonce: String,
+    /// Unix seconds, the viewer's clock.
+    pub at: i64,
+    /// Ed25519 by the viewer's `sign_pub` at `epoch`, base64url.
+    pub sig: String,
+}
+
+impl HandoverSignature {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.epoch == 0 {
+            return Err(invalid("epoch", "starts at 1"));
+        }
+        crate::enroll::parse_nonce(&self.nonce).ok_or_else(|| invalid("nonce", "must be 32 bytes, base64url"))?;
+        parse_sig(&self.sig).ok_or_else(|| invalid("sig", "must be 64 bytes, base64url without padding"))?;
+        Ok(())
+    }
+}
+
+/// The bytes a viewer signs to ask for the primary role (see [`HandoverSignature`]); `None` for a nonce that is not
+/// 32 bytes.
+#[must_use]
+pub fn handover_request_message(account: &str, epoch: u64, device_id: &str, nonce: &str, at: i64) -> Option<Vec<u8>> {
+    let nonce = crate::enroll::parse_nonce(nonce)?;
+    let mut c = Canon::new(contexts::HANDOVER_REQUEST);
+    c.u32(PROTOCOL_VERSION).str(account).u64(epoch).str(device_id).key(&nonce).i64(at);
+    Some(c.finish())
 }
 
 /// What `POST /reins/api/handovers` answers.
@@ -538,9 +610,12 @@ pub struct HandoverRequest {
     pub id: String,
     /// The viewer asking.
     pub device_id: String,
-    /// Its name in the roster.
+    /// Its name in the roster (as the server read it; the primary shows the name its verified roster gives).
     pub device_name: String,
     pub created_at: i64,
+    /// The viewer's signature ([`NewHandover::signed`]), as the server kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed: Option<HandoverSignature>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -602,6 +677,7 @@ impl RosterEntry {
             credential_pub,
             recovery_wrap_hash,
             at,
+            primary_counter: None,
             sig: String::new(),
         }
     }
@@ -627,6 +703,7 @@ impl RosterEntry {
             credential_pub: self.credential_pub.clone(),
             recovery_wrap_hash: self.recovery_wrap_hash.clone(),
             at,
+            primary_counter: None,
             sig: String::new(),
         })
     }
@@ -688,7 +765,7 @@ pub(crate) mod tests {
         if reason == RosterReason::Recovery {
             entry.credential_pub = key(61);
         }
-        if matches!(reason, RosterReason::Recovery | RosterReason::Rewrap) {
+        if reason.brings_wrap() {
             entry.recovery_wrap_hash = hex32(&[71 + u8::try_from(prev.epoch).unwrap(); 32]);
         }
         let signer = decode_key(&prev.owner_pub).unwrap()[0];
@@ -709,7 +786,9 @@ pub(crate) mod tests {
         verify_chain(&chain, Some(&key(50)), fake_verify).unwrap();
         assert_eq!(verify_chain(&chain, Some(&key(9)), fake_verify), Err(RosterError::BadSignature));
         // After the recovery, the old owner key signs nothing.
-        let forged = signed(chain[7].successor(RosterReason::Remove, member("x", 4), vec![], 30).unwrap(), 50);
+        let mut forged = chain[7].successor(RosterReason::Remove, member("x", 4), vec![], 30).unwrap();
+        forged.recovery_wrap_hash = hex32(&[99; 32]);
+        let forged = signed(forged, 50);
         assert_eq!(verify_step(Some(&chain[7]), &forged, fake_verify), Err(RosterError::BadSignature));
         assert_eq!(previous_primary(&chain).map(|m| m.device_id.as_str()), Some("v"));
         assert_eq!(previous_primary(&chain[..4]), None);
@@ -774,6 +853,22 @@ pub(crate) mod tests {
         sneaks_wrap.recovery_wrap_hash = hex32(&[9; 32]);
         refused(signed(sneaks_wrap, 50), &e2);
         refused(next(&e2, RosterReason::Rewrap, member("p", 1), vec![], 50), &e2);
+        // Only a handover or a recovery names the outgoing primary's last counter.
+        let mut counted = next(&e2, RosterReason::Enroll, member("p", 1), vec![member("v", 2), member("w", 3)], 50);
+        counted.primary_counter = Some(4);
+        refused(signed(counted, 50), &e2);
+        let mut handed = next(&e2, RosterReason::Handover, member("v", 2), vec![member("p", 1)], 50);
+        handed.primary_counter = Some(4);
+        check_successor(Some(&e2), &signed(handed, 50)).unwrap();
+        // A removal or a handover that keeps the old wrap: refused (the old wrap would still fit after it).
+        for (reason, primary, viewers) in [
+            (RosterReason::Remove, member("p", 1), vec![]),
+            (RosterReason::Handover, member("v", 2), vec![member("p", 1)]),
+        ] {
+            let mut keeps = next(&e2, reason, primary, viewers, 50);
+            keeps.recovery_wrap_hash.clone_from(&e2.recovery_wrap_hash);
+            refused(signed(keeps, 50), &e2);
+        }
         check_successor(Some(&e2), &next(&e2, RosterReason::Rewrap, member("p", 1), vec![member("v", 2)], 50)).unwrap();
         assert_eq!(recovery_wrap_hash("d3JhcA"), Some(hex32(&sha256(b"wrap"))));
         assert!(
@@ -828,7 +923,7 @@ pub(crate) mod tests {
         let mut changed = e.clone();
         changed.sig = crate::canon::encode_sig(&[9; 64]);
         assert_eq!(changed.signing_bytes().unwrap(), base);
-        let edits: [fn(&mut RosterEntry); 11] = [
+        let edits: [fn(&mut RosterEntry); 12] = [
             |e| e.account.push('x'),
             |e| e.epoch += 1,
             |e| e.reason = RosterReason::Enroll,
@@ -840,6 +935,7 @@ pub(crate) mod tests {
             |e| e.recovery_wrap_hash = hex32(&[2; 32]),
             |e| e.at += 1,
             |e| e.prev_hash = Some(hex32(&[1; 32])),
+            |e| e.primary_counter = Some(0),
         ];
         for edit in edits {
             let mut e2 = e.clone();
@@ -850,7 +946,7 @@ pub(crate) mod tests {
         assert_eq!(hex32(&e.hash().unwrap()), GENESIS_HASH);
     }
 
-    const GENESIS_HASH: &str = "b6cb47ee595ad1ee32338e33f46053dce249e14f42697e9fa7c1688bc497a198";
+    const GENESIS_HASH: &str = "dd08057fd313f4ba41336bd004caec9a98b2d91cbd90187fbd71e959e98596a0";
 
     #[test]
     fn real_ed25519_signatures_verify_through_the_closure() {
@@ -869,6 +965,48 @@ pub(crate) mod tests {
         let mut e2 = entry.successor(RosterReason::Enroll, member("p", 1), vec![member("v", 2)], 11).unwrap();
         e2.sig = crate::canon::encode_sig(&owner.sign(&e2.signing_bytes().unwrap()).as_ref().try_into().unwrap());
         verify_chain(&[entry, e2], None, ring_verify).unwrap();
+    }
+
+    #[test]
+    fn a_handover_request_signs_account_epoch_device_nonce_and_time() {
+        let nonce = crate::canon::encode_payload(&[7; 32]);
+        let base = handover_request_message("acct", 3, "v", &nonce, 100).unwrap();
+        let other_nonce = crate::canon::encode_payload(&[8; 32]);
+        for other in [
+            handover_request_message("acct2", 3, "v", &nonce, 100),
+            handover_request_message("acct", 4, "v", &nonce, 100),
+            handover_request_message("acct", 3, "w", &nonce, 100),
+            handover_request_message("acct", 3, "v", &other_nonce, 100),
+            handover_request_message("acct", 3, "v", &nonce, 101),
+        ] {
+            assert_ne!(other.unwrap(), base);
+        }
+        assert_eq!(handover_request_message("acct", 3, "v", "short", 100), None);
+        let signed = HandoverSignature {
+            epoch: 3,
+            nonce,
+            at: 100,
+            sig: crate::canon::encode_sig(&[1; 64]),
+        };
+        signed.validate().unwrap();
+        let no_epoch = HandoverSignature {
+            epoch: 0,
+            ..signed.clone()
+        };
+        assert!(no_epoch.validate().is_err());
+        let short = HandoverSignature {
+            nonce: "x".to_owned(),
+            ..signed
+        };
+        assert!(short.validate().is_err());
+        // Requests without a signature still parse: the field is optional on the wire.
+        let old: NewHandover = serde_json::from_value(serde_json::json!({"v": 1})).unwrap();
+        assert_eq!(old.signed, None);
+        let unsigned = NewHandover {
+            v: 1,
+            signed: None,
+        };
+        assert_eq!(serde_json::to_value(unsigned).unwrap(), serde_json::json!({"v": 1}));
     }
 
     #[test]

@@ -56,6 +56,24 @@ final class SettingsTextTests: XCTestCase {
         XCTAssertEqual(SettingsText.minutesLeft(900, now: 1_000), "1 min left")
     }
 
+    func testARenamedConnectionStillSaysWhatItCallsItself() {
+        var c = ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: 0, lastUsedAt: 9_700, icon: nil, keyFingerprint: nil,
+                               ownLabel: "Claude", clientName: "Claude")
+        XCTAssertNil(SettingsText.calledItself(c), "its own name: nothing to add")
+        var second = c
+        second.number = 2
+        second.label = "Claude 2"
+        XCTAssertEqual(SettingsText.calledItself(second), "Calls itself “Claude”", "a second Claude says what it is")
+        c.name = "Claude (work)"
+        c.label = "Claude (work)"
+        XCTAssertEqual(SettingsText.calledItself(c), "Calls itself “Claude”")
+        c.clientName = "Evil\u{202E}\nname"
+        XCTAssertFalse(SettingsText.calledItself(c)!.unicodeScalars.contains { $0 == "\u{202E}" || $0 == "\n" })
+        XCTAssertEqual(SettingsText.lastUsed(c, now: 10_000), "5 min ago")
+        c.lastUsedAt = nil
+        XCTAssertEqual(SettingsText.lastUsed(c, now: 10_000), "Never")
+    }
+
     func testAConnectionSaysWhereItRunsAndWhenItWasUsed() {
         let c = ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: 0, lastUsedAt: 9_700, icon: nil, keyFingerprint: nil)
         XCTAssertEqual(SettingsText.connectionLine(c, now: 10_000), "claude.ai · 5 min ago")

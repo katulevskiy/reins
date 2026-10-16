@@ -29,6 +29,9 @@ use crate::types::{JoinProgress, JoinStart, JoinView, PendingItem, PendingKind};
 /// Where the new phone keeps its open request (store secrets: service, account).
 const JOIN_SERVICE: &str = "reins.join";
 const JOIN_ACCOUNT: &str = "open";
+/// Why a join over one key (without an enrollment's commitment) is refused on an account with phone roles.
+const LEGACY_JOIN_REFUSED: &str =
+    "This account has phone roles: another phone joins by enrolling as a viewer (update Reins on it).";
 
 #[derive(Serialize, Deserialize)]
 struct OpenJoin {
@@ -38,16 +41,16 @@ struct OpenJoin {
 }
 
 impl PhoneApi<'_> {
-    async fn create_join(&self, new: &NewJoin) -> Result<JoinCreated, ApiFailure> {
+    pub(crate) async fn create_join(&self, new: &NewJoin) -> Result<JoinCreated, ApiFailure> {
         Self::json(self.request(Method::POST, "/joins").json(new)).await
     }
 
-    async fn join_state(&self, id: &str) -> Result<JoinState, ApiFailure> {
+    pub(crate) async fn join_state(&self, id: &str) -> Result<JoinState, ApiFailure> {
         check_id(id)?;
         Self::json(self.request(Method::GET, &format!("/joins/{id}"))).await
     }
 
-    async fn get_join(&self, id: &str) -> Result<JoinRequest, ApiFailure> {
+    pub(crate) async fn get_join(&self, id: &str) -> Result<JoinRequest, ApiFailure> {
         check_id(id)?;
         let join: JoinRequest = Self::json(self.request(Method::GET, &format!("/joins/{id}"))).await?;
         if join.id != id {
@@ -191,6 +194,13 @@ impl Engine {
     pub(crate) fn park_join(&self, join: &JoinRequest) -> Result<(), CoreError> {
         reins_proto::check_version(join.v).map_err(|e| CoreError::invalid(e.to_string()))?;
         code_of(&join.public_key)?;
+        if join.commitment.is_none() && self.holds_roster_now()? {
+            // A roster account takes enrollments only; an older phone's request over one key is not even shown.
+            log::warn!(
+                "a request for the account's keys without an enrollment was ignored (the account has phone roles)"
+            );
+            return Ok(());
+        }
         let payload = serde_json::to_vec(join).map_err(|e| CoreError::storage(e.to_string()))?;
         if self.store.park(&join.id, PendingKind::Join, join.created_at, unix_now(), &payload)? {
             self.notifier.item_pending(join_item(join));
@@ -208,6 +218,13 @@ impl Engine {
 
     pub fn join_view(&self, id: &str) -> Result<JoinView, CoreError> {
         let join = self.parked_join(id)?;
+        if join.commitment.is_some() {
+            // An enrollment's code comes from the commit-then-reveal exchange (`enroll_view`), never from one key.
+            return Err(CoreError::invalid("This phone asks to view the account: compare the code with enroll_view."));
+        }
+        if self.holds_roster_now()? {
+            return Err(CoreError::invalid(LEGACY_JOIN_REFUSED));
+        }
         Ok(JoinView {
             id: join.id.clone(),
             device_name: join.device_name.clone(),
@@ -218,10 +235,24 @@ impl Engine {
 
     /// Approves (seals the account secret to the new phone's key) or denies. Ask for biometrics before approving.
     pub async fn answer_join(&self, id: &str, approve: bool) -> Result<(), CoreError> {
+        if self.parked_join(id)?.commitment.is_some() {
+            return self.enroll_confirm(id, approve).await;
+        }
+        self.require_decider()?;
         let session = self.session()?;
         let Some(_claim) = self.claim(id) else {
             return Err(CoreError::NotFound);
         };
+        // An account with phone roles takes only enrollments (commit, challenge, reveal): a join over one key is never
+        // answered, signed or not, and the account secret is never sealed to it. It is dropped here and expires on the
+        // server.
+        let account = self.roles_account(&session).await?;
+        if self.local_roster(&account.slot)?.is_some() {
+            self.store.remove_pending(id)?;
+            self.store.mark_handled(id, unix_now())?;
+            self.notifier.item_resolved(id.to_owned());
+            return Err(CoreError::invalid(LEGACY_JOIN_REFUSED));
+        }
         let join = self.parked_join(id)?;
         let sealed = if approve {
             let secret = self.signed_in_secret().await?.ok_or_else(|| {

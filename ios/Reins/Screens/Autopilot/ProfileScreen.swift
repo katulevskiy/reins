@@ -343,21 +343,19 @@ private struct ThresholdSlider: View {
                 }
                 .frame(width: w, height: 28)
                 .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { drag in
-                            dragging = true
-                            let p = min(max(Int((drag.location.x / max(w, 1) * 100).rounded()), lo), hi)
-                            if p != value {
-                                value = p
-                                feedback.play(.detent, step: p - lo)
-                            }
-                        }
-                        .onEnded { _ in
-                            dragging = false
-                            onCommit()
-                        }
-                )
+                // The page scrolls: a tap sets the threshold where it lands, and a drag moves it only when the finger
+                // goes sideways (SidewaysPan), so a scroll that starts on the track scrolls.
+                .onTapGesture { point in
+                    set(point.x, width: w)
+                    onCommit()
+                }
+                .gesture(SidewaysPan(onChanged: { drag in
+                    dragging = true
+                    set(drag.location.x, width: w)
+                }, onEnded: { _, _ in
+                    dragging = false
+                    onCommit()
+                }))
             }
             .frame(height: 28)
         }
@@ -373,6 +371,15 @@ private struct ThresholdSlider: View {
             onCommit()
         }
         .accessibilityIdentifier(identifier)
+    }
+
+    /// The threshold under `x` on a track `width` wide, with a detent tick for each step.
+    private func set(_ x: CGFloat, width: CGFloat) {
+        let p = min(max(Int((x / max(width, 1) * 100).rounded()), lo), hi)
+        if p != value {
+            value = p
+            feedback.play(.detent, step: p - lo)
+        }
     }
 }
 

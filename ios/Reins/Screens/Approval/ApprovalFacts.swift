@@ -206,9 +206,9 @@ private struct MessagesFacts: View {
             if vm.readOnly {
                 // An Activity entry: what was shared is ticked, and nothing can be ticked again.
                 let shared = view.messages.filter { $0.coveredByGrant || draft.selected.contains($0.id) }.count
-                FactHeader("\(view.messages.count) found · \(shared) shared")
+                FactHeader(AttentionText.mailHeader(view.messages, service: view.service, shared: shared)).accessibilityIdentifier("messagesHeader")
             } else {
-                FactHeader(text: "\(view.messages.count) found") {
+                FactHeader(text: AttentionText.mailHeader(view.messages, service: view.service)) {
                     Button(allTicked ? "Clear" : "Select all") {
                         vm.draft.selected = allTicked ? [] : Set(view.messages.map(\.id))
                         vm.draft.allMail = nil
@@ -220,7 +220,8 @@ private struct MessagesFacts: View {
                 }
             }
             FactGroup {
-                ForEach(view.messages, id: \.id) { m in
+                // Flagged first: rows are keyed by id, so the order on screen is all that changes.
+                ForEach(AttentionText.ordered(view.messages) { AttentionText.mail($0, service: view.service)?.level }.map(\.element), id: \.id) { m in
                     MailRow(
                         message: m,
                         checked: m.coveredByGrant || draft.selected.contains(m.id) || (draft.allMail != nil && !m.sensitive),
@@ -269,17 +270,20 @@ private struct MailRow: View {
         } label: {
             HStack(spacing: 14) {
                 TickBox(checked: checked, enabled: enabled)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(RFont.sans(15, .semibold)).foregroundStyle(Palette.ink).strikethrough(!checked, color: Palette.inkMeta).lineLimit(1)
-                    if !meta.isEmpty { Text(meta).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta).lineLimit(1) }
+                VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(RFont.sans(15, .semibold)).foregroundStyle(Palette.ink).strikethrough(!checked, color: Palette.inkMeta).lineLimit(1)
+                        if !meta.isEmpty { Text(meta).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta).lineLimit(1) }
+                    }
+                    .opacity(checked ? 1 : 0.45)
+                    // One chip: a code or a password keeps its word ("Code") among the other reasons.
+                    if let mark = AttentionText.mail(m, service: service) {
+                        AttentionTag(mark: mark, id: m.sensitive ? "sensitive:\(m.id)" : "attention:\(m.id)")
+                    }
                 }
-                .opacity(checked ? 1 : 0.45)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if m.coveredByGrant {
                     Image(systemName: "lock.fill").font(.system(size: 13)).foregroundStyle(Palette.inkMeta).accessibilityLabel("Already allowed")
-                }
-                if m.sensitive {
-                    WarnTag(text: service == "vault" ? "Password" : "Code", tint: Palette.warning, small: true).accessibilityIdentifier("sensitive:\(m.id)")
                 }
             }
             .padding(.horizontal, 16)

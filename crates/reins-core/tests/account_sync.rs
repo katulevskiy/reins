@@ -163,7 +163,7 @@ async fn a_phone_whose_changes_never_reached_the_server_still_opens_and_keeps_bo
     // The iPhone starts again too, and is up to date with what the Android phone uploaded while signing in.
     drop(iphone);
     let iphone = core(iphone_dir.path());
-    assert!(iphone.session().await.is_some());
+    assert!(iphone.session().await.unwrap().is_some());
     cloud.settle().await;
 
     // Android writes while the server refuses its uploads.
@@ -179,7 +179,7 @@ async fn a_phone_whose_changes_never_reached_the_server_still_opens_and_keeps_bo
     // The Android app is updated: a new process opens the same data.
     drop(android);
     let android = core(android_dir.path());
-    assert!(android.session().await.is_some(), "the phone opens signed in, never on the welcome screen");
+    assert!(android.session().await.unwrap().is_some(), "the phone opens signed in, never on the welcome screen");
     assert_eq!(integrations(&android).await, ["from-android", "from-iphone-1", "from-iphone-2"]);
     // Signing in again (the welcome screen's Continue) works too.
     drop(android);
@@ -240,14 +240,14 @@ async fn a_state_that_does_not_open_or_is_older_leaves_a_notice_and_is_never_ove
         }
         drop(app);
         let app = core(dir.path());
-        assert!(app.session().await.is_some(), "revision {revision}: still opens");
+        assert!(app.session().await.unwrap().is_some(), "revision {revision}: still opens");
         assert_eq!(integrations(&app).await, ["first", "second"]);
-        assert_eq!(app.account_sync_notice().await.as_deref(), Some(notice), "revision {revision}");
+        assert_eq!(app.account_sync_notice().await.unwrap().as_deref(), Some(notice), "revision {revision}");
         app.engine().register_account("github", "third").unwrap();
         app.accounts().await.unwrap();
         cloud.settle().await;
         assert_eq!(cloud.states.lock().unwrap().values().next().unwrap(), &unreadable, "revision {revision}");
         app.dismiss_account_sync_notice().await.unwrap();
-        assert_eq!(app.account_sync_notice().await, None);
+        assert_eq!(app.account_sync_notice().await.unwrap(), None);
     }
 }

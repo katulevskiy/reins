@@ -117,7 +117,7 @@ for job in ("desktop-linux", "desktop", "android"):
     section = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n  ", 1)[0]
     assert "fail-fast: false" in section, job
 assert "uses: actions/upload-artifact@" not in workflow
-assert workflow.count("uses: ./.github/actions/upload-artifact") == 13
+assert workflow.count("uses: ./.github/actions/upload-artifact") == 14
 # The APK and the Play bundle are built on two runners and must carry the same versionCode: plan's.
 android = workflow.split("\n  android:\n", 1)[1].split("\n\n  ", 1)[0]
 assert "VERSION_CODE: ${{ needs.plan.outputs.version-code }}" in android

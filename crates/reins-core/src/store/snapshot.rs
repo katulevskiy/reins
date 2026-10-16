@@ -49,6 +49,19 @@ pub(super) const DEVICE_SECRETS: &[&str] = &[
     "reins.join",
     "mcp_signin",
     "payments.provider",
+    // Phone roles: this installation's own keys and roster state (they live in the device store; listed here so that
+    // an account store never exports or imports them either).
+    "reins.sign-key",
+    "reins.box-key",
+    "reins.owner-seed",
+    "reins.view-keys",
+    "reins.roster",
+    "reins.enroll",
+    "reins.enroll-primary",
+    "reins.view-grants",
+    "reins.handover",
+    "reins.handover-nonces",
+    "reins.wrap-key",
 ];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

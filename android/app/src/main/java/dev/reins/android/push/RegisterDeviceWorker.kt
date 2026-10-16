@@ -18,7 +18,15 @@ class RegisterDeviceWorker(context: Context, params: WorkerParameters) : Corouti
     override suspend fun doWork(): Result {
         val container = (applicationContext as ReinsApp).container
         return try {
-            if (container.core.session() == null) return Result.success()
+            val signedIn = try {
+                container.readSession()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A busy or failed store is not "signed out": try the registration again later.
+                return Result.retry()
+            }
+            if (signedIn == null) return Result.success()
             container.registerDevice(force = false)
             Result.success()
         } catch (e: CancellationException) {
@@ -32,6 +40,7 @@ class RegisterDeviceWorker(context: Context, params: WorkerParameters) : Corouti
                     Result.failure()
                 }
                 e is CoreException.Network -> Result.retry()
+                e is CoreException.Storage -> Result.retry()
                 e is CoreException.Server && e.status.toInt() >= 500 -> Result.retry()
                 else -> Result.failure()
             }

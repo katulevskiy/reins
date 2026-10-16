@@ -27,8 +27,10 @@ pub mod handler;
 pub mod http;
 pub mod join;
 pub mod mcp;
+pub mod names;
 pub mod phone_api;
 pub mod quick;
+pub mod roles;
 pub mod rt;
 mod secrets;
 pub mod services;
@@ -58,7 +60,11 @@ pub use connector::device::{DeviceBridge, DeviceContact, DeviceEvent, NewDeviceE
 pub use engine::{CoreConfig, Engine};
 pub use error::{CoreError, ForeignError};
 pub use mcp::{McpAddStep, McpCallView, McpServerView, McpToolView};
-pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck};
+pub use roles::{
+    EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RecoveryPreview,
+    RosterMemberView, RosterSummary,
+};
+pub use traits::{GoogleTokenProvider, KeyWrapper, Notifier, OwnerCheck, StoreLockGuard};
 pub use types::{AccountKeys, JoinProgress, JoinStart, JoinView, ServerInfo, SsoOutcome, SsoStart};
 pub use types::{
     AccountView, ActivityEntry, ActivityInfo, ActivityMessage, ActivityPush, ActivityRequest, ApprovalChoice,

@@ -44,6 +44,7 @@ import androidx.compose.material.icons.rounded.TimerOff
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -67,6 +68,8 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -346,10 +349,17 @@ fun dangerTags(view: ApprovalView): List<DangerTag> = buildList {
 
 /** A tinted tag with a real icon (the warning sign unless said otherwise). */
 @Composable
-internal fun WarnTag(text: String, tint: Color, modifier: Modifier = Modifier, small: Boolean = false, icon: ImageVector = Icons.Rounded.Warning) {
+internal fun WarnTag(
+    text: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    small: Boolean = false,
+    icon: ImageVector = Icons.Rounded.Warning,
+    maxLines: Int = 1,
+) {
     Row(
         modifier
-            .clip(CircleShape)
+            .clip(if (maxLines > 1) RoundedCornerShape(if (small) 11.dp else 16.dp) else CircleShape)
             .background(tint.copy(alpha = 0.14f))
             .padding(start = if (small) 6.dp else 11.dp, end = if (small) 8.dp else 13.dp, top = if (small) 4.dp else 7.dp, bottom = if (small) 4.dp else 7.dp)
             .semantics(mergeDescendants = true) {},
@@ -357,8 +367,26 @@ internal fun WarnTag(text: String, tint: Color, modifier: Modifier = Modifier, s
     ) {
         Icon(icon, null, Modifier.size(if (small) 12.dp else 15.dp), tint = tint)
         Spacer(Modifier.width(if (small) 4.dp else 6.dp))
-        RText(text, RType.sans(if (small) 11.5f else 13.5f, FontWeight.SemiBold), tint, maxLines = 1)
+        RText(text, RType.sans(if (small) 11.5f else 13.5f, FontWeight.SemiBold), tint, maxLines = maxLines)
     }
+}
+
+/**
+ * What deserves a closer look in one commit, file or email: the warning sign and its 1 to 3 reasons. Close is the
+ * filled sign in the warning colour; Look is quieter, the outline sign in a muted ink, so "Changes CI" reads as more
+ * serious than "Runs on build". Red stays for danger. TalkBack reads "Look closer: Changes CI".
+ */
+@Composable
+internal fun AttentionTag(mark: AttentionMark, modifier: Modifier = Modifier) {
+    val c = LocalColors.current
+    WarnTag(
+        mark.text,
+        if (mark.level == dev.reins.core.AttentionLevel.CLOSE) c.warning else c.secondary,
+        modifier.clearAndSetSemantics { contentDescription = mark.spoken },
+        small = true,
+        icon = if (mark.level == dev.reins.core.AttentionLevel.CLOSE) Icons.Rounded.Warning else Icons.Rounded.WarningAmber,
+        maxLines = 2,
+    )
 }
 
 /** Approve, Deny, or Unsure when Autopilot would ask. */

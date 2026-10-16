@@ -31,6 +31,9 @@ struct SignalMenuItem: Identifiable, Equatable {
     /// The row opens something further (a chevron).
     var more = false
     var enabled = true
+    /// Picked only by a tap on the row once the menu is open, never by sliding onto it from the trigger and lifting: a
+    /// change that loosens control (Auto, ending a lockdown) or stops what runs (a bypass, an Overnight).
+    var tapOnly = false
 }
 
 /// The open menu, kept by the host.
@@ -279,10 +282,11 @@ extension View {
     /// Draws the Signal menus opened inside this view, over it. Put it on a page or sheet root.
     func signalMenuHost() -> some View { modifier(SignalMenuHost()) }
 
-    /// Makes this view the trigger of a Signal menu: a tap opens or closes it; pressing and sliding onto a row picks it
-    /// when the finger lifts, with a select tick for each row crossed. Needs a `signalMenuHost()` above it.
-    /// `chosen` and `staysOpen`: a menu that picks several, its ticked rows; a tap on a row ticks or unticks it and
-    /// the menu stays open.
+    /// Makes this view the trigger of a Signal menu: a tap opens or closes it; pressing a moment and sliding onto a row
+    /// picks it when the finger lifts, with a select tick for each row crossed; a finger that moves at once scrolls the
+    /// page instead. A `tapOnly` row is never picked by a slide: only a tap on it, once the menu is open. Needs a
+    /// `signalMenuHost()` above it. `chosen` and `staysOpen`: a menu that picks several, its ticked rows; a tap on a row
+    /// ticks or unticks it and the menu stays open.
     func signalMenu(
         id: String, items: [SignalMenuItem], selected: String? = nil, chosen: Set<String> = [], staysOpen: Bool = false,
         identifier: String = "signalMenu", scrimIdentifier: String = "menuScrim", onPick: @escaping (String) -> Void
@@ -309,51 +313,19 @@ private struct SignalMenuTrigger: ViewModifier {
     @State private var sliding = false
     /// Whether this press found the menu already open (a tap then closes it); nil between presses.
     @State private var wasOpen: Bool?
+    /// Where the press began, in the host's space.
+    @State private var pressedAt: CGPoint?
 
     func body(content: Content) -> some View {
         content
             .anchorPreference(key: SignalMenuAnchors.self, value: .bounds) { [id: $0] }
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .named(SignalMenuCard.space))
-                    .onChanged { drag in
-                        guard let controller else { return }
-                        if wasOpen == nil {
-                            wasOpen = controller.open?.trigger == id
-                            sliding = false
-                            if wasOpen == false {
-                                controller.toggle(open)
-                                feedback.play(.open)
-                            }
-                            return
-                        }
-                        // A slide onto the rows: highlight the row under the finger, a tick for each one crossed.
-                        guard drag.translation.height.magnitude > 8 || sliding else { return }
-                        sliding = true
-                        let row = controller.row(at: drag.location)?.id
-                        if row != controller.hovered {
-                            controller.hovered = row
-                            if row != nil { feedback.play(.selection) }
-                        }
-                    }
-                    .onEnded { drag in
-                        guard let controller else { return }
-                        defer {
-                            sliding = false
-                            wasOpen = nil
-                        }
-                        if sliding, let row = controller.row(at: drag.location) {
-                            feedback.play(.selection)
-                            controller.close()
-                            onPick(row.id)
-                        } else if !sliding, wasOpen == true {
-                            feedback.play(.close)
-                            controller.close()
-                        } else {
-                            controller.hovered = nil
-                        }
-                    }
-            )
+            // Triggers sit in scrolling pages: a finger that moves at once scrolls the page, one that lifts is a tap,
+            // and one that stays a moment opens the menu to slide onto its rows (DelayedPress).
+            .gesture(DelayedPress(space: .named(SignalMenuCard.space), onPress: press, onSlide: slide, onRelease: release) {
+                reset()
+                controller?.hovered = nil
+            })
             .accessibilityAddTraits(.isButton)
             .accessibilityAction {
                 controller?.toggle(open)
@@ -368,6 +340,64 @@ private struct SignalMenuTrigger: ViewModifier {
         var items: [SignalMenuItem]
         var selected: String?
         var chosen: Set<String>
+    }
+
+    /// The finger stayed on the trigger: the menu opens under it, ready for a slide.
+    private func press(at point: CGPoint) {
+        guard let controller else { return }
+        wasOpen = controller.open?.trigger == id
+        sliding = false
+        pressedAt = point
+        if wasOpen == false {
+            controller.toggle(open)
+            feedback.play(.open)
+        }
+    }
+
+    /// A slide onto the rows: highlight the row under the finger, a tick for each one crossed.
+    private func slide(to point: CGPoint) {
+        guard let controller, let start = pressedAt else { return }
+        guard (point.y - start.y).magnitude > 8 || sliding else { return }
+        sliding = true
+        // A row a slide cannot pick is not lit by one either.
+        let row = controller.row(at: point).flatMap { $0.tapOnly ? nil : $0.id }
+        if row != controller.hovered {
+            controller.hovered = row
+            if row != nil { feedback.play(.selection) }
+        }
+    }
+
+    private func release(at point: CGPoint, held: Bool) {
+        guard let controller else { return }
+        defer { reset() }
+        guard held else {
+            // A tap opens the menu, or closes it.
+            let closing = controller.open?.trigger == id
+            controller.toggle(open)
+            feedback.play(closing ? .close : .open)
+            return
+        }
+        if sliding, let row = controller.row(at: point) {
+            guard !row.tapOnly else {
+                // Lifted on a row that needs a tap: the menu stays open for one, and nothing changes.
+                controller.hovered = nil
+                return
+            }
+            feedback.play(.selection)
+            controller.close()
+            onPick(row.id)
+        } else if !sliding, wasOpen == true {
+            feedback.play(.close)
+            controller.close()
+        } else {
+            controller.hovered = nil
+        }
+    }
+
+    private func reset() {
+        sliding = false
+        wasOpen = nil
+        pressedAt = nil
     }
 
     private var open: SignalMenuController.Open {
