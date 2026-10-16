@@ -149,11 +149,15 @@ command in that folder, so a learnt answer never covers another command). There 
     it, `HEAD:main`, `heads/main` and `refs//heads/main` included, options such as `-o` read with their values), and a
     GitHub write that lands on the default branch: a pull request or a branch merged, or a file committed to it or
     without naming a branch.
-  - `git push`, `git push origin` and `git push origin HEAD` push the branch checked out. For a hook, the desktop app
-    reads it from the repository's files (it never runs git there) and reports it when a push of it certainly lands on
-    the branch of the same name: a feature branch is then decided as usual. When it is not reported, or the line
-    changes folder or branch first, it asks.
-  - `--all`, `--mirror` and a push to anything that is not clearly a branch or a tag ask too.
+  - **An allowlist.** A command line that runs a push is decided by Autopilot only in one shape. Every other line
+    that mentions `git` with `push`, or `gh` with anything but a read, asks.
+    - The whole line is `git push`, with no other command, wrapper, variable or quote.
+    - Its only options are `-u`, `--set-upstream`, `-q`, `-v` or `--no-verify`.
+    - It names at most a plain remote, then plain branch names (`branch`, `src:branch`, `HEAD`).
+    - Every destination is a branch that is neither protected nor the repository's default. For a hook, the desktop
+      app reads the checked-out branch and the default from the repository's files (it never runs git there). It
+      reports them only when the configuration parses cleanly and a push of the branch lands on the branch of the
+      same name. Without that report, the push asks.
   - A git command hidden behind an alias, configuration that can run commands, git's environment, `xargs`, or a shell
     construct the phone does not read is held as not read with certainty. Force pushes and branch deletes are on the
     hard floor. Outside the floor it weighs, Overnight applies Auto's risk checks too.

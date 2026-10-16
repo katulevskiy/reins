@@ -2533,15 +2533,20 @@ async fn a_push_to_the_default_branch_always_asks_in_auto_and_overnight() {
             );
         }
     }
-    // A plain push of a feature branch, approved once by the user, is still Autopilot's.
+    // A plain push of a feature branch, approved once by the user, is still Autopilot's, with the repository's default
+    // reported by the desktop app (the allowlist needs it: without it, the push asks).
+    let reported = "Rule: Pushing · git push\nMatched: git push\nBranch: feature/x\nDefault branch: main\n";
     env.mode(None, AutopilotMode::Manual).await;
-    env.relay("hook-seed", OLD, hook_ask(&key, "", "command:git push", "git push origin feature/x")).await;
+    env.relay("hook-seed", OLD, hook_ask(&key, reported, "command:git push", "git push origin feature/x")).await;
     env.approve("hook-seed").await;
     env.unlock("desktop/ask").await;
     env.mode(None, AutopilotMode::Auto).await;
-    env.relay("hook-feature", OLD, hook_ask(&key, "", "command:git push", "git push origin feature/x")).await;
+    env.relay("hook-feature", OLD, hook_ask(&key, reported, "command:git push", "git push origin feature/x")).await;
     let s = env.suggestion("hook-feature").await;
     assert!(env.decided().iter().any(|(d, v, _)| d == "hook-feature" && *v == Verdict::Approve), "{s:?}");
+    // the same push, nothing reported (an older desktop app): it asks
+    env.relay("hook-unreported", OLD, hook_ask(&key, "", "command:git push", "git push origin feature/x")).await;
+    assert!(env.suggestion("hook-unreported").await.floor);
 }
 
 /// A GitHub write that lands on the default branch (no branch named, the repository's own default whatever its name,
