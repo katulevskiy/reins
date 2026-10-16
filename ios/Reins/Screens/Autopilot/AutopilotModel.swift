@@ -412,7 +412,11 @@ final class AutopilotModel {
             guard let i = profile.classes.firstIndex(where: { $0.classKey == classKey }) else { return }
             // `manual`: false locked by hand, true unlocked by hand, nil automatic.
             profile.classes[i].manual = locked.map { !$0 }
-            if let locked { profile.classes[i].autoApprove = !locked }
+            if let locked {
+                profile.classes[i].autoApprove = !locked
+                // a lock or a trust by hand: no pause shows
+                profile.classes[i].paused = false
+            }
         }
         let done = await run {
             try await app.core.setClassLock(profileId: id, classKey: classKey, locked: locked)

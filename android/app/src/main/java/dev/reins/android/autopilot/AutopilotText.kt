@@ -419,13 +419,27 @@ object AutopilotText {
     /** A stat tile's percentage, "—" before there is one. */
     fun share(p: Float?): String = p?.let(::percent) ?: "—"
 
-    /** A kind of request in one line, for its row: on Auto, always asks, or how far from unlocking. */
-    fun kindLine(c: ClassView): String = when {
-        c.manual == false -> "Always asks"
-        c.autoApprove -> "On Auto · ${c.decisions} ${if (c.decisions == 1u) "decision" else "decisions"}"
-        c.decisionsToUnlock > 0u -> "${c.decisionsToUnlock} more to unlock"
-        else -> "Learning"
+    /** Where a kind of request stands. */
+    enum class KindState { AUTO, ASKS, PAUSED, LOCKED }
+
+    fun kindState(c: ClassView): KindState = when {
+        c.manual == false -> KindState.LOCKED
+        c.paused -> KindState.PAUSED
+        c.autoApprove -> KindState.AUTO
+        else -> KindState.ASKS
     }
+
+    /** A kind of request in one word, for its row: Auto, Asks, Paused (after a wrong answer) or Locked by you. */
+    fun kindLine(c: ClassView): String = when (kindState(c)) {
+        KindState.AUTO -> "Auto"
+        KindState.ASKS -> "Asks"
+        KindState.PAUSED -> "Paused"
+        KindState.LOCKED -> "Locked by you"
+    }
+
+    /** The quiet line above the kinds: "Learning your preferences · 140 answers". */
+    fun learningLine(p: ProfileView): String =
+        "Learning your preferences · ${p.memoryCount} ${if (p.memoryCount == 1u) "answer" else "answers"}"
 
     /** "Claude Code, ChatGPT · 140 decisions": the AIs a profile learns from, then how much it remembers. */
     fun profileLine(p: ProfileView, ais: List<String>): String = buildList {
@@ -442,23 +456,16 @@ object AutopilotText {
         }.map { untrusted(it.second) }
     }
 
-    /** How far a class is on its way to approving by itself, 0..1 (full once it may). */
-    fun unlockProgress(c: ClassView): Float = when {
-        c.autoApprove -> 1f
-        c.decisions + c.decisionsToUnlock == 0u -> 0f
-        else -> (c.decisions.toFloat() / (c.decisions + c.decisionsToUnlock).toFloat()).coerceIn(0f, 1f)
-    }
-
     /** Where a class stands, in one line. */
-    fun classStatus(c: ClassView): String = when {
-        c.manual == false -> "Locked by you · always asks"
-        c.manual == true && c.autoApprove -> "Unlocked by you · approves on its own"
-        c.autoApprove && c.autoDeny -> "Approves and denies on its own"
-        c.autoApprove -> "Approves on its own"
-        c.decisionsToUnlock > 0u -> "${c.decisionsToUnlock} more ${if (c.decisionsToUnlock == 1u) "decision" else "decisions"} to unlock" +
-            if (c.autoDeny) " · denies on its own" else ""
-        c.autoDeny -> "Denies on its own · learning to approve"
-        else -> "Learning · accuracy must reach 95%"
+    fun classStatus(c: ClassView): String = when (kindState(c)) {
+        KindState.LOCKED -> "Locked by you · always asks"
+        KindState.PAUSED -> "Paused after a wrong answer"
+        KindState.AUTO -> when {
+            c.manual == true -> "Trusted by you · approves when sure"
+            c.autoDeny -> "Approves and denies when sure"
+            else -> "Approves when sure"
+        }
+        KindState.ASKS -> "Asks until it knows this kind"
     }
 
     /** "12 approved · 1 denied · 96% accurate". */

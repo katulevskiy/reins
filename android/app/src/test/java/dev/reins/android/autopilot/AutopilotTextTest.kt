@@ -228,9 +228,13 @@ class AutopilotTextTest {
         )
         assertEquals("94%", AutopilotText.share(0.94f))
         assertEquals("—", AutopilotText.share(null))
-        assertEquals("On Auto · 26 decisions", AutopilotText.kindLine(TestData.classView(decisions = 26u, autoApprove = true, toUnlock = 0u)))
-        assertEquals("8 more to unlock", AutopilotText.kindLine(TestData.classView(toUnlock = 8u)))
-        assertEquals("Always asks", AutopilotText.kindLine(TestData.classView(manual = false)))
+        // a kind's state in one word: no "more to unlock" any more, Auto runs from the first request
+        assertEquals("Auto", AutopilotText.kindLine(TestData.classView(decisions = 1u, autoApprove = true)))
+        assertEquals("Asks", AutopilotText.kindLine(TestData.classView()))
+        assertEquals("Paused", AutopilotText.kindLine(TestData.classView(paused = true)))
+        assertEquals("Locked by you", AutopilotText.kindLine(TestData.classView(manual = false, paused = true)))
+        assertEquals("Learning your preferences · 140 answers", AutopilotText.learningLine(TestData.profile(memory = 140u)))
+        assertEquals("Learning your preferences · 1 answer", AutopilotText.learningLine(TestData.profile(memory = 1u)))
         val p = TestData.profile(memory = 140u)
         assertEquals("Claude Code, ChatGPT · 140 decisions", AutopilotText.profileLine(p, listOf("Claude Code", "ChatGPT")))
         assertEquals("1 decision", AutopilotText.profileLine(TestData.profile(memory = 1u), emptyList()))
@@ -281,12 +285,15 @@ class AutopilotTextTest {
     }
 
     @Test
-    fun `a class fills its ring with answers and is full once it runs by itself`() {
-        assertEquals(0.6f, AutopilotText.unlockProgress(TestData.classView(decisions = 12u, toUnlock = 8u)), 0.001f)
-        assertEquals(1f, AutopilotText.unlockProgress(TestData.classView(autoApprove = true, toUnlock = 0u)), 0f)
-        assertEquals("8 more decisions to unlock", AutopilotText.classStatus(TestData.classView()))
+    fun `a class says where it stands, never how far from unlocking`() {
+        assertEquals(AutopilotText.KindState.AUTO, AutopilotText.kindState(TestData.classView(autoApprove = true)))
+        assertEquals(AutopilotText.KindState.PAUSED, AutopilotText.kindState(TestData.classView(autoApprove = false, paused = true)))
+        assertEquals("Asks until it knows this kind", AutopilotText.classStatus(TestData.classView()))
+        assertEquals("Paused after a wrong answer", AutopilotText.classStatus(TestData.classView(paused = true)))
         assertEquals("Locked by you · always asks", AutopilotText.classStatus(TestData.classView(manual = false)))
-        assertEquals("Approves on its own", AutopilotText.classStatus(TestData.classView(autoApprove = true, toUnlock = 0u)))
+        assertEquals("Trusted by you · approves when sure", AutopilotText.classStatus(TestData.classView(autoApprove = true, manual = true)))
+        assertEquals("Approves when sure", AutopilotText.classStatus(TestData.classView(autoApprove = true)))
+        assertEquals("Approves and denies when sure", AutopilotText.classStatus(TestData.classView(autoApprove = true, autoDeny = true)))
         assertEquals("11 approved · 1 denied · 96% accurate", AutopilotText.classNumbers(TestData.classView(accuracy = 0.96f)))
     }
 

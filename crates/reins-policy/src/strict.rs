@@ -567,7 +567,10 @@ fn text_consumer(program: &str, args: &[Word]) -> bool {
 fn resolve(raw: &Raw, line: &[Raw], depth: usize, out: &mut Vec<Seg>) -> Option<()> {
     let mut words: &[Word] = &raw.words;
     loop {
-        while words.first().is_some_and(|w| assignment(&w.text)) {
+        // assignments, and the shell's reserved words before a command (`then git push …`, `! git push …`)
+        while words.first().is_some_and(|w| {
+            assignment(&w.text) || (!w.quoted && crate::shell::RESERVED_PREFIXES.contains(&w.text.as_str()))
+        }) {
             words = &words[1..];
         }
         let Some(first) = words.first() else {
@@ -690,6 +693,39 @@ mod tests {
 
     fn words(text: &str) -> Option<Vec<Vec<String>>> {
         read(text).map(|segs| segs.into_iter().map(|s| s.words).collect())
+    }
+
+    /// The shell's reserved words before a command are not its program: what follows them is read, in both readings.
+    #[test]
+    fn reserved_words_never_hide_the_command_after_them() {
+        let push: Vec<String> = ["git", "push", "origin", "main"].map(str::to_owned).to_vec();
+        for line in [
+            "if true; then git push origin main; fi",
+            "while true; do git push origin main; done",
+            "until false; do git push origin main; done",
+            "! git push origin main",
+            "{ git push origin main; }",
+            "if git push origin main; then echo ok; else echo no; fi",
+        ] {
+            // the strict reading reads it with the push, or not at all (outside its subset: uncertain)
+            let strict = words(line).unwrap_or_default();
+            assert!(strict.is_empty() || strict.contains(&push), "strict: {line}: {strict:?}");
+            let guard = crate::shell::parse(line).segments;
+            assert!(guard.contains(&push), "guard: {line}: {guard:?}");
+            assert!(
+                !strict
+                    .iter()
+                    .chain(&guard)
+                    .any(|s| s.first().is_some_and(|p| matches!(p.as_str(), "then" | "do" | "!" | "{"))),
+                "{line}"
+            );
+        }
+        // the `if` forms are inside the subset: read, with the push
+        assert!(words("if true; then git push origin main; fi").unwrap().contains(&push));
+        assert!(words("! git push origin main").unwrap().contains(&push));
+        // quoted, a reserved word is a word like another
+        assert_eq!(words("'then' x"), Some(vec![vec!["then".to_owned(), "x".to_owned()]]));
+        assert_eq!(words("time -p git status").unwrap()[0], ["git", "status"], "time stays a wrapper");
     }
 
     #[test]

@@ -1708,7 +1708,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
-    /// `locked` true: always asked; false: unlocked by hand (decides on its own); nil: back to what the numbers say.
+    /// `locked` true: always asked; false: trusted by hand (no cautious start, no pause); nil: back to Autopilot.
     func setClassLock(profileId: String, classKey: String, locked lockedValue: Bool?) async throws {
         locked { s in
             guard let i = s.profiles.firstIndex(where: { $0.id == profileId }) else { return }
@@ -1716,7 +1716,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
                 guard c.classKey == classKey else { return c }
                 var c = c
                 c.manual = lockedValue.map { !$0 }
-                c.autoApprove = lockedValue == false || (lockedValue == nil && c.decisionsToUnlock == 0 && (c.shadowAccuracy ?? 0) >= 0.95)
+                // as the core: a lock wins, a trust by hand clears a pause, else Auto runs unless paused
+                c.autoApprove = lockedValue == false || (lockedValue == nil && !c.paused)
+                c.paused = lockedValue == nil && c.paused
                 if lockedValue == true { c.autoDeny = false }
                 return c
             }

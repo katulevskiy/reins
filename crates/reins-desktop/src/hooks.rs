@@ -22,6 +22,7 @@
 //!   "allow"|"deny", "reason": …}`, no output for no decision.
 
 use std::fmt::Write as _;
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -211,6 +212,213 @@ pub fn parse(harness: Harness, input: &[u8]) -> Result<HookCall, String> {
 /// The rule the call matches and the question to ask about it.
 #[must_use]
 pub fn question(call: &HookCall, guard: &GuardConfig) -> Option<(Match, Question)> {
+    question_in(call, guard, None)
+}
+
+/// What a hook's question reports of the repository its command runs in (the phone reads it for a `git push`): the
+/// checked-out branch, only when a push of it (`git push`, `git push origin HEAD`) certainly lands on the branch of the
+/// same name, and the remote's default branch when the repository records it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GitHead {
+    pub branch: Option<String>,
+    pub default: Option<String>,
+}
+
+/// Reads a small file of the repository (at most 64 KiB): `None` when it is not there or larger.
+fn small_file(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > 64 * 1024 {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
+/// A branch name on one line, as git allows it (the phone checks it again).
+fn one_branch(name: &str) -> Option<String> {
+    let name = name.trim();
+    (!name.is_empty() && name.len() <= 200 && name.chars().all(|c| c.is_ascii_graphic())).then(|| name.to_owned())
+}
+
+/// The settings of git's configuration that decide where `git push` with no destination sends the current branch:
+/// `push.default` and `branch.<name>.merge`.
+#[derive(Default)]
+struct PushSettings {
+    default: Option<String>,
+    merge: Option<String>,
+}
+
+/// Reads a git configuration file into `into`; `false` unless every line of it parses cleanly by the plain subset:
+/// comments, `[section]`, `[section "subsection"]` or `[section.subsection]` with nothing after the `]`, and `key =
+/// value` lines with no continuation, escape or inline comment; no include, no `remote.*.push`, no `push.*` key but
+/// `push.default`. Anything else and nothing is reported: the phone then takes the push as one to a protected branch.
+fn push_settings(text: &str, branch: &str, into: &mut PushSettings) -> bool {
+    let name_ok = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'));
+    let mut section: Option<(String, String)> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with(['#', ';']) {
+            continue;
+        }
+        if line.contains('\\') {
+            return false;
+        }
+        if let Some(inner) = line.strip_prefix('[') {
+            let Some(head) = inner.strip_suffix(']') else {
+                return false;
+            };
+            let (name, sub) = match head.split_once(char::is_whitespace) {
+                Some((n, s)) => {
+                    let s = s.trim();
+                    let Some(q) = s.strip_prefix('"').and_then(|q| q.strip_suffix('"')) else {
+                        return false;
+                    };
+                    if q.contains('"') {
+                        return false;
+                    }
+                    (n, q.to_owned())
+                }
+                // `[section.subsection]`: git reads the subsection without regard to case
+                None => head.split_once('.').map_or((head, String::new()), |(n, s)| (n, s.to_ascii_lowercase())),
+            };
+            if !name_ok(name) || head.contains(']') {
+                return false;
+            }
+            let name = name.to_ascii_lowercase();
+            if name == "include" || name == "includeif" {
+                return false;
+            }
+            section = Some((name, sub));
+            continue;
+        }
+        let Some((section, sub)) = &section else {
+            return false;
+        };
+        let (key, value) = line.split_once('=').map_or((line, ""), |(k, v)| (k.trim(), v.trim()));
+        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') || key.is_empty() {
+            return false;
+        }
+        if value.contains([';', '#']) {
+            return false;
+        }
+        let value = match value.strip_prefix('"') {
+            Some(q) => match q.strip_suffix('"') {
+                Some(v) if !v.contains('"') => v,
+                _ => return false,
+            },
+            None if value.contains('"') => return false,
+            None => value,
+        };
+        let key = key.to_ascii_lowercase();
+        // In the sections that can say where a push goes, only the keys known to be harmless are let through:
+        // `push.default`, `remote.<name>.url` and `.fetch`, `branch.<name>.remote` and `.merge`. Any other (a mirror,
+        // a push URL, `pushInsteadOf`, a push remote, `remote.pushDefault`…) and nothing is reported.
+        match (section.as_str(), key.as_str()) {
+            ("push", "default") => into.default = Some(value.to_ascii_lowercase()),
+            ("remote", "url" | "fetch") if !sub.is_empty() => {}
+            ("branch", "remote" | "merge") if !sub.is_empty() => {
+                // a section of this branch only by case: which one git reads is not certain
+                if sub != branch && sub.eq_ignore_ascii_case(branch) {
+                    return false;
+                }
+                if key == "merge" && sub == branch {
+                    into.merge = Some(value.to_owned());
+                }
+            }
+            ("push" | "remote" | "branch" | "url", _) => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+/// A configuration file's text: `Ok(None)` when there is truly none; `Err` when one is there but cannot be read, is no
+/// plain file or is larger than 64 KiB (then nothing is reported).
+fn config_file(path: &Path) -> Result<Option<String>, ()> {
+    match std::fs::metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(()),
+        Ok(meta) if !meta.is_file() || meta.len() > 64 * 1024 => Err(()),
+        Ok(_) => std::fs::read_to_string(path).map(Some).map_err(|_| ()),
+    }
+}
+
+/// Reads the repository at or above `cwd` from its files: it never runs git, whose configuration in a repository can
+/// make it run programs. The branch is left out unless a push of it certainly goes to the branch of the same name:
+/// no configuration included from elsewhere, no `remote.*.push`, `push.default` neither `matching` nor `upstream`
+/// to another branch.
+#[must_use]
+pub fn git_head(cwd: &Path) -> Option<GitHead> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| home.as_ref().map(|h| h.join(".config")));
+    let globals: Vec<std::path::PathBuf> = [
+        Some(std::path::PathBuf::from("/etc/gitconfig")),
+        home.map(|h| h.join(".gitconfig")),
+        xdg.map(|x| x.join("git/config")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    git_head_with(cwd, &globals)
+}
+
+/// [`git_head`], with the system's and the user's configuration files named (`globals`).
+fn git_head_with(cwd: &Path, globals: &[std::path::PathBuf]) -> Option<GitHead> {
+    let (top, dot) = cwd.ancestors().find_map(|d| {
+        let dot = d.join(".git");
+        dot.exists().then(|| (d.to_path_buf(), dot))
+    })?;
+    let git_dir = if dot.is_dir() {
+        dot
+    } else {
+        let pointer = small_file(&dot)?;
+        let to = pointer.lines().next()?.strip_prefix("gitdir:")?.trim();
+        top.join(to)
+    };
+    let common = small_file(&git_dir.join("commondir"))
+        .map_or_else(|| git_dir.clone(), |c| git_dir.join(c.lines().next().unwrap_or_default().trim()));
+    // one line each, exactly a symbolic ref
+    let symref = |text: Option<String>, prefix: &str| {
+        text.and_then(|t| {
+            let mut lines = t.lines().filter(|l| !l.trim().is_empty());
+            let first = lines.next()?;
+            if lines.next().is_some() {
+                return None;
+            }
+            first.strip_prefix(prefix).and_then(one_branch)
+        })
+    };
+    let branch = symref(small_file(&git_dir.join("HEAD")), "ref: refs/heads/");
+    let default = symref(small_file(&common.join("refs/remotes/origin/HEAD")), "ref: refs/remotes/origin/");
+    // Every configuration file must parse cleanly, else nothing at all is reported.
+    let mut s = PushSettings::default();
+    let local = [common.join("config"), git_dir.join("config.worktree")];
+    for f in globals.iter().chain(&local) {
+        match config_file(f) {
+            Ok(None) => {}
+            Ok(Some(text)) if push_settings(&text, branch.as_deref().unwrap_or_default(), &mut s) => {}
+            _ => return None,
+        }
+    }
+    let branch = branch.filter(|b| {
+        let same_name = s.merge.as_deref().is_none_or(|m| m == format!("refs/heads/{b}"));
+        match s.default.as_deref() {
+            None | Some("simple" | "current" | "nothing") => true,
+            Some("upstream" | "tracking") => same_name,
+            Some(_) => false,
+        }
+    });
+    Some(GitHead {
+        branch,
+        default,
+    })
+}
+
+/// [`question`], with what [`git_head`] read of the repository the command runs in: its lines follow the rule's, before
+/// the command, so that a command cannot write them.
+#[must_use]
+pub fn question_in(call: &HookCall, guard: &GuardConfig, head: Option<&GitHead>) -> Option<(Match, Question)> {
     let who = call.harness.label();
     let (m, question, mut detail) = match &call.action {
         Action::Command(c) => {
@@ -241,7 +449,16 @@ pub fn question(call: &HookCall, guard: &GuardConfig) -> Option<(Match, Question
     if let Some(cwd) = &call.cwd {
         let _infallible = write!(detail, "\n\nIn: {cwd}");
     }
-    let detail = format!("{}\n{detail}", rule_lines(&m));
+    let mut head_lines = String::new();
+    if let (Action::Command(_), Some(h)) = (&call.action, head) {
+        if let Some(b) = &h.branch {
+            let _infallible = writeln!(head_lines, "Branch: {b}");
+        }
+        if let Some(d) = &h.default {
+            let _infallible = writeln!(head_lines, "Default branch: {d}");
+        }
+    }
+    let detail = format!("{}{head_lines}\n{detail}", rule_lines(&m));
     let q = Question::new(&question, Some(&detail), Some(&m.topic)).ok()?;
     Some((m, q))
 }
@@ -358,7 +575,12 @@ pub async fn run(
         Ok(c) => c,
         Err(e) => return (None, 2, Some(format!("reins hook: {e}; not allowed."))),
     };
-    let Some((m, q)) = question(&call, &config.guard) else {
+    // For a push, what the repository says of its branch (read from its files, never by running git).
+    let head = match (&call.action, &call.cwd) {
+        (Action::Command(c), Some(cwd)) if c.contains("push") => git_head(Path::new(cwd)),
+        _ => None,
+    };
+    let Some((m, q)) = question_in(&call, &config.guard, head.as_ref()) else {
         let (out, code) = render(&call, &Verdict::Unmatched);
         return (out, code, None);
     };
@@ -514,6 +736,156 @@ mod tests {
         assert_eq!(head[0], "Rule: Cloud and cluster credentials · .config/gcloud/*", "{head:?}");
         assert!(head[1].starts_with("Matched: ") && head[1].contains(".config/gcloud/"), "{head:?}");
         assert_eq!(head[2], "Group: cloud", "an ordinary question, not one that cannot be undone");
+    }
+
+    /// A repository on disk: `.git/HEAD`, the remote's default, and a configuration.
+    fn repo(head: &str, origin_head: Option<&str>, config: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let git = dir.path().join(".git");
+        std::fs::create_dir_all(git.join("refs/remotes/origin")).unwrap();
+        std::fs::write(git.join("HEAD"), format!("{head}\n")).unwrap();
+        if let Some(o) = origin_head {
+            std::fs::write(git.join("refs/remotes/origin/HEAD"), format!("ref: refs/remotes/origin/{o}\n")).unwrap();
+        }
+        std::fs::write(git.join("config"), config).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_branch_a_push_lands_on_is_read_from_the_repositorys_files() {
+        let plain = "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = git@github.com:me/app.git\n";
+        let r = repo("ref: refs/heads/feature/x", Some("live"), plain);
+        let sub = r.path().join("src/deep");
+        std::fs::create_dir_all(&sub).unwrap();
+        let head = git_head_with(&sub, &[]).unwrap();
+        assert_eq!(
+            head,
+            GitHead {
+                branch: Some("feature/x".into()),
+                default: Some("live".into())
+            }
+        );
+        // detached: no branch
+        let r = repo("0123456789abcdef0123456789abcdef01234567", Some("main"), plain);
+        assert_eq!(git_head_with(r.path(), &[]).unwrap().branch, None);
+        // where a clean configuration sends a push of the branch elsewhere, the branch is not reported
+        for config in [
+            "[push]\n\tdefault = matching\n",
+            "[push]\n\tdefault = upstream\n[branch \"feature/x\"]\n\tmerge = refs/heads/main\n",
+        ] {
+            let r = repo("ref: refs/heads/feature/x", Some("main"), config);
+            let head = git_head_with(r.path(), &[]).unwrap();
+            assert_eq!((head.branch, head.default.as_deref()), (None, Some("main")), "{config}");
+        }
+        // a configuration that does not parse cleanly, includes others or says where pushes go: nothing reported at
+        // all (each a way found around the first reading)
+        for config in [
+            "[remote \"origin\"]\n\tpush = refs/heads/*:refs/heads/main\n",
+            "[include]\n\tpath = ~/other.gitconfig\n",
+            "[includeIf \"gitdir:~/work/\"]\n\tpath = ~/work.gitconfig\n",
+            "[push] default = matching\n",
+            "[push]\n\tdefault = \\\nmatching\n",
+            "[push]\n\tdefault = sim\\ple\n",
+            "[push]\n\tdefault = simple ; matching\n",
+            "[push]\n\tdefault = \"simple\" \"matching\"\n",
+            "[push]\n\tautoSetupRemote = true\n",
+            "\tdefault = matching\n[core]\n",
+            "[remote \"or\\\"igin\"]\n\turl = x\n",
+            "[push \"x\"] # comment\n",
+        ] {
+            let r = repo("ref: refs/heads/feature/x", Some("main"), config);
+            assert_eq!(git_head_with(r.path(), &[]), None, "{config}");
+        }
+        // in the sections that can say where a push goes, only the known keys: anything else, nothing reported
+        for config in [
+            "[remote \"origin\"]\n\turl = x\n\tmirror = true\n",
+            "[remote \"origin\"]\n\turl = x\n\tpushurl = y\n",
+            "[url \"git@evil:\"]\n\tpushInsteadOf = git@github.com:\n",
+            "[branch \"feature/x\"]\n\tpushRemote = other\n",
+            "[remote]\n\tpushDefault = other\n",
+            "[branch \"feature/x\"]\n\trebase = true\n",
+        ] {
+            let r = repo("ref: refs/heads/feature/x", Some("main"), config);
+            assert_eq!(git_head_with(r.path(), &[]), None, "{config}");
+        }
+        let known = "[remote \"origin\"]\n\turl = x\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
+                     [branch \"feature/x\"]\n\tremote = origin\n\tmerge = refs/heads/feature/x\n";
+        let r = repo("ref: refs/heads/feature/x", Some("main"), known);
+        assert_eq!(git_head_with(r.path(), &[]).unwrap().branch.as_deref(), Some("feature/x"));
+        // a configuration file that is there but cannot be read as one (a folder, too large): nothing reported
+        let r = repo("ref: refs/heads/feature/x", Some("main"), plain);
+        let folder = r.path().join("folder.gitconfig");
+        std::fs::create_dir_all(&folder).unwrap();
+        assert_eq!(git_head_with(r.path(), &[folder]), None, "a folder where a file is expected");
+        let large = r.path().join("large.gitconfig");
+        std::fs::write(&large, format!("[core]\n{}", "\t# padding\n".repeat(8_000))).unwrap();
+        assert_eq!(git_head_with(r.path(), &[large]), None, "over the size cap");
+        assert!(git_head_with(r.path(), &[r.path().join("missing.gitconfig")]).is_some(), "a missing file is skipped");
+        // a branch section that matches only by case (git reads `[branch.Name]` without regard to it): nothing reported
+        for (head_ref, config) in [
+            ("ref: refs/heads/Feature/X", "[branch \"feature/x\"]\n\tmerge = refs/heads/main\n"),
+            ("ref: refs/heads/Feature/X", "[branch.Feature/X]\n\tmerge = refs/heads/main\n"),
+        ] {
+            let r = repo(head_ref, Some("main"), config);
+            assert_eq!(git_head_with(r.path(), &[]), None, "{config}");
+        }
+        // two lines in HEAD, or a HEAD that is no symbolic ref: no branch
+        let r = repo("ref: refs/heads/feature/x\nref: refs/heads/main", Some("main"), plain);
+        assert_eq!(git_head_with(r.path(), &[]).unwrap().branch, None);
+        // upstream to the branch of the same name, simple, current: reported
+        for config in [
+            "[push]\n\tdefault = upstream\n[branch \"feature/x\"]\n\tmerge = refs/heads/feature/x\n",
+            "[push]\n\tdefault = simple\n",
+            "[push]\n\tdefault = current\n",
+        ] {
+            let r = repo("ref: refs/heads/feature/x", None, config);
+            assert_eq!(git_head_with(r.path(), &[]).unwrap().branch.as_deref(), Some("feature/x"), "{config}");
+        }
+        // the user's own configuration counts as much as the repository's
+        let r = repo("ref: refs/heads/feature/x", None, plain);
+        let global = r.path().join("global.gitconfig");
+        std::fs::write(&global, "[push]\n\tdefault = matching\n").unwrap();
+        assert_eq!(git_head_with(r.path(), &[global]).unwrap().branch, None);
+        // a worktree: `.git` is a file naming its git directory
+        let main = repo("ref: refs/heads/main", Some("main"), plain);
+        let wt_git = main.path().join(".git/worktrees/wt");
+        std::fs::create_dir_all(&wt_git).unwrap();
+        std::fs::write(wt_git.join("HEAD"), "ref: refs/heads/feature/y\n").unwrap();
+        std::fs::write(wt_git.join("commondir"), "../..\n").unwrap();
+        let wt = tempfile::tempdir().unwrap();
+        std::fs::write(wt.path().join(".git"), format!("gitdir: {}\n", wt_git.display())).unwrap();
+        assert_eq!(
+            git_head_with(wt.path(), &[]).unwrap(),
+            GitHead {
+                branch: Some("feature/y".into()),
+                default: Some("main".into())
+            }
+        );
+        // not a repository
+        let none = tempfile::tempdir().unwrap();
+        assert!(git_head_with(none.path(), &[]).is_none_or(|h| h.branch.is_none()));
+    }
+
+    #[test]
+    fn a_push_question_reports_the_branch_in_lines_a_command_cannot_write() {
+        let call = HookCall {
+            harness: Harness::ClaudeCode,
+            event: Event::PreToolUse,
+            // a force push is always asked about; its command tries to write a branch line of its own
+            action: Action::Command("git push --force origin HEAD\nBranch: main".to_owned()),
+            cwd: Some("/home/me/app".to_owned()),
+        };
+        let head = GitHead {
+            branch: Some("feature/x".into()),
+            default: Some("live".into()),
+        };
+        let (_, q) = question_in(&call, &GuardConfig::default(), Some(&head)).expect("asked");
+        let detail = q.detail.unwrap();
+        let lines: Vec<&str> = detail.lines().collect();
+        let command = lines.iter().position(|l| *l == "Command:").unwrap();
+        let branch = lines.iter().position(|l| *l == "Branch: feature/x").unwrap();
+        assert!(branch < command, "{detail}");
+        assert!(lines.contains(&"Default branch: live"));
     }
 
     #[test]

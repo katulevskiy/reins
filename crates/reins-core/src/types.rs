@@ -386,6 +386,11 @@ pub struct ApprovalView {
     /// A git host's token the computer hands to the phone's integration of that host.
     #[uniffi(default)]
     pub token_store: Option<TokenStoreView>,
+    /// A write to a GitHub repository that lands on its default branch or a protected one, or may (a pull request or a
+    /// branch merged, a file committed to the default branch or without naming a branch): Autopilot's Auto and
+    /// Overnight always ask for it.
+    #[uniffi(default)]
+    pub targets_default_branch: bool,
 }
 
 /// One command a permission for secrets can cover, as the approval offers it.
@@ -561,6 +566,13 @@ pub struct AskView {
     /// `None`: the generic kind.
     #[uniffi(default)]
     pub kind: Option<String>,
+    /// The branch checked out where a hook's command runs, as the desktop app reported it: only when a push of it
+    /// (`git push`, `git push origin HEAD`) lands on the branch of the same name. `None`: not reported.
+    #[uniffi(default)]
+    pub branch: Option<String>,
+    /// The repository's default branch (its remote's), as the desktop app reported it.
+    #[uniffi(default)]
+    pub default_branch: Option<String>,
 }
 
 /// The guard rule a desktop question matches.

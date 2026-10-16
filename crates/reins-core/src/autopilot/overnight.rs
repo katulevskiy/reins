@@ -7,7 +7,8 @@
 //! - the package's threshold is a finite number in (0, 1], and P(catastrophic) is strictly below it (compared as
 //!   `f32`; a NaN, an infinity or equality holds);
 //! - Auto's checks other than the floor pass: no floor Overnight keeps, not a just-paired AI, an Approve verdict, the
-//!   class unlocked, not paused (Auto's rate limit and Overnight's valves).
+//!   class unlocked (by Overnight's own numbers, or Auto would approve the request on its own), not paused (Auto's
+//!   rate limit and Overnight's valves).
 //!
 //! Anything else is a [`Hold`], with its reason. The engine refuses an Overnight approval without a proof for that
 //! very request (`Engine::ap_conclude`).
@@ -60,7 +61,8 @@ pub(crate) enum Gate {
 pub(crate) struct AutoChecks {
     /// The model's verdict (Auto's thresholds, a new target asks).
     pub verdict: Verdict,
-    /// The class lets Autopilot approve / deny on its own (earned, or unlocked by hand).
+    /// The class lets Autopilot approve / deny on its own (earned, unlocked by hand, or, for approving, Auto would
+    /// approve this very request on its own).
     pub may_approve: bool,
     pub may_deny: bool,
     /// A just-paired AI.
@@ -156,7 +158,7 @@ pub(crate) fn gate(r: &Request<'_>) -> Gate {
     }
     if !r.auto.may_approve {
         return hold(Hold::Auto {
-            why: "Autopilot has not earned this kind of request yet".to_owned(),
+            why: "still learning this kind of request".to_owned(),
             deny: false,
         });
     }

@@ -423,13 +423,16 @@ final class AutopilotFlowTests: XCTestCase {
     func testAProfileTakesAPresetAndAClassLock() async throws {
         await start()
         let personal = try XCTUnwrap(ap.profile("personal"))
-        XCTAssertEqual(AutopilotText.classStatus(try XCTUnwrap(personal.classes.first { $0.classKey == "github/write/push" })), "Approves on its own")
+        XCTAssertEqual(AutopilotText.classStatus(try XCTUnwrap(personal.classes.first { $0.classKey == "github/write/push" })), "Approves when sure")
+        XCTAssertEqual(AutopilotText.kindState(try XCTUnwrap(personal.classes.first { $0.classKey == "gmail/read" })), .paused)
         await ap.setPreset("personal", .cautious)
         XCTAssertEqual(ap.profile("personal")?.preset, .cautious)
         XCTAssertEqual(ap.profile("personal")?.approveAt, 0.98)
         await ap.setClassLock("personal", "gmail/read", locked: false)
         XCTAssertTrue(feedback.lastWas(.autopilotOn), "unlocking is felt as more autonomy")
         XCTAssertEqual(ap.profile("personal")?.classes.first { $0.classKey == "gmail/read" }?.manual, true)
+        let trusted = try XCTUnwrap(ap.profile("personal")?.classes.first { $0.classKey == "gmail/read" })
+        XCTAssertEqual(AutopilotText.classStatus(trusted), "Trusted by you · approves when sure", "a trust by hand clears the pause")
         await ap.setClassLock("personal", "gmail/read", locked: true)
         XCTAssertEqual(ap.profile("personal")?.classes.first { $0.classKey == "gmail/read" }?.manual, false)
     }
@@ -457,7 +460,12 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertEqual(stats.days, 7)
         XCTAssertGreaterThan(stats.scored, 0)
         XCTAssertNotNil(stats.matched)
-        XCTAssertEqual(stats.kindsOnAuto, 1, "Personal's push")
+        // On Auto from the start in the demo: Personal's push (earned), Personal's Gmail send (trusted by hand) and Work's
+        // push (on Auto from its first answer, the cold start). The week's number counts exactly those.
+        let onAuto = ap.profiles.flatMap { p in p.classes.filter(\.autoApprove).map { "\(p.id):\($0.classKey)" } }
+        XCTAssertEqual(Set(onAuto), ["personal:github/write/push", "personal:gmail/send", "work:github/write/push"])
+        XCTAssertEqual(stats.kindsOnAuto, 3, "the three kinds on Auto")
+        XCTAssertEqual(stats.kindsOnAuto, UInt32(onAuto.count))
     }
 
     func testAProfileCanBeCreatedMadeDefaultResetAndDeleted() async throws {

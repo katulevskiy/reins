@@ -77,7 +77,8 @@ async fn setup(email: &str) -> Setup {
     reins_e2e::init_tls();
     let mcp = fake_mcp().await;
     let models = MockServer::start().await;
-    let files = testing::package();
+    // a model that rates risk (as the one shipped does), calling everything clearly benign unless a test says otherwise
+    let files = testing::package_with_risk();
     let known = testing::known_model("fake-laya-e2e", &files);
     for (name, bytes) in &files {
         Mock::given(method("GET"))
@@ -96,6 +97,7 @@ async fn setup(email: &str) -> Setup {
     })
     .await;
     let model = Arc::new(FakeRuntime::default());
+    model.set_risk_default(testing::risk(0.95, 0.03, 0.015, 0.005));
     let runtime: Arc<dyn ModelRuntime> = Arc::<FakeRuntime>::clone(&model);
     phone.core.set_model_runtime(runtime);
     let progress: Arc<dyn DownloadProgress> = Arc::new(testing::Progress::default());
@@ -170,38 +172,33 @@ async fn in_bypass_an_ai_tool_call_completes_without_a_tap() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn in_auto_mode_autopilot_learns_from_the_user_then_approves_alone_and_still_asks_for_something_new() {
+async fn in_auto_mode_autopilot_asks_once_then_approves_alone_and_still_asks_for_something_new() {
     let s = setup("auto@example.com").await;
     s.phone.core.set_autopilot_mode(None, Some(AutopilotMode::Auto), None).await.unwrap();
-    s.model.rule("list_notes", logits(0.97, 0.01, 0.02));
+    s.model.rule("list_notes", logits(0.98, 0.01, 0.01));
     s.model.rule("add_note", logits(0.99, 0.005, 0.005));
 
-    // The user answers twenty times; Autopilot only watches (the class has not earned it yet).
-    for i in 0..20 {
-        let no_args = json!({});
-        let call = s.ai.tool(&s.list_notes, &no_args);
-        let user = async {
-            let item = s.phone.wait_for_item(Duration::from_secs(30)).await;
-            let suggestion = s.phone.core.autopilot_suggestion(item.id.clone()).await.unwrap().expect("evaluated");
-            assert!(suggestion.judged, "{i}: {suggestion:?}");
-            if i > 0 {
-                assert_eq!(suggestion.verdict, Verdict::Approve, "{i}: {suggestion:?}");
-                assert!(item.suggestion.as_deref().is_some_and(|l| l.starts_with("Autopilot would approve")));
-            }
-            s.phone.core.approve(item.id, once()).await.unwrap();
-        };
-        let (result, ()) = tokio::join!(call, user);
-        assert_eq!(result["isError"], false, "{result}");
-    }
+    // The first time this tool is called it asks, however sure the model is; the user approves it once.
+    let no_args = json!({});
+    let call = s.ai.tool(&s.list_notes, &no_args);
+    let user = async {
+        let item = s.phone.wait_for_item(Duration::from_secs(30)).await;
+        let suggestion = s.phone.core.autopilot_suggestion(item.id.clone()).await.unwrap().expect("evaluated");
+        assert!(suggestion.judged && suggestion.novel && suggestion.verdict == Verdict::Ask, "{suggestion:?}");
+        s.phone.core.approve(item.id, once()).await.unwrap();
+    };
+    let (result, ()) = tokio::join!(call, user);
+    assert_eq!(result["isError"], false, "{result}");
     assert!(decided(&s.phone).is_empty());
 
-    // Earned: the same kind of request now completes with nobody tapping.
+    // No break-in for the kind: from the next call on it completes with nobody tapping. (Before the cold start it took
+    // twenty answers first.)
     let result = with_app_open(&s.phone, s.ai.tool(&s.list_notes, &json!({}))).await;
     assert_eq!(result["isError"], false, "{result}");
     assert_eq!(decided_soon(&s.phone, 1).await, [(Verdict::Approve, "autopilot".to_owned())]);
     let profiles = s.phone.core.autopilot_profiles().await.unwrap();
     let class = profiles[0].classes.iter().find(|c| c.class_key.ends_with("/read/list_notes")).unwrap();
-    assert!(class.auto_approve && class.decisions == 20, "{class:?}");
+    assert!(class.auto_approve && class.decisions == 1 && !class.paused, "{class:?}");
 
     // A tool never approved before waits, however sure the model is; the user says no.
     let args = json!({"text": "transfer everything"});

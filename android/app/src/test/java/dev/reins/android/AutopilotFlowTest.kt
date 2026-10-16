@@ -486,9 +486,11 @@ class AutopilotFlowTest : FlowHarness() {
         openAutopilot()
         tap("profile:personal")
         awaitTag("class:github/write/push")
-        rule.onNodeWithTag("classStatus:github/write/push", useUnmergedTree = true).assertTextContains("On Auto · 26 decisions")
-        rule.onNodeWithTag("classStatus:desktop/ask/command", useUnmergedTree = true).assertTextContains("15 more to unlock")
-        rule.onNodeWithTag("classStatus:telegram/send", useUnmergedTree = true).assertTextContains("Always asks")
+        rule.onNodeWithTag("classStatus:github/write/push", useUnmergedTree = true).assertTextContains("Auto")
+        rule.onNodeWithTag("classStatus:gmail/read", useUnmergedTree = true).assertTextContains("Paused")
+        rule.onNodeWithTag("classStatus:desktop/ask/command", useUnmergedTree = true).assertTextContains("Asks")
+        rule.onNodeWithTag("classStatus:telegram/send", useUnmergedTree = true).assertTextContains("Locked by you")
+        rule.onNodeWithTag("learningLine", useUnmergedTree = true).assertTextContains("Learning your preferences · 64 answers")
         rule.onNodeWithTag("statMemory").assertTextContains("64", substring = true)
         rule.onNodeWithTag("statKinds").assertTextContains("/4", substring = true)
         tap("preset:CAUTIOUS")
@@ -521,15 +523,15 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun unlockingAClassByHandWarnsFirst() {
+    fun trustingAClassByHandWarnsFirst() {
         installModel()
         openAutopilot()
         tap("profile:personal")
         tap("class:gmail/read")
         tap("lock:off:gmail/read")
-        awaitText("Let Auto approve", substring = true)
+        awaitText("Trust Gmail · read now?", substring = true)
         assertTrue(core.classLocks.isEmpty())
-        rule.onNodeWithText("Unlock").performClick()
+        rule.onNodeWithText("Trust").performClick()
         awaitCore { core.classLocks.isNotEmpty() }
         assertEquals(Triple("personal", "gmail/read", false), core.classLocks.single())
         tap("lock:on:gmail/read")

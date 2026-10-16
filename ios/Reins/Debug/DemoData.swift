@@ -899,34 +899,34 @@ enum DemoData {
 
     static func classView(
         _ key: String, _ label: String, decisions: UInt32, approved: UInt32, denied: UInt32, accuracy: Float?, autoApprove: Bool = false,
-        autoDeny: Bool = false, manual: Bool? = nil, toUnlock: UInt32
+        autoDeny: Bool = false, manual: Bool? = nil, paused: Bool = false
     ) -> ClassView {
         ClassView(
             classKey: key, label: label, decisions: decisions, approved: approved, denied: denied, shadowAccuracy: accuracy,
-            autoApprove: autoApprove, autoDeny: autoDeny, manual: manual, decisionsToUnlock: toUnlock
+            autoApprove: autoApprove, autoDeny: autoDeny, manual: manual, paused: paused
         )
     }
 
-    /// Personal (default): one class decided on its own, one denied on its own, one still learning, one unlocked by
-    /// hand, one kept manual. Work: young, nothing unlocked yet.
+    /// Personal (default): one kind on Auto, one paused after a wrong answer, one that asks (no model that rates risk
+    /// yet), one locked by hand, one trusted by hand. Work: young, on Auto from its first answer.
     static func profiles(_ now: Int64) -> [ProfileView] {
         [
             ProfileView(
                 id: "personal", name: "Personal", icon: "🙂", preset: .balanced, approveAt: 0.95, denyAt: 0.90, agreement: 0.94,
                 isDefault: true, memoryCount: 64, connections: [],
                 classes: [
-                    classView("github/write/push", "GitHub · write · push", decisions: 26, approved: 25, denied: 1, accuracy: 0.98, autoApprove: true, toUnlock: 0),
-                    classView("gmail/read", "Gmail · read", decisions: 14, approved: 12, denied: 2, accuracy: 0.93, autoDeny: true, toUnlock: 6),
-                    classView("desktop/ask/command", "Desktop · ask · command", decisions: 5, approved: 5, denied: 0, accuracy: nil, toUnlock: 15),
-                    classView("telegram/send", "Telegram · send", decisions: 22, approved: 20, denied: 2, accuracy: 0.97, manual: false, toUnlock: 0),
-                    classView("gmail/send", "Gmail · send", decisions: 31, approved: 29, denied: 2, accuracy: 0.96, manual: true, toUnlock: 0),
+                    classView("github/write/push", "GitHub · write · push", decisions: 26, approved: 25, denied: 1, accuracy: 0.98, autoApprove: true),
+                    classView("gmail/read", "Gmail · read", decisions: 14, approved: 12, denied: 2, accuracy: 0.93, autoDeny: true, paused: true),
+                    classView("desktop/ask/command", "Desktop · ask · command", decisions: 5, approved: 5, denied: 0, accuracy: nil),
+                    classView("telegram/send", "Telegram · send", decisions: 22, approved: 20, denied: 2, accuracy: 0.97, manual: false),
+                    classView("gmail/send", "Gmail · send", decisions: 31, approved: 29, denied: 2, accuracy: 0.96, autoApprove: true, manual: true),
                 ],
                 trainedAt: now - 86_400
             ),
             ProfileView(
                 id: "work", name: "Work", icon: "💼", preset: .cautious, approveAt: 0.98, denyAt: 0.95, agreement: nil,
                 isDefault: false, memoryCount: 9, connections: [],
-                classes: [classView("github/write/push", "GitHub · write · push", decisions: 9, approved: 9, denied: 0, accuracy: nil, toUnlock: 11)],
+                classes: [classView("github/write/push", "GitHub · write · push", decisions: 9, approved: 9, denied: 0, accuracy: nil, autoApprove: true)],
                 trainedAt: nil
             ),
         ]

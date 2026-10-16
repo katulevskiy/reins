@@ -15,7 +15,9 @@ pub enum AutopilotMode {
     // Older versions stored the mode this one replaced as "Assisted".
     #[serde(alias = "Assisted")]
     Manual,
-    /// Autopilot approves or denies what it is confident about, in classes that earned it; the rest waits.
+    /// Autopilot approves what it is confident about from the first request (stricter while the user's answers to a
+    /// kind are few, and only what the risk model calls clearly benign), and denies what it is sure about where it
+    /// learned to; the rest waits.
     Auto,
     /// For agents left working: Auto, plus the destructive part of the hard floor weighed by the risk model instead of
     /// always asked. What it rates catastrophic in context, a tripwire, or what the phone cannot read with certainty
@@ -266,7 +268,8 @@ pub struct ProfileView {
     pub trained_at: Option<i64>,
 }
 
-/// One action class of a profile and how far it is from running on its own (spec §5.4).
+/// One action class of a profile and where it stands (spec §5.4). Its state, for the app: `manual == Some(false)`
+/// locked by you; else `paused`; else `auto_approve` Auto; else it asks.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct ClassView {
     /// `service/action/class`, e.g. `github/write/push`.
@@ -280,14 +283,21 @@ pub struct ClassView {
     /// Share of the recent decisions where Autopilot would have done what the user did (among those it would have
     /// decided on its own); `None` until it would have decided at least 10.
     pub shadow_accuracy: Option<f32>,
-    /// Auto mode may approve in this class.
+    /// Auto mode approves on its own in this class when it is sure (from the first request: the bar is stricter while
+    /// the user's answers are few). False when paused, locked by hand, or, with no model that rates risk, before the
+    /// user's answers show full measured agreement (`decide::trust`), as the engine reads it.
     pub auto_approve: bool,
-    /// Auto mode may deny in this class.
+    /// Auto mode may deny any request of this class it would deny (else only what it rates surely catastrophic).
     pub auto_deny: bool,
     /// The user's override: `Some(true)` unlocked by hand, `Some(false)` locked by hand, `None` automatic.
     pub manual: Option<bool>,
-    /// Human decisions still needed before auto-approve can unlock by itself (0 when the count is reached).
+    /// Deprecated, always 0: Auto no longer waits for a number of decisions. Kept for apps that still read it.
+    #[uniffi(default)]
     pub decisions_to_unlock: u32,
+    /// Auto-approve is paused here after a wrong approval (the user said "This was wrong", or denied what Autopilot
+    /// would have approved); it resumes after enough answers that agree with the user.
+    #[uniffi(default)]
+    pub paused: bool,
 }
 
 /// One remembered decision similar to a request.
@@ -407,7 +417,7 @@ pub struct AutopilotStats {
     pub matched: Option<f32>,
     /// How many decisions `matched` is out of.
     pub compared: u32,
-    /// Kinds of request Auto may approve on its own, over every profile…
+    /// Kinds of request Auto approves on its own when sure (not paused or locked), over every profile…
     pub kinds_on_auto: u32,
     /// …out of the kinds seen.
     pub kinds: u32,
