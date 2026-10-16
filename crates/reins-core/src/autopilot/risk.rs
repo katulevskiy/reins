@@ -949,6 +949,14 @@ pub fn push_context(git: &GitPushView) -> Context {
     c
 }
 
+/// A push changes the default branch, or a long-lived one when the default is not known (`main`, `master`, `trunk`,
+/// `develop`, `production`, `prod`, `release…`): Auto always asks for it, whatever the model says. (A force push or a
+/// delete of any branch is on the hard floor already.)
+pub fn changes_default_branch(git: &GitPushView) -> bool {
+    let default = git.default_branch.as_deref();
+    git.refs.iter().any(|r| r.kind == "branch" && branch_kind(&r.short_name, default).is_some())
+}
+
 /// What a file that a path names holds, when it holds secrets.
 fn secret_path(path: &str) -> Option<&'static str> {
     // The table lives in `reins_proto::attention` so a phone and the desktop app share it.

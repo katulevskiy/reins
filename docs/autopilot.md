@@ -139,7 +139,12 @@ command in that folder, so a learnt answer never covers another command). There 
   rates 30% or more likely severe or catastrophic, not even in a kind you trust by hand. Until your answers show
   measured agreement (Autopilot's suggestions matched at least 95% of your decisions, over at least 10 of them), it
   also needs the request rated clearly benign (at least 90% benign, under 5% severe or catastrophic); that requirement
-  eases in a straight line from 10 to 20 agreeing decisions. Without a model that rates risk, a kind asks until then.
+  eases in a straight line from 10 to 20 agreeing decisions, never below 50% benign. Only your decisions on requests
+  clear of risk, with the model in use, count as agreement: approving requests it held for their risk never releases
+  that hold. Without a model that rates risk, a kind asks until then.
+- **Pushes to the default branch** (or `main`, `master`, `trunk`, `develop`, `production`, `prod`, `release…` when the
+  default is not known) always ask in Auto, whatever the model says; force pushes and branch deletes are on the hard
+  floor. Overnight keeps its own rules for these, and outside the floor it weighs it applies Auto's risk checks too.
 - **Paused:** when you say an automatic approval was wrong (Auto's or Overnight's), or deny something Autopilot would
   have approved, auto-approve pauses for that kind, and a trust you gave it by hand is taken back. It resumes once the
   wrong one is out of your last 20 answers there and Autopilot again agrees with at least 95% of what you decided.

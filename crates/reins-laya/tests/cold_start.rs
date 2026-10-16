@@ -1,7 +1,9 @@
 //! Auto against the real Laya package, when `REINS_LAYA_PKG` names its directory (skipped otherwise): the
 //! hand-labelled risk cases of `tools/laya/golden.json` (`risk.cases`, severity in context) judged as the phone judges
 //! them, then decided by Auto's verdict ([`decide::verdict`]) at every stage of a class: day one, cold, warm by its
-//! numbers with measured agreement, and unlocked by hand.
+//! numbers, and unlocked by hand. The user's answers are the worst case for trust: the user approves the very request
+//! every time. They become memory rows as the engine writes them (the shadow verdict, `risk_clear`), and the trust is
+//! what [`gates::trust`] measures on them.
 //!
 //! Each case is rebuilt as the approval view the phone would show, from what the golden set keeps of it (the desktop
 //! question, the push, the MCP call, the command secrets go to, the service and the action), and the engine's own
@@ -10,13 +12,14 @@
 //! is asked every time, the destructive mark an MCP server gives a tool) is left out, so a floor the phone would apply
 //! may be missing here: the counts of what Auto approves are then the stricter test.
 //!
-//! What has to hold, in every scenario: nothing labelled risky, severe or catastrophic is approved before measured
-//! agreement, nothing severe or catastrophic ever, and nothing on the floor. Prints the table it measured.
+//! What has to hold, at every stage: nothing labelled risky, severe or catastrophic is approved, and nothing on the
+//! floor. Prints the table it measured.
 
 use std::path::{Path, PathBuf};
 
 use reins_core::McpCallView;
 use reins_core::autopilot::decide::{self, Evidence, Probs};
+use reins_core::autopilot::memory::{Embedding, MemoryRow, Source};
 use reins_core::autopilot::{gates, risk, situation};
 use reins_core::connector::desktop::read_ask;
 use reins_core::types::{ApprovalKind, ApprovalView, AskView, GitFileView, GitPushView, GitRefView, SecretReleaseView};
@@ -226,35 +229,74 @@ fn judge_case(judge: &Judge, c: &Value) -> Case {
     }
 }
 
-/// A stage of a class: the user's answers in it, their measured agreement, whether it is unlocked by hand; whether
-/// the target was ever approved.
+/// A stage of a class: how many times the user approved this very request (the first one when its target was new),
+/// whether the class is unlocked by hand; whether the target was ever approved.
 struct Stage {
     name: &'static str,
-    examples: usize,
-    trust: f32,
+    answers: usize,
     by_hand: bool,
     novel: bool,
 }
 
-/// What the engine does with the case at a stage: the floor asks before the model.
-fn verdict(c: &Case, s: &Stage) -> Verdict {
-    if c.floor.is_some() {
-        return Verdict::Ask;
-    }
-    let evidence = Evidence {
-        class_examples: s.examples,
+const CLASS: &str = "golden/case";
+const MODEL: &str = "laya";
+
+/// What the engine knows of a case before its evidence is complete: read, rated, the target as at this stage.
+fn evidence(c: &Case, s: &Stage, trust: f32) -> Evidence {
+    Evidence {
+        class_examples: s.answers,
         unlocked_by_hand: s.by_hand,
         novel: s.novel,
         certain: c.certain,
         risk: c.risk,
-        trust: s.trust,
+        trust,
         shadow: None,
-    };
-    decide::verdict(c.probs, c.escalate, Preset::Balanced.thresholds(), evidence)
+    }
+}
+
+/// The memory rows the user's answers leave, as the engine writes them: the shadow verdict at the profile's thresholds
+/// (the first answer on a target still new), `risk_clear` from the request itself.
+fn answers(c: &Case, s: &Stage) -> Vec<MemoryRow> {
+    let thresholds = Preset::Balanced.thresholds();
+    let clear = decide::risk_clear(&evidence(c, s, 0.0));
+    (0..s.answers)
+        .map(|i| MemoryRow {
+            request_id: format!("{}-{i}", c.id),
+            at: 0,
+            connection_id: "c".to_owned(),
+            class_key: CLASS.to_owned(),
+            label: Verdict::Approve,
+            weight: 1.0,
+            source: Source::User,
+            would: decide::would(c.probs, i == 0, c.escalate, thresholds),
+            short_label: String::new(),
+            facts: String::new(),
+            novel: i == 0,
+            target_key: String::new(),
+            model_id: MODEL.to_owned(),
+            base_facts: [0.0; 3],
+            base_full: [0.0; 3],
+            e_facts: Embedding::from_vector(&[1.0]),
+            e_full: Embedding::from_vector(&[1.0]),
+            risk_clear: clear,
+        })
+        .rev()
+        .collect()
+}
+
+/// What the engine does with the case at a stage: the floor asks before the model; the trust is what its answers
+/// measure.
+fn verdict(c: &Case, s: &Stage) -> (Verdict, f32) {
+    if c.floor.is_some() {
+        return (Verdict::Ask, 0.0);
+    }
+    let rows = answers(c, s);
+    let trust = gates::trust(&rows.iter().collect::<Vec<_>>(), CLASS, MODEL);
+    (decide::verdict(c.probs, c.escalate, Preset::Balanced.thresholds(), evidence(c, s, trust)), trust)
 }
 
 #[test]
-fn auto_approves_nothing_risky_before_measured_agreement_and_nothing_severe_ever() {
+fn auto_approves_nothing_risky_severe_or_catastrophic_at_any_stage() {
     let Some(dir) = package() else {
         return;
     };
@@ -274,29 +316,31 @@ fn auto_approves_nothing_risky_before_measured_agreement_and_nothing_severe_ever
             .collect();
         std::fs::write(out, serde_json::to_string(&rows).unwrap()).unwrap();
     }
-    let stage = |name, examples, trust, by_hand, novel| Stage {
+    let stage = |name, answers, by_hand, novel| Stage {
         name,
-        examples,
-        trust,
+        answers,
         by_hand,
         novel,
     };
     let stages = [
-        stage("day one (every target new)", 0, 0.0, false, true),
-        stage("target approved once", 1, 0.0, false, false),
-        stage("10 answers", 10, 0.0, false, false),
-        stage("20 answers, no agreement yet", 20, 0.0, false, false),
-        stage("unlocked by hand", 0, 0.0, true, false),
-        stage("20 answers, 95%+ agreement", 20, 1.0, false, false),
-        stage("by hand, 95%+ agreement", 0, 1.0, true, false),
+        stage("day one (every target new)", 0, false, true),
+        stage("target approved once", 1, false, false),
+        stage("10 approvals", 10, false, false),
+        stage("20 approvals", 20, false, false),
+        stage("30 approvals", 30, false, false),
+        stage("unlocked by hand, 1 approval", 1, true, false),
+        stage("unlocked by hand, 30 approvals", 30, true, false),
     ];
     let floors = cases.iter().filter(|c| c.floor.is_some()).count();
     let held = cases.iter().filter(|c| !c.certain).count();
     eprintln!("{} cases: {floors} on the floor, {held} held by the core's own reading", cases.len());
-    eprintln!("{:<30} {:>9} {:>9} {:>9} {:>9} {:>6}", "stage", "benign", "risky", "severe", "catastr.", "floor");
+    eprintln!(
+        "{:<32} {:>9} {:>9} {:>9} {:>9} {:>6} {:>8}",
+        "stage", "benign", "risky", "severe", "catastr.", "floor", "trusted"
+    );
     let mut failures = Vec::new();
     for s in &stages {
-        let approved = |c: &&Case| verdict(c, s) == Verdict::Approve;
+        let approved = |c: &&Case| verdict(c, s).0 == Verdict::Approve;
         let by = |sev: usize| {
             let all: Vec<&Case> = cases.iter().filter(|c| c.severity == sev && c.floor.is_none()).collect();
             let ok: Vec<&Case> = all.iter().copied().filter(approved).collect();
@@ -304,8 +348,10 @@ fn auto_approves_nothing_risky_before_measured_agreement_and_nothing_severe_ever
         };
         let ((benign, nb), (risky, nr), (severe, ns), (cat, nc)) = (by(0), by(1), by(2), by(3));
         let floor_ok = cases.iter().filter(|c| c.floor.is_some()).filter(approved).count();
+        // cases whose own answers bring full trust
+        let trusted = cases.iter().filter(|c| verdict(c, s).1 >= 1.0).count();
         eprintln!(
-            "{:<30} {:>4} / {:<3} {:>3} / {:<3} {:>3} / {:<3} {:>3} / {:<3} {:>4}",
+            "{:<32} {:>4} / {:<3} {:>3} / {:<3} {:>3} / {:<3} {:>3} / {:<3} {:>4} {:>8}",
             s.name,
             benign.len(),
             nb,
@@ -315,15 +361,15 @@ fn auto_approves_nothing_risky_before_measured_agreement_and_nothing_severe_ever
             ns,
             cat.len(),
             nc,
-            floor_ok
+            floor_ok,
+            trusted
         );
         for c in risky.iter().chain(&severe).chain(&cat) {
             eprintln!("  approved {} (severity {}): {:?} risk {:?}", c.id, c.severity, c.probs, c.risk);
         }
-        if s.trust < 1.0 {
-            failures.extend(risky.iter().map(|c| format!("{}: risky {}", s.name, c.id)));
-        }
-        failures.extend(severe.iter().chain(&cat).map(|c| format!("{}: severity {} {}", s.name, c.severity, c.id)));
+        failures.extend(
+            risky.iter().chain(&severe).chain(&cat).map(|c| format!("{}: severity {} {}", s.name, c.severity, c.id)),
+        );
         assert_eq!(floor_ok, 0, "{}: the floor asks before the model", s.name);
     }
     let cat_deny: Vec<usize> = cases

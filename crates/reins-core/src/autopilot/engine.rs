@@ -868,7 +868,12 @@ impl Engine {
         // wait, as in Auto.
         let weighed = mode == AutopilotMode::Overnight && rates_risk && subject.floor_weighable;
         let floor = subject.floor.clone().filter(|_| !weighed);
-        if let Some(floor) = floor.or(young) {
+        // Auto never decides a push to the default branch on the model (a force push or a branch delete is on the
+        // floor above): it always asks. Overnight keeps its own floor rules.
+        let default_branch = (mode == AutopilotMode::Auto
+            && subject.view.as_ref().and_then(|v| v.git.as_ref()).is_some_and(risk::changes_default_branch))
+        .then(|| "a push to the default branch is always asked in Auto".to_owned());
+        if let Some(floor) = floor.or(young).or(default_branch) {
             s.reason = format!("Always asks: {floor}");
             s.floor = Some(floor);
             return self.ap_wait(&subject, &s);
@@ -894,10 +899,14 @@ impl Engine {
         let first_line = subject.described.facts.context.first().cloned();
         // The class as the profile knows it: Auto approves from the first request unless a wrong approval paused it or
         // the user locked it (gates::auto_gate).
-        let (stats, manual_open) = {
+        let (stats, manual_open, trust) = {
             let profile = self.ap_profile_loaded(ctx, &subject.connection_id)?;
             let refs: Vec<&MemoryRow> = profile.1.iter().collect();
-            (gates::class_stats(&refs, &s.class_key), profile.0.profile.manual.get(&s.class_key).map(|locked| !locked))
+            (
+                gates::class_stats(&refs, &s.class_key),
+                profile.0.profile.manual.get(&s.class_key).map(|locked| !locked),
+                gates::trust(&refs, &s.class_key, &judged.model_id),
+            )
         };
         let gate = gates::auto_gate(&stats, manual_open);
         let evidence = decide::Evidence {
@@ -905,7 +914,7 @@ impl Engine {
             novel,
             certain,
             risk: readable,
-            trust: gates::trust(&stats),
+            trust,
             shadow: Some(decide::would(probs, novel, judged.escalate, thresholds)),
             ..judged.evidence.unwrap_or_default()
         };
@@ -917,13 +926,16 @@ impl Engine {
         let overnight = mode == AutopilotMode::Overnight && judged.risk_declared;
         if overnight {
             // Overnight's own rule, as it always was (the earned classes, the rule of before the cold start), and
-            // whatever Auto would approve on its own (never a floor, which Auto always asks).
+            // whatever Auto would approve on its own (never a floor, which Auto always asks). Outside the floor it
+            // weighs, its own rule passes Auto's risk check too (the severe veto, clearly benign until measured
+            // agreement): Overnight is never looser than Auto but on that floor.
             let (earned_approve, may_deny) = gates::unlocked(&stats, manual_open);
             let auto_approves = s.verdict == Verdict::Approve && gate.approve && subject.floor.is_none();
+            let risk_passes = subject.floor.is_some() || decide::risk_ok(readable, evidence.trust);
             let (verdict, may_approve) = if auto_approves {
                 (Verdict::Approve, true)
             } else {
-                (decide::would(probs, novel, judged.escalate, thresholds), earned_approve)
+                (decide::would(probs, novel, judged.escalate, thresholds), earned_approve && risk_passes)
             };
             let view_max = judged.risk_view_max;
             let level = readable
@@ -2135,14 +2147,14 @@ impl Engine {
         let memory = self.store.ap_memory(&stored.id)?;
         let mut profile = (stored, memory);
         let manual_open = profile.0.profile.manual.get(&s.class_key).map(|locked| !locked);
-        let stats = gates::class_stats(&profile.1.iter().collect::<Vec<_>>(), &s.class_key);
         let (mut judged, probs) = self.ap_judge(&s, None, &mut profile, s.at).await.map_err(CoreError::service)?;
+        let trust = gates::trust(&profile.1.iter().collect::<Vec<_>>(), &s.class_key, &judged.model_id);
         // As Auto would judge it (a typed situation has no core reading to hold it), the risk as the model rates it.
         let evidence = decide::Evidence {
             unlocked_by_hand: manual_open == Some(true),
             certain: true,
             risk: judged.risk.filter(|p| risk::readable(*p)),
-            trust: gates::trust(&stats),
+            trust,
             shadow: Some(decide::would(probs, s.novel, judged.escalate, thresholds)),
             ..judged.evidence.unwrap_or_default()
         };
@@ -2164,6 +2176,8 @@ impl Engine {
         // Without a model that rates risk nothing vouches for a kind until the user's answers show full measured
         // agreement in it (decide::risk_ok): it asks until then. The engine reads the same numbers.
         let rates_risk = self.ap_installed() && model::rates_risk(&self.data_dir, &self.ap_known());
+        // the model in use, whose decisions alone measure agreement (as the engine counts them)
+        let model_id = self.ap_known().id.to_string();
         let mut views = Vec::with_capacity(profiles.len());
         for p in profiles {
             let memory = self.store.ap_memory(&p.id)?;
@@ -2180,7 +2194,7 @@ impl Engine {
                     let stats = gates::class_stats(&refs, &key);
                     let open = p.profile.manual.get(&key).map(|locked| !locked);
                     let gate = gates::auto_gate(&stats, open);
-                    let vouched = rates_risk || gates::trust(&stats) >= 1.0;
+                    let vouched = rates_risk || gates::trust(&refs, &key, &model_id) >= 1.0;
                     ClassView {
                         label: class_label(self, &key),
                         decisions: u32::try_from(stats.decisions).unwrap_or(u32::MAX),
@@ -2437,5 +2451,6 @@ fn memory_row(
         base_full: j.base_full,
         e_facts: j.e_facts.clone(),
         e_full: j.e_full.clone(),
+        risk_clear: j.evidence.is_some_and(|e| decide::risk_clear(&e)),
     }
 }

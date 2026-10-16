@@ -206,9 +206,23 @@ pub fn unlocked(stats: &ClassStats, manual: Option<bool>) -> (bool, bool) {
     }
 }
 
-/// The user's measured agreement in a class ([`super::decide::trust`]): how far it relaxes the benign requirement.
-pub fn trust(stats: &ClassStats) -> f32 {
-    super::decide::trust(stats.accuracy(), stats.decided)
+/// The user's measured agreement in a class with the model in use ([`super::decide::trust`]): how far it relaxes the
+/// risk check. Over the class's last 50 decisions remembered with `model_id`, only those on requests that themselves
+/// passed the fully relaxed risk check (`MemoryRow::risk_clear`) and that Autopilot would have decided: a decision on
+/// a request held for its risk never helps release that hold, and another model's agreement is not this one's.
+#[expect(clippy::cast_precision_loss, reason = "counts of at most 50")]
+pub fn trust(rows: &[&MemoryRow], class_key: &str, model_id: &str) -> f32 {
+    let (mut decided, mut correct) = (0_usize, 0_usize);
+    for r in rows.iter().filter(|r| r.class_key == class_key && r.model_id == model_id).take(ACCURACY_WINDOW) {
+        if r.risk_clear && r.would != Verdict::Ask {
+            decided += 1;
+            if r.would == r.label {
+                correct += 1;
+            }
+        }
+    }
+    let accuracy = (decided >= ACCURACY_MIN_DECIDED).then(|| correct as f32 / decided as f32);
+    super::decide::trust(accuracy, decided)
 }
 
 /// What Auto may do on its own in one class.
@@ -383,6 +397,31 @@ mod tests {
         let refs: Vec<&MemoryRow> = wrong.iter().collect();
         let gate = auto_gate(&class_stats(&refs, "github/write/push"), None);
         assert!(!gate.deny && !gate.deny_catastrophic, "{gate:?}");
+    }
+
+    /// Agreement is measured only on decisions about requests clear of risk, with the model in use.
+    #[test]
+    fn trust_counts_only_risk_clear_decisions_of_the_model_in_use() {
+        let agreeing = |n: usize, clear: bool, model: &str| -> Vec<MemoryRow> {
+            (0..n)
+                .map(|_| {
+                    let mut r = decided(Verdict::Approve, Verdict::Approve);
+                    r.risk_clear = clear;
+                    model.clone_into(&mut r.model_id);
+                    r
+                })
+                .collect()
+        };
+        let trust_of = |rows: &[MemoryRow], model: &str| {
+            let refs: Vec<&MemoryRow> = rows.iter().collect();
+            trust(&refs, "github/write/push", model)
+        };
+        assert!((trust_of(&agreeing(20, true, "m"), "m") - 1.0).abs() < 1e-6);
+        assert!(trust_of(&agreeing(40, false, "m"), "m") == 0.0, "decisions on requests held for risk never count");
+        assert!(trust_of(&agreeing(20, true, "old"), "m") == 0.0, "another model's agreement is not this one's");
+        let mut mixed = agreeing(15, true, "m");
+        mixed.extend(agreeing(30, false, "m"));
+        assert!((trust_of(&mixed, "m") - 0.5).abs() < 1e-6, "15 clear decisions: halfway");
     }
 
     #[test]

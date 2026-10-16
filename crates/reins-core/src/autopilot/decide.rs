@@ -28,6 +28,12 @@ pub const COLD_SEVERE_MAX: f32 = 0.05;
 /// 0.63 or more and 50 of the 54 severe ones above 0.3, while 90% of the benign ones are under 0.07; 0.3 stops as few
 /// benign cases as 0.5 does (4 of 122) and one severe case more.
 pub const SEVERE_VETO: f32 = 0.3;
+/// The P(benign) Auto needs even at full trust: a request the risk head rates more likely not benign than benign
+/// (mostly risky: a push to the default branch, a hard reset) asks, however much the user's answers agree. On the golden
+/// set of `tools/laya`, among the requests that reach the model (off the floor, read with certainty), any floor from
+/// 0.3 to 0.5 stops the same 6 of 88 benign cases and passes 1 of 41 risky ones (then still held by the approve bar);
+/// 0.6 stops 2 benign cases more for no risky one: 0.5 is the strictest that costs nothing.
+pub const TRUSTED_BENIGN: f32 = 0.5;
 /// Comparable decisions (Autopilot's shadow verdict against the user's) at which measured agreement has fully relaxed
 /// the benign requirement ([`trust`]); it starts relaxing at the 10 the shadow accuracy needs to count.
 pub const TRUSTED_DECIDED: usize = 20;
@@ -218,17 +224,25 @@ pub fn trust(accuracy: Option<f32>, decided: usize) -> f32 {
     ((decided - MEASURED_DECIDED) as f32 / (TRUSTED_DECIDED - MEASURED_DECIDED) as f32).min(1.0)
 }
 
-/// The risk Auto accepts at `trust` (0 to 1): P(benign) at least [`COLD_BENIGN`] · (1 − trust) and P(severe) +
-/// P(catastrophic) under [`COLD_SEVERE_MAX`], rising in a line to [`SEVERE_VETO`]; never at or above the veto. Without
-/// a readable risk (a model that does not rate it) only full trust, and then nothing is vetoed by the risk head.
+/// The risk Auto accepts at `trust` (0 to 1): P(benign) at least [`COLD_BENIGN`], easing in a line to
+/// [`TRUSTED_BENIGN`], and P(severe) + P(catastrophic) under [`COLD_SEVERE_MAX`], rising in a line to [`SEVERE_VETO`];
+/// never at or above the veto, never under the trusted P(benign). Without a readable risk (a model that does not rate
+/// it) only full trust, and then nothing is vetoed by the risk head.
 pub fn risk_ok(risk: Option<[f32; 4]>, trust: f32) -> bool {
     let t = trust.clamp(0.0, 1.0);
     match risk.filter(|r| readable(*r)) {
         Some(r) => {
-            r[0] >= COLD_BENIGN * (1.0 - t) && r[2] + r[3] < COLD_SEVERE_MAX + (SEVERE_VETO - COLD_SEVERE_MAX) * t
+            r[0] >= COLD_BENIGN + (TRUSTED_BENIGN - COLD_BENIGN) * t
+                && r[2] + r[3] < COLD_SEVERE_MAX + (SEVERE_VETO - COLD_SEVERE_MAX) * t
         }
         None => t >= 1.0,
     }
+}
+
+/// The request passes the fully relaxed risk check: read with certainty, no tripwire, and within what full trust
+/// accepts ([`risk_ok`] at 1). Only decisions on such requests measure the agreement that relaxes the check.
+pub fn risk_clear(e: &Evidence) -> bool {
+    e.certain && risk_ok(e.risk, 1.0)
 }
 
 /// The risk head calls a request clearly benign (after the two-pass rule): what [`risk_ok`] asks with no measured
@@ -346,7 +360,9 @@ mod tests {
     }
 
     const CALM: [f32; 4] = [0.95, 0.02, 0.02, 0.01];
-    /// Not clearly benign, well under the veto: what measured agreement lets through.
+    /// Not clearly benign, well under the veto, still more benign than not: what measured agreement lets through.
+    const LEANING: [f32; 4] = [0.6, 0.3, 0.07, 0.03];
+    /// Mostly risky, under the veto: asks even at full trust.
     const RISKY: [f32; 4] = [0.2, 0.7, 0.07, 0.03];
     /// At the severe veto.
     const SEVERE: [f32; 4] = [0.1, 0.6, 0.2, 0.1];
@@ -393,9 +409,18 @@ mod tests {
         assert!((trust(Some(1.0), 15) - 0.5).abs() < 1e-6);
         assert!((trust(Some(0.96), 20) - 1.0).abs() < 1e-6 && (trust(Some(1.0), 50) - 1.0).abs() < 1e-6);
         // the accepted risk moves in a line, and the veto never moves
-        assert!(risk_ok(Some(CALM), 0.0) && !risk_ok(Some(RISKY), 0.0) && !risk_ok(Some(RISKY), 0.5));
-        assert!(risk_ok(Some(RISKY), 1.0), "full trust: no benign requirement");
+        assert!(risk_ok(Some(CALM), 0.0) && !risk_ok(Some(LEANING), 0.0) && !risk_ok(Some(LEANING), 0.5));
+        assert!(risk_ok(Some(LEANING), 1.0), "full trust: more benign than not is enough");
+        assert!(!risk_ok(Some(RISKY), 1.0), "mostly risky asks at full trust");
         assert!(!risk_ok(Some(SEVERE), 1.0), "the severe veto holds at full trust");
+        let clear = |risk, certain| {
+            risk_clear(&Evidence {
+                certain,
+                risk: Some(risk),
+                ..Evidence::default()
+            })
+        };
+        assert!(clear(CALM, true) && clear(LEANING, true) && !clear(RISKY, true) && !clear(CALM, false));
         assert!(risk_ok(Some([0.9, 0.0, 0.05, 0.05]), 0.3) && !risk_ok(Some([0.9, 0.0, 0.05, 0.05]), 0.1));
         assert!(!risk_ok(None, 0.99) && risk_ok(None, 1.0), "without a risk head, only full trust");
     }
@@ -426,8 +451,13 @@ mod tests {
             trust,
             ..seen(20, risk)
         };
-        assert_eq!(verdict(p(0.99, 0.0), 0.0, t, warm(RISKY, 0.0)), Verdict::Ask, "20 answers, no measured agreement");
-        assert_eq!(verdict(p(0.96, 0.0), 0.0, t, warm(RISKY, 1.0)), Verdict::Approve, "measured agreement");
+        assert_eq!(
+            verdict(p(0.99, 0.0), 0.0, t, warm(LEANING, 0.0)),
+            Verdict::Ask,
+            "20 answers, no measured agreement"
+        );
+        assert_eq!(verdict(p(0.96, 0.0), 0.0, t, warm(LEANING, 1.0)), Verdict::Approve, "measured agreement");
+        assert_eq!(verdict(p(0.999, 0.0), 0.0, t, warm(RISKY, 1.0)), Verdict::Ask, "mostly risky, at full trust");
         assert_eq!(verdict(p(0.999, 0.0), 0.0, t, warm(SEVERE, 1.0)), Verdict::Ask, "the veto");
         let tripwire = Evidence {
             certain: false,

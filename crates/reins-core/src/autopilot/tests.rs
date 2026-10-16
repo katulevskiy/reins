@@ -1507,15 +1507,28 @@ async fn turning_overnight_on_judges_what_already_waits_and_young_ais_still_wait
 async fn after_a_hold_an_ais_severe_requests_wait_and_the_rest_go_on() {
     let env = env_risk().await;
     env.model.risk_rule("wire the savings", testing::risk(0.01, 0.01, 0.03, 0.95));
-    env.model.risk_rule("quarterly numbers", testing::risk(0.05, 0.1, 0.8, 0.05));
+    // Severe deletes inside the project: on the floor Overnight weighs, so its own gate may approve them. (A severe
+    // mail no longer is: outside that floor Overnight passes Auto's risk check, whose veto holds it. It was a mail
+    // about "the quarterly numbers" before.)
+    env.model.risk_rule("rm -rf build", testing::risk(0.05, 0.1, 0.8, 0.05));
+    env.model.risk_rule("rm -rf dist", testing::risk(0.05, 0.1, 0.8, 0.05));
+    let key = desktop_key(&env);
+    env.store().pin_desktop_key(OTHER, &key, "Laptop", unix_now() - 30 * 86_400).unwrap();
     known_and_unlocked(&env).await;
+    for (id, conn, cmd) in
+        [("seed-a", OLD, "rm -rf build"), ("seed-b", OLD, "rm -rf dist"), ("seed-c", OTHER, "rm -rf build")]
+    {
+        env.relay(id, conn, hook_ask(&key, "", "command:rm -r", cmd)).await;
+        env.approve(id).await;
+    }
+    env.unlock("desktop/ask").await;
     env.mode(None, AutopilotMode::Overnight).await;
-    env.relay("r1", OLD, email("friend@x.com", "the quarterly numbers")).await;
+    env.relay("r1", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
     assert_eq!(env.decided().len(), 1, "a severe request is approved");
     env.relay("r2", OLD, email("friend@x.com", "wire the savings now")).await;
-    env.relay("r3", OLD, email("friend@x.com", "the quarterly numbers again")).await;
+    env.relay("r3", OLD, hook_ask(&key, "", "command:rm -r", "rm -rf dist")).await;
     env.relay("r4", OLD, email("friend@x.com", "lunch?")).await;
-    env.relay("r5", OTHER, email("friend@x.com", "the quarterly numbers from another AI")).await;
+    env.relay("r5", OTHER, hook_ask(&key, "", "command:rm -r", "rm -rf build")).await;
     let decided: Vec<String> = env.decided().into_iter().map(|(id, _, _)| id).collect();
     assert_eq!(decided, ["r1", "r4", "r5"]);
     let paused = env.suggestion("r3").await;
@@ -2214,7 +2227,9 @@ async fn cold_start_fixtures_approve_only_benign_known_targets() {
         env.decided().into_iter().filter(|(id, _, _)| !id.starts_with("second-")).map(|(id, v, _)| (id, v)).collect();
     // Denying stays conservative: only the surely catastrophic one is denied with no answers to learn from.
     assert_eq!(automatic, [("mail-catastrophic".to_owned(), Verdict::Deny)]);
-    assert!(env.suggestion("push-main").await.reason.contains("learning"), "the risk model holds it back");
+    // was held by the risk model ("Still learning"): a push to the default branch now always asks in Auto
+    let main = env.suggestion("push-main").await;
+    assert!(main.floor && main.reason.contains("default branch"), "{main:?}");
     assert!(env.suggestion("mail-new-recipient").await.reason.contains("never approved"));
     assert!(env.suggestion("mail-spam").await.reason.contains("after more of your answers"));
     for (id, _, _) in floor("second") {
@@ -2350,6 +2365,76 @@ async fn denying_what_autopilot_would_approve_takes_back_an_unlock_by_hand() {
     env.approve("r3").await;
     env.relay("r4", OLD, email("friend@x.com", "hi")).await;
     assert!(env.decided().is_empty(), "{:?}", env.suggestion("r4").await);
+}
+
+/// Trust cannot be gamed. Decisions on pushes held for their risk never count as agreement, however many the user
+/// approves. Agreement on pushes clear of risk relaxes the check only for what is still more benign than not. A push to
+/// the default branch always asks in Auto.
+#[tokio::test]
+async fn agreement_on_feature_pushes_never_releases_a_risky_push_or_a_push_to_main() {
+    use reins_proto::desktop::RefChange;
+    let (env, _github) = env_git(true).await;
+    env.model.set_risk_default(testing::risk(0.95, 0.03, 0.015, 0.005));
+    env.model.set_default(logits(0.99, 0.005, 0.005));
+    // a push the risk head calls mostly risky, and one it calls more benign than not (not clearly benign)
+    env.model.risk_rule("mostly risky change", testing::risk(0.3, 0.65, 0.03, 0.02));
+    env.model.risk_rule("leaning change", testing::risk(0.6, 0.35, 0.03, 0.02));
+    let key = desktop_key(&env);
+    let push = |id: &str, subject: &str| push_call(&key, id, "src/parse.rs", subject);
+    let answered = |env: &Env, id: &str| env.decided().iter().any(|(d, _, _)| d == id);
+
+    // Manual: the user approves the repository, then twenty pushes held for their risk.
+    env.relay("seed", OLD, push("seed", "Fix the parser")).await;
+    env.approve("seed").await;
+    for i in 0..20 {
+        let id = format!("risky-{i}");
+        env.relay(&id, OLD, push(&id, "mostly risky change")).await;
+        env.approve(&id).await;
+    }
+    // Auto: none of those counted, so a request more benign than not, but not clearly benign, still asks.
+    env.mode(None, AutopilotMode::Auto).await;
+    env.relay("leaning-1", OLD, push("leaning-1", "leaning change")).await;
+    assert!(!answered(&env, "leaning-1"), "{:?}", env.suggestion("leaning-1").await);
+    env.approve("leaning-1").await;
+
+    // Manual: twenty plain feature pushes the user approves, each clear of risk: agreement is measured.
+    env.mode(None, AutopilotMode::Manual).await;
+    for i in 0..20 {
+        let id = format!("plain-{i}");
+        env.relay(&id, OLD, push(&id, "Fix the parser")).await;
+        env.approve(&id).await;
+    }
+    env.mode(None, AutopilotMode::Auto).await;
+    // Now what is more benign than not is Autopilot's…
+    env.relay("leaning-2", OLD, push("leaning-2", "leaning change")).await;
+    assert!(answered(&env, "leaning-2"), "{:?}", env.suggestion("leaning-2").await);
+    // …what is mostly risky still asks at full trust…
+    env.relay("risky-again", OLD, push("risky-again", "mostly risky change")).await;
+    assert!(!answered(&env, "risky-again"), "{:?}", env.suggestion("risky-again").await);
+    // …and a push to main, rated benign by this model, always asks in Auto.
+    env.relay("main", OLD, push_to(&key, "main", "main", RefChange::Update, true)).await;
+    let s = env.suggestion("main").await;
+    assert!(!answered(&env, "main") && s.floor && s.reason.contains("default branch"), "{s:?}");
+}
+
+/// Overnight's own rule (its earned classes, a hand unlock) passes Auto's risk check outside the floor it weighs: a
+/// severe but not catastrophic request in a class unlocked by hand is not approved.
+#[tokio::test]
+async fn overnight_never_approves_what_autos_risk_check_holds_outside_its_floor() {
+    let env = env_risk().await;
+    env.model.rule("friend@x.com", logits(0.99, 0.005, 0.005));
+    // severe, well under Overnight's catastrophic threshold of this package (0.5)
+    env.model.risk_rule("the quarterly numbers", testing::risk(0.1, 0.3, 0.55, 0.05));
+    env.unlock("gmail/send").await;
+    env.relay("r1", OLD, email("friend@x.com", "hi")).await;
+    env.approve("r1").await;
+    env.mode(None, AutopilotMode::Overnight).await;
+    env.relay("severe", OLD, email("friend@x.com", "the quarterly numbers, all of them")).await;
+    let s = env.suggestion("severe").await;
+    assert!(env.decided().is_empty() && env.waiting().await.contains(&"severe".to_owned()), "{s:?}");
+    // A calm one in the same class is still Overnight's.
+    env.relay("calm", OLD, email("friend@x.com", "lunch at 1?")).await;
+    assert_eq!(env.decided(), [("calm".to_owned(), Verdict::Approve, "overnight".to_owned())]);
 }
 
 // ---- profiles --------------------------------------------------------------------------------------------------------

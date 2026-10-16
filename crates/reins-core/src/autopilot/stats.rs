@@ -193,6 +193,7 @@ mod tests {
             base_full: [0.0; 3],
             e_facts: Embedding::from_vector(&[1.0]),
             e_full: Embedding::from_vector(&[1.0]),
+            risk_clear: true,
         };
         assert_eq!(agreement(&[]), (None, 0));
         let rows = [
