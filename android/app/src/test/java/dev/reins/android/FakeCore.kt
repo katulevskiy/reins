@@ -584,7 +584,10 @@ class FakeCore : ReinsCoreInterface {
         ssoFinishError = null
         ssoFinishErrorAfterSignIn = null
         syncNotice = null
+        syncNoticeError = null
         syncNoticeDismissals.set(0)
+        sessionError = null
+        sessionThrows = 0
         ssoBegins.clear()
         serverInfos.clear()
         ssoFinishes.clear()
@@ -640,8 +643,13 @@ class FakeCore : ReinsCoreInterface {
     /** The core's sync notice, and how often it was dismissed. */
     @Volatile var syncNotice: String? = null
     val syncNoticeDismissals = java.util.concurrent.atomic.AtomicInteger()
+    /** Thrown by [accountSyncNotice] while set. A failed read is not "no notice". */
+    @Volatile var syncNoticeError: CoreException? = null
 
-    override suspend fun accountSyncNotice(): String? = syncNotice
+    override suspend fun accountSyncNotice(): String? {
+        syncNoticeError?.let { throw it }
+        return syncNotice
+    }
 
     override suspend fun restoreAccountSyncBackup(): Boolean = false
 
@@ -764,6 +772,47 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun joinView(id: String): JoinView = joins[id] ?: throw CoreException.NotFound()
 
+    // Phone roles: a legacy account (no roster) in these tests.
+    override suspend fun phoneRole(): dev.reins.core.PhoneRole = dev.reins.core.PhoneRole.LEGACY
+
+    override suspend fun rosterSummary(refresh: Boolean): dev.reins.core.RosterSummary? = null
+
+    override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): dev.reins.core.RosterSummary =
+        throw CoreException.NotFound()
+
+    override suspend fun enrollBegin(deviceName: String): dev.reins.core.EnrollStart = throw CoreException.NotFound()
+
+    override suspend fun enrollPoll(): dev.reins.core.EnrollProgress = throw CoreException.NotFound()
+
+    override suspend fun enrollCancel() {}
+
+    override suspend fun enrollView(id: String): dev.reins.core.EnrollView = throw CoreException.NotFound()
+
+    override suspend fun enrollConfirm(id: String, approve: Boolean) = throw CoreException.NotFound()
+
+    override suspend fun handoverRequest(): String = throw CoreException.NotFound()
+
+    override suspend fun handoverPoll(): dev.reins.core.HandoverProgress = throw CoreException.NotFound()
+
+    override suspend fun handoverRequests(): List<dev.reins.core.HandoverView> = emptyList()
+
+    override suspend fun handoverApprove(id: String, deviceId: String) = throw CoreException.NotFound()
+
+    override suspend fun handoverDeny(id: String) = throw CoreException.NotFound()
+
+    override suspend fun rosterRecoverPreview(codeOrPassword: String): dev.reins.core.RecoveryPreview =
+        throw CoreException.NotFound()
+
+    override suspend fun rosterRecover(
+        codeOrPassword: String,
+        deviceName: String,
+        tip: String,
+    ): dev.reins.core.RosterSummary = throw CoreException.NotFound()
+
+    override suspend fun rosterRemoveMember(deviceId: String) = throw CoreException.NotFound()
+
+    override suspend fun rosterRewrap(newPassword: String) = throw CoreException.NotFound()
+
     override suspend fun answerJoin(id: String, approve: Boolean) {
         joinAnswers += id to approve
         joins.remove(id)
@@ -828,7 +877,21 @@ class FakeCore : ReinsCoreInterface {
         alwaysAsk[project to env] = always
     }
 
-    override suspend fun session() = session
+    /**
+     * Thrown by [session] while set. [sessionThrows] is how many of the next calls throw, after which the read
+     * succeeds; 0 throws every time. A throw is a busy or failed store, not "signed out".
+     */
+    @Volatile var sessionError: CoreException? = null
+    @Volatile var sessionThrows: Int = 0
+
+    override suspend fun session(): SessionInfo? {
+        val error = sessionError ?: return session
+        if (sessionThrows > 0) {
+            sessionThrows -= 1
+            if (sessionThrows == 0) sessionError = null
+        }
+        throw error
+    }
 
     /** The foreground poll: returns quickly with what is pending. */
     override suspend fun sync(waitSecs: UInt): List<PendingItem> {
@@ -1014,6 +1077,9 @@ class FakeCore : ReinsCoreInterface {
     override fun setModelRuntime(runtime: ModelRuntime) {
         this.runtime = runtime
     }
+
+    /** The fake does not load a model either way. */
+    override fun setBackground(background: Boolean) = Unit
 
     override suspend fun autopilotSettings(): AutopilotSettings {
         val now = now()

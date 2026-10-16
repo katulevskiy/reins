@@ -53,6 +53,8 @@ pub mod contexts {
     pub const ENROLL_PROOF_KEY: &str = "reins/enroll-proof-key/v1";
     /// The plaintext of an op's body ([`crate::oplog::OpBody`]), the associated data its seal binds.
     pub const OP_BODY: &str = "reins/op-body/v1";
+    /// A viewer's request to become primary, signed by its device key ([`crate::roster::HandoverSignature`]).
+    pub const HANDOVER_REQUEST: &str = "reins/handover-request/v1";
 }
 
 /// Writes one canonical message. Start with [`Canon::new`] and its context, add the fields in their documented order,
@@ -276,6 +278,7 @@ mod tests {
             contexts::ENROLL_PROOF,
             contexts::ENROLL_PROOF_KEY,
             contexts::OP_BODY,
+            contexts::HANDOVER_REQUEST,
         ];
         let set: std::collections::BTreeSet<_> = all.iter().collect();
         assert_eq!(set.len(), all.len());

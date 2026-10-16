@@ -12,12 +12,14 @@ mod audit_push;
 mod audit_search;
 mod desktop;
 mod grants;
+mod lattice;
 mod mcp;
 mod merge;
+pub mod oplog;
 mod pending;
 mod protected;
 mod snapshot;
-pub(crate) use protected::Owner;
+pub(crate) use protected::{Owner, STORE_BUSY, STORE_SUSPENDING, install_lock_guard};
 mod secrets;
 mod sync;
 pub(crate) use sync::Pulled;
@@ -162,7 +164,7 @@ fn drop_tombstone_triggers(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 /// Columns and tables added after the first release, applied once each (`PRAGMA user_version`). A table added to
 /// [`SCHEMA`] needs one here too: a sealed database restored from disk keeps the tables it was written with.
-const MIGRATIONS: [&str; 10] = [
+const MIGRATIONS: [&str; 11] = [
     "
 ALTER TABLE audit ADD COLUMN connection_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE audit ADD COLUMN service TEXT NOT NULL DEFAULT 'gmail';
@@ -298,6 +300,9 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
     // `command:make deploy`), which covered every later question with that topic. They are now keyed by exactly the
     // file, command or question, on that computer; the old, broader ones are dropped rather than honoured.
     DROP_TOPIC_DESKTOP_GRANTS,
+    // Phone roles' op-log store (`oplog`): records with their versions and tombstones, the proposals, each author's
+    // counter, the applied hash per seq, and where the log stands. This phone's own bookkeeping: never in a snapshot.
+    oplog::SCHEMA,
 ];
 const DROP_TOPIC_DESKTOP_GRANTS: &str = "
 DELETE FROM grants WHERE json_extract(grant_json, '$.scope.action') = 'service'
@@ -399,7 +404,15 @@ impl Store {
     pub fn open(data_dir: &Path, keys: &dyn KeyWrapper) -> Result<Self, CoreError> {
         fs::create_dir_all(data_dir).map_err(|e| CoreError::storage(format!("cannot create data directory: {e}")))?;
         let protected_path = data_dir.join("reins.sealed");
-        let disk = if !protected_path.exists() && data_dir.join(DB_FILE).exists() {
+        let legacy = !protected_path.exists() && data_dir.join(DB_FILE).exists();
+        // The legacy database is a file in the shared container, and its connection holds SQLite's file locks while
+        // open: the platform's guard is held until it is closed (iOS ends a process suspended with such a lock).
+        let awake = if legacy {
+            Some(protected::stay_awake()?)
+        } else {
+            None
+        };
+        let disk = if legacy {
             Some(Connection::open(data_dir.join(DB_FILE))?)
         } else {
             None
@@ -449,6 +462,7 @@ impl Store {
             snapshot::import(&mut conn, &legacy, false)?;
             drop(disk);
         }
+        drop(awake);
         let store = Self {
             active: std::sync::atomic::AtomicBool::new(true),
             conn: Mutex::new(Some(conn)),
@@ -521,7 +535,7 @@ impl Store {
             return control.load_session();
         }
         let row: Option<(String, String, Vec<u8>)> = self
-            .lock()?
+            .read()?
             .query_row("SELECT server_url, email, refresh_token FROM session WHERE id = 1", [], |r| {
                 Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             })
@@ -545,7 +559,7 @@ impl Store {
 
     pub fn meta_get(&self, key: &str) -> Result<Option<String>, CoreError> {
         Ok(self
-            .lock()?
+            .read()?
             .query_row("SELECT value FROM meta WHERE key = ?1", params![format!("app.{key}")], |r| {
                 r.get::<_, String>(0)
             })
@@ -636,7 +650,7 @@ impl Store {
     /// The icon the user picked for a connection (`None` = automatic).
     pub fn connection_icon(&self, connection_id: &str) -> Result<Option<String>, CoreError> {
         Ok(self
-            .lock()?
+            .read()?
             .query_row("SELECT icon FROM connection_prefs WHERE connection_id = ?1", params![connection_id], |r| {
                 r.get::<_, Option<String>>(0)
             })
@@ -697,7 +711,7 @@ impl Store {
     /// The `meta` values under `<prefix><connection id>`, by connection id.
     fn meta_by_connection(&self, key: &str) -> Result<std::collections::HashMap<String, String>, CoreError> {
         let prefix = format!("app.{key}");
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let mut stmt = conn.prepare("SELECT key, value FROM meta WHERE substr(key, 1, ?1) = ?2")?;
         let rows = stmt
             .query_map(params![i64::try_from(prefix.len()).unwrap_or(i64::MAX), prefix], |r| {
@@ -755,6 +769,13 @@ fn create_dek(dek_path: &Path, keys: &dyn KeyWrapper) -> Result<Dek, CoreError> 
 }
 
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
+    replace_file(path, bytes)?;
+    sync_parent(path)
+}
+
+/// Writes `bytes` to a temporary file, flushes it to disk and renames it over `path`: readers see the old file or the
+/// new one, never part of either. The rename reaches the disk with [`sync_parent`].
+fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
     let tmp: PathBuf = path.with_extension("tmp");
     let fail = |e: std::io::Error| CoreError::storage(format!("cannot write the data key: {e}"));
     let mut options = fs::OpenOptions::new();
@@ -768,8 +789,15 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
     file.write_all(bytes).map_err(fail)?;
     file.sync_all().map_err(fail)?;
     fs::rename(&tmp, path).map_err(fail)?;
+    Ok(())
+}
+
+/// Makes a rename into `path`'s directory durable.
+fn sync_parent(path: &Path) -> Result<(), CoreError> {
     if let Some(parent) = path.parent() {
-        fs::File::open(parent).and_then(|f| f.sync_all()).map_err(fail)?;
+        fs::File::open(parent)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| CoreError::storage(format!("cannot write the data key: {e}")))?;
     }
     Ok(())
 }
@@ -896,7 +924,7 @@ pub(crate) mod tests {
         assert_eq!((old[0].at, old[0].connection_label.as_str(), old[0].service.as_str()), (7, "Old", "gmail"));
         assert_eq!(old[0].detail, DETAIL_UNAVAILABLE, "rows from before the details existed have none");
         let version: i64 = store.lock().unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
         assert_eq!(store.desktop_key("c1").unwrap(), None, "the desktop keys table exists");
         assert!(store.ap_profiles().unwrap().is_empty(), "the Autopilot tables exist");
         assert_eq!(store.ap_mode_row("").unwrap(), crate::autopilot::modes::ModeRow::default());

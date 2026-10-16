@@ -1219,12 +1219,12 @@ async fn nothing_works_signed_out_and_state_survives_a_restart() {
     serve_gmail_search(&env, &[("m1", "a@x.com")]).await;
     serve_pending(&env, &[search_request("r1", "c1", "AI", "x")], &[]).await;
     env.core.sync(0).await.unwrap();
-    let info = env.core.session().await.unwrap();
+    let info = env.core.session().await.unwrap().unwrap();
     assert_eq!((info.email.as_str(), info.server_url.as_str()), (EMAIL, env.server.uri().as_str()));
 
     // A new process on the same data directory: session and parked item are back.
     let restarted = open_core(env.dir.path(), &env.gmail, &env.google, &env.notifier);
-    assert_eq!(restarted.session().await.unwrap().email, EMAIL);
+    assert_eq!(restarted.session().await.unwrap().unwrap().email, EMAIL);
     assert_eq!(restarted.pending().await.unwrap().len(), 1);
     Mock::given(method("POST"))
         .and(path("/identity/connect/token"))
@@ -1237,7 +1237,7 @@ async fn nothing_works_signed_out_and_state_survives_a_restart() {
     restarted.deny("r1".to_owned()).await.unwrap();
 
     restarted.logout().await.unwrap();
-    assert!(restarted.session().await.is_none());
+    assert!(restarted.session().await.unwrap().is_none());
     assert_eq!(restarted.sync(0).await.unwrap_err(), CoreError::NotLoggedIn);
     assert_eq!(restarted.register_device(None).await.unwrap_err(), CoreError::NotLoggedIn);
     assert_eq!(restarted.connections().await.unwrap_err(), CoreError::NotLoggedIn);

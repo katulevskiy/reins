@@ -562,7 +562,7 @@ impl Store {
     /// Brings the index up to date with the entries: drops what went or changed, indexes what is new.
     fn refresh_search(&self) -> Result<(), CoreError> {
         let todo: Vec<i64> = {
-            let mut conn = self.lock()?;
+            let mut conn = self.read()?;
             conn.execute_batch(TEMP_SCHEMA)?;
             let stale: Vec<i64> = conn
                 .prepare(&format!(
@@ -600,7 +600,7 @@ impl Store {
         let list = seqs.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
         // Read sealed under the lock, with what tells them apart; opened after letting it go.
         let (rows, tags, snaps) = {
-            let conn = self.lock()?;
+            let conn = self.read()?;
             let rows = sealed_rows(&conn, &format!("WHERE seq IN ({list})"), [])?;
             let tags: HashMap<i64, Option<Vec<u8>>> = conn
                 .prepare(&format!("SELECT a.seq, {TAG} FROM audit a WHERE a.seq IN ({list})"))?
@@ -628,7 +628,7 @@ impl Store {
                 }
             })
             .collect();
-        let mut conn = self.lock()?;
+        let mut conn = self.read()?;
         // The connection may be a newer copy since (another process wrote the file): its index starts over.
         conn.execute_batch(TEMP_SCHEMA)?;
         let tx = conn.transaction()?;
@@ -665,7 +665,7 @@ impl Store {
         let (filter, mut values) = filters(q, parsed.fts.as_deref());
         let limit = limit.clamp(1, PAGE_MAX);
         let (total, page): (u32, Vec<(i64, i64)>) = {
-            let conn = self.lock()?;
+            let conn = self.read()?;
             let total: i64 =
                 conn.query_row(&format!("SELECT COUNT(*) {JOINED} {filter}"), params_from_iter(values.iter()), |r| {
                     r.get(0)
@@ -735,7 +735,7 @@ impl Store {
         let parsed = parse(&q.text);
         let (filter, mut values) = filters(q, parsed.fts.as_deref());
         values.push(Sql::Integer(i64::from(STAMPS_MAX)));
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let stamps = conn
             .prepare(&format!(
                 "SELECT a.seq, a.at, a.outcome, r.decided_by {JOINED} {filter} ORDER BY a.at DESC, a.seq DESC LIMIT ?"
@@ -754,7 +754,7 @@ impl Store {
 
     /// The integrations, kinds and connections the Activity holds.
     pub(crate) fn activity_facets(&self) -> Result<ActivityFacets, CoreError> {
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let column = |sql: &str| -> Result<Vec<String>, CoreError> {
             Ok(conn.prepare(sql)?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)
         };

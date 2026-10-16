@@ -488,6 +488,21 @@ Details: [autopilot.md](autopilot.md).
   (enrollment as a viewer uses the commit-then-reveal exchange instead); a recovery is not emailed (the hosted server
   sends no email), only pushed to the old primary; with the account secret on every viewer, an unlocked stolen viewer
   can recover to primary (above).
+- Phone roles, phone stage:
+  - **Removal is not revocation (Q1 = B).** A removed viewer, or a replaced primary, keeps the account secret it
+    holds. It reads nothing written after it left (the view key is rotated), signs nothing the others accept, and
+    answers nothing: a phone that does not decide answers no request, pairing, upload or purchase, whatever its own
+    Autopilot modes or grants say. But it can still open the vault and, with the master key, the recovery wrap, and so
+    recover to primary. Only rotating the account secret (a vault reset now; recovery-code rotation is a follow-up)
+    revokes it for good.
+  - **A demoted primary keeps its tokens until the sync engine stage.** After a handover or a recovery the old
+    primary drops the owner seed, the recovery wrap's key and the card provider's key at once, but its integration
+    tokens and the payment mandate key stay in its local store until the sync engine (the next stage) wipes them on
+    every phone that is not the primary. Until then they are as safe as that phone's lock.
+  - A phone with no roster of its own that recovers cannot tell a current roster from an older, consistent one a
+    server kept (with that time's recovery wrap). The recovery shows the members it would recover into, the epoch and
+    the owner key's fingerprint, and signs nothing until the user confirms; a phone that verified the roster before
+    refuses anything older.
 - Hooks are pattern-based (above).
 - Autopilot's model was trained and evaluated on synthetic data ([model card](../tools/laya/MODEL_CARD.md)).
 

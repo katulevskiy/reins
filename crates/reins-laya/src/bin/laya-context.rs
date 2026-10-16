@@ -57,6 +57,7 @@ fn push_view(v: &Value) -> GitPushView {
                                         diff: Vec::new(),
                                         diff_cut: false,
                                         hidden_chars: false,
+                                        attention: None,
                                     })
                                     .collect()
                             })

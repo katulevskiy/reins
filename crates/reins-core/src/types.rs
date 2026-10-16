@@ -222,6 +222,68 @@ pub enum ApprovalKind {
     Write,
 }
 
+/// How closely the person should look at one commit, file or message.
+///
+/// The level is the heaviest reason. Weights are not added together.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum AttentionLevel {
+    /// Worth a glance: the heaviest reason has weight 3 to 5.
+    Look,
+    /// Open this before approving: the heaviest reason has weight 6 or more.
+    Close,
+}
+
+/// Why an item deserves a closer look. Declaration order breaks ties between equal weights.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum ReasonCode {
+    /// "Secret file".
+    SecretFile,
+    /// "Looks like a key".
+    LooksLikeKey,
+    /// "Password".
+    Password,
+    /// "Looks like a sign-in code".
+    SignInCode,
+    /// "Changes CI".
+    ChangesCi,
+    /// "Changes auth".
+    ChangesAuth,
+    /// "Password reset".
+    PasswordReset,
+    /// "Security alert".
+    SecurityAlert,
+    /// "Hidden characters".
+    HiddenChars,
+    /// "Deletes N lines".
+    DeletesLines,
+    /// "Changes infra".
+    ChangesInfra,
+    /// "Bank or invoice".
+    Finance,
+    /// "Changes owners".
+    ChangesOwners,
+    /// "Runs on build".
+    ChangesBuildScripts,
+    /// "Deletes a file".
+    DeletesFile,
+}
+
+/// One reason, in fixed wording. A deletion count is the only fact filled in.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct AttentionReason {
+    pub code: ReasonCode,
+    /// Never a path, a subject, an author, a snippet or a secret.
+    pub label: String,
+}
+
+/// What deserves a closer look in one commit, file or message. At most three reasons, heaviest first.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct Attention {
+    /// The heaviest reason. Weights are not added together.
+    pub level: AttentionLevel,
+    pub reasons: Vec<AttentionReason>,
+}
+
 /// A thing an approval is about: a chat, a calendar, a repository.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ResourceView {
@@ -242,6 +304,11 @@ pub struct MessageView {
     pub covered_by_grant: bool,
     /// Looks like something that must never be shared by default (a login code, a password).
     pub sensitive: bool,
+    /// What in this message deserves a closer look. `None`: no rule matched, which is not a clearance.
+    /// A sign-in code or a password is also `sensitive` and starts unticked. A reset, a bank message or a security
+    /// alert is only marked here.
+    #[uniffi(default)]
+    pub attention: Option<Attention>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -606,6 +673,10 @@ pub struct GitCommitView {
     /// (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
     #[uniffi(default)]
     pub hidden_chars: bool,
+    /// What in this commit deserves a closer look. `None`: no rule matched, which is not a clearance. At most three
+    /// reasons, heaviest first. Computed when the view is built, and never stored on the push.
+    #[uniffi(default)]
+    pub attention: Option<Attention>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -628,6 +699,9 @@ pub struct GitFileView {
     /// is shown as U+FFFD. Show a warning.
     #[uniffi(default)]
     pub hidden_chars: bool,
+    /// What in this file deserves a closer look. `None`: no rule matched, which is not a clearance.
+    #[uniffi(default)]
+    pub attention: Option<Attention>,
 }
 
 /// One line of a file's change.

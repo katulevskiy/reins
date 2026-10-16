@@ -48,8 +48,10 @@ enum SnapshotWriter {
 
     /// Re-reads what widgets show and saves it; keeps the last values of anything that cannot be read.
     static func update(from core: any ReinsCoreProtocol) async {
-        let session = await core.session()
-        guard let session else { Snapshot().save(); return }
+        // A read that failed says nothing about the session: what the widgets show stays.
+        let read: SessionInfo?
+        do { read = try await core.session() } catch { return }
+        guard let session = read else { Snapshot().save(); return }
         let owner = Snapshot.owner(server: session.serverUrl, email: session.email)
         let stored = Snapshot.load()
         var s = stored
@@ -75,7 +77,7 @@ enum SnapshotWriter {
             s.overnightUntil = a.overnightUntil
         }
         if let grants = try? await core.grants() { s.activeGrants = grants.filter(\.active).count }
-        guard await core.session() == session else { return }
+        guard (try? await core.session()) == session else { return }
         // Only what the widgets show wakes them: nothing to save or reload when it is all as stored.
         s.updatedAt = stored.updatedAt
         guard s != stored else { return }
