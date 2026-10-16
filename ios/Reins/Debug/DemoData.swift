@@ -34,8 +34,9 @@ enum DemoData {
         return [
             ConnectionView(id: "c1", label: "Claude", clientHost: "claude.ai", createdAt: now - 86_400 * 40, lastUsedAt: now - 60, icon: nil, keyFingerprint: nil,
                            autoIcon: "claude", blobatar: blob("c1", 0, 1)),
+            // Renamed by the user: it goes by "My ChatGPT", and still says what it calls itself.
             ConnectionView(id: "c2", label: "My ChatGPT", clientHost: "chatgpt.com", createdAt: now - 86_400 * 21, lastUsedAt: now - 120, icon: "openai", keyFingerprint: nil,
-                           autoIcon: "openai", blobatar: blob("c2", 1, 7)),
+                           autoIcon: "openai", blobatar: blob("c2", 1, 7), name: "My ChatGPT", ownLabel: "ChatGPT", clientName: "ChatGPT"),
             ConnectionView(id: "c3", label: "Hermes agent", clientHost: "hermes.local", createdAt: now - 86_400 * 9, lastUsedAt: now - 7_200, icon: nil, keyFingerprint: nil,
                            autoIcon: "hermes", blobatar: blob("c3", 2, 4)),
             ConnectionView(id: "c4", label: "notes-bot", clientHost: "notes.example.com", createdAt: now - 86_400 * 5, lastUsedAt: now - 3_600, icon: nil, keyFingerprint: nil,

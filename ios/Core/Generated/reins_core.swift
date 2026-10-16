@@ -2729,7 +2729,7 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
      * Sync never keeps the app closed or signed out; this is all it ever shows.
      */
-    func accountSyncNotice() async  -> String?
+    func accountSyncNotice() async throws  -> String?
     
     /**
      * The accounts the user connected, oldest first.
@@ -2801,7 +2801,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func answerJoin(id: String, approve: Bool) async throws 
     
-    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?) async throws 
+    /**
+     * Answers a pairing. `label` is what the name field holds; it becomes the user's name for the connection only
+     * when `name_edited` (the user changed the field) and it is not the name the field started with.
+     */
+    func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool) async throws 
     
     func approvalView(requestId: String) async throws  -> ApprovalView
     
@@ -2908,6 +2912,31 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func downloadModel(progress: DownloadProgress) async throws  -> ModelStatus
     
     /**
+     * On a phone that should view the account: asks its primary to enroll it. Then call `enroll_poll` every few
+     * seconds; it shows the code to compare once the primary answered.
+     */
+    func enrollBegin(deviceName: String) async throws  -> EnrollStart
+    
+    func enrollCancel() async throws 
+    
+    /**
+     * On the primary, after the user compared the codes (and biometrics): enrolls the phone as a viewer, or declines.
+     */
+    func enrollConfirm(id: String, approve: Bool) async throws 
+    
+    /**
+     * Where this phone's enrollment stands: `Compare` shows the six digits; `Enrolled` once it views the account
+     * (with the vault open when the account has a recovery code). `NotFound` when none is open.
+     */
+    func enrollPoll() async throws  -> EnrollProgress
+    
+    /**
+     * On the primary: a phone asking to view the account (a parked `Join` item). The first call answers it with this
+     * phone's challenge; call again until `code` is there, then show it next to the other phone's.
+     */
+    func enrollView(id: String) async throws  -> EnrollView
+    
+    /**
      * Lets an active grant run for `duration_secs` from now instead of until its end; its uses so far stay.
      */
     func extendGrant(grantId: String, durationSecs: UInt64) async throws 
@@ -2934,6 +2963,31 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Lockdown decide at once; what Manual or Auto would judge waits unjudged, and the app's next pass judges it.
      */
     func handlePushDeferringAutopilot(kind: String, id: String) async throws 
+    
+    /**
+     * On the primary, after biometrics: makes the viewer that asked (`id`) the primary. `device_id` is the phone the
+     * user saw in `handover_requests` (the request must be from it). This phone becomes a viewer.
+     */
+    func handoverApprove(id: String, deviceId: String) async throws 
+    
+    func handoverDeny(id: String) async throws 
+    
+    /**
+     * Where this phone's handover request stands; `Done` once it is the primary (it verified and kept the keys the
+     * old primary sealed to it). `NotFound` when none is open.
+     */
+    func handoverPoll() async throws  -> HandoverProgress
+    
+    /**
+     * On a viewer: "Decide on this phone". Returns the request's id; follow with `handover_poll`.
+     */
+    func handoverRequest() async throws  -> String
+    
+    /**
+     * On the primary: the viewers asking to decide, each verified (signed by that viewer's roster key) and named as
+     * the roster names it.
+     */
+    func handoverRequests() async throws  -> [HandoverView]
     
     /**
      * "Add another phone", on the new phone (keys `Locked`): asks the account's approval device for its keys. Show
@@ -3000,6 +3054,12 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      */
     func phoneKeyFingerprint() async throws  -> String
     
+    /**
+     * What this phone is on the signed-in account: `Legacy` while the account has no roster (or this phone is not in
+     * it), else `Primary`, `Viewer` or `Removed`. From what this phone verified last; no network.
+     */
+    func phoneRole() async throws  -> PhoneRole
+    
     func registerDevice(fcmToken: String?) async throws 
     
     /**
@@ -3013,6 +3073,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func removeServiceAccount(service: String, account: String) async throws 
     
     func removeVaultPasskey(credentialId: Data) async throws  -> [VaultPasskeyView]
+    
+    /**
+     * Gives a connection the user's own name for it ("Claude (work)"), kept with the account and shown everywhere
+     * instead of its own; `None` or an empty name takes it away. One line of at most 64 characters, without control
+     * or invisible characters. Returns the name kept (`None`: it goes by its own name).
+     */
+    func renameConnection(connectionId: String, name: String?) async throws  -> String?
     
     func renameProfile(profileId: String, name: String, icon: String?) async throws 
     
@@ -3058,6 +3125,42 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func revokeSecretsEverywhere(project: String?, env: String?) async throws  -> SecretsRevoked
     
     /**
+     * On the approval device: turns phone roles on for the account, with this phone as primary (`device_name`, e.g.
+     * "iPhone"). `code_or_password`: only for an account made with a master password (this phone keeps no recovery
+     * code to seal the recovery wrap with). Ask whether the recovery code is saved first.
+     */
+    func rosterCreate(deviceName: String, codeOrPassword: String?) async throws  -> RosterSummary
+    
+    /**
+     * Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
+     * becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
+     * phones changed since, nothing is signed.
+     */
+    func rosterRecover(codeOrPassword: String, deviceName: String, tip: String) async throws  -> RosterSummary
+    
+    /**
+     * "<primary> lost? Use the recovery code", step 1: what the recovery would make of the account's phones (this
+     * phone primary, the viewers kept, the primary removed). Show it; the user confirms before `roster_recover`.
+     */
+    func rosterRecoverPreview(codeOrPassword: String) async throws  -> RecoveryPreview
+    
+    /**
+     * On the primary: takes a viewer off the account (it reads nothing written from now on).
+     */
+    func rosterRemoveMember(deviceId: String) async throws 
+    
+    /**
+     * On the primary, after the account's master password changed: seals the recovery wrap again for it.
+     */
+    func rosterRewrap(newPassword: String) async throws 
+    
+    /**
+     * The account's phones as this phone verified them (`refresh`: fetched and verified again first). `None` on a
+     * legacy account.
+     */
+    func rosterSummary(refresh: Bool) async throws  -> RosterSummary?
+    
+    /**
      * Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
      * newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
      * matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.
@@ -3081,9 +3184,11 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     func services() async throws  -> [ServiceView]
     
     /**
-     * The signed-in session, if any.
+     * The signed-in session; `None` when signed out. An error says the data could not be read now (another process
+     * holds it, the app is being suspended, a failure in the core): it says nothing about the session, and the same
+     * call later does.
      */
-    func session() async  -> SessionInfo?
+    func session() async throws  -> SessionInfo?
     
     /**
      * Sets the global mode (`connection_id` = `None`) or one connection's. `mode` = `None` returns the global mode to
@@ -3097,6 +3202,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
      * Whether the app's download job waits for Wi-Fi (kept here; the job honours it).
      */
     func setAutopilotWifiOnly(wifiOnly: Bool) async throws 
+    
+    /**
+     * Whether the app is in the background, where iOS gives it seconds and ends a process that grows: Autopilot's
+     * pass then does not load the model; what it would judge waits for the next pass in front (Bypass and Lockdown
+     * still decide, and a model already loaded still judges).
+     */
+    func setBackground(background: Bool) 
     
     /**
      * Locks (`Some(true)`) or unlocks (`Some(false)`, with a warning in the app) a class by hand; `None` lets the
@@ -3468,9 +3580,9 @@ open func accountStatus(account: String)async  -> GmailStatus  {
      * A problem syncing with the account's other phones, for a banner the user can dismiss (`None`: nothing to show).
      * Sync never keeps the app closed or signed out; this is all it ever shows.
      */
-open func accountSyncNotice()async  -> String?  {
+open func accountSyncNotice()async throws  -> String?  {
     return
-        try!  await uniffiRustCallAsync(
+        try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_account_sync_notice(
                         self.uniffiCloneHandle()
@@ -3480,8 +3592,7 @@ open func accountSyncNotice()async  -> String?  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionString.lift,
-            errorHandler: nil
-            
+            errorHandler: FfiConverterTypeCoreError_lift
         )
 }
     
@@ -3737,12 +3848,16 @@ open func answerJoin(id: String, approve: Bool)async throws   {
         )
 }
     
-open func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?)async throws   {
+    /**
+     * Answers a pairing. `label` is what the name field holds; it becomes the user's name for the connection only
+     * when `name_edited` (the user changed the field) and it is not the name the field started with.
+     */
+open func answerPairing(pairingId: String, approve: Bool, chosenCode: UInt8?, label: String?, nameEdited: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_answer_pairing(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(pairingId),FfiConverterBool.lower(approve),FfiConverterOptionUInt8.lower(chosenCode),FfiConverterOptionString.lower(label)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(pairingId),FfiConverterBool.lower(approve),FfiConverterOptionUInt8.lower(chosenCode),FfiConverterOptionString.lower(label),FfiConverterBool.lower(nameEdited)
                 )
             },
             pollFunc: ffi_reins_core_rust_future_poll_void,
@@ -4180,6 +4295,101 @@ open func downloadModel(progress: DownloadProgress)async throws  -> ModelStatus 
 }
     
     /**
+     * On a phone that should view the account: asks its primary to enroll it. Then call `enroll_poll` every few
+     * seconds; it shows the code to compare once the primary answered.
+     */
+open func enrollBegin(deviceName: String)async throws  -> EnrollStart  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_enroll_begin(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceName)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeEnrollStart_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func enrollCancel()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_enroll_cancel(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary, after the user compared the codes (and biometrics): enrolls the phone as a viewer, or declines.
+     */
+open func enrollConfirm(id: String, approve: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_enroll_confirm(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterBool.lower(approve)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Where this phone's enrollment stands: `Compare` shows the six digits; `Enrolled` once it views the account
+     * (with the vault open when the account has a recovery code). `NotFound` when none is open.
+     */
+open func enrollPoll()async throws  -> EnrollProgress  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_enroll_poll(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeEnrollProgress_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary: a phone asking to view the account (a parked `Join` item). The first call answers it with this
+     * phone's challenge; call again until `code` is there, then show it next to the other phone's.
+     */
+open func enrollView(id: String)async throws  -> EnrollView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_enroll_view(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeEnrollView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Lets an active grant run for `duration_secs` from now instead of until its end; its uses so far stay.
      */
 open func extendGrant(grantId: String, durationSecs: UInt64)async throws   {
@@ -4288,6 +4498,101 @@ open func handlePushDeferringAutopilot(kind: String, id: String)async throws   {
             completeFunc: ffi_reins_core_rust_future_complete_void,
             freeFunc: ffi_reins_core_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary, after biometrics: makes the viewer that asked (`id`) the primary. `device_id` is the phone the
+     * user saw in `handover_requests` (the request must be from it). This phone becomes a viewer.
+     */
+open func handoverApprove(id: String, deviceId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_handover_approve(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterString.lower(deviceId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func handoverDeny(id: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_handover_deny(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Where this phone's handover request stands; `Done` once it is the primary (it verified and kept the keys the
+     * old primary sealed to it). `NotFound` when none is open.
+     */
+open func handoverPoll()async throws  -> HandoverProgress  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_handover_poll(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeHandoverProgress_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On a viewer: "Decide on this phone". Returns the request's id; follow with `handover_poll`.
+     */
+open func handoverRequest()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_handover_request(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary: the viewers asking to decide, each verified (signed by that viewer's roster key) and named as
+     * the roster names it.
+     */
+open func handoverRequests()async throws  -> [HandoverView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_handover_requests(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeHandoverView.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4568,6 +4873,26 @@ open func phoneKeyFingerprint()async throws  -> String  {
         )
 }
     
+    /**
+     * What this phone is on the signed-in account: `Legacy` while the account has no roster (or this phone is not in
+     * it), else `Primary`, `Viewer` or `Removed`. From what this phone verified last; no network.
+     */
+open func phoneRole()async throws  -> PhoneRole  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_phone_role(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePhoneRole_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
 open func registerDevice(fcmToken: String?)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -4634,6 +4959,27 @@ open func removeVaultPasskey(credentialId: Data)async throws  -> [VaultPasskeyVi
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeVaultPasskeyView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Gives a connection the user's own name for it ("Claude (work)"), kept with the account and shown everywhere
+     * instead of its own; `None` or an empty name takes it away. One line of at most 64 characters, without control
+     * or invisible characters. Returns the name kept (`None`: it goes by its own name).
+     */
+open func renameConnection(connectionId: String, name: String?)async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_rename_connection(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterOptionString.lower(name)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -4808,6 +5154,126 @@ open func revokeSecretsEverywhere(project: String?, env: String?)async throws  -
 }
     
     /**
+     * On the approval device: turns phone roles on for the account, with this phone as primary (`device_name`, e.g.
+     * "iPhone"). `code_or_password`: only for an account made with a master password (this phone keeps no recovery
+     * code to seal the recovery wrap with). Ask whether the recovery code is saved first.
+     */
+open func rosterCreate(deviceName: String, codeOrPassword: String?)async throws  -> RosterSummary  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_create(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceName),FfiConverterOptionString.lower(codeOrPassword)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRosterSummary_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Step 2, once the user confirmed the preview: with the recovery code (or the master password) this phone
+     * becomes the primary under a new owner key; the old primary is removed. `tip` is the preview's: if the account's
+     * phones changed since, nothing is signed.
+     */
+open func rosterRecover(codeOrPassword: String, deviceName: String, tip: String)async throws  -> RosterSummary  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_recover(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword),FfiConverterString.lower(deviceName),FfiConverterString.lower(tip)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRosterSummary_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * "<primary> lost? Use the recovery code", step 1: what the recovery would make of the account's phones (this
+     * phone primary, the viewers kept, the primary removed). Show it; the user confirms before `roster_recover`.
+     */
+open func rosterRecoverPreview(codeOrPassword: String)async throws  -> RecoveryPreview  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_recover_preview(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(codeOrPassword)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRecoveryPreview_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary: takes a viewer off the account (it reads nothing written from now on).
+     */
+open func rosterRemoveMember(deviceId: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_remove_member(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceId)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * On the primary, after the account's master password changed: seals the recovery wrap again for it.
+     */
+open func rosterRewrap(newPassword: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_rewrap(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(newPassword)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_void,
+            completeFunc: ffi_reins_core_rust_future_complete_void,
+            freeFunc: ffi_reins_core_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * The account's phones as this phone verified them (`refresh`: fetched and verified again first). `None` on a
+     * legacy account.
+     */
+open func rosterSummary(refresh: Bool)async throws  -> RosterSummary?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_summary(
+                        self.uniffiCloneHandle(),FfiConverterBool.lower(refresh)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeRosterSummary.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
      * Searches the Activity on this device (nothing is sent anywhere): one page of the entries matching `query`,
      * newest first, `limit` at most 200, starting after `after` (the previous page's `next`). Each hit says where it
      * matched outside its title, with the matching words set apart; `terms` are the words to set apart in titles.
@@ -4888,11 +5354,13 @@ open func services()async throws  -> [ServiceView]  {
 }
     
     /**
-     * The signed-in session, if any.
+     * The signed-in session; `None` when signed out. An error says the data could not be read now (another process
+     * holds it, the app is being suspended, a failure in the core): it says nothing about the session, and the same
+     * call later does.
      */
-open func session()async  -> SessionInfo?  {
+open func session()async throws  -> SessionInfo?  {
     return
-        try!  await uniffiRustCallAsync(
+        try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_reins_core_fn_method_reinscore_session(
                         self.uniffiCloneHandle()
@@ -4902,8 +5370,7 @@ open func session()async  -> SessionInfo?  {
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeSessionInfo.lift,
-            errorHandler: nil
-            
+            errorHandler: FfiConverterTypeCoreError_lift
         )
 }
     
@@ -4946,6 +5413,20 @@ open func setAutopilotWifiOnly(wifiOnly: Bool)async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCoreError_lift
         )
+}
+    
+    /**
+     * Whether the app is in the background, where iOS gives it seconds and ends a process that grows: Autopilot's
+     * pass then does not load the model; what it would judge waits for the next pass in front (Bypass and Lockdown
+     * still decide, and a model already loaded still judges).
+     */
+open func setBackground(background: Bool)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_reinscore_set_background(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(background),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -5950,6 +6431,260 @@ public func FfiConverterTypeReinsCore_lift(_ handle: UInt64) throws -> ReinsCore
 #endif
 public func FfiConverterTypeReinsCore_lower(_ value: ReinsCore) -> UInt64 {
     return FfiConverterTypeReinsCore.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Keeps the process from being suspended while it holds the store's cross-process file lock (iOS: a file in the App
+ * Group container, shared with the notification extension; iOS ends a process suspended with such a lock held,
+ * `0xdead10cc`). Installed once per process with `install_store_lock_guard`, before the first `ReinsCore`.
+ */
+public protocol StoreLockGuard: AnyObject, Sendable {
+    
+    /**
+     * The process is about to take the lock: hold off suspension (a background task, an expiring activity) until
+     * `unlocked`. False when that cannot be promised (the process is being suspended): the lock is not taken and the
+     * call that needed it fails with a storage error.
+     */
+    func locking()  -> Bool
+    
+    /**
+     * The lock was given back (each `locking` that returned true is followed by exactly one of these).
+     */
+    func unlocked() 
+    
+}
+/**
+ * Keeps the process from being suspended while it holds the store's cross-process file lock (iOS: a file in the App
+ * Group container, shared with the notification extension; iOS ends a process suspended with such a lock held,
+ * `0xdead10cc`). Installed once per process with `install_store_lock_guard`, before the first `ReinsCore`.
+ */
+open class StoreLockGuardImpl: StoreLockGuard, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_reins_core_fn_clone_storelockguard(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_reins_core_fn_free_storelockguard(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * The process is about to take the lock: hold off suspension (a background task, an expiring activity) until
+     * `unlocked`. False when that cannot be promised (the process is being suspended): the lock is not taken and the
+     * call that needed it fails with a storage error.
+     */
+open func locking() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_storelockguard_locking(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The lock was given back (each `locking` that returned true is followed by exactly one of these).
+     */
+open func unlocked()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_method_storelockguard_unlocked(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceStoreLockGuard {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceStoreLockGuard = UniffiVTableCallbackInterfaceStoreLockGuard(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeStoreLockGuard.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface StoreLockGuard: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeStoreLockGuard.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface StoreLockGuard: handle missing in uniffiClone")
+            }
+        },
+        locking: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<Int8>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> Bool in
+                guard let uniffiObj = try? FfiConverterTypeStoreLockGuard.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.locking(
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterBool.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        unlocked: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeStoreLockGuard.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.unlocked(
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceStoreLockGuard> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceStoreLockGuard>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitStoreLockGuard() {
+    uniffi_reins_core_fn_init_callback_vtable_storelockguard(UniffiCallbackInterfaceStoreLockGuard.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStoreLockGuard: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<StoreLockGuard>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = StoreLockGuard
+
+    public static func lift(_ handle: UInt64) throws -> StoreLockGuard {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return StoreLockGuardImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: StoreLockGuard) -> UInt64 {
+         if let rustImpl = value as? StoreLockGuardImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StoreLockGuard {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: StoreLockGuard, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStoreLockGuard_lift(_ handle: UInt64) throws -> StoreLockGuard {
+    return try FfiConverterTypeStoreLockGuard.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStoreLockGuard_lower(_ value: StoreLockGuard) -> UInt64 {
+    return FfiConverterTypeStoreLockGuard.lower(value)
 }
 
 
@@ -9305,8 +10040,8 @@ public func FfiConverterTypeConnectionAutopilot_lower(_ value: ConnectionAutopil
 public struct ConnectionView: Equatable, Hashable {
     public var id: String
     /**
-     * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
-     * name it was given (`avatar::shown_label`).
+     * Its name as every screen shows it: the one the user gave it ([`Self::name`]), else its own
+     * ([`Self::own_label`]).
      */
     public var label: String
     public var clientHost: String
@@ -9335,13 +10070,35 @@ public struct ConnectionView: Equatable, Hashable {
      * changed by the user).
      */
     public var blobatar: Blobatar?
+    /**
+     * The name the user gave it (`names::typed_name`), synced to every phone of the account; `None`: it goes by its
+     * own.
+     */
+    public var name: String?
+    /**
+     * Its own name as the lists show it without the user's: a computer's ("M2A", not "Reins desktop app on
+     * Mac.localdomain"), else the name it was given (`avatar::shown_label`). The name field's placeholder; clearing
+     * the name brings it back.
+     */
+    public var ownLabel: String
+    /**
+     * The number the core tells a second connection of the same client apart by ("Claude 2", already in
+     * [`Self::own_label`]): set when it paired and the same client was connected, never from the client's text, and
+     * never the user's name. `None` for the first of its client.
+     */
+    public var number: UInt32?
+    /**
+     * What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
+     * (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
+     */
+    public var clientName: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(id: String, 
         /**
-         * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
-         * name it was given (`avatar::shown_label`).
+         * Its name as every screen shows it: the one the user gave it ([`Self::name`]), else its own
+         * ([`Self::own_label`]).
          */label: String, clientHost: String, createdAt: Int64, lastUsedAt: Int64?, 
         /**
          * The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
@@ -9360,7 +10117,25 @@ public struct ConnectionView: Equatable, Hashable {
         /**
          * Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
          * changed by the user).
-         */blobatar: Blobatar? = nil) {
+         */blobatar: Blobatar? = nil, 
+        /**
+         * The name the user gave it (`names::typed_name`), synced to every phone of the account; `None`: it goes by its
+         * own.
+         */name: String? = nil, 
+        /**
+         * Its own name as the lists show it without the user's: a computer's ("M2A", not "Reins desktop app on
+         * Mac.localdomain"), else the name it was given (`avatar::shown_label`). The name field's placeholder; clearing
+         * the name brings it back.
+         */ownLabel: String = "", 
+        /**
+         * The number the core tells a second connection of the same client apart by ("Claude 2", already in
+         * [`Self::own_label`]): set when it paired and the same client was connected, never from the client's text, and
+         * never the user's name. `None` for the first of its client.
+         */number: UInt32? = nil, 
+        /**
+         * What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
+         * (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
+         */clientName: String = "") {
         self.id = id
         self.label = label
         self.clientHost = clientHost
@@ -9371,6 +10146,10 @@ public struct ConnectionView: Equatable, Hashable {
         self.autoIcon = autoIcon
         self.platform = platform
         self.blobatar = blobatar
+        self.name = name
+        self.ownLabel = ownLabel
+        self.number = number
+        self.clientName = clientName
     }
 
     
@@ -9398,7 +10177,11 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
                 keyFingerprint: FfiConverterOptionString.read(from: &buf), 
                 autoIcon: FfiConverterString.read(from: &buf), 
                 platform: FfiConverterOptionString.read(from: &buf), 
-                blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf)
+                blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf), 
+                ownLabel: FfiConverterString.read(from: &buf), 
+                number: FfiConverterOptionUInt32.read(from: &buf), 
+                clientName: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -9413,6 +10196,10 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
         FfiConverterString.write(value.autoIcon, into: &buf)
         FfiConverterOptionString.write(value.platform, into: &buf)
         FfiConverterOptionTypeBlobatar.write(value.blobatar, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterString.write(value.ownLabel, into: &buf)
+        FfiConverterOptionUInt32.write(value.number, into: &buf)
+        FfiConverterString.write(value.clientName, into: &buf)
     }
 }
 
@@ -9903,6 +10690,154 @@ public func FfiConverterTypeEmailView_lift(_ buf: RustBuffer) throws -> EmailVie
 #endif
 public func FfiConverterTypeEmailView_lower(_ value: EmailView) -> RustBuffer {
     return FfiConverterTypeEmailView.lower(value)
+}
+
+
+/**
+ * This phone asked to view the account: poll with `enroll_poll` until it shows the code to compare.
+ */
+public struct EnrollStart: Equatable, Hashable {
+    public var id: String
+    public var expiresAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, expiresAt: Int64) {
+        self.id = id
+        self.expiresAt = expiresAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension EnrollStart: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEnrollStart: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EnrollStart {
+        return
+            try EnrollStart(
+                id: FfiConverterString.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EnrollStart, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnrollStart_lift(_ buf: RustBuffer) throws -> EnrollStart {
+    return try FfiConverterTypeEnrollStart.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnrollStart_lower(_ value: EnrollStart) -> RustBuffer {
+    return FfiConverterTypeEnrollStart.lower(value)
+}
+
+
+/**
+ * A phone asking to view the account, as the primary sees it.
+ */
+public struct EnrollView: Equatable, Hashable {
+    public var id: String
+    /**
+     * The name the asking phone gave, as the server relayed it: not covered by the code, so show it as unverified.
+     * (The asking phone refuses to be listed under another name, so a renamed request never completes.)
+     */
+    public var deviceName: String
+    /**
+     * The six digits to compare, once the asking phone revealed its nonce (`None`: ask again in a moment).
+     */
+    public var code: String?
+    /**
+     * The asking phone proved that it held the account secret already (a phone of the account before the update):
+     * it may be accepted without comparing.
+     */
+    public var proven: Bool
+    public var createdAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * The name the asking phone gave, as the server relayed it: not covered by the code, so show it as unverified.
+         * (The asking phone refuses to be listed under another name, so a renamed request never completes.)
+         */deviceName: String, 
+        /**
+         * The six digits to compare, once the asking phone revealed its nonce (`None`: ask again in a moment).
+         */code: String?, 
+        /**
+         * The asking phone proved that it held the account secret already (a phone of the account before the update):
+         * it may be accepted without comparing.
+         */proven: Bool, createdAt: Int64) {
+        self.id = id
+        self.deviceName = deviceName
+        self.code = code
+        self.proven = proven
+        self.createdAt = createdAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension EnrollView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEnrollView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EnrollView {
+        return
+            try EnrollView(
+                id: FfiConverterString.read(from: &buf), 
+                deviceName: FfiConverterString.read(from: &buf), 
+                code: FfiConverterOptionString.read(from: &buf), 
+                proven: FfiConverterBool.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: EnrollView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.deviceName, into: &buf)
+        FfiConverterOptionString.write(value.code, into: &buf)
+        FfiConverterBool.write(value.proven, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnrollView_lift(_ buf: RustBuffer) throws -> EnrollView {
+    return try FfiConverterTypeEnrollView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnrollView_lower(_ value: EnrollView) -> RustBuffer {
+    return FfiConverterTypeEnrollView.lower(value)
 }
 
 
@@ -11133,6 +12068,71 @@ public func FfiConverterTypeGrantView_lower(_ value: GrantView) -> RustBuffer {
 
 
 /**
+ * A viewer asking to become primary, as the primary sees it.
+ */
+public struct HandoverView: Equatable, Hashable {
+    public var id: String
+    public var deviceId: String
+    public var deviceName: String
+    public var createdAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, deviceId: String, deviceName: String, createdAt: Int64) {
+        self.id = id
+        self.deviceId = deviceId
+        self.deviceName = deviceName
+        self.createdAt = createdAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension HandoverView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHandoverView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HandoverView {
+        return
+            try HandoverView(
+                id: FfiConverterString.read(from: &buf), 
+                deviceId: FfiConverterString.read(from: &buf), 
+                deviceName: FfiConverterString.read(from: &buf), 
+                createdAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HandoverView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.deviceId, into: &buf)
+        FfiConverterString.write(value.deviceName, into: &buf)
+        FfiConverterInt64.write(value.createdAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHandoverView_lift(_ buf: RustBuffer) throws -> HandoverView {
+    return try FfiConverterTypeHandoverView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHandoverView_lower(_ value: HandoverView) -> RustBuffer {
+    return FfiConverterTypeHandoverView.lower(value)
+}
+
+
+/**
  * This phone asked the approval device for the account's keys: show `code` ("482 193") and ask the user to check
  * that the other phone shows the same.
  */
@@ -12128,6 +13128,16 @@ public struct PairingView: Equatable, Hashable {
      * too. `None` for an AI client (or a key that cannot be used).
      */
     public var keyFingerprint: String?
+    /**
+     * The name the name field starts with: its own, or one of its own ("Claude 2") when a connection of the same
+     * client is there already (`names::suggested_name`).
+     */
+    public var suggestedName: String
+    /**
+     * How many connections of the same client there are already: two accounts of one AI (two Claude.ai accounts)
+     * look the same to Reins, so the app puts the cursor in the name field for the user to tell this one apart.
+     */
+    public var sameClient: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -12135,13 +13145,23 @@ public struct PairingView: Equatable, Hashable {
         /**
          * The Reins desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
          * too. `None` for an AI client (or a key that cannot be used).
-         */keyFingerprint: String?) {
+         */keyFingerprint: String?, 
+        /**
+         * The name the name field starts with: its own, or one of its own ("Claude 2") when a connection of the same
+         * client is there already (`names::suggested_name`).
+         */suggestedName: String = "", 
+        /**
+         * How many connections of the same client there are already: two accounts of one AI (two Claude.ai accounts)
+         * look the same to Reins, so the app puts the cursor in the name field for the user to tell this one apart.
+         */sameClient: UInt32 = UInt32(0)) {
         self.id = id
         self.clientName = clientName
         self.clientHost = clientHost
         self.choices = choices
         self.createdAt = createdAt
         self.keyFingerprint = keyFingerprint
+        self.suggestedName = suggestedName
+        self.sameClient = sameClient
     }
 
     
@@ -12165,7 +13185,9 @@ public struct FfiConverterTypePairingView: FfiConverterRustBuffer {
                 clientHost: FfiConverterString.read(from: &buf), 
                 choices: FfiConverterData.read(from: &buf), 
                 createdAt: FfiConverterInt64.read(from: &buf), 
-                keyFingerprint: FfiConverterOptionString.read(from: &buf)
+                keyFingerprint: FfiConverterOptionString.read(from: &buf), 
+                suggestedName: FfiConverterString.read(from: &buf), 
+                sameClient: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -12176,6 +13198,8 @@ public struct FfiConverterTypePairingView: FfiConverterRustBuffer {
         FfiConverterData.write(value.choices, into: &buf)
         FfiConverterInt64.write(value.createdAt, into: &buf)
         FfiConverterOptionString.write(value.keyFingerprint, into: &buf)
+        FfiConverterString.write(value.suggestedName, into: &buf)
+        FfiConverterUInt32.write(value.sameClient, into: &buf)
     }
 }
 
@@ -13387,6 +14411,109 @@ public func FfiConverterTypeQuickApproval_lower(_ value: QuickApproval) -> RustB
 
 
 /**
+ * What a recovery would make of the account's phones, for the user to check before it is signed.
+ */
+public struct RecoveryPreview: Equatable, Hashable {
+    /**
+     * The roster entry the recovery starts from (hex); hand it back to `roster_recover`.
+     */
+    public var tip: String
+    /**
+     * The epoch the recovery makes.
+     */
+    public var epoch: UInt64
+    /**
+     * The roster's epoch now, and its owner key's fingerprint: compare them with another phone's.
+     */
+    public var rosterEpoch: UInt64
+    public var ownerFingerprint: String
+    /**
+     * The primary the recovery removes.
+     */
+    public var removedPrimary: String
+    /**
+     * The viewers that stay (this phone becomes the primary).
+     */
+    public var viewers: [RosterMemberView]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The roster entry the recovery starts from (hex); hand it back to `roster_recover`.
+         */tip: String, 
+        /**
+         * The epoch the recovery makes.
+         */epoch: UInt64, 
+        /**
+         * The roster's epoch now, and its owner key's fingerprint: compare them with another phone's.
+         */rosterEpoch: UInt64, ownerFingerprint: String, 
+        /**
+         * The primary the recovery removes.
+         */removedPrimary: String, 
+        /**
+         * The viewers that stay (this phone becomes the primary).
+         */viewers: [RosterMemberView]) {
+        self.tip = tip
+        self.epoch = epoch
+        self.rosterEpoch = rosterEpoch
+        self.ownerFingerprint = ownerFingerprint
+        self.removedPrimary = removedPrimary
+        self.viewers = viewers
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RecoveryPreview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecoveryPreview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecoveryPreview {
+        return
+            try RecoveryPreview(
+                tip: FfiConverterString.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                rosterEpoch: FfiConverterUInt64.read(from: &buf), 
+                ownerFingerprint: FfiConverterString.read(from: &buf), 
+                removedPrimary: FfiConverterString.read(from: &buf), 
+                viewers: FfiConverterSequenceTypeRosterMemberView.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RecoveryPreview, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tip, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterUInt64.write(value.rosterEpoch, into: &buf)
+        FfiConverterString.write(value.ownerFingerprint, into: &buf)
+        FfiConverterString.write(value.removedPrimary, into: &buf)
+        FfiConverterSequenceTypeRosterMemberView.write(value.viewers, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecoveryPreview_lift(_ buf: RustBuffer) throws -> RecoveryPreview {
+    return try FfiConverterTypeRecoveryPreview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecoveryPreview_lower(_ value: RecoveryPreview) -> RustBuffer {
+    return FfiConverterTypeRecoveryPreview.lower(value)
+}
+
+
+/**
  * What a request is, the same on every screen: the thing it touches (the tile), what it does to it (the badge on the
  * tile's corner) and the request itself in a few words, "Run `git push --force origin main`". Built by the core from
  * the call (`crate::titles`), so a waiting card, its Activity row and the entry's page agree.
@@ -13652,6 +14779,148 @@ public func FfiConverterTypeRiskView_lift(_ buf: RustBuffer) throws -> RiskView 
 #endif
 public func FfiConverterTypeRiskView_lower(_ value: RiskView) -> RustBuffer {
     return FfiConverterTypeRiskView.lower(value)
+}
+
+
+/**
+ * One phone of the roster.
+ */
+public struct RosterMemberView: Equatable, Hashable {
+    public var deviceId: String
+    public var name: String
+    public var primary: Bool
+    public var thisPhone: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(deviceId: String, name: String, primary: Bool, thisPhone: Bool) {
+        self.deviceId = deviceId
+        self.name = name
+        self.primary = primary
+        self.thisPhone = thisPhone
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RosterMemberView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRosterMemberView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RosterMemberView {
+        return
+            try RosterMemberView(
+                deviceId: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                primary: FfiConverterBool.read(from: &buf), 
+                thisPhone: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RosterMemberView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.deviceId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.primary, into: &buf)
+        FfiConverterBool.write(value.thisPhone, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRosterMemberView_lift(_ buf: RustBuffer) throws -> RosterMemberView {
+    return try FfiConverterTypeRosterMemberView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRosterMemberView_lower(_ value: RosterMemberView) -> RustBuffer {
+    return FfiConverterTypeRosterMemberView.lower(value)
+}
+
+
+/**
+ * The roster as this phone verified it.
+ */
+public struct RosterSummary: Equatable, Hashable {
+    public var epoch: UInt64
+    public var role: PhoneRole
+    /**
+     * The primary first, then the viewers.
+     */
+    public var members: [RosterMemberView]
+    /**
+     * A short fingerprint of the owner key ("a1b2 c3d4").
+     */
+    public var ownerFingerprint: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(epoch: UInt64, role: PhoneRole, 
+        /**
+         * The primary first, then the viewers.
+         */members: [RosterMemberView], 
+        /**
+         * A short fingerprint of the owner key ("a1b2 c3d4").
+         */ownerFingerprint: String) {
+        self.epoch = epoch
+        self.role = role
+        self.members = members
+        self.ownerFingerprint = ownerFingerprint
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RosterSummary: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRosterSummary: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RosterSummary {
+        return
+            try RosterSummary(
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                role: FfiConverterTypePhoneRole.read(from: &buf), 
+                members: FfiConverterSequenceTypeRosterMemberView.read(from: &buf), 
+                ownerFingerprint: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RosterSummary, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterTypePhoneRole.write(value.role, into: &buf)
+        FfiConverterSequenceTypeRosterMemberView.write(value.members, into: &buf)
+        FfiConverterString.write(value.ownerFingerprint, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRosterSummary_lift(_ buf: RustBuffer) throws -> RosterSummary {
+    return try FfiConverterTypeRosterSummary.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRosterSummary_lower(_ value: RosterSummary) -> RustBuffer {
+    return FfiConverterTypeRosterSummary.lower(value)
 }
 
 
@@ -16947,6 +18216,11 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      * master password) with `unlock_account`; then `register_device` again.
      */
     case OtherApprovalDevice
+    /**
+     * This phone only views the account (phone roles): the change is the primary's to make. Lockdown, stopping a
+     * bypass and revoking a grant (the brake) stay open to it.
+     */
+    case ViewerOnly
 
     
 
@@ -17005,6 +18279,7 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 14: return .OtherApprovalDevice
+        case 15: return .ViewerOnly
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -17079,6 +18354,10 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
         
         case .OtherApprovalDevice:
             writeInt(&buf, Int32(14))
+        
+        
+        case .ViewerOnly:
+            writeInt(&buf, Int32(15))
         
         }
     }
@@ -17288,6 +18567,105 @@ public func FfiConverterTypeDiffLineKind_lower(_ value: DiffLineKind) -> RustBuf
 
 
 
+
+public enum EnrollProgress: Equatable, Hashable {
+    
+    /**
+     * The primary has not answered yet: ask again in a few seconds.
+     */
+    case waiting
+    /**
+     * Show `code` ("482 193") and ask the user to check that the primary shows the same; keep polling.
+     */
+    case compare(code: String
+    )
+    /**
+     * This phone is a viewer of the account now (with the vault open when the account has a recovery code).
+     */
+    case enrolled
+    case denied
+    case expired
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension EnrollProgress: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeEnrollProgress: FfiConverterRustBuffer {
+    typealias SwiftType = EnrollProgress
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> EnrollProgress {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .waiting
+        
+        case 2: return .compare(code: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 3: return .enrolled
+        
+        case 4: return .denied
+        
+        case 5: return .expired
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: EnrollProgress, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .waiting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case let .compare(code):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(code, into: &buf)
+            
+        
+        case .enrolled:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .denied:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .expired:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnrollProgress_lift(_ buf: RustBuffer) throws -> EnrollProgress {
+    return try FfiConverterTypeEnrollProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeEnrollProgress_lower(_ value: EnrollProgress) -> RustBuffer {
+    return FfiConverterTypeEnrollProgress.lower(value)
+}
+
+
+
 /**
  * Error returned by the Kotlin implementations of the foreign traits.
  */
@@ -17444,6 +18822,92 @@ public func FfiConverterTypeGmailStatus_lift(_ buf: RustBuffer) throws -> GmailS
 #endif
 public func FfiConverterTypeGmailStatus_lower(_ value: GmailStatus) -> RustBuffer {
     return FfiConverterTypeGmailStatus.lower(value)
+}
+
+
+
+/**
+ * Where this phone's "Decide on this phone" request stands.
+ */
+
+public enum HandoverProgress: Equatable, Hashable {
+    
+    case waiting
+    /**
+     * This phone is the primary now, with the owner seed and the keys that move with the role.
+     */
+    case done
+    case denied
+    case expired
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension HandoverProgress: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHandoverProgress: FfiConverterRustBuffer {
+    typealias SwiftType = HandoverProgress
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HandoverProgress {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .waiting
+        
+        case 2: return .done
+        
+        case 3: return .denied
+        
+        case 4: return .expired
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: HandoverProgress, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .waiting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .done:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .denied:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .expired:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHandoverProgress_lift(_ buf: RustBuffer) throws -> HandoverProgress {
+    return try FfiConverterTypeHandoverProgress.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHandoverProgress_lower(_ value: HandoverProgress) -> RustBuffer {
+    return FfiConverterTypeHandoverProgress.lower(value)
 }
 
 
@@ -18008,6 +19472,101 @@ public func FfiConverterTypePendingKind_lift(_ buf: RustBuffer) throws -> Pendin
 #endif
 public func FfiConverterTypePendingKind_lower(_ value: PendingKind) -> RustBuffer {
     return FfiConverterTypePendingKind.lower(value)
+}
+
+
+
+/**
+ * What this phone is on its account.
+ */
+
+public enum PhoneRole: Equatable, Hashable {
+    
+    /**
+     * The account has no roster (or this phone was never enrolled in it): everything works as before phone roles.
+     */
+    case legacy
+    /**
+     * This phone decides.
+     */
+    case primary
+    /**
+     * This phone watches; decisions are on the primary.
+     */
+    case viewer
+    /**
+     * This phone was listed and is not now (removed, or replaced by a recovery).
+     */
+    case removed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PhoneRole: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePhoneRole: FfiConverterRustBuffer {
+    typealias SwiftType = PhoneRole
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PhoneRole {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .legacy
+        
+        case 2: return .primary
+        
+        case 3: return .viewer
+        
+        case 4: return .removed
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PhoneRole, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .legacy:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .primary:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .viewer:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .removed:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePhoneRole_lift(_ buf: RustBuffer) throws -> PhoneRole {
+    return try FfiConverterTypePhoneRole.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePhoneRole_lower(_ value: PhoneRole) -> RustBuffer {
+    return FfiConverterTypePhoneRole.lower(value)
 }
 
 
@@ -19396,6 +20955,30 @@ fileprivate struct FfiConverterOptionTypeRiskView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeRosterSummary: FfiConverterRustBuffer {
+    typealias SwiftType = RosterSummary?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRosterSummary.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRosterSummary.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeSecretReleaseView: FfiConverterRustBuffer {
     typealias SwiftType = SecretReleaseView?
 
@@ -20360,6 +21943,31 @@ fileprivate struct FfiConverterSequenceTypeGrantView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeHandoverView: FfiConverterRustBuffer {
+    typealias SwiftType = [HandoverView]
+
+    public static func write(_ value: [HandoverView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeHandoverView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [HandoverView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [HandoverView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeHandoverView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMcpServerView: FfiConverterRustBuffer {
     typealias SwiftType = [McpServerView]
 
@@ -20602,6 +22210,31 @@ fileprivate struct FfiConverterSequenceTypeResourceView: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeResourceView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRosterMemberView: FfiConverterRustBuffer {
+    typealias SwiftType = [RosterMemberView]
+
+    public static func write(_ value: [RosterMemberView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRosterMemberView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RosterMemberView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RosterMemberView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRosterMemberView.read(from: &buf))
         }
         return seq
     }
@@ -21120,6 +22753,19 @@ public func uniffiForeignFutureHandleCountReinsCore() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
 /**
+ * Installs the platform's guard over the store's cross-process file lock, and how long taking the lock may wait for
+ * another process before a call fails as busy (iOS: the app and its notification extension share the store in the
+ * App Group container; see [`StoreLockGuard`]). Call once, before the first `ReinsCore` in the process.
+ */
+public func installStoreLockGuard(`guard`: StoreLockGuard, waitMs: UInt32)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_reins_core_fn_func_install_store_lock_guard(
+        FfiConverterTypeStoreLockGuard_lower(`guard`),
+        FfiConverterUInt32.lower(waitMs),uniffiCallStatus
+    )
+}
+}
+/**
  * Minor units as the user reads them ("$19.98").
  */
 public func paymentsFormatAmount(minor: Int64, currency: String) -> String  {
@@ -21159,6 +22805,9 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_reins_core_checksum_func_install_store_lock_guard() != 42374) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_func_payments_format_amount() != 50711) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -21174,7 +22823,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_account_status() != 62124) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_account_sync_notice() != 55961) {
+    if (uniffi_reins_core_checksum_method_reinscore_account_sync_notice() != 34339) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_accounts() != 48644) {
@@ -21216,7 +22865,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_answer_join() != 45029) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_answer_pairing() != 8400) {
+    if (uniffi_reins_core_checksum_method_reinscore_answer_pairing() != 16934) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_approval_view() != 29546) {
@@ -21288,6 +22937,21 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_download_model() != 52176) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_enroll_begin() != 4151) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_enroll_cancel() != 40851) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_enroll_confirm() != 57899) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_enroll_poll() != 725) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_enroll_view() != 13516) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_extend_grant() != 25710) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -21304,6 +22968,21 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_handle_push_deferring_autopilot() != 59934) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_handover_approve() != 26618) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_handover_deny() != 2995) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_handover_poll() != 30802) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_handover_request() != 13833) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_handover_requests() != 22938) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_join_begin() != 61201) {
@@ -21351,6 +23030,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_phone_key_fingerprint() != 65272) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_phone_role() != 2718) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_register_device() != 53382) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -21361,6 +23043,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_remove_vault_passkey() != 31346) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_rename_connection() != 945) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_rename_profile() != 43478) {
@@ -21390,6 +23075,24 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_revoke_secrets_everywhere() != 57345) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_create() != 29964) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_recover() != 44614) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_recover_preview() != 24859) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_remove_member() != 252) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_rewrap() != 55468) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_summary() != 39004) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_method_reinscore_search_activity() != 51150) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -21402,13 +23105,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_reinscore_services() != 31924) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_reins_core_checksum_method_reinscore_session() != 8809) {
+    if (uniffi_reins_core_checksum_method_reinscore_session() != 56857) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_mode() != 21760) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_autopilot_wifi_only() != 5322) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_set_background() != 57933) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_set_class_lock() != 43604) {
@@ -21627,6 +23333,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_reins_core_checksum_method_ownercheck_confirm() != 63799) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_reins_core_checksum_method_storelockguard_locking() != 18347) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_storelockguard_unlocked() != 15014) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_reins_core_checksum_constructor_reinscore_new() != 41877) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -21638,6 +23350,7 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitModelRuntime()
     uniffiCallbackInitNotifier()
     uniffiCallbackInitOwnerCheck()
+    uniffiCallbackInitStoreLockGuard()
     return InitializationResult.ok
 }()
 

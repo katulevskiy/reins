@@ -232,6 +232,46 @@ pub struct Connections {
     pub connections: Vec<ConnectionInfo>,
 }
 
+/// A11 `PUT /connections/{id}/name` body: the name the user gave a computer ([`ComputerName`]), in a box from the
+/// phone's inbox key to its desktop app's key, so that the app shows the name the user's phones show while the server
+/// can neither read it nor forge one (the app opens it only with the phone key it pinned). `None`: the user gave it
+/// none, the app goes by its own. The server keeps it for the app (`GET /reins/desktop/phone`, `sealed_name`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SealedName {
+    pub sealed: Option<String>,
+}
+
+/// The longest [`SealedName::sealed`] the server keeps (base64url of a sealed [`ComputerName`]).
+pub const MAX_SEALED_NAME_CHARS: usize = 1024;
+
+/// What a [`SealedName`] seals: the name, padded so that every sealed name is the same length (its length would
+/// tell the server how long the name is).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComputerName {
+    pub v: u32,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub pad: String,
+}
+
+/// The length of a [`ComputerName`] as JSON once padded: room for 64 characters of four bytes each, escaped.
+pub const COMPUTER_NAME_JSON_BYTES: usize = 400;
+
+impl ComputerName {
+    /// `name` padded to [`COMPUTER_NAME_JSON_BYTES`] of JSON (a longer one is left as it is).
+    #[must_use]
+    pub fn padded(name: Option<String>) -> Self {
+        let mut out = Self {
+            v: 1,
+            name,
+            pad: String::new(),
+        };
+        let len = serde_json::to_vec(&out).map_or(0, |j| j.len());
+        out.pad = " ".repeat(COMPUTER_NAME_JSON_BYTES.saturating_sub(len));
+        out
+    }
+}
+
 /// One device signed in to the account (a phone, a Bitwarden app or the web vault), as listed by A9.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceInfo {
@@ -300,6 +340,20 @@ mod tests {
 
     use super::*;
     use crate::pairing::PairingRequest;
+
+    #[test]
+    fn a_computer_name_is_padded_to_one_length() {
+        let lengths: Vec<usize> = [None, Some("M2A".to_owned()), Some("\u{1f600}".repeat(64)), Some("\"".repeat(64))]
+            .into_iter()
+            .map(|n| serde_json::to_vec(&ComputerName::padded(n)).unwrap().len())
+            .collect();
+        assert!(lengths.iter().all(|l| *l == COMPUTER_NAME_JSON_BYTES), "{lengths:?}");
+        let back: ComputerName =
+            serde_json::from_slice(&serde_json::to_vec(&ComputerName::padded(Some("Work".into()))).unwrap()).unwrap();
+        assert_eq!(back.name.as_deref(), Some("Work"));
+        let sealed_len = 4 * (COMPUTER_NAME_JSON_BYTES + 48).div_ceil(3);
+        assert!(sealed_len <= MAX_SEALED_NAME_CHARS, "{sealed_len}");
+    }
 
     #[test]
     fn registration_token_is_optional() {

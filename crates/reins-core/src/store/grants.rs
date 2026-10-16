@@ -120,7 +120,7 @@ impl Store {
 
     /// Every grant (active, expired, used up or revoked), newest first. Corrupt rows are skipped.
     pub fn grants(&self) -> Result<Vec<StoredGrant>, CoreError> {
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let mut stmt = conn.prepare(
             "SELECT id, connection_id, connection_label, grant_json, last_used_at, origin FROM grants \
              ORDER BY created_at DESC, id",
@@ -259,7 +259,7 @@ impl Store {
 
     /// Whether an active grant of `connection` for `account` needs message bodies to decide.
     pub fn needs_body(&self, connection: &ConnectionId, account: Option<&str>, now: i64) -> Result<bool, CoreError> {
-        let conn = self.lock()?;
+        let conn = self.read()?;
         Ok(needs_body(&connection_grants(&conn, connection, account, now)?, connection, now))
     }
 
@@ -452,7 +452,7 @@ impl Store {
         service: &str,
         now: i64,
     ) -> Result<reins_policy::AccountCoverage, CoreError> {
-        let conn = self.lock()?;
+        let conn = self.read()?;
         let grants = all_connection_grants(&conn, connection, now)?;
         Ok(reins_policy::account_coverage(&grants, connection, service, now))
     }

@@ -11,6 +11,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.People
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -125,7 +130,16 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
             }
             Column(Modifier.padding(horizontal = 22.dp)) {
                 LabelText("Name it", c.inkMeta, Modifier.padding(top = 18.dp, bottom = 8.dp))
-                RTextField(ui.label, viewModel::setLabel, "Name", tag = "label")
+                val naming = remember { androidx.compose.ui.focus.FocusRequester() }
+                if (ui.sameClient) {
+                    // Two accounts of one AI look the same to Reins: the name is what tells them apart.
+                    Row(Modifier.padding(bottom = 8.dp).testTag("pairSameClient"), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.People, null, tint = c.accent, modifier = Modifier.size(18.dp))
+                        RText(sameClientLine(view), RType.meta, c.accent, Modifier.padding(start = 8.dp))
+                    }
+                    LaunchedEffect(view.id) { runCatching { naming.requestFocus() } }
+                }
+                RTextField(ui.label, viewModel::setLabel, untrustedName(view.clientName, 48).ifEmpty { "Name" }, tag = "label", focusRequester = naming)
                 val policy by viewModel.startingPolicy.collectAsStateWithLifecycle()
                 dev.reins.android.ui.grants.StartingRuleText.onPairing(policy)?.let {
                     RText(it, RType.meta, c.inkMeta, Modifier.padding(top = 12.dp).testTag("startingRuleNote"))

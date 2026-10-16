@@ -371,6 +371,38 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("7-pairing")
     }
 
+    /** A second Claude.ai account: "Claude 2" in the name field, the cursor in it, and why. */
+    @Test
+    fun pairingSecondAccount() {
+        history()
+        core.connections = listOf(TestData.connection("c1", "Claude").copy(ownLabel = "Claude", clientName = "Claude"))
+        core.pending = listOf(TestData.pairingItem("p2"))
+        core.pairing = PairingView("p2", "Claude", "claude.ai", byteArrayOf(7, 42, 88), 1_700_000_200, null, "Claude 2", 1u)
+        launch(link("pairing", "p2"))
+        await("pairSameClient")
+        rule.onNodeWithTag("label").performScrollTo()
+        shoot("7b-pairing-second-account")
+    }
+
+    /** A connection's Name: the field with the user's name, its own as the placeholder, what it calls itself. */
+    @Test
+    fun renameConnection() {
+        history()
+        core.connections = listOf(
+            TestData.connection("c1", "Claude (work)").copy(name = "Claude (work)", ownLabel = "Claude", clientName = "Claude", lastUsedAt = now - 300),
+            TestData.connection("c2", "Claude").copy(ownLabel = "Claude", clientName = "Claude"),
+        )
+        launch()
+        tap("tabConnections")
+        tap("connection:c1")
+        await("connectionCalledItself")
+        shoot("13c-connection-renamed")
+        tap("connectionRename")
+        await("renameField")
+        repeat(20) { rule.mainClock.advanceTimeBy(50) }
+        shoot("13d-connection-rename-field")
+    }
+
     @Test
     fun activityDetails() {
         history()

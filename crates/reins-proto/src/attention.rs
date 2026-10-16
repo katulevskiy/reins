@@ -1,8 +1,9 @@
 //! Marks on a commit, a file or a message that deserve a closer look.
 //!
 //! The level is the heaviest reason. Weights are not added. At most three reasons are kept, heaviest first, and a tie
-//! breaks by [`Code`]'s order. Nothing matching is not a clearance: a commit message, a subject or a snippet can only
-//! add an email reason, never clear a path.
+//! breaks by [`Code`]'s order. A hidden-character warning is never one of the cuts: when it fired, it takes the place
+//! of the lightest reason that would otherwise fill the list. Nothing matching is not a clearance: a commit message,
+//! a subject or a snippet can only add an email reason, never clear a path.
 //!
 //! A label is fixed wording. The matched secret is not kept. A deletion count is the only fact filled in.
 
@@ -44,7 +45,7 @@ pub struct Reason {
     pub label: String,
 }
 
-/// At most three reasons, heaviest first.
+/// At most three reasons, heaviest first. A hidden-character warning stays even when three heavier reasons fired.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attention {
     pub level: Level,
@@ -555,7 +556,16 @@ fn finish(hits: Vec<Hit>) -> Option<Attention> {
     if max < 3 {
         return None;
     }
-    kept.sort_by(|a, b| b.weight.cmp(&a.weight).then(a.code.cmp(&b.code)));
+    kept.sort_by(heavier_first);
+    // Three heavier reasons would drop this. It replaces the lightest of them, then the list is ordered again.
+    if let Some(index) = kept.iter().position(|found| found.code == Code::HiddenChars)
+        && index >= 3
+    {
+        let hidden = kept.remove(index);
+        kept.truncate(2);
+        kept.push(hidden);
+        kept.sort_by(heavier_first);
+    }
     kept.truncate(3);
     let level = if max >= 6 {
         Level::Close
@@ -566,6 +576,10 @@ fn finish(hits: Vec<Hit>) -> Option<Attention> {
         level,
         reasons: kept.iter().map(reason).collect(),
     })
+}
+
+fn heavier_first(a: &Hit, b: &Hit) -> std::cmp::Ordering {
+    b.weight.cmp(&a.weight).then(a.code.cmp(&b.code))
 }
 
 fn absorb(kept: &mut Vec<Hit>, found: Hit) {
@@ -1074,15 +1088,30 @@ mod tests {
 
     #[test]
     fn many_reasons_keep_the_three_heaviest() {
-        let mut change = with_patch(
-            "k8s/.github/workflows/credentials.json",
-            &format!("@@ -0,0 +1 @@\n+ghp_{}\u{200B}", "A".repeat(36)),
-        );
+        let mut change =
+            with_patch("k8s/.github/workflows/credentials.json", &format!("@@ -0,0 +1 @@\n+ghp_{}", "A".repeat(36)));
         change.deletions = Some(1_240);
         let found = file(&change).expect("several");
         assert_eq!(found.level, Level::Close);
         assert_eq!(found.reasons.len(), 3);
         assert_eq!(codes(&found), vec![Code::SecretFile, Code::LooksLikeKey, Code::ChangesCi]);
+        let blob = format!("ghp_{}", "A".repeat(36));
+        assert!(found.reasons.iter().all(|reason| !reason.label.contains(&blob)));
+        assert!(found.reasons.iter().all(|reason| !reason.label.contains("credentials.json")));
+    }
+
+    #[test]
+    fn hidden_characters_stay_when_three_heavier_reasons_would_fill_the_list() {
+        let mut change = with_patch(
+            "k8s/.github/workflows/credentials.json",
+            &format!("@@ -0,0 +1 @@\n+ghp_{}\u{200B}", "A".repeat(36)),
+        );
+        change.deletions = Some(1_240);
+        let found = file(&change).expect("hidden among heavier");
+        assert_eq!(found.level, Level::Close);
+        assert_eq!(found.reasons.len(), 3);
+        assert_eq!(codes(&found), vec![Code::SecretFile, Code::LooksLikeKey, Code::HiddenChars]);
+        assert_eq!(found.reasons[2].label, "Hidden characters");
         let blob = format!("ghp_{}", "A".repeat(36));
         assert!(found.reasons.iter().all(|reason| !reason.label.contains(&blob)));
         assert!(found.reasons.iter().all(|reason| !reason.label.contains("credentials.json")));

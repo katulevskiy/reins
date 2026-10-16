@@ -254,6 +254,16 @@ impl<'a> PhoneApi<'a> {
         Self::send(self.request(Method::DELETE, &format!("/connections/{id}"))).await.map(drop)
     }
 
+    /// A11 `PUT /connections/{id}/name`: a computer's name, sealed to its desktop app's key (`None`: it has none).
+    pub async fn put_connection_name(
+        &self,
+        id: &str,
+        name: &reins_proto::device::SealedName,
+    ) -> Result<(), ApiFailure> {
+        check_id(id)?;
+        Self::send(self.request(Method::PUT, &format!("/connections/{id}/name")).json(name)).await.map(drop)
+    }
+
     /// A9 `GET /devices`.
     pub async fn devices(&self) -> Result<reins_proto::device::Devices, ApiFailure> {
         Self::json(self.request(Method::GET, "/devices")).await

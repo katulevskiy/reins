@@ -17,18 +17,34 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/**
+ * The name the field starts with: the core's suggestion ("Claude 2" when the same AI is connected already), else the
+ * client's own name; cleaned like any name from the other side.
+ */
+internal fun startingName(view: PairingView): String =
+    untrustedName(view.suggestedName.ifEmpty { view.clientName }, Int.MAX_VALUE).take(PairingViewModel.MAX_LABEL)
+
+/** "Claude is connected already · name this one": a second account of an AI looks the same to Reins. */
+internal fun sameClientLine(view: PairingView): String =
+    "${untrustedName(view.clientName, 32).ifEmpty { "This AI" }} is connected already · name this one"
+
 data class PairingUi(
     val loading: Boolean = true,
     val view: PairingView? = null,
     /** The two-digit code the user tapped; the AI is connected only if it is the one their computer or browser shows. */
     val chosen: Int? = null,
     val label: String = "",
+    /** The user changed the name field: only then is its name the user's (the core still refuses the client's own). */
+    val nameEdited: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
     /** Approving failed because the phone has no screen lock: the sheet offers Android's settings for one. */
     val needsScreenLock: Boolean = false,
     val finished: Boolean = false,
 ) {
+    /** The same AI is connected already (a second account of it): the user names this one now. */
+    val sameClient: Boolean get() = (view?.sameClient ?: 0u) > 0u
+
     /** Codes as unsigned values (the UniFFI `ByteArray` is signed). */
     val codes: List<Int> get() = view?.choices?.map { it.toInt() and 0xFF } ?: emptyList()
 }
@@ -44,7 +60,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
         viewModelScope.launch {
             try {
                 val view = container.core.pairingView(pairingId)
-                _ui.value = PairingUi(loading = false, view = view, label = untrustedName(view.clientName, Int.MAX_VALUE).take(MAX_LABEL))
+                _ui.value = PairingUi(loading = false, view = view, label = startingName(view))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -55,7 +71,8 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
 
     fun choose(code: Int) = _ui.update { it.copy(chosen = code, error = null) }
 
-    fun setLabel(label: String) = _ui.update { it.copy(label = label.take(MAX_LABEL)) }
+    /** The user typing in the name field. */
+    fun setLabel(label: String) = _ui.update { it.copy(label = label.take(MAX_LABEL), nameEdited = true) }
 
     fun approve(authenticator: Authenticator) {
         val current = _ui.value
@@ -74,7 +91,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
                 when (authenticator.authenticate(title, untrustedName(current.view?.clientName.orEmpty()))) {
                     AuthResult.Success -> {
                         container.feedback.play(Event.Connected)
-                        container.core.answerPairing(pairingId, true, code.toUByte(), current.label.trim().ifEmpty { null })
+                        container.core.answerPairing(pairingId, true, code.toUByte(), current.label.trim().ifEmpty { null }, current.nameEdited)
                         // A computer: the page that connects computers says it worked.
                         if (current.view?.keyFingerprint != null) {
                             container.state.setJustPaired(current.label.trim().ifEmpty { current.view.clientName })
@@ -105,7 +122,7 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
         container.feedback.play(Event.Denied)
         viewModelScope.launch {
             try {
-                container.core.answerPairing(pairingId, false, null, null)
+                container.core.answerPairing(pairingId, false, null, null, false)
                 container.refreshAfterAnswer(pairingId)
                 _ui.update { it.copy(busy = false, finished = true) }
             } catch (e: CancellationException) {
@@ -117,7 +134,8 @@ class PairingViewModel(private val container: AppContainer, private val pairingI
         }
     }
 
-    private companion object {
+    companion object {
+        /** The longest name, as the core keeps it. */
         const val MAX_LABEL = 64
     }
 }

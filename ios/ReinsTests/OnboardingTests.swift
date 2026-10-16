@@ -133,7 +133,7 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(again.id, view.id, "the same code parks one pairing")
 
         let before = try await core.connections().count
-        try await core.answerPairing(pairingId: view.id, approve: true, chosenCode: view.choices.first, label: nil)
+        try await core.answerPairing(pairingId: view.id, approve: true, chosenCode: view.choices.first, label: nil, nameEdited: false)
         let connections = try await core.connections()
         XCTAssertEqual(connections.count, before + 1)
         XCTAssertEqual(connections.last?.label, "studio", "a computer by its own name")

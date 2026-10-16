@@ -43,6 +43,10 @@ pub struct PhoneSeen {
     #[serde(default)]
     pub services: Option<Vec<String>>,
     pub server_time: i64,
+    /// The name the user gave this computer on the phone, sealed to this app's key
+    /// (`reins_proto::device::SealedName`); `None`: none, or an older server.
+    #[serde(default)]
+    pub sealed_name: Option<String>,
 }
 
 pub struct DesktopClient {
