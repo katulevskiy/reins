@@ -16,6 +16,7 @@ use crate::autopilot::{
 use crate::connector::device::{DeviceBridge, DeviceCalendar, DeviceContacts, Sms};
 use crate::connector::{Connector, LoginProgress};
 use crate::engine::{CoreConfig, Engine};
+use crate::roles::{EnrollProgress, EnrollStart, EnrollView, HandoverProgress, HandoverView, PhoneRole, RosterSummary};
 use crate::types::{
     AccountKeys, AccountView, ActivityEntry, ApprovalChoice, ApprovalKind, ApprovalView, ConnectionView, DeviceView,
     EmailContent, GmailStatus, GrantView, JoinProgress, JoinStart, JoinView, PairingView, PendingItem, SecretsRevoked,
@@ -398,6 +399,227 @@ impl ReinsCore {
             let engine = runtime.prepare(generation).await?;
             engine.ensure_active()?;
             let result = engine.run_account(async { engine.answer_join(&id, approve).await }).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    // ---- phone roles: one primary decides, viewers watch ----------------------------------------------------------
+
+    /// What this phone is on the signed-in account: `Legacy` while the account has no roster (or this phone is not in
+    /// it), else `Primary`, `Viewer` or `Removed`. From what this phone verified last; no network.
+    pub async fn phone_role(&self) -> Result<PhoneRole, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.phone_role()).await
+        })
+        .await
+    }
+
+    /// The account's phones as this phone verified them (`refresh`: fetched and verified again first). `None` on a
+    /// legacy account.
+    pub async fn roster_summary(&self, refresh: bool) -> Result<Option<RosterSummary>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.roster_summary(refresh)).await
+        })
+        .await
+    }
+
+    /// On the approval device: turns phone roles on for the account, with this phone as primary (`device_name`, e.g.
+    /// "iPhone"). `code_or_password`: only for an account made with a master password (this phone keeps no recovery
+    /// code to seal the recovery wrap with). Ask whether the recovery code is saved first.
+    pub async fn roster_create(
+        &self,
+        device_name: String,
+        code_or_password: Option<String>,
+    ) -> Result<RosterSummary, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let typed = code_or_password.map(Zeroizing::new);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.roster_create(&device_name, typed)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On a phone that should view the account: asks its primary to enroll it. Then call `enroll_poll` every few
+    /// seconds; it shows the code to compare once the primary answered.
+    pub async fn enroll_begin(&self, device_name: String) -> Result<EnrollStart, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.enroll_begin(&device_name)).await
+        })
+        .await
+    }
+
+    /// Where this phone's enrollment stands: `Compare` shows the six digits; `Enrolled` once it views the account
+    /// (with the vault open when the account has a recovery code). `NotFound` when none is open.
+    pub async fn enroll_poll(&self) -> Result<EnrollProgress, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let progress = engine.run_account(engine.enroll_poll()).await?;
+            runtime.check_engine(&engine)?;
+            if progress == EnrollProgress::Enrolled {
+                // The vault opens when the answer carried the account secret (an account with a master password signs
+                // in with it instead).
+                match runtime.activate_unlocked().await {
+                    Ok(()) | Err(CoreError::NotLoggedIn) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok(progress)
+        })
+        .await
+    }
+
+    pub async fn enroll_cancel(&self) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.enroll_cancel()).await
+        })
+        .await
+    }
+
+    /// On the primary: a phone asking to view the account (a parked `Join` item). The first call answers it with this
+    /// phone's challenge; call again until `code` is there, then show it next to the other phone's.
+    pub async fn enroll_view(&self, id: String) -> Result<EnrollView, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.enroll_view(&id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the primary, after the user compared the codes (and biometrics): enrolls the phone as a viewer, or declines.
+    pub async fn enroll_confirm(&self, id: String, approve: bool) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.enroll_confirm(&id, approve)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On a viewer: "Decide on this phone". Returns the request's id; follow with `handover_poll`.
+    pub async fn handover_request(&self) -> Result<String, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.handover_request()).await
+        })
+        .await
+    }
+
+    /// Where this phone's handover request stands; `Done` once it is the primary (it verified and kept the keys the
+    /// old primary sealed to it). `NotFound` when none is open.
+    pub async fn handover_poll(&self) -> Result<HandoverProgress, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.handover_poll()).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the primary: the viewers asking to decide, each verified (signed by that viewer's roster key) and named as
+    /// the roster names it.
+    pub async fn handover_requests(&self) -> Result<Vec<HandoverView>, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.handover_requests()).await
+        })
+        .await
+    }
+
+    /// On the primary, after biometrics: makes the viewer that asked (`id`) the primary. `device_id` is the phone the
+    /// user saw in `handover_requests` (the request must be from it). This phone becomes a viewer.
+    pub async fn handover_approve(&self, id: String, device_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.handover_approve(&id, &device_id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    pub async fn handover_deny(&self, id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            engine.run_account(engine.handover_deny(&id)).await
+        })
+        .await
+    }
+
+    /// "<primary> lost? Use the recovery code": with the recovery code (or the master password) this phone becomes
+    /// the primary under a new owner key; the old primary is removed.
+    pub async fn roster_recover(
+        &self,
+        code_or_password: String,
+        device_name: String,
+    ) -> Result<RosterSummary, CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let typed = Zeroizing::new(code_or_password);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let summary = engine.run_account(engine.roster_recover(typed, &device_name)).await?;
+            runtime.check_engine(&engine)?;
+            match runtime.activate_unlocked().await {
+                Ok(()) | Err(CoreError::NotLoggedIn) => {}
+                Err(e) => return Err(e),
+            }
+            Ok(summary)
+        })
+        .await
+    }
+
+    /// On the primary: takes a viewer off the account (it reads nothing written from now on).
+    pub async fn roster_remove_member(&self, device_id: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.roster_remove_member(&device_id)).await;
+            runtime.finish(&engine, result)
+        })
+        .await
+    }
+
+    /// On the primary, after the account's master password changed: seals the recovery wrap again for it.
+    pub async fn roster_rewrap(&self, new_password: String) -> Result<(), CoreError> {
+        let runtime = Arc::clone(&self.runtime);
+        let typed = Zeroizing::new(new_password);
+        let generation = runtime.generation();
+        rt::run(async move {
+            let engine = runtime.prepare(generation).await?;
+            let result = engine.run_account(engine.roster_rewrap(typed)).await;
             runtime.finish(&engine, result)
         })
         .await

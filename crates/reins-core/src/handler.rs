@@ -456,7 +456,15 @@ impl Engine {
             v: PROTOCOL_VERSION,
             outcome,
         };
-        match api_call!(session, |api| api.respond(id, &response)) {
+        // With a roster, the primary signs the answer's exact bytes (the server and desktops check it).
+        let bytes = serde_json::to_vec(&response).map_err(|e| CoreError::storage(e.to_string()))?;
+        let signed = self.signed_answer(session, reins_proto::answer::AnswerKind::Request, id, &bytes).await?;
+        let sent = if let Some(signed) = &signed {
+            api_call!(session, |api| api.respond_body(id, signed))
+        } else {
+            api_call!(session, |api| api.respond(id, &response))
+        };
+        match sent {
             // Ok, or expired on the server / answered already: nothing more to do.
             Ok(())
             | Err(ApiFailure::Status {

@@ -7,6 +7,9 @@ use zeroize::Zeroizing;
 use super::Store;
 use crate::CoreError;
 
+/// One secret of a service: its account and value.
+pub(crate) type Secret = (String, Zeroizing<Vec<u8>>);
+
 fn aad(service: &str, account: &str) -> String {
     format!("secret.{service}.{account}")
 }
@@ -32,6 +35,21 @@ impl Store {
             params![service, account, sealed],
         )?;
         Ok(())
+    }
+
+    /// Every secret of `service`, by account.
+    pub(crate) fn secrets_of(&self, service: &str) -> Result<Vec<Secret>, CoreError> {
+        let rows: Vec<(String, Vec<u8>)> = {
+            let conn = self.lock()?;
+            let mut stmt = conn.prepare("SELECT account, value FROM secrets WHERE service = ?1 ORDER BY account")?;
+            stmt.query_map(params![service], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
+        };
+        rows.into_iter()
+            .map(|(account, blob)| {
+                let plain = self.unseal(&aad(service, &account), &blob)?;
+                Ok((account, Zeroizing::new(plain)))
+            })
+            .collect()
     }
 
     pub fn secret_delete(&self, service: &str, account: &str) -> Result<(), CoreError> {
@@ -88,6 +106,53 @@ impl Store {
         <[u8; 32]>::try_from(raw.as_slice())
             .map(Zeroizing::new)
             .map_err(|_| CoreError::storage("the inbox key was not kept"))
+    }
+}
+
+impl Store {
+    /// The store that keeps this installation's own keys: the device store (sealed with the data key the platform
+    /// keystore wraps, never synced), whichever account store `self` is.
+    fn device_store(&self) -> &Store {
+        self.control.as_deref().unwrap_or(self)
+    }
+
+    /// A secret of this installation (phone roles' signing, box, owner and view keys), in the device store.
+    pub(crate) fn device_secret_get(
+        &self,
+        service: &str,
+        account: &str,
+    ) -> Result<Option<Zeroizing<Vec<u8>>>, CoreError> {
+        Ok(self.device_store().secret_get(service, account)?.map(Zeroizing::new))
+    }
+
+    pub(crate) fn device_secret_put(&self, service: &str, account: &str, value: &[u8]) -> Result<(), CoreError> {
+        self.device_store().secret_put(service, account, value)
+    }
+
+    pub(crate) fn device_secret_delete(&self, service: &str, account: &str) -> Result<(), CoreError> {
+        self.device_store().secret_delete(service, account)
+    }
+
+    /// The 32 random bytes kept as device secret (`service`, `account`), made the first time. Of two first calls at
+    /// once, the first value stays.
+    pub(crate) fn device_seed(&self, service: &str, account: &str) -> Result<Zeroizing<[u8; 32]>, CoreError> {
+        let store = self.device_store();
+        if let Some(raw) = store.secret_get(service, account)?
+            && let Ok(key) = <[u8; 32]>::try_from(raw.as_slice())
+        {
+            return Ok(Zeroizing::new(key));
+        }
+        store.secret_delete(service, account)?;
+        let fresh = Zeroizing::new(crate::crypto::random_bytes::<32>()?);
+        let sealed = store.seal(&aad(service, account), &fresh[..])?;
+        store.lock()?.execute(
+            "INSERT INTO secrets (service, account, value) VALUES (?1, ?2, ?3) ON CONFLICT (service, account) DO NOTHING",
+            params![service, account, sealed],
+        )?;
+        let raw = Zeroizing::new(
+            store.secret_get(service, account)?.ok_or_else(|| CoreError::storage("a key was not kept"))?,
+        );
+        <[u8; 32]>::try_from(raw.as_slice()).map(Zeroizing::new).map_err(|_| CoreError::storage("a key was not kept"))
     }
 }
 

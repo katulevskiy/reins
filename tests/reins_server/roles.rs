@@ -753,8 +753,13 @@ async fn other_devices_cannot_hide_requests_from_the_primary() {
     let b = acct.server.second_device("hana@example.com").await;
     acct.enroll(&b, &keys(2), "Pixel").await;
     let c = acct.server.second_device("hana@example.com").await;
-    let (_, created) =
-        c.post("/joins", &json!({"v": 1, "device_name": "Tablet", "public_key": encode_key(&[4; 32])})).await;
+    let (_, created) = c
+        .post(
+            "/joins",
+            &json!({"v": 1, "device_name": "Tablet", "public_key": encode_key(&[4; 32]),
+                    "sign_pub": keys(4).sign_pub, "commitment": hex32(&[4; 32])}),
+        )
+        .await;
     let join = created["id"].as_str().unwrap().to_owned();
     let (status, body) = b.get(&format!("/joins/{join}")).await;
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "not_approval_device"));
@@ -765,6 +770,39 @@ async fn other_devices_cannot_hide_requests_from_the_primary() {
     let (_, pending) = acct.primary.get("/pending?wait=0").await;
     assert_eq!(pending["joins"][0]["id"].as_str(), Some(join.as_str()), "{pending}");
     assert_eq!(pending["handovers"][0]["id"].as_str(), Some(handover.as_str()), "{pending}");
+}
+
+#[tokio::test]
+async fn a_signed_handover_request_is_kept_and_a_badly_signed_one_refused() {
+    let mut acct = Account::new("jon@example.com").await;
+    let b = acct.server.second_device("jon@example.com").await;
+    let bk = keys(2);
+    acct.enroll(&b, &bk, "Pixel").await;
+    let epoch = acct.current().epoch;
+    let nonce = encode_payload(&[5; 32]);
+    let message = |device: &str, epoch: u64| {
+        reins_proto::roster::handover_request_message(&acct.user, epoch, device, &nonce, 100).expect("message")
+    };
+    let signed = |by: &Ed25519KeyPair, device: &str, epoch: u64| json!({"v": 1, "signed": {"epoch": epoch, "nonce": nonce, "at": 100, "sig": sig(by, &message(device, epoch))}});
+    // Signed by another key, for another phone, or at another epoch: refused.
+    for body in [
+        signed(&keys(9).sign, &b.device_id, epoch),
+        signed(&bk.sign, &acct.primary.device_id, epoch),
+        signed(&bk.sign, &b.device_id, epoch + 1),
+    ] {
+        let (status, refused) = b.post("/handovers", &body).await;
+        assert_eq!((status, error(&refused)), (StatusCode::FORBIDDEN, "bad_signature"), "{body}");
+    }
+    // A join over one key (no enrollment) is refused once the account has a roster.
+    let c = acct.server.second_device("jon@example.com").await;
+    let (status, body) =
+        c.post("/joins", &json!({"v": 1, "device_name": "Old", "public_key": encode_key(&[4; 32])})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    // Signed by the viewer's roster key: the primary gets the signature with the request.
+    let (status, created) = b.post("/handovers", &signed(&bk.sign, &b.device_id, epoch)).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let (_, pending) = acct.primary.get("/pending?wait=0").await;
+    assert_eq!(pending["handovers"][0]["signed"]["epoch"], epoch, "{pending}");
 }
 
 #[tokio::test]

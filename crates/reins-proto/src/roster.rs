@@ -522,6 +522,51 @@ pub struct MemberRegistration {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewHandover {
     pub v: u32,
+    /// The viewer's signature over its request; the server keeps it with the request and the primary verifies it
+    /// against the roster, so a server can neither make a request up nor point one at another phone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed: Option<HandoverSignature>,
+}
+
+/// Most a handover request's `at` may differ from the primary's clock (seconds): a request lives 10 minutes.
+pub const HANDOVER_REQUEST_SKEW_SECS: i64 = 15 * 60;
+
+/// A viewer's signature over its handover request. The server names a request only once it exists, so the viewer
+/// signs a fresh nonce of its own in the id's place.
+///
+/// Signed message (context `reins/handover-request/v1`): `v` (u32), `account` (string), `epoch` (u64), `device_id`
+/// (string), `nonce` (32 bytes), `at` (i64).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoverSignature {
+    /// The roster epoch the viewer signed at: the primary refuses a request from another epoch.
+    pub epoch: u64,
+    /// 32 random bytes, base64url.
+    pub nonce: String,
+    /// Unix seconds, the viewer's clock.
+    pub at: i64,
+    /// Ed25519 by the viewer's `sign_pub` at `epoch`, base64url.
+    pub sig: String,
+}
+
+impl HandoverSignature {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.epoch == 0 {
+            return Err(invalid("epoch", "starts at 1"));
+        }
+        crate::enroll::parse_nonce(&self.nonce).ok_or_else(|| invalid("nonce", "must be 32 bytes, base64url"))?;
+        parse_sig(&self.sig).ok_or_else(|| invalid("sig", "must be 64 bytes, base64url without padding"))?;
+        Ok(())
+    }
+}
+
+/// The bytes a viewer signs to ask for the primary role (see [`HandoverSignature`]); `None` for a nonce that is not
+/// 32 bytes.
+#[must_use]
+pub fn handover_request_message(account: &str, epoch: u64, device_id: &str, nonce: &str, at: i64) -> Option<Vec<u8>> {
+    let nonce = crate::enroll::parse_nonce(nonce)?;
+    let mut c = Canon::new(contexts::HANDOVER_REQUEST);
+    c.u32(PROTOCOL_VERSION).str(account).u64(epoch).str(device_id).key(&nonce).i64(at);
+    Some(c.finish())
 }
 
 /// What `POST /reins/api/handovers` answers.
@@ -538,9 +583,12 @@ pub struct HandoverRequest {
     pub id: String,
     /// The viewer asking.
     pub device_id: String,
-    /// Its name in the roster.
+    /// Its name in the roster (as the server read it; the primary shows the name its verified roster gives).
     pub device_name: String,
     pub created_at: i64,
+    /// The viewer's signature ([`NewHandover::signed`]), as the server kept it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed: Option<HandoverSignature>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -869,6 +917,48 @@ pub(crate) mod tests {
         let mut e2 = entry.successor(RosterReason::Enroll, member("p", 1), vec![member("v", 2)], 11).unwrap();
         e2.sig = crate::canon::encode_sig(&owner.sign(&e2.signing_bytes().unwrap()).as_ref().try_into().unwrap());
         verify_chain(&[entry, e2], None, ring_verify).unwrap();
+    }
+
+    #[test]
+    fn a_handover_request_signs_account_epoch_device_nonce_and_time() {
+        let nonce = crate::canon::encode_payload(&[7; 32]);
+        let base = handover_request_message("acct", 3, "v", &nonce, 100).unwrap();
+        let other_nonce = crate::canon::encode_payload(&[8; 32]);
+        for other in [
+            handover_request_message("acct2", 3, "v", &nonce, 100),
+            handover_request_message("acct", 4, "v", &nonce, 100),
+            handover_request_message("acct", 3, "w", &nonce, 100),
+            handover_request_message("acct", 3, "v", &other_nonce, 100),
+            handover_request_message("acct", 3, "v", &nonce, 101),
+        ] {
+            assert_ne!(other.unwrap(), base);
+        }
+        assert_eq!(handover_request_message("acct", 3, "v", "short", 100), None);
+        let signed = HandoverSignature {
+            epoch: 3,
+            nonce,
+            at: 100,
+            sig: crate::canon::encode_sig(&[1; 64]),
+        };
+        signed.validate().unwrap();
+        let no_epoch = HandoverSignature {
+            epoch: 0,
+            ..signed.clone()
+        };
+        assert!(no_epoch.validate().is_err());
+        let short = HandoverSignature {
+            nonce: "x".to_owned(),
+            ..signed
+        };
+        assert!(short.validate().is_err());
+        // Requests without a signature still parse: the field is optional on the wire.
+        let old: NewHandover = serde_json::from_value(serde_json::json!({"v": 1})).unwrap();
+        assert_eq!(old.signed, None);
+        let unsigned = NewHandover {
+            v: 1,
+            signed: None,
+        };
+        assert_eq!(serde_json::to_value(unsigned).unwrap(), serde_json::json!({"v": 1}));
     }
 
     #[test]

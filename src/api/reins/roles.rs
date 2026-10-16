@@ -25,10 +25,10 @@ use reins_proto::{
     device::codes,
     pairing::{PushKind, PushMessage},
     roster::{
-        HandoverAnswer, HandoverBundle, HandoverCreated, HandoverRequest, HandoverState, HandoverStatus,
-        MAX_BUNDLE_CHARS, MAX_RECOVERY_WRAP_CHARS, Member, MemberRegistration, NewHandover, RecoveryWrap,
-        RecoveryWrapRequest, Roster, RosterAppend, RosterAppended, RosterEntry, RosterError, RosterReason,
-        recovery_wrap_hash, verify_step,
+        HandoverAnswer, HandoverBundle, HandoverCreated, HandoverRequest, HandoverSignature, HandoverState,
+        HandoverStatus, MAX_BUNDLE_CHARS, MAX_RECOVERY_WRAP_CHARS, Member, MemberRegistration, NewHandover,
+        RecoveryWrap, RecoveryWrapRequest, Roster, RosterAppend, RosterAppended, RosterEntry, RosterError,
+        RosterReason, handover_request_message, recovery_wrap_hash, verify_step,
     },
 };
 use rocket::{Data, Route, State, http::Status, serde::json::Json};
@@ -532,7 +532,14 @@ impl HandoverHub {
 
     /// A new request of `device` (replacing its earlier one), and whether it replaced a waiting one (the primary was
     /// told of that already); `None` when the account has [`MAX_HANDOVERS_PER_USER`] open.
-    pub fn create(&self, user: &str, device: &str, name: &str, now: i64) -> Option<(HandoverCreated, bool)> {
+    pub fn create(
+        &self,
+        user: &str,
+        device: &str,
+        name: &str,
+        signed: Option<HandoverSignature>,
+        now: i64,
+    ) -> Option<(HandoverCreated, bool)> {
         let mut entries = self.lock();
         let replaced = entries
             .values()
@@ -554,6 +561,7 @@ impl HandoverHub {
                     device_id: device.to_owned(),
                     device_name: name.to_owned(),
                     created_at: now,
+                    signed,
                 },
                 delivered: false,
                 status: HandoverStatus::Waiting,
@@ -689,19 +697,32 @@ async fn post_handover(
     if member.role != ROLE_VIEWER {
         return Err(bad_request("This is the primary"));
     }
-    let _: NewHandover = parse_versioned(&read_body_limited(data, 4096).await?)?;
+    let new: NewHandover = parse_versioned(&read_body_limited(data, 4096).await?)?;
     let user = user_key(&headers);
     if let Err(wait) = super::limits::HANDOVER_REQUESTS.check(&(user.clone(), member.device_uuid.clone())) {
         return Err(rate_limited("too many handover requests from this phone", wait));
     }
     let entries = chain(&user, &conn).await?;
+    // The viewer's signature is kept for the primary, which verifies it against its own roster; a bad one is refused
+    // here already. (Unsigned requests are still taken from apps that predate it; the primary refuses them.)
+    if let Some(signed) = &new.signed {
+        signed.validate().map_err(|e| bad_request(e.to_string()))?;
+        let current = entries.last().ok_or_else(no_roster)?;
+        let signer = current.member(&member.device_uuid).and_then(|m| m.sign_key().ok());
+        let message = handover_request_message(&user, signed.epoch, &member.device_uuid, &signed.nonce, signed.at);
+        let verified = matches!((signer, message, reins_proto::canon::parse_sig(&signed.sig)),
+            (Some(key), Some(message), Some(sig)) if ed25519_verify(&key, &message, &sig));
+        if signed.epoch != current.epoch || !verified {
+            return Err(api_err(Status::Forbidden, codes::BAD_SIGNATURE, "The request is not signed by this phone"));
+        }
+    }
     let name = entries
         .last()
         .and_then(|e| e.member(&member.device_uuid))
         .map_or_else(|| "A phone".to_owned(), |m| m.name.clone());
     let (created, replaced) = HUB
         .handovers
-        .create(&user, &member.device_uuid, &name, now_unix())
+        .create(&user, &member.device_uuid, &name, new.signed, now_unix())
         .ok_or_else(|| api_err(Status::TooManyRequests, codes::RATE_LIMITED, "Too many open handover requests"))?;
     // A request that replaced this phone's waiting one is not pushed again.
     if !replaced && let Some(approval) = ReinsDevice::find_by_user(&headers.user.uuid, &conn).await {
@@ -817,9 +838,9 @@ mod tests {
     #[test]
     fn handover_requests_wait_for_the_primary_and_end_with_the_roster() {
         let hub = HandoverHub::new(Arc::new(ItemSignal::new()));
-        let (created, replaced) = hub.create("u1", "viewer", "Pixel", 100).unwrap();
+        let (created, replaced) = hub.create("u1", "viewer", "Pixel", None, 100).unwrap();
         assert!(!replaced);
-        let (again, replaced) = hub.create("u1", "viewer", "Pixel", 101).unwrap();
+        let (again, replaced) = hub.create("u1", "viewer", "Pixel", None, 101).unwrap();
         assert!(replaced, "the primary was told of the first one; the replacement is not pushed again");
         assert!(
             hub.view("u1", "viewer", &created.id, 101, false).is_none(),
@@ -829,9 +850,9 @@ mod tests {
         assert!(hub.view("u1", "someone", &again.id, 101, false).is_none());
         assert_eq!(hub.take_undelivered("u1", 101).len(), 1, "a viewer's look did not take it");
         hub.requeue("u1");
-        assert!(hub.create("u1", "v2", "b", 101).is_some() && hub.create("u1", "v3", "c", 101).is_some());
-        assert!(hub.create("u1", "v4", "d", 101).is_none(), "a few per account");
-        assert!(hub.create("u2", "v4", "d", 101).is_some(), "per account, not for the server");
+        assert!(hub.create("u1", "v2", "b", None, 101).is_some() && hub.create("u1", "v3", "c", None, 101).is_some());
+        assert!(hub.create("u1", "v4", "d", None, 101).is_none(), "a few per account");
+        assert!(hub.create("u2", "v4", "d", None, 101).is_some(), "per account, not for the server");
         assert_eq!(hub.peek_waiting("u1", 102).len(), 3);
         assert_eq!(hub.take_undelivered("u1", 102).len(), 3);
         assert!(hub.take_undelivered("u1", 102).is_empty());

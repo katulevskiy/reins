@@ -624,7 +624,14 @@ impl Engine {
             label: label.map(|l| text::truncate_chars(&text::one_line(&l), 64)).filter(|l| !l.is_empty()),
         };
         let now = unix_now();
-        let result = api_call!(&session, |api| api.answer_pairing(id, &response));
+        // With a roster, the primary signs the answer (the server checks it); without one it goes as it is.
+        let bytes = serde_json::to_vec(&response).map_err(|e| CoreError::storage(e.to_string()))?;
+        let signed = self.signed_answer(&session, reins_proto::answer::AnswerKind::Pairing, id, &bytes).await?;
+        let result = if let Some(signed) = &signed {
+            api_call!(&session, |api| api.answer_pairing_body(id, signed))
+        } else {
+            api_call!(&session, |api| api.answer_pairing(id, &response))
+        };
         let (outcome, detail) = match &result {
             Ok(r) if approve && r.connection_id.is_some() => ("released", format!("connected {}", pairing.client_name)),
             Ok(_) => ("denied", format!("refused {}", pairing.client_name)),
