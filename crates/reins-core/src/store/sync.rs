@@ -439,6 +439,35 @@ mod tests {
         assert_eq!(b.connection_blobatars().unwrap().get("c2"), None, "forgotten with its connection");
     }
 
+    /// A name the user gives a connection on one phone is the name on the other; clearing it there clears it here.
+    #[test]
+    fn a_connections_name_travels_to_the_other_phone_and_so_does_clearing_it() {
+        let (a_dir, b_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (a, b) = (Phone::new(a_dir.path()).open(), Phone::new(b_dir.path()).open());
+        let mut server = Server::default();
+        a.set_connection_name("c1", Some("Claude (work)")).unwrap();
+        a.set_connection_name("c2", Some("Home Mac")).unwrap();
+        server.sync(&a);
+        assert_eq!(server.pull(&b), Pulled::Imported);
+        let on_b = b.connection_names().unwrap();
+        assert_eq!(on_b.get("c1").map(String::as_str), Some("Claude (work)"));
+        assert_eq!(on_b.get("c2").map(String::as_str), Some("Home Mac"));
+        b.set_connection_name("c1", Some("Claude (personal)")).unwrap();
+        b.set_connection_name("c2", None).unwrap();
+        server.sync(&b);
+        server.pull(&a);
+        let on_a = a.connection_names().unwrap();
+        assert_eq!(on_a.get("c1").map(String::as_str), Some("Claude (personal)"), "the rename came over");
+        assert_eq!(on_a.get("c2"), None, "cleared: it goes by its own name again");
+        assert!(a.connection_blobatars().unwrap().is_empty(), "names are not blobatars");
+        // The number a second Claude is told apart by travels too, apart from the names.
+        a.set_connection_number("c3", Some(2)).unwrap();
+        server.sync(&a);
+        server.pull(&b);
+        assert_eq!(b.connection_numbers().unwrap().get("c3"), Some(&2));
+        assert_eq!(b.connection_names().unwrap().get("c3"), None, "a number is not a name");
+    }
+
     /// A corrupt base is as good as none: never a refusal.
     #[test]
     fn a_corrupt_base_falls_back_to_the_servers_state_with_a_backup() {

@@ -114,6 +114,8 @@ pub struct Root {
     health_open: bool,
     /// Settings' Notifications row is open to its two switches.
     notify_open: bool,
+    /// Settings' Name row is open to its field.
+    name_open: bool,
     /// The run profile open to its variables (Keys & secrets).
     profile_open: Option<String>,
     /// The (?) open now ([`parts::help`]), and the page it is on: another page closes it.
@@ -164,8 +166,9 @@ struct Data {
     /// This computer's name, and its machine project.
     computer: String,
     machine: String,
-    /// The name the phone shows for this computer.
+    /// This computer's own name, and the one the user gave it on the phone (which the phone shows instead).
     shown_as: String,
+    phone_name: Option<String>,
     /// `--demo`, and the gallery showing.
     demo: bool,
     gallery: bool,
@@ -201,6 +204,7 @@ impl Data {
             computer: m.computer.clone(),
             machine: m.machine.clone(),
             shown_as: m.shown_as.clone(),
+            phone_name: m.phone_name.clone(),
             demo: m.demo(),
             gallery: false,
         }
@@ -308,6 +312,7 @@ impl Root {
             presses: 0,
             health_open: demo_var("REINS_DEMO_HEALTH").is_some(),
             notify_open: false,
+            name_open: demo_var("REINS_DEMO_NAME_OPEN").is_some(),
             profile_open: None,
             help,
             help_page,

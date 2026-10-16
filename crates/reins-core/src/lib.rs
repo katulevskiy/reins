@@ -27,6 +27,7 @@ pub mod handler;
 pub mod http;
 pub mod join;
 pub mod mcp;
+pub mod names;
 pub mod phone_api;
 pub mod quick;
 pub mod roles;

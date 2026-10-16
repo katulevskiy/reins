@@ -133,7 +133,7 @@ async fn an_environment_saved_from_the_computer_is_released_bound_to_one_command
     let user = async {
         let item = phone.wait_for_item(Duration::from_secs(60)).await;
         let code = code_rx.await.unwrap();
-        phone.core.answer_pairing(item.id, true, Some(code), Some("Laptop".to_owned())).await.unwrap();
+        phone.core.answer_pairing(item.id, true, Some(code), Some("Laptop".to_owned()), true).await.unwrap();
     };
     let (logged_in, (), ()) = tokio::join!(login, browser, user);
     logged_in.unwrap();
@@ -370,7 +370,7 @@ async fn an_import_moves_a_projects_secrets_into_the_vault_with_one_approval() {
     let user = async {
         let item = phone.wait_for_item(Duration::from_secs(60)).await;
         let code = code_rx.await.unwrap();
-        phone.core.answer_pairing(item.id, true, Some(code), Some("Laptop".to_owned())).await.unwrap();
+        phone.core.answer_pairing(item.id, true, Some(code), Some("Laptop".to_owned()), true).await.unwrap();
     };
     let (logged_in, (), ()) = tokio::join!(login, browser, user);
     logged_in.unwrap();

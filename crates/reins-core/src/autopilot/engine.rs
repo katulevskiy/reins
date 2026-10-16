@@ -600,7 +600,8 @@ impl Engine {
                     .ok()
                     .flatten()
                     .is_some_and(|s| self.ap_mode_for(&s.connection_id, now).ok() == Some(AutopilotMode::Bypass));
-                if !bypassed && let Some(item) = Self::ap_pending_item(&row) {
+                if !bypassed && let Some(mut item) = Self::ap_pending_item(&row) {
+                    self.names().item(&mut item);
                     self.notifier.item_pending(item);
                 }
             }
@@ -1263,7 +1264,7 @@ impl Engine {
         drop(paused);
         self.notifier.autopilot_changed(AutopilotEvent::Paused {
             connection_id: subject.connection_id.clone(),
-            connection_label: subject.connection_label.clone(),
+            connection_label: self.names().label(&subject.connection_id, &subject.connection_label),
             reason: reason.to_owned(),
         });
     }
@@ -1352,6 +1353,7 @@ impl Engine {
         self.store.ap_put_suggestion(s)?;
         let mut item = subject.item.clone();
         item.suggestion = suggestion_line(s);
+        self.names().item(&mut item);
         self.notifier.item_pending(item);
         Ok(())
     }
@@ -1405,7 +1407,7 @@ impl Engine {
                     self.store.ap_rate_add(&subject.connection_id, now)?;
                 }
                 let j = s.judged.as_ref();
-                self.notifier.auto_decided(AutoDecisionView {
+                let mut decided = AutoDecisionView {
                     request_id: subject.id.clone(),
                     kind: subject.kind,
                     connection_id: subject.connection_id.clone(),
@@ -1416,7 +1418,9 @@ impl Engine {
                     p_approve: j.map_or(0.0, |j| j.probs[0]),
                     confidence: j.map_or(0.0, |j| j.confidence),
                     activity_id: seq,
-                });
+                };
+                self.names().decision(&mut decided);
+                self.notifier.auto_decided(decided);
                 Ok(())
             }
             Err(e) if by == "bypass" => {

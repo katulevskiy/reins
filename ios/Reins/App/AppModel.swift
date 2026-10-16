@@ -682,6 +682,14 @@ final class AppModel {
         }
     }
 
+    /// Gives a connection the user's own name (nil or blank: it goes by its own again), kept with the account and
+    /// synced by the core; then reads the connections and everything that shows their names again.
+    func renameConnection(_ connectionId: String, to name: String?) async throws {
+        _ = try await core.renameConnection(connectionId: connectionId, name: name)
+        await refreshConnections()
+        await refreshPending()
+    }
+
     /// A change to a connection's blobatar from its Icon sheet.
     enum BlobatarChange: Equatable {
         case shape(UInt8)

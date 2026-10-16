@@ -337,7 +337,7 @@ async fn git_through_the_desktop_app() -> String {
             .await;
         core.sync(0).await.unwrap();
         if core.pairing_view("p1".to_owned()).await.is_ok() {
-            core.answer_pairing("p1".to_owned(), true, Some(2), None).await.unwrap();
+            core.answer_pairing("p1".to_owned(), true, Some(2), None, false).await.unwrap();
         }
     }
     let before = format!(

@@ -387,6 +387,7 @@ table! {
         label -> Text,
         created_at -> BigInt,
         last_used_at -> Nullable<BigInt>,
+        sealed_name -> Nullable<Text>,
     }
 }
 

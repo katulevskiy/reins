@@ -87,8 +87,8 @@ class MainSafeCore(
 
     override suspend fun activity(limit: UInt): List<ActivityEntry> = io { activity(limit) }
 
-    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?) =
-        io { answerPairing(pairingId, approve, chosenCode, label) }
+    override suspend fun answerPairing(pairingId: String, approve: Boolean, chosenCode: UByte?, label: String?, nameEdited: Boolean) =
+        io { answerPairing(pairingId, approve, chosenCode, label, nameEdited) }
 
     override suspend fun approvalView(requestId: String): ApprovalView = io { approvalView(requestId) }
 
@@ -174,6 +174,7 @@ class MainSafeCore(
         io { serviceAccountStatus(service, account) }
 
     override suspend fun setConnectionIcon(connectionId: String, icon: String?) = io { setConnectionIcon(connectionId, icon) }
+    override suspend fun renameConnection(connectionId: String, name: String?): String? = io { renameConnection(connectionId, name) }
 
     override suspend fun setConnectionBlobatar(connectionId: String, shape: UByte, colour: UByte): Blobatar =
         io { setConnectionBlobatar(connectionId, shape, colour) }

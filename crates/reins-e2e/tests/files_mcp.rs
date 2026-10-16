@@ -31,7 +31,7 @@ async fn connected(github_base: Option<&str>) -> (Server, Phone, AiClient) {
     let wait_url = ai.start_authorization(EMAIL).await;
     let code = ai.browser_code(&wait_url).await;
     let item = phone.wait_for_item(Duration::from_secs(20)).await;
-    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned())).await.unwrap();
+    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned()), true).await.unwrap();
     ai.finish_authorization(&wait_url).await;
     (server, phone, ai)
 }

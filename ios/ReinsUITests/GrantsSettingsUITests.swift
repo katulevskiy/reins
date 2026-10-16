@@ -242,6 +242,26 @@ final class GrantsSettingsUITests: XCTestCase {
         XCTAssertTrue(element("service:gmail").label.contains("2 accounts"), element("service:gmail").label)
     }
 
+    /// The rename sheet's field, Save and "Use its own name" are reachable (the sheet is a container, its id does not
+    /// replace theirs), and a name typed there becomes the connection's.
+    func testAConnectionCanBeRenamed() {
+        launch()
+        section("connections")
+        scrollTo("connection:c1")
+        tap("connection:c1")
+        tap("connectionRename")
+        wait("renameSheet")
+        let field = wait("renameField")
+        XCTAssertTrue(wait("renameSave").exists, "Save is reachable inside the sheet")
+        field.tap()
+        field.typeText("Work Claude")
+        shot("rename-sheet")
+        tap("renameSave")
+        XCTAssertTrue(element("renameSheet").waitForNonExistence(timeout: 5), "Save closes the sheet")
+        let named = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Work Claude"), object: element("connectionName"))
+        XCTAssertEqual(XCTWaiter().wait(for: [named], timeout: 5), .completed, "the new name shows: \(element("connectionName").label)")
+    }
+
     func testAConnectionsModeAndIconCanBePickedAndItCanBeDisconnected() {
         launch()
         section("connections")

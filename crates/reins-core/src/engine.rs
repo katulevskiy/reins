@@ -785,6 +785,7 @@ impl Engine {
     // ---- read-only views -----------------------------------------------------------
 
     pub fn pending(&self) -> Result<Vec<PendingItem>, CoreError> {
+        let names = self.names();
         let mut items = Vec::new();
         for row in self.store.pending_rows(unix_now())? {
             let item = match row.kind {
@@ -796,6 +797,7 @@ impl Engine {
                 PendingKind::Join => serde_json::from_slice(&row.payload).ok().map(|j| crate::join::join_item(&j)),
             };
             if let Some(mut item) = item {
+                names.item(&mut item);
                 item.suggestion = self
                     .store
                     .ap_suggestion(&item.id)
@@ -813,7 +815,17 @@ impl Engine {
         if let Err(e) = self.ap_expire_bypasses(unix_now()) {
             log::warn!("Autopilot could not end the bypasses that ran out: {e}");
         }
-        Ok(self.store.grants()?.iter().map(views::grant_view).collect())
+        let names = self.names();
+        Ok(self
+            .store
+            .grants()?
+            .iter()
+            .map(|g| {
+                let mut view = views::grant_view(g);
+                names.grant(&mut view);
+                view
+            })
+            .collect())
     }
 
     /// Starts an ended grant over with the changes the user made: how long, how many uses, and who or what it covers.
@@ -922,7 +934,8 @@ impl Engine {
         let session = self.session()?;
         let list = api_call!(&session, |api| api.connections()).map_err(ApiFailure::into_core)?;
         let blobatars = self.blobatars_for(&list.connections);
-        Ok(list
+        let names = self.names_for(&list.connections);
+        let views: Vec<ConnectionView> = list
             .connections
             .into_iter()
             .map(|c| {
@@ -935,21 +948,112 @@ impl Engine {
                     .and_then(reins_proto::desktop::key_fingerprint);
                 let computer = key_fingerprint.is_some();
                 let platform = computer.then(|| crate::avatar::platform(&c.client_name, &c.label)).flatten();
-                let label = crate::avatar::shown_label(&c.label);
+                let shown = crate::avatar::shown_label(&c.label);
+                let name = names.get(&c.id.0).map(str::to_owned);
+                // Its own name, with the number a second connection of its client is told apart by ("Claude 2").
+                let own_label = names.own(&c.id.0, &shown);
                 ConnectionView {
                     icon: self.store.connection_icon(&c.id.0).ok().flatten(),
                     key_fingerprint,
-                    auto_icon: crate::avatar::auto_icon(&label, computer, platform),
+                    // From what it is, never from the name the user gave it.
+                    auto_icon: crate::avatar::auto_icon(&shown, computer, platform),
                     platform: platform.map(|p| p.key().to_owned()),
                     blobatar: blobatars.get(&c.id.0).cloned(),
+                    label: name.clone().unwrap_or_else(|| own_label.clone()),
+                    name,
+                    number: names.number(&c.id.0),
+                    own_label,
+                    client_name: crate::names::original_name(&c.client_name),
                     id: c.id.0,
-                    label,
                     client_host: crate::text::one_line(&c.client_host),
                     created_at: c.created_at,
                     last_used_at: c.last_used_at,
                 }
             })
-            .collect())
+            .collect();
+        for computer in views.iter().filter(|v| v.key_fingerprint.is_some()) {
+            if let Err(e) = self.send_computer_name(&computer.id, computer.name.as_deref()).await {
+                log::warn!("could not leave a computer its name: {e}");
+            }
+        }
+        Ok(views)
+    }
+
+    /// Leaves a computer the name the user gave it (`None`: none, it goes by its own), in a box from this phone's inbox
+    /// key to its desktop app's key, unless the account left it that one already: the app shows the name the phones
+    /// show (`GET /reins/desktop/phone`), once it has pinned the phone's key; the server cannot read it, forge it, nor
+    /// tell its length. Nothing for an AI app. Only the approval device may leave it (the server refuses the others).
+    pub(crate) async fn send_computer_name(&self, connection_id: &str, name: Option<&str>) -> Result<(), CoreError> {
+        let want = name.unwrap_or_default();
+        if self.store.computer_name_sent(connection_id)?.unwrap_or_default() == want {
+            return Ok(());
+        }
+        let Some(key) = self.store.desktop_key(connection_id)?.as_deref().and_then(reins_proto::desktop::decode_key)
+        else {
+            return Ok(());
+        };
+        let sealed = match name {
+            Some(n) => Some(crate::connector::sealed::box_from_phone(
+                key,
+                &*self.store.inbox_key()?,
+                &reins_proto::device::ComputerName::padded(Some(n.to_owned())),
+            )?),
+            None => None,
+        };
+        let body = reins_proto::device::SealedName {
+            sealed,
+        };
+        let session = self.session()?;
+        api_call!(&session, |api| api.put_connection_name(connection_id, &body)).map_err(ApiFailure::into_core)?;
+        self.store.set_computer_name_sent(connection_id, Some(want))
+    }
+
+    /// The names the user gave connections and the numbers second connections of a client go by
+    /// ([`crate::names::Names`]), to show in every view.
+    pub(crate) fn names(&self) -> crate::names::Names {
+        let read = |what: &str, e: CoreError| log::warn!("could not read the {what} of the connections: {e}");
+        crate::names::Names::new(
+            self.store.connection_names().unwrap_or_else(|e| {
+                read("names", e);
+                std::collections::HashMap::new()
+            }),
+            self.store.connection_numbers().unwrap_or_else(|e| {
+                read("numbers", e);
+                std::collections::HashMap::new()
+            }),
+        )
+    }
+
+    /// The names and numbers of the listed connections; those of connections no longer listed are forgotten.
+    fn names_for(&self, connections: &[reins_proto::device::ConnectionInfo]) -> crate::names::Names {
+        let kept = self.store.connection_names().unwrap_or_default();
+        let numbers = self.store.connection_numbers().unwrap_or_default();
+        let listed = |id: &String| connections.iter().any(|c| &c.id.0 == id);
+        for gone in kept.keys().chain(numbers.keys()).filter(|id| !listed(id)) {
+            if let Err(e) =
+                self.store.set_connection_name(gone, None).and_then(|()| self.store.set_connection_number(gone, None))
+            {
+                log::warn!("could not forget a removed connection's name: {e}");
+            }
+        }
+        crate::names::Names::new(kept, numbers)
+    }
+
+    /// Gives a connection the name the user typed (`names::typed_name`); `None`, or a name that is empty once cleaned,
+    /// takes it away: it goes by its own name again. Synced to the account's other phones like any change; a computer
+    /// is left it sealed to its key (again with the next listing when that fails). Returns the name kept.
+    pub async fn rename_connection(
+        &self,
+        connection_id: &str,
+        name: Option<String>,
+    ) -> Result<Option<String>, CoreError> {
+        check_id(connection_id)?;
+        let name = name.as_deref().and_then(crate::names::typed_name);
+        self.store.set_connection_name(connection_id, name.as_deref())?;
+        if let Err(e) = self.send_computer_name(connection_id, name.as_deref()).await {
+            log::warn!("could not leave a computer its new name: {e}");
+        }
+        Ok(name)
     }
 
     /// Every listed connection's blobatar: the one kept, else a new one standing apart from the others' (kept now, so
@@ -1107,6 +1211,9 @@ impl Engine {
         self.store.remove_desktop_key(connection_id)?;
         self.store.set_connection_icon(connection_id, None)?;
         self.store.set_connection_blobatar(connection_id, None)?;
+        self.store.set_connection_name(connection_id, None)?;
+        self.store.set_connection_number(connection_id, None)?;
+        self.store.set_computer_name_sent(connection_id, None)?;
         for row in self.store.pending_rows(unix_now())? {
             if row.kind != PendingKind::Request {
                 continue;
@@ -1121,7 +1228,17 @@ impl Engine {
     }
 
     pub fn activity(&self, limit: u32) -> Result<Vec<ActivityEntry>, CoreError> {
-        Ok(self.store.activity(limit.clamp(1, 500))?.iter().map(views::activity_entry).collect())
+        let names = self.names();
+        Ok(self
+            .store
+            .activity(limit.clamp(1, 500))?
+            .iter()
+            .map(|r| {
+                let mut entry = views::activity_entry(r);
+                names.entry(&mut entry);
+                entry
+            })
+            .collect())
     }
 
     /// One page of the entries matching `query`, newest first, after `after` (see `store::audit_search`).
@@ -1132,13 +1249,18 @@ impl Engine {
         limit: u32,
     ) -> Result<crate::types::ActivityPage, CoreError> {
         let page = self.store.search_activity(query, after, limit)?;
+        let names = self.names();
         Ok(crate::types::ActivityPage {
             hits: page
                 .found
                 .into_iter()
-                .map(|f| crate::types::ActivityHit {
-                    entry: views::activity_entry(&f.record),
-                    snippet: f.snippet,
+                .map(|f| {
+                    let mut entry = views::activity_entry(&f.record);
+                    names.entry(&mut entry);
+                    crate::types::ActivityHit {
+                        entry,
+                        snippet: f.snippet,
+                    }
                 })
                 .collect(),
             next: page.next,
@@ -1157,14 +1279,27 @@ impl Engine {
 
     /// The integrations, kinds and connections the Activity holds, for the filters.
     pub fn activity_facets(&self) -> Result<crate::types::ActivityFacets, CoreError> {
-        self.store.activity_facets()
+        let mut facets = self.store.activity_facets()?;
+        let names = self.names();
+        for c in &mut facets.connections {
+            c.label = names.label(&c.id, &c.label);
+        }
+        Ok(facets)
+    }
+
+    /// An Activity entry's approval as it showed, with the connection's name as it is now.
+    fn named_approval(&self, view: Option<crate::types::ApprovalView>) -> Option<crate::types::ApprovalView> {
+        view.map(|mut v| {
+            self.names().approval(&mut v);
+            v
+        })
     }
 
     /// The request of an Activity entry as its approval showed it, to be shown again read-only. A device without that
     /// copy (another one showed it) gets a push from the copy synced with the entry. `None` for an entry without
     /// either (logged before they were kept, or not about a request).
     pub fn activity_approval(&self, entry_id: i64) -> Result<Option<crate::types::ApprovalView>, CoreError> {
-        self.store.activity_approval(entry_id)
+        Ok(self.named_approval(self.store.activity_approval(entry_id)?))
     }
 
     /// The push of an Activity entry: this device's copy of its approval when it has one, else the copy synced with the

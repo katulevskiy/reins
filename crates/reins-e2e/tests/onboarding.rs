@@ -96,7 +96,7 @@ async fn the_phone_creates_the_account_and_its_vault_works_like_a_bitwarden_vaul
     let wait_url = ai.start_authorization(EMAIL).await;
     let code = ai.browser_code(&wait_url).await;
     let item = phone.wait_for_item(Duration::from_secs(20)).await;
-    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned())).await.unwrap();
+    phone.core.answer_pairing(item.id, true, Some(code), Some("Claude".to_owned()), true).await.unwrap();
     ai.finish_authorization(&wait_url).await;
     let query = json!({"query": "git"});
     let search = ai.tool("vault_search", &query);
@@ -153,7 +153,7 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
     assert!(view.choices.contains(&confirm), "{view:?}");
     assert_eq!(phone.core.pairing_by_code(scanned).await.unwrap().id, view.id, "scanning twice is the same pairing");
     assert_eq!(phone.core.pairing_view(view.id.clone()).await.unwrap(), view, "parked like a pushed pairing");
-    phone.core.answer_pairing(view.id, true, Some(confirm), Some("Laptop".to_owned())).await.unwrap();
+    phone.core.answer_pairing(view.id, true, Some(confirm), Some("Laptop".to_owned()), true).await.unwrap();
 
     // The next poll logs the app in; the key is pinned: the phone answers its question, sealed to that key.
     let logged_in = tokio::time::timeout(Duration::from_secs(30), pairing.wait(&paths)).await.unwrap();
@@ -189,7 +189,7 @@ async fn the_desktop_app_pairs_by_a_qr_code_the_phone_scans() {
     assert_eq!(spent.unwrap_err(), CoreError::NotFound);
     let mut denied = DevicePairing::start(&identity, &server.base).await.unwrap();
     let view = phone.core.pairing_by_code(denied.user_code.clone()).await.unwrap();
-    phone.core.answer_pairing(view.id, false, None, None).await.unwrap();
+    phone.core.answer_pairing(view.id, false, None, None, false).await.unwrap();
     let refused = tokio::time::timeout(Duration::from_secs(30), denied.wait(&paths)).await.unwrap();
     assert!(refused.unwrap_err().contains("denied"));
     assert!(matches!(phone.core.pairing_by_code("not a code".to_owned()).await, Err(CoreError::Invalid { .. })));

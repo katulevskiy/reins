@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS audit_snapshots (seq INTEGER PRIMARY KEY, data BLOB N
 ";
 /// Where a connection's blobatar is kept (`meta`, `connection.blobatar.<connection id>`).
 const BLOBATAR_KEY: &str = "connection.blobatar.";
+/// Where the name the user gave a connection is kept (`meta`, `connection.name.<connection id>`).
+const NAME_KEY: &str = "connection.name.";
+/// The number the core told a second connection of a client apart by (`meta`, `connection.number.<connection id>`).
+const NUMBER_KEY: &str = "connection.number.";
+/// The name last sealed for a computer and left at the server (`meta`, `connection.sent-name.<connection id>`).
+const SENT_NAME_KEY: &str = "connection.sent-name.";
 /// The records whose removal is a security decision (a permission, a connected account or its token, a paired
 /// computer's key, an MCP server, an approved target), with their primary keys: each removal leaves a tombstone, so
 /// that no merge, import or restore brings the record back (see `merge.rs` and `sync.rs`).
@@ -664,7 +670,47 @@ impl Store {
     /// The blobatars kept for connections (`avatar::Blobatar::encode`), by connection id. In `meta`, so that they
     /// travel with the account to every phone (and an older version keeps them as they are).
     pub fn connection_blobatars(&self) -> Result<std::collections::HashMap<String, String>, CoreError> {
-        let prefix = format!("app.{BLOBATAR_KEY}");
+        self.meta_by_connection(BLOBATAR_KEY)
+    }
+
+    /// Keeps a connection's blobatar (`None` forgets it).
+    pub fn set_connection_blobatar(&self, connection_id: &str, blobatar: Option<&str>) -> Result<(), CoreError> {
+        self.set_meta_for_connection(BLOBATAR_KEY, connection_id, blobatar)
+    }
+
+    /// The names the user gave connections (`names::typed_name`), by connection id. In `meta` like the blobatars: in
+    /// the account state, sealed with the account's key, on every phone of the account; the server never has them.
+    pub fn connection_names(&self) -> Result<std::collections::HashMap<String, String>, CoreError> {
+        self.meta_by_connection(NAME_KEY)
+    }
+
+    /// Keeps the name the user gave a connection (`None` forgets it: the connection goes by its own name again).
+    pub fn set_connection_name(&self, connection_id: &str, name: Option<&str>) -> Result<(), CoreError> {
+        self.set_meta_for_connection(NAME_KEY, connection_id, name)
+    }
+
+    /// The numbers the core told second connections of a client apart by ("Claude 2"), by connection id: part of
+    /// their own names, never the user's; synced like the names. Values that are not numbers are left out.
+    pub fn connection_numbers(&self) -> Result<std::collections::HashMap<String, u32>, CoreError> {
+        Ok(self.meta_by_connection(NUMBER_KEY)?.into_iter().filter_map(|(id, v)| Some((id, v.parse().ok()?))).collect())
+    }
+
+    pub fn set_connection_number(&self, connection_id: &str, number: Option<u32>) -> Result<(), CoreError> {
+        self.set_meta_for_connection(NUMBER_KEY, connection_id, number.map(|n| n.to_string()).as_deref())
+    }
+
+    /// The name last left for a computer at the server, sealed to its key ("" for none), by any phone of the account.
+    pub fn computer_name_sent(&self, connection_id: &str) -> Result<Option<String>, CoreError> {
+        self.meta_get(&format!("{SENT_NAME_KEY}{connection_id}"))
+    }
+
+    pub fn set_computer_name_sent(&self, connection_id: &str, name: Option<&str>) -> Result<(), CoreError> {
+        self.set_meta_for_connection(SENT_NAME_KEY, connection_id, name)
+    }
+
+    /// The `meta` values under `<prefix><connection id>`, by connection id.
+    fn meta_by_connection(&self, key: &str) -> Result<std::collections::HashMap<String, String>, CoreError> {
+        let prefix = format!("app.{key}");
         let conn = self.read()?;
         let mut stmt = conn.prepare("SELECT key, value FROM meta WHERE substr(key, 1, ?1) = ?2")?;
         let rows = stmt
@@ -675,13 +721,12 @@ impl Store {
         Ok(rows.into_iter().filter_map(|(k, v)| Some((k.strip_prefix(&prefix)?.to_owned(), v))).collect())
     }
 
-    /// Keeps a connection's blobatar (`None` forgets it).
-    pub fn set_connection_blobatar(&self, connection_id: &str, blobatar: Option<&str>) -> Result<(), CoreError> {
-        if let Some(value) = blobatar {
-            return self.meta_set(&format!("{BLOBATAR_KEY}{connection_id}"), value);
+    /// Sets (`Some`) or removes (`None`) the `meta` value `<key><connection id>`.
+    fn set_meta_for_connection(&self, key: &str, connection_id: &str, value: Option<&str>) -> Result<(), CoreError> {
+        if let Some(value) = value {
+            return self.meta_set(&format!("{key}{connection_id}"), value);
         }
-        self.lock()?
-            .execute("DELETE FROM meta WHERE key = ?1", params![format!("app.{BLOBATAR_KEY}{connection_id}")])?;
+        self.lock()?.execute("DELETE FROM meta WHERE key = ?1", params![format!("app.{key}{connection_id}")])?;
         Ok(())
     }
 

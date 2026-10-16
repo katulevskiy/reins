@@ -154,7 +154,7 @@ async fn pair(env: &Env, id: &str, key: Option<&str>, connection: Option<&str>, 
         .mount(&env.server)
         .await;
     let code = approve.then_some(47);
-    env.core.answer_pairing(id.to_owned(), approve, code, None).await.unwrap();
+    env.core.answer_pairing(id.to_owned(), approve, code, None, false).await.unwrap();
 }
 
 fn call(id: &str, connection: &str, op: &str, args: &Value) -> Value {
@@ -327,7 +327,7 @@ async fn a_desktop_pairing_shows_the_key_fingerprint_and_approving_it_pins_the_k
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing("p1".to_owned(), true, Some(47), None).await.unwrap();
+    env.core.answer_pairing("p1".to_owned(), true, Some(47), None, false).await.unwrap();
 
     serve(&env, &[fetch("r1", DESK, &key, "me/app")], &[]).await;
     env.core.sync(0).await.unwrap();
@@ -351,7 +351,7 @@ async fn a_denied_pairing_or_an_unusable_key_pins_nothing() {
         .with_priority(1)
         .mount(&env.server)
         .await;
-    env.core.answer_pairing("p2".to_owned(), true, Some(47), None).await.unwrap();
+    env.core.answer_pairing("p2".to_owned(), true, Some(47), None, false).await.unwrap();
     // An ordinary AI pairing shows no fingerprint either.
     let plain = json!({"v": 1, "id": "p3", "client_name": "Claude", "client_host": "claude.ai",
         "choices": [12, 47, 83], "created_at": 50});

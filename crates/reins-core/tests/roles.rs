@@ -1001,7 +1001,7 @@ async fn an_empty_roster_from_the_server_is_never_the_end_of_phone_roles_but_a_d
         "choices": [12, 47, 83], "created_at": 7}));
     a.sync(0).await.unwrap();
     assert!(a.pending().await.unwrap().iter().any(|p| p.id == "p1"));
-    assert!(a.answer_pairing("p1".to_owned(), true, Some(47), None).await.is_err());
+    assert!(a.answer_pairing("p1".to_owned(), true, Some(47), None, false).await.is_err());
     assert!(a.pending().await.unwrap().iter().any(|p| p.id == "p1"), "it still waits");
     // The user deletes the account here: everything phone roles kept for it goes with it.
     w.state().empty_roster = false;
@@ -1058,4 +1058,17 @@ async fn a_viewer_changes_nothing_but_may_pull_the_brake() {
     a.roster_remove_member(b_id).await.unwrap();
     b.roster_summary(true).await.unwrap();
     assert_eq!(b.start_bypass(None, Some(30)).await, Err(CoreError::ViewerOnly));
+}
+
+/// Naming a connection is the primary's, like any other change to it: a viewer is refused before anything is kept.
+#[tokio::test]
+async fn only_the_primary_renames_a_connection() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    assert_eq!(b.rename_connection("c1".to_owned(), Some("Work".to_owned())).await, Err(CoreError::ViewerOnly));
+    assert_eq!(b.rename_connection("c1".to_owned(), None).await, Err(CoreError::ViewerOnly), "nor take a name away");
+    assert_eq!(a.rename_connection("c1".to_owned(), Some("Work".to_owned())).await, Ok(Some("Work".to_owned())));
 }
