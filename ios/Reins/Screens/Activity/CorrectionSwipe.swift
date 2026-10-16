@@ -10,6 +10,9 @@ struct CorrectionSwipe: ViewModifier {
     @State private var offset: CGFloat = 0
     /// A sideways swipe is going on: the row does not look pressed while it slides.
     @State private var swiping = false
+    /// Where this swipe started: shut (0) or open (-reveal), read once when it begins. Read on every move instead, a
+    /// row that passed half open mid-swipe jumped to the open place plus the finger's travel, and a short swipe asked.
+    @State private var swipeStart: CGFloat?
     @State private var asking = false
 
     /// How far the row opens.
@@ -72,10 +75,12 @@ struct CorrectionSwipe: ViewModifier {
     private var swipe: SidewaysPan {
         SidewaysPan(onChanged: { drag in
             swiping = true
-            let start: CGFloat = offset <= -Self.reveal / 2 ? -Self.reveal : 0
+            let start = swipeStart ?? (offset <= -Self.reveal / 2 ? -Self.reveal : 0)
+            swipeStart = start
             offset = min(0, start + drag.translation.width)
         }, onEnded: { _, cancelled in
             swiping = false
+            swipeStart = nil
             if !cancelled && offset < -Self.reveal * 1.6 {
                 // A long swipe asks at once.
                 close()

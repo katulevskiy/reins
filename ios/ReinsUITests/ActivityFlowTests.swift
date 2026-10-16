@@ -14,9 +14,10 @@ final class ActivityFlowTests: XCTestCase {
         app.launch()
         // The first launch of a run can race xcodebuild still installing the app, which then comes up again without
         // these arguments (on the real sign-in screen): once, launch it again, and say so in the log. The demo shows
-        // its Activity tab (Signal's own bar, not a system tab bar), or a linked item's sheet over it.
+        // its Activity tab (Signal's own bar, not a system tab bar), a linked item's sheet over it, or a linked entry's
+        // page (pushed, so the tab bar is down).
         let demo = app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier IN %@", ["tab:activity", "approvalSheet", "pairingSheet", "uploadSheet"]
+            format: "identifier IN %@", ["tab:activity", "approvalSheet", "pairingSheet", "uploadSheet", "entryHero", "entryApproval"]
         )).firstMatch
         if !demo.waitForExistence(timeout: 20) {
             XCTContext.runActivity(named: "Relaunching: the demo's first screen did not appear") { activity in
@@ -302,8 +303,10 @@ final class ActivityFlowTests: XCTestCase {
         for move in moves {
             let before = target.frame.minY
             drag(target, at: point, dy: move.dy, pause: move.pause, speed: move.speed)
+            // The list moves the finger's way, at least most of its travel (a quick flick may glide on): the bug kept it
+            // still while the row took the press.
             let moved = target.frame.minY - before
-            XCTAssertEqual(moved, move.dy, accuracy: 60, "the list followed the finger (\(move))")
+            XCTAssertGreaterThan(moved * (move.dy < 0 ? -1 : 1), abs(move.dy) * 0.7, "the list followed the finger (\(move), moved \(moved))")
             XCTAssertFalse(element(app, "entryHero").waitForExistence(timeout: 1), "no entry opened (\(move))")
             XCTAssertFalse(element(app, "approvalSheet").exists, "no request opened (\(move))")
             XCTAssertFalse(app.alerts.firstMatch.exists, "nothing asked (\(move))")
