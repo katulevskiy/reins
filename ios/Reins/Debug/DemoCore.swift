@@ -536,6 +536,23 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// An AI app asks to connect, parked like a pushed pairing (a second account of one already connected, for one).
+    /// Returns its id.
+    func addDemoPairing(clientName: String, clientHost: String) async throws -> String {
+        locked { s in
+            s.nextConnection += 1
+            let id = "pair-demo-\(s.nextConnection)"
+            let p = PairingView(
+                id: id, clientName: clientName, clientHost: clientHost, choices: Data([7, 42, 88]),
+                createdAt: Self.now(), keyFingerprint: nil
+            )
+            s.pairings[id] = p
+            s.pending.insert(DemoData.pairingItem(p), at: 0)
+            s.pendingVersion += 1
+            return id
+        }
+    }
+
     /// A desktop app on "studio" asks to pair, parked like a pushed pairing. Codes starting with "BBBB" have expired.
     func pairingByCode(userCode: String) async throws -> PairingView {
         try await latency()
@@ -555,10 +572,44 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
     }
 
+    /// As the core: the name field starts with the client's own name, or "Claude 2" when the same client is connected
+    /// already (the same name from the same host).
     func pairingView(pairingId: String) async throws -> PairingView {
         try locked { s in
-            guard let p = s.pairings[pairingId] else { throw CoreError.NotFound }
+            guard var p = s.pairings[pairingId] else { throw CoreError.NotFound }
+            let same = s.connections.filter {
+                $0.clientHost.lowercased() == p.clientHost.lowercased()
+                    && ($0.clientName.isEmpty ? $0.label : $0.clientName).lowercased() == p.clientName.lowercased()
+            }.count
+            p.sameClient = UInt32(same)
+            p.suggestedName = p.clientName
+            if same > 0 {
+                let taken = Set(s.connections.map { $0.label.lowercased() })
+                var n = same + 1
+                while taken.contains("\(p.clientName) \(n)".lowercased()) { n += 1 }
+                p.suggestedName = "\(p.clientName) \(n)"
+            }
             return p
+        }
+    }
+
+    /// As the core: one clean line of at most 64 characters; blank takes the name away.
+    func renameConnection(connectionId: String, name: String?) async throws -> String? {
+        try locked { s in
+            guard let i = s.connections.firstIndex(where: { $0.id == connectionId }) else { throw CoreError.NotFound }
+            let clean = name.map { untrustedName($0, limit: 64) }.flatMap { $0.isEmpty ? nil : $0 }
+            var c = s.connections[i]
+            if c.ownLabel.isEmpty { c.ownLabel = c.name == nil ? c.label : c.clientName }
+            if c.clientName.isEmpty { c.clientName = c.ownLabel }
+            let old = c.label
+            c.name = clean
+            c.label = clean ?? c.ownLabel
+            s.connections[i] = c
+            for j in s.pending.indices where s.pending[j].connectionId == connectionId && s.pending[j].connectionLabel == old {
+                s.pending[j].connectionLabel = c.label
+            }
+            s.pendingVersion += 1
+            return clean
         }
     }
 
@@ -686,13 +737,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             guard approve else { return }
             s.nextConnection += 1
             let name = label.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 } ?? p.clientName
+            // As the core: the name the field started with is the client's own, anything else the user's.
+            let given: String? = name == p.clientName ? nil : name
             let id = "c\(s.nextConnection)"
             // The demo's computers are Macs (a real one says its platform in the name it registers with).
             let platform: String? = p.keyFingerprint != nil ? "macos" : nil
             s.connections.append(ConnectionView(
                 id: id, label: name, clientHost: p.clientHost, createdAt: Self.now(), lastUsedAt: nil, icon: nil, keyFingerprint: p.keyFingerprint,
-                autoIcon: Self.autoIcon(label: name, computer: p.keyFingerprint != nil, platform: platform), platform: platform,
-                blobatar: Self.firstBlobatar(id, others: s.connections.compactMap(\.blobatar))
+                autoIcon: Self.autoIcon(label: p.clientName, computer: p.keyFingerprint != nil, platform: platform), platform: platform,
+                blobatar: Self.firstBlobatar(id, others: s.connections.compactMap(\.blobatar)),
+                name: given, ownLabel: p.clientName, clientName: p.clientName
             ))
         }
     }

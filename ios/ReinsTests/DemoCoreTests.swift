@@ -87,6 +87,35 @@ final class DemoCoreTests: XCTestCase {
         XCTAssertFalse(pending.contains { $0.id == "pair1" })
     }
 
+    func testARenameShowsEverywhereAndClearingGivesTheOwnNameBack() async throws {
+        let c = core()
+        let kept = try await c.renameConnection(connectionId: "c1", name: "  Claude (work) ")
+        XCTAssertEqual(kept, "Claude (work)")
+        var claude = try await c.connections().first { $0.id == "c1" }
+        XCTAssertEqual(claude?.label, "Claude (work)")
+        XCTAssertEqual(claude?.name, "Claude (work)")
+        XCTAssertEqual(claude?.ownLabel, "Claude")
+        let cleared = try await c.renameConnection(connectionId: "c1", name: "   ")
+        XCTAssertNil(cleared)
+        claude = try await c.connections().first { $0.id == "c1" }
+        XCTAssertEqual(claude?.label, "Claude")
+        XCTAssertNil(claude?.name)
+    }
+
+    func testASecondClaudeIsOfferedClaude2() async throws {
+        let c = core()
+        let first = try await c.pairingView(pairingId: "pair1")
+        XCTAssertEqual(first.sameClient, 0)
+        XCTAssertEqual(first.suggestedName, "Gemini")
+        try await c.answerPairing(pairingId: "pair1", approve: true, chosenCode: 42, label: nil)
+        let added = try await c.connections().last
+        XCTAssertNil(added?.name, "kept as it came: its own name")
+        let again = try await c.addDemoPairing(clientName: "Gemini", clientHost: "gemini.google.com")
+        let second = try await c.pairingView(pairingId: again)
+        XCTAssertEqual(second.sameClient, 1)
+        XCTAssertEqual(second.suggestedName, "Gemini 2")
+    }
+
     func testBypassRunsForTheMinutesAsked() async throws {
         let c = core()
         try await c.setAutopilotMode(connectionId: nil, mode: .bypass, minutes: 30)

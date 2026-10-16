@@ -49,6 +49,12 @@ enum PairWords {
 
     static func ask(_ view: PairingView) -> String { line(view).text }
 
+    /// "Claude is connected already · name this one": a second account of the same AI.
+    static func sameClient(_ view: PairingView) -> String {
+        let name = untrustedName(view.clientName, limit: 32)
+        return "\(name.isEmpty ? "This AI" : name) is connected already · name this one"
+    }
+
     /// “Gemini”: a name the other side sent, quoted, on one line, capped and cleaned; "No name" for none.
     static func quoted(_ name: String) -> String {
         let clean = untrustedName(name, limit: 48)
@@ -60,7 +66,7 @@ enum PairWords {
 @Observable
 @MainActor
 final class PairingModel {
-    static let maxLabel = 64
+    nonisolated static let maxLabel = 64
     let pairingId: String
     private(set) var loading = true
     private(set) var view: PairingView?
@@ -82,9 +88,18 @@ final class PairingModel {
     init(view: PairingView) {
         pairingId = view.id
         self.view = view
-        label = untrustedName(view.clientName, limit: Self.maxLabel)
+        label = Self.startingName(view)
         loading = false
     }
+
+    /// The name the field starts with: the core's suggestion ("Claude 2" when the same AI is connected already), else
+    /// the client's own name.
+    nonisolated static func startingName(_ view: PairingView) -> String {
+        untrustedName(view.suggestedName.isEmpty ? view.clientName : view.suggestedName, limit: maxLabel)
+    }
+
+    /// The same AI is connected already (a second account of it): the user names this one now.
+    var sameClient: Bool { (view?.sameClient ?? 0) > 0 }
 
     /// The three codes to pick from.
     var codes: [UInt8] { view.map { Array($0.choices) } ?? [] }
@@ -94,7 +109,7 @@ final class PairingModel {
         do {
             let v = try await app.core.pairingView(pairingId: pairingId)
             view = v
-            label = untrustedName(v.clientName, limit: Self.maxLabel)
+            label = Self.startingName(v)
             loading = false
         } catch {
             loading = false
@@ -186,7 +201,20 @@ private struct PairingContent: View {
                     .padding(.top, 16)
                 codes.padding(.horizontal, 20).padding(.vertical, 18)
                 Text("Name this connection").textRole(.label).foregroundStyle(Palette.inkMeta).padding(.leading, 24).padding(.bottom, 8)
-                TextField("Name", text: $vm.label)
+                if vm.sameClient {
+                    // Two accounts of one AI look the same to Reins: the name is what tells them apart.
+                    Label {
+                        Text(PairWords.sameClient(view))
+                    } icon: {
+                        Image(systemName: "person.2.fill")
+                    }
+                    .font(RFont.sans(13.5))
+                    .foregroundStyle(Palette.violet)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier("pairSameClient")
+                }
+                TextField(untrustedName(view.clientName, limit: 48), text: $vm.label)
                     .font(RFont.sans(16))
                     .focused($naming)
                     .submitLabel(.done)
@@ -226,6 +254,8 @@ private struct PairingContent: View {
             )
         }
         .accessibilityContainer("pairingSheet")
+        // A second account of an AI already connected: the cursor waits in the name field, "Claude 2" selected to type over.
+        .task(id: vm.sameClient) { if vm.sameClient { naming = true } }
     }
 
     private var codes: some View {

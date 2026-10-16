@@ -3014,6 +3014,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     func removeVaultPasskey(credentialId: Data) async throws  -> [VaultPasskeyView]
     
+    /**
+     * Gives a connection the user's own name for it ("Claude (work)"), kept with the account and shown everywhere
+     * instead of its own; `None` or an empty name takes it away. One line of at most 64 characters, without control
+     * or invisible characters. Returns the name kept (`None`: it goes by its own name).
+     */
+    func renameConnection(connectionId: String, name: String?) async throws  -> String?
+    
     func renameProfile(profileId: String, name: String, icon: String?) async throws 
     
     /**
@@ -4634,6 +4641,27 @@ open func removeVaultPasskey(credentialId: Data)async throws  -> [VaultPasskeyVi
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeVaultPasskeyView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Gives a connection the user's own name for it ("Claude (work)"), kept with the account and shown everywhere
+     * instead of its own; `None` or an empty name takes it away. One line of at most 64 characters, without control
+     * or invisible characters. Returns the name kept (`None`: it goes by its own name).
+     */
+open func renameConnection(connectionId: String, name: String?)async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_rename_connection(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(connectionId),FfiConverterOptionString.lower(name)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -9179,8 +9207,8 @@ public func FfiConverterTypeConnectionAutopilot_lower(_ value: ConnectionAutopil
 public struct ConnectionView: Equatable, Hashable {
     public var id: String
     /**
-     * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
-     * name it was given (`avatar::shown_label`).
+     * Its name as every screen shows it: the one the user gave it ([`Self::name`]), else its own
+     * ([`Self::own_label`]).
      */
     public var label: String
     public var clientHost: String
@@ -9209,13 +9237,29 @@ public struct ConnectionView: Equatable, Hashable {
      * changed by the user).
      */
     public var blobatar: Blobatar?
+    /**
+     * The name the user gave it (`names::typed_name`), synced to every phone of the account; `None`: it goes by its
+     * own.
+     */
+    public var name: String?
+    /**
+     * Its own name as the lists show it without the user's: a computer's ("M2A", not "Reins desktop app on
+     * Mac.localdomain"), else the name it was given (`avatar::shown_label`). The name field's placeholder; clearing
+     * the name brings it back.
+     */
+    public var ownLabel: String
+    /**
+     * What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
+     * (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
+     */
+    public var clientName: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(id: String, 
         /**
-         * Its name as the lists show it: a computer's own ("M2A", not "Reins desktop app on Mac.localdomain"), else the
-         * name it was given (`avatar::shown_label`).
+         * Its name as every screen shows it: the one the user gave it ([`Self::name`]), else its own
+         * ([`Self::own_label`]).
          */label: String, clientHost: String, createdAt: Int64, lastUsedAt: Int64?, 
         /**
          * The icon the user picked (`None` = Auto, [`Self::auto_icon`]): a provider's key ("claude"), a platform's
@@ -9234,7 +9278,20 @@ public struct ConnectionView: Equatable, Hashable {
         /**
          * Its blobatar: the figure, shape and colour it keeps (chosen to stand apart from the other connections', and
          * changed by the user).
-         */blobatar: Blobatar? = nil) {
+         */blobatar: Blobatar? = nil, 
+        /**
+         * The name the user gave it (`names::typed_name`), synced to every phone of the account; `None`: it goes by its
+         * own.
+         */name: String? = nil, 
+        /**
+         * Its own name as the lists show it without the user's: a computer's ("M2A", not "Reins desktop app on
+         * Mac.localdomain"), else the name it was given (`avatar::shown_label`). The name field's placeholder; clearing
+         * the name brings it back.
+         */ownLabel: String = "", 
+        /**
+         * What it called itself when it connected ("Claude", "M2A (macOS)"), cleaned but untrusted
+         * (`names::original_name`): its page shows it quietly under the name, so that a name never hides what it is.
+         */clientName: String = "") {
         self.id = id
         self.label = label
         self.clientHost = clientHost
@@ -9245,6 +9302,9 @@ public struct ConnectionView: Equatable, Hashable {
         self.autoIcon = autoIcon
         self.platform = platform
         self.blobatar = blobatar
+        self.name = name
+        self.ownLabel = ownLabel
+        self.clientName = clientName
     }
 
     
@@ -9272,7 +9332,10 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
                 keyFingerprint: FfiConverterOptionString.read(from: &buf), 
                 autoIcon: FfiConverterString.read(from: &buf), 
                 platform: FfiConverterOptionString.read(from: &buf), 
-                blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf)
+                blobatar: FfiConverterOptionTypeBlobatar.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf), 
+                ownLabel: FfiConverterString.read(from: &buf), 
+                clientName: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -9287,6 +9350,9 @@ public struct FfiConverterTypeConnectionView: FfiConverterRustBuffer {
         FfiConverterString.write(value.autoIcon, into: &buf)
         FfiConverterOptionString.write(value.platform, into: &buf)
         FfiConverterOptionTypeBlobatar.write(value.blobatar, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterString.write(value.ownLabel, into: &buf)
+        FfiConverterString.write(value.clientName, into: &buf)
     }
 }
 
@@ -11966,6 +12032,16 @@ public struct PairingView: Equatable, Hashable {
      * too. `None` for an AI client (or a key that cannot be used).
      */
     public var keyFingerprint: String?
+    /**
+     * The name the name field starts with: its own, or one of its own ("Claude 2") when a connection of the same
+     * client is there already (`names::suggested_name`).
+     */
+    public var suggestedName: String
+    /**
+     * How many connections of the same client there are already: two accounts of one AI (two Claude.ai accounts)
+     * look the same to Reins, so the app puts the cursor in the name field for the user to tell this one apart.
+     */
+    public var sameClient: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -11973,13 +12049,23 @@ public struct PairingView: Equatable, Hashable {
         /**
          * The Reins desktop app asks to pair: the eight digits ("4821 9930") of its key, which the computer shows
          * too. `None` for an AI client (or a key that cannot be used).
-         */keyFingerprint: String?) {
+         */keyFingerprint: String?, 
+        /**
+         * The name the name field starts with: its own, or one of its own ("Claude 2") when a connection of the same
+         * client is there already (`names::suggested_name`).
+         */suggestedName: String = "", 
+        /**
+         * How many connections of the same client there are already: two accounts of one AI (two Claude.ai accounts)
+         * look the same to Reins, so the app puts the cursor in the name field for the user to tell this one apart.
+         */sameClient: UInt32 = UInt32(0)) {
         self.id = id
         self.clientName = clientName
         self.clientHost = clientHost
         self.choices = choices
         self.createdAt = createdAt
         self.keyFingerprint = keyFingerprint
+        self.suggestedName = suggestedName
+        self.sameClient = sameClient
     }
 
     
@@ -12003,7 +12089,9 @@ public struct FfiConverterTypePairingView: FfiConverterRustBuffer {
                 clientHost: FfiConverterString.read(from: &buf), 
                 choices: FfiConverterData.read(from: &buf), 
                 createdAt: FfiConverterInt64.read(from: &buf), 
-                keyFingerprint: FfiConverterOptionString.read(from: &buf)
+                keyFingerprint: FfiConverterOptionString.read(from: &buf), 
+                suggestedName: FfiConverterString.read(from: &buf), 
+                sameClient: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -12014,6 +12102,8 @@ public struct FfiConverterTypePairingView: FfiConverterRustBuffer {
         FfiConverterData.write(value.choices, into: &buf)
         FfiConverterInt64.write(value.createdAt, into: &buf)
         FfiConverterOptionString.write(value.keyFingerprint, into: &buf)
+        FfiConverterString.write(value.suggestedName, into: &buf)
+        FfiConverterUInt32.write(value.sameClient, into: &buf)
     }
 }
 
@@ -20868,6 +20958,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_remove_vault_passkey() != 31346) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_rename_connection() != 945) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_rename_profile() != 43478) {
