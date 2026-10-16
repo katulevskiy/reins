@@ -26,10 +26,13 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request supersedes its run in progress. A main or nightly run is not cancelled.
+# Every pull request shares one group, so two pull requests' iOS lanes queue instead of splitting the
+# xcode-27 runners between them (runs 38888346599 and 38889759511 waited 26-35 minutes for a runner that way).
+# A run in progress is not cancelled. GitHub keeps one pending run per group, so a newer pending pull request
+# run replaces an older pending one. A main or nightly run keeps its own group and is not cancelled.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.sha) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && 'pr' || format('{0}-{1}', github.event_name, github.sha) }}
+  cancel-in-progress: false
 
 defaults:
   run:
