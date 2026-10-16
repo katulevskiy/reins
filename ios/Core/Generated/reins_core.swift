@@ -7920,6 +7920,132 @@ public func FfiConverterTypeAskView_lower(_ value: AskView) -> RustBuffer {
 
 
 /**
+ * What deserves a closer look in one commit, file or message. At most three reasons, heaviest first.
+ */
+public struct Attention: Equatable, Hashable {
+    /**
+     * The heaviest reason. Weights are not added together.
+     */
+    public var level: AttentionLevel
+    public var reasons: [AttentionReason]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The heaviest reason. Weights are not added together.
+         */level: AttentionLevel, reasons: [AttentionReason]) {
+        self.level = level
+        self.reasons = reasons
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Attention: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttention: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Attention {
+        return
+            try Attention(
+                level: FfiConverterTypeAttentionLevel.read(from: &buf), 
+                reasons: FfiConverterSequenceTypeAttentionReason.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Attention, into buf: inout [UInt8]) {
+        FfiConverterTypeAttentionLevel.write(value.level, into: &buf)
+        FfiConverterSequenceTypeAttentionReason.write(value.reasons, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttention_lift(_ buf: RustBuffer) throws -> Attention {
+    return try FfiConverterTypeAttention.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttention_lower(_ value: Attention) -> RustBuffer {
+    return FfiConverterTypeAttention.lower(value)
+}
+
+
+/**
+ * One reason, in fixed wording. A deletion count is the only fact filled in.
+ */
+public struct AttentionReason: Equatable, Hashable {
+    public var code: ReasonCode
+    /**
+     * Never a path, a subject, an author, a snippet or a secret.
+     */
+    public var label: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(code: ReasonCode, 
+        /**
+         * Never a path, a subject, an author, a snippet or a secret.
+         */label: String) {
+        self.code = code
+        self.label = label
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AttentionReason: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttentionReason: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttentionReason {
+        return
+            try AttentionReason(
+                code: FfiConverterTypeReasonCode.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AttentionReason, into buf: inout [UInt8]) {
+        FfiConverterTypeReasonCode.write(value.code, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttentionReason_lift(_ buf: RustBuffer) throws -> AttentionReason {
+    return try FfiConverterTypeAttentionReason.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttentionReason_lower(_ value: AttentionReason) -> RustBuffer {
+    return FfiConverterTypeAttentionReason.lower(value)
+}
+
+
+/**
  * A request Autopilot decided, for the quiet "Autopilot" notification (spec §7).
  */
 public struct AutoDecisionView: Equatable, Hashable {
@@ -10100,6 +10226,11 @@ public struct GitCommitView: Equatable, Hashable {
      * (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
      */
     public var hiddenChars: Bool
+    /**
+     * What in this commit deserves a closer look. `None`: no rule matched, which is not a clearance. At most three
+     * reasons, heaviest first. Computed when the view is built, and never stored on the push.
+     */
+    public var attention: Attention?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10123,7 +10254,11 @@ public struct GitCommitView: Equatable, Hashable {
         /**
          * The subject, the author or one of its files holds characters that change how text reads without being seen
          * (bidi controls, zero-width characters): what is shown may not be what the code does. Show a warning.
-         */hiddenChars: Bool = false) {
+         */hiddenChars: Bool = false, 
+        /**
+         * What in this commit deserves a closer look. `None`: no rule matched, which is not a clearance. At most three
+         * reasons, heaviest first. Computed when the view is built, and never stored on the push.
+         */attention: Attention? = nil) {
         self.shortSha = shortSha
         self.subject = subject
         self.author = author
@@ -10133,6 +10268,7 @@ public struct GitCommitView: Equatable, Hashable {
         self.additions = additions
         self.deletions = deletions
         self.hiddenChars = hiddenChars
+        self.attention = attention
     }
 
     
@@ -10159,7 +10295,8 @@ public struct FfiConverterTypeGitCommitView: FfiConverterRustBuffer {
                 files: FfiConverterSequenceTypeGitFileView.read(from: &buf), 
                 additions: FfiConverterOptionUInt64.read(from: &buf), 
                 deletions: FfiConverterOptionUInt64.read(from: &buf), 
-                hiddenChars: FfiConverterBool.read(from: &buf)
+                hiddenChars: FfiConverterBool.read(from: &buf), 
+                attention: FfiConverterOptionTypeAttention.read(from: &buf)
         )
     }
 
@@ -10173,6 +10310,7 @@ public struct FfiConverterTypeGitCommitView: FfiConverterRustBuffer {
         FfiConverterOptionUInt64.write(value.additions, into: &buf)
         FfiConverterOptionUInt64.write(value.deletions, into: &buf)
         FfiConverterBool.write(value.hiddenChars, into: &buf)
+        FfiConverterOptionTypeAttention.write(value.attention, into: &buf)
     }
 }
 
@@ -10218,6 +10356,10 @@ public struct GitFileView: Equatable, Hashable {
      * is shown as U+FFFD. Show a warning.
      */
     public var hiddenChars: Bool
+    /**
+     * What in this file deserves a closer look. `None`: no rule matched, which is not a clearance.
+     */
+    public var attention: Attention?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10238,7 +10380,10 @@ public struct GitFileView: Equatable, Hashable {
         /**
          * The path or a line of `diff` held invisible characters (bidi controls, zero-width characters); in `diff` each
          * is shown as U+FFFD. Show a warning.
-         */hiddenChars: Bool = false) {
+         */hiddenChars: Bool = false, 
+        /**
+         * What in this file deserves a closer look. `None`: no rule matched, which is not a clearance.
+         */attention: Attention? = nil) {
         self.path = path
         self.status = status
         self.additions = additions
@@ -10247,6 +10392,7 @@ public struct GitFileView: Equatable, Hashable {
         self.diff = diff
         self.diffCut = diffCut
         self.hiddenChars = hiddenChars
+        self.attention = attention
     }
 
     
@@ -10272,7 +10418,8 @@ public struct FfiConverterTypeGitFileView: FfiConverterRustBuffer {
                 binary: FfiConverterBool.read(from: &buf), 
                 diff: FfiConverterSequenceTypeDiffLineView.read(from: &buf), 
                 diffCut: FfiConverterBool.read(from: &buf), 
-                hiddenChars: FfiConverterBool.read(from: &buf)
+                hiddenChars: FfiConverterBool.read(from: &buf), 
+                attention: FfiConverterOptionTypeAttention.read(from: &buf)
         )
     }
 
@@ -10285,6 +10432,7 @@ public struct FfiConverterTypeGitFileView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeDiffLineView.write(value.diff, into: &buf)
         FfiConverterBool.write(value.diffCut, into: &buf)
         FfiConverterBool.write(value.hiddenChars, into: &buf)
+        FfiConverterOptionTypeAttention.write(value.attention, into: &buf)
     }
 }
 
@@ -11394,13 +11542,24 @@ public struct MessageView: Equatable, Hashable {
      * Looks like something that must never be shared by default (a login code, a password).
      */
     public var sensitive: Bool
+    /**
+     * What in this message deserves a closer look. `None`: no rule matched, which is not a clearance.
+     * A sign-in code or a password is also `sensitive` and starts unticked. A reset, a bank message or a security
+     * alert is only marked here.
+     */
+    public var attention: Attention?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(id: String, from: String, subject: String, date: Int64, snippet: String, coveredByGrant: Bool, 
         /**
          * Looks like something that must never be shared by default (a login code, a password).
-         */sensitive: Bool) {
+         */sensitive: Bool, 
+        /**
+         * What in this message deserves a closer look. `None`: no rule matched, which is not a clearance.
+         * A sign-in code or a password is also `sensitive` and starts unticked. A reset, a bank message or a security
+         * alert is only marked here.
+         */attention: Attention? = nil) {
         self.id = id
         self.from = from
         self.subject = subject
@@ -11408,6 +11567,7 @@ public struct MessageView: Equatable, Hashable {
         self.snippet = snippet
         self.coveredByGrant = coveredByGrant
         self.sensitive = sensitive
+        self.attention = attention
     }
 
     
@@ -11432,7 +11592,8 @@ public struct FfiConverterTypeMessageView: FfiConverterRustBuffer {
                 date: FfiConverterInt64.read(from: &buf), 
                 snippet: FfiConverterString.read(from: &buf), 
                 coveredByGrant: FfiConverterBool.read(from: &buf), 
-                sensitive: FfiConverterBool.read(from: &buf)
+                sensitive: FfiConverterBool.read(from: &buf), 
+                attention: FfiConverterOptionTypeAttention.read(from: &buf)
         )
     }
 
@@ -11444,6 +11605,7 @@ public struct FfiConverterTypeMessageView: FfiConverterRustBuffer {
         FfiConverterString.write(value.snippet, into: &buf)
         FfiConverterBool.write(value.coveredByGrant, into: &buf)
         FfiConverterBool.write(value.sensitive, into: &buf)
+        FfiConverterOptionTypeAttention.write(value.attention, into: &buf)
     }
 }
 
@@ -16449,6 +16611,83 @@ public func FfiConverterTypeApprovalKind_lower(_ value: ApprovalKind) -> RustBuf
 
 
 /**
+ * How closely the person should look at one commit, file or message.
+ *
+ * The level is the heaviest reason. Weights are not added together.
+ */
+
+public enum AttentionLevel: Equatable, Hashable {
+    
+    /**
+     * Worth a glance: the heaviest reason has weight 3 to 5.
+     */
+    case look
+    /**
+     * Open this before approving: the heaviest reason has weight 6 or more.
+     */
+    case close
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AttentionLevel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAttentionLevel: FfiConverterRustBuffer {
+    typealias SwiftType = AttentionLevel
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AttentionLevel {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .look
+        
+        case 2: return .close
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AttentionLevel, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .look:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .close:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttentionLevel_lift(_ buf: RustBuffer) throws -> AttentionLevel {
+    return try FfiConverterTypeAttentionLevel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAttentionLevel_lower(_ value: AttentionLevel) -> RustBuffer {
+    return FfiConverterTypeAttentionLevel.lower(value)
+}
+
+
+
+/**
  * Something about Autopilot changed that the app shows (the bypass notification, the mode pill).
  */
 
@@ -17869,6 +18108,211 @@ public func FfiConverterTypePreset_lower(_ value: Preset) -> RustBuffer {
 
 
 /**
+ * Why an item deserves a closer look. Declaration order breaks ties between equal weights.
+ */
+
+public enum ReasonCode: Equatable, Hashable {
+    
+    /**
+     * "Secret file".
+     */
+    case secretFile
+    /**
+     * "Looks like a key".
+     */
+    case looksLikeKey
+    /**
+     * "Password".
+     */
+    case password
+    /**
+     * "Looks like a sign-in code".
+     */
+    case signInCode
+    /**
+     * "Changes CI".
+     */
+    case changesCi
+    /**
+     * "Changes auth".
+     */
+    case changesAuth
+    /**
+     * "Password reset".
+     */
+    case passwordReset
+    /**
+     * "Security alert".
+     */
+    case securityAlert
+    /**
+     * "Hidden characters".
+     */
+    case hiddenChars
+    /**
+     * "Deletes N lines".
+     */
+    case deletesLines
+    /**
+     * "Changes infra".
+     */
+    case changesInfra
+    /**
+     * "Bank or invoice".
+     */
+    case finance
+    /**
+     * "Changes owners".
+     */
+    case changesOwners
+    /**
+     * "Runs on build".
+     */
+    case changesBuildScripts
+    /**
+     * "Deletes a file".
+     */
+    case deletesFile
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ReasonCode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeReasonCode: FfiConverterRustBuffer {
+    typealias SwiftType = ReasonCode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ReasonCode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .secretFile
+        
+        case 2: return .looksLikeKey
+        
+        case 3: return .password
+        
+        case 4: return .signInCode
+        
+        case 5: return .changesCi
+        
+        case 6: return .changesAuth
+        
+        case 7: return .passwordReset
+        
+        case 8: return .securityAlert
+        
+        case 9: return .hiddenChars
+        
+        case 10: return .deletesLines
+        
+        case 11: return .changesInfra
+        
+        case 12: return .finance
+        
+        case 13: return .changesOwners
+        
+        case 14: return .changesBuildScripts
+        
+        case 15: return .deletesFile
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ReasonCode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .secretFile:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .looksLikeKey:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .password:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .signInCode:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .changesCi:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .changesAuth:
+            writeInt(&buf, Int32(6))
+        
+        
+        case .passwordReset:
+            writeInt(&buf, Int32(7))
+        
+        
+        case .securityAlert:
+            writeInt(&buf, Int32(8))
+        
+        
+        case .hiddenChars:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .deletesLines:
+            writeInt(&buf, Int32(10))
+        
+        
+        case .changesInfra:
+            writeInt(&buf, Int32(11))
+        
+        
+        case .finance:
+            writeInt(&buf, Int32(12))
+        
+        
+        case .changesOwners:
+            writeInt(&buf, Int32(13))
+        
+        
+        case .changesBuildScripts:
+            writeInt(&buf, Int32(14))
+        
+        
+        case .deletesFile:
+            writeInt(&buf, Int32(15))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReasonCode_lift(_ buf: RustBuffer) throws -> ReasonCode {
+    return try FfiConverterTypeReasonCode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeReasonCode_lower(_ value: ReasonCode) -> RustBuffer {
+    return FfiConverterTypeReasonCode.lower(value)
+}
+
+
+
+/**
  * How bad it would be if a request were a mistake, in its context (`docs/autopilot-risk.md` §2).
  */
 
@@ -18584,6 +19028,30 @@ fileprivate struct FfiConverterOptionTypeAskView: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAskView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAttention: FfiConverterRustBuffer {
+    typealias SwiftType = Attention?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAttention.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAttention.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -19484,6 +19952,31 @@ fileprivate struct FfiConverterSequenceTypeAddressView: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAddressView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAttentionReason: FfiConverterRustBuffer {
+    typealias SwiftType = [AttentionReason]
+
+    public static func write(_ value: [AttentionReason], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAttentionReason.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AttentionReason] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AttentionReason]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAttentionReason.read(from: &buf))
         }
         return seq
     }
