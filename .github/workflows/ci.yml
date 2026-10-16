@@ -189,10 +189,13 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain
         run: rustup toolchain install
+      # The tests' cache, read only: its registry, build scripts and proc macros are what clippy reuses (it checks the
+      # rest). A cache of its own (500 MB) pushed the release's out of the repository's 10 GB, and this job ends well
+      # before the tests do.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: linux-server-core-clippy
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: linux-server-core
+          save-if: false
       # Preserve the existing lint coverage: all core targets and the production server target.
       - run: cargo clippy --locked --workspace --exclude vaultwarden --exclude reins-desktop-app --all-targets -- -D warnings
       - run: cargo clippy --locked --features sqlite -- -D warnings
