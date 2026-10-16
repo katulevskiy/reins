@@ -1,11 +1,22 @@
 name: iOS
 
-# Not on push to main. scripts/wait-for-ci.sh waits for the whole ci.yml run of that push (30 minutes)
-# and publishes when it passes. These jobs are slower than that cap. A pull request already ran them.
+# Push to main rebuilds only the simulator core, and only when a core input changes. The test shards
+# do not run on push. scripts/wait-for-ci.sh waits for ci.yml on that same commit, not this workflow,
+# so a core rebuild cannot hold a release. The saved cache is what the next pull request restores.
 on:
   pull_request:
   workflow_dispatch:
-  # Once a week on main, so the caches pull requests restore stay warm.
+  push:
+    branches: [main]
+    paths:
+      - crates/reins-core/**
+      - crates/reins-proto/**
+      - crates/reins-policy/**
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/**
+      - ios/scripts/build-core.sh
+  # Once a week on main, so a core nobody pushed still refreshes before GitHub drops the cache.
   schedule:
     - cron: "41 5 * * 1"
 
@@ -35,7 +46,8 @@ defaults:
 # method using the per-test times from that run. ReinsTests (about two minutes) shares the rest shard.
 # Classes added later land on rest.
 #
-# Caches are written from main only (the weekly run and a hand run on main). DerivedData is not cached.
+# The core cache is written from main: a push of a core input, the weekly run, or a hand run.
+# Test shards do not run on push. DerivedData is not cached.
 
 jobs:
   changes:
@@ -165,7 +177,7 @@ jobs:
   ios-test:
     name: iOS tests (${{ matrix.shard }})
     needs: [changes, ios-core]
-    if: needs.changes.outputs.ios == 'true' && needs.ios-core.result == 'success'
+    if: github.event_name != 'push' && needs.changes.outputs.ios == 'true' && needs.ios-core.result == 'success'
     runs-on: xcode-27
     timeout-minutes: 45
     strategy:
@@ -314,16 +326,24 @@ jobs:
     steps:
       - name: Result
         env:
+          EVENT: ${{ github.event_name }}
           CHANGES: ${{ needs.changes.result }}
           LANE: ${{ needs.changes.outputs.ios }}
           CORE: ${{ needs.ios-core.result }}
           TESTS: ${{ needs.ios-test.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES lane=$LANE core=$CORE tests=$TESTS"
+          echo "event=$EVENT changes=$CHANGES lane=$LANE core=$CORE tests=$TESTS"
           if [[ "$CHANGES" != success ]]; then
             echo "::error::The changes job did not succeed ($CHANGES)"
             exit 1
+          fi
+          # A main push builds the core and saves the cache. The test shards are skipped on purpose.
+          if [[ "$EVENT" == push ]]; then
+            [[ "$CORE" == success ]] || { echo "::error::ios-core $CORE"; exit 1; }
+            [[ "$TESTS" == skipped || "$TESTS" == success ]] || { echo "::error::ios-test $TESTS"; exit 1; }
+            echo "iOS core saved on main; tests are not run on push"
+            exit 0
           fi
           if [[ "$LANE" != true ]]; then
             for result in "$CORE" "$TESTS"; do

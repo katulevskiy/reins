@@ -103,4 +103,23 @@ with tempfile.TemporaryDirectory(prefix="reins-ci-routing-") as directory:
                         ("schedule", baseline), ("schedule", "")]:
         assert lanes(event, base) == (True, True, True, True, True), (event, base)
 
+ios_workflow = (ROOT / ".github/workflows/ios.yml").read_text()
+push = ios_workflow.split("\n  push:\n", 1)[1].split("\n  schedule:\n", 1)[0]
+assert "branches: [main]" in push
+for path in (
+    "crates/reins-core/**",
+    "crates/reins-proto/**",
+    "crates/reins-policy/**",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    ".cargo/**",
+    "ios/scripts/build-core.sh",
+):
+    assert path in push, path
+assert "github.event_name != 'push'" in ios_workflow
+# A main push of this workflow must not satisfy the release gate. That gate names ci.yml only.
+gate = (ROOT / "scripts/wait-for-ci.sh").read_text()
+assert "--workflow ci.yml" in gate
+assert "ios.yml" not in gate
+
 print(f"{len(cases) + 6} CI component-routing checks passed")
