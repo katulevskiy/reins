@@ -380,6 +380,8 @@ impl AccountRuntime {
         let _guard = self.transition.lock().await;
         let previous = self.engine();
         previous.ensure_active()?;
+        // Deleting the account is the primary's decision, never a viewer's.
+        previous.require_decider()?;
         previous.run_account(previous.delete_server_account(confirm_email)).await?;
         self.generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         let owner = previous.store.bound_owner();
@@ -403,6 +405,9 @@ impl AccountRuntime {
         self.control.secret_delete(KEY_CACHE, &owner.id())?;
         self.control.secret_delete(SECRET_CACHE, &owner.id())?;
         self.control.secret_delete(sso::SECRET_SERVICE, &owner.user_id)?;
+        // Phone roles went with the vault (the server deletes the roster on a reset or a deletion): this phone keeps
+        // no roster, owner seed, view key or open request of the account, so it starts as a phone without roles.
+        crate::roles::forget(&self.control, &owner.id())?;
         let sealed = self.directory.join("accounts").join(format!("{}.sealed", owner.id()));
         let side = |name: &str| sealed.with_extension(format!("{name}.sealed"));
         let side_tmp = |name: &str| sealed.with_extension(format!("{name}.tmp"));

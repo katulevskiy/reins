@@ -154,6 +154,8 @@ impl Engine {
             && let Some(limit) = self.payments.covering_limit(&plan, connection, request.created_at, unix_now())?
             // Lockdown may have been switched on while the charges were read.
             && self.ap_mode_for(connection, unix_now())? != AutopilotMode::Lockdown
+            // Paid without asking only while the server confirms this phone is still the primary (else it asks).
+            && self.require_decider_fresh(session).await.is_ok()
         {
             let approval = Approval {
                 request_id: &request.id.0,
@@ -254,6 +256,9 @@ impl Engine {
             if let Some(why) = self.payments.refusal(&plan.cart, connection, Self::margin(plan, method), now)? {
                 return Err(CoreError::invalid(format!("{why} Change the budget in Payments, or deny this.")));
             }
+            // A purchase is not taken back: paid (by the user's tap or by Autopilot) only while the server confirms
+            // this phone is still the primary.
+            self.require_decider_fresh(session).await?;
             self.payments.perform(&one, plan, method, choice.address_id.as_deref(), &approval).await?
         };
         let mut note = None;
@@ -271,6 +276,8 @@ impl Engine {
 
     /// The user approved a purchase on the purchase screen. Like [`Engine::approve`], with their picks.
     pub async fn approve_purchase(&self, request_id: &str, choice: PurchaseChoice) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
+        self.require_decider()?;
         let Some(_claim) = self.claim(request_id) else {
             return Err(CoreError::NotFound);
         };

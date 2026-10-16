@@ -611,6 +611,8 @@ make_config! {
         reins_device_proof_max_failures: u32, false, def,    5;
         /// Wrong takeover proofs window (seconds) |> The window the limit above counts wrong proofs in.
         reins_device_proof_window_seconds: u64, false, def,  900;
+        /// Wrong recovery proofs per device |> Wrong proofs one device may send to fetch the recovery wrap or recover the primary role, within the window above. They count against the account's limit above too, so new device ids never get more guesses; a device that proved itself before keeps its own tries when others used up the account's. 0 disables the limit.
+        reins_device_proof_max_failures_per_device: u32, false, def, 3;
         /// Apple team id (app links) |> The Apple Developer team id of the Reins iOS app, so that pairing links (`{DOMAIN}/pair`) open the app (`/.well-known/apple-app-site-association`). Empty: the APNs team id, if set.
         reins_apple_team_id:         String, false,  def,    String::new();
         /// Android signing certificates (app links) |> SHA-256 fingerprints (`AB:CD:...`, comma-separated) of the certificates the Reins Android app is signed with, so that pairing links open the app (`/.well-known/assetlinks.json`). Empty: links open the page.
