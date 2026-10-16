@@ -586,13 +586,25 @@ async fn answers_need_the_primarys_signature_once_there_is_a_roster() {
     let phone = server.phone("ana@example.com").await;
     phone.register_device().await;
     let tokens = server.connect_ai(&phone, "ana@example.com", Some("Claude")).await;
-    let acct = Account::with_roster(server, phone).await;
+    let mut acct = Account::with_roster(server, phone).await;
+    let viewer = acct.server.second_device("ana@example.com").await;
+    let vk = keys(2);
+    acct.enroll(&viewer, &vk, "Pixel").await;
 
     let ai = mcp_tool(acct.server.url("/mcp"), tokens.access.clone());
     let phone_side = async {
         let (_, pending) = acct.primary.get("/pending?wait=10").await;
         let id = pending["requests"][0]["id"].as_str().expect("request").to_owned();
         let denied = json!({"v": 1, "outcome": "denied", "reason": null});
+        // From the viewer's device: refused, whether it relays the primary's signed answer or signs its own.
+        let bytes = serde_json::to_vec(&denied).unwrap();
+        let mut by_viewer = signed_answer(&acct, &id, &denied);
+        by_viewer["sig"] =
+            json!(sig(&vk.sign, &answer_message(&acct.user, AnswerKind::Request, &id, acct.current().epoch, &bytes)));
+        for body in [signed_answer(&acct, &id, &denied), by_viewer] {
+            let (status, refused) = viewer.post(&format!("/requests/{id}/response"), &body).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+        }
         // Unsigned, as before phone roles: refused.
         let (status, body) = acct.primary.post(&format!("/requests/{id}/response"), &denied).await;
         assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "signature_required"));
@@ -675,7 +687,9 @@ fn chrono_now() -> i64 {
 
 #[tokio::test]
 async fn pairing_answers_need_the_primarys_signature_once_there_is_a_roster() {
-    let acct = Account::new("pia@example.com").await;
+    let mut acct = Account::new("pia@example.com").await;
+    let viewer = acct.server.second_device("pia@example.com").await;
+    acct.enroll(&viewer, &keys(2), "Pixel").await;
     let client_id = acct.server.register_client().await;
     let wait_url = acct.server.start_authorization(&client_id, "pia@example.com").await;
     let html = client().get(&wait_url).send().await.unwrap().text().await.unwrap();
@@ -688,6 +702,24 @@ async fn pairing_answers_need_the_primarys_signature_once_there_is_a_roster() {
     let wrong_kind = signed_for(&acct, AnswerKind::Request, &id, &approve);
     let (status, body) = acct.primary.post(&format!("/pairings/{id}/response"), &wrong_kind).await;
     assert_eq!((status, error(&body)), (StatusCode::FORBIDDEN, "bad_signature"), "signed for a request, not a pairing");
+    // The viewer's device relaying the primary's signed answer: refused (only the primary's device answers).
+    let signed = signed_for(&acct, AnswerKind::Pairing, &id, &approve);
+    let (status, body) = viewer.post(&format!("/pairings/{id}/response"), &signed).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    // So is a join answer from it.
+    let joiner = acct.server.second_device("pia@example.com").await;
+    let (_, created) = joiner
+        .post(
+            "/joins",
+            &json!({"v": 1, "device_name": "Tablet", "public_key": encode_key(&[4; 32]),
+                    "sign_pub": keys(4).sign_pub, "commitment": hex32(&[4; 32])}),
+        )
+        .await;
+    let join = created["id"].as_str().expect("join").to_owned();
+    let deny = json!({"v": 1, "approve": false});
+    let signed_join = signed_for(&acct, AnswerKind::Join, &join, &deny);
+    let (status, body) = viewer.post(&format!("/joins/{join}/response"), &signed_join).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     let (status, body) = acct
         .primary
         .post(&format!("/pairings/{id}/response"), &signed_for(&acct, AnswerKind::Pairing, &id, &approve))

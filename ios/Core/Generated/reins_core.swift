@@ -17566,6 +17566,11 @@ enum CoreError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      * master password) with `unlock_account`; then `register_device` again.
      */
     case OtherApprovalDevice
+    /**
+     * This phone only views the account (phone roles): the change is the primary's to make. Lockdown, stopping a
+     * bypass and revoking a grant (the brake) stay open to it.
+     */
+    case ViewerOnly
 
     
 
@@ -17624,6 +17629,7 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
             reason: try FfiConverterString.read(from: &buf)
             )
         case 14: return .OtherApprovalDevice
+        case 15: return .ViewerOnly
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -17698,6 +17704,10 @@ public struct FfiConverterTypeCoreError: FfiConverterRustBuffer {
         
         case .OtherApprovalDevice:
             writeInt(&buf, Int32(14))
+        
+        
+        case .ViewerOnly:
+            writeInt(&buf, Int32(15))
         
         }
     }

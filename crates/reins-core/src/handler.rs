@@ -48,6 +48,12 @@ impl Engine {
         session: &Session,
         mut request: RelayRequest,
     ) -> Result<(), CoreError> {
+        // A phone that only views the account (or was removed from its roster) decides nothing, whatever its grants
+        // or Autopilot modes say: the request waits for the primary. The server would refuse its answer too.
+        if !self.decides() {
+            log::info!("a request reached a phone that does not decide for the account; it waits for the primary");
+            return Ok(());
+        }
         if check_version(request.v).is_err() {
             return self.reject(session, &request, "This version of the Reins app is too old for the server.").await;
         }
@@ -452,6 +458,8 @@ impl Engine {
     }
 
     pub(crate) async fn respond(&self, session: &Session, id: &str, outcome: RelayOutcome) -> Result<(), CoreError> {
+        // Every answer to a request goes through here: a phone that does not decide sends none.
+        self.require_decider()?;
         let response = RelayResponse {
             v: PROTOCOL_VERSION,
             outcome,

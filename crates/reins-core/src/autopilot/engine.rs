@@ -517,6 +517,11 @@ impl Engine {
     }
 
     async fn ap_pass(&self, model: bool) -> Result<(), CoreError> {
+        // A viewer's (or a removed phone's) own Bypass, Overnight or Auto decides nothing: its items wait for the
+        // primary, which runs its own Autopilot.
+        if !self.decides() {
+            return Ok(());
+        }
         let now = unix_now();
         self.ap_expire_bypasses(now)?;
         self.store.ap_prune(now)?;

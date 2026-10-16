@@ -69,6 +69,10 @@ struct State {
     /// Answers whose signature verified: (kind, id, bytes).
     signed: Vec<(AnswerKind, String, Vec<u8>)>,
     unsigned: Vec<String>,
+    /// Every answer to a request that reached the server (signed or not, taken or refused).
+    answered: Vec<String>,
+    /// Requests the server hands out by id (`GET /requests/<id>`, what a push names).
+    by_id: HashMap<String, Value>,
     password: String,
     next: u32,
     // Lies.
@@ -368,8 +372,13 @@ impl State {
                 self.bundle = None;
                 ResponseTemplate::new(204)
             }
+            ("GET", ["requests", id]) => match self.by_id.get(*id) {
+                Some(request) => ok(request),
+                None => err(404, "not_found"),
+            },
             ("POST", ["requests", id, "response"]) => {
                 let id = (*id).to_owned();
+                self.answered.push(id.clone());
                 match self.open_answer(AnswerKind::Request, &id, &req.body) {
                     Some(_) => ResponseTemplate::new(204),
                     None => err(403, "bad_signature"),
@@ -796,4 +805,44 @@ async fn a_recovery_never_starts_from_an_older_roster_than_the_phone_saw() {
     assert!(refused.to_string().contains("changed"), "{refused}");
     assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
     assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
+}
+
+#[tokio::test]
+async fn a_viewer_with_bypass_on_answers_nothing_pushed_to_it() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    // B ran a bypass before phone roles (any phone could): it would approve whatever arrives.
+    b.start_bypass(None, Some(60)).await.unwrap();
+    a.roster_create("iPhone".to_owned(), Some(PASSWORD.to_owned())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    let request = |id: &str| {
+        json!({"v": 1, "id": id, "connection_id": "c1", "connection_label": "Claude", "created_at": 100,
+               "call": {"tool": "gmail_search", "query": "from:bank", "max_results": 1}})
+    };
+    // A server (or a stale token) pushes the request to the viewer, and its long-poll carries another.
+    w.state().by_id.insert("r9".to_owned(), request("r9"));
+    b.handle_push("req".to_owned(), "r9".to_owned()).await.unwrap();
+    b.handle_push_deferring_autopilot("req".to_owned(), "r9".to_owned()).await.unwrap();
+    w.state().requests.push(request("r10"));
+    b.sync(0).await.unwrap();
+    // Nothing was answered, approved or parked: the requests wait for the primary.
+    assert!(w.state().answered.is_empty(), "{:?}", w.state().answered);
+    assert!(b.pending().await.unwrap().is_empty());
+    // And a tap on the viewer cannot answer either.
+    assert_eq!(b.deny("r9".to_owned()).await, Err(CoreError::ViewerOnly));
+    // The primary answers, signed.
+    w.state().requests.push(request("r11"));
+    a.sync(0).await.unwrap();
+    for item in a.pending().await.unwrap() {
+        a.deny(item.id).await.unwrap();
+    }
+    assert_eq!(w.state().answered, ["r11"]);
+    // Removed, B decides nothing either.
+    let b_id = device_of(&b).await;
+    a.roster_remove_member(b_id).await.unwrap();
+    b.roster_summary(true).await.unwrap();
+    w.state().by_id.insert("r12".to_owned(), request("r12"));
+    b.handle_push("req".to_owned(), "r12".to_owned()).await.unwrap();
+    assert_eq!(w.state().answered, ["r11"]);
 }

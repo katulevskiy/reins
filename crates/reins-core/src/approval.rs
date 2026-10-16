@@ -194,6 +194,8 @@ impl Engine {
 
     /// Approves a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn approve_claimed(&self, request_id: &str, choice: ApprovalChoice) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
+        self.require_decider()?;
         let session = self.session()?;
         let (_, mut parked) = self.parked(request_id)?;
         let now = unix_now();
@@ -353,6 +355,8 @@ impl Engine {
 
     /// Denies a request the caller already claimed (the user's tap, or Autopilot).
     pub(crate) async fn deny_claimed(&self, request_id: &str) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
+        self.require_decider()?;
         let session = self.session()?;
         let (_, parked) = self.parked(request_id)?;
         let now = unix_now();
@@ -600,6 +604,7 @@ impl Engine {
         chosen_code: Option<u8>,
         label: Option<String>,
     ) -> Result<(), CoreError> {
+        self.require_decider()?;
         let session = self.session()?;
         let Some(_claim) = self.claim(id) else {
             return Err(CoreError::NotFound);

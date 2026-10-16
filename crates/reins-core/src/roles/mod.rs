@@ -369,6 +369,41 @@ impl Engine {
         }
     }
 
+    /// This phone's role from the roster it verified last, without the network: `Legacy` when it holds none for the
+    /// signed-in account.
+    pub(crate) fn role_now(&self) -> Result<PhoneRole, CoreError> {
+        let Some(slot) = self.account_slot_now()? else {
+            return Ok(PhoneRole::Legacy);
+        };
+        match self.local_roster(&slot)? {
+            Some(roster) => Ok(self.standing_in(&roster)?.into()),
+            None => Ok(PhoneRole::Legacy),
+        }
+    }
+
+    /// Whether this phone may decide: the primary, or any phone of an account without phone roles. A viewer, or a
+    /// phone the roster removed, never answers a request, pairing or upload: whatever its local Autopilot modes or
+    /// grants say, the item waits for the primary. When the role cannot be read, it does not decide either.
+    pub(crate) fn decides(&self) -> bool {
+        match self.role_now() {
+            Ok(PhoneRole::Primary | PhoneRole::Legacy) => true,
+            Ok(PhoneRole::Viewer | PhoneRole::Removed) => false,
+            Err(e) => {
+                log::warn!("this phone's role could not be read; it decides nothing: {e}");
+                false
+            }
+        }
+    }
+
+    /// Refuses an answer or a change on a phone that does not decide ([`Engine::decides`]): [`CoreError::ViewerOnly`].
+    pub(crate) fn require_decider(&self) -> Result<(), CoreError> {
+        if self.decides() {
+            Ok(())
+        } else {
+            Err(CoreError::ViewerOnly)
+        }
+    }
+
     /// This phone in a roster entry, named `name`.
     fn me(&self, name: &str) -> Result<Member, CoreError> {
         Ok(Member {

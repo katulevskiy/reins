@@ -238,6 +238,7 @@ impl Engine {
         if self.parked_join(id)?.commitment.is_some() {
             return self.enroll_confirm(id, approve).await;
         }
+        self.require_decider()?;
         let session = self.session()?;
         let Some(_claim) = self.claim(id) else {
             return Err(CoreError::NotFound);

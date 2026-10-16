@@ -271,6 +271,8 @@ impl Engine {
 
     /// The user approved a purchase on the purchase screen. Like [`Engine::approve`], with their picks.
     pub async fn approve_purchase(&self, request_id: &str, choice: PurchaseChoice) -> Result<(), CoreError> {
+        // Only the phone that decides answers (never a viewer, whatever its modes or grants say).
+        self.require_decider()?;
         let Some(_claim) = self.claim(request_id) else {
             return Err(CoreError::NotFound);
         };
