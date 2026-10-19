@@ -623,11 +623,12 @@ impl Engine {
                 // Nothing was decided: the item waits, as it would without Autopilot; under a bypass it is tried
                 // again by the next pass, and nobody is told it waits.
                 log::warn!("Autopilot could not evaluate a request: {e}");
-                let bypassed = Self::ap_subject(&row)
+                let bypassed = self
+                    .ap_subject(&row)
                     .ok()
                     .flatten()
                     .is_some_and(|s| self.ap_mode_for(&s.connection_id, now).ok() == Some(AutopilotMode::Bypass));
-                if !bypassed && let Some(mut item) = Self::ap_pending_item(&row) {
+                if !bypassed && let Some(mut item) = self.ap_pending_item(&row) {
                     self.names().item(&mut item);
                     self.notifier.item_pending(item);
                 }
@@ -637,10 +638,10 @@ impl Engine {
     }
 
     /// The pending-list entry of a parked row.
-    fn ap_pending_item(row: &PendingRow) -> Option<PendingItem> {
+    fn ap_pending_item(&self, row: &PendingRow) -> Option<PendingItem> {
         match row.kind {
             PendingKind::Request => {
-                serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| views::request_item(&p))
+                serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| self.pending_request_item(&p))
             }
             PendingKind::Pairing => {
                 serde_json::from_slice::<PairingRequest>(&row.payload).ok().map(|p| views::pairing_item(&p))
@@ -650,13 +651,13 @@ impl Engine {
         }
     }
 
-    fn ap_subject(row: &PendingRow) -> Result<Option<Subject>, CoreError> {
+    fn ap_subject(&self, row: &PendingRow) -> Result<Option<Subject>, CoreError> {
         let corrupt = || CoreError::storage("corrupt parked item");
         Ok(match row.kind {
             PendingKind::Pairing | PendingKind::Join => None,
             PendingKind::Request => {
                 let parked: ParkedRequest = serde_json::from_slice(&row.payload).map_err(|_| corrupt())?;
-                let view = views::approval_view(&parked);
+                let view = self.pending_approval_view(&parked);
                 Some(Subject {
                     id: row.id.clone(),
                     kind: PendingKind::Request,
@@ -665,7 +666,7 @@ impl Engine {
                     described: situation::describe_request(&view),
                     floor: gates::request_floor(&view).map(str::to_owned),
                     floor_weighable: gates::overnight_weighs(&view),
-                    item: views::request_item(&parked),
+                    item: self.pending_request_item(&parked),
                     choice: default_choice(&view),
                     everything: everything(&view),
                     grant: view.kind == ApprovalKind::Grant,
@@ -755,7 +756,7 @@ impl Engine {
             // Left to the app, which tells the user.
             return Ok(());
         }
-        let Some(mut subject) = Self::ap_subject(row)? else {
+        let Some(mut subject) = self.ap_subject(row)? else {
             // A new connection is only ever approved by the user, in every mode.
             let pairing: PairingRequest =
                 serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked pairing"))?;
@@ -2360,7 +2361,7 @@ impl Engine {
         };
         let mut again = false;
         for row in rows {
-            let Ok(Some(subject)) = Self::ap_subject(&row) else {
+            let Ok(Some(subject)) = self.ap_subject(&row) else {
                 continue;
             };
             if self.ap_mode_for(&subject.connection_id, now).ok() != Some(into) {
@@ -2385,7 +2386,7 @@ impl Engine {
             return;
         };
         for row in rows {
-            let Ok(Some(subject)) = Self::ap_subject(&row) else {
+            let Ok(Some(subject)) = self.ap_subject(&row) else {
                 continue;
             };
             if connection_id.is_some_and(|c| c != subject.connection_id) {

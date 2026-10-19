@@ -103,6 +103,9 @@ impl Engine {
         if let Err(error) = self.authorization_preflight(&request) {
             return self.reject(session, &request, &error.to_string()).await;
         }
+        if matches!(call, ToolCall::RequestGrant { .. }) && self.legacy_mail_grants_unavailable(&request)? {
+            return self.reject(session, &request, crate::permissions::MANAGED_GRANT_GUIDANCE).await;
+        }
         match call {
             ToolCall::GmailSearch {
                 query,

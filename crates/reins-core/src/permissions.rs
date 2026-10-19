@@ -25,6 +25,7 @@ pub(crate) use storage::{PermissionReservation, VerifiedPermission};
 pub const MAX_PERMISSION_SECS: i64 = 7 * 86_400;
 pub const MAX_DELEGATION_SECS: i64 = 24 * 3_600;
 const DEFAULT_USES: u64 = 1_000;
+pub(crate) const MANAGED_GRANT_GUIDANCE: &str = "Use account permissions or temporary permissions for this managed account. Legacy Remember grants cannot authorize its mail actions.";
 
 fn capability_key(capability: PermissionCapability) -> &'static str {
     match capability {
@@ -141,6 +142,14 @@ fn scopes(capability: PermissionCapability) -> Vec<PermissionScopeKind> {
 
 fn account_prefix(account_id: &str) -> String {
     format!("account:{}:", hex32(&sha256(account_id.as_bytes())))
+}
+
+fn agent_scope_summary(agents: &[String]) -> String {
+    if agents.is_empty() {
+        "all current and future agents".into()
+    } else {
+        format!("{} selected agents", agents.len())
+    }
 }
 
 fn mode(effect: &PolicyEffect) -> PermissionMode {
@@ -395,7 +404,7 @@ impl Engine {
                     _ => "Block",
                 };
                 if policy.scope.connection_ids.is_empty() {
-                    format!("{behavior} for this capability from all agents")
+                    format!("{behavior} for this capability from all current and future agents")
                 } else {
                     format!("{behavior} for this capability from {} selected agents", policy.scope.connection_ids.len())
                 }
@@ -739,7 +748,7 @@ impl Engine {
             &draft.service,
             &draft.account,
             draft.expected_revision,
-            format!("Save {} account rules for {} selected agents", draft.rules.len(), draft.agent_ids.len()),
+            format!("Save {} account rules for {}", draft.rules.len(), agent_scope_summary(&draft.agent_ids)),
         )?;
         preview.warnings.extend(self.review_default_migration_warning(&candidate)?);
         Ok(preview)
@@ -778,14 +787,16 @@ impl Engine {
         )
         .await?;
         let summary = format!(
-            "Save {} permissions for {}. {} selected agents{}. Ask reviews by default; explicit scoped permissions or delegations may authorize matching requests. Block always denies matching requests. Automatic permissions expire at {:?}, with at most {:?} further uses per capability. {} Existing mandatory requirements remain in force. {}",
+            "Save {} permissions for {}. These defaults cover {}. {} Ask reviews by default; explicit scoped permissions or delegations may authorize matching requests. Block always denies matching requests. Automatic permissions expire at {:?}, with at most {:?} further uses per capability. {} Existing mandatory requirements remain in force. {}",
             draft.rules.len(),
             draft.account,
-            draft.agent_ids.len(),
-            if draft.grant_account_access {
-                " may discover this account"
+            agent_scope_summary(&draft.agent_ids),
+            if draft.agent_ids.is_empty() {
+                "No new agent account access is granted."
+            } else if draft.grant_account_access {
+                "Selected agents may discover this account."
             } else {
-                " retain their existing account access"
+                "Selected agents retain their existing account access."
             },
             draft.expires_at,
             draft.max_uses,
@@ -1004,6 +1015,50 @@ impl Engine {
         Ok(self
             .authenticated_authorization_state()?
             .is_some_and(|state| storage::is_managed(&state, &normalized.action)))
+    }
+
+    /// Legacy mail grants are separate from explicit account discovery/admission. An old request without an
+    /// account cannot safely offer a grant covering a managed account it has not resolved yet.
+    pub(crate) fn managed_mail_account(&self, account: Option<&str>) -> Result<bool, CoreError> {
+        let Some(state) = self.authenticated_authorization_state()? else {
+            return Ok(false);
+        };
+        if let Some(account) = account {
+            let account =
+                reins_proto::gmail::normalize_account(account).map_err(|e| CoreError::invalid(e.to_string()))?;
+            let id = crate::authorization::account_resource_id("gmail", &account);
+            return Ok(state.managed_scopes.iter().any(|scope| scope.account_id == id));
+        }
+        if let [account] = self.gmail_accounts().as_slice() {
+            let id = crate::authorization::account_resource_id("gmail", account);
+            return Ok(state.managed_scopes.iter().any(|scope| scope.account_id == id));
+        }
+        Ok(state.managed_scopes.iter().any(|scope| {
+            serde_json::from_str::<[String; 2]>(&scope.account_id).is_ok_and(|account| account[0] == "gmail")
+        }))
+    }
+
+    pub(crate) fn legacy_mail_grants_unavailable(&self, request: &RelayRequest) -> Result<bool, CoreError> {
+        if !matches!(
+            request.call,
+            reins_proto::gmail::ToolCall::GmailSearch { .. }
+                | reins_proto::gmail::ToolCall::GmailRead { .. }
+                | reins_proto::gmail::ToolCall::GmailSend { .. }
+                | reins_proto::gmail::ToolCall::RequestGrant { .. }
+        ) {
+            return Ok(false);
+        }
+        self.managed_mail_account(request.account.as_deref())
+    }
+
+    pub(crate) fn guard_legacy_grant_update(&self, grant_id: &str) -> Result<(), CoreError> {
+        if let Some(stored) = self.store.grants()?.into_iter().find(|stored| stored.grant.id.0 == grant_id)
+            && matches!(stored.grant.scope, Scope::Read(_) | Scope::Send(_))
+            && self.managed_mail_account(stored.grant.account.as_deref())?
+        {
+            return Err(CoreError::invalid(MANAGED_GRANT_GUIDANCE));
+        }
+        Ok(())
     }
 
     pub(crate) fn permission_route(&self, request: &RelayRequest) -> Result<PermissionReservation, CoreError> {

@@ -812,7 +812,7 @@ impl Engine {
         for row in self.store.pending_rows(unix_now())? {
             let item = match row.kind {
                 PendingKind::Request => {
-                    serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| views::request_item(&p))
+                    serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| self.pending_request_item(&p))
                 }
                 PendingKind::Pairing => serde_json::from_slice(&row.payload).ok().map(|p| views::pairing_item(&p)),
                 PendingKind::Blob => Self::blob_pending_item(&row.payload),
@@ -853,6 +853,7 @@ impl Engine {
     /// Starts an ended grant over with the changes the user made: how long, how many uses, and who or what it covers.
     /// The kind (read or send) stays as it was.
     pub fn resume_grant_edited(&self, grant_id: &str, standing: &crate::types::StandingGrant) -> Result<(), CoreError> {
+        self.guard_legacy_grant_update(grant_id)?;
         let secs = standing.duration_secs.ok_or_else(|| CoreError::invalid("choose for how long"))?;
         if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&secs) {
             return Err(CoreError::invalid("choose a period between a minute and 30 days"));
@@ -920,6 +921,7 @@ impl Engine {
 
     /// Starts a grant that ended (expired, used up or deleted) over for `duration_secs`.
     pub fn resume_grant(&self, grant_id: &str, duration_secs: u64) -> Result<(), CoreError> {
+        self.guard_legacy_grant_update(grant_id)?;
         if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&duration_secs) {
             return Err(CoreError::invalid("choose a period between a minute and 30 days"));
         }
@@ -933,6 +935,7 @@ impl Engine {
 
     /// Lets an active grant run for `duration_secs` from now (its uses so far stay).
     pub fn extend_grant(&self, grant_id: &str, duration_secs: u64) -> Result<(), CoreError> {
+        self.guard_legacy_grant_update(grant_id)?;
         if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&duration_secs) {
             return Err(CoreError::invalid("choose a period between a minute and 30 days"));
         }
