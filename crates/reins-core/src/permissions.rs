@@ -100,7 +100,7 @@ fn description(capability: PermissionCapability) -> &'static str {
         PermissionCapability::MailSend => {
             "Send only to the recipients you explicitly select, including every To and Cc recipient."
         }
-        _ => "This integration supports blocking now. Additional automatic permissions need an enforcing adapter.",
+        _ => "Account defaults are informational until this integration supports reversible review and block settings.",
     }
 }
 
@@ -119,7 +119,7 @@ fn supported_modes(service: &str) -> Vec<PermissionMode> {
     if service == "gmail" {
         vec![PermissionMode::Ask, PermissionMode::Auto, PermissionMode::Block]
     } else {
-        vec![PermissionMode::Block]
+        vec![]
     }
 }
 
@@ -426,7 +426,7 @@ impl Engine {
                     controller: PermissionController::UnsupportedAdapter,
                     policy_id: None,
                     reason:
-                        "This integration currently supports blocking; automatic execution needs an enforcing adapter"
+                        "Account defaults are read-only until reversible review and block settings are supported. Existing grants and explicit restrictions still apply."
                             .into(),
                 });
             }
@@ -503,7 +503,7 @@ impl Engine {
                     vec![AccountPermissionPreset::ReviewEveryRequest, AccountPermissionPreset::Custom]
                 }
             } else {
-                vec![AccountPermissionPreset::Custom]
+                vec![]
             },
             expires_at: state.policies.iter().filter(|p| p.id.starts_with(&prefix)).filter_map(|p| p.expires_at).min(),
             maximum_duration_secs: u64::try_from(MAX_PERMISSION_SECS).expect("positive"),

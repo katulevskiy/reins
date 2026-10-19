@@ -2617,6 +2617,8 @@ async fn revoking_an_agent_during_owner_confirmation_cannot_recreate_account_or_
             } else {
                 500
             }))
+            .with_priority(1)
+            .expect(1)
             .mount(&world.server)
             .await;
         let started = Arc::new(tokio::sync::Notify::new());
@@ -2659,4 +2661,20 @@ async fn revoking_an_agent_during_owner_confirmation_cannot_recreate_account_or_
         assert!(!core.pending().await.unwrap().iter().any(|pending| pending.id == "revoked"));
         assert_eq!(sent_count(&gmail).await, 0);
     }
+}
+
+#[tokio::test]
+async fn non_gmail_account_defaults_are_readonly_until_reversible_settings_are_supported() {
+    let mut world = world().await;
+    let gmail = MockServer::start().await;
+    let core = permission_phone(&mut world, &gmail).await;
+    core.engine().register_account("github", "person").unwrap();
+    let view = core.account_permissions("github".into(), "person".into()).await.unwrap();
+    assert!(!view.managed, "informational views cannot migrate legacy authorization");
+    assert!(view.available_presets.is_empty());
+    assert!(view.capabilities.iter().all(|capability| capability.supported_modes.is_empty()));
+    assert!(
+        core.account_permission_draft("github".into(), "person".into(), AccountPermissionPreset::Custom).await.is_err()
+    );
+    assert!(!core.account_permissions("github".into(), "person".into()).await.unwrap().managed);
 }
