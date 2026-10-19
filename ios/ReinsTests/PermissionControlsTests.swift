@@ -49,6 +49,18 @@ final class PermissionControlsTests: XCTestCase {
         XCTAssertEqual(editor.draft?.rules.first(where: { $0.capability == .mailRead })?.mode, .auto)
         XCTAssertTrue(editor.draft?.agentIds.contains("c2") == true)
     }
+    func testEmptyAgentsCanSetReviewAndBlockDefaultsWithoutAccountAdmission() async {
+        let core = DemoReinsCore(syncCap: 0.1)
+        let app = await app(core)
+        let editor = AccountPermissionsModel(app: app, service: "gmail", account: "me@gmail.com")
+        await editor.reload(); editor.agent("c1", selected: false); editor.mode(.mailSend, .block)
+        await editor.reviewChanges()
+        XCTAssertNotNil(editor.preview)
+        XCTAssertEqual(editor.draft?.agentIds, [])
+        XCTAssertFalse(editor.draft?.grantAccountAccess == true)
+        XCTAssertFalse(editor.draft?.rules.contains(where: { $0.mode == .auto }) == true)
+        await editor.save(); XCTAssertTrue(editor.saved)
+    }
     func testCancelledOwnerDoesNotSaveOptionalPermissions() async throws {
         let core = DemoReinsCore(syncCap: 0.1)
         let auth = Answer(); auth.answer = false

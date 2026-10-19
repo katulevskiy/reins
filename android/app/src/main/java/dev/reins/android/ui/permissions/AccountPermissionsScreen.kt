@@ -64,7 +64,10 @@ fun AccountPermissionsScreen(
         BackHandler { if (!state.busy) model.discardPreview() }
         Screen(title = "Review permissions", subtitle = untrusted(model.account), onBack = { if (!state.busy) model.discardPreview() }) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                RText(permissionPreviewText(preview), RType.sans(15f, lineHeight = 23f), c.ink, Modifier.testTag("permissionPreviewSummary"))
+                RText(untrusted(preview.summary), RType.sans(15f, lineHeight = 23f), c.ink, Modifier.testTag("permissionPreviewSummary"))
+                if (state.account != null && state.draft != null) PermissionDraftReview(state.account!!, state.draft!!, model.temporary)
+                preview.warnings.forEach { RText(untrusted(it), RType.sans(14f), c.ink2) }
+                RText(permissionHistoryText(preview), RType.sans(14f), c.ink2, Modifier.testTag("permissionPreviewHistory"))
                 CapsuleButton(if (model.temporary) "Create temporary permission" else "Save permissions", Modifier.fillMaxWidth().testTag("permissionsSave"), enabled = !state.busy, busy = state.busy, maxLines = Int.MAX_VALUE) { model.save(authenticator) }
                 CapsuleButton("Keep editing", Modifier.fillMaxWidth(), enabled = !state.busy, style = ButtonStyle.Soft, onClick = model::discardPreview, maxLines = Int.MAX_VALUE)
             }
@@ -130,8 +133,9 @@ fun AccountPermissionsScreen(
             }
             if (!finishing || state.hasChosenPreset) {
             RText("Review by default asks for confirmation unless a matching explicit temporary permission allows the action. Mandatory review and blocks still apply.", RType.sans(14f), c.ink2, Modifier.padding(horizontal = 16.dp))
-            Group(header = "Agents", footer = "Only selected agents are included. Selecting an agent without access explicitly admits it to this account. New agents receive no access automatically.") {
-                if (view.agents.isEmpty()) RText("Connect an agent first.", RType.sans(15f), c.ink2, Modifier.padding(16.dp))
+            Group(header = "Agents", footer = "Automatic permissions require selected agents. With no selection, review and block rules apply to all agents, including future connections. Selecting an agent without access explicitly admits it to this account.") {
+                if (draft.agentIds.isEmpty()) RText("All agents (including future connections) for review and block rules. Automatic permission requires selected agents.", RType.sans(14f), c.ink2, Modifier.padding(16.dp).testTag("permissionAllAgents"))
+                if (view.agents.isEmpty()) RText("No agents are connected. You can still set review or block defaults.", RType.sans(15f), c.ink2, Modifier.padding(16.dp))
                 view.agents.forEach { agent ->
                     CheckRow(agent.connectionId in draft.agentIds, { model.agent(agent.connectionId, it) }, Modifier.fillMaxWidth().padding(16.dp), enabled = !state.busy && !state.changedElsewhere, tag = "permissionAgent:${agent.connectionId}") {
                         Column {
@@ -165,7 +169,7 @@ fun AccountPermissionsScreen(
                             RText(permissionScopeTitle(rule.scope.kind) + if (rule.scope.kind == PermissionScopeKind.ALL_IN_ACCOUNT) "" else " · ${rule.scope.ids.size} selected", RType.sans(14f), c.ink2)
                             CapsuleButton("Choose scope", Modifier.fillMaxWidth().testTag("permissionScope:${capability.capability}"), enabled = !state.busy, style = ButtonStyle.Soft, maxLines = Int.MAX_VALUE) { scopeFor = capability.capability }
                         } else {
-                            RText("For these operations in this account, for the selected agents.", RType.sans(13f), c.ink2)
+                            RText(if (draft.agentIds.isEmpty()) "For these operations in this account, for all agents including future connections." else "For these operations in this account, for the selected agents.", RType.sans(13f), c.ink2)
                         }
                     }
                 }
@@ -185,7 +189,7 @@ fun AccountPermissionsScreen(
                 Group(header = "Automatic permission limits") {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         RText("Expires: ${permissionExpiry(draft.expiresAt)}", RType.sans(14f), c.ink, Modifier.testTag("permissionExpiry"))
-                        RText("Uses available: ${if (view.usageVerified) draft.maxUses?.toString() ?: "Not set" else "Unavailable"}", RType.sans(14f), c.ink)
+                        RText("${if (model.temporary) "Total uses available" else "Further uses per automatic operation"}: ${if (view.usageVerified) draft.maxUses?.toString() ?: "Not set" else "Unavailable"}", RType.sans(14f), c.ink)
                         val needsLimits = draft.expiresAt == null || draft.maxUses == null
                         if (needsLimits) RText("Choose an expiry and enter a use limit before reviewing automatic permission.", RType.sans(14f), c.ink2)
                         if (!editLimits && !needsLimits) CapsuleButton("Change limits", Modifier.fillMaxWidth(), style = ButtonStyle.Soft, maxLines = Int.MAX_VALUE) { editLimits = true }
@@ -193,7 +197,7 @@ fun AccountPermissionsScreen(
                         listOf(3600L to "1 hour", 28800L to "8 hours", 86400L to "1 day", 604800L to "7 days").filter { it.first.toULong() <= if (model.temporary) view.delegationMaximumDurationSecs else view.maximumDurationSecs }.forEach { (seconds, label) ->
                             CapsuleButton("Expire in $label", Modifier.fillMaxWidth(), enabled = !state.busy, style = ButtonStyle.Soft, maxLines = Int.MAX_VALUE) { model.expiresAt(System.currentTimeMillis() / 1000 + seconds) }
                         }
-                        RText("Remaining uses to authorize", RType.sans(14f), c.ink)
+                        RText(if (model.temporary) "Total uses to authorize" else "Further uses to authorize for each automatic operation", RType.sans(14f), c.ink)
                         RTextField(if (view.usageVerified) draft.maxUses?.toString().orEmpty() else "", { model.remainingUses(it.toULongOrNull()) }, "Number of uses", tag = "permissionUses", enabled = !state.busy && view.usageVerified, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                         }
                         RText(if (view.usageVerified) "Already used: ${view.used}. Limits are enforced by the core; unknown outcomes are not silently refunded." else "Usage is unavailable until history is verified.", RType.sans(13f), c.ink2)
@@ -221,13 +225,48 @@ fun PermissionRestrictions(restrictions: List<PermissionRestriction>) {
     }
 }
 
-fun permissionPreviewText(preview: PermissionPreview): String = buildString {
-    append(untrusted(preview.summary))
-    preview.warnings.forEach { append("\n\n"); append(untrusted(it)) }
-    append("\n\nRetained history: automatic "); append(preview.eligibleHistoryCount?.toString() ?: "unavailable")
-    append(", review "); append(preview.reviewHistoryCount?.toString() ?: "unavailable")
-    append(", blocked "); append(preview.blockedHistoryCount?.toString() ?: "unavailable")
-    if (!preview.historyComplete) append("\nHistory coverage is partial. These counts are not a prediction of future requests.")
+fun permissionHistoryText(preview: PermissionPreview): String {
+    if (preview.eligibleHistoryCount == null && preview.reviewHistoryCount == null && preview.blockedHistoryCount == null) return "A history comparison is unavailable."
+    return "Past requests: ${preview.eligibleHistoryCount?.toString() ?: "unavailable"} automatic, ${preview.reviewHistoryCount?.toString() ?: "unavailable"} review, ${preview.blockedHistoryCount?.toString() ?: "unavailable"} blocked." +
+        if (preview.historyComplete) "" else " Only part of your history is available. Past results do not predict future requests."
+}
+
+/** Displays only the exact typed draft already validated by the core preview. */
+@Composable
+private fun PermissionDraftReview(view: dev.reins.core.AccountPermissionsView, draft: dev.reins.core.AccountPermissionsDraft, temporary: Boolean) {
+    val c = LocalColors.current
+    fun label(id: String) = view.agents.firstOrNull { it.connectionId == id }?.label ?: id
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.testTag("permissionReviewDetails")) {
+        RText("Account", RType.sans(15f), c.ink2)
+        RText("${dev.reins.android.design.serviceName(draft.service)} · ${untrusted(draft.account)}", RType.sans(16f), c.ink, ltr = true)
+        RText("Agents", RType.sans(15f), c.ink2)
+        if (draft.agentIds.isEmpty()) RText("All agents (including future connections)", RType.sans(16f), c.ink)
+        draft.agentIds.forEach { id ->
+            RText(untrusted(label(id)), RType.sans(16f), c.ink)
+            RText(untrusted(id), RType.sans(13f), c.ink2, ltr = true)
+        }
+        val admitted = draft.agentIds.filter { id -> view.agents.none { it.connectionId == id && it.hasAccountAccess } }
+        if (draft.grantAccountAccess && admitted.isNotEmpty()) {
+            RText("New account access", RType.sans(15f), c.ink2)
+            admitted.forEach { RText("${untrusted(label(it))} can discover this account.", RType.sans(15f), c.ink) }
+            RText("Account access expires: ${draft.expiresAt?.let { permissionExpiry(it) } ?: "No expiry"}", RType.sans(14f), c.ink2)
+        } else RText("No additional agents receive account access.", RType.sans(14f), c.ink2)
+        draft.rules.forEach { rule ->
+            Hairline()
+            val title = view.capabilities.firstOrNull { it.capability == rule.capability }?.title ?: rule.capability.name
+            RText("${untrusted(title)}: ${permissionModeTitle(rule.mode)}", RType.sans(16f), c.ink)
+            if (rule.mode == PermissionMode.AUTO) {
+                RText(permissionScopeTitle(rule.scope.kind), RType.sans(14f), c.ink2)
+                rule.scope.ids.forEach { RText(untrusted(it), RType.sans(15f), c.ink, ltr = true) }
+                if (rule.scope.kind == PermissionScopeKind.SELECTED_RECIPIENTS) RText("Every To and Cc address must match these recipients.", RType.sans(13f), c.ink2)
+            } else RText(if (draft.agentIds.isEmpty()) "All requests of this operation in this account, from all agents including future connections." else "All requests of this operation in this account, from the selected agents.", RType.sans(14f), c.ink2)
+        }
+        if (draft.rules.any { it.mode == PermissionMode.AUTO }) Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.testTag("permissionReviewLimits")) {
+            Hairline()
+            RText("Automatic permission expires: ${permissionExpiry(draft.expiresAt)}", RType.sans(15f), c.ink)
+            RText(if (temporary) "At most ${draft.maxUses} total requests across the selected operations." else "At most ${draft.maxUses} further uses for each automatic operation.", RType.sans(15f), c.ink)
+        }
+    }
 }
 
 @Composable

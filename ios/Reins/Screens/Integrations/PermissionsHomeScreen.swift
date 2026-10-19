@@ -26,7 +26,7 @@ struct PermissionsHomeScreen: View {
                         }
                     }.accessibilityIdentifier("managePermissions:\(account.service):\(account.account)")
                 }
-            } header: { Text("Accounts") } footer: { Text("These settings also appear in Connections. Each permission applies only to its selected agents and account; future agents do not inherit access.") }
+            } header: { Text("Accounts") } footer: { Text("These settings also appear in Connections. Automatic permissions apply only to their selected agents and account. New agents need explicit account access.") }
             Section {
                 if records.isEmpty { Text("No temporary permissions") }
                 ForEach(records, id: \.id) { record in

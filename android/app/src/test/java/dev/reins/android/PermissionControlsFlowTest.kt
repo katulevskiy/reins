@@ -40,7 +40,7 @@ class PermissionControlsFlowTest : FlowHarness() {
     @Test fun explicitAdmissionAndPresetReachTheExactCoreDraftAfterOwnerReview() {
         existing(); chooseRead(); tap("permissionAgent:c2"); tap("permissionsPreview")
         awaitTag("permissionPreviewSummary")
-        rule.onNodeWithTag("permissionPreviewSummary").assertTextContains("unavailable", substring = true)
+        rule.onNodeWithTag("permissionPreviewHistory").performScrollTo().assertTextEquals("A history comparison is unavailable.")
         tap("permissionsSave"); awaitTag("permissionsSaved")
         val draft = core.savedPermissionDrafts.single()
         assertTrue(draft.grantAccountAccess)
@@ -48,6 +48,28 @@ class PermissionControlsFlowTest : FlowHarness() {
         assertEquals(AccountPermissionPreset.READ_ASSIST, draft.preset)
         assertEquals(PermissionMode.ASK, draft.rules.first { it.capability == PermissionCapability.MAIL_SEND }.mode)
         assertEquals(1, prompts.get())
+    }
+    @Test fun reviewListsExactAgentsAdmissionOperationsAndLimitsBeforeOwnerApproval() {
+        existing(); chooseRead(); tap("permissionAgent:c2"); tap("permissionsPreview")
+        awaitTag("permissionReviewDetails")
+        for (text in listOf("Claude Code", "Personal agent", "c1", "c2", "Personal agent can discover this account.", "Search mail: Allow automatically", "Read mail: Allow automatically", "Send mail: Review by default", "At most 20 further uses for each automatic operation.")) {
+            rule.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+        }
+        assertTrue(core.savedPermissionDrafts.isEmpty())
+        assertEquals(0, prompts.get())
+    }
+    @Test fun emptyAgentSelectionTruthfullyAppliesReviewAndBlockDefaultsToAllAgents() {
+        existing(); tap("permissionAgent:c1"); tap("permissionMode:MAIL_SEND:BLOCK")
+        awaitTag("permissionAllAgents")
+        tap("permissionsPreview")
+        rule.onNodeWithText("All agents (including future connections)").performScrollTo().assertIsDisplayed()
+        rule.onAllNodesWithText("All requests of this operation in this account, from all agents including future connections.")[0].performScrollTo().assertIsDisplayed()
+        tap("permissionsSave"); awaitTag("permissionsSaved")
+        val draft = core.savedPermissionDrafts.single()
+        assertTrue(draft.agentIds.isEmpty()); assertFalse(draft.grantAccountAccess)
+        assertEquals(PermissionMode.BLOCK, draft.rules.first { it.capability == PermissionCapability.MAIL_SEND }.mode)
+        assertTrue(draft.rules.any { it.mode == PermissionMode.ASK })
+        assertTrue(draft.rules.none { it.mode == PermissionMode.AUTO })
     }
     @Test fun cancelledOwnerDoesNotSaveAndKeepsTheDraftEditable() {
         existing(); chooseRead(); tap("permissionsPreview"); authResult = AuthResult.Cancelled
@@ -79,7 +101,13 @@ class PermissionControlsFlowTest : FlowHarness() {
         rule.onNodeWithTag("permissionScopeQuery").performTextReplacement("FRIEND@example.com")
         awaitTag("scopeOption:recipient:friend@example.com")
         tap("scopeOption:recipient:friend@example.com"); tap("permissionScopeDone")
-        tap("permissionsPreview"); tap("permissionsSave"); awaitTag("permissionsSaved")
+        rule.onNodeWithText("Expire in 1 hour").performScrollTo().performClick()
+        rule.onNodeWithTag("permissionUses").performScrollTo().performTextReplacement("7")
+        tap("permissionsPreview")
+        rule.onNodeWithText("recipient:friend@example.com").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("Every To and Cc address must match these recipients.").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("At most 7 further uses for each automatic operation.").performScrollTo().assertIsDisplayed()
+        tap("permissionsSave"); awaitTag("permissionsSaved")
         val send = core.savedPermissionDrafts.single().rules.first { it.capability == PermissionCapability.MAIL_SEND }
         assertEquals(listOf("recipient:friend@example.com"), send.scope.ids)
         assertEquals(PermissionScopeKind.SELECTED_RECIPIENTS, send.scope.kind)

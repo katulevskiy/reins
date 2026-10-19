@@ -240,15 +240,19 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     @Test
     fun permissionChangesReview() {
+        Timers.frozenNowMillis = 1_800_014_400_000L // 2027-01-15; active permissions expire in the future.
         core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
         launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
         tap("permissionPreset:READ_ASSIST"); tap("permissionAgent:c2"); tap("permissionsPreview")
         await("permissionPreviewSummary")
         shoot("permissions-review")
+        rule.onNodeWithTag("permissionsSave").performScrollTo()
+        shoot("permissions-review-limits")
     }
 
     @Test
     fun temporaryPermissionControls() {
+        Timers.frozenNowMillis = 1_800_014_400_000L // 2027-01-15; active permissions expire in the future.
         core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
         kotlinx.coroutines.runBlocking {
             val draft = core.delegationDraft("gmail", "me@gmail.com")

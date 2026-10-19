@@ -36,7 +36,7 @@ fun PermissionsHomeScreen(container: AppContainer, authenticator: Authenticator,
     }
     LaunchedEffect(epoch) { reload() }
     Screen("Permissions", onBack = onBack) {
-        Group(header = "Accounts", footer = "These settings also appear in Connections. Each permission applies only to its selected agents and account; future agents do not inherit access.") {
+        Group(header = "Accounts", footer = "These settings also appear in Connections. Automatic permissions apply only to their selected agents and account. New agents need explicit account access.") {
             accounts.forEach { account ->
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     RText(untrusted(account.account), RType.sans(16f), c.ink)

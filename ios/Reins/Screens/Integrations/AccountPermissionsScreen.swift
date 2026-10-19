@@ -136,7 +136,8 @@ struct AccountPermissionsScreen: View {
     }
     private func agents(_ editor: AccountPermissionsModel, _ view: AccountPermissionsView, _ draft: AccountPermissionsDraft) -> some View {
         Section {
-            if view.agents.isEmpty { Text("Connect an agent first.") }
+            if draft.agentIds.isEmpty { Text("All agents (including future connections) for review and block rules. Automatic permission requires selected agents.").font(.footnote).accessibilityIdentifier("permissionAllAgents") }
+            if view.agents.isEmpty { Text("No agents are connected. You can still set review or block defaults.") }
             ForEach(view.agents, id: \.connectionId) { agent in
                 Toggle(isOn: Binding(get: { draft.agentIds.contains(agent.connectionId) }, set: { editor.agent(agent.connectionId, selected: $0) })) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -145,7 +146,7 @@ struct AccountPermissionsScreen: View {
                     }
                 }.disabled(editor.busy || editor.changedElsewhere).accessibilityIdentifier("permissionAgent:\(agent.connectionId)")
             }
-        } header: { Text("Agents") } footer: { Text("Only selected agents are included. Selecting an agent without access explicitly admits it to this account. New agents receive no access automatically.") }
+        } header: { Text("Agents") } footer: { Text("Automatic permissions require selected agents. With no selection, review and block rules apply to all agents, including future connections. Selecting an agent without access explicitly admits it to this account.") }
     }
     @ViewBuilder private func capabilitySection(_ editor: AccountPermissionsModel, _ capability: PermissionCapabilityView, _ draft: AccountPermissionsDraft) -> some View {
         let rule = draft.rules.first(where: { $0.capability == capability.capability })
@@ -169,21 +170,21 @@ struct AccountPermissionsScreen: View {
                     Text(PermissionCopy.scope(rule.scope.kind) + (rule.scope.kind == .allInAccount ? "" : " · \(rule.scope.ids.count) selected"))
                     ActionButton(title: "Choose scope", kind: .secondary, lineLimit: nil) { scopeFor = capability.capability }.disabled(editor.busy || editor.changedElsewhere)
                         .accessibilityIdentifier("permissionScope:\(capability.capability)")
-                } else if !temporary { Text("For these operations in this account, for the selected agents.").font(.footnote).foregroundStyle(Palette.ink2) }
+                } else if !temporary { Text(draft.agentIds.isEmpty ? "For these operations in this account, for all agents including future connections." : "For these operations in this account, for the selected agents.").font(.footnote).foregroundStyle(Palette.ink2) }
             }
         }
     }
     private func limits(_ editor: AccountPermissionsModel, _ view: AccountPermissionsView, _ draft: AccountPermissionsDraft) -> some View {
         Section("Automatic permission limits") {
             Text("Expires: \(PermissionCopy.expiry(draft.expiresAt))")
-            Text("Uses available: \(view.usageVerified ? draft.maxUses.map(String.init) ?? "Not set" : "Unavailable")")
+            Text("\(temporary ? "Total uses available" : "Further uses per automatic operation"): \(view.usageVerified ? draft.maxUses.map(String.init) ?? "Not set" : "Unavailable")")
             if draft.expiresAt == nil || draft.maxUses == nil { Text("Choose an expiry and enter a use limit before reviewing automatic permission.").font(.footnote) }
             if !editLimits, draft.expiresAt != nil, draft.maxUses != nil { ActionButton(title: "Change limits", kind: .secondary, lineLimit: nil) { editLimits = true } }
             if editLimits || draft.expiresAt == nil || draft.maxUses == nil {
                 ForEach(PermissionCopy.durations.filter { $0.seconds <= (temporary ? view.delegationMaximumDurationSecs : view.maximumDurationSecs) }, id: \.seconds) { duration in
                     ActionButton(title: "Expire in \(duration.label)", kind: .secondary, lineLimit: nil) { editor.expiresAt(Int64(Date().timeIntervalSince1970) + Int64(duration.seconds)) }.disabled(editor.busy)
                 }
-                TextField("Remaining uses to authorize", text: Binding(get: { view.usageVerified ? draft.maxUses.map(String.init) ?? "" : "" }, set: { editor.remainingUses(UInt64($0)) }))
+                TextField(temporary ? "Total uses to authorize" : "Further uses per automatic operation", text: Binding(get: { view.usageVerified ? draft.maxUses.map(String.init) ?? "" : "" }, set: { editor.remainingUses(UInt64($0)) }))
                     .keyboardType(.numberPad).disabled(editor.busy || !view.usageVerified).accessibilityIdentifier("permissionUses")
             }
             Text(view.usageVerified ? "Already used: \(view.used). Limits are enforced by the core; unknown outcomes are not silently refunded." : "Usage is unavailable until history is verified.").font(.footnote).foregroundStyle(Palette.ink2)
@@ -193,8 +194,11 @@ struct AccountPermissionsScreen: View {
         List {
             Section("Review permissions") {
                 Text(untrusted(preview.summary)).textSelection(.enabled).accessibilityIdentifier("permissionPreviewSummary")
+            }
+            if let view = editor.view, let draft = editor.draft { PermissionDraftReview(view: view, draft: draft, temporary: temporary) }
+            Section {
                 ForEach(preview.warnings, id: \.self) { Text(untrusted($0)).foregroundStyle(Palette.warning) }
-                Text(PermissionCopy.history(preview)).font(.footnote).foregroundStyle(Palette.ink2)
+                Text(PermissionCopy.history(preview)).font(.footnote).foregroundStyle(Palette.ink2).accessibilityIdentifier("permissionPreviewHistory")
             }
             Section {
                 ActionButton(title: temporary ? "Create temporary permission" : "Save permissions", busy: editor.busy, lineLimit: nil) { Task { await editor.save() } }.accessibilityIdentifier("permissionsSave")
@@ -222,7 +226,49 @@ enum PermissionCopy {
     static func expiry(_ at: Int64?) -> String { at.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) } ?? "Choose an expiry" }
     static let durations: [(seconds: UInt64, label: String)] = [(3600, "1 hour"), (28800, "8 hours"), (86400, "1 day"), (604800, "7 days")]
     static func history(_ preview: PermissionPreview) -> String {
-        "Retained history: automatic \(preview.eligibleHistoryCount.map(String.init) ?? "unavailable"), review \(preview.reviewHistoryCount.map(String.init) ?? "unavailable"), blocked \(preview.blockedHistoryCount.map(String.init) ?? "unavailable")" + (preview.historyComplete ? "" : "\nHistory coverage is partial. These counts are not a prediction of future requests.")
+        if preview.eligibleHistoryCount == nil, preview.reviewHistoryCount == nil, preview.blockedHistoryCount == nil { return "A history comparison is unavailable." }
+        return "Past requests: \(preview.eligibleHistoryCount.map(String.init) ?? "unavailable") automatic, \(preview.reviewHistoryCount.map(String.init) ?? "unavailable") review, \(preview.blockedHistoryCount.map(String.init) ?? "unavailable") blocked." + (preview.historyComplete ? "" : " Only part of your history is available. Past results do not predict future requests.")
+    }
+
+}
+
+/// Displays only the exact typed draft already validated by the core preview.
+private struct PermissionDraftReview: View {
+    var view: AccountPermissionsView
+    var draft: AccountPermissionsDraft
+    var temporary: Bool
+    private func label(_ id: String) -> String { view.agents.first(where: { $0.connectionId == id })?.label ?? id }
+    private var admissions: [String] { draft.agentIds.filter { id in !view.agents.contains(where: { $0.connectionId == id && $0.hasAccountAccess }) } }
+    var body: some View {
+        Section("Account") { Text("\(serviceName(draft.service)) · \(untrusted(draft.account))").textSelection(.enabled) }
+        Section("Agents") {
+            if draft.agentIds.isEmpty { Text("All agents (including future connections)") }
+            ForEach(draft.agentIds, id: \.self) { id in
+                VStack(alignment: .leading) { Text(untrusted(label(id))); Text(untrusted(id)).font(.footnote).foregroundStyle(Palette.ink2) }
+            }
+        }
+        Section("Account access") {
+            if draft.grantAccountAccess, !admissions.isEmpty {
+                ForEach(admissions, id: \.self) { id in Text("\(untrusted(label(id))) can discover this account.") }
+                Text("Account access expires: \(draft.expiresAt.map { PermissionCopy.expiry($0) } ?? "No expiry")").font(.footnote)
+            } else { Text("No additional agents receive account access.") }
+        }
+        ForEach(draft.rules, id: \.capability) { rule in
+            Section(untrusted(view.capabilities.first(where: { $0.capability == rule.capability })?.title ?? "Operation")) {
+                Text(PermissionCopy.mode(rule.mode))
+                if rule.mode == .auto {
+                    Text(PermissionCopy.scope(rule.scope.kind))
+                    ForEach(rule.scope.ids, id: \.self) { Text(untrusted($0)).textSelection(.enabled) }
+                    if rule.scope.kind == .selectedRecipients { Text("Every To and Cc address must match these recipients.").font(.footnote).foregroundStyle(Palette.ink2) }
+                } else { Text(draft.agentIds.isEmpty ? "All requests of this operation in this account, from all agents including future connections." : "All requests of this operation in this account, from the selected agents.").font(.footnote).foregroundStyle(Palette.ink2) }
+            }
+        }
+        if draft.rules.contains(where: { $0.mode == .auto }) {
+            Section("Automatic permission limits") {
+                Text("Automatic permission expires: \(PermissionCopy.expiry(draft.expiresAt))")
+                Text(temporary ? "At most \(draft.maxUses.map(String.init) ?? "not set") total requests across the selected operations." : "At most \(draft.maxUses.map(String.init) ?? "not set") further uses for each automatic operation.")
+            }.accessibilityIdentifier("permissionReviewLimits")
+        }
     }
 }
 
