@@ -100,6 +100,10 @@ fun askSentence(
     val subject = untrusted(label.subject).trim()
     val tail = serifLine(label.tail)
     val phrase = when {
+        provider == "terminal" && label.command != null -> Phrase(
+            serifLine(label.command!!.heading),
+            details = label.command!!.actionable.takeIf { it.isNotBlank() }?.let(::untrusted),
+        )
         provider == "terminal" -> commandPhrase(untrusted(full?.takeIf { it.isNotBlank() } ?: label.subject), cwd, matched, uncertain)
         provider == "file" -> filePhrase(lead.ifBlank { "Read" }, subject, tail)
         provider == "secrets" && subject.isNotEmpty() -> Phrase("${dropPreposition(lead)} for a command", details = subject, full = subject)
@@ -117,7 +121,13 @@ fun askSentence(
         subject.isEmpty() -> Phrase(joinTail(lead, tail))
         else -> subjectPhrase(lead, subject, label.code, tail, if (provider in NAME_PROVIDERS) ValueKind.Name else ValueKind.Identifier)
     }
-    return phrase.told(tense, who, kindOf(provider, action), provider, action)
+    val sentence = phrase.told(tense, who, kindOf(provider, action), provider, action)
+    if (provider == "terminal" && label.command != null && tense == Tense.Done) {
+        // A desktop ask records permission, not an executor's report that the command actually ran.
+        val heading = label.command!!.heading
+        return sentence.copy(text = if (heading.startsWith("Run ")) "Approved running ${heading.drop(4)}" else "Approved a shell command", target = null)
+    }
+    return sentence
 }
 
 /** A waiting request: from its approval view when it has been read (with the core's label), else from its label. */

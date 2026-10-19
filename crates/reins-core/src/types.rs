@@ -149,6 +149,40 @@ pub struct RequestLabel {
     /// After the subject (" and 2 more"); usually empty.
     #[serde(default)]
     pub tail: String,
+    /// Derived for native views from the retained original; never persisted, synced, or an authorization scope.
+    #[serde(skip)]
+    #[uniffi(default)]
+    pub command: Option<CommandPresentation>,
+}
+
+/// Readable command facts derived by the core. The exact original request remains the approval's authority.
+#[derive(Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommandPresentation {
+    /// Fixed words describing only a recognized operation; never an agent's explanation.
+    pub heading: String,
+    /// Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
+    pub actionable: String,
+    /// Setup performed before the action. Environment values are concealed; the original is inspected separately.
+    pub setup: Vec<String>,
+    /// Consequences or limitations that remain visible with the action, including altered execution context.
+    pub notices: Vec<String>,
+    /// Original pending invocation for explicit inspection, including text beyond the legacy detail limit.
+    /// Never persisted here or included in Debug; history uses the source text actually retained with the entry.
+    #[serde(skip)]
+    #[uniffi(default)]
+    pub original: String,
+}
+
+impl std::fmt::Debug for CommandPresentation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandPresentation")
+            .field("heading", &self.heading)
+            .field("actionable", &self.actionable)
+            .field("setup", &self.setup)
+            .field("notices", &self.notices)
+            .field("original", &"<concealed>")
+            .finish()
+    }
 }
 
 impl RequestLabel {

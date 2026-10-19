@@ -4,6 +4,17 @@ import XCTest
 /// Requests written from the core's label (ASK-TEXT) for waiting cards, Activity rows, entry pages, lists, widgets and
 /// notifications: one test per kind of label, the tenses, and crafted inputs.
 final class AskLabelsTests: XCTestCase {
+    func testCommandsUseSharedPresentationWithoutReinterpretingEnvironment() {
+        let presentation = CommandPresentation(heading: "Run Gradle", actionable: "./gradlew test", setup: ["TOKEN=•••• (value hidden)"], notices: ["Runs project build scripts"])
+        var command = label("terminal", "run", "Run", "TOKEN=secret JAVA_HOME=/jdk ./gradlew test", code: true)
+        command.command = presentation
+        check(AskLabels.line(command, field: .push), "Run Gradle", mono: "./gradlew test")
+        check(AskLabels.line(command, field: .push, tense: .done, who: "Claude Code"), "Approved running Gradle", mono: "./gradlew test")
+        command.command?.heading = "Review a shell command"
+        command.command?.actionable = ""
+        check(AskLabels.line(command, field: .push), "Review a shell command")
+    }
+
     private func label(_ provider: String, _ action: String, _ lead: String, _ subject: String = "", code: Bool = false, tail: String = "") -> RequestLabel {
         RequestLabel(provider: provider, action: action, lead: lead, subject: subject, code: code, tail: tail)
     }
