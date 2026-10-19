@@ -862,7 +862,9 @@ abstract class ScreenshotsBase(private val suffix: String) {
             listOf("JAVA_HOME=•••• (value hidden)", "ANDROID_HOME=•••• (value hidden)", "TOKEN=•••• (value hidden)", "Requested directory: /home/dana/dev/reins"),
             listOf("Gradle can execute project build scripts and plugins with this process’s permissions and credentials."),
         )
-        val view = TestData.askView(detail = "Command:\n$raw\n\nIn: /home/dana/dev/reins", topic = "command:./gradlew").copy(waitUntil = null)
+        val view = TestData.askView(detail = "Command:\n$raw\n\nIn: /home/dana/dev/reins", topic = "command:./gradlew").let {
+            it.copy(waitUntil = null, ask = it.ask!!.copy(question = "Run: $raw"))
+        }
         core.pending = listOf(TestData.pending(view.requestId, "write", 1u, service = "desktop").copy(
             label = TestData.label("terminal", "run", "Run", raw, code = true).copy(command = command),
         ))
