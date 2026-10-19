@@ -25,6 +25,9 @@ final class AccountsModel {
         self.platform = platform ?? model.integrations
     }
 
+    var connectedAccount: String? { model.connectedAccounts[service] }
+    func dismissConnection() { model.connectedAccounts[service] = nil }
+
     var isGmail: Bool { service == "gmail" }
 
     /// The service as the core lists it; "sms", which the app never offers, as unavailable.
@@ -71,19 +74,23 @@ final class AccountsModel {
     private func operation(_ block: () async throws -> Void) async {
         guard !busy else { return }
         busy = true
+        let epoch = model.accountEpoch
         clearError()
         defer { busy = false }
         do {
             try await block()
         } catch is CancellationError {
         } catch {
+            guard epoch == model.accountEpoch else { return }
             model.feedback.play(.error)
             self.error = error.userMessage
         }
     }
 
     /// An account was added: it sounds, and the lists catch up.
-    private func connected() async {
+    private func connected(_ account: AccountView, epoch: UInt64) async {
+        guard epoch == model.accountEpoch else { return }
+        model.accountConnected(account, epoch: epoch)
         model.feedback.play(.connected)
         await refresh()
     }
@@ -94,14 +101,14 @@ final class AccountsModel {
     /// that the access works). `hint` asks one account again.
     func addGoogle(hint: String? = nil) async {
         await operation {
+            let epoch = model.accountEpoch
             guard platform.googleConfigured else { throw IntegrationsFailure(platform.googleSetupMessage) }
             guard let address = try await platform.authorizeGoogle(service: service, loginHint: hint) else { return }
-            if isGmail {
-                _ = try await model.core.addAccount(hint: address)
-            } else {
-                _ = try await model.core.addServiceAccount(service: service, hint: address)
-            }
-            await connected()
+            guard epoch == model.accountEpoch else { return }
+            let account = isGmail
+                ? try await model.core.addAccount(hint: address)
+                : try await model.core.addServiceAccount(service: service, hint: address)
+            await connected(account, epoch: epoch)
         }
     }
 
@@ -109,8 +116,9 @@ final class AccountsModel {
 
     func addSecret(_ secret: String) async {
         await operation {
-            _ = try await model.core.addTokenAccount(service: service, token: secret.trimmingCharacters(in: .whitespacesAndNewlines))
-            await connected()
+            let epoch = model.accountEpoch
+            let account = try await model.core.addTokenAccount(service: service, token: secret.trimmingCharacters(in: .whitespacesAndNewlines))
+            await connected(account, epoch: epoch)
         }
     }
 
@@ -118,14 +126,16 @@ final class AccountsModel {
 
     /// Asks iOS for the permission, then connects the phone's calendar or contacts.
     func addDevice() async {
-        guard !busy else { return }
-        guard await platform.requestPhoneAccess(service: service) else {
-            fail(ServiceCopy.permissionRefused, refusedByIOS: true)
-            return
-        }
         await operation {
-            _ = try await model.core.addServiceAccount(service: service, hint: "")
-            await connected()
+            let epoch = model.accountEpoch
+            let allowed = await platform.requestPhoneAccess(service: service)
+            guard epoch == model.accountEpoch else { return }
+            guard allowed else {
+                fail(ServiceCopy.permissionRefused, refusedByIOS: true)
+                return
+            }
+            let account = try await model.core.addServiceAccount(service: service, hint: "")
+            await connected(account, epoch: epoch)
         }
     }
 
@@ -134,28 +144,38 @@ final class AccountsModel {
     func loginBegin(_ phone: String) async {
         let number = phone.trimmingCharacters(in: .whitespacesAndNewlines)
         await operation {
+            let epoch = model.accountEpoch
             try await model.core.loginBegin(service: service, phone: number)
+            guard epoch == model.accountEpoch else { return }
             login = .code(phone: number)
         }
     }
 
     func loginCode(_ code: String) async {
         await operation {
-            switch try await model.core.loginCode(service: service, code: code.trimmingCharacters(in: .whitespaces)) {
+            let epoch = model.accountEpoch
+            let progress = try await model.core.loginCode(service: service, code: code.trimmingCharacters(in: .whitespaces))
+            guard epoch == model.accountEpoch else { return }
+            switch progress {
             case let .needsPassword(hint):
                 login = .password(hint: hint)
-            case .done:
+            case let .done(account):
+                guard epoch == model.accountEpoch else { return }
                 login = .phone
-                await connected()
+                model.accountConnected(service: service, account: account, epoch: epoch)
+                model.feedback.play(.connected)
+                await refresh()
             }
         }
     }
 
     func loginPassword(_ password: String) async {
         await operation {
-            _ = try await model.core.loginPassword(service: service, password: password)
+            let epoch = model.accountEpoch
+            let account = try await model.core.loginPassword(service: service, password: password)
+            guard epoch == model.accountEpoch else { return }
             login = .phone
-            await connected()
+            await connected(account, epoch: epoch)
         }
     }
 
@@ -172,11 +192,14 @@ final class AccountsModel {
         let google = view?.kind == "google"
         await operation {
             model.feedback.play(.revoked)
+            let epoch = model.accountEpoch
             if isGmail {
                 try await model.core.removeAccount(account: account)
             } else {
                 try await model.core.removeServiceAccount(service: service, account: account)
             }
+            guard epoch == model.accountEpoch else { return }
+            if connectedAccount == account { dismissConnection() }
             statuses[account] = nil
             await refresh()
             if google { await platform.revokeGoogle(account: account, service: service) }

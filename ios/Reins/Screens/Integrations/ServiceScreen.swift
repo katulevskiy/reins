@@ -52,6 +52,15 @@ struct AccountsScreen: View {
     @ViewBuilder
     private func content(_ service: ServiceView, _ m: AccountsModel) -> some View {
         List {
+            if let identity = m.connectedAccount {
+                Section {
+                    IntegrationCompletion(title: "Account connected", identity: identity, onDone: {
+                        m.dismissConnection()
+                        model.back()
+                    }, onAnother: service.kind == "device" || service.kind == "vault" ? nil : { m.dismissConnection() })
+                        .plainListRow(top: 12, bottom: 12)
+                }
+            }
             Section {
                 if service.accounts.isEmpty {
                     NoAccountsRow(title: ServiceCopy.emptyTitle(service), message: ServiceCopy.intro(service))
@@ -88,7 +97,9 @@ struct AccountsScreen: View {
 
             Section {
                 VStack(alignment: .leading, spacing: 12) {
-                    if service.available {
+                    if m.connectedAccount != nil {
+                        // The finishing surface stays above until Done or Add another account.
+                    } else if service.available {
                         AddAccountControls(service: service, accounts: m)
                     } else {
                         IntegrationBanner(text: untrusted(service.note ?? "Not available in this build."), kind: .warning)
