@@ -37,9 +37,5 @@ long originals, legacy labels, and the unchanged exact-approval identity. Native
 values and explicit inspection; screenshot fixtures cover light, dark, and larger text. iOS formatters have matching
 tests and Linux compile checks; actual iOS simulator/device rendering requires macOS.
 
-Android native-graphics fixtures (API 35, synthetic values):
 
-| Light | Dark |
-| --- | --- |
-| ![Android command request in light mode](assets/command-presentation/android-light.png) | ![Android command request in dark mode](assets/command-presentation/android-dark.png) |
-| ![Android command request with larger text in light mode](assets/command-presentation/android-large-light.png) | ![Android command request with larger text in dark mode](assets/command-presentation/android-large-dark.png) |
+Native Android visual evidence is attached to [PR #176](https://github.com/katulevskiy/reins/pull/176).
