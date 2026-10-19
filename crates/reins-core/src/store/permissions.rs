@@ -60,6 +60,13 @@ pub(crate) struct ExecutionReceipt {
 pub(crate) struct VerifiedPermission {
     key: String,
     receipt: ExecutionReceipt,
+    trace: crate::authorization_trace::AuthorizationTrace,
+}
+
+impl VerifiedPermission {
+    pub(crate) fn trace(&self) -> &crate::authorization_trace::AuthorizationTrace {
+        &self.trace
+    }
 }
 
 /// Replay protection for an independently authorized legacy send; this grants no account or action authority.
@@ -458,7 +465,7 @@ impl Store {
             attempt_id: uuid::Uuid::new_v4().to_string(),
             executor_device_id: action.actor.executor_device_id.clone(),
             roster_epoch: epoch,
-            owner: state.owner,
+            owner: state.owner.clone(),
             connection_id: action.actor.connection_id.clone(),
             request_id: action.request_id.clone(),
             request_digest: action.request_digest.clone(),
@@ -474,10 +481,54 @@ impl Store {
                 serde_json::to_string(&receipt).map_err(|e| CoreError::storage(e.to_string()))?
             ],
         )?;
+        use crate::authorization_trace::{
+            AuthorizationFactSource, AuthorizationPhase, AuthorizationPolicyVersion, AuthorizationReviewSource,
+            AuthorizationTrace,
+        };
+        let trace = AuthorizationTrace {
+            v: 1,
+            attempt_id: receipt.attempt_id.clone(),
+            request_id: action.request_id.clone(),
+            request_digest: action.request_digest.clone(),
+            policy_state_revision: state.revision,
+            policy_state_digest: hex32(&sha256(
+                &serde_json::to_vec(&state).map_err(|e| CoreError::storage(e.to_string()))?,
+            )),
+            policies: state
+                .policies
+                .iter()
+                .map(|policy| AuthorizationPolicyVersion {
+                    id: policy.id.clone(),
+                    revision: policy.revision,
+                })
+                .collect(),
+            determining_policy_ids: decision.determining_policies,
+            required_reviews: decision.required_reviews,
+            source: AuthorizationReviewSource::Automatic,
+            verified_facts: action
+                .facts
+                .iter()
+                .filter_map(|fact| match &fact.fact {
+                    reins_proto::authorization::Fact::Known {
+                        evidence,
+                        ..
+                    } if verified.contains(&fact.key) => Some(AuthorizationFactSource {
+                        key: fact.key,
+                        source: evidence.source,
+                        observed_at: evidence.observed_at,
+                        valid_until: evidence.valid_until,
+                    }),
+                    _ => None,
+                })
+                .collect(),
+            checked_at: now,
+            phase: AuthorizationPhase::Started,
+        };
         tx.commit()?;
         Ok(PermissionReservation::Authorized(VerifiedPermission {
             key,
             receipt,
+            trace,
         }))
     }
 
@@ -659,6 +710,64 @@ pub(crate) fn receipt_incoming(previous: Option<&Value>, next: Option<&Value>) -
         (None, Some(b)) => b.clone(),
         (None, None) => serde_json::json!({"execution_attempt":"unverified"}),
     }
+}
+
+/// Disconnect is a narrowing authority change, performed in the account-removal transaction.
+/// Retain counter/receipt history and mandatory restrictions; reconnect can only create fresh authority IDs.
+pub(super) fn account_removed(conn: &Connection, service: &str, account: &str) -> Result<(), CoreError> {
+    use reins_proto::authorization::{PolicyEffect, PolicyLifecycle};
+    let account_id = crate::authorization::account_resource_id(service, account);
+    if let Some(mut state) = authorization::read(conn)? {
+        let expected = state.revision;
+        let mut changed = false;
+        for policy in &mut state.policies {
+            if policy.scope.account_ids.contains(&account_id)
+                && policy.lifecycle != PolicyLifecycle::Revoked
+                && matches!(
+                    policy.effect,
+                    PolicyEffect::Permit | PolicyEffect::EligibleForAuto | PolicyEffect::DelegationAuthority
+                )
+            {
+                policy.lifecycle = PolicyLifecycle::Revoked;
+                policy.revision =
+                    policy.revision.checked_add(1).ok_or_else(|| CoreError::invalid("policy revision exhausted"))?;
+                state.revoked_ids.insert(policy.id.clone());
+                changed = true;
+            }
+        }
+        if changed {
+            state.revision = expected.checked_add(1).ok_or_else(|| CoreError::invalid("policy revision exhausted"))?;
+            authorization::replace_in(conn, expected, &state)?;
+        }
+    }
+    let mut statement = conn.prepare("SELECT grant_json FROM grants WHERE origin != ?1")?;
+    let grants = statement.query_map([BUDGET_ORIGIN], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    let mut statement = conn.prepare("SELECT account FROM accounts WHERE service=?1 ORDER BY account")?;
+    let remaining = statement.query_map([service], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    for raw in grants {
+        let mut grant: Grant = serde_json::from_str(&raw)
+            .map_err(|_| CoreError::storage("an account permission could not be verified"))?;
+        if let Scope::Accounts(scope) = &mut grant.scope {
+            if scope.service != service
+                || (!scope.accounts.is_empty() && !scope.accounts.iter().any(|id| id == account))
+            {
+                continue;
+            }
+            if scope.accounts.is_empty() {
+                scope.accounts.clone_from(&remaining);
+            } else {
+                scope.accounts.retain(|id| id != account);
+            }
+            if scope.accounts.is_empty() {
+                grant.revoked = true;
+            }
+            conn.execute(
+                "UPDATE grants SET grant_json=?2 WHERE id=?1",
+                params![grant.id.0, serde_json::to_string(&grant).map_err(|e| CoreError::storage(e.to_string()))?],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) struct PreservedPermissions {

@@ -148,6 +148,7 @@ impl Store {
                  AND COALESCE(json_extract(grant_json, '$.scope.service'), 'gmail') = ?2",
                 params![account, service],
             )?;
+            super::permissions::account_removed(&tx, service, &account)?;
         }
         tx.commit()?;
         Ok(removed)

@@ -355,10 +355,11 @@ impl Engine {
                 .account_coverage(&ConnectionId(connection.id.clone()), service, unix_now())?
                 .covers(&account);
             agents.push(PermissionAgentView {
-                selected: state
-                    .policies
-                    .iter()
-                    .any(|p| p.id.starts_with(&prefix) && p.scope.connection_ids.contains(&connection.id)),
+                selected: state.policies.iter().any(|p| {
+                    p.id.starts_with(&prefix)
+                        && p.lifecycle == PolicyLifecycle::Active
+                        && p.scope.connection_ids.contains(&connection.id)
+                }),
                 connection_id: connection.id,
                 label: connection.label,
                 has_account_access: access,
@@ -367,8 +368,10 @@ impl Engine {
         let now = unix_now();
         let mut views = vec![];
         for capability in capabilities(service) {
-            let id = format!("{prefix}{}", capability_key(capability));
-            let own = state.policies.iter().find(|p| p.id == id && p.lifecycle != PolicyLifecycle::Revoked);
+            let suffix = format!(":{}", capability_key(capability));
+            let own = state.policies.iter().find(|p| {
+                p.id.starts_with(&prefix) && p.id.ends_with(&suffix) && p.lifecycle != PolicyLifecycle::Revoked
+            });
             let scope = own.map_or_else(|| default_scope(capability), |p| scope_of(p, capability));
             let actual_scope_summary =
                 if own.is_some_and(|p| mode(&p.effect) != PermissionMode::Auto) || (own.is_none() && managed) {
@@ -442,8 +445,13 @@ impl Engine {
                 restrictions: floors,
             });
         }
-        let automatic: Vec<_> =
-            state.policies.iter().filter(|p| p.id.starts_with(&prefix) && p.effect == PolicyEffect::Permit).collect();
+        let automatic: Vec<_> = state
+            .policies
+            .iter()
+            .filter(|p| {
+                p.id.starts_with(&prefix) && p.effect == PolicyEffect::Permit && p.lifecycle == PolicyLifecycle::Active
+            })
+            .collect();
         let used = automatic
             .iter()
             .map(|p| self.store.permission_budget_uses(&p.id))
@@ -587,7 +595,19 @@ impl Engine {
         let prefix = account_prefix(&account_id);
         let mut budgets = vec![];
         for rule in &draft.rules {
-            let id = format!("{prefix}{}", capability_key(rule.capability));
+            let suffix = format!(":{}", capability_key(rule.capability));
+            let id = state
+                .policies
+                .iter()
+                .find(|policy| {
+                    policy.id.starts_with(&prefix)
+                        && policy.id.ends_with(&suffix)
+                        && policy.lifecycle != PolicyLifecycle::Revoked
+                })
+                .map_or_else(
+                    || format!("{prefix}{}:{key}", uuid::Uuid::new_v4(), key = capability_key(rule.capability)),
+                    |policy| policy.id.clone(),
+                );
             let maximum = self
                 .store
                 .permission_budget_uses(&id)?
@@ -737,6 +757,9 @@ impl Engine {
         limit: u32,
     ) -> Result<PermissionScopeOptions, CoreError> {
         self.permission_account(service, account)?;
+        if !capabilities(service).contains(&capability) {
+            return Err(CoreError::invalid("this capability does not belong to the selected integration"));
+        }
         let kinds = scopes(capability);
         let mut options = BTreeMap::new();
         let needle = query.to_lowercase();
@@ -938,8 +961,23 @@ impl Engine {
         )
     }
 
-    pub(crate) fn permission_finished(&self, proof: VerifiedPermission, succeeded: bool) -> Result<(), CoreError> {
-        self.store.permission_outcome(proof, succeeded)
+    pub(crate) fn permission_finished(
+        &self,
+        request: &RelayRequest,
+        proof: VerifiedPermission,
+        succeeded: bool,
+    ) -> Result<(), CoreError> {
+        let trace = proof.trace().clone();
+        self.store.permission_outcome(proof, succeeded)?;
+        self.authorization_attempt_event(
+            request,
+            &trace,
+            if succeeded {
+                crate::authorization_trace::AuthorizationPhase::Succeeded
+            } else {
+                crate::authorization_trace::AuthorizationPhase::Unknown
+            },
+        )
     }
 
     pub(crate) fn legacy_send_attempt(&self, request: &RelayRequest) -> Result<storage::SendAttempt, CoreError> {
@@ -970,6 +1008,11 @@ impl Engine {
         if !(self.holds_roster_now()? && self.decides()) {
             return Err(CoreError::invalid("automatic execution requires a verified single-primary roster"));
         }
+        self.authorization_attempt_event(
+            request,
+            proof.trace(),
+            crate::authorization_trace::AuthorizationPhase::Started,
+        )?;
         self.execution_attempt_durable().await?;
         self.revalidate_permission(request, proof)
     }

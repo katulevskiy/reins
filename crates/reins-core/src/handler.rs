@@ -322,7 +322,7 @@ impl Engine {
         match reservation {
             crate::permissions::PermissionReservation::Authorized(proof) => {
                 if let Err(error) = self.permission_durable(request, &proof).await {
-                    self.permission_finished(proof, false)?;
+                    self.permission_finished(request, proof, false)?;
                     return self.fail(session, request, action, &error).await;
                 }
                 let summaries: Vec<_> = parsed.iter().map(|message| message.summary.clone()).collect();
@@ -339,7 +339,7 @@ impl Engine {
                         },
                     )
                     .await;
-                self.permission_finished(proof, result.is_ok())?;
+                self.permission_finished(request, proof, result.is_ok())?;
                 return result;
             }
             crate::permissions::PermissionReservation::Review => {
@@ -419,11 +419,11 @@ impl Engine {
         match reservation {
             crate::permissions::PermissionReservation::Authorized(proof) => {
                 if let Err(error) = self.permission_durable(request, &proof).await {
-                    self.permission_finished(proof, false)?;
+                    self.permission_finished(request, proof, false)?;
                     return self.fail(session, request, "send", &error).await;
                 }
                 let sent = self.gmail_for(account_of(request)).send(email).await;
-                self.permission_finished(proof, sent.is_ok())?;
+                self.permission_finished(request, proof, sent.is_ok())?;
                 return match sent {
                     Ok(sent) => {
                         let audit = self.audit(
