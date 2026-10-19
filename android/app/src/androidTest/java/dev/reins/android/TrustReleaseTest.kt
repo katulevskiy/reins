@@ -2,6 +2,7 @@ package dev.reins.android
 
 import android.app.Application
 import android.content.Context
+import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -15,10 +16,13 @@ import androidx.test.uiautomator.Until
 import dev.reins.android.core.CoreFactory
 import dev.reins.android.core.CoreProvider
 import dev.reins.android.platform.ScreenLock
+import dev.reins.android.platform.update.UpdateFetcher
+import dev.reins.android.platform.update.UpdateProvider
 import dev.reins.core.AutopilotMode
 import dev.reins.core.ModelState
 import dev.reins.core.SessionInfo
 import kotlinx.coroutines.CompletableDeferred
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Rule
 import org.junit.Test
@@ -39,6 +43,10 @@ class TrustTestRunner : AndroidJUnitRunner() {
         core.profilesGate = CompletableDeferred()
         CoreProvider.factory = CoreFactory { core }
         ScreenLock.check = { true }
+        UpdateProvider.fetcher = object : UpdateFetcher {
+            override fun manifest() = """{"versionCode":1,"versionName":"test","build":"test","file":"test.apk","sha256":"0000000000000000000000000000000000000000000000000000000000000000","size":1,"published_at":1}"""
+            override fun apk(file: String): java.io.InputStream = throw AssertionError("Unexpected APK download")
+        }
         return super.newApplication(cl, className, context)
     }
 }
@@ -56,9 +64,9 @@ class TrustReleaseTest {
         FakeCore.shared.profilesGate!!.complete(Unit)
         repeat(3) {
             click("Manual")
-            find(By.textStartsWith("Manual").selected(true))
+            awaitMode(AutopilotMode.MANUAL)
             click("Auto")
-            find(By.textStartsWith("Auto").selected(true))
+            awaitMode(AutopilotMode.AUTO)
         }
         click("Bypass…")
         click("Cancel")
@@ -72,7 +80,14 @@ class TrustReleaseTest {
         click("Cancel")
         click("Activity")
         click("Trust")
-        find(By.textStartsWith("Auto").selected(true))
+        find(By.textStartsWith("Auto"))
+        awaitMode(AutopilotMode.AUTO)
+    }
+
+    private fun awaitMode(mode: AutopilotMode) {
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (FakeCore.shared.apGlobal.mode != mode && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(50)
+        assertEquals(mode, FakeCore.shared.apGlobal.mode)
     }
 
     private fun click(text: String) = find(By.textStartsWith(text)).click()
