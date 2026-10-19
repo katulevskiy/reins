@@ -465,8 +465,10 @@ private fun PageContent(
             mcp,
             onBack = { app.back() },
             onAdded = { id ->
-                app.back()
-                app.open(Route.McpServer(id))
+                if (app.current == Route.McpAdd) {
+                    app.back()
+                    app.open(Route.McpServer(id))
+                }
             },
         )
         is Route.McpServer -> McpServerScreen(mcp, state, route.id, onBack = { app.back() }, onRemoved = { app.back() })

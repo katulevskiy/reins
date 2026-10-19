@@ -25,12 +25,14 @@ final class McpModel {
     private func operation(_ block: () async throws -> Void) async {
         guard !busy else { return }
         busy = true
+        let epoch = model.accountEpoch
         error = nil
         defer { busy = false }
         do {
             try await block()
         } catch is CancellationError {
         } catch {
+            guard epoch == model.accountEpoch else { return }
             model.feedback.play(.error)
             self.error = error.userMessage
         }
@@ -41,6 +43,7 @@ final class McpModel {
     func add(url: String, name: String, token: String) async -> String? {
         var added: String?
         await operation {
+            let epoch = model.accountEpoch
             signingIn = nil
             let address = url.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,11 +51,13 @@ final class McpModel {
             let secret = token.trimmingCharacters(in: .whitespacesAndNewlines)
             if !secret.isEmpty {
                 let server = try await model.core.mcpAddWithToken(url: address, token: secret, name: label)
-                model.feedback.play(.connected)
+                guard epoch == model.accountEpoch else { return }
+                model.serverConnected(server, epoch: epoch)
+                if server.status == "ok" { model.feedback.play(.connected) }
                 await model.refreshPending()
-                added = server.id
+                if epoch == model.accountEpoch { added = server.id }
             } else {
-                added = try await step(model.core.mcpAdd(url: address, name: label))
+                added = try await step(model.core.mcpAdd(url: address, name: label), epoch: epoch)
             }
         }
         return added
@@ -63,27 +68,31 @@ final class McpModel {
         await operation {
             model.feedback.play(.refresh)
             signingIn = nil
-            _ = try await step(model.core.mcpRefresh(id: id))
+            let epoch = model.accountEpoch
+            _ = try await step(model.core.mcpRefresh(id: id), epoch: epoch)
         }
     }
 
     /// What the server answered: added, or a sign-in first. Returns the server to show, nil when there is none (the
     /// page was not opened, or closed before the sign-in finished).
-    private func step(_ step: McpAddStep) async throws -> String? {
+    private func step(_ step: McpAddStep, epoch: UInt64) async throws -> String? {
+        guard epoch == model.accountEpoch else { return nil }
         switch step {
         case let .added(server):
-            model.feedback.play(.connected)
+            model.serverConnected(server, epoch: epoch)
+            if server.status == "ok" { model.feedback.play(.connected) }
             await model.refreshPending()
-            return server.id
+            return epoch == model.accountEpoch ? server.id : nil
         case let .needsSignIn(serverId, authorizeUrl):
             await model.refreshPending()
+            guard epoch == model.accountEpoch else { return nil }
             guard McpLogic.isWebPage(authorizeUrl) else {
                 throw IntegrationsFailure("This server's sign-in page is not a web page, so it was not opened.")
             }
             signingIn = serverId
             defer { signingIn = nil }
             switch await platform.mcpSignIn(serverId: serverId, authorizeUrl: authorizeUrl, model: model) {
-            case let .done(id), let .failed(id): return id
+            case let .done(id), let .failed(id): return epoch == model.accountEpoch ? id : nil
             case .cancelled: return nil
             }
         }
@@ -104,7 +113,10 @@ final class McpModel {
         var removed = false
         await operation {
             model.feedback.play(.revoked)
+            let epoch = model.accountEpoch
             try await model.core.mcpRemove(id: id)
+            guard epoch == model.accountEpoch else { return }
+            model.connectedServers[id] = nil
             await model.refreshPending()
             removed = true
         }

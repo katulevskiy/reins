@@ -36,7 +36,15 @@ struct McpServerScreen: View {
     @ViewBuilder
     private func content(_ server: McpServerView) -> some View {
         List {
-            if let notice = model.mcpNotice, notice.serverId == serverId {
+            if let receipt = model.connectedServers[serverId], server.status == "ok" {
+                Section {
+                    IntegrationCompletion(title: "Server connected", identity: "\(receipt.name) · \(McpLogic.host(receipt.url))", onDone: {
+                        model.connectedServers[serverId] = nil
+                    })
+                    .plainListRow(top: 12, bottom: 12)
+                }
+            }
+            if let notice = model.mcpNotice, notice.serverId == serverId, notice.failed || model.connectedServers[serverId] == nil {
                 Section {
                     IntegrationBanner(text: untrusted(notice.text), kind: notice.failed ? .error : .success)
                         .accessibilityIdentifier("mcpNotice")
