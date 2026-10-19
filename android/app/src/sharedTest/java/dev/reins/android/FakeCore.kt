@@ -863,6 +863,12 @@ class FakeCore : ReinsCoreInterface {
     override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): dev.reins.core.RosterSummary =
         throw CoreException.NotFound()
 
+    override suspend fun rosterCreateAuthorized(
+        deviceName: String,
+        codeOrPassword: String?,
+        owner: OwnerCheck,
+    ): dev.reins.core.RosterSummary = throw CoreException.NotFound()
+
     override suspend fun enrollBegin(deviceName: String): dev.reins.core.EnrollStart = throw CoreException.NotFound()
 
     override suspend fun enrollPoll(): dev.reins.core.EnrollProgress = throw CoreException.NotFound()

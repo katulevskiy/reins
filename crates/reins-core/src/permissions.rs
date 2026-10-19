@@ -152,6 +152,37 @@ fn agent_scope_summary(agents: &[String]) -> String {
     }
 }
 
+fn mode_text(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Ask => "Review by default",
+        PermissionMode::Auto => "Allow automatically",
+        PermissionMode::Block => "Block",
+    }
+}
+
+fn expiry_text(expires_at: i64) -> String {
+    let mut remaining = expires_at.saturating_sub(unix_now());
+    if remaining <= 0 {
+        return "already expired".into();
+    }
+    let mut parts = vec![];
+    for (seconds, unit) in [(86_400, "day"), (3_600, "hour"), (60, "minute"), (1, "second")] {
+        let count = remaining / seconds;
+        remaining %= seconds;
+        if count > 0 {
+            parts.push(format!(
+                "{count} {unit}{}",
+                if count == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+    }
+    format!("in {}", parts.join(", "))
+}
+
 fn mode(effect: &PolicyEffect) -> PermissionMode {
     match effect {
         PolicyEffect::Permit | PolicyEffect::EligibleForAuto | PolicyEffect::DelegationAuthority => {
@@ -473,13 +504,13 @@ impl Engine {
                 capability,
                 title: title(capability).into(),
                 description: description(capability).into(),
-                supported_modes: if !editable {
-                    vec![]
-                } else {
+                supported_modes: if editable {
                     supported_modes(service)
                         .into_iter()
                         .filter(|mode| *mode != PermissionMode::Auto || positive_available)
                         .collect()
+                } else {
+                    vec![]
                 },
                 supported_scopes: scopes(capability),
                 configured_mode: own.map(|p| mode(&p.effect)).or(managed.then_some(PermissionMode::Ask)),
@@ -786,8 +817,17 @@ impl Engine {
             "policy_access",
         )
         .await?;
+        let automatic_limits = if draft.rules.iter().any(|rule| rule.mode == PermissionMode::Auto) {
+            format!(
+                "Automatic permissions expire {}, with at most {} further uses per capability.",
+                expiry_text(draft.expires_at.expect("validated automatic expiry")),
+                draft.max_uses.unwrap_or(DEFAULT_USES)
+            )
+        } else {
+            "No automatic permissions are being granted.".into()
+        };
         let summary = format!(
-            "Save {} permissions for {}. These defaults cover {}. {} Ask reviews by default; explicit scoped permissions or delegations may authorize matching requests. Block always denies matching requests. Automatic permissions expire at {:?}, with at most {:?} further uses per capability. {} Existing mandatory requirements remain in force. {}",
+            "Save {} permissions for {}. These defaults cover {}. {} Ask reviews by default; explicit scoped permissions or delegations may authorize matching requests. Block always denies matching requests. {} {} Existing mandatory requirements remain in force. {}",
             draft.rules.len(),
             draft.account,
             agent_scope_summary(&draft.agent_ids),
@@ -798,15 +838,14 @@ impl Engine {
             } else {
                 "Selected agents retain their existing account access."
             },
-            draft.expires_at,
-            draft.max_uses,
+            automatic_limits,
             draft
                 .rules
                 .iter()
                 .map(|rule| format!(
-                    "{}: {:?} ({})",
+                    "{}: {} ({})",
                     title(rule.capability),
-                    rule.mode,
+                    mode_text(rule.mode),
                     if rule.mode == PermissionMode::Auto {
                         scope_summary(&rule.scope)
                     } else {
@@ -1305,11 +1344,11 @@ impl Engine {
             &draft.account,
             draft.expected_revision,
             format!(
-                "Delegate {} capabilities to {} agents, at most {} total requests, until {}",
+                "Delegate {} capabilities to {} agents, at most {} total requests, expiring {}",
                 draft.rules.len(),
                 draft.agent_ids.len(),
                 draft.max_uses,
-                draft.expires_at
+                expiry_text(draft.expires_at)
             ),
         )
     }
@@ -1331,12 +1370,12 @@ impl Engine {
         )
         .await?;
         let summary = format!(
-            "Delegate {} on {} to {} selected agents, at most {} total requests, until {}. {}",
+            "Delegate {} on {} to {} selected agents, at most {} total requests, expiring {}. {}",
             draft.rules.iter().map(|r| title(r.capability)).collect::<Vec<_>>().join(", "),
             draft.account,
             draft.agent_ids.len(),
             draft.max_uses,
-            draft.expires_at,
+            expiry_text(draft.expires_at),
             draft.rules.iter().map(|r| scope_summary(&r.scope)).collect::<Vec<_>>().join("; ")
         );
         if !owner.confirm(summary).await.map_err(|_| CoreError::invalid("the owner check failed"))? {
@@ -1430,18 +1469,18 @@ impl Engine {
                 .filter_map(|p| p.limits.max_uses)
                 .min()
                 .ok_or_else(|| CoreError::storage("delegation usage limit is missing"))?;
-            let restrictions = if !complete_personal_policy(&state)
-                || !(self.holds_roster_now()?
-                    && self.decides()
-                    && self.store.permission_history_ready().unwrap_or(false))
+            let restrictions = if complete_personal_policy(&state)
+                && self.holds_roster_now()?
+                && self.decides()
+                && self.store.permission_history_ready().unwrap_or(false)
             {
-                vec![PermissionRestriction {
-                        controller: PermissionController::Conflict,
-                        policy_id: None,
-                        reason: "Automatic authority requires a verified primary and complete verified policy and execution history".into(),
-                    }]
-            } else {
                 vec![]
+            } else {
+                vec![PermissionRestriction {
+                    controller: PermissionController::Conflict,
+                    policy_id: None,
+                    reason: "Automatic authority requires a verified primary and complete verified policy and execution history".into(),
+                }]
             };
             views.push(DelegationView {
                 id,

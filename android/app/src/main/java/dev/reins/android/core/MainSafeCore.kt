@@ -271,6 +271,12 @@ class MainSafeCore(
     override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): RosterSummary =
         io { rosterCreate(deviceName, codeOrPassword) }
 
+    override suspend fun rosterCreateAuthorized(
+        deviceName: String,
+        codeOrPassword: String?,
+        owner: OwnerCheck,
+    ): RosterSummary = io { rosterCreateAuthorized(deviceName, codeOrPassword, owner) }
+
     override suspend fun enrollBegin(deviceName: String): EnrollStart = io { enrollBegin(deviceName) }
 
     override suspend fun enrollPoll(): EnrollProgress = io { enrollPoll() }

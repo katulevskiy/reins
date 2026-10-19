@@ -2260,6 +2260,8 @@ async fn ask_default_allows_scoped_delegation_but_preserves_saved_hard_reviews_u
     let reasons = Arc::new(Mutex::new(vec![]));
     core.save_account_permissions(draft, Arc::new(ConfirmedReasons(Arc::clone(&reasons)))).await.unwrap();
     assert!(reasons.lock().unwrap().iter().any(|reason| reason.contains("Changing 1 saved Always Ask")));
+    assert!(reasons.lock().unwrap().iter().all(|reason| !reason.contains("Some(") && !reason.contains("None")));
+    assert!(reasons.lock().unwrap().iter().any(|reason| reason.contains("Review by default")));
     engine.process_relayed(permission_send("owner-changed-default", &["friend@example.com"])).await.unwrap();
     assert_eq!(sent_count(&gmail).await, 2);
 
@@ -2779,4 +2781,57 @@ async fn non_gmail_account_defaults_are_readonly_until_reversible_settings_are_s
         core.account_permission_draft("github".into(), "person".into(), AccountPermissionPreset::Custom).await.is_err()
     );
     assert!(!core.account_permissions("github".into(), "person".into()).await.unwrap().managed);
+}
+
+#[tokio::test]
+async fn automatic_permission_setup_requires_prepared_account_owner_consent() {
+    struct RefusedOwner;
+    #[async_trait::async_trait]
+    impl reins_core::OwnerCheck for RefusedOwner {
+        async fn confirm(&self, _reason: String) -> Result<bool, reins_core::ForeignError> {
+            Ok(false)
+        }
+    }
+    let mut world = world().await;
+    let gmail = MockServer::start().await;
+    let core = permission_phone(&mut world, &gmail).await;
+    let denied =
+        core.roster_create_authorized("Phone".into(), Some(PASSWORD.into()), Arc::new(RefusedOwner)).await.unwrap_err();
+    assert!(denied.to_string().contains("owner did not confirm"));
+    assert!(world.state().roster.is_empty(), "refused or stale native consent cannot create authority");
+    assert_eq!(core.phone_role().await.unwrap(), PhoneRole::Legacy);
+    let before = core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap();
+    assert!(!before.available_presets.contains(&AccountPermissionPreset::ReadAssist));
+    let created =
+        core.roster_create_authorized("Phone".into(), Some(PASSWORD.into()), Arc::new(PermissionOwner)).await.unwrap();
+    assert_eq!(created.role, PhoneRole::Primary);
+    let after = core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap();
+    assert!(after.available_presets.contains(&AccountPermissionPreset::ReadAssist));
+    assert!(after.capabilities.iter().all(|view| view.supported_modes.contains(&PermissionMode::Auto)));
+}
+
+#[tokio::test]
+async fn logout_while_authorizing_primary_setup_cannot_create_a_roster_for_another_account() {
+    let mut first = world().await;
+    let second = world().await;
+    let core = first.phone().await;
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let owner = Arc::new(PausedPermissionOwner {
+        started: Arc::clone(&started),
+        release: Arc::clone(&release),
+    });
+    let setting_up = Arc::clone(&core);
+    let setup =
+        tokio::spawn(
+            async move { setting_up.roster_create_authorized("Phone".into(), Some(PASSWORD.into()), owner).await },
+        );
+    started.notified().await;
+    core.logout().await.unwrap();
+    core.login(second.server.uri(), EMAIL.into(), PASSWORD.into(), None).await.unwrap();
+    release.notify_one();
+    assert!(setup.await.unwrap().is_err());
+    assert!(first.state().roster.is_empty(), "retired account never received setup");
+    assert!(second.state().roster.is_empty(), "late consent never reached newly signed-in account");
+    assert_eq!(core.phone_role().await.unwrap(), PhoneRole::Legacy);
 }
