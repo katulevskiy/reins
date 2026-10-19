@@ -77,6 +77,7 @@ abstract class FlowHarness {
         core.commitChangeCalls.clear()
         core.commitChangeGate = null
         core.gmail = GmailStatus.Ready
+        core.addedAccounts.clear(); core.removedAccounts.clear(); core.serviceAdded.clear(); core.serviceRemoved.clear()
         core.accounts = listOf(AccountView("gmail", "me@gmail.com", 1_700_000_000))
         core.catalogue = FakeCore.defaultServices()
         core.accountStatuses = emptyMap()
