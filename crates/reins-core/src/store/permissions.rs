@@ -1191,4 +1191,55 @@ mod tests {
         assert!(store.add_verified_account("owner", "gmail", "failed@example.com", 11).is_err());
         assert!(!store.accounts().unwrap().iter().any(|a| a.account == "failed@example.com"));
     }
+    #[test]
+    fn unknown_settlement_is_monotone_commutative_and_survives_sync_and_restore() {
+        let (_dir, store) = setup(vec![policy("permission", 3)]);
+        let proof = reserve(&store, "settlement");
+        let started = serde_json::to_value(&proof.receipt).unwrap();
+        let mut unknown = proof.receipt.clone();
+        unknown.outcome = ReceiptOutcome::Unknown;
+        let unknown = serde_json::to_value(unknown).unwrap();
+        assert_eq!(receipt_incoming(Some(&started), Some(&unknown)), unknown);
+        assert_eq!(receipt_incoming(Some(&unknown), Some(&started)), unknown);
+        let previous = PreservedPermissions {
+            receipts: vec![(format!("app.{}", proof.key), unknown.to_string())],
+            budgets: vec![],
+        };
+        {
+            let conn = store.lock().unwrap();
+            after_import(&conn, previous).unwrap();
+        }
+        assert!(store.permission_revalidate(&proof, &action("settlement"), &[AttributeKey::Recipients], 10).is_err());
+        store.write_sync_row(reins_proto::oplog::Table::Meta, &proof.key, None, Some(&started)).unwrap();
+        let kept: String = store
+            .read()
+            .unwrap()
+            .query_row("SELECT value FROM meta WHERE key=?1", [format!("app.{}", proof.key)], |row| row.get(0))
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&kept).unwrap(), unknown);
+        assert!(store.permission_outcome(proof, true).is_err(), "local completion cannot erase imported settlement");
+    }
+    #[test]
+    fn imported_positive_policies_without_managed_markers_never_reenable_legacy() {
+        for lifecycle in [PolicyLifecycle::Active, PolicyLifecycle::Paused, PolicyLifecycle::Revoked] {
+            for service in ["gmail", "telegram"] {
+                let (_dir, store) = setup(vec![policy("permission", 3)]);
+                let mut state = store.authorization_state().unwrap().unwrap();
+                state.managed_scopes.clear();
+                state.policies[0].lifecycle = lifecycle;
+                state.policies[0].scope.operations[0].service = service.into();
+                state.policies[0].scope.account_ids[0] =
+                    crate::authorization::account_resource_id(service, "me@example.com");
+                if lifecycle == PolicyLifecycle::Revoked {
+                    state.revoked_ids.insert("permission".into());
+                }
+                assert!(state.validate().is_err());
+                store.meta_set(authorization::RECORD_KEY, &serde_json::to_string(&state).unwrap()).unwrap();
+                assert!(
+                    store.permission_reserve(&action("imported"), &[AttributeKey::Recipients], 10).is_err(),
+                    "missing marker is invalid authority, never legacy absence"
+                );
+            }
+        }
+    }
 }
