@@ -2478,14 +2478,18 @@ impl reins_core::OwnerCheck for PausedPermissionOwner {
 
 #[tokio::test]
 async fn revoking_an_agent_during_owner_confirmation_cannot_recreate_account_or_delegation_authority() {
-    for delegation in [false, true] {
+    for (delegation, remote_confirmed) in [(false, true), (true, true), (false, false)] {
         let mut world = world().await;
         let gmail = MockServer::start().await;
         let core = permission_phone(&mut world, &gmail).await;
         core.roster_create("Phone".into(), Some(PASSWORD.into())).await.unwrap();
         Mock::given(method("DELETE"))
             .and(path("/reins/api/connections/c1"))
-            .respond_with(ResponseTemplate::new(200))
+            .respond_with(ResponseTemplate::new(if remote_confirmed {
+                200
+            } else {
+                500
+            }))
             .mount(&world.server)
             .await;
         let started = Arc::new(tokio::sync::Notify::new());
@@ -2511,7 +2515,15 @@ async fn revoking_an_agent_during_owner_confirmation_cannot_recreate_account_or_
             tokio::spawn(async move { saving.save_account_permissions(draft, owner).await.map(|_| ()) })
         };
         started.notified().await;
-        core.revoke_connection("c1".into()).await.unwrap();
+        let revoke = core.revoke_connection("c1".into()).await;
+        assert_eq!(revoke.is_ok(), remote_confirmed);
+        if let Err(error) = revoke {
+            assert!(error.to_string().contains("blocked on this phone"));
+        }
+        assert!(
+            core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap().agents.is_empty(),
+            "stale server connection listings cannot offer revoked agents for new authority"
+        );
         release.notify_one();
         assert!(pending.await.unwrap().is_err(), "late owner confirmation must fail after connection revocation");
         assert!(core.grants().await.unwrap().iter().all(|grant| grant.connection_id != "c1"));

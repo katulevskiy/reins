@@ -343,8 +343,8 @@ impl Engine {
         }
     }
 
-    /// Registers an account of any integration once it has been checked (a session that works, a token that was
-    /// accepted). The name is kept in lower case.
+    /// Registers a non-Gmail integration after its session/token was checked. Gmail must use `add_account` so its
+    /// verified identity and managed defaults commit under the asynchronous handover fence. Names use lower case.
     pub fn register_account(&self, service: &str, account: &str) -> Result<AccountView, CoreError> {
         let account = account.trim().to_lowercase();
         if account.is_empty() || account.len() > reins_proto::connector::MAX_ACCOUNT_LEN {
@@ -353,12 +353,11 @@ impl Engine {
         let now = unix_now();
         if service == views::SERVICE_GMAIL {
             return Err(CoreError::invalid("connect Gmail through the verified asynchronous add-account flow"));
-        } else {
-            // Roll out mandatory connected-account defaults together with a usable positive adapter. Other
-            // integrations retain their remembered-grant semantics until that adapter ships; explicit policies
-            // and already managed markers remain enforced by the common gate.
-            self.store.add_account(service, &account, now)?;
         }
+        // Roll out mandatory connected-account defaults together with a usable positive adapter. Other
+        // integrations retain their remembered-grant semantics until that adapter ships; explicit policies
+        // and already managed markers remain enforced by the common gate.
+        self.store.add_account(service, &account, now)?;
         Ok(AccountView {
             service: service.to_owned(),
             account,
