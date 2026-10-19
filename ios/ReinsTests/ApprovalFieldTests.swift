@@ -76,6 +76,15 @@ final class ApprovalFieldTests: XCTestCase {
         GitCommitView(shortSha: "a1b2c3d", subject: "x", author: "a", date: 0, filesChanged: nil, files: [], additions: nil, deletions: nil, hiddenChars: true)
     }
 
+    func testManagedMailExplainsOneTimeApprovalWithoutPromisingEveryFutureRequestAsks() {
+        let view = T.view(kind: .send, service: "gmail", noStanding: true, action: "send")
+        XCTAssertTrue(ApprovalWords.rememberLocked(view))
+        XCTAssertTrue(ApprovalWords.mailPermissionSettings(view))
+        let warning = lines(view).first(where: { $0.id == "alwaysAsks" })
+        XCTAssertEqual(warning?.text, "This approval is once only. Manage ongoing access in Trust.")
+        XCTAssertFalse(warning?.text.contains("never remembered") == true)
+    }
+
     // MARK: The ask (each kind: AskFormatTests)
 
     func testALongQuestionIsWholeOnTheLineBelow() {

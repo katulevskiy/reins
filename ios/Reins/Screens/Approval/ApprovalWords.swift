@@ -216,6 +216,11 @@ enum ApprovalWords {
 
     /// Nothing here may be remembered: the dock says "Asked every time" instead of offering how long. A release of an
     /// environment is remembered only for a command the core offers.
+    /// This approval is one-time; ongoing Gmail access belongs to the account permission editor.
+    static func mailPermissionSettings(_ view: ApprovalView) -> Bool {
+        view.noStanding && view.service == "gmail" && [.search, .read, .send].contains(view.kind)
+    }
+
     static func rememberLocked(_ view: ApprovalView) -> Bool { view.envRelease != nil ? !secretsRememberable(view) : view.noStanding }
 
     /// A remembered release covers a wider command than the one asked (`npm run *`): the dock shows which; nil when it

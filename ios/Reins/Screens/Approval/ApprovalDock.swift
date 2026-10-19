@@ -22,8 +22,12 @@ struct ApprovalDock: View {
             if view.kind == .grant {
                 GrantPeriodRow(vm: vm, view: view)
             } else if ApprovalWords.rememberLocked(view) || ApprovalWords.held(view) {
-                Chooser.asked()
+                Chooser.asked(ApprovalWords.mailPermissionSettings(view) ? "Approve once" : "Asked every time")
                     .accessibilityIdentifier("noStanding")
+                if ApprovalWords.mailPermissionSettings(view) {
+                    Text("For ongoing access, use account or temporary permissions in Trust. Sensitive requests can still require review.")
+                        .font(.footnote).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("accountPermissionHelp")
+                }
             } else {
                 if ApprovalWords.likeThisOn(view, vm.draft) { LikeThisNote() }
                 if let wider = ApprovalWords.secretsWider(view, vm.draft) { SecretsCommandNote(command: wider) }

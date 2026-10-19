@@ -50,7 +50,10 @@ fun fieldWarnings(view: ApprovalView, suggestion: SuggestionView?, risk: RiskVie
     view.ssh?.takeIf { it.host.isNullOrBlank() }?.let { ssh ->
         add(FieldWarning("unknownHost", if (ssh.hostKey.isNullOrBlank()) "Unknown server" else "Server known only by its key", WarnTone.Amber))
     }
-    if (dangers.isEmpty()) alwaysAskReason(view)?.let { add(FieldWarning("alwaysAsks", "Always asks · $it", WarnTone.Plain)) }
+    if (dangers.isEmpty()) {
+        if (mailPermissionSettings(view)) add(FieldWarning("alwaysAsks", "This approval is once only. Manage ongoing access in Trust.", WarnTone.Plain))
+        else alwaysAskReason(view)?.let { add(FieldWarning("alwaysAsks", "Always asks · $it", WarnTone.Plain)) }
+    }
     if (suggestion?.novel == true) add(FieldWarning("novel", "First time for this AI", WarnTone.Amber))
     if (risk != null) {
         val line = if (riskInFacts) "Risk: ${AutopilotText.riskWord(risk.level)}" else AutopilotText.riskLine(risk)
