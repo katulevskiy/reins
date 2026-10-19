@@ -376,8 +376,17 @@ impl Engine {
             });
             let scope = own.map_or_else(|| default_scope(capability), |p| scope_of(p, capability));
             let actual_scope_summary =
-                if own.is_some_and(|p| mode(&p.effect) != PermissionMode::Auto) || (own.is_none() && managed) {
-                    "Every request in this account from the selected agents".into()
+                if let Some(policy) = own.filter(|policy| mode(&policy.effect) != PermissionMode::Auto) {
+                    if policy.scope.connection_ids.is_empty() {
+                        "Every request of this capability from all agents".into()
+                    } else {
+                        format!(
+                            "Every request of this capability from {} selected agents",
+                            policy.scope.connection_ids.len()
+                        )
+                    }
+                } else if own.is_none() && managed {
+                    "Review by default for every agent in this account".into()
                 } else {
                     scope_summary(&scope)
                 };
@@ -422,8 +431,10 @@ impl Engine {
                 "Policy conflict holds execution".into()
             } else if own.is_some_and(|p| p.expires_at.is_some_and(|e| now >= e)) {
                 "This permission expired; requests require review".into()
-            } else if own.is_some() || managed {
+            } else if own.is_some() {
                 "Applies within the selected scope and all additional requirements".into()
+            } else if managed {
+                "Review by default; active scoped delegations can authorize within all mandatory requirements".into()
             } else {
                 "Existing grants and Auto settings apply; no account defaults have been saved".into()
             };
@@ -493,6 +504,7 @@ impl Engine {
             },
             expires_at: state.policies.iter().filter(|p| p.id.starts_with(&prefix)).filter_map(|p| p.expires_at).min(),
             maximum_duration_secs: u64::try_from(MAX_PERMISSION_SECS).expect("positive"),
+            delegation_maximum_duration_secs: u64::try_from(MAX_DELEGATION_SECS).expect("positive"),
             scope_summary: if managed {
                 "Account-specific policies; new agents receive no access automatically".into()
             } else {
@@ -864,7 +876,9 @@ impl Engine {
                     cost_currency: None,
                 })
             })
-            .collect::<Result<Vec<_>, CoreError>>()?;
+            .collect::<Result<Vec<_>, CoreError>>();
+        incomplete |= usage.is_err();
+        let usage = usage.unwrap_or_default();
         let history = self.store.activity(500)?;
         if history.len() == 500 {
             incomplete = true;
@@ -1336,6 +1350,13 @@ impl Engine {
         change: DelegationChange,
         owner: &dyn OwnerCheck,
     ) -> Result<DelegationView, CoreError> {
+        if change == DelegationChange::Resume
+            && !(self.holds_roster_now()? && self.decides() && self.store.permission_history_ready().unwrap_or(false))
+        {
+            return Err(CoreError::invalid(
+                "resuming delegation requires verified primary authority and complete execution history",
+            ));
+        }
         let mut state = self.authorization_policies()?;
         if state.revision != expected_revision || state.conflicted || state.overflow_digest.is_some() {
             return Err(CoreError::invalid("reload and reconcile authorization before changing a delegation"));

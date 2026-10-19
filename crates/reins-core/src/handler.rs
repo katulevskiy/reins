@@ -428,48 +428,38 @@ impl Engine {
                     .gmail_for(account_of(request))
                     .send_checked(email, || self.permission_before_send(session, request, &proof))
                     .await;
-                return match sent {
-                    Ok(sent) => {
-                        if self.revalidate_permission(request, &proof).is_err() {
-                            self.permission_finished(request, proof, true)?;
-                            return self.result_withheld(session, request).await;
-                        }
-                        let audit = self.audit(
-                            request,
-                            "send",
-                            "sent",
-                            &send_detail(email),
-                            None,
-                            email.recipients().count(),
-                            &[],
-                        );
-                        let mut held = false;
-                        let result = self
-                            .finish_checked(
-                                session,
-                                request,
-                                audit,
-                                RelayOutcome::Result {
-                                    result: ToolResult::Sent(sent),
-                                },
-                                || {
-                                    let checked = self.revalidate_permission(request, &proof);
-                                    held |= checked.is_err();
-                                    checked
-                                },
-                            )
-                            .await;
+                return if let Ok(sent) = sent {
+                    if self.revalidate_permission(request, &proof).is_err() {
                         self.permission_finished(request, proof, true)?;
-                        if held {
-                            self.result_withheld(session, request).await
-                        } else {
-                            result
-                        }
+                        return self.result_withheld(session, request).await;
                     }
-                    Err(_) => {
-                        self.permission_finished(request, proof, false)?;
-                        self.send_outcome_unknown(session, request).await
+                    let audit =
+                        self.audit(request, "send", "sent", &send_detail(email), None, email.recipients().count(), &[]);
+                    let mut held = false;
+                    let result = self
+                        .finish_checked(
+                            session,
+                            request,
+                            audit,
+                            RelayOutcome::Result {
+                                result: ToolResult::Sent(sent),
+                            },
+                            || {
+                                let checked = self.revalidate_permission(request, &proof);
+                                held |= checked.is_err();
+                                checked
+                            },
+                        )
+                        .await;
+                    self.permission_finished(request, proof, true)?;
+                    if held {
+                        self.result_withheld(session, request).await
+                    } else {
+                        result
                     }
+                } else {
+                    self.permission_finished(request, proof, false)?;
+                    self.send_outcome_unknown(session, request).await
                 };
             }
             crate::permissions::PermissionReservation::Review => {

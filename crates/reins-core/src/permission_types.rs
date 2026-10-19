@@ -93,6 +93,7 @@ pub struct AccountPermissionsView {
     pub available_presets: Vec<AccountPermissionPreset>,
     pub expires_at: Option<i64>,
     pub maximum_duration_secs: u64,
+    pub delegation_maximum_duration_secs: u64,
     pub used: u64,
     pub usage_verified: bool,
     pub remaining_uses: Option<u64>,
