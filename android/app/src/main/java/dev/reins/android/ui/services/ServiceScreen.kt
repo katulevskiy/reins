@@ -54,7 +54,7 @@ import dev.reins.core.ServiceView
 
 /** The accounts of one integration and the way to add another, which depends on the kind of service. */
 @Composable
-fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Unit, onOpenVault: () -> Unit = {}) {
+fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Unit, onOpenVault: () -> Unit = {}, onPermissions: (String) -> Unit = {}, permissionFinish: (@Composable (String, () -> Unit, (() -> Unit)?) -> Unit)? = null) {
     val c = LocalColors.current
     val services by state.services.collectAsStateWithLifecycle()
     val statuses by viewModel.statuses.collectAsStateWithLifecycle()
@@ -80,6 +80,12 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
         if (granted.isNotEmpty() && granted.values.all { it }) viewModel.addDevice() else viewModel.fail("Not allowed. Turn it on in Android settings.")
     }
 
+    connected[service.service]?.let { identity ->
+        if (permissionFinish != null) {
+            permissionFinish(identity, { state.dismissAccountConnection(service.service); onBack() }, if (service.kind == "device" || service.kind == "vault") null else ({ state.dismissAccountConnection(service.service) }))
+            return
+        }
+    }
     Screen(title = service.name, onBack = onBack) {
         connected[service.service]?.let { identity ->
             dev.reins.android.ui.common.IntegrationCompletion("Account connected", identity,
@@ -112,6 +118,7 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
                     },
                     onRemove = { removing = account.account },
                 )
+                CapsuleButton("Account permissions", Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("accountPermissions:${account.account}"), style = ButtonStyle.Soft, maxLines = Int.MAX_VALUE) { onPermissions(account.account) }
             }
         }
         if (service.kind == "vault" && service.accounts.isNotEmpty()) {

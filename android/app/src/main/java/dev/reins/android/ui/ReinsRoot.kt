@@ -65,6 +65,7 @@ import dev.reins.android.ui.mcp.McpServerScreen
 import dev.reins.android.ui.mcp.McpViewModel
 import dev.reins.android.ui.upload.UploadSheet
 import dev.reins.android.ui.upload.UploadViewModel
+import dev.reins.android.ui.permissions.*
 import dev.reins.android.ui.nav.Route
 import dev.reins.android.ui.nav.SheetTarget
 import dev.reins.android.ui.nav.Tab
@@ -369,6 +370,7 @@ private fun TabContent(
             onOpenGrant = { app.open(Route.GrantDetail(it)) },
             onNewGrant = { app.open(Route.NewGrant) },
             onEnded = { app.open(Route.EndedGrants) },
+            onPermissions = { app.open(Route.Permissions) },
             onStartingPolicy = container::chooseStartingPolicy,
             onOpenEntry = { app.open(Route.ActivityDetail(it)) },
             onCovered = onCovered,
@@ -477,6 +479,10 @@ private fun PageContent(
             state,
             onBack = { app.back() },
             onOpenVault = { app.open(Route.Vault) },
+            onPermissions = { app.open(Route.AccountPermissions(route.id, it)) },
+            permissionFinish = { identity, done, another ->
+                AccountPermissionsScreen(viewModel(key = "permissions:${state.accountEpoch.value}:${route.id}:$identity") { AccountPermissionsViewModel(container, route.id, identity) }, authenticator, true, { app.back() }, done, {}, another)
+            },
         )
         Route.Vault -> VaultScreen(
             vault,
@@ -507,7 +513,16 @@ private fun PageContent(
                 }
             },
         )
-        Route.Gmail -> GmailScreen(gmail, state, onBack = { app.back() })
+        Route.Gmail -> GmailScreen(gmail, state, onBack = { app.back() },
+            onPermissions = { app.open(Route.AccountPermissions("gmail", it)) },
+            permissionFinish = { identity, done, another ->
+                AccountPermissionsScreen(viewModel(key = "permissions:${state.accountEpoch.value}:gmail:$identity") { AccountPermissionsViewModel(container, "gmail", identity) }, authenticator, true, { app.back() }, done, {}, another)
+            })
+        Route.Permissions -> PermissionsHomeScreen(container, authenticator, { app.back() }, { service, account -> app.open(Route.AccountPermissions(service, account)) })
+        is Route.AccountPermissions -> AccountPermissionsScreen(
+            viewModel(key = "permissions:${state.accountEpoch.value}:${route.service}:${route.account}:${route.temporary}") { AccountPermissionsViewModel(container, route.service, route.account, route.temporary) },
+            authenticator, false, { app.back() }, { app.back() }, { app.open(Route.AccountPermissions(route.service, route.account, true)) },
+        )
         Route.Payments -> PaymentsScreen(
             viewModel(key = "payments") { PaymentsViewModel(container) },
             state,

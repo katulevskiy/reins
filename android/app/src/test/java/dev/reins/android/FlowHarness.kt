@@ -62,6 +62,7 @@ abstract class FlowHarness {
         Foreground.autoPopup = true
         // Robolectric has no screen lock; the tests that need none set it.
         dev.reins.android.platform.ScreenLock.check = { true }
+        core.permissionViews.clear(); core.savedPermissionDrafts.clear(); core.delegationRecords.clear(); core.permissionFailure = null; core.permissionSaveGate = null; core.permissionSaveCalls.set(0); core.permissionScopeGates.clear(); core.permissionScopeOverride = null
         core.session = SessionInfo("http://127.0.0.1:8000", "me@example.com")
         core.loginError = null
         core.pending = emptyList()

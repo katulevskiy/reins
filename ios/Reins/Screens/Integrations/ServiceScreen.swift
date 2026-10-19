@@ -23,7 +23,9 @@ struct AccountsScreen: View {
         Group {
             if let accounts {
                 if let service = accounts.view {
-                    content(service, accounts)
+                    if let identity = accounts.connectedAccount {
+                        AccountPermissionsScreen(service: serviceId, account: identity, finishing: true, onDone: { accounts.dismissConnection(); model.back() }, onAnother: service.kind == "device" || service.kind == "vault" ? nil : { accounts.dismissConnection() })
+                    } else { content(service, accounts) }
                 } else {
                     EmptyState(symbol: "puzzlepiece.extension", title: "Integration", message: "This integration is not available.")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -83,6 +85,8 @@ struct AccountsScreen: View {
                         onRemove: { removing = account.account }
                     )
                     .accessibilityIdentifier("account:\(account.account)")
+                    ActionButton(title: "Account permissions", kind: .secondary, lineLimit: nil) { model.show(.accountPermissions(service: serviceId, account: account.account, temporary: false)) }
+                        .accessibilityIdentifier("accountPermissions:\(account.account)")
                 }
             } header: {
                 GroupHeading("Accounts")

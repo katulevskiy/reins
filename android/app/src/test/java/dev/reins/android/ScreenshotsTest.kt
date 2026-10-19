@@ -68,6 +68,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         Timers.frozenNowMillis = now * 1000
         Foreground.focused = false
         Foreground.autoPopup = false
+        core.permissionViews.clear(); core.savedPermissionDrafts.clear(); core.delegationRecords.clear(); core.permissionFailure = null; core.permissionSaveGate = null; core.permissionSaveCalls.set(0); core.permissionScopeGates.clear(); core.permissionScopeOverride = null
         core.session = SessionInfo("https://app.reins2fa.com", "me@example.com")
         core.pending = emptyList()
         core.startingPolicy = null
@@ -209,7 +210,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("service:gmail")
         val app = (context.applicationContext as ReinsApp).container
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
-        await("integrationConnected")
+        await("permissionPreset:REVIEW_EVERY_REQUEST")
         shoot("integration-account-connected")
     }
 
@@ -227,13 +228,46 @@ abstract class ScreenshotsBase(private val suffix: String) {
             tap("service:gmail")
             val app = (context.applicationContext as ReinsApp).container
             kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
-            await("integrationConnected")
+            await("permissionPreset:REVIEW_EVERY_REQUEST")
             shoot("integration-account-connected-large-text")
             tap("connectionDone")
             await("service:gmail")
         } finally {
             resources.updateConfiguration(previous, resources.displayMetrics)
         }
+    }
+
+
+    @Test
+    fun permissionChangesReview() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        tap("permissionPreset:READ_ASSIST"); tap("permissionAgent:c2"); tap("permissionsPreview")
+        await("permissionPreviewSummary")
+        shoot("permissions-review")
+    }
+
+    @Test
+    fun temporaryPermissionControls() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        kotlinx.coroutines.runBlocking {
+            val draft = core.delegationDraft("gmail", "me@gmail.com")
+            core.issueDelegation(draft, object : dev.reins.core.OwnerCheck { override suspend fun confirm(reason: String) = true })
+        }
+        launch(); tap("tabTrust"); tap("trustPermissions")
+        await("delegation:temporary-0")
+        rule.onNodeWithTag("delegation:temporary-0").performScrollTo()
+        shoot("permissions-temporary")
+    }
+
+    @Test
+    fun unsupportedAccountPermissions() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        launch(); tap("tabConnections"); tap("service:github")
+        val app = (context.applicationContext as ReinsApp).container
+        kotlinx.coroutines.runBlocking { app.state.accountConnected(dev.reins.core.AccountView("github", "octo-cat", now), app.state.accountEpoch.value) }
+        await("permissionsReadOnly")
+        shoot("permissions-unsupported-account")
     }
 
     @Test
