@@ -1777,7 +1777,7 @@ async fn pair_as(env: &Env, id: &str, connection: &str) {
 #[tokio::test]
 async fn a_new_ai_asks_for_everything_until_the_starting_rule_says_otherwise() {
     let env = env().await;
-    env.core.engine().register_account("gmail", "me@gmail.com").unwrap();
+    env.core.add_account("me@gmail.com".into()).await.unwrap();
     assert_eq!(env.core.starting_policy().await.unwrap(), None, "not chosen yet: asks every time");
     pair_as(&env, "p1", "c8").await;
     assert!(env.core.grants().await.unwrap().is_empty(), "nothing is given without the user's choice");
@@ -1790,7 +1790,7 @@ async fn a_new_ai_asks_for_everything_until_the_starting_rule_says_otherwise() {
 #[tokio::test]
 async fn headlines_for_its_first_hour_show_who_what_and_when_but_opening_anything_asks() {
     let env = env().await;
-    env.core.engine().register_account("gmail", "me@gmail.com").unwrap();
+    env.core.add_account("me@gmail.com".into()).await.unwrap();
     env.core.engine().register_account("telegram", "+15550100").unwrap();
     env.core.engine().register_account("vault", "me@example.com").unwrap();
     env.core.set_starting_policy(StartingPolicy::HeadlinesFirstHour).await.unwrap();

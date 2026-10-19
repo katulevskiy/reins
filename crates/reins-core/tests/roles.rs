@@ -2501,3 +2501,62 @@ async fn gmail_success_is_withheld_when_policy_changes_during_positive_or_owner_
         }
     }
 }
+
+struct PausedPermissionOwner {
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+#[async_trait::async_trait]
+impl reins_core::OwnerCheck for PausedPermissionOwner {
+    async fn confirm(&self, _reason: String) -> Result<bool, reins_core::ForeignError> {
+        self.started.notify_one();
+        self.release.notified().await;
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn revoking_an_agent_during_owner_confirmation_cannot_recreate_account_or_delegation_authority() {
+    for delegation in [false, true] {
+        let mut world = world().await;
+        let gmail = MockServer::start().await;
+        let core = permission_phone(&mut world, &gmail).await;
+        core.roster_create("Phone".into(), Some(PASSWORD.into())).await.unwrap();
+        Mock::given(method("DELETE"))
+            .and(path("/reins/api/connections/c1"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&world.server)
+            .await;
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let owner = Arc::new(PausedPermissionOwner {
+            started: started.clone(),
+            release: release.clone(),
+        });
+        let pending = if delegation {
+            let mut draft = core.delegation_draft("gmail".into(), EMAIL.into()).await.unwrap();
+            draft.agent_ids = vec!["c1".into()];
+            draft.grant_account_access = true;
+            let saving = core.clone();
+            tokio::spawn(async move { saving.issue_delegation(draft, owner).await.map(|_| ()) })
+        } else {
+            let mut draft = core
+                .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReadAssist)
+                .await
+                .unwrap();
+            draft.agent_ids = vec!["c1".into()];
+            draft.grant_account_access = true;
+            let saving = core.clone();
+            tokio::spawn(async move { saving.save_account_permissions(draft, owner).await.map(|_| ()) })
+        };
+        started.notified().await;
+        core.revoke_connection("c1".into()).await.unwrap();
+        release.notify_one();
+        assert!(pending.await.unwrap().is_err(), "late owner confirmation must fail after connection revocation");
+        assert!(core.grants().await.unwrap().iter().all(|grant| grant.connection_id != "c1"));
+        assert!(core.delegations().await.unwrap().is_empty());
+        core.engine().process_relayed(permission_send("revoked", &["friend@example.com"])).await.unwrap();
+        assert!(!core.pending().await.unwrap().iter().any(|pending| pending.id == "revoked"));
+        assert_eq!(sent_count(&gmail).await, 0);
+    }
+}

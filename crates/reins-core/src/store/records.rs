@@ -674,7 +674,7 @@ impl Store {
             return Err(bad("this installation's own setting"));
         }
         let local = Json::Array(vec![Json::String(store_key.clone())]).to_string();
-        if key.starts_with(super::permissions::RECEIPT_PREFIX) {
+        if super::permissions::retained_metadata_key(key) {
             let previous: Option<String> =
                 conn.query_row("SELECT value FROM meta WHERE key=?1", [&store_key], |r| r.get(0)).optional()?;
             let previous = previous.as_deref().map(|raw| serde_json::from_str(raw).unwrap_or(Json::Null));
