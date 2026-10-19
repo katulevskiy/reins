@@ -22,9 +22,39 @@ final class SoundsScreenUITests: XCTestCase {
 
     private func toggle(_ id: String) -> XCUIElement { app.switches[id].firstMatch }
 
-    /// Taps the switch itself (the row's trailing edge): a tap in the middle of a SwiftUI toggle row lands on its label.
-    private func flip(_ id: String) {
-        toggle(id).coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+    /// Taps the switch itself (the row's trailing edge): a tap in the middle lands on its label.
+    /// A lazy List can report an offscreen switch with an infinite frame. Scroll until its
+    /// actual tap point is visible, then anchor to the app so XCTest cannot resolve it again
+    /// to an infinite element-relative coordinate while synthesizing the event.
+    private func flip(_ id: String, towardTop: Bool = false) {
+        let screen = app.frame
+        let navigation = app.navigationBars.firstMatch
+        let top = navigation.exists ? max(screen.minY + 1, navigation.frame.maxY) : screen.minY + 1
+        let visible = CGRect(x: screen.minX + 1, y: top, width: screen.width - 2,
+                             height: max(0, screen.maxY - 34 - top))
+        var lastFrame = CGRect.zero
+        for attempt in 0...8 {
+            let control = toggle(id)
+            lastFrame = .zero
+            if control.exists {
+                lastFrame = control.frame
+                let point = CGPoint(x: lastFrame.minX + lastFrame.width * 0.93, y: lastFrame.midY)
+                if lastFrame.width > 1, lastFrame.height > 1,
+                   point.x.isFinite, point.y.isFinite, visible.contains(point) {
+                    app.coordinate(withNormalizedOffset: .zero)
+                        .withOffset(CGVector(dx: point.x - screen.minX, dy: point.y - screen.minY)).tap()
+                    return
+                }
+            }
+            guard attempt < 8 else { break }
+            let down = lastFrame.midY.isFinite && lastFrame.height > 1
+                ? lastFrame.midY < visible.minY : towardTop
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.3 : 0.75))
+                .press(forDuration: 0.05,
+                       thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.75 : 0.3)),
+                       withVelocity: XCUIGestureVelocity(rawValue: 300), thenHoldForDuration: 0.4)
+        }
+        XCTFail("\(id) has no finite visible switch point (frame \(lastFrame), viewport \(visible))")
     }
 
     /// The volume reads a whole tenth, one step from `percent` at most: `adjust(toNormalizedSliderPosition:)` drags to
@@ -62,11 +92,7 @@ final class SoundsScreenUITests: XCTestCase {
         app.swipeUp()
         app.buttons["try:Slider"].firstMatch.tap()
         shot("sounds-bottom")
-        app.swipeDown()
-        app.swipeDown()
-        app.swipeDown()
-
-        flip("soundsMaster")
+        flip("soundsMaster", towardTop: true)
         XCTAssertFalse(toggle("haptics").isEnabled, "the master turns everything off")
         flip("soundsMaster")
         XCTAssertTrue(toggle("haptics").isEnabled)

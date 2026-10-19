@@ -371,9 +371,11 @@ final class ActivityFlowTests: XCTestCase {
         start.press(
             forDuration: 0.02, thenDragTo: end,
             // Positioning is not the scroll regression: a fast nudge can coast several times its travel even
-            // with a hold at the end. Take about a second, slowing further as the correction gets smaller.
-            withVelocity: XCUIGestureVelocity(rawValue: max(1, abs(dy))), thenHoldForDuration: 0.5
+            // with a hold at the end. Slow positioning still needs to clear pan slop before a card's context
+            // menu recognises a long press: never crawl below 80 points/second for the final correction.
+            withVelocity: XCUIGestureVelocity(rawValue: max(80, abs(dy))), thenHoldForDuration: 0.5
         )
+        XCTAssertFalse(app.menuItems.firstMatch.exists, "centering did not open a context menu")
     }
 
     /// Scrolls until `row`'s centre is in the middle of the open list, not merely hittable.
@@ -391,7 +393,10 @@ final class ActivityFlowTests: XCTestCase {
             if abs(delta) <= 36, band.contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { return }
             let before = row.frame.midY
             // Correct half the measured error so residual glide cannot bounce indefinitely across the centre.
-            let correction = max(-160, min(160, -delta * 0.5))
+            // A sub-20-point drag can remain within the context menu's movement allowance. Commit to a pan
+            // even for the last correction; 32 points is still smaller than the 36-point centering window.
+            let distance = min(160, max(32, abs(delta) * 0.5))
+            let correction = delta > 0 ? -distance : distance
             nudge(app, dy: correction, avoiding: row)
             settle(row)
             let after = row.frame.midY

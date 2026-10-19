@@ -30,6 +30,7 @@ struct SettingsScreen: View {
             #endif
         }
         .reinsGrouped()
+        .accessibilityIdentifier("settingsList")
         .navigationTitle("Settings")
         .rootNavigationBar()
         .refreshable {
