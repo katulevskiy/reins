@@ -4,6 +4,7 @@
 //! send, from grants the user created on their phone. Pure and IO-free.
 //! Every check fails closed: malformed or unknown data never grants access.
 
+pub mod authorization;
 mod evaluate;
 mod grant;
 pub mod guard;
