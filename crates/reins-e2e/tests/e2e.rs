@@ -69,7 +69,7 @@ async fn connected_with_gmail(relay_wait: u64, offline: u64, existing: bool) -> 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn new_gmail_reviews_legacy_grants_until_an_explicit_scoped_permission_is_saved() {
+async fn new_gmail_uses_explicit_scoped_permissions_instead_of_ineffective_legacy_remember() {
     let (server, phone, ai) = connected(20, 8).await;
     phone.stock_gmail(&[("m1", "Bank <alerts@bank.com>"), ("m2", "Spam <x@spam.example>")]).await;
 
@@ -81,6 +81,7 @@ async fn new_gmail_reviews_legacy_grants_until_an_explicit_scoped_permission_is_
         assert_eq!(item.title, "My Claude wants to search your Gmail");
         let view = phone.core.approval_view(item.id.clone()).await.unwrap();
         assert_eq!((view.kind, view.messages.len()), (ApprovalKind::Search, 2));
+        assert!(view.no_standing, "managed mail uses typed permission setup rather than legacy Remember");
         let mut only_bank = scope();
         only_bank.sender_domains = vec!["bank.com".to_owned()];
         let standing = StandingGrant {
@@ -88,8 +89,11 @@ async fn new_gmail_reviews_legacy_grants_until_an_explicit_scoped_permission_is_
             max_uses: None,
             scope: only_bank,
         };
-        // The user shares just the bank message and allows the bank from now on.
-        phone.core.approve(item.id, pick(&["m1"], Some(standing))).await.unwrap();
+        // A stale client cannot create a misleading legacy Remember grant for this managed account.
+        let error = phone.core.approve(item.id.clone(), pick(&["m1"], Some(standing))).await.unwrap_err();
+        assert!(error.to_string().contains("Use account permissions or temporary permissions"), "{error}");
+        // One-off approval remains usable and releases only the message actually selected.
+        phone.core.approve(item.id, pick(&["m1"], None)).await.unwrap();
     };
     let (result, ()) = tokio::join!(search, user);
     assert_eq!(result["isError"], false, "{result}");
@@ -97,7 +101,17 @@ async fn new_gmail_reviews_legacy_grants_until_an_explicit_scoped_permission_is_
         result["structuredContent"]["messages"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["m1"], "the unapproved message never left the phone");
 
-    // The newly connected account's Review baseline still wins over old Remember grants.
+    // The agent is directed to typed settings without asking for an ineffective legacy grant.
+    let narrow =
+        json!({"action":"read", "duration_seconds":1800, "reason":"Summarise bank statements", "from":["@bank.com"]});
+    let request = ai.tool("reins_request_access", &narrow);
+    let app_open = async { phone.core.sync(10).await.unwrap() };
+    let (rejected, pending) = tokio::join!(request, app_open);
+    assert_eq!(rejected["isError"], true, "{rejected}");
+    assert!(rejected.to_string().contains("Use account permissions or temporary permissions"), "{rejected}");
+    assert!(pending.is_empty(), "unsupported legacy grant never asks the owner");
+
+    // One-off approval leaves the newly connected account's Review baseline intact.
     phone.gmail.reset().await;
     phone.stock_gmail(&[("m1", "Bank <alerts@bank.com>")]).await;
     let query = json!({"query": "from:bank"});
@@ -108,7 +122,7 @@ async fn new_gmail_reviews_legacy_grants_until_an_explicit_scoped_permission_is_
     };
     let (again, ()) = tokio::join!(again, review);
     assert_eq!(again["isError"], false, "{again}");
-    assert_eq!(phone.core.grants().await.unwrap().len(), 1, "legacy grant remains stored but cannot bypass Review");
+    assert!(phone.core.grants().await.unwrap().is_empty(), "ineffective legacy authority was never installed");
 
     // Explicit deterministic permissions have separate account admission, a verified primary and bounded usage.
     phone.core.roster_create("Primary phone".into(), Some(reins_e2e::PASSWORD.into())).await.unwrap();
