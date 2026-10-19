@@ -1313,6 +1313,50 @@ abstract class ScreenshotsBase(private val suffix: String) {
         shoot("polish-entry-commit-diff")
     }
 
+    /** The paper history header: a recorded long command, a denial, and an older automatic decision. */
+    @Test
+    fun historyCommand() {
+        val command = "JAVA_HOME=/opt/jdk ANDROID_HOME=/opt/android ./gradlew :app:assembleDebug --no-daemon --console=plain " +
+            (1..8).joinToString(" ") { "-Pbuild.option$it=development-value-$it" }
+        core.activity = listOf(TestData.entry(7, "write", service = "desktop", op = "ask", at = now - 120,
+            label = TestData.label("terminal", "run", "Run", command, code = true),
+            request = TestData.asked(command, "Build the Android app", "Claude Code", "/home/dana/dev/reins", askedAt = now - 129)).copy(connectionLabel = "M2A", account = null))
+        core.entryApprovals[7L] = TestData.askView(detail = "Command:\n$command\n\nIn: /home/dana/dev/reins", topic = null)
+            .copy(waitUntil = null)
+        launch()
+        tap("entry:7")
+        await("entryHero")
+        frames()
+        shoot("history-command")
+        rule.onNodeWithTag("fullRequest").performScrollTo()
+        frames()
+        shoot("history-command-full")
+    }
+
+    @Test
+    fun historyLegacyAuto() {
+        core.activity = listOf(TestData.entry(7, "write", at = now - 120, service = "github", op = "git_push",
+            label = TestData.label("github", "push", "Push 3 commits to", "katulevskiy/reins"),
+            decidedBy = "autopilot", autopilot = TestData.note(risk = TestData.risk(dev.reins.core.RiskLevel.BENIGN, why = "A new branch in your repository"))).copy(account = "katulevskiy"))
+        launch()
+        tap("entry:7")
+        await("entryHero")
+        frames()
+        shoot("history-legacy-auto")
+    }
+
+    @Test
+    fun historyDenied() {
+        core.activity = listOf(reportedPush().copy(outcome = "denied", decidedBy = "autopilot",
+            autopilot = TestData.note(suggested = dev.reins.core.Verdict.DENY, pApprove = 0.09f)))
+        core.entryApprovals[7L] = reportedPushView()
+        launch()
+        tap("entry:7")
+        await("entryHero")
+        frames()
+        shoot("history-denied")
+    }
+
     /** The push the user reported: 3 commits to a new branch, allowed during a bypass, as Activity shows it. */
     private fun reportedPush(): dev.reins.core.ActivityEntry {
         val full = """

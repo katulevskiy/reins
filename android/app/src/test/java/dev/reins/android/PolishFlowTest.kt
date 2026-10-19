@@ -120,7 +120,7 @@ class PolishFlowTest : FlowHarness() {
         awaitTag("commitSubject")
         pressBack()
         pressBack()
-        awaitTag("hero")
+        awaitTag("entryHero")
         // No decision dock: "This was wrong" is where it was, then what was asked.
         assertFalse(has("dock"))
         assertFalse(has("approve"))

@@ -67,7 +67,7 @@ internal fun MainPage(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalVie
     val nav = LocalApprovalNav.current
     Column(Modifier.fillMaxWidth().padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // The risk's reason, when the field had room only for its word.
-        val risk = (LocalApprovalRecord.current?.risk ?: ui.suggestion?.risk)?.takeIf { nav.riskInFacts }
+        val risk = ui.suggestion?.risk?.takeIf { LocalApprovalRecord.current == null && nav.riskInFacts }
         if (risk != null) {
             FactGroup(tag = "riskFact", rows = listOf({ FactRow("Risk", untrusted(risk.why).ifBlank { AutopilotText.riskWord(risk.level) }, valueTag = "riskWhy", maxLines = Int.MAX_VALUE) }))
         }

@@ -117,7 +117,7 @@ fun riskTint(level: RiskLevel, c: RColors): Color = when (level) {
  * "Held by Overnight" with the moon. Nothing at all without a risk.
  */
 @Composable
-fun RiskChip(risk: RiskView?, modifier: Modifier = Modifier, small: Boolean = false) {
+fun RiskChip(risk: RiskView?, modifier: Modifier = Modifier, small: Boolean = false, maxLines: Int = 1) {
     risk ?: return
     val c = LocalColors.current
     val tint = riskTint(risk.level, c)
@@ -132,7 +132,7 @@ fun RiskChip(risk: RiskView?, modifier: Modifier = Modifier, small: Boolean = fa
         ) {
             androidx.compose.material3.Icon(Icons.Rounded.Speed, null, Modifier.size(if (small) 12.dp else 15.dp), tint = tint)
             Spacer(Modifier.width(if (small) 4.dp else 6.dp))
-            RText(AutopilotText.riskLine(risk), RType.sans(if (small) 11.5f else 13f, FontWeight.SemiBold), tint, Modifier.testTag("riskLine"), maxLines = 1)
+            RText(AutopilotText.riskLine(risk), RType.sans(if (small) 11.5f else 13f, FontWeight.SemiBold), tint, Modifier.testTag("riskLine"), maxLines = maxLines)
         }
         AutopilotText.heldLine(risk)?.let { held ->
             Row(Modifier.padding(start = 2.dp).semantics(mergeDescendants = true) {}.testTag("riskHeld"), verticalAlignment = Alignment.CenterVertically) {
