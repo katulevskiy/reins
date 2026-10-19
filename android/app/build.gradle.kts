@@ -37,7 +37,8 @@ android {
         // reads the default versionName from the line below; keep its shape.
         versionCode = providers.gradleProperty("reins.versionCode").map(String::toInt).getOrElse(1)
         versionName = providers.gradleProperty("reins.versionName").getOrElse("0.1.0")
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = providers.gradleProperty("reins.testRunner")
+            .getOrElse("androidx.test.runner.AndroidJUnitRunner")
         // Shown next to the version in Settings ("0.1.0-202610010115-a9643bcb" for releases, "dev" for local builds).
         val buildId = providers.gradleProperty("reins.build").getOrElse("dev")
         buildConfigField("String", "BUILD_ID", "\"$buildId\"")
@@ -139,9 +140,13 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Require an explicit production identity for distribution. Debug signing is for debug builds only.
-            // The variant hooks below install the full-release or Play-upload signing config when supplied.
-            signingConfig = null
+            if (providers.gradleProperty("reins.testBuildType").orNull == "release") {
+                // The runner injects its core before Application.onCreate; keep only its entry points.
+                proguardFiles("proguard-test-rules.pro")
+            }
+            // Explicit full-release credentials also sign instrumentation APKs when testing the minified build.
+            // With no credentials, release APKs remain unsigned. Play's variant hook selects its upload key below.
+            signingConfig = signingConfigs.findByName("release")
             testProguardFiles("proguard-test-rules.pro")
         }
     }
@@ -150,6 +155,10 @@ android {
         compose = true
         buildConfig = true
     }
+
+    // Use the same core fixtures for JVM flows and device tests of the R8-optimized UI.
+    sourceSets.getByName("test").kotlin.directories += "src/sharedTest/java"
+    sourceSets.getByName("androidTest").kotlin.directories += "src/sharedTest/java"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
@@ -382,6 +391,7 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.espresso.core)
+    androidTestImplementation(libs.androidx.uiautomator)
     androidTestImplementation(libs.coroutines.test)
     debugImplementation(libs.compose.ui.test.manifest)
 }

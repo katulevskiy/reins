@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.DontMemoize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -122,10 +123,10 @@ fun TrustScreen(
                     AutopilotModes(
                         s,
                         AutopilotText.modelUsable(model),
-                        onPick = { mode -> if (mode != s.mode) autopilot.setMode(mode) },
+                        onPick = @DontMemoize { mode -> if (mode != s.mode) autopilot.setMode(mode) },
                         onBypass = { sheets.bypass = true },
                         onOvernight = { sheets.overnight = true },
-                        onLockdown = { autopilot.setMode(AutopilotMode.LOCKDOWN) },
+                        onLockdown = @DontMemoize { autopilot.setMode(AutopilotMode.LOCKDOWN) },
                     )
                     AutopilotWeek(autopilot, s)
                 }
@@ -146,8 +147,8 @@ fun TrustScreen(
                 s,
                 fold,
                 scrolled = { scroll.value },
-                onStop = { kind -> if (kind == TimedKind.Bypass) autopilot.stopBypass() else autopilot.stopOvernight() },
-                onEndLockdown = { autopilot.endLockdown(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL, authenticator) },
+                onStop = @DontMemoize { kind -> if (kind == TimedKind.Bypass) autopilot.stopBypass() else autopilot.stopOvernight() },
+                onEndLockdown = @DontMemoize { autopilot.endLockdown(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL, authenticator) },
             )
         }
         AutopilotSheets(autopilot, sheets, authenticator, onProfile)

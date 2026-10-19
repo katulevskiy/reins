@@ -405,6 +405,72 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  android-release-smoke:
+    name: Android minified Trust smoke test
+    needs: [changes, android-native]
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: android-debug-native-*
+          merge-multiple: true
+          path: native
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Create a test-only signing key
+        run: |
+          keytool -genkeypair -keystore "$RUNNER_TEMP/trust-test.keystore" -storepass android \
+            -alias androiddebugkey -keypass android -dname "CN=Android Test" -keyalg RSA -validity 2
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: >-
+            cd android && ./gradlew --no-daemon --console=plain --no-configuration-cache connectedFullReleaseAndroidTest
+            -Preins.prebuiltNativeDir="$GITHUB_WORKSPACE/native"
+            -Preins.testBuildType=release -Preins.secureScreens=false
+            -Preins.testRunner=dev.reins.android.TrustTestRunner
+            -Preins.releaseKeystore="$RUNNER_TEMP/trust-test.keystore"
+            -Preins.releaseKeystorePassword=android -Preins.releaseKeyAlias=androiddebugkey
+            -Pandroid.testInstrumentationRunnerArguments.class=dev.reins.android.TrustReleaseTest
+      - name: Require the regression test to execute
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = Path("android/app/build/outputs/androidTest-results/connected/release")
+          cases = [case for path in reports.rglob("TEST-*.xml") for case in ET.parse(path).iter("testcase")]
+          trust = [case for case in cases if case.get("classname") == "dev.reins.android.TrustReleaseTest"]
+          assert trust, "Trust regression never ran (the instrumentation process may have crashed before test discovery)"
+          assert all(case.find("failure") is None and case.find("error") is None and case.find("skipped") is None for case in trust)
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-trust-release-test-reports
+          path: |
+            android/app/build/reports/androidTests/
+            android/app/build/outputs/androidTest-results/
+            android/app/build/outputs/mapping/fullRelease/mapping.txt
+
   android:
     name: Android ${{ matrix.lane }}
     needs: [changes, android-native]

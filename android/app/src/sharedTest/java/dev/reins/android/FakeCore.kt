@@ -1081,6 +1081,7 @@ class FakeCore : ReinsCoreInterface {
     private fun now(): Long = (dev.reins.android.design.Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000
 
     fun resetAutopilot() {
+        profilesGate = null
         apGlobal = ApRow()
         apConnections.clear()
         model = TestData.modelStatus()
@@ -1241,7 +1242,11 @@ class FakeCore : ReinsCoreInterface {
         this.wifiOnly = wifiOnly
     }
 
-    override suspend fun autopilotProfiles() = profiles
+    @Volatile var profilesGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun autopilotProfiles(): List<ProfileView> {
+        profilesGate?.await()
+        return profiles
+    }
 
     override suspend fun createProfile(name: String, icon: String?): ProfileView {
         profileCalls += "create:$name"
