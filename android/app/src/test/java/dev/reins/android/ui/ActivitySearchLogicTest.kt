@@ -111,8 +111,8 @@ class ActivitySearchLogicTest {
     fun aDaySaysItsCountAndWhatWentWrong() {
         assertEquals("14", daySummary(DayCount(1, 14)))
         assertEquals("14 · 2 denied", daySummary(DayCount(1, 14, denied = 2)))
-        assertEquals("14 · 2 denied · 1 failed", daySummary(DayCount(1, 14, denied = 2, failed = 1)))
-        assertEquals("3 · 1 failed", daySummary(DayCount(1, 3, failed = 1)))
+        assertEquals("14 · 2 denied · 1 needs attention", daySummary(DayCount(1, 14, denied = 2, failed = 1)))
+        assertEquals("3 · 1 needs attention", daySummary(DayCount(1, 3, failed = 1)))
     }
 
     @Test

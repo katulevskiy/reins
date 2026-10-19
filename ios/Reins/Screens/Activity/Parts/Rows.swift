@@ -50,6 +50,9 @@ struct OutcomeTag: View {
         switch outcome {
         case "denied": OutcomePill(text: "Denied", tone: .bad)
         case "error": TintTag(text: "Failed", tint: Palette.warning)
+        case "started": TintTag(text: "Awaiting outcome", tint: Palette.warning)
+        case "unknown": TintTag(text: "Outcome unknown", tint: Palette.warning)
+        case "succeeded_withheld": TintTag(text: "Response withheld", tint: Palette.warning)
         case "granted": OutcomePill(text: "Granted", tone: .accent)
         case "sent": OutcomePill(text: "Sent")
         case "released": OutcomePill(text: "Allowed")
@@ -61,6 +64,9 @@ struct OutcomeTag: View {
         switch outcome {
         case "denied": "Denied"
         case "error": "Failed"
+        case "started": "Awaiting outcome"
+        case "unknown": "Outcome unknown"
+        case "succeeded_withheld": "Completed; response withheld"
         case "granted": "Granted"
         case "sent": "Sent"
         case "released": "Allowed"
@@ -81,9 +87,16 @@ enum EntryText {
     }
 
     /// How an entry ended, as the history row's trailing mark.
-    enum Mark: Equatable { case approved, denied, failed, auto, grant, overnight, bypass, lockdown }
+    enum Mark: Equatable { case approved, denied, failed, auto, grant, overnight, bypass, lockdown, started, unknown, withheld }
 
     static func mark(_ entry: ActivityEntry) -> Mark {
+        switch entry.outcome {
+        case "started": return .started
+        case "unknown": return .unknown
+        case "succeeded_withheld": return .withheld
+        case "error": return .failed
+        default: break
+        }
         switch entry.decidedBy {
         case "autopilot": return .auto
         case "overnight": return .overnight
@@ -156,6 +169,9 @@ struct EntryMark: View {
             case .grant: GlyphIcon(.key, size: 17).foregroundStyle(Palette.violet)
             case .denied: word("Denied", Palette.danger)
             case .failed: word("Failed", Palette.warning)
+            case .started: word("Awaiting outcome", Palette.warning)
+            case .unknown: word("Outcome unknown", Palette.warning)
+            case .withheld: word("Response withheld", Palette.warning)
             case .auto: word("Auto", Palette.violet)
             case .overnight: word(AutopilotText.overnightName, Palette.violet)
             case .bypass: word("Bypass", Palette.danger)
@@ -177,6 +193,9 @@ struct EntryMark: View {
         case .grant: "Under a grant"
         case .denied: "Denied"
         case .failed: "Failed"
+        case .started: "Awaiting outcome"
+        case .unknown: "Outcome unknown; do not repeat"
+        case .withheld: "Completed; response withheld; do not repeat"
         case .auto: "Decided by Autopilot"
         case .overnight: "Decided during \(AutopilotText.overnightName)"
         case .bypass: "Approved by a bypass"

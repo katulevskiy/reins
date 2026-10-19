@@ -60,7 +60,7 @@ private fun countDays(items: List<Pair<Long, ActivityOutcome>>): List<DayCount> 
 /** An entry's outcome as the core's filters read it. */
 fun outcomeKind(outcome: String): ActivityOutcome = when (outcome) {
     "denied" -> ActivityOutcome.DENIED
-    "error" -> ActivityOutcome.FAILED
+    "error", "started", "unknown", "succeeded_withheld" -> ActivityOutcome.FAILED
     else -> ActivityOutcome.APPROVED
 }
 
@@ -76,14 +76,14 @@ fun deciderKind(decidedBy: String): ActivityDecider = when (decidedBy) {
 fun daySummary(d: DayCount): String = buildString {
     append(d.count)
     if (d.denied > 0) append(" · ${d.denied} denied")
-    if (d.failed > 0) append(" · ${d.failed} failed")
+    if (d.failed > 0) append(" · ${d.failed} ${if (d.failed == 1) "needs" else "need"} attention")
 }
 
 /** What a day's header says it holds, for a screen reader: "14 entries, 2 denied". */
 fun daySpoken(d: DayCount): String = buildString {
     append(if (d.count == 1) "1 entry" else "${d.count} entries")
     if (d.denied > 0) append(", ${d.denied} denied")
-    if (d.failed > 0) append(", ${d.failed} failed")
+    if (d.failed > 0) append(", ${d.failed} ${if (d.failed == 1) "needs" else "need"} attention")
 }
 
 /** "Today", "Yesterday", else the date ("Mon, 3 Mar"; "3 Mar 2025" in another year). */
@@ -132,7 +132,7 @@ fun <T> Set<T>.toggled(value: T): Set<T> = if (value in this) this - value else 
 fun outcomeName(o: ActivityOutcome): String = when (o) {
     ActivityOutcome.APPROVED -> "Approved"
     ActivityOutcome.DENIED -> "Denied"
-    ActivityOutcome.FAILED -> "Failed"
+    ActivityOutcome.FAILED -> "Needs attention"
 }
 
 /** Who decided, in the filter's words. */
