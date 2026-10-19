@@ -76,6 +76,10 @@ impl FakeTelegram {
 
 #[async_trait::async_trait]
 impl Connector for FakeTelegram {
+    async fn fetch_headers(&self, _account: &str) -> Result<Vec<(String, String)>, CoreError> {
+        Ok(vec![("Authorization".into(), "Bearer PRIVATE-FETCH-CREDENTIAL".into())])
+    }
+
     fn service(&self) -> &'static str {
         "telegram"
     }
