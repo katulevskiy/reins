@@ -55,6 +55,8 @@ pub mod contexts {
     pub const OP_BODY: &str = "reins/op-body/v1";
     /// A viewer's request to become primary, signed by its device key ([`crate::roster::HandoverSignature`]).
     pub const HANDOVER_REQUEST: &str = "reins/handover-request/v1";
+    /// A viewer's supported policy versions, independently bound to its exact handover request.
+    pub const HANDOVER_POLICY_SUPPORT: &str = "reins/handover-policy-support/v1";
 }
 
 /// Writes one canonical message. Start with [`Canon::new`] and its context, add the fields in their documented order,
@@ -279,6 +281,7 @@ mod tests {
             contexts::ENROLL_PROOF_KEY,
             contexts::OP_BODY,
             contexts::HANDOVER_REQUEST,
+            contexts::HANDOVER_POLICY_SUPPORT,
         ];
         let set: std::collections::BTreeSet<_> = all.iter().collect();
         assert_eq!(set.len(), all.len());

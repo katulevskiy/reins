@@ -908,6 +908,35 @@ async fn a_signed_handover_request_is_kept_and_a_badly_signed_one_refused() {
 }
 
 #[tokio::test]
+async fn handover_policy_support_is_verified_and_forwarded_without_changing_legacy_signatures() {
+    let mut acct = Account::new("jon@example.com").await;
+    let viewer = acct.server.second_device("jon@example.com").await;
+    let key = keys(2);
+    acct.enroll(&viewer, &key, "Pixel").await;
+    let epoch = acct.current().epoch;
+    let nonce = encode_payload(&[6; 32]);
+    let now = chrono_now();
+    let legacy =
+        reins_proto::roster::handover_request_message(&acct.user, epoch, &viewer.device_id, &nonce, now).unwrap();
+    let proof =
+        reins_proto::roster::handover_policy_support_message(&acct.user, epoch, &viewer.device_id, &nonce, now, &[1])
+            .unwrap();
+    let body = json!({"v":1,"signed":{"epoch":epoch,"nonce":nonce,"at":now,"sig":sig(&key.sign,&legacy),"policy_enforcement":{"authorization_versions":[1],"sig":sig(&key.sign,&proof)}}});
+    let mut bad = body.clone();
+    bad["signed"]["policy_enforcement"]["authorization_versions"] = json!([2]);
+    let (status, refused) = viewer.post("/handovers", &bad).await;
+    assert_eq!((status, error(&refused)), (StatusCode::FORBIDDEN, "bad_signature"));
+    let mut bad = body.clone();
+    bad["signed"]["policy_enforcement"]["sig"] = body["signed"]["sig"].clone();
+    let (status, refused) = viewer.post("/handovers", &bad).await;
+    assert_eq!((status, error(&refused)), (StatusCode::FORBIDDEN, "bad_signature"));
+    let (status, created) = viewer.post("/handovers", &body).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let (_, pending) = acct.primary.get("/pending?wait=0").await;
+    assert_eq!(pending["handovers"][0]["signed"]["policy_enforcement"], body["signed"]["policy_enforcement"]);
+}
+
+#[tokio::test]
 async fn a_roster_is_created_only_with_the_password_and_proofs_are_counted_per_device() {
     let options = Options {
         env: vec![("REINS_DEVICE_PROOF_MAX_FAILURES", "3".to_owned())],

@@ -939,6 +939,45 @@ async fn a_handover_request_the_server_made_up_or_pointed_elsewhere_is_refused()
 }
 
 #[tokio::test]
+async fn managed_handover_requires_the_viewers_signed_policy_support_before_keys_move() {
+    let mut w = world().await;
+    let gmail = MockServer::start().await;
+    let a = permission_phone(&mut w, &gmail).await;
+    a.roster_create("iPhone".into(), Some(PASSWORD.into())).await.unwrap();
+    let b = w.phone().await;
+    enroll(&a, &b, "Pixel").await;
+    let device = device_of(&b).await;
+    let id = b.handover_request().await.unwrap();
+    // An old viewer or old server cannot supply/retain this optional signed proof.
+    let proof = w.state().handovers.get_mut(&id).unwrap().request.signed.as_mut().unwrap().policy_enforcement.take();
+    assert!(proof.is_some());
+    a.sync(0).await.unwrap();
+    let error = a.handover_approve(id.clone(), device.clone()).await.unwrap_err();
+    assert!(error.to_string().contains("policy support"), "{error}");
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
+    assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
+    assert!(w.state().bundle.is_none(), "no owner keys or provider secrets were transferred");
+    // A capable viewer's exact authenticated proof permits the ordinary transfer.
+    w.state().handovers.get_mut(&id).unwrap().request.signed.as_mut().unwrap().policy_enforcement = proof;
+    a.handover_approve(id, device).await.unwrap();
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+    assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Primary);
+}
+
+#[tokio::test]
+async fn unmanaged_handover_keeps_the_legacy_signature_compatible() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".into(), Some(PASSWORD.into())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    let id = b.handover_request().await.unwrap();
+    w.state().handovers.get_mut(&id).unwrap().request.signed.as_mut().unwrap().policy_enforcement = None;
+    a.handover_approve(id, device_of(&b).await).await.unwrap();
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+}
+
+#[tokio::test]
 async fn a_roster_account_takes_no_join_over_one_key() {
     let mut w = world().await;
     let a = w.phone().await;

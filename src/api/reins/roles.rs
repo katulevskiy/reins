@@ -842,6 +842,16 @@ async fn post_handover(
         if signed.epoch != current.epoch || !verified || (now - signed.at).abs() > HANDOVER_REQUEST_SKEW_SECS {
             return Err(api_err(Status::Forbidden, codes::BAD_SIGNATURE, "The request is not signed by this phone"));
         }
+        if signed.policy_enforcement.is_some()
+            && !signer
+                .is_some_and(|key| signed.policy_support_verifies(&user, &member.device_uuid, &key, ed25519_verify))
+        {
+            return Err(api_err(
+                Status::Forbidden,
+                codes::BAD_SIGNATURE,
+                "The policy support is not signed by this phone",
+            ));
+        }
         if !HUB.handovers.fresh_nonce(&user, &member.device_uuid, signed, now) {
             return Err(super::device_api::already_answered());
         }

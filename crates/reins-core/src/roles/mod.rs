@@ -24,6 +24,7 @@ pub mod chain;
 mod enroll;
 pub mod keys;
 mod net;
+mod policy_support;
 pub mod sealed;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,8 +34,9 @@ use data_encoding::BASE64URL_NOPAD;
 use reins_proto::PROTOCOL_VERSION;
 use reins_proto::answer::{AnswerKind, SignedAnswer};
 use reins_proto::roster::{
-    HANDOVER_REQUEST_SKEW_SECS, HandoverRequest, HandoverSignature, HandoverStatus, Member, RecoveryWrapRequest,
-    RosterAppend, RosterEntry, RosterReason, handover_request_message, recovery_wrap_hash, verify_chain,
+    HANDOVER_REQUEST_SKEW_SECS, HandoverPolicySupport, HandoverRequest, HandoverSignature, HandoverStatus, Member,
+    RecoveryWrapRequest, RosterAppend, RosterEntry, RosterReason, handover_policy_support_message,
+    handover_request_message, recovery_wrap_hash, verify_chain,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use zeroize::Zeroizing;
@@ -312,6 +314,11 @@ pub(crate) fn verified_handover(
     let sig = reins_proto::canon::parse_sig(&signed.sig).ok_or_else(|| refuse("it is malformed"))?;
     if !ed25519_verify(&key, &message, &sig) {
         return Err(refuse("it is not signed by the phone"));
+    }
+    if signed.policy_enforcement.is_some()
+        && !signed.policy_support_verifies(account, &member.device_id, &key, ed25519_verify)
+    {
+        return Err(refuse("the phone's policy support could not be verified"));
     }
     Ok(HandoverView {
         id: request.id.clone(),
@@ -1234,9 +1241,25 @@ impl Engine {
             .ok_or_else(|| CoreError::storage("invalid nonce"))?;
         let signed = HandoverSignature {
             epoch: roster.epoch(),
-            nonce,
+            nonce: nonce.clone(),
             at,
             sig: self.sign_key()?.sign_b64(&message),
+            policy_enforcement: Some({
+                let authorization_versions = vec![reins_proto::authorization::AUTHORIZATION_VERSION];
+                let message = handover_policy_support_message(
+                    &account.id,
+                    roster.epoch(),
+                    &self.store.device_id()?,
+                    &nonce,
+                    at,
+                    &authorization_versions,
+                )
+                .ok_or_else(|| CoreError::storage("invalid policy-support claim"))?;
+                HandoverPolicySupport {
+                    authorization_versions,
+                    sig: self.sign_key()?.sign_b64(&message),
+                }
+            }),
         };
         let created = api_call!(&session, |api| api.create_handover(signed.clone())).map_err(ApiFailure::into_core)?;
         self.save(
@@ -1430,6 +1453,7 @@ impl Engine {
         if shown.device_id != device_id {
             return Err(CoreError::invalid("That request is from another phone than the one shown."));
         }
+        self.require_handover_policy_support(&roster, &account.id, &request)?;
         let nonce = request.signed.as_ref().map(|s| (s.nonce.clone(), s.at)).unwrap_or_default();
         if self.answered_nonces(&account.slot, now)?.contains_key(&nonce.0) {
             return Err(CoreError::invalid("That request was answered already."));
