@@ -401,7 +401,7 @@ private fun OutcomeLine(entry: ActivityEntry) {
     val tint = when (outcomeOf(entry)) {
         Outcome.Auto, Outcome.Overnight, Outcome.Grant -> c.accent
         Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Bypass -> c.danger
-        Outcome.Failed, Outcome.Lockdown -> c.warning
+        Outcome.Failed, Outcome.Lockdown, Outcome.Started, Outcome.Unknown, Outcome.Withheld -> c.warning
         Outcome.Approved -> c.ink2
     }
     Row(Modifier.testTag("entryOutcome"),
@@ -435,7 +435,7 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
         if (info.messages.isNotEmpty()) {
             val noun = if (entry.op.isNotEmpty()) "Items" else "Emails"
             ValueRow(
-                if (denied) "$noun not shared" else "$noun shared",
+                if (denied) "$noun not shared" else if (dev.reins.android.ui.common.entryTense(entry.outcome) == dev.reins.android.ui.common.Tense.Done) "$noun shared" else "$noun requested",
                 Modifier.testTag("emailsShared"),
                 value = info.messages.size.toString(),
                 open = messagesOpen,
@@ -444,7 +444,7 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
         }
         if (info.accounts.isNotEmpty()) {
             ValueRow(
-                if (denied) "Accounts not shared" else "Accounts shared",
+                if (denied) "Accounts not shared" else if (dev.reins.android.ui.common.entryTense(entry.outcome) == dev.reins.android.ui.common.Tense.Done) "Accounts shared" else "Accounts requested",
                 Modifier.testTag("accountsShared"),
                 value = info.accounts.size.toString(),
                 open = accountsOpen,
@@ -508,6 +508,7 @@ private fun DecisionDetails(entry: ActivityEntry, grantKnown: Boolean, onOpenGra
     val note = entry.autopilot
     if (note != null && (note.reason.isNotBlank() || note.neighbours.isNotEmpty() || note.pApprove > 0f || note.pDeny > 0f)) {
         val title = when {
+            entry.outcome in setOf("started", "unknown", "succeeded_withheld", "error") -> "What Autopilot thought"
             entry.decidedBy == "autopilot" && entry.outcome == "denied" -> "Why Autopilot denied it"
             entry.decidedBy == "autopilot" -> "Why Autopilot allowed it"
             else -> "What Autopilot thought"

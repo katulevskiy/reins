@@ -69,7 +69,7 @@ struct DecidedHeader: View {
         switch EntryText.mark(entry) {
         case .auto, .overnight, .grant: Palette.violet
         case .denied, .bypass: Palette.danger
-        case .failed, .lockdown: Palette.warning
+        case .failed, .lockdown, .started, .unknown, .withheld: Palette.warning
         case .approved: Palette.ink2
         }
     }

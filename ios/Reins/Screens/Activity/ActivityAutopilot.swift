@@ -75,6 +75,13 @@ func correctionFor(_ entry: ActivityEntry) -> Verdict { entry.outcome == "denied
 /// unit-tested).
 enum EntryOutcome {
     static func text(_ entry: ActivityEntry) -> String {
+        switch entry.outcome {
+        case "started": return "Awaiting outcome"
+        case "unknown": return "Outcome unknown · do not repeat"
+        case "succeeded_withheld": return "Completed; response withheld · do not repeat"
+        case "error": return "Failed"
+        default: break
+        }
         let denied = entry.outcome == "denied"
         switch entry.decidedBy {
         case "autopilot":
@@ -104,7 +111,7 @@ enum EntryOutcome {
         case .lockdown: "lock.fill"
         case .grant: "key.horizontal"
         case .denied: "xmark"
-        case .failed: "exclamationmark.triangle"
+        case .failed, .started, .unknown, .withheld: "exclamationmark.triangle"
         case .approved: "checkmark"
         }
     }
@@ -114,7 +121,7 @@ enum EntryOutcome {
         case .auto, .grant: Palette.violet
         case .overnight: Palette.violet
         case .bypass, .denied: Palette.danger
-        case .lockdown, .failed: Palette.warning
+        case .lockdown, .failed, .started, .unknown, .withheld: Palette.warning
         case .approved: Palette.success
         }
     }
@@ -122,6 +129,8 @@ enum EntryOutcome {
     /// The row that opens Autopilot's reasons: "Why Autopilot allowed it", "Why Autopilot denied it", "What Autopilot
     /// suggested".
     static func whyTitle(_ entry: ActivityEntry) -> String {
+        if ["started", "unknown", "succeeded_withheld", "error"].contains(entry.outcome) { return "What Autopilot suggested" }
+        return
         switch entry.decidedBy {
         case "autopilot", "overnight": entry.outcome == "denied" ? "Why Autopilot denied it" : "Why Autopilot allowed it"
         default: "What Autopilot suggested"
