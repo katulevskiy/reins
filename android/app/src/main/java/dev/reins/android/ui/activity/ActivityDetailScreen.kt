@@ -13,17 +13,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Undo
-import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Cancel
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Key
-import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,10 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.autopilot.AutopilotText
@@ -51,21 +48,17 @@ import dev.reins.android.design.EmptyState
 import dev.reins.android.design.Glyph
 import dev.reins.android.design.LabelText
 import dev.reins.android.design.LocalColors
-import dev.reins.android.design.OnWarning
 import dev.reins.android.design.PageDock
 import dev.reins.android.design.RText
 import dev.reins.android.design.RType
-import dev.reins.android.design.ServiceTile
 import dev.reins.android.design.Timers
 import dev.reins.android.design.ValueRow
 import dev.reins.android.design.pressable
-import dev.reins.android.design.toneCard
 import dev.reins.android.state.AppState
 import dev.reins.android.ui.common.ConnectionIcon
 import dev.reins.android.ui.common.untrusted
 import dev.reins.android.ui.settings.PillButton
 import dev.reins.android.ui.settings.SettingsGroup
-import dev.reins.android.ui.settings.SettingsPage
 import dev.reins.core.ActivityEntry
 import dev.reins.core.Verdict
 import androidx.compose.foundation.border
@@ -75,6 +68,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -87,12 +81,10 @@ import dev.reins.android.ui.approval.ApprovalRecord
 import dev.reins.android.ui.approval.ApprovalScreen
 import dev.reins.android.ui.approval.ApprovalViewModel
 import dev.reins.android.ui.autopilot.modeTint
-import dev.reins.android.ui.autopilot.OvernightIcon
 import dev.reins.android.ui.autopilot.RiskChip
 import dev.reins.android.ui.common.AskSentenceText
 import dev.reins.android.ui.common.IntegrationIcon
 import dev.reins.android.ui.common.askSentence
-import dev.reins.android.ui.common.untrustedName
 import dev.reins.android.ui.common.LocalConnections
 import dev.reins.android.ui.common.findConnection
 import dev.reins.android.ui.common.untrustedLine
@@ -102,9 +94,9 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * One operation, opened. An entry that kept its approval is shown with the approval's own screen, read-only (the same
- * hero, facts and pages: commits, a commit's lines, the emails), with how it ended on the hero, what was asked in full
- * below, and "This was wrong" where the decision dock was. An older entry shows what it kept.
+ * One operation, opened: a quiet history header, then the request's facts and pages, read-only (commits, a commit's
+ * lines, the emails), what was asked in full, and "This was wrong" where the decision dock was. An older entry uses
+ * the same header and shows what it kept.
  */
 @Composable
 fun ActivityDetailScreen(
@@ -171,18 +163,19 @@ fun ActivityDetailScreen(
         val viewModel = viewModel(key = "entry:$entryId") {
             ApprovalViewModel(container, "entry:$entryId", shown, entry.info.messages.map { it.id }.toSet() + entry.info.accounts)
         }
-        val (icon, tint) = outcomeLook(entry)
         ApprovalScreen(
             viewModel = viewModel,
             authenticator = authenticator,
             onDone = onBack,
             record = ApprovalRecord(
-                outcome = outcomeLine(entry),
-                icon = icon,
-                tint = tint,
-                glyph = outcomeGlyph(entry),
+                header = {
+                    DecidedHeader(entry, askSentence(shown, dev.reins.android.ui.common.entryTense(entry.outcome), label = entry.label, cwd = entry.request?.cwd))
+                },
                 below = {
                     AskedSections(entry)
+                    if (entry.grantId != null || entry.autopilot != null) {
+                        SettingsGroup(gap = 14.dp) { DecisionDetails(entry, grants.any { it.id == entry.grantId }, onOpenGrant) }
+                    }
                     shown.envRelease?.let { release ->
                         dev.reins.android.ui.grants.RevokeEverywhere(
                             release.project,
@@ -193,8 +186,6 @@ fun ActivityDetailScreen(
                     }
                 },
                 footer = dock,
-                risk = entry.autopilot?.risk,
-                tense = dev.reins.android.ui.common.entryTense(entry.outcome),
                 label = entry.label,
                 cwd = entry.request?.cwd,
                 commits = commits.takeIf { shown.git != null },
@@ -202,15 +193,18 @@ fun ActivityDetailScreen(
         )
     } else if (looked) {
         Box(Modifier.fillMaxSize().background(c.background)) {
-            SettingsPage(title = null, onBack = onBack) {
-                if (entry == null) {
-                    EmptyState(Glyph.List, "Not found", null, tag = "entryGone")
-                    return@SettingsPage
+            Column(Modifier.fillMaxSize()) {
+                dev.reins.android.ui.approval.HistoryBar(entry?.connectionId.orEmpty(), entry?.connectionLabel.orEmpty(), onBack)
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars)) {
+                    if (entry == null) {
+                        EmptyState(Glyph.List, "Not found", null, tag = "entryGone")
+                    } else {
+                        DecidedHeader(entry)
+                        AskedSections(entry)
+                        Details(entry, grants.any { it.id == entry.grantId }, onOpenGrant, onOpenEmail)
+                        Spacer(Modifier.height(if (dock != null) 120.dp else 32.dp))
+                    }
                 }
-                Hero(entry)
-                AskedSections(entry)
-                Details(entry, grants.any { it.id == entry.grantId }, onOpenGrant, onOpenEmail)
-                Spacer(Modifier.height(if (dock != null) 120.dp else 32.dp))
             }
             if (dock != null) Box(Modifier.align(Alignment.BottomCenter)) { dock() }
         }
@@ -267,20 +261,6 @@ private fun EntryDock(correctable: Boolean, thanked: Boolean, busy: Boolean, err
     }
 }
 
-/** How an entry ended, as its pill's icon and colour. */
-private fun outcomeLook(entry: ActivityEntry): Pair<ImageVector, (dev.reins.android.design.RColors) -> Color> = when (outcomeOf(entry)) {
-    Outcome.Auto -> Icons.Rounded.Bolt to { c -> c.accent }
-    Outcome.AutoDenied -> Icons.Rounded.Bolt to { c -> c.danger }
-    Outcome.Overnight -> OvernightIcon to { c -> c.night }
-    Outcome.OvernightDenied -> OvernightIcon to { c -> c.danger }
-    Outcome.Bypass -> Icons.Rounded.Bolt to { c -> c.danger }
-    Outcome.Lockdown -> Icons.Rounded.Lock to { c -> c.secondary }
-    Outcome.Grant -> Icons.Rounded.Key to { c -> c.accent }
-    Outcome.Denied -> Icons.Rounded.Cancel to { c -> c.danger }
-    Outcome.Failed -> Icons.Rounded.Warning to { c -> c.warning }
-    Outcome.Approved -> Icons.Rounded.CheckCircle to { c -> c.success }
-}
-
 /** The glyph beside how an entry ended on its field: from its own outcome, never a tick for one that was refused. */
 internal fun outcomeGlyph(entry: ActivityEntry): Glyph = when {
     entry.outcome == "denied" -> if (entry.decidedBy == "lockdown") Glyph.Lock else Glyph.CircleClose
@@ -288,41 +268,29 @@ internal fun outcomeGlyph(entry: ActivityEntry): Glyph = when {
     else -> Glyph.CircleAlert
 }
 
-/** The entry's hero: what it touched with what it did, the request, large; and who decided. */
+/** A completed request uses paper: its kind and time, the past-tense action, then who decided and any risk. */
 @Composable
-private fun Hero(entry: ActivityEntry) {
+private fun DecidedHeader(entry: ActivityEntry, sentence: dev.reins.android.ui.common.AskSentence = askSentence(entry)) {
     val c = LocalColors.current
-    val tone = if (entry.outcome == "denied") c.danger else toneColor(toneOf(entry.action), c)
-    val decided = entry.decidedBy.isNotEmpty() || entry.autopilot != null
-    // Who asked is on its own line with their mark, as in the field's top row, so the sentence starts with the verb.
-    val sentence = remember(entry) { askSentence(entry) }
-    Row(
-        Modifier
-            .padding(horizontal = 12.dp)
-            .fillMaxWidth()
-            .toneCard(tone, radius = 24.dp, top = if (c.dark) 0.16f else 0.10f, bottom = if (c.dark) 0.04f else 0.03f)
-            .testTag(if (decided) "entryAutopilot" else "entryHero")
-            .padding(16.dp),
-        verticalAlignment = Alignment.Top,
+    Column(
+        Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 12.dp)
+            .testTag("entryHero"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        IntegrationIcon(sentence.provider, sentence.action, size = 44.dp, ring = androidx.compose.ui.graphics.lerp(c.background, tone, 0.12f))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Row(Modifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 20.dp)
-                Spacer(Modifier.width(7.dp))
-                RText(untrustedName(entry.connectionLabel), RType.sans(14f, FontWeight.Medium), c.secondary, Modifier.testTag("detailWho"), maxLines = 1)
-            }
-            LabelText(sentence.kind, c.inkMeta, Modifier.padding(bottom = 6.dp).testTag("detailKind"))
-            AskSentenceText(sentence, style = RType.serif(25f, 28f), color = c.text, detailsColor = c.secondary, detailsStyle = RType.mono(13f), tag = "detailTitle", detailsTag = "detailDetails")
-            if (entry.label == null) {
-                untrusted(entry.detail).takeIf { it.isNotBlank() }?.let {
-                    RText(it, RType.sans(13.5f, lineHeight = 18f), c.tertiary, Modifier.padding(top = 6.dp).testTag("detailSummary"), maxLines = 2)
-                }
-            }
-            OutcomePill(entry, Modifier.padding(top = 10.dp))
-            RiskChip(entry.autopilot?.risk, Modifier.padding(top = 8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.testTag("entryIcon")) { IntegrationIcon(sentence.provider, sentence.action, size = 40.dp) }
+            LabelText("${sentence.kind} · ${whenLine(entry.at).replace(",", "")}", c.inkMeta, Modifier.weight(1f).testTag("detailKind"), maxLines = 2)
         }
+        AskSentenceText(sentence, style = RType.sheetTitle, color = c.ink, detailsColor = c.ink2, detailsStyle = RType.value,
+            modifier = Modifier.semantics { heading() }, tag = "detailTitle", detailsTag = "detailDetails")
+        if (entry.label == null) {
+            untrusted(entry.detail).takeIf { it.isNotBlank() }?.let {
+                RText(it, RType.sans(15f, lineHeight = 21f), c.ink2, Modifier.testTag("detailSummary"))
+            }
+        }
+        Box(Modifier.testTag("entryAutopilot")) { OutcomeLine(entry) }
+        // The risk explanation is never truncated on a history page.
+        RiskChip(entry.autopilot?.risk, maxLines = Int.MAX_VALUE)
     }
 }
 
@@ -427,27 +395,24 @@ fun answeredIn(askedAt: Long, decidedAt: Long): String {
 }
 
 @Composable
-private fun OutcomePill(entry: ActivityEntry, modifier: Modifier = Modifier) {
+private fun OutcomeLine(entry: ActivityEntry) {
     val c = LocalColors.current
-    val (icon: ImageVector, tint: Color) = when (outcomeOf(entry)) {
-        Outcome.Auto -> Icons.Rounded.Bolt to c.accent
-        Outcome.AutoDenied -> Icons.Rounded.Bolt to c.danger
-        Outcome.Overnight -> OvernightIcon to c.night
-        Outcome.OvernightDenied -> OvernightIcon to c.danger
-        Outcome.Bypass -> Icons.Rounded.Bolt to c.danger
-        Outcome.Lockdown -> Icons.Rounded.Lock to c.secondary
-        Outcome.Grant -> Icons.Rounded.Key to c.accent
-        Outcome.Denied -> Icons.Rounded.Cancel to c.danger
-        Outcome.Failed -> Icons.Rounded.Warning to c.warning
-        Outcome.Approved -> Icons.Rounded.CheckCircle to c.success
+    val tint = when (outcomeOf(entry)) {
+        Outcome.Auto, Outcome.Overnight, Outcome.Grant -> c.accent
+        Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Bypass -> c.danger
+        Outcome.Failed, Outcome.Lockdown -> c.warning
+        Outcome.Approved -> c.ink2
     }
-    Row(
-        modifier.clip(RoundedCornerShape(10.dp)).background(tint.copy(alpha = 0.16f)).padding(start = 9.dp, end = 12.dp, top = 7.dp, bottom = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, Modifier.size(15.dp), tint = tint)
-        Spacer(Modifier.width(6.dp))
-        RText(outcomeLine(entry), RType.sans(13f, FontWeight.SemiBold), tint, Modifier.testTag("entryAutopilotTitle"), maxLines = 1)
+    Row(Modifier.testTag("entryOutcome"),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (entry.decidedBy.isNotEmpty()) {
+            dev.reins.android.design.GlyphIcon(when (entry.decidedBy) {
+                "overnight" -> Glyph.Moon
+                "lockdown" -> Glyph.Lock
+                else -> Glyph.Autopilot
+            }, tint, size = 16.dp)
+        }
+        RText(outcomeLine(entry), RType.sans(14.5f, FontWeight.Medium), tint, Modifier.testTag("entryAutopilotTitle"))
     }
 }
 
@@ -460,7 +425,6 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
     // Another integration's items keep their text: shown straight away. Emails open from a row.
     var messagesOpen by rememberSaveable { mutableStateOf(entry.op.isNotEmpty()) }
     var accountsOpen by rememberSaveable { mutableStateOf(false) }
-    var whyOpen by rememberSaveable { mutableStateOf(false) }
     val denied = entry.outcome == "denied"
     SettingsGroup(gap = 14.dp) {
         // "What it asked" says when already.
@@ -496,34 +460,7 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
                 }
             }
         }
-        entry.grantId?.let { id ->
-            ValueRow(
-                if (grantKnown) "Grant" else "A grant that ended",
-                Modifier.testTag("openGrantFromEntry"),
-                value = info.grantSummary?.let(::untrusted),
-                onClick = if (grantKnown) ({ onOpenGrant(id) }) else null,
-            )
-        }
-        val note = entry.autopilot
-        if (note != null && (note.reason.isNotBlank() || note.neighbours.isNotEmpty() || note.pApprove > 0f || note.pDeny > 0f)) {
-            val title = when {
-                entry.decidedBy == "autopilot" && denied -> "Why Autopilot denied it"
-                entry.decidedBy == "autopilot" -> "Why Autopilot allowed it"
-                else -> "What Autopilot thought"
-            }
-            ValueRow(title, Modifier.testTag("whyAutopilot"), open = whyOpen) { whyOpen = !whyOpen }
-            AnimatedVisibility(whyOpen) {
-                Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp).testTag("whyDetail"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    RText(
-                        "Approve ${AutopilotText.percent(note.pApprove)} · Deny ${AutopilotText.percent(note.pDeny)} · ${AutopilotText.name(note.mode)}",
-                        RType.sans(13.5f, FontWeight.Medium),
-                        c.secondary,
-                    )
-                    note.reason.takeIf { it.isNotBlank() }?.let { RText(untrusted(it), RType.sans(14.5f, lineHeight = 20f), c.text) }
-                    note.neighbours.forEach { RText("· " + untrusted(it), RType.sans(13.5f), c.tertiary, maxLines = 2) }
-                }
-            }
-        }
+        DecisionDetails(entry, grantKnown, onOpenGrant)
     }
 
     info.email?.let { email ->
@@ -550,6 +487,41 @@ private fun Details(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (Str
     if (entry.grantId == null) {
         info.grantSummary?.let(::untrusted)?.takeIf { it.isNotBlank() }?.let { summary ->
             SettingsGroup(header = "Permission") { RText(summary, RType.sans(15f, lineHeight = 21f), c.text, Modifier.padding(16.dp)) }
+        }
+    }
+}
+
+/** The grant and the actual recorded model judgment, shared by recorded and older entries. */
+@Composable
+private fun DecisionDetails(entry: ActivityEntry, grantKnown: Boolean, onOpenGrant: (String) -> Unit) {
+    val c = LocalColors.current
+    var whyOpen by rememberSaveable(entry.id) { mutableStateOf(false) }
+    entry.grantId?.let { id ->
+        ValueRow(
+            if (grantKnown) "Grant" else "A grant that ended",
+            Modifier.testTag("openGrantFromEntry"),
+            value = entry.info.grantSummary?.let(::untrusted),
+            onClick = if (grantKnown) ({ onOpenGrant(id) }) else null,
+        )
+    }
+    val note = entry.autopilot
+    if (note != null && (note.reason.isNotBlank() || note.neighbours.isNotEmpty() || note.pApprove > 0f || note.pDeny > 0f)) {
+        val title = when {
+            entry.decidedBy == "autopilot" && entry.outcome == "denied" -> "Why Autopilot denied it"
+            entry.decidedBy == "autopilot" -> "Why Autopilot allowed it"
+            else -> "What Autopilot thought"
+        }
+        ValueRow(title, Modifier.testTag("whyAutopilot"), open = whyOpen) { whyOpen = !whyOpen }
+        AnimatedVisibility(whyOpen) {
+            Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp).testTag("whyDetail"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                RText(
+                    "Approve ${AutopilotText.percent(note.pApprove)} · Deny ${AutopilotText.percent(note.pDeny)} · ${AutopilotText.name(note.mode)}",
+                    RType.sans(13.5f, FontWeight.Medium),
+                    c.secondary,
+                )
+                note.reason.takeIf { it.isNotBlank() }?.let { RText(untrusted(it), RType.sans(14.5f, lineHeight = 20f), c.text) }
+                note.neighbours.forEach { RText("· " + untrusted(it), RType.sans(13.5f), c.tertiary, maxLines = 2) }
+            }
         }
     }
 }

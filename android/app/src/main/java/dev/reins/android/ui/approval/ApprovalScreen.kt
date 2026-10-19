@@ -135,21 +135,14 @@ class ApprovalNav {
 val LocalApprovalNav = staticCompositionLocalOf { ApprovalNav() }
 
 /**
- * An Activity entry shown with the approval's own screen, read-only: how it ended (the hero's pill, in [tint]), what
- * goes [below] the facts, and the [footer] in place of the decision dock.
+ * An Activity entry shown with the approval's facts and drilldowns, read-only: its paper [header], what goes
+ * [below] the facts, and the [footer] in place of the decision dock.
  */
 class ApprovalRecord(
-    val outcome: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-    val tint: (RColors) -> Color,
-    /** The mark beside [outcome] on the field, from how the entry ended (a tick only for one carried out). */
-    val glyph: dev.reins.android.design.Glyph = dev.reins.android.design.Glyph.CircleCheck,
+    /** The entry's own paper header, scrolled together with its facts. */
+    val header: @Composable () -> Unit,
     val below: @Composable () -> Unit = {},
     val footer: (@Composable () -> Unit)? = null,
-    /** How risky the model rated it, and whether Overnight held it; null when it was not rated. */
-    val risk: dev.reins.core.RiskView? = null,
-    /** How the ask is told: done, or (denied, failed) refused. */
-    val tense: dev.reins.android.ui.common.Tense = dev.reins.android.ui.common.Tense.Done,
     /** The core's reading of the request (its label) and where a command ran, as the entry kept them. */
     val label: dev.reins.core.RequestLabel? = null,
     val cwd: String? = null,
@@ -221,8 +214,12 @@ fun ApprovalScreen(
             }
             Column(Modifier.fillMaxSize()) {
                 val page = nav.pages.lastOrNull()
-                if (page == null) {
-                    Hero(view, ui, viewModel, close, back = record != null, entered = entered)
+                if (record != null) {
+                    HistoryBar(view.connectionId, view.connectionLabel) {
+                        if (!nav.back()) close()
+                    }
+                } else if (page == null) {
+                    Hero(view, ui, viewModel, close, entered = entered)
                 } else {
                     // Drilled in: the field becomes a band with the ask and the timer.
                     val (ask, target) = askWords(view)
@@ -253,6 +250,8 @@ fun ApprovalScreen(
                         }
                         when (shown) {
                             null -> {
+                                record?.header?.invoke()
+                                if (record != null) HistoryWarnings(view)
                                 MainPage(view, ui, viewModel)
                                 record?.below?.invoke()
                             }
@@ -270,6 +269,47 @@ fun ApprovalScreen(
             if (record == null) ApprovalOverlays(view, ui, viewModel, onOpenAutopilot)
         }
     }
+}
+
+/** A recorded request keeps native Back navigation and its asker, without a waiting field or timer. */
+@Composable
+internal fun HistoryBar(connectionId: String, connectionLabel: String, onBack: () -> Unit) {
+    val c = LocalColors.current
+    Row(
+        Modifier.fillMaxWidth().windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets)
+            .padding(start = 8.dp, end = 22.dp, top = 8.dp, bottom = 8.dp).testTag("entryBar"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CloseButton(onBack, back = true)
+        Spacer(Modifier.width(12.dp))
+        ConnectionIcon(connectionId, connectionLabel, size = 22.dp)
+        Spacer(Modifier.width(8.dp))
+        RText(untrusted(connectionLabel), RType.sans(15f, FontWeight.SemiBold), c.ink, Modifier.weight(1f).testTag("detailWho"), maxLines = 1)
+    }
+}
+
+/** The field's warnings stay available on paper, including the longer explanation behind each warning. */
+@Composable
+private fun HistoryWarnings(view: ApprovalView) {
+    val c = LocalColors.current
+    val warnings = fieldWarnings(view, suggestion = null, risk = null)
+    if (warnings.isEmpty()) return
+    FactGroup(rows = warnings.map { warning ->
+        {
+            Column(Modifier.padding(vertical = 12.dp).testTag(warning.tag)) {
+                val tint = when (warning.tone) {
+                    WarnTone.Red -> c.danger
+                    WarnTone.Amber -> c.warning
+                    WarnTone.Plain -> c.ink2
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                    dev.reins.android.design.GlyphIcon(warning.glyph, tint, size = 17.dp)
+                    RText(warning.text, RType.sans(14f, FontWeight.Medium, lineHeight = 20f), tint, Modifier.weight(1f))
+                }
+                warning.help?.let { RText(it, RType.sans(13f, lineHeight = 18f), c.ink2, Modifier.padding(top = 6.dp)) }
+            }
+        }
+    })
 }
 
 /** The page's own title in the bar: "8 commits", a commit's short id, "12 files". */

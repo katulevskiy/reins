@@ -123,7 +123,7 @@ fun badgeIcon(badge: Badge): ImageVector = when (badge) {
 /**
  * The ask as a field (Reins Signal): who asks and how long it waits, the label line ("GITHUB · PUSH"), the ask in the
  * serif with its target in italic, and one verdict line: Autopilot's opinion, why it is always asked, the risk
- * Overnight saw, or (an Activity entry) how it ended.
+ * Overnight saw.
  */
 @Composable
 internal fun Hero(
@@ -136,12 +136,10 @@ internal fun Hero(
 ) {
     val nav = LocalApprovalNav.current
     val host = findConnection(dev.reins.android.ui.common.LocalConnections.current, view.connectionId, view.connectionLabel)?.clientHost?.let(::untrusted)
-    val record = LocalApprovalRecord.current
-    // Waiting: present tense from the verb (the asker is in the top row). An entry: past tense, with its icon.
-    // A desktop question is told through the core's reading of it (the entry's label, else the waiting item's).
-    val label = record?.label ?: viewModel.pendingLabel()
-    val sentence = androidx.compose.runtime.remember(view, record, label) {
-        dev.reins.android.ui.common.askSentence(view, record?.tense ?: dev.reins.android.ui.common.Tense.Waiting, label = label, cwd = record?.cwd)
+    // A waiting request starts with the verb; the asker is in the top row.
+    val label = viewModel.pendingLabel()
+    val sentence = androidx.compose.runtime.remember(view, label) {
+        dev.reins.android.ui.common.askSentence(view, label = label)
     }
     val field = askField(view)
     AskField(
@@ -150,11 +148,6 @@ internal fun Hero(
         sentence.text,
         sentence.target,
         details = sentence.details,
-        icon = if (record != null) {
-            { dev.reins.android.ui.common.IntegrationIcon(sentence.provider, sentence.action, Modifier.testTag("entryIcon"), size = 34.dp, ring = field.fill(), field = field) }
-        } else {
-            null
-        },
         onClose = onClose,
         askTag = if (view.ask != null) "askQuestion" else "what",
         closeGlyph = if (back) Glyph.ArrowBack else Glyph.Close,
@@ -172,27 +165,23 @@ internal fun Hero(
  * The field's verdict lines. Every warning the request carries is shown here, in this order and never cut short:
  * what makes it dangerous or asked every time (with its (?) for the longer reason), then the risk Overnight's model
  * saw and whether Overnight held it (two lines at most; if longer, the risk's word stays here and its reason becomes
- * the first fact row). Then Autopilot's opinion (not for what can't be undone), or the offer to get its model. An
- * Activity entry adds how it ended first.
+ * the first fact row). Then Autopilot's opinion (not for what can't be undone), or the offer to get its model.
+ * History entries use their own paper header.
  */
 @Composable
 private fun HeroVerdict(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewModel, nav: ApprovalNav) {
     val feedback = LocalFeedback.current
-    val record = LocalApprovalRecord.current
     val danger = dangerTag(view)
     val s = ui.suggestion
     val model = ui.model
-    val risk = record?.risk ?: s?.risk
+    val risk = s?.risk
     val openAutopilot = {
         nav.overlay = ApprovalOverlay.Autopilot
         feedback.play(Event.Open)
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (record != null) {
-            FieldVerdict(record.outcome, Modifier.testTag("entryOutcome"), glyph = record.glyph, maxLines = Int.MAX_VALUE, textTag = "entryAutopilotTitle")
-        }
         // Every warning, each on its own line (see fieldWarnings).
-        fieldWarnings(view, if (record == null) s else null, risk, nav.riskInFacts).forEach { w ->
+        fieldWarnings(view, s, risk, nav.riskInFacts).forEach { w ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val isRisk = w.tag == "risk"
                 FieldVerdict(
@@ -201,14 +190,14 @@ private fun HeroVerdict(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalV
                     glyph = w.glyph,
                     maxLines = w.maxLines,
                     textTag = if (isRisk) "riskLine" else null,
-                    onClick = if (isRisk && record == null && s != null && s.judged) openAutopilot else null,
+                    onClick = if (isRisk && s != null && s.judged) openAutopilot else null,
                     onOverflow = if (isRisk) { over -> if (over && !nav.riskInFacts) nav.riskInFacts = true } else { _ -> },
                 )
-                if (record == null && w.help != null) HelpDot(w.tag, w.help, size = 26.dp, onField = true)
+                if (w.help != null) HelpDot(w.tag, w.help, size = 26.dp, onField = true)
             }
         }
         if (view.kind == ApprovalKind.GRANT) FieldVerdict("Nothing is shared now. Matches are answered for you.", Modifier.testTag("grantLine"))
-        if (record != null || heldByDanger(view)) return@Column
+        if (heldByDanger(view)) return@Column
         when {
             s != null && s.judged && !s.floor -> {
                 val p = if (s.verdict == Verdict.DENY) s.pDeny else s.pApprove
