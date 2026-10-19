@@ -79,6 +79,14 @@ final class AskFormatTests: XCTestCase {
               target: "your computer", mono: "npm test and 1 more", icon: AskIcon(mark: .glyph(.terminal), action: .play, kind: .push))
     }
 
+    func testCommandPresentationAlsoDrivesThePendingApprovalField() {
+        let presentation = CommandPresentation(heading: "Run Gradle", actionable: "./gradlew test", setup: ["TOKEN=•••• (value hidden)"], notices: [])
+        let core = RequestLabel(provider: "terminal", action: "run", lead: "Run", subject: "TOKEN=fixture-secret ./gradlew test", code: true, tail: "", command: presentation)
+        let line = AskFormat.waiting(ask(question: "Run this?", detail: nil), core: core)
+        XCTAssertEqual(line.text, "Run Gradle")
+        XCTAssertNil(line.mono, "the full actionable command is the first fact")
+    }
+
     func testAFileQuestionSaysWhatTheCoreReadAndShowsThePath() {
         let v = ask(question: "Claude Code wants to read .env", detail: "Files:\napp/.env")
         check(AskFormat.waiting(v, core: core("file", "read", "app/.env", tail: " and 1 more"), computer: "laptop"), "Read a file on laptop",

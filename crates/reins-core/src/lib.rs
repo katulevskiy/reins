@@ -17,6 +17,7 @@ pub mod approval;
 pub mod autopilot;
 pub mod avatar;
 pub mod blob;
+pub mod command_presentation;
 pub mod connector;
 pub mod crypto;
 pub mod engine;

@@ -147,7 +147,8 @@ internal fun Hero(
         sentence.kind,
         sentence.text,
         sentence.target,
-        details = sentence.details,
+        // The full actionable command is the first fact; avoid repeating it inside the fixed field.
+        details = if (label?.command != null) null else sentence.details,
         onClose = onClose,
         askTag = if (view.ask != null) "askQuestion" else "what",
         closeGlyph = if (back) Glyph.ArrowBack else Glyph.Close,

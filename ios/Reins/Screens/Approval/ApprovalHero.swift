@@ -26,6 +26,7 @@ struct ApprovalRecord: Equatable {
     var tint: Color
     /// The risk the model saw in it, when it rated one.
     var risk: RiskView? = nil
+    var label: RequestLabel? = nil
 }
 
 private struct ApprovalRecordKey: EnvironmentKey {

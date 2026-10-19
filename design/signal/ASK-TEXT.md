@@ -15,9 +15,13 @@ never assemble the sentence themselves. Every kind of request has a test.
 
 - Waiting requests are present tense ("Push 3 commits to *octo/app*"); decided ones past tense ("git pushed 3 commits
   to *katulevskiy/reins*"). On a waiting field the asker is in the top bar, so the sentence starts with the verb.
-- Commands, URLs, branches and paths never go into the serif. A command request reads "Run a command in *reins*" (the
-  folder or repo is the target); the mono line shows the part that matched a rule (`rm -rf jarx`) plus "and N more
-  commands"; the full command is a mono fact row, wrapped, never cut.
+- Commands, URLs, branches and paths never go into the serif. The core supplies a command presentation: fixed words
+  such as "Run Gradle", the actionable command in mono, setup with environment values concealed, and visible
+  notices about runtime context or limitations. All remaining commands and operators stay together; unsupported
+  syntax says "Review a shell command" and requires inspecting the full invocation. The complete original stays
+  available behind an explicit inspection control (it may contain secrets). Presentation never defines what an
+  approval or standing permission covers. A permitted desktop command says "Approved running …" in history:
+  the approval is not an executor's report that it actually ran. Older labels retain their legacy wording.
 - Branches: the same source and destination shows once (`feature/x · new branch`); different ones `feature/x → main`.
 - Counts and amounts are roman serif ("3 commits", "$42.10"); the target stays the only italic.
 - Nothing the user approves is ever truncated: long values wrap or open in full.

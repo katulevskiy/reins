@@ -282,7 +282,7 @@ private fun DecidedHeader(entry: ActivityEntry, sentence: dev.reins.android.ui.c
             Box(Modifier.testTag("entryIcon")) { IntegrationIcon(sentence.provider, sentence.action, size = 40.dp) }
             LabelText("${sentence.kind} · ${whenLine(entry.at).replace(",", "")}", c.inkMeta, Modifier.weight(1f).testTag("detailKind"), maxLines = 2)
         }
-        AskSentenceText(sentence, style = RType.sheetTitle, color = c.ink, detailsColor = c.ink2, detailsStyle = RType.value,
+        AskSentenceText(if (entry.label?.command != null) sentence.copy(details = null) else sentence, style = RType.sheetTitle, color = c.ink, detailsColor = c.ink2, detailsStyle = RType.value,
             modifier = Modifier.semantics { heading() }, tag = "detailTitle", detailsTag = "detailDetails")
         if (entry.label == null) {
             untrusted(entry.detail).takeIf { it.isNotBlank() }?.let {
@@ -312,7 +312,9 @@ internal fun askedWho(entry: ActivityEntry, host: String?): String {
  */
 @Composable
 internal fun AskedSections(entry: ActivityEntry) {
+    entry.label?.command?.let { dev.reins.android.ui.approval.CommandFacts(it) }
     val r = entry.request ?: return
+    var showInvocation by remember(entry.id) { mutableStateOf(false) }
     val c = LocalColors.current
     val host = findConnection(LocalConnections.current, entry.connectionId, entry.connectionLabel)?.clientHost
     val who = askedWho(entry, host)
@@ -342,26 +344,35 @@ internal fun AskedSections(entry: ActivityEntry) {
             contentAlignment = Alignment.Center,
         ) { Icon(Icons.Rounded.ContentCopy, null, Modifier.size(17.dp), tint = c.accent) }
     }
-    Column(
-        Modifier
-            .padding(horizontal = 16.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (c.dark) Color(0xFF0A0A0C) else c.elevated)
-            .border(1.dp, if (c.dark) Color(0xFF1C1C20) else c.hairline, RoundedCornerShape(16.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp)
-            .testTag("fullRequest"),
-    ) {
-        if (full.isNotBlank()) RText(full, RType.mono(12.5f).copy(lineHeight = 20.sp), c.text, Modifier.testTag("fullRequestText"), ltr = true)
-        if (purpose.isNotBlank()) {
-            val who = untrusted(r.agent).ifBlank { untrusted(entry.connectionLabel) }
-            RText(
-                "# $who: “$purpose”",
-                RType.mono(12.5f).copy(lineHeight = 20.sp),
-                c.tertiary,
-                Modifier.padding(top = if (full.isNotBlank()) 12.dp else 0.dp).testTag("fullRequestPurpose"),
-                ltr = true,
-            )
+    if (entry.label?.command != null) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 22.dp)
+            .pressable(label = if (showInvocation) "Hide full invocation" else "Show full invocation") { showInvocation = !showInvocation }
+            .padding(vertical = 14.dp).testTag("revealFullInvocation")) {
+            RText(if (showInvocation) "Hide full invocation" else "Show full invocation · may contain secrets", RType.sans(14f), c.accent)
+        }
+    }
+    if (entry.label?.command == null || showInvocation) {
+        Column(
+            Modifier
+                .padding(horizontal = 16.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (c.dark) Color(0xFF0A0A0C) else c.elevated)
+                .border(1.dp, if (c.dark) Color(0xFF1C1C20) else c.hairline, RoundedCornerShape(16.dp))
+                .padding(horizontal = 14.dp, vertical = 12.dp)
+                .testTag("fullRequest"),
+        ) {
+            if (full.isNotBlank()) RText(full, RType.mono(12.5f).copy(lineHeight = 20.sp), c.text, Modifier.testTag("fullRequestText"), ltr = true)
+            if (purpose.isNotBlank()) {
+                val who = untrusted(r.agent).ifBlank { untrusted(entry.connectionLabel) }
+                RText(
+                    "# $who: “$purpose”",
+                    RType.mono(12.5f).copy(lineHeight = 20.sp),
+                    c.tertiary,
+                    Modifier.padding(top = if (full.isNotBlank()) 12.dp else 0.dp).testTag("fullRequestPurpose"),
+                    ltr = true,
+                )
+            }
         }
     }
 }

@@ -115,6 +115,7 @@ fn label(
         subject: subject.into(),
         code,
         tail: String::new(),
+        command: None,
     }
 }
 
@@ -388,18 +389,27 @@ fn ask(call: &ConnectorCall) -> RequestLabel {
     match hook(call) {
         Some(Hook {
             command: Some(command),
+            cwd,
             ..
-        }) => label(
-            "terminal",
-            if deletes(&command) {
-                "delete"
-            } else {
-                "run"
-            },
-            "Run",
-            line(&command),
-            true,
-        ),
+        }) => {
+            let mut l = label(
+                "terminal",
+                if deletes(&command) {
+                    "delete"
+                } else {
+                    "run"
+                },
+                "Run",
+                line(&command),
+                true,
+            );
+            let mut presentation = crate::command_presentation::of(&command);
+            if !cwd.is_empty() {
+                presentation.setup.push(format!("Requested directory: {}", line(&cwd)));
+            }
+            l.command = Some(presentation);
+            l
+        }
         Some(h) if !h.files.is_empty() => {
             let mut l = label(
                 "file",
@@ -667,7 +677,24 @@ pub fn activity_request(r: &AuditRequest) -> ActivityRequest {
 #[must_use]
 pub fn of_entry(r: &AuditRecord) -> RequestLabel {
     if let Some(l) = &r.info.label {
-        return (**l).clone();
+        let mut l = (**l).clone();
+        // Refresh from the retained original, including entries written before command presentations existed.
+        if l.provider == "terminal" {
+            let original = r.info.request.as_ref().map_or(l.subject.as_str(), |request| request.full.as_str());
+            let mut presentation = crate::command_presentation::of(original);
+            if original.trim_end().ends_with('…') {
+                presentation.notices.push(
+                    "The retained invocation ends with an ellipsis. Some original text may be unavailable.".into(),
+                );
+            }
+            if r.info.request.is_none() {
+                presentation
+                    .notices
+                    .push("The complete original invocation was not retained for this older entry.".into());
+            }
+            l.command = Some(presentation);
+        }
+        return l;
     }
     let service = if r.service.is_empty() {
         views::SERVICE_GMAIL
@@ -677,7 +704,7 @@ pub fn of_entry(r: &AuditRecord) -> RequestLabel {
     let detail = r.detail.strip_prefix("approved: ").unwrap_or(&r.detail);
     if service == DESKTOP && r.op == "ask" {
         if let Some((_, command)) = detail.split_once(" wants to run: ") {
-            return label(
+            let mut l = label(
                 "terminal",
                 if deletes(command) {
                     "delete"
@@ -688,6 +715,10 @@ pub fn of_entry(r: &AuditRecord) -> RequestLabel {
                 line(command),
                 true,
             );
+            let mut presentation = crate::command_presentation::of(command);
+            presentation.notices.push("The complete original invocation was not retained for this older entry.".into());
+            l.command = Some(presentation);
+            return l;
         }
         for (verb, action, lead) in [("read", "read", "Read"), ("change", "write", "Change")] {
             if let Some((_, path)) = detail.split_once(&format!(" wants to {verb} ")) {

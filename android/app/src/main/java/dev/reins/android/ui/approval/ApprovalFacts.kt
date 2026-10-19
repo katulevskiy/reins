@@ -502,6 +502,18 @@ private fun McpFacts(call: dev.reins.core.McpCallView) {
 private fun AskFacts(ask: dev.reins.core.AskView, label: dev.reins.core.RequestLabel?, cwd: String?) {
     val detail = ask.detail?.let(::untrusted)?.takeIf { it.isNotBlank() }
     val topic = ask.topic?.let(::untrusted)?.takeIf { it.isNotBlank() }
+    label?.command?.let { presentation ->
+        if (LocalApprovalRecord.current != null) return // History owns these facts and the original below.
+        val nav = LocalApprovalNav.current
+        CommandFacts(presentation, cwd)
+        val original = presentation.original.takeIf { it.isNotBlank() }?.let(::untrusted) ?: detail
+        if (original != null) FactGroup(rows = listOf {
+            DrillRow("Full invocation", "fullInvocation", {
+                nav.push(ApprovalPage.Text("Full invocation · may contain secrets", original, mono = true, tag = "fullInvocationText"))
+            }) { RText("Includes setup and environment values", RType.sans(12f), LocalColors.current.ink2, maxLines = 2) }
+        })
+        return
+    }
     // A command as the core read it (its label), never re-read here (ASK-TEXT.md): the whole of it as a mono fact row,
     // wrapped, never cut; where it ran as the core kept it; the guard's rule.
     val command = label?.takeIf { it.provider == "terminal" }?.subject?.let(::untrusted)?.trim()?.takeIf { it.isNotEmpty() }
@@ -524,6 +536,27 @@ private fun AskFacts(ask: dev.reins.core.AskView, label: dev.reins.core.RequestL
             if (topic != null) add { FactRow("About", topic, mono = true, valueTag = "askTopic") }
         },
     )
+}
+
+/** Core-derived command facts. No parsing and no authorization decisions happen in the UI. */
+@Composable
+internal fun CommandFacts(presentation: dev.reins.core.CommandPresentation, cwd: String? = null) {
+    val c = LocalColors.current
+    FactGroup(tag = "commandPresentation", rows = buildList<@Composable () -> Unit> {
+        if (presentation.actionable.isNotBlank()) add { CommandRow(untrusted(presentation.actionable)) }
+        presentation.notices.forEachIndexed { i, notice -> add {
+            RText(untrusted(notice), RType.sans(14f, lineHeight = 20f), c.ink2,
+                Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag("commandNotice:$i"))
+        } }
+        cwd?.takeIf { it.isNotBlank() }?.let { add { FactRow("In", untrusted(it), mono = true, valueTag = "askIn", maxLines = Int.MAX_VALUE) } }
+        if (presentation.setup.isNotEmpty()) add {
+            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag("commandSetup")) {
+                RText("Setup", RType.sans(15f), c.ink2)
+                RText(untrusted(presentation.setup.joinToString("\n")), RType.mono(13f), c.ink,
+                    Modifier.fillMaxWidth().padding(top = 6.dp), ltr = true)
+            }
+        }
+    })
 }
 
 /** "Command" over the whole command in mono, wrapped. */

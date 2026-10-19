@@ -8,6 +8,8 @@ import SwiftUI
 struct Facts: View {
     @Bindable var vm: ApprovalModel
     var view: ApprovalView
+    @Environment(AppModel.self) private var app
+    @Environment(\.approvalRecord) private var record
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -23,7 +25,9 @@ struct Facts: View {
                 } else if let mcp = view.mcp {
                     McpFacts(call: mcp)
                 } else if let ask = view.ask {
-                    AskFacts(ask: ask)
+                    if record?.label?.command == nil {
+                        AskFacts(ask: ask, command: app.pending.first { $0.id == view.requestId }?.label?.command)
+                    }
                 } else if let release = view.envRelease {
                     EnvReleaseFacts(vm: vm, release: release)
                 } else if let store = view.secretsStore {
@@ -515,17 +519,59 @@ private struct McpFacts: View {
 
 private struct AskFacts: View {
     var ask: AskView
+    var command: CommandPresentation?
 
     var body: some View {
         let detail = ask.detail.map(untrusted).flatMap { $0.isEmpty ? nil : $0 }
         let topic = ask.topic.map(untrusted).flatMap { $0.isEmpty ? nil : $0 }
-        if detail != nil || topic != nil {
+        if let command {
+            CommandFacts(presentation: command)
+            let original = command.original.isEmpty ? detail : untrusted(command.original)
+            if let original {
+                FactGroup {
+                    DrillRow(title: "Full invocation", id: "fullInvocation", page: .text(title: "Full invocation · may contain secrets", body: original, mono: true, id: "fullInvocationText")) {
+                        Text("Includes setup and environment values").font(RFont.sans(12)).foregroundStyle(Palette.inkMeta)
+                    }
+                }
+            }
+        } else if detail != nil || topic != nil {
             FactGroup {
                 if let detail { MonoBlock(text: detail, id: "askDetail") }
                 if let topic { FactRow(key: "About", value: topic, mono: true, valueId: "askTopic") }
             }
             .accessibilityContainer("ask")
         }
+    }
+}
+
+/// Core-derived facts: the clients never reinterpret a shell command or turn its summary into permission.
+struct CommandFacts: View {
+    var presentation: CommandPresentation
+
+    var body: some View {
+        FactGroup {
+            if !presentation.actionable.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Command").font(RFont.sans(15)).foregroundStyle(Palette.inkMeta)
+                    Text(untrusted(presentation.actionable)).font(RFont.mono(13.5)).foregroundStyle(Palette.ink)
+                        .environment(\.layoutDirection, .leftToRight).textSelection(.enabled)
+                        .accessibilityIdentifier("askCommand")
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 12)
+            }
+            ForEach(Array(presentation.notices.enumerated()), id: \.offset) { index, notice in
+                Text(untrusted(notice)).font(RFont.sans(14)).foregroundStyle(Palette.ink2)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 12)
+                    .accessibilityIdentifier("commandNotice:\(index)")
+            }
+            if !presentation.setup.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Setup").font(RFont.sans(15)).foregroundStyle(Palette.inkMeta)
+                    Text(untrusted(presentation.setup.joined(separator: "\n"))).font(RFont.mono(13)).foregroundStyle(Palette.ink)
+                        .environment(\.layoutDirection, .leftToRight).textSelection(.enabled)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 12)
+                    .accessibilityIdentifier("commandSetup")
+            }
+        }.accessibilityContainer("commandPresentation")
     }
 }
 
