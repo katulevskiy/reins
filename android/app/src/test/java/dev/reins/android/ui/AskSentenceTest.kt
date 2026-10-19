@@ -20,6 +20,21 @@ import org.junit.Test
 
 /** How every kind of request is written (design/signal/ASK-TEXT.md): one test per kind, and the rules across them. */
 class AskSentenceTest {
+    @Test
+    fun commandsUseTheSharedPresentationWithoutReparsingTheInvocation() {
+        val raw = "TOKEN=secret JAVA_HOME=/jdk ./gradlew test"
+        val presentation = dev.reins.core.CommandPresentation("Run Gradle", "./gradlew test", listOf("TOKEN=•••• (value hidden)"), listOf("Runs project build scripts"))
+        val label = TestData.label("terminal", "run", "Run", raw, code = true).copy(command = presentation)
+        val sentence = askSentence(label)
+        assertEquals("Run Gradle", sentence.text)
+        assertEquals("./gradlew test", sentence.details)
+        assertEquals("Approved running Gradle", askSentence(label, tense = Tense.Done, who = "Claude Code").text)
+        assertFalse(sentence.toString().contains("secret"))
+        val fallback = askSentence(label.copy(command = presentation.copy(heading = "Review a shell command", actionable = "")))
+        assertNull(fallback.details)
+        assertFalse(fallback.toString().contains("secret"))
+    }
+
     private val command = "rm -rf jarx && npm run build && npm test"
 
     /** The rules every sentence keeps: one italic run inside the text, no machine value in the serif. */

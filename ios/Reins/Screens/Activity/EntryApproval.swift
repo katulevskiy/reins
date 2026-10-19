@@ -63,10 +63,12 @@ enum AskedText {
 /// said, and a copy button. Nothing for entries logged before the request was kept.
 struct AskedSections: View {
     var entry: ActivityEntry
+    @State private var showInvocation = false
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
 
     var body: some View {
+        if let command = entry.label?.command { CommandFacts(presentation: command) }
         if let r = entry.request {
             let host = findConnection(model.connections, id: entry.connectionId, label: entry.connectionLabel)?.clientHost
             let cwd = untrusted(r.cwd)
@@ -115,33 +117,43 @@ struct AskedSections: View {
                     .accessibilityIdentifier("copyFullRequest")
                 }
                 .padding(.leading, 12)
-                VStack(alignment: .leading, spacing: 12) {
-                    if !full.isEmpty {
-                        // Wrapped, never cut: the whole request is what this is for.
-                        Text(full)
-                            .font(RFont.mono(12.5))
-                            .foregroundStyle(Palette.ink)
-                            .lineSpacing(5)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("fullRequestText")
+                if entry.label?.command != nil {
+                    Button(showInvocation ? "Hide full invocation" : "Show full invocation · may contain secrets") {
+                        showInvocation.toggle()
                     }
-                    if !purpose.isEmpty {
-                        Text(AskedText.purposeLine(who: agent.isEmpty ? untrusted(entry.connectionLabel) : agent, purpose: purpose))
-                            .font(RFont.mono(12.5))
-                            .foregroundStyle(Palette.inkMeta)
-                            .lineSpacing(5)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("fullRequestPurpose")
-                    }
+                    .font(RFont.sans(14)).foregroundStyle(Palette.violet)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .accessibilityIdentifier("revealFullInvocation")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(Self.well, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Self.wellEdge, lineWidth: 1))
-                .environment(\.layoutDirection, .leftToRight)
-                .textSelection(.enabled)
-                .accessibilityContainer("fullRequest")
+                if entry.label?.command == nil || showInvocation {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if !full.isEmpty {
+                            // Wrapped, never cut: the whole request is what this is for.
+                            Text(full)
+                                .font(RFont.mono(12.5))
+                                .foregroundStyle(Palette.ink)
+                                .lineSpacing(5)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("fullRequestText")
+                        }
+                        if !purpose.isEmpty {
+                            Text(AskedText.purposeLine(who: agent.isEmpty ? untrusted(entry.connectionLabel) : agent, purpose: purpose))
+                                .font(RFont.mono(12.5))
+                                .foregroundStyle(Palette.inkMeta)
+                                .lineSpacing(5)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("fullRequestPurpose")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Self.well, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Self.wellEdge, lineWidth: 1))
+                    .environment(\.layoutDirection, .leftToRight)
+                    .textSelection(.enabled)
+                    .accessibilityContainer("fullRequest")
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 22)

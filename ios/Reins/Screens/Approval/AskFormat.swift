@@ -46,6 +46,10 @@ enum AskFormat {
             return line(commits == 0 ? "\(verb) to " : "\(verb) \(plural(commits, "commit")) to ", repo, mono: mono, stand: "a repository")
         }
         if let ask = view.ask {
+            if core?.provider == "terminal", let command = core?.command {
+                // The complete actionable command is the first fact, outside the fixed field.
+                return line(command.heading, nil)
+            }
             let place = computer.flatMap { $0.isEmpty ? nil : untrustedName($0) } ?? "your computer"
             // What it runs or touches is the core's reading (its label, the guard's match), never read again here.
             // Not read for sure, or not resolved: the generic sentence, and everything that was asked below it.
