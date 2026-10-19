@@ -208,19 +208,24 @@ impl Engine {
         let session = self.session()?;
         self.require_decider_fresh(&session).await?;
         let (_, mut parked) = self.parked(request_id)?;
+        if self.store.invocation_started(request_id)? {
+            return Err(CoreError::invalid(
+                "This request was already attempted. Check Activity and the provider before creating a new request; do not repeat this approval.",
+            ));
+        }
         // This explicit source follows the entry point; Auto, Bypass and Overnight cannot impersonate an owner tap.
         self.authorization_execute(&parked.request, source)?;
         let now = unix_now();
         if matches!(parked.request.call, ToolCall::Mcp(_)) {
-            return self.approve_mcp(&session, request_id, &parked, &choice, now).await;
+            return self.approve_mcp(&session, request_id, &parked, &choice, now, source).await;
         }
         if matches!(parked.kind(), ApprovalKind::Fetch | ApprovalKind::Write) {
             let scope = self.blob_scope();
-            return crate::blob::within(scope, self.approve_connector(&session, request_id, &parked, &choice, now))
-                .await;
-        }
-        if matches!(parked.kind(), ApprovalKind::Fetch | ApprovalKind::Write) {
-            return self.approve_connector(&session, request_id, &parked, &choice, now).await;
+            return crate::blob::within(
+                scope,
+                self.approve_connector(&session, request_id, &parked, &choice, now, source),
+            )
+            .await;
         }
         if parked.kind() == ApprovalKind::Accounts {
             // About an integration as a whole: no single account to settle on.
