@@ -473,13 +473,13 @@ impl Engine {
                 capability,
                 title: title(capability).into(),
                 description: description(capability).into(),
-                supported_modes: if !editable {
-                    vec![]
-                } else {
+                supported_modes: if editable {
                     supported_modes(service)
                         .into_iter()
                         .filter(|mode| *mode != PermissionMode::Auto || positive_available)
                         .collect()
+                } else {
+                    vec![]
                 },
                 supported_scopes: scopes(capability),
                 configured_mode: own.map(|p| mode(&p.effect)).or(managed.then_some(PermissionMode::Ask)),
@@ -1430,10 +1430,10 @@ impl Engine {
                 .filter_map(|p| p.limits.max_uses)
                 .min()
                 .ok_or_else(|| CoreError::storage("delegation usage limit is missing"))?;
-            let restrictions = if !complete_personal_policy(&state)
-                || !(self.holds_roster_now()?
-                    && self.decides()
-                    && self.store.permission_history_ready().unwrap_or(false))
+            let restrictions = if !(complete_personal_policy(&state)
+                && self.holds_roster_now()?
+                && self.decides()
+                && self.store.permission_history_ready().unwrap_or(false))
             {
                 vec![PermissionRestriction {
                         controller: PermissionController::Conflict,
