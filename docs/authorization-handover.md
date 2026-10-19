@@ -27,6 +27,11 @@ authority after acquiring their lease. This prevents a second process from insta
 capability check and key release. Shared administration leases also let a new Deny or revocation become effective
 while an execution is awaiting provider authentication or a response.
 
+The receiving phone does not report the transfer complete or delete its retryable bundle until it has materialized
+the outgoing primary's signed history frontier. Verified op counters alone are insufficient. The common decision
+and policy-administration gates hold while materialization is incomplete, including after keys have been installed
+or the app restarts. A failed sync can be retried without reopening legacy approval behavior.
+
 This is authenticated software capability advertisement, not hardware attestation or protection against a malicious
 paired phone that lies about its implementation. Owner-key recovery and accounts operated through older deciding
 apps remain outside this handover guarantee. Enterprise deployment still needs a server-enforced supported-client

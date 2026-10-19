@@ -1306,7 +1306,7 @@ impl Engine {
     }
 
     /// Where this phone's handover request stands. `Done`: the primary handed over, and this phone verified and kept
-    /// the bundle (it is the primary now).
+    /// the bundle and materialized the outgoing primary's authorization history (it is the primary now).
     pub async fn handover_poll(&self) -> Result<HandoverProgress, CoreError> {
         let session = self.session()?;
         let _one = self.roles.changing.lock().await;
@@ -1397,6 +1397,11 @@ impl Engine {
             );
             self.adopt_secret(AccountSecret::from_bytes(&raw)?).await?;
         }
+        // The roster's outgoing counter is not enough: catch_up_log can verify it without materializing policy,
+        // retained revocations or usage floors into this phone's deciding store. Keep the bundle/request retryable
+        // until those records are applied. The common authorization gate also holds effects throughout this window.
+        self.live_sync_now().await?;
+        self.require_authorization_history_ready()?;
         match api_call!(session, |api| api.drop_handover_bundle()) {
             Ok(())
             | Err(ApiFailure::Status {

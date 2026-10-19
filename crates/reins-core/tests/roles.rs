@@ -112,6 +112,9 @@ struct State {
     floor: u64,
     /// `POST /ops` answers 503 (the phone is offline for its uploads).
     ops_down: bool,
+    /// Make sync fail only after the receiving phone fetched its handover bundle (keys may already be installed).
+    stall_after_bundle: bool,
+    pulls_down: bool,
     /// The next `POST /ops` is refused with this status and message (and nothing of it stored).
     refuse_ops_once: Option<(u16, String)>,
     /// `PUT /checkpoint` is refused, and how many came.
@@ -272,6 +275,9 @@ impl State {
     }
 
     fn sync(&self, req: &Request) -> ResponseTemplate {
+        if self.pulls_down {
+            return err(503, "offline");
+        }
         let after: u64 =
             req.url.query_pairs().find(|(k, _)| k == "after").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
         let from = after.max(self.floor);
@@ -550,12 +556,17 @@ impl State {
                 }
                 ResponseTemplate::new(204)
             }
-            ("GET", ["handover-bundle"]) => match &self.bundle {
-                Some((epoch, sealed)) if self.roster.last().unwrap().primary.device_id == me => {
-                    ok(json!({"epoch": epoch, "sealed": sealed}))
+            ("GET", ["handover-bundle"]) => {
+                if self.stall_after_bundle {
+                    self.pulls_down = true;
                 }
-                _ => err(404, "not_found"),
-            },
+                match &self.bundle {
+                    Some((epoch, sealed)) if self.roster.last().unwrap().primary.device_id == me => {
+                        ok(json!({"epoch": epoch, "sealed": sealed}))
+                    }
+                    _ => err(404, "not_found"),
+                }
+            }
             ("DELETE", ["handover-bundle"]) => {
                 self.bundle = None;
                 ResponseTemplate::new(204)
@@ -2333,6 +2344,55 @@ async fn delegation_consumption_survives_pause_and_primary_handover_without_lega
     b.engine().process_relayed(permission_send("after-handover", &["friend@example.com"])).await.unwrap();
     assert_eq!(sent_count(&gmail).await, 1, "new primary cannot reuse the previous primary's spent delegation");
     assert_eq!(b.delegations().await.unwrap()[0].used, 1);
+}
+
+#[tokio::test]
+async fn interrupted_handover_holds_effects_until_policy_history_is_materialized_and_can_retry() {
+    let mut w = world().await;
+    let gmail = MockServer::start().await;
+    let a = permission_phone(&mut w, &gmail).await;
+    a.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+    let b = w
+        .phone_config(CoreConfig {
+            gmail_base: gmail.uri(),
+            ..CoreConfig::default()
+        })
+        .await;
+    enroll(&a, &b, "Viewer").await;
+    let mut draft = a.delegation_draft("gmail".into(), EMAIL.into()).await.unwrap();
+    draft.agent_ids = vec!["c1".into()];
+    draft.grant_account_access = true;
+    draft.max_uses = 1;
+    draft.rules = vec![CapabilityPermissionInput {
+        capability: PermissionCapability::MailSend,
+        mode: PermissionMode::Auto,
+        scope: PermissionScopeSelection {
+            kind: PermissionScopeKind::SelectedRecipients,
+            ids: vec!["friend@example.com".into()],
+        },
+    }];
+    a.issue_delegation(draft, Arc::new(PermissionOwner)).await.unwrap();
+    let request = b.handover_request().await.unwrap();
+    a.handover_approve(request, device_of(&b).await).await.unwrap();
+    w.state().stall_after_bundle = true;
+    assert!(b.handover_poll().await.is_err(), "key installation alone must not report Done");
+    assert!(w.state().bundle.is_some(), "the bundle remains available for retry");
+    let error = b.engine().authorization_policies().unwrap_err();
+    assert!(error.to_string().contains("authorization history"), "{error}");
+    if let Err(error) = b.engine().process_relayed(permission_send("before-ready", &["friend@example.com"])).await {
+        assert!(error.to_string().contains("authorization history"), "{error}");
+    }
+    assert_eq!(sent_count(&gmail).await, 0, "missing history never reopens legacy authorization");
+    {
+        let mut state = w.state();
+        state.stall_after_bundle = false;
+        state.pulls_down = false;
+    }
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+    assert!(w.state().bundle.is_none());
+    assert_eq!(b.delegations().await.unwrap().len(), 1, "Done includes the actual policy state");
+    b.engine().process_relayed(permission_send("after-ready", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 1, "verified scoped authority becomes usable only after readiness");
 }
 
 #[tokio::test]
