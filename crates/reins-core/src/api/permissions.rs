@@ -7,7 +7,8 @@ use crate::permission_types::{
     AccountPermissionPreset, AccountPermissionsDraft, AccountPermissionsView, DelegationChange, DelegationDraft,
     DelegationView, PermissionCapability, PermissionPreview, PermissionScopeOptions,
 };
-use crate::{CoreError, OwnerCheck, rt};
+use crate::{CoreError, OwnerCheck, RosterSummary, rt};
+use zeroize::Zeroizing;
 
 macro_rules! on_engine {
     ($core:ident, |$engine:ident| $body:expr) => {{
@@ -25,6 +26,30 @@ macro_rules! on_engine {
 
 #[uniffi::export]
 impl ReinsCore {
+    /// Explicit legacy-account setup. The owner callback runs after preparing this account's engine, so native
+    /// code can reject a stale screen/session before consent. Logout retires that engine and cancels the attempt.
+    /// Confirm that recovery information is saved before authorizing; existing rosters require their normal flow.
+    pub async fn roster_create_authorized(
+        &self,
+        device_name: String,
+        code_or_password: Option<String>,
+        owner: Arc<dyn OwnerCheck>,
+    ) -> Result<RosterSummary, CoreError> {
+        let typed = code_or_password.map(Zeroizing::new);
+        on_engine!(self, |engine| {
+            let session = engine.session()?;
+            let reason = format!(
+                "Enable automatic permission setup for {} with this phone as the verified primary. Confirm that your recovery information is saved. Account permissions still require a separate explicit save.",
+                session.email()
+            );
+            if !owner.confirm(reason).await.map_err(|_| CoreError::invalid("the owner check failed"))? {
+                return Err(CoreError::invalid("the owner did not confirm primary phone setup"));
+            }
+            engine.ensure_active()?;
+            engine.roster_create(&device_name, typed).await
+        })
+    }
+
     pub async fn account_permissions(
         &self,
         service: String,

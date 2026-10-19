@@ -3502,6 +3502,13 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     func previewDelegation(draft: DelegationDraft) async throws  -> PermissionPreview
     
+    /**
+     * Explicit legacy-account setup. The owner callback runs after preparing this account's engine, so native
+     * code can reject a stale screen/session before consent. Logout retires that engine and cancels the attempt.
+     * Confirm that recovery information is saved before authorizing; existing rosters require their normal flow.
+     */
+    func rosterCreateAuthorized(deviceName: String, codeOrPassword: String?, owner: OwnerCheck) async throws  -> RosterSummary
+    
     func saveAccountPermissions(draft: AccountPermissionsDraft, owner: OwnerCheck) async throws  -> AccountPermissionsView
     
     /**
@@ -6728,6 +6735,27 @@ open func previewDelegation(draft: DelegationDraft)async throws  -> PermissionPr
             completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
             freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypePermissionPreview_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Explicit legacy-account setup. The owner callback runs after preparing this account's engine, so native
+     * code can reject a stale screen/session before consent. Logout retires that engine and cancels the attempt.
+     * Confirm that recovery information is saved before authorizing; existing rosters require their normal flow.
+     */
+open func rosterCreateAuthorized(deviceName: String, codeOrPassword: String?, owner: OwnerCheck)async throws  -> RosterSummary  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_create_authorized(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceName),FfiConverterOptionString.lower(codeOrPassword),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRosterSummary_lift,
             errorHandler: FfiConverterTypeCoreError_lift
         )
 }
@@ -26377,6 +26405,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_preview_delegation() != 35239) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_create_authorized() != 4256) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_save_account_permissions() != 59940) {

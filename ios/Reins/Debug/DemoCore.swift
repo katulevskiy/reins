@@ -475,6 +475,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     func rosterCreate(deviceName: String, codeOrPassword: String?) async throws -> RosterSummary {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
+    func rosterCreateAuthorized(deviceName: String, codeOrPassword: String?, owner: OwnerCheck) async throws -> RosterSummary {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
     func enrollBegin(deviceName: String) async throws -> EnrollStart {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
