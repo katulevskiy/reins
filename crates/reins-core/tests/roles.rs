@@ -2495,14 +2495,14 @@ async fn revoking_an_agent_during_owner_confirmation_cannot_recreate_account_or_
         let started = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Notify::new());
         let owner = Arc::new(PausedPermissionOwner {
-            started: started.clone(),
-            release: release.clone(),
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
         });
         let pending = if delegation {
             let mut draft = core.delegation_draft("gmail".into(), EMAIL.into()).await.unwrap();
             draft.agent_ids = vec!["c1".into()];
             draft.grant_account_access = true;
-            let saving = core.clone();
+            let saving = Arc::clone(&core);
             tokio::spawn(async move { saving.issue_delegation(draft, owner).await.map(|_| ()) })
         } else {
             let mut draft = core
@@ -2511,7 +2511,7 @@ async fn revoking_an_agent_during_owner_confirmation_cannot_recreate_account_or_
                 .unwrap();
             draft.agent_ids = vec!["c1".into()];
             draft.grant_account_access = true;
-            let saving = core.clone();
+            let saving = Arc::clone(&core);
             tokio::spawn(async move { saving.save_account_permissions(draft, owner).await.map(|_| ()) })
         };
         started.notified().await;
