@@ -166,6 +166,29 @@ impl Engine {
         .await
     }
 
+    async fn finish_connector_unknown(
+        &self,
+        session: &Session,
+        request: &RelayRequest,
+        call: &ConnectorCall,
+        message: &str,
+        trace: Option<&AuthorizationTrace>,
+    ) -> Result<(), CoreError> {
+        let mut audit = self.audit_connector(request, call, action_of(call), "unknown", message, None, &[]);
+        if let Some(trace) = trace {
+            trace.stamp(&mut audit, AuthorizationPhase::Unknown);
+        }
+        self.finish(
+            session,
+            request,
+            audit,
+            RelayOutcome::Error {
+                message: message.to_owned(),
+            },
+        )
+        .await
+    }
+
     /// Handles a call to another integration received from the server.
     pub(crate) async fn handle_connector(
         &self,
@@ -342,6 +365,7 @@ impl Engine {
                         }
                         let outcome = match attempt.disclosure_error {
                             Some(_error) => {
+                                "succeeded_withheld".clone_into(&mut audit.outcome);
                                 audit.info.note = Some("The provider returned success; its result was withheld because policy changed while it was running.".to_owned());
                                 RelayOutcome::Error {
                                     message: RESULT_WITHHELD.to_owned(),
@@ -357,11 +381,12 @@ impl Engine {
                     }
                     Err(e) => {
                         // Invocation began: a failed response cannot prove that the provider did not act.
-                        self.fail_connector_text(
+                        self.finish_connector_unknown(
                             session,
                             &request,
                             call,
                             &format!("{} {OUTCOME_UNKNOWN}", ai_message(&call.service, &e)),
+                            attempt.trace.as_ref(),
                         )
                         .await
                     }
@@ -440,7 +465,9 @@ impl Engine {
                         self.authorization_attempt_event(&request, trace, AuthorizationPhase::Unknown)?;
                     }
                     // A partial file handoff may already have disclosed content; do not refund its authority.
-                    return self.fail_connector_text(session, &request, call, OUTCOME_UNKNOWN).await;
+                    return self
+                        .finish_connector_unknown(session, &request, call, OUTCOME_UNKNOWN, trace.as_ref())
+                        .await;
                 }
             };
             self.authorization_disclosure_check(&request, AuthorizationSource::Automatic, trace.as_ref())?;
@@ -587,9 +614,10 @@ impl Engine {
                 };
             let data = match attempt.result {
                 Ok(data) => data,
-                Err(_error) => {
+                Err(error) => {
+                    let message = format!("{} {OUTCOME_UNKNOWN}", ai_message(&call.service, &error));
                     let mut audit =
-                        self.audit_connector(request, call, action_of(call), "error", OUTCOME_UNKNOWN, None, &[]);
+                        self.audit_connector(request, call, action_of(call), "unknown", &message, None, &[]);
                     if let Some(trace) = &attempt.trace {
                         trace.stamp(&mut audit, AuthorizationPhase::Unknown);
                     }
@@ -600,7 +628,7 @@ impl Engine {
                             request,
                             audit,
                             RelayOutcome::Error {
-                                message: OUTCOME_UNKNOWN.to_owned(),
+                                message,
                             },
                         )
                         .await;
@@ -623,6 +651,7 @@ impl Engine {
             }
             let outcome = match attempt.disclosure_error {
                 Some(_error) => {
+                    "succeeded_withheld".clone_into(&mut audit.outcome);
                     audit.info.note = Some("The provider returned success; its result was withheld because policy changed while it was running.".to_owned());
                     RelayOutcome::Error {
                         message: RESULT_WITHHELD.to_owned(),
@@ -692,7 +721,7 @@ impl Engine {
             Ok(items) => items,
             Err(_error) => {
                 let mut audit =
-                    self.audit_connector(request, call, action_of(call), "error", OUTCOME_UNKNOWN, None, &[]);
+                    self.audit_connector(request, call, action_of(call), "unknown", OUTCOME_UNKNOWN, None, &[]);
                 if let Some(trace) = &trace {
                     trace.stamp(&mut audit, AuthorizationPhase::Unknown);
                 }
@@ -710,7 +739,7 @@ impl Engine {
             }
         };
         if self.authorization_disclosure_check(request, source, trace.as_ref()).is_err() {
-            let mut audit = self.audit_connector(request, call, action_of(call), "error", OUTCOME_UNKNOWN, None, &[]);
+            let mut audit = self.audit_connector(request, call, action_of(call), "unknown", OUTCOME_UNKNOWN, None, &[]);
             if let Some(trace) = &trace {
                 trace.stamp(&mut audit, AuthorizationPhase::Unknown);
             }
@@ -810,6 +839,8 @@ impl Engine {
         let trace = self.authorization_attempt_started(request, source)?;
         // Boxed: each is a large future (a store adds integrations), which would otherwise be inlined into every
         // approval's future, autopilot's included.
+        // From this point onward return WriteAttempt even on policy/audit failure: outer Err means the provider
+        // was never invoked and is the only case in which the caller may refund a reserved grant use.
         let result = if is_env_release(call) {
             Box::pin(self.release_env(account, call, command)).await
         } else if is_token_store(call) {
@@ -819,11 +850,6 @@ impl Engine {
         } else {
             connector.perform(account, call).await
         };
-        if result.is_err()
-            && let Some(trace) = &trace
-        {
-            self.authorization_attempt_event(request, trace, AuthorizationPhase::Unknown)?;
-        }
         let disclosure_error = self.authorization_execute(request, source).err();
         // Provider errors may contain content too; suppress them after a late policy restriction.
         let result = match (result, disclosure_error.as_ref()) {

@@ -12,6 +12,10 @@ use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use data_encoding::BASE64URL_NOPAD;
 use reins_core::autopilot::AutopilotMode;
 use reins_core::crypto::{Kdf, master_key, master_password_hash};
+use reins_core::permission_types::{
+    AccountPermissionPreset, CapabilityPermissionInput, DelegationChange, PermissionCapability, PermissionMode,
+    PermissionScopeKind, PermissionScopeSelection,
+};
 use reins_core::{
     CoreConfig, CoreError, EnrollProgress, GoogleTokenProvider, HandoverProgress, Notifier, PhoneRole, ReinsCore,
 };
@@ -2094,6 +2098,14 @@ impl reins_core::OwnerCheck for PermissionOwner {
     }
 }
 
+struct SendStarted(Arc<tokio::sync::Notify>);
+impl Respond for SendStarted {
+    fn respond(&self, _request: &Request) -> ResponseTemplate {
+        self.0.notify_one();
+        ok(json!({"id":"secret-provider-result","threadId":"t"})).set_delay(std::time::Duration::from_millis(500))
+    }
+}
+
 async fn permission_phone(w: &mut World, gmail: &MockServer) -> Arc<ReinsCore> {
     Mock::given(method("GET")).and(path("/reins/api/connections")).respond_with(ok(json!({"connections":[{"id":"c1","label":"Agent","client_name":"Claude","client_host":"claude.ai","created_at":1,"last_used_at":null}]}))).with_priority(1).mount(&w.server).await;
     Mock::given(method("GET"))
@@ -2132,7 +2144,6 @@ async fn sent_count(gmail: &MockServer) -> usize {
 
 #[tokio::test]
 async fn typed_permissions_enforce_selected_recipients_limits_all_modes_and_truthful_native_defaults() {
-    use reins_core::permission_types::*;
     let mut w = world().await;
     let gmail = MockServer::start().await;
     let core = permission_phone(&mut w, &gmail).await;
@@ -2184,11 +2195,34 @@ async fn typed_permissions_enforce_selected_recipients_limits_all_modes_and_trut
     core.set_autopilot_mode(None, Some(AutopilotMode::Lockdown), None).await.unwrap();
     core.engine().process_relayed(permission_send("locked", &["friend@example.com"])).await.unwrap();
     assert_eq!(sent_count(&gmail).await, 2);
+    core.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
+    core.remove_account(EMAIL.into()).await.unwrap();
+    core.add_account(EMAIL.into()).await.unwrap();
+    let reconnected = core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap();
+    assert!(reconnected.managed);
+    assert!(
+        reconnected.capabilities.iter().all(|capability| capability.configured_mode != Some(PermissionMode::Auto)),
+        "disconnect permanently revokes automatic authority"
+    );
+    core.engine().process_relayed(permission_send("after-reconnect", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 2);
+    let mut fresh = core
+        .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+        .await
+        .unwrap();
+    fresh.agent_ids = vec!["c1".into()];
+    fresh.grant_account_access = true;
+    fresh.max_uses = Some(1);
+    let send = fresh.rules.iter_mut().find(|rule| rule.capability == PermissionCapability::MailSend).unwrap();
+    send.mode = PermissionMode::Auto;
+    send.scope.ids = vec!["friend@example.com".into()];
+    core.save_account_permissions(fresh, Arc::new(PermissionOwner)).await.unwrap();
+    core.engine().process_relayed(permission_send("fresh-after-reconnect", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 3, "a new explicit owner authorization can create fresh bounded authority");
 }
 
 #[tokio::test]
 async fn delegation_consumption_survives_pause_and_primary_handover_without_legacy_fallback() {
-    use reins_core::permission_types::*;
     let mut w = world().await;
     let gmail = MockServer::start().await;
     let a = permission_phone(&mut w, &gmail).await;
@@ -2236,7 +2270,6 @@ async fn delegation_consumption_survives_pause_and_primary_handover_without_lega
 
 #[tokio::test]
 async fn managed_reads_require_exact_resources_and_never_release_suspected_codes() {
-    use reins_core::permission_types::*;
     let mut w = world().await;
     let gmail = MockServer::start().await;
     let core = permission_phone(&mut w, &gmail).await;
@@ -2296,7 +2329,6 @@ async fn managed_reads_require_exact_resources_and_never_release_suspected_codes
 
 #[tokio::test]
 async fn ambiguous_gmail_send_retains_consumption_and_prevents_duplicate_retry() {
-    use reins_core::permission_types::*;
     let mut w = world().await;
     let gmail = MockServer::start().await;
     let core = permission_phone(&mut w, &gmail).await;
@@ -2327,4 +2359,106 @@ async fn ambiguous_gmail_send_retains_consumption_and_prevents_duplicate_retry()
     let _retry = core.engine().process_relayed(permission_send("uncertain", &["friend@example.com"])).await;
     core.engine().process_relayed(permission_send("new-after-uncertain", &["friend@example.com"])).await.unwrap();
     assert_eq!(sent_count(&gmail).await, 1);
+}
+
+#[tokio::test]
+async fn gmail_success_is_withheld_when_policy_changes_during_positive_or_owner_send() {
+    use reins_proto::authorization::{
+        OperationId, PolicyEffect, PolicyIssuer, PolicyKind, PolicyLifecycle, PolicyRecord, PolicyScope, UsageLimits,
+    };
+    for automatic in [true, false] {
+        let mut world = world().await;
+        let gmail = MockServer::start().await;
+        let core = permission_phone(&mut world, &gmail).await;
+        core.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+        let mut draft = core
+            .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+            .await
+            .unwrap();
+        draft.agent_ids = vec!["c1".into()];
+        draft.grant_account_access = true;
+        draft.max_uses = Some(1);
+        let send = draft.rules.iter_mut().find(|rule| rule.capability == PermissionCapability::MailSend).unwrap();
+        if automatic {
+            send.mode = PermissionMode::Auto;
+            send.scope.ids = vec!["friend@example.com".into()];
+        }
+        core.save_account_permissions(draft, Arc::new(PermissionOwner)).await.unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(SendStarted(Arc::clone(&entered)))
+            .with_priority(1)
+            .mount(&gmail)
+            .await;
+        let request = permission_send("change-during-send", &["friend@example.com"]);
+        if !automatic {
+            core.engine().process_relayed(request.clone()).await.unwrap();
+        }
+        let task_core = Arc::clone(&core);
+        let mut sending = tokio::spawn(async move {
+            if automatic {
+                task_core.engine().process_relayed(request).await
+            } else {
+                task_core
+                    .approve(
+                        "change-during-send".into(),
+                        reins_core::ApprovalChoice {
+                            selected_message_ids: vec![],
+                            standing: None,
+                        },
+                    )
+                    .await
+            }
+        });
+        tokio::select! {
+            () = entered.notified() => {},
+            result = &mut sending => panic!("send ended before provider invocation: {result:?}"),
+        }
+        let engine = core.engine();
+        let state = engine.authorization_policies().unwrap();
+        let deny = PolicyRecord {
+            v: 1,
+            id: "deny-during-send".into(),
+            revision: 1,
+            issuer: PolicyIssuer {
+                principal_id: USER.into(),
+                tenant_id: None,
+            },
+            kind: PolicyKind::Mandatory,
+            lifecycle: PolicyLifecycle::Active,
+            valid_from: reins_core::store::unix_now(),
+            expires_at: None,
+            scope: PolicyScope {
+                account_ids: vec![serde_json::json!(["gmail", EMAIL]).to_string()],
+                operations: vec![OperationId {
+                    service: "gmail".into(),
+                    capability: "write".into(),
+                    action: "send".into(),
+                }],
+                ..PolicyScope::default()
+            },
+            conditions: vec![],
+            effect: PolicyEffect::Deny,
+            parent_policy_ids: vec![],
+            limits: UsageLimits::default(),
+        };
+        engine.save_authorization_policy(state.revision, deny, &PermissionOwner).await.unwrap();
+        sending.await.unwrap().unwrap();
+        assert_eq!(sent_count(&gmail).await, 1);
+        let answer = world
+            .state()
+            .signed
+            .iter()
+            .filter(|(_, id, _)| id == "change-during-send")
+            .map(|(_, _, bytes)| String::from_utf8(bytes.clone()).unwrap())
+            .next_back()
+            .unwrap();
+        assert!(answer.contains("Do not repeat"), "{answer}");
+        assert!(!answer.contains("secret-provider-result"), "provider result must remain withheld");
+        assert!(core.activity(20).await.unwrap().iter().any(|entry| entry.outcome == "succeeded_withheld"));
+        if automatic {
+            assert_eq!(core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap().remaining_uses, Some(0));
+        }
+    }
 }

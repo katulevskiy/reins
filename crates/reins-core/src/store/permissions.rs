@@ -16,6 +16,10 @@ use serde_json::Value;
 
 use super::{AuthorizationState, Store, authorization};
 use crate::CoreError;
+use crate::authorization_trace::{
+    AuthorizationFactSource, AuthorizationPhase, AuthorizationPolicyVersion, AuthorizationReviewSource,
+    AuthorizationTrace,
+};
 
 pub(crate) const BUDGET_ORIGIN: &str = "policy_budget";
 pub(crate) const BUDGET_SERVICE: &str = "authorization_budget";
@@ -60,11 +64,11 @@ pub(crate) struct ExecutionReceipt {
 pub(crate) struct VerifiedPermission {
     key: String,
     receipt: ExecutionReceipt,
-    trace: crate::authorization_trace::AuthorizationTrace,
+    trace: AuthorizationTrace,
 }
 
 impl VerifiedPermission {
-    pub(crate) fn trace(&self) -> &crate::authorization_trace::AuthorizationTrace {
+    pub(crate) fn trace(&self) -> &AuthorizationTrace {
         &self.trace
     }
 }
@@ -162,6 +166,14 @@ fn account_admitted(conn: &Connection, action: &ActionContext, now: i64) -> Resu
         .map_err(|_| CoreError::invalid("invalid account identity"))?;
     if tuple.len() != 2 || tuple[0] != action.operation.service {
         return Err(CoreError::invalid("invalid account identity"));
+    }
+    let connected: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE service=?1 AND account=?2)",
+        params![tuple[0], tuple[1]],
+        |row| row.get(0),
+    )?;
+    if !connected {
+        return Ok(false);
     }
     let mut stmt = conn.prepare("SELECT grant_json,origin FROM grants WHERE connection_id=?1")?;
     let rows = stmt
@@ -481,10 +493,6 @@ impl Store {
                 serde_json::to_string(&receipt).map_err(|e| CoreError::storage(e.to_string()))?
             ],
         )?;
-        use crate::authorization_trace::{
-            AuthorizationFactSource, AuthorizationPhase, AuthorizationPolicyVersion, AuthorizationReviewSource,
-            AuthorizationTrace,
-        };
         let trace = AuthorizationTrace {
             v: 1,
             attempt_id: receipt.attempt_id.clone(),
@@ -635,6 +643,12 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn permission_history_ready(&self) -> Result<bool, CoreError> {
+        let conn = self.read()?;
+        Ok(receipt_rows(&conn)?.iter().filter(|(_, receipt)| receipt.outcome != ReceiptOutcome::Succeeded).count()
+            < MAX_UNRESOLVED)
+    }
+
     pub(crate) fn permission_budget_uses(&self, policy_id: &str) -> Result<u64, CoreError> {
         let conn = self.read()?;
         let id = budget_id(policy_id);
@@ -696,9 +710,11 @@ pub(crate) fn receipt_incoming(previous: Option<&Value>, next: Option<&Value>) -
                 let mut comparison = new.clone();
                 comparison.outcome = old.outcome;
                 if old == comparison {
-                    if new.outcome == ReceiptOutcome::Succeeded {
-                        old.outcome = ReceiptOutcome::Succeeded;
-                    }
+                    old.outcome = match (old.outcome, new.outcome) {
+                        (ReceiptOutcome::Succeeded, _) | (_, ReceiptOutcome::Succeeded) => ReceiptOutcome::Succeeded,
+                        (ReceiptOutcome::Unknown, _) | (_, ReceiptOutcome::Unknown) => ReceiptOutcome::Unknown,
+                        _ => ReceiptOutcome::Started,
+                    };
                     return serde_json::to_value(old).expect("receipt serializes");
                 }
             }
@@ -900,6 +916,7 @@ mod tests {
     fn setup(policies: Vec<PolicyRecord>) -> (tempfile::TempDir, Arc<Store>) {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(crate::store::tests::open(dir.path()));
+        store.add_account("gmail", "me@example.com", 1).unwrap();
         let mut state = AuthorizationState::empty("owner");
         state.revision = 1;
         state.managed_scopes.insert(ManagedOperation {
@@ -1173,5 +1190,56 @@ mod tests {
         drop(conn);
         assert!(store.add_verified_account("owner", "gmail", "failed@example.com", 11).is_err());
         assert!(!store.accounts().unwrap().iter().any(|a| a.account == "failed@example.com"));
+    }
+    #[test]
+    fn unknown_settlement_is_monotone_commutative_and_survives_sync_and_restore() {
+        let (_dir, store) = setup(vec![policy("permission", 3)]);
+        let proof = reserve(&store, "settlement");
+        let started = serde_json::to_value(&proof.receipt).unwrap();
+        let mut unknown = proof.receipt.clone();
+        unknown.outcome = ReceiptOutcome::Unknown;
+        let unknown = serde_json::to_value(unknown).unwrap();
+        assert_eq!(receipt_incoming(Some(&started), Some(&unknown)), unknown);
+        assert_eq!(receipt_incoming(Some(&unknown), Some(&started)), unknown);
+        let previous = PreservedPermissions {
+            receipts: vec![(format!("app.{}", proof.key), unknown.to_string())],
+            budgets: vec![],
+        };
+        {
+            let conn = store.lock().unwrap();
+            after_import(&conn, previous).unwrap();
+        }
+        assert!(store.permission_revalidate(&proof, &action("settlement"), &[AttributeKey::Recipients], 10).is_err());
+        store.write_sync_row(reins_proto::oplog::Table::Meta, &proof.key, None, Some(&started)).unwrap();
+        let kept: String = store
+            .read()
+            .unwrap()
+            .query_row("SELECT value FROM meta WHERE key=?1", [format!("app.{}", proof.key)], |row| row.get(0))
+            .unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&kept).unwrap(), unknown);
+        assert!(store.permission_outcome(proof, true).is_err(), "local completion cannot erase imported settlement");
+    }
+    #[test]
+    fn imported_positive_policies_without_managed_markers_never_reenable_legacy() {
+        for lifecycle in [PolicyLifecycle::Active, PolicyLifecycle::Paused, PolicyLifecycle::Revoked] {
+            for service in ["gmail", "telegram"] {
+                let (_dir, store) = setup(vec![policy("permission", 3)]);
+                let mut state = store.authorization_state().unwrap().unwrap();
+                state.managed_scopes.clear();
+                state.policies[0].lifecycle = lifecycle;
+                state.policies[0].scope.operations[0].service = service.into();
+                state.policies[0].scope.account_ids[0] =
+                    crate::authorization::account_resource_id(service, "me@example.com");
+                if lifecycle == PolicyLifecycle::Revoked {
+                    state.revoked_ids.insert("permission".into());
+                }
+                assert!(state.validate().is_err());
+                store.meta_set(authorization::RECORD_KEY, &serde_json::to_string(&state).unwrap()).unwrap();
+                assert!(
+                    store.permission_reserve(&action("imported"), &[AttributeKey::Recipients], 10).is_err(),
+                    "missing marker is invalid authority, never legacy absence"
+                );
+            }
+        }
     }
 }

@@ -7284,14 +7284,16 @@ public struct AccountPermissionsView: Equatable, Hashable {
     public var availablePresets: [AccountPermissionPreset]
     public var expiresAt: Int64?
     public var maximumDurationSecs: UInt64
+    public var delegationMaximumDurationSecs: UInt64
     public var used: UInt64
+    public var usageVerified: Bool
     public var remainingUses: UInt64?
     public var scopeSummary: String
     public var restrictions: [PermissionRestriction]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(service: String, account: String, accountId: String, revision: UInt64, managed: Bool, conflicted: Bool, capabilities: [PermissionCapabilityView], agents: [PermissionAgentView], availablePresets: [AccountPermissionPreset], expiresAt: Int64?, maximumDurationSecs: UInt64, used: UInt64, remainingUses: UInt64?, scopeSummary: String, restrictions: [PermissionRestriction]) {
+    public init(service: String, account: String, accountId: String, revision: UInt64, managed: Bool, conflicted: Bool, capabilities: [PermissionCapabilityView], agents: [PermissionAgentView], availablePresets: [AccountPermissionPreset], expiresAt: Int64?, maximumDurationSecs: UInt64, delegationMaximumDurationSecs: UInt64, used: UInt64, usageVerified: Bool, remainingUses: UInt64?, scopeSummary: String, restrictions: [PermissionRestriction]) {
         self.service = service
         self.account = account
         self.accountId = accountId
@@ -7303,7 +7305,9 @@ public struct AccountPermissionsView: Equatable, Hashable {
         self.availablePresets = availablePresets
         self.expiresAt = expiresAt
         self.maximumDurationSecs = maximumDurationSecs
+        self.delegationMaximumDurationSecs = delegationMaximumDurationSecs
         self.used = used
+        self.usageVerified = usageVerified
         self.remainingUses = remainingUses
         self.scopeSummary = scopeSummary
         self.restrictions = restrictions
@@ -7336,7 +7340,9 @@ public struct FfiConverterTypeAccountPermissionsView: FfiConverterRustBuffer {
                 availablePresets: FfiConverterSequenceTypeAccountPermissionPreset.read(from: &buf), 
                 expiresAt: FfiConverterOptionInt64.read(from: &buf), 
                 maximumDurationSecs: FfiConverterUInt64.read(from: &buf), 
+                delegationMaximumDurationSecs: FfiConverterUInt64.read(from: &buf), 
                 used: FfiConverterUInt64.read(from: &buf), 
+                usageVerified: FfiConverterBool.read(from: &buf), 
                 remainingUses: FfiConverterOptionUInt64.read(from: &buf), 
                 scopeSummary: FfiConverterString.read(from: &buf), 
                 restrictions: FfiConverterSequenceTypePermissionRestriction.read(from: &buf)
@@ -7355,7 +7361,9 @@ public struct FfiConverterTypeAccountPermissionsView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAccountPermissionPreset.write(value.availablePresets, into: &buf)
         FfiConverterOptionInt64.write(value.expiresAt, into: &buf)
         FfiConverterUInt64.write(value.maximumDurationSecs, into: &buf)
+        FfiConverterUInt64.write(value.delegationMaximumDurationSecs, into: &buf)
         FfiConverterUInt64.write(value.used, into: &buf)
+        FfiConverterBool.write(value.usageVerified, into: &buf)
         FfiConverterOptionUInt64.write(value.remainingUses, into: &buf)
         FfiConverterString.write(value.scopeSummary, into: &buf)
         FfiConverterSequenceTypePermissionRestriction.write(value.restrictions, into: &buf)
@@ -11224,6 +11232,7 @@ public struct DelegationView: Equatable, Hashable {
      * Includes attempted operations with an unresolved external outcome; these are not silently refunded.
      */
     public var used: UInt64
+    public var usageVerified: Bool
     public var unresolved: UInt64
     public var maxUses: UInt64
     public var scopeSummary: String
@@ -11238,7 +11247,7 @@ public struct DelegationView: Equatable, Hashable {
          */revision: UInt64, title: String, service: String, account: String, state: DelegationState, expiresAt: Int64, agentIds: [String], rules: [CapabilityPermissionInput], 
         /**
          * Includes attempted operations with an unresolved external outcome; these are not silently refunded.
-         */used: UInt64, unresolved: UInt64, maxUses: UInt64, scopeSummary: String, effectiveReason: String, restrictions: [PermissionRestriction]) {
+         */used: UInt64, usageVerified: Bool, unresolved: UInt64, maxUses: UInt64, scopeSummary: String, effectiveReason: String, restrictions: [PermissionRestriction]) {
         self.id = id
         self.revision = revision
         self.title = title
@@ -11249,6 +11258,7 @@ public struct DelegationView: Equatable, Hashable {
         self.agentIds = agentIds
         self.rules = rules
         self.used = used
+        self.usageVerified = usageVerified
         self.unresolved = unresolved
         self.maxUses = maxUses
         self.scopeSummary = scopeSummary
@@ -11282,6 +11292,7 @@ public struct FfiConverterTypeDelegationView: FfiConverterRustBuffer {
                 agentIds: FfiConverterSequenceString.read(from: &buf), 
                 rules: FfiConverterSequenceTypeCapabilityPermissionInput.read(from: &buf), 
                 used: FfiConverterUInt64.read(from: &buf), 
+                usageVerified: FfiConverterBool.read(from: &buf), 
                 unresolved: FfiConverterUInt64.read(from: &buf), 
                 maxUses: FfiConverterUInt64.read(from: &buf), 
                 scopeSummary: FfiConverterString.read(from: &buf), 
@@ -11301,6 +11312,7 @@ public struct FfiConverterTypeDelegationView: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.agentIds, into: &buf)
         FfiConverterSequenceTypeCapabilityPermissionInput.write(value.rules, into: &buf)
         FfiConverterUInt64.write(value.used, into: &buf)
+        FfiConverterBool.write(value.usageVerified, into: &buf)
         FfiConverterUInt64.write(value.unresolved, into: &buf)
         FfiConverterUInt64.write(value.maxUses, into: &buf)
         FfiConverterString.write(value.scopeSummary, into: &buf)
@@ -19825,7 +19837,7 @@ public enum ActivityOutcome: Equatable, Hashable {
     case approved
     case denied
     /**
-     * Allowed but it failed.
+     * Needs attention: error, started without a known outcome, unknown outcome, or successful response withheld.
      */
     case failed
 

@@ -89,6 +89,20 @@ impl AuthorizationState {
         let mut ids = BTreeSet::new();
         for policy in &self.policies {
             policy.validate().map_err(|e| CoreError::invalid(e.to_string()))?;
+            if matches!(
+                policy.effect,
+                reins_proto::authorization::PolicyEffect::Permit
+                    | reins_proto::authorization::PolicyEffect::EligibleForAuto
+                    | reins_proto::authorization::PolicyEffect::DelegationAuthority
+            ) && (policy.scope.account_ids.is_empty()
+                || policy
+                    .scope
+                    .account_ids
+                    .iter()
+                    .any(|account| !self.managed_scopes.iter().any(|scope| &scope.account_id == account)))
+            {
+                return Err(CoreError::invalid("authorizing policy requires permanent managed account markers"));
+            }
             if policy.issuer.principal_id != self.owner || !ids.insert(&policy.id) {
                 return Err(CoreError::invalid("authorization policy has another owner or a duplicate identity"));
             }

@@ -93,7 +93,9 @@ pub struct AccountPermissionsView {
     pub available_presets: Vec<AccountPermissionPreset>,
     pub expires_at: Option<i64>,
     pub maximum_duration_secs: u64,
+    pub delegation_maximum_duration_secs: u64,
     pub used: u64,
+    pub usage_verified: bool,
     pub remaining_uses: Option<u64>,
     pub scope_summary: String,
     pub restrictions: Vec<PermissionRestriction>,
@@ -185,6 +187,7 @@ pub struct DelegationView {
     pub rules: Vec<CapabilityPermissionInput>,
     /// Includes attempted operations with an unresolved external outcome; these are not silently refunded.
     pub used: u64,
+    pub usage_verified: bool,
     pub unresolved: u64,
     pub max_uses: u64,
     pub scope_summary: String,

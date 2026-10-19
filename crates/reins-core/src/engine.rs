@@ -351,10 +351,13 @@ impl Engine {
             return Err(CoreError::invalid("that is not a usable account name"));
         }
         let now = unix_now();
-        if service == "vault" {
-            self.store.add_account(service, &account, now)?;
-        } else {
+        if service == views::SERVICE_GMAIL {
             self.store.add_verified_account(&self.policy_owner()?, service, &account, now)?;
+        } else {
+            // Roll out mandatory connected-account defaults together with a usable positive adapter. Other
+            // integrations retain their remembered-grant semantics until that adapter ships; explicit policies
+            // and already managed markers remain enforced by the common gate.
+            self.store.add_account(service, &account, now)?;
         }
         Ok(AccountView {
             service: service.to_owned(),
@@ -381,7 +384,11 @@ impl Engine {
     /// address Gmail reports for it is what gets stored.
     pub async fn add_account(&self, hint: &str) -> Result<AccountView, CoreError> {
         let hint = reins_proto::gmail::normalize_account(hint).map_err(|e| CoreError::invalid(e.to_string()))?;
-        let found = self.gmail_for(&hint).account().await?.unwrap_or(hint);
+        let found =
+            self.gmail_for(&hint).account().await?.ok_or_else(|| {
+                CoreError::invalid("Gmail did not verify this account identity; reconnect and try again")
+            })?;
+        let found = reins_proto::gmail::normalize_account(&found).map_err(|e| CoreError::invalid(e.to_string()))?;
         let now = unix_now();
         self.store.add_verified_account(&self.policy_owner()?, views::SERVICE_GMAIL, &found, now)?;
         Ok(AccountView {

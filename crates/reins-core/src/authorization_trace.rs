@@ -206,7 +206,7 @@ impl Engine {
                 ("sent", "The provider returned success for this policy-authorized attempt.")
             }
             AuthorizationPhase::Unknown => {
-                ("error", "The attempt did not return success. It may already have acted; check before trying again.")
+                ("unknown", "The attempt did not return success. It may already have acted; check before trying again.")
             }
         };
         let mut audit = self.audit(request, "execute", outcome, detail, None, 1, &[]);

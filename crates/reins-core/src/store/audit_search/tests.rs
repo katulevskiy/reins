@@ -481,3 +481,25 @@ fn ten_thousand_entries_stay_quick() {
     assert!(built < std::time::Duration::from_secs(20), "{built:?}");
     assert!(searched < std::time::Duration::from_secs(5), "{searched:?}");
 }
+
+#[test]
+fn ambiguous_and_withheld_execution_states_need_attention_and_are_not_approved() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    for (index, outcome) in ["error", "started", "unknown", "succeeded_withheld", "sent"].into_iter().enumerate() {
+        let mut record = audit_record();
+        record.at = i64::try_from(index).unwrap();
+        record.outcome = outcome.to_owned();
+        store.append_audit(&record).unwrap();
+    }
+    let attention = ActivityQuery {
+        outcomes: vec![ActivityOutcome::Failed],
+        ..ActivityQuery::default()
+    };
+    assert_eq!(ids(&store, &attention).len(), 4);
+    let approved = ActivityQuery {
+        outcomes: vec![ActivityOutcome::Approved],
+        ..ActivityQuery::default()
+    };
+    assert_eq!(ids(&store, &approved).len(), 1);
+}

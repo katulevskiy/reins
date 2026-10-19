@@ -2386,6 +2386,7 @@ async fn env_git(with_risk: bool) -> (Env, MockServer) {
         testing::package()
     };
     let env = env_with(true, files, Some(github.uri())).await;
+    env.store().add_account("github", "me", unix_now()).unwrap();
     env.core.add_token_account("github".to_owned(), "ghp_attentionholdtoken".to_owned()).await.unwrap();
     (env, github)
 }
@@ -3763,4 +3764,87 @@ async fn dump_decisions() {
         out.insert(format!("{mode:?}"), Value::Object(decided));
     }
     std::fs::write(output, serde_json::to_string_pretty(&Value::Object(out)).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn held_execution_history_keeps_account_inspection_and_braking_available() {
+    use crate::permission_types::{AccountPermissionPreset, DelegationChange, PermissionMode};
+    use reins_proto::authorization::{
+        OperationId, PolicyEffect, PolicyIssuer, PolicyKind, PolicyLifecycle, PolicyRecord, PolicyScope, UsageLimits,
+    };
+    let env = env(false).await;
+    let engine = env.core.engine();
+    let mut state = engine.authorization_policies().unwrap();
+    let operation = OperationId {
+        service: "gmail".into(),
+        capability: "read".into(),
+        action: "read".into(),
+    };
+    let account_id = crate::authorization::account_resource_id("gmail", GMAIL);
+    let authority = PolicyRecord {
+        v: 1,
+        id: "delegation-authority:held:mail-read".into(),
+        revision: 1,
+        issuer: PolicyIssuer {
+            principal_id: state.owner.clone(),
+            tenant_id: None,
+        },
+        kind: PolicyKind::Permission,
+        lifecycle: PolicyLifecycle::Active,
+        valid_from: unix_now() - 1,
+        expires_at: Some(unix_now() + 600),
+        scope: PolicyScope {
+            account_ids: vec![account_id.clone()],
+            connection_ids: vec![OLD.into()],
+            operations: vec![operation.clone()],
+            ..PolicyScope::default()
+        },
+        conditions: vec![],
+        effect: PolicyEffect::DelegationAuthority,
+        parent_policy_ids: vec![],
+        limits: UsageLimits {
+            max_uses: Some(5),
+            ..UsageLimits::default()
+        },
+    };
+    let mut child = authority.clone();
+    child.id = "delegation:held:mail-read".into();
+    child.kind = PolicyKind::Delegation;
+    child.effect = PolicyEffect::Permit;
+    child.parent_policy_ids = vec![authority.id.clone()];
+    let budget = crate::store::permissions::budget_grant(&child, unix_now()).unwrap();
+    state.policies.extend([authority, child]);
+    state.managed_scopes.insert(crate::store::authorization::ManagedOperation {
+        account_id,
+        operation,
+    });
+    state.revision += 1;
+    engine.store.permissions_apply(0, &state, &[], &[budget]).unwrap();
+    engine.store.meta_set("authorization.receipt.corrupt", r#"{"execution_attempt":"conflict"}"#).unwrap();
+    let view = env.core.account_permissions("gmail".into(), GMAIL.into()).await.unwrap();
+    assert!(!view.usage_verified);
+    assert!(!view.available_presets.contains(&AccountPermissionPreset::ReadAssist));
+    assert!(view.capabilities.iter().all(|capability| !capability.supported_modes.contains(&PermissionMode::Auto)));
+    let held = env.core.delegations().await.unwrap().remove(0);
+    assert!(!held.usage_verified);
+    let paused =
+        env.core.change_delegation(held.id.clone(), held.revision, DelegationChange::Pause, owner_yes()).await.unwrap();
+    assert!(
+        env.core
+            .change_delegation(held.id.clone(), paused.revision, DelegationChange::Resume, owner_yes())
+            .await
+            .is_err()
+    );
+    let revoked =
+        env.core.change_delegation(held.id, paused.revision, DelegationChange::Revoke, owner_yes()).await.unwrap();
+    assert!(!revoked.usage_verified);
+    let ask = env
+        .core
+        .account_permission_draft("gmail".into(), GMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+        .await
+        .unwrap();
+    env.core.preview_account_permissions(ask.clone()).await.unwrap();
+    let saved = env.core.save_account_permissions(ask, owner_yes()).await.unwrap();
+    assert!(!saved.usage_verified);
+    assert!(saved.capabilities.iter().all(|capability| capability.configured_mode == Some(PermissionMode::Ask)));
 }

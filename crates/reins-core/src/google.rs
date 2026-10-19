@@ -103,6 +103,22 @@ impl GoogleApi {
         query: &[(&str, String)],
         body: Option<&serde_json::Value>,
     ) -> Result<String, CoreError> {
+        self.request_checked(method, path, query, body, || std::future::ready(Ok(()))).await
+    }
+
+    /// Rechecks the caller's live execution authority after token acquisition and before every HTTP invocation.
+    pub(crate) async fn request_checked<F, Fut>(
+        &self,
+        method: &Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&serde_json::Value>,
+        mut check: F,
+    ) -> Result<String, CoreError>
+    where
+        F: FnMut() -> Fut + Send,
+        Fut: Future<Output = Result<(), CoreError>> + Send,
+    {
         let mut token = self.access_token().await?;
         let mut refreshed = false;
         let mut attempt = 0;
@@ -112,6 +128,7 @@ impl GoogleApi {
             if let Some(body) = body {
                 req = req.json(body);
             }
+            check().await?;
             let resp = req.send().await?;
             let status = resp.status();
             let text = resp.text().await?;
@@ -147,4 +164,62 @@ fn retryable(status: StatusCode, body: &str) -> bool {
             && (body.contains("rateLimitExceeded")
                 || body.contains("userRateLimitExceeded")
                 || body.contains("quotaExceeded")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::Notify;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    struct GatedToken {
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+    #[async_trait::async_trait]
+    impl GoogleTokenProvider for GatedToken {
+        async fn access_token(&self, _account: String, _service: String) -> Result<String, ForeignError> {
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok("token".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn revoked_authority_during_token_acquisition_never_reaches_provider() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let token: Arc<dyn GoogleTokenProvider> = Arc::new(GatedToken {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        });
+        let api =
+            GoogleApi::new(crate::http::client().unwrap(), &server.uri(), token, "account", "gmail", Duration::ZERO);
+        let allowed = Arc::new(AtomicBool::new(true));
+        let check = Arc::clone(&allowed);
+        let invocation = tokio::spawn(async move {
+            api.request_checked(&Method::POST, "/send", &[], None, || {
+                std::future::ready(if check.load(Ordering::Acquire) {
+                    Ok(())
+                } else {
+                    Err(CoreError::invalid("permission revoked"))
+                })
+            })
+            .await
+        });
+        entered.notified().await;
+        allowed.store(false, Ordering::Release);
+        release.notify_one();
+        assert!(invocation.await.unwrap().is_err());
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
 }

@@ -1098,3 +1098,23 @@ fn a_lockdown_on_no_setting_makes_a_row_and_names_no_profile() {
     assert_eq!((row["scope"].clone(), row["mode"].clone()), (json!(""), json!("lockdown")));
     assert!(row.get("profile_id").is_none(), "a profile only the store knows is left as it is: {row}");
 }
+
+#[test]
+fn execution_receipt_unknown_is_monotone_for_signed_seen_concurrent_and_remove_ops() {
+    let mut world = World::new(false);
+    let mut conn = store();
+    let key = "authorization.receipt.test";
+    let started = json!({"v":1,"attempt_id":"attempt","owner":"owner","executor_device_id":"p","roster_epoch":3,"connection_id":"agent","request_id":"r","request_digest":"aa".repeat(32),"at":NOW,"expires_at":NOW+60,"policies":[],"outcome":"started"});
+    let mut unknown = started.clone();
+    unknown["outcome"] = json!("unknown");
+    let first = world.op("p", 3, OpClass::Primary, put(Table::Meta, key, None, started.clone()));
+    assert_eq!(run(&mut conn, &world, 1, std::slice::from_ref(&first)), [Outcome::Applied]);
+    let settle = world.op("p", 3, OpClass::Primary, put(Table::Meta, key, Some(Version::of(&first)), unknown.clone()));
+    run(&mut conn, &world, 2, std::slice::from_ref(&settle));
+    let rollback =
+        world.op("p", 3, OpClass::Primary, put(Table::Meta, key, Some(Version::of(&settle)), started.clone()));
+    let concurrent = world.op("p", 3, OpClass::Primary, put(Table::Meta, key, None, started));
+    let deletion = world.op("p", 3, OpClass::Primary, remove(Table::Meta, key));
+    run(&mut conn, &world, 3, &[rollback, concurrent, deletion]);
+    assert_eq!(record(&conn, Table::Meta, key).unwrap().unwrap().value.unwrap(), unknown);
+}

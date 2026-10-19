@@ -191,6 +191,16 @@ async fn answers(env: &Env) -> Vec<Value> {
         .collect()
 }
 
+async fn settled_failure(env: &Env, id: &str) -> String {
+    env.core.approve(id.to_owned(), choice(&[], None)).await.unwrap();
+    let answer = answers(env).await.pop().unwrap();
+    assert_eq!(answer["outcome"], "error");
+    let message = answer["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("Do not repeat"));
+    assert!(env.core.approve(id.to_owned(), choice(&[], None)).await.is_err());
+    message
+}
+
 fn choice(ids: &[&str], standing: Option<StandingGrant>) -> ApprovalChoice {
     ApprovalChoice {
         selected_message_ids: ids.iter().map(|s| (*s).to_owned()).collect(),
@@ -497,7 +507,7 @@ async fn a_failed_upload_deletes_the_empty_send_and_tells_the_ai() {
     let args = json!({"type": "file", "name": "R", "file_name": "a.txt", "content_base64": BASE64.encode(b"hello")});
     serve_pending(&env, &[request("r1", "send_create", &args)]).await;
     env.core.sync(0).await.unwrap();
-    assert!(env.core.approve("r1".to_owned(), choice(&[], None)).await.is_err());
+    settled_failure(&env, "r1").await;
     assert_eq!(
         sent(&env, "DELETE", &format!("/api/sends/{NEW_ID}")).await.len(),
         1,
@@ -523,7 +533,7 @@ async fn a_server_that_keeps_files_elsewhere_or_answers_oddly_is_not_followed() 
     let args = json!({"type": "file", "name": "R", "file_name": "a.txt", "content_base64": BASE64.encode(b"hello")});
     serve_pending(&env, &[request("r1", "send_create", &args)]).await;
     env.core.sync(0).await.unwrap();
-    assert!(env.core.approve("r1".to_owned(), choice(&[], None)).await.is_err());
+    settled_failure(&env, "r1").await;
     let all = env.server.received_requests().await.unwrap();
     assert!(all.iter().all(|r| r.url.host_str() != Some("evil.example")));
     assert!(all.iter().all(|r| !r.url.path().contains("/file/") || r.url.path() == "/api/sends/file/v2"));
@@ -644,10 +654,13 @@ async fn the_server_refusing_is_passed_on_in_its_own_words_and_nothing_is_claime
     let args = json!({"type": "text", "name": "N", "text": "secret-text-123"});
     serve_pending(&env, &[request("r1", "send_create", &args)]).await;
     env.core.sync(0).await.unwrap();
-    let error = env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap_err();
-    assert!(error.to_string().contains("Enterprise Policy"), "{error}");
-    assert!(!error.to_string().contains("secret-text-123"));
-    assert_eq!(env.core.pending().await.unwrap().len(), 1, "still waiting: the AI was not told it worked");
+    let error = settled_failure(&env, "r1").await;
+    assert!(error.contains("Enterprise Policy"), "{error}");
+    assert!(!error.contains("secret-text-123"));
+    assert!(
+        env.core.pending().await.unwrap().is_empty(),
+        "the AI was told the attempt failed, without claiming success"
+    );
 }
 
 #[tokio::test]
@@ -665,11 +678,11 @@ async fn server_errors_map_to_messages_the_ai_can_act_on() {
         .await;
     serve_pending(&env, &[request("r1", "send_delete", &json!({"send": TEXT_ID}))]).await;
     env.core.sync(0).await.unwrap();
-    let error = env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap_err().to_string();
+    let error = settled_failure(&env, "r1").await;
     assert!(error.contains("Send not found"), "{error}");
     serve_pending(&env, &[request("r2", "send_update", &json!({"send": TEXT_ID, "name": "New"}))]).await;
     env.core.sync(0).await.unwrap();
-    let error = env.core.approve("r2".to_owned(), choice(&[], None)).await.unwrap_err().to_string();
+    let error = settled_failure(&env, "r2").await;
     assert!(!error.contains("abc123"), "the server's raw body is never passed on: {error}");
 }
 
