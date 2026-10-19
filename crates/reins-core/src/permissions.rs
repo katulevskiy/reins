@@ -961,6 +961,26 @@ impl Engine {
         )
     }
 
+    pub(crate) async fn permission_before_send(
+        &self,
+        session: &crate::session::Session,
+        request: &RelayRequest,
+        proof: &VerifiedPermission,
+    ) -> Result<(), CoreError> {
+        self.require_decider_fresh(session).await?;
+        self.revalidate_permission(request, proof)
+    }
+
+    pub(crate) async fn legacy_before_send(
+        &self,
+        session: &crate::session::Session,
+        request: &RelayRequest,
+        source: crate::authorization::AuthorizationSource,
+    ) -> Result<(), CoreError> {
+        self.require_decider_fresh(session).await?;
+        self.authorization_execute(request, source)
+    }
+
     pub(crate) fn permission_finished(
         &self,
         request: &RelayRequest,

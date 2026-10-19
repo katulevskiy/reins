@@ -422,7 +422,10 @@ impl Engine {
                     self.permission_finished(request, proof, false)?;
                     return self.fail(session, request, "send", &error).await;
                 }
-                let sent = self.gmail_for(account_of(request)).send(email).await;
+                let sent = self
+                    .gmail_for(account_of(request))
+                    .send_checked(email, || self.permission_before_send(session, request, &proof))
+                    .await;
                 self.permission_finished(request, proof, sent.is_ok())?;
                 return match sent {
                     Ok(sent) => {
@@ -498,7 +501,12 @@ impl Engine {
                     self.store.refund(&BTreeSet::from([grant]))?;
                     return self.fail(session, request, "send", &error).await;
                 }
-                let sent = self.gmail_for(account_of(request)).send(email).await;
+                let sent = self
+                    .gmail_for(account_of(request))
+                    .send_checked(email, || {
+                        self.legacy_before_send(session, request, crate::authorization::AuthorizationSource::Automatic)
+                    })
+                    .await;
                 self.legacy_send_finished(attempt, sent.is_ok())?;
                 match sent {
                     Ok(sent) => {

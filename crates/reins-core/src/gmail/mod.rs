@@ -167,6 +167,14 @@ impl GmailClient {
     /// Sends `email` (already approved). Replies stay in their conversation when
     /// the original's threading headers can be read.
     pub async fn send(&self, email: &OutgoingEmail) -> Result<SentMessage, CoreError> {
+        self.send_checked(email, || std::future::ready(Ok(()))).await
+    }
+
+    pub(crate) async fn send_checked<F, Fut>(&self, email: &OutgoingEmail, check: F) -> Result<SentMessage, CoreError>
+    where
+        F: FnMut() -> Fut + Send,
+        Fut: Future<Output = Result<(), CoreError>> + Send,
+    {
         let reply = match &email.reply_to_message_id {
             Some(id) => self.reply_context(id).await,
             None => None,
@@ -176,7 +184,9 @@ impl GmailClient {
         if let (Some(reply), Some(obj)) = (&reply, body.as_object_mut()) {
             obj.insert("threadId".to_owned(), json!(reply.thread_id));
         }
-        let sent: SendResponse = self.json(Method::POST, "/users/me/messages/send", &[], Some(&body)).await?;
+        let text = self.api.request_checked(&Method::POST, "/users/me/messages/send", &[], Some(&body), check).await?;
+        let sent: SendResponse =
+            serde_json::from_str(&text).map_err(|_| CoreError::gmail("Gmail sent an unexpected response"))?;
         Ok(SentMessage {
             id: sent.id,
             thread_id: sent.thread_id,

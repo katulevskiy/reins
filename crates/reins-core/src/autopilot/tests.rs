@@ -2386,6 +2386,7 @@ async fn env_git(with_risk: bool) -> (Env, MockServer) {
         testing::package()
     };
     let env = env_with(true, files, Some(github.uri())).await;
+    env.store().add_account("github", "me", unix_now()).unwrap();
     env.core.add_token_account("github".to_owned(), "ghp_attentionholdtoken".to_owned()).await.unwrap();
     (env, github)
 }

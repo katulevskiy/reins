@@ -297,7 +297,7 @@ impl Engine {
                 }
                 // A roster or mandatory policy may have changed while usage reached durable storage.
                 self.authorization_execute(request, source)?;
-                let sent = gmail.send(email).await;
+                let sent = gmail.send_checked(email, || self.legacy_before_send(&session, request, source)).await;
                 self.legacy_send_finished(attempt, sent.is_ok())?;
                 let Ok(sent) = sent else {
                     self.store.remove_pending(request_id)?;

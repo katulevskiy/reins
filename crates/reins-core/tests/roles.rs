@@ -12,6 +12,10 @@ use common::{FakeGoogle, FakeKeys, RecordingNotifier};
 use data_encoding::BASE64URL_NOPAD;
 use reins_core::autopilot::AutopilotMode;
 use reins_core::crypto::{Kdf, master_key, master_password_hash};
+use reins_core::permission_types::{
+    AccountPermissionPreset, CapabilityPermissionInput, DelegationChange, PermissionCapability, PermissionMode,
+    PermissionScopeKind, PermissionScopeSelection,
+};
 use reins_core::{
     CoreConfig, CoreError, EnrollProgress, GoogleTokenProvider, HandoverProgress, Notifier, PhoneRole, ReinsCore,
 };
@@ -2132,7 +2136,6 @@ async fn sent_count(gmail: &MockServer) -> usize {
 
 #[tokio::test]
 async fn typed_permissions_enforce_selected_recipients_limits_all_modes_and_truthful_native_defaults() {
-    use reins_core::permission_types::*;
     let mut w = world().await;
     let gmail = MockServer::start().await;
     let core = permission_phone(&mut w, &gmail).await;
@@ -2184,11 +2187,34 @@ async fn typed_permissions_enforce_selected_recipients_limits_all_modes_and_trut
     core.set_autopilot_mode(None, Some(AutopilotMode::Lockdown), None).await.unwrap();
     core.engine().process_relayed(permission_send("locked", &["friend@example.com"])).await.unwrap();
     assert_eq!(sent_count(&gmail).await, 2);
+    core.set_autopilot_mode(None, Some(AutopilotMode::Manual), None).await.unwrap();
+    core.remove_account(EMAIL.into()).await.unwrap();
+    core.add_account(EMAIL.into()).await.unwrap();
+    let reconnected = core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap();
+    assert!(reconnected.managed);
+    assert!(
+        reconnected.capabilities.iter().all(|capability| capability.configured_mode != Some(PermissionMode::Auto)),
+        "disconnect permanently revokes automatic authority"
+    );
+    core.engine().process_relayed(permission_send("after-reconnect", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 2);
+    let mut fresh = core
+        .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+        .await
+        .unwrap();
+    fresh.agent_ids = vec!["c1".into()];
+    fresh.grant_account_access = true;
+    fresh.max_uses = Some(1);
+    let send = fresh.rules.iter_mut().find(|rule| rule.capability == PermissionCapability::MailSend).unwrap();
+    send.mode = PermissionMode::Auto;
+    send.scope.ids = vec!["friend@example.com".into()];
+    core.save_account_permissions(fresh, Arc::new(PermissionOwner)).await.unwrap();
+    core.engine().process_relayed(permission_send("fresh-after-reconnect", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 3, "a new explicit owner authorization can create fresh bounded authority");
 }
 
 #[tokio::test]
 async fn delegation_consumption_survives_pause_and_primary_handover_without_legacy_fallback() {
-    use reins_core::permission_types::*;
     let mut w = world().await;
     let gmail = MockServer::start().await;
     let a = permission_phone(&mut w, &gmail).await;
@@ -2236,7 +2262,6 @@ async fn delegation_consumption_survives_pause_and_primary_handover_without_lega
 
 #[tokio::test]
 async fn managed_reads_require_exact_resources_and_never_release_suspected_codes() {
-    use reins_core::permission_types::*;
     let mut w = world().await;
     let gmail = MockServer::start().await;
     let core = permission_phone(&mut w, &gmail).await;
@@ -2296,7 +2321,6 @@ async fn managed_reads_require_exact_resources_and_never_release_suspected_codes
 
 #[tokio::test]
 async fn ambiguous_gmail_send_retains_consumption_and_prevents_duplicate_retry() {
-    use reins_core::permission_types::*;
     let mut w = world().await;
     let gmail = MockServer::start().await;
     let core = permission_phone(&mut w, &gmail).await;

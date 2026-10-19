@@ -16,6 +16,10 @@ use serde_json::Value;
 
 use super::{AuthorizationState, Store, authorization};
 use crate::CoreError;
+use crate::authorization_trace::{
+    AuthorizationFactSource, AuthorizationPhase, AuthorizationPolicyVersion, AuthorizationReviewSource,
+    AuthorizationTrace,
+};
 
 pub(crate) const BUDGET_ORIGIN: &str = "policy_budget";
 pub(crate) const BUDGET_SERVICE: &str = "authorization_budget";
@@ -60,11 +64,11 @@ pub(crate) struct ExecutionReceipt {
 pub(crate) struct VerifiedPermission {
     key: String,
     receipt: ExecutionReceipt,
-    trace: crate::authorization_trace::AuthorizationTrace,
+    trace: AuthorizationTrace,
 }
 
 impl VerifiedPermission {
-    pub(crate) fn trace(&self) -> &crate::authorization_trace::AuthorizationTrace {
+    pub(crate) fn trace(&self) -> &AuthorizationTrace {
         &self.trace
     }
 }
@@ -162,6 +166,14 @@ fn account_admitted(conn: &Connection, action: &ActionContext, now: i64) -> Resu
         .map_err(|_| CoreError::invalid("invalid account identity"))?;
     if tuple.len() != 2 || tuple[0] != action.operation.service {
         return Err(CoreError::invalid("invalid account identity"));
+    }
+    let connected: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE service=?1 AND account=?2)",
+        params![tuple[0], tuple[1]],
+        |row| row.get(0),
+    )?;
+    if !connected {
+        return Ok(false);
     }
     let mut stmt = conn.prepare("SELECT grant_json,origin FROM grants WHERE connection_id=?1")?;
     let rows = stmt
@@ -481,10 +493,6 @@ impl Store {
                 serde_json::to_string(&receipt).map_err(|e| CoreError::storage(e.to_string()))?
             ],
         )?;
-        use crate::authorization_trace::{
-            AuthorizationFactSource, AuthorizationPhase, AuthorizationPolicyVersion, AuthorizationReviewSource,
-            AuthorizationTrace,
-        };
         let trace = AuthorizationTrace {
             v: 1,
             attempt_id: receipt.attempt_id.clone(),
@@ -900,6 +908,7 @@ mod tests {
     fn setup(policies: Vec<PolicyRecord>) -> (tempfile::TempDir, Arc<Store>) {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(crate::store::tests::open(dir.path()));
+        store.add_account("gmail", "me@example.com", 1).unwrap();
         let mut state = AuthorizationState::empty("owner");
         state.revision = 1;
         state.managed_scopes.insert(ManagedOperation {
