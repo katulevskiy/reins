@@ -25,6 +25,7 @@ pub(crate) use storage::{PermissionReservation, VerifiedPermission};
 pub const MAX_PERMISSION_SECS: i64 = 7 * 86_400;
 pub const MAX_DELEGATION_SECS: i64 = 24 * 3_600;
 const DEFAULT_USES: u64 = 1_000;
+pub(crate) const MANAGED_GRANT_GUIDANCE: &str = "Use account permissions or temporary permissions for this managed account. Legacy Remember grants cannot authorize its mail actions.";
 
 fn capability_key(capability: PermissionCapability) -> &'static str {
     match capability {
@@ -34,6 +35,12 @@ fn capability_key(capability: PermissionCapability) -> &'static str {
         PermissionCapability::IntegrationRead => "integration-read",
         PermissionCapability::IntegrationWrite => "integration-write",
     }
+}
+
+fn complete_personal_policy(state: &AuthorizationState) -> bool {
+    !state.conflicted
+        && state.overflow_digest.is_none()
+        && state.policies.iter().all(|policy| policy.issuer.tenant_id.is_none())
 }
 
 fn capabilities(service: &str) -> Vec<PermissionCapability> {
@@ -135,6 +142,14 @@ fn scopes(capability: PermissionCapability) -> Vec<PermissionScopeKind> {
 
 fn account_prefix(account_id: &str) -> String {
     format!("account:{}:", hex32(&sha256(account_id.as_bytes())))
+}
+
+fn agent_scope_summary(agents: &[String]) -> String {
+    if agents.is_empty() {
+        "all current and future agents".into()
+    } else {
+        format!("{} selected agents", agents.len())
+    }
 }
 
 fn mode(effect: &PolicyEffect) -> PermissionMode {
@@ -330,12 +345,22 @@ impl Engine {
             restrictions.push(PermissionRestriction {
                 controller: PermissionController::Conflict,
                 policy_id: None,
-                reason: "Automatic permissions require a complete reconciled policy history".into(),
+                reason: "Reconcile the complete policy history before changing account defaults".into(),
             });
         }
         let usage_verified = self.store.permission_history_ready().is_ok();
         let history_ready = self.store.permission_history_ready().unwrap_or(false);
-        let positive_available = self.holds_roster_now()? && self.decides() && history_ready;
+        let editable = !state.conflicted && state.overflow_digest.is_none() && self.decides();
+        let authority_ready = complete_personal_policy(&state);
+        let positive_available = authority_ready && self.holds_roster_now()? && editable && history_ready;
+        if state.policies.iter().any(|policy| policy.issuer.tenant_id.is_some()) {
+            restrictions.push(PermissionRestriction {
+                controller: PermissionController::Organization,
+                policy_id: None,
+                reason: "Organization policy authority could not be verified; automatic permissions are unavailable"
+                    .into(),
+            });
+        }
         if !positive_available {
             restrictions.push(PermissionRestriction { controller: PermissionController::UnsupportedAdapter, policy_id: None, reason: "Automatic permissions require a verified primary phone and complete execution history. Reconcile pending or conflicting attempts before enabling Auto.".into() });
         }
@@ -379,7 +404,7 @@ impl Engine {
                     _ => "Block",
                 };
                 if policy.scope.connection_ids.is_empty() {
-                    format!("{behavior} for this capability from all agents")
+                    format!("{behavior} for this capability from all current and future agents")
                 } else {
                     format!("{behavior} for this capability from {} selected agents", policy.scope.connection_ids.len())
                 }
@@ -448,7 +473,7 @@ impl Engine {
                 capability,
                 title: title(capability).into(),
                 description: description(capability).into(),
-                supported_modes: if state.conflicted || state.overflow_digest.is_some() {
+                supported_modes: if !editable {
                     vec![]
                 } else {
                     supported_modes(service)
@@ -495,7 +520,7 @@ impl Engine {
             conflicted: state.conflicted,
             capabilities: views,
             agents,
-            available_presets: if service == "gmail" {
+            available_presets: if service == "gmail" && editable {
                 if positive_available {
                     vec![
                         AccountPermissionPreset::ReviewEveryRequest,
@@ -599,7 +624,10 @@ impl Engine {
             ));
         }
         if draft.rules.iter().any(|r| r.mode == PermissionMode::Auto)
-            && !(self.holds_roster_now()? && self.decides() && self.store.permission_history_ready().unwrap_or(false))
+            && !(complete_personal_policy(&state)
+                && self.holds_roster_now()?
+                && self.decides()
+                && self.store.permission_history_ready().unwrap_or(false))
         {
             return Err(CoreError::invalid("automatic permissions require the verified primary phone"));
         }
@@ -720,7 +748,7 @@ impl Engine {
             &draft.service,
             &draft.account,
             draft.expected_revision,
-            format!("Save {} account rules for {} selected agents", draft.rules.len(), draft.agent_ids.len()),
+            format!("Save {} account rules for {}", draft.rules.len(), agent_scope_summary(&draft.agent_ids)),
         )?;
         preview.warnings.extend(self.review_default_migration_warning(&candidate)?);
         Ok(preview)
@@ -759,14 +787,16 @@ impl Engine {
         )
         .await?;
         let summary = format!(
-            "Save {} permissions for {}. {} selected agents{}. Ask reviews by default; explicit scoped permissions or delegations may authorize matching requests. Block always denies matching requests. Automatic permissions expire at {:?}, with at most {:?} further uses per capability. {} Existing mandatory requirements remain in force. {}",
+            "Save {} permissions for {}. These defaults cover {}. {} Ask reviews by default; explicit scoped permissions or delegations may authorize matching requests. Block always denies matching requests. Automatic permissions expire at {:?}, with at most {:?} further uses per capability. {} Existing mandatory requirements remain in force. {}",
             draft.rules.len(),
             draft.account,
-            draft.agent_ids.len(),
-            if draft.grant_account_access {
-                " may discover this account"
+            agent_scope_summary(&draft.agent_ids),
+            if draft.agent_ids.is_empty() {
+                "No new agent account access is granted."
+            } else if draft.grant_account_access {
+                "Selected agents may discover this account."
             } else {
-                " retain their existing account access"
+                "Selected agents retain their existing account access."
             },
             draft.expires_at,
             draft.max_uses,
@@ -987,6 +1017,50 @@ impl Engine {
             .is_some_and(|state| storage::is_managed(&state, &normalized.action)))
     }
 
+    /// Legacy mail grants are separate from explicit account discovery/admission. An old request without an
+    /// account cannot safely offer a grant covering a managed account it has not resolved yet.
+    pub(crate) fn managed_mail_account(&self, account: Option<&str>) -> Result<bool, CoreError> {
+        let Some(state) = self.authenticated_authorization_state()? else {
+            return Ok(false);
+        };
+        if let Some(account) = account {
+            let account =
+                reins_proto::gmail::normalize_account(account).map_err(|e| CoreError::invalid(e.to_string()))?;
+            let id = crate::authorization::account_resource_id("gmail", &account);
+            return Ok(state.managed_scopes.iter().any(|scope| scope.account_id == id));
+        }
+        if let [account] = self.gmail_accounts().as_slice() {
+            let id = crate::authorization::account_resource_id("gmail", account);
+            return Ok(state.managed_scopes.iter().any(|scope| scope.account_id == id));
+        }
+        Ok(state.managed_scopes.iter().any(|scope| {
+            serde_json::from_str::<[String; 2]>(&scope.account_id).is_ok_and(|account| account[0] == "gmail")
+        }))
+    }
+
+    pub(crate) fn legacy_mail_grants_unavailable(&self, request: &RelayRequest) -> Result<bool, CoreError> {
+        if !matches!(
+            request.call,
+            reins_proto::gmail::ToolCall::GmailSearch { .. }
+                | reins_proto::gmail::ToolCall::GmailRead { .. }
+                | reins_proto::gmail::ToolCall::GmailSend { .. }
+                | reins_proto::gmail::ToolCall::RequestGrant { .. }
+        ) {
+            return Ok(false);
+        }
+        self.managed_mail_account(request.account.as_deref())
+    }
+
+    pub(crate) fn guard_legacy_grant_update(&self, grant_id: &str) -> Result<(), CoreError> {
+        if let Some(stored) = self.store.grants()?.into_iter().find(|stored| stored.grant.id.0 == grant_id)
+            && matches!(stored.grant.scope, Scope::Read(_) | Scope::Send(_))
+            && self.managed_mail_account(stored.grant.account.as_deref())?
+        {
+            return Err(CoreError::invalid(MANAGED_GRANT_GUIDANCE));
+        }
+        Ok(())
+    }
+
     pub(crate) fn permission_route(&self, request: &RelayRequest) -> Result<PermissionReservation, CoreError> {
         let Some(account) = request.account.as_deref() else {
             return Ok(PermissionReservation::Review);
@@ -1141,6 +1215,9 @@ impl Engine {
         let mut state = self.authorization_policies()?;
         if state.revision != draft.expected_revision || state.conflicted || state.overflow_digest.is_some() {
             return Err(CoreError::invalid("reload and reconcile authorization before issuing a delegation"));
+        }
+        if !complete_personal_policy(&state) {
+            return Err(CoreError::invalid("verify policy authority before issuing automatic delegations"));
         }
         validate_ids(&draft.agent_ids, true)?;
         let now = unix_now();
@@ -1353,17 +1430,19 @@ impl Engine {
                 .filter_map(|p| p.limits.max_uses)
                 .min()
                 .ok_or_else(|| CoreError::storage("delegation usage limit is missing"))?;
-            let restrictions =
-                if state.conflicted || state.overflow_digest.is_some() || !(self.holds_roster_now()? && self.decides())
-                {
-                    vec![PermissionRestriction {
+            let restrictions = if !complete_personal_policy(&state)
+                || !(self.holds_roster_now()?
+                    && self.decides()
+                    && self.store.permission_history_ready().unwrap_or(false))
+            {
+                vec![PermissionRestriction {
                         controller: PermissionController::Conflict,
                         policy_id: None,
-                        reason: "Automatic authority is held until its complete policy history is reconciled".into(),
+                        reason: "Automatic authority requires a verified primary and complete verified policy and execution history".into(),
                     }]
-                } else {
-                    vec![]
-                };
+            } else {
+                vec![]
+            };
             views.push(DelegationView {
                 id,
                 revision: state.revision,
@@ -1415,6 +1494,9 @@ impl Engine {
         let mut state = self.authorization_policies()?;
         if state.revision != expected_revision || state.conflicted || state.overflow_digest.is_some() {
             return Err(CoreError::invalid("reload and reconcile authorization before changing a delegation"));
+        }
+        if change == DelegationChange::Resume && !complete_personal_policy(&state) {
+            return Err(CoreError::invalid("verify policy authority before resuming automatic delegations"));
         }
         let child_prefix = format!("delegation:{identity}:");
         let parent_prefix = format!("delegation-authority:{identity}:");

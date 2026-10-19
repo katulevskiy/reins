@@ -233,6 +233,11 @@ impl Engine {
         }
         self.bind_account(&mut parked).await?;
         let request = &parked.request;
+        if (choice.standing.is_some() || parked.kind() == ApprovalKind::Grant)
+            && self.legacy_mail_grants_unavailable(request)?
+        {
+            return Err(CoreError::invalid(crate::permissions::MANAGED_GRANT_GUIDANCE));
+        }
         let call = request.call.clone().normalized().map_err(policy_error)?;
         let kind = parked.kind();
         if kind == ApprovalKind::Grant {
@@ -344,7 +349,8 @@ impl Engine {
         let needs_pass = late
             && new_grant.is_none()
             && matches!(kind, ApprovalKind::Search | ApprovalKind::Read)
-            && !released_ids.is_empty();
+            && !released_ids.is_empty()
+            && !self.legacy_mail_grants_unavailable(request)?;
         let note = if needs_pass {
             let pass = Grant::new(
                 GrantId(uuid::Uuid::new_v4().to_string()),
@@ -574,8 +580,14 @@ impl Engine {
         if !matches!(kind, ApprovalKind::Read | ApprovalKind::Send) {
             return Err(CoreError::invalid("choose whether the permission is for reading or for sending"));
         }
+        if self.managed_mail_account(Some(&account))? {
+            return Err(CoreError::invalid(crate::permissions::MANAGED_GRANT_GUIDANCE));
+        }
         let connection =
             self.connections().await?.into_iter().find(|c| c.id == connection_id).ok_or(CoreError::NotFound)?;
+        if self.managed_mail_account(Some(&account))? {
+            return Err(CoreError::invalid(crate::permissions::MANAGED_GRANT_GUIDANCE));
+        }
         let now = unix_now();
         let conn_id = ConnectionId(connection_id.to_owned());
         let grant = build_standing_grant(&standing, kind, &[], &conn_id, now)?.for_account(Some(account.clone()));
