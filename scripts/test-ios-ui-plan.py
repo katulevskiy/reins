@@ -4,13 +4,7 @@
 import importlib.util
 import os
 from pathlib import Path
-import tempfile
 
-
-scratch = Path.home() / "Documents/dev/tmp/ios-ci"
-scratch.mkdir(parents=True, exist_ok=True)
-os.environ["TMPDIR"] = str(scratch)
-tempfile.tempdir = str(scratch)
 
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("ios_ui_plan", ROOT / "scripts" / "ios-ui-plan.py")

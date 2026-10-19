@@ -191,7 +191,8 @@ jobs:
           name: ios-simulator-core
           path: target/ios-core/iphonesimulator/
           if-no-files-found: error
-          retention-days: 1
+          # Keep build inputs as long as test results so failed shards can be rerun.
+          retention-days: 7
 
   ios-build:
     name: iOS build
@@ -300,7 +301,8 @@ jobs:
           name: ios-test-products
           path: derived/Build/Products
           if-no-files-found: error
-          retention-days: 1
+          # Keep build inputs as long as test results so failed shards can be rerun.
+          retention-days: 7
 
   ios-test:
     name: iOS tests (${{ matrix.shard }})

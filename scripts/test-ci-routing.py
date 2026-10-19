@@ -7,13 +7,6 @@ import subprocess
 import tempfile
 import textwrap
 
-# /tmp is a RAM disk on this machine. Keep the disposable repos on disk.
-_scratch = Path.home() / "Documents/dev/tmp/ios-ci"
-_scratch.mkdir(parents=True, exist_ok=True)
-os.environ["TMPDIR"] = str(_scratch)
-tempfile.tempdir = str(_scratch)
-
-
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -132,6 +125,10 @@ assert "github.event_name != 'push'" not in ios_workflow
 # A pull request must not take every macOS runner. The nightly still may.
 assert "max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}" in ios_workflow
 assert "cancel-in-progress: false" in ios_workflow
+# A failed shard can be retried for as long as its result bundle is retained.
+for artifact in ("ios-simulator-core", "ios-test-products"):
+    block = ios_workflow.split(f"          name: {artifact}\n", 1)[1].split("\n\n", 1)[0]
+    assert "retention-days: 7" in block, artifact
 # A main push of this workflow must not satisfy the release gate. That gate names ci.yml only.
 gate = (ROOT / "scripts/wait-for-ci.sh").read_text()
 assert "--workflow ci.yml" in gate
