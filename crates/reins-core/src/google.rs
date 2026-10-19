@@ -94,8 +94,8 @@ impl GoogleApi {
         })
     }
 
-    /// Sends a request with bounded retries. A 401 gets one fresh token, then `GmailNeedsConsent`; 429/5xx and
-    /// rate-limit 403s back off exponentially.
+    /// Safe reads use bounded backoff. Mutations never retry ambiguous 429/5xx responses: the provider may
+    /// already have applied them. A definite 401 rejection gets one fresh token, then `GmailNeedsConsent`.
     pub async fn request(
         &self,
         method: &Method,
@@ -126,7 +126,7 @@ impl GoogleApi {
                 token = self.access_token().await?;
                 continue;
             }
-            if retryable(status, &text) && attempt < MAX_RETRIES {
+            if method.is_safe() && retryable(status, &text) && attempt < MAX_RETRIES {
                 let delay = (self.backoff_base * 2u32.pow(attempt)).min(MAX_BACKOFF);
                 tokio::time::sleep(delay).await;
                 attempt += 1;

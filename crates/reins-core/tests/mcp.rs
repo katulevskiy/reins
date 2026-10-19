@@ -3,6 +3,8 @@
 //! every time, refused, large results and heavy tools, refreshing tokens and removing a server.
 
 mod common;
+#[path = "common/policy_runtime.rs"]
+mod policy_runtime;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -422,12 +424,16 @@ async fn an_expired_token_is_refreshed_and_a_refused_refresh_asks_for_a_new_sign
     assert_eq!((form["grant_type"].as_str(), form["refresh_token"].as_str()), ("refresh_token", "MCP-REFRESH-1"));
     assert_eq!(form["resource"], w.url());
 
-    // Then neither the token nor the (rotated) refresh token works: the approval waits for a new sign-in.
+    // Neither token works after a tools/call attempt: sign-in is needed, but the original request cannot be blindly repeated.
     w.state.lock().unwrap().valid_token = Some("MCP-ACCESS-3".to_owned());
     w.relay("r2", "create_issue", &json!({"title": "b"})).await;
-    let failed = w.core.approve("r2".to_owned(), once()).await;
-    assert!(matches!(failed, Err(CoreError::ServiceNeedsAttention { .. })), "{failed:?}");
-    assert!(w.is_pending("r2").await, "kept for another try");
+    w.core.approve("r2".to_owned(), once()).await.unwrap();
+    assert!(!w.is_pending("r2").await, "the attempted request is settled, not silently retried after sign-in");
+    let answer = w.answer("r2").await;
+    assert_eq!(answer["outcome"], "error");
+    assert!(answer["message"].as_str().unwrap().contains("sign in"));
+    assert!(answer["message"].as_str().unwrap().contains("Do not repeat"));
+    assert!(w.core.approve("r2".to_owned(), once()).await.is_err());
     assert_eq!(w.core.mcp_servers().await.unwrap()[0].status, "needs_sign_in");
     let McpAddStep::NeedsSignIn {
         authorize_url,
@@ -524,4 +530,133 @@ async fn an_address_that_is_no_mcp_server_says_so() {
     let err = w.core.mcp_add(format!("{}/docs", w.mcp.uri()), None).await.unwrap_err().to_string();
     assert!(err.contains("No MCP server answers at that address (HTTP 404)"), "{err}");
     assert!(err.contains("/mcp"), "{err}");
+}
+
+#[tokio::test]
+async fn mandatory_mcp_owner_review_overrides_old_grants_and_bypass() {
+    use reins_core::authorization_trace::{AuthorizationPhase, AuthorizationReviewSource};
+    let w = World::new(|_| {}).await;
+    w.add_open().await;
+    w.relay("seed-policy", "create_issue", &json!({"title":"seed"})).await;
+    w.core.approve("seed-policy".to_owned(), remember("create_issue")).await.unwrap();
+    let engine = w.core.engine();
+    let policy = policy_runtime::policy(&engine, "mcp_tracker", "tool", "call", policy_runtime::review("owner"));
+    engine.save_authorization_policy(0, policy, &policy_runtime::Owner).await.unwrap();
+    w.core.set_autopilot_mode(None, Some(reins_core::AutopilotMode::Bypass), Some(15)).await.unwrap();
+    w.relay("needs-owner", "create_issue", &json!({"title":"must wait"})).await;
+    assert!(w.is_pending("needs-owner").await);
+    assert!(!w.answered("needs-owner").await);
+    assert_eq!(w.state.lock().unwrap().calls.len(), 1);
+    assert_eq!(w.core.grants().await.unwrap()[0].uses, 0);
+    w.core.approve_quick("needs-owner".to_owned()).await.unwrap();
+    assert_eq!(w.state.lock().unwrap().calls.len(), 2);
+    let row = &w.core.activity(1).await.unwrap()[0];
+    let trace = engine.activity_authorization(row.id).unwrap().unwrap();
+    assert_eq!((trace.source, trace.phase), (AuthorizationReviewSource::Owner, AuthorizationPhase::Succeeded));
+    assert_eq!(trace.request_id, "needs-owner");
+}
+
+#[tokio::test]
+async fn mcp_external_reviewer_cannot_be_satisfied_by_owner_tap() {
+    let w = World::new(|_| {}).await;
+    w.add_open().await;
+    let engine = w.core.engine();
+    let policy = policy_runtime::policy(&engine, "mcp_tracker", "tool", "call", policy_runtime::review("legal"));
+    engine.save_authorization_policy(0, policy, &policy_runtime::Owner).await.unwrap();
+    w.relay("legal-review", "create_issue", &json!({"title":"publish"})).await;
+    assert!(w.core.approve_quick("legal-review".to_owned()).await.is_err());
+    assert!(w.is_pending("legal-review").await);
+    assert!(w.state.lock().unwrap().calls.is_empty());
+}
+
+#[tokio::test]
+async fn deny_during_mcp_session_reopen_prevents_retry_tool_call() {
+    use reins_proto::authorization::PolicyEffect;
+    let w = World::new(|_| {}).await;
+    w.add_open().await;
+    w.relay("seed-reopen", "search", &json!({"query":"seed"})).await;
+    w.core.approve("seed-reopen".to_owned(), remember("search")).await.unwrap();
+    // The old session is gone. A delayed initialize forces the retry to suspend before its final tools/call gate.
+    w.state.lock().unwrap().session = "gone".to_owned();
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/mcp"))
+        .and(wiremock::matchers::body_partial_json(json!({"method":"initialize"})))
+        .respond_with(|request: &wiremock::Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            wiremock::ResponseTemplate::new(200).insert_header("Mcp-Session-Id", "renewed")
+                .set_body_json(json!({"jsonrpc":"2.0","id":body["id"],"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"1"}}}))
+                .set_delay(Duration::from_millis(600))
+        }).with_priority(1).mount(&w.mcp).await;
+    let before = w.mcp.received_requests().await.unwrap().len();
+    let engine = w.core.engine();
+    let running = Arc::clone(&engine);
+    let task = tokio::spawn(async move {
+        running.process_relayed(mcp_request("retry-policy", "tracker", "search", &json!({"query":"secret"}))).await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if w.mcp.received_requests().await.unwrap().iter().skip(before).any(|request| {
+                serde_json::from_slice::<Value>(&request.body).is_ok_and(|v| v["method"] == "initialize")
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let deny = policy_runtime::policy(&engine, "mcp_tracker", "tool", "call", PolicyEffect::Deny);
+    engine.save_authorization_policy(0, deny, &policy_runtime::Owner).await.unwrap();
+    task.await.unwrap().unwrap();
+    assert_eq!(w.state.lock().unwrap().calls.len(), 1, "no tools/call follows the suspended initialization");
+    assert!(w.answer("retry-policy").await["message"].as_str().unwrap().contains("Do not repeat"));
+}
+
+#[tokio::test]
+async fn deny_during_mcp_read_withholds_success_and_error_content() {
+    use reins_proto::authorization::PolicyEffect;
+    for result in [
+        json!({"result":{"content":[{"type":"text","text":"PRIVATE RESULT"}]}}),
+        json!({"error":{"code":-32603,"message":"PRIVATE ERROR"}}),
+    ] {
+        let w = World::new(|_| {}).await;
+        w.add_open().await;
+        w.relay("late-read", "search", &json!({"query":"private"})).await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/mcp"))
+            .and(wiremock::matchers::body_partial_json(json!({"method":"tools/call"})))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                let mut answer = result.clone();
+                answer["jsonrpc"] = json!("2.0");
+                answer["id"] = body["id"].clone();
+                wiremock::ResponseTemplate::new(200).set_body_json(answer).set_delay(Duration::from_millis(600))
+            })
+            .with_priority(1)
+            .mount(&w.mcp)
+            .await;
+        let before = w.mcp.received_requests().await.unwrap().len();
+        let core = Arc::clone(&w.core);
+        let task = tokio::spawn(async move { core.approve("late-read".to_owned(), once()).await });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if w.mcp.received_requests().await.unwrap().len() > before {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let engine = w.core.engine();
+        let deny = policy_runtime::policy(&engine, "mcp_tracker", "tool", "call", PolicyEffect::Deny);
+        engine.save_authorization_policy(0, deny, &policy_runtime::Owner).await.unwrap();
+        task.await.unwrap().unwrap();
+        let answer = w.answer("late-read").await;
+        assert_eq!(answer["outcome"], "error");
+        assert!(!answer.to_string().contains("PRIVATE"), "neither provider content nor its error is released");
+        assert!(answer["message"].as_str().unwrap().contains("Do not repeat"));
+        assert!(!w.is_pending("late-read").await);
+        assert!(w.core.approve("late-read".to_owned(), once()).await.is_err());
+    }
 }

@@ -106,6 +106,9 @@ pub struct AuditAutopilot {
 /// What the activity screen shows when an entry is opened. Sealed with the data key.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AuditInfo {
+    /// The exact narrowing policy decision captured before the effect/disclosure, not a reusable permission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<crate::authorization_trace::AuthorizationTrace>,
     #[serde(default)]
     pub query: Option<String>,
     #[serde(default)]

@@ -133,6 +133,17 @@ impl Store {
         Ok(())
     }
 
+    /// Device-local barrier for an external invocation, persisted before the provider is called. The same ID may
+    /// not be invoked by two app/extension processes or resumed after a crash. Positive authority uses its separate
+    /// account-synchronized immutable receipt ledger; this barrier has the existing handled/request retention.
+    pub(crate) fn start_invocation(&self, id: &str, now: i64) -> Result<bool, CoreError> {
+        Ok(self.lock()?.execute("INSERT OR IGNORE INTO handled (id, at) VALUES (?1, ?2)", params![id, now])? == 1)
+    }
+
+    pub(crate) fn invocation_started(&self, id: &str) -> Result<bool, CoreError> {
+        Ok(self.read()?.query_row("SELECT 1 FROM handled WHERE id = ?1", params![id], |_| Ok(())).optional()?.is_some())
+    }
+
     /// True when `id` is parked or was already answered.
     pub fn is_known(&self, id: &str) -> Result<bool, CoreError> {
         let conn = self.read()?;
@@ -151,6 +162,36 @@ impl Store {
 mod tests {
     use super::*;
     use crate::store::tests::open;
+
+    #[test]
+    fn invocation_barrier_is_atomic_across_store_handles_and_survives_reopen() {
+        use std::sync::{Arc, Barrier};
+        let dir = tempfile::tempdir().unwrap();
+        let first = Arc::new(open(dir.path()));
+        let second = Arc::new(open(dir.path()));
+        let start = Arc::new(Barrier::new(8));
+        #[allow(clippy::needless_collect, reason = "all threads must start before joining or the barrier deadlocks")]
+        let tasks: Vec<_> = (0..8)
+            .map(|index| {
+                let store = if index % 2 == 0 {
+                    Arc::clone(&first)
+                } else {
+                    Arc::clone(&second)
+                };
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    store.start_invocation("same-request", 1000).unwrap()
+                })
+            })
+            .collect();
+        assert_eq!(tasks.into_iter().map(|task| task.join().unwrap()).filter(|won| *won).count(), 1);
+        drop(first);
+        drop(second);
+        let reopened = open(dir.path());
+        assert!(reopened.invocation_started("same-request").unwrap());
+        assert!(!reopened.start_invocation("same-request", 1001).unwrap());
+    }
 
     #[test]
     fn park_dedupes_orders_and_expires() {

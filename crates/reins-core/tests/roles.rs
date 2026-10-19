@@ -658,12 +658,14 @@ async fn world() -> World {
 
 impl World {
     async fn phone(&mut self) -> Arc<ReinsCore> {
+        self.phone_config(CoreConfig::default()).await
+    }
+
+    async fn phone_config(&mut self, config: CoreConfig) -> Arc<ReinsCore> {
         let dir = tempfile::tempdir().unwrap();
         let google: Arc<dyn GoogleTokenProvider> = Arc::new(FakeGoogle::new());
         let notifier: Arc<dyn Notifier> = Arc::new(RecordingNotifier::default());
-        let core =
-            ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, notifier, CoreConfig::default())
-                .unwrap();
+        let core = ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys, google, notifier, config).unwrap();
         core.login(self.server.uri(), EMAIL.to_owned(), PASSWORD.to_owned(), None).await.unwrap();
         self.dirs.push(dir);
         core
@@ -2082,4 +2084,247 @@ async fn a_confirmation_stands_only_for_what_the_user_was_shown() {
     w.state().inflate_counter = None;
     let done = recover_with(token).await.unwrap();
     assert_eq!(done.role, PhoneRole::Primary);
+}
+
+struct PermissionOwner;
+#[async_trait::async_trait]
+impl reins_core::OwnerCheck for PermissionOwner {
+    async fn confirm(&self, _reason: String) -> Result<bool, reins_core::ForeignError> {
+        Ok(true)
+    }
+}
+
+async fn permission_phone(w: &mut World, gmail: &MockServer) -> Arc<ReinsCore> {
+    Mock::given(method("GET")).and(path("/reins/api/connections")).respond_with(ok(json!({"connections":[{"id":"c1","label":"Agent","client_name":"Claude","client_host":"claude.ai","created_at":1,"last_used_at":null}]}))).with_priority(1).mount(&w.server).await;
+    Mock::given(method("GET"))
+        .and(path("/users/me/profile"))
+        .respond_with(ok(json!({"emailAddress":EMAIL})))
+        .mount(gmail)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/users/me/messages/send"))
+        .respond_with(ok(json!({"id":"sent","threadId":"t"})))
+        .mount(gmail)
+        .await;
+    let core = w
+        .phone_config(CoreConfig {
+            gmail_base: gmail.uri(),
+            ..CoreConfig::default()
+        })
+        .await;
+    core.add_account(EMAIL.into()).await.unwrap();
+    core
+}
+
+fn permission_send(id: &str, recipients: &[&str]) -> reins_proto::relay::RelayRequest {
+    serde_json::from_value(json!({"v":1,"id":id,"connection_id":"c1","connection_label":"Agent","created_at":reins_core::store::unix_now(),"account":EMAIL,"call":{"tool":"gmail_send","email":{"to":recipients,"subject":"Hi","body":"A note","cc":[]}}})).unwrap()
+}
+
+async fn sent_count(gmail: &MockServer) -> usize {
+    gmail
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.method == "POST" && r.url.path() == "/users/me/messages/send")
+        .count()
+}
+
+#[tokio::test]
+async fn typed_permissions_enforce_selected_recipients_limits_all_modes_and_truthful_native_defaults() {
+    use reins_core::permission_types::*;
+    let mut w = world().await;
+    let gmail = MockServer::start().await;
+    let core = permission_phone(&mut w, &gmail).await;
+    let legacy = core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap();
+    assert!(legacy.managed, "verified connection installs Review baseline before UI setup");
+    assert!(!legacy.available_presets.contains(&AccountPermissionPreset::ReadAssist));
+    assert!(legacy.capabilities.iter().all(|c| !c.supported_modes.contains(&PermissionMode::Auto)));
+    core.roster_create("Phone".into(), Some(PASSWORD.into())).await.unwrap();
+    let mut draft = core
+        .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+        .await
+        .unwrap();
+    draft.agent_ids = vec!["c1".into()];
+    draft.grant_account_access = true;
+    draft.max_uses = Some(2);
+    let send = draft.rules.iter_mut().find(|r| r.capability == PermissionCapability::MailSend).unwrap();
+    send.mode = PermissionMode::Auto;
+    send.scope.ids = vec!["friend@example.com".into()];
+    let options = core
+        .permission_scope_options(
+            "gmail".into(),
+            EMAIL.into(),
+            PermissionCapability::MailSend,
+            "Friend@EXAMPLE.com".into(),
+            10,
+        )
+        .await
+        .unwrap();
+    assert!(options.options.iter().any(|o| o.id == "friend@example.com"));
+    let expires = draft.expires_at;
+    let saved = core.save_account_permissions(draft.clone(), Arc::new(PermissionOwner)).await.unwrap();
+    assert_eq!(saved.remaining_uses, Some(2));
+    assert!(core.save_account_permissions(draft, Arc::new(PermissionOwner)).await.is_err(), "stale CAS");
+    core.engine().process_relayed(permission_send("allowed-manual", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 1);
+    let custom =
+        core.account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::Custom).await.unwrap();
+    assert_eq!(custom.expires_at, expires);
+    assert_eq!(custom.max_uses, Some(1), "opening editor cannot replenish quota");
+    core.set_autopilot_mode(None, Some(AutopilotMode::Bypass), Some(30)).await.unwrap();
+    core.engine()
+        .process_relayed(permission_send("outside-scope", &["friend@example.com", "corporate@example.com"]))
+        .await
+        .unwrap();
+    core.engine().process_relayed(permission_send("allowed-bypass", &["friend@example.com"])).await.unwrap();
+    core.engine().process_relayed(permission_send("exhausted", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 2, "Bypass cannot approve outside policy or replenish its use limit");
+    assert!(core.pending().await.unwrap().iter().any(|p| p.id == "outside-scope"));
+    core.set_autopilot_mode(None, Some(AutopilotMode::Lockdown), None).await.unwrap();
+    core.engine().process_relayed(permission_send("locked", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 2);
+}
+
+#[tokio::test]
+async fn delegation_consumption_survives_pause_and_primary_handover_without_legacy_fallback() {
+    use reins_core::permission_types::*;
+    let mut w = world().await;
+    let gmail = MockServer::start().await;
+    let a = permission_phone(&mut w, &gmail).await;
+    a.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+    let mut draft = a.delegation_draft("gmail".into(), EMAIL.into()).await.unwrap();
+    draft.agent_ids = vec!["c1".into()];
+    draft.grant_account_access = true;
+    draft.max_uses = 1;
+    draft.rules = vec![CapabilityPermissionInput {
+        capability: PermissionCapability::MailSend,
+        mode: PermissionMode::Auto,
+        scope: PermissionScopeSelection {
+            kind: PermissionScopeKind::SelectedRecipients,
+            ids: vec!["friend@example.com".into()],
+        },
+    }];
+    let issued = a.issue_delegation(draft, Arc::new(PermissionOwner)).await.unwrap();
+    a.engine().process_relayed(permission_send("delegated-first", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 1);
+    let view = a.delegations().await.unwrap().remove(0);
+    assert_eq!(view.used, 1);
+    let paused = a
+        .change_delegation(issued.id.clone(), view.revision, DelegationChange::Pause, Arc::new(PermissionOwner))
+        .await
+        .unwrap();
+    let resumed = a
+        .change_delegation(issued.id, paused.revision, DelegationChange::Resume, Arc::new(PermissionOwner))
+        .await
+        .unwrap();
+    assert_eq!(resumed.used, 1);
+    let b = w
+        .phone_config(CoreConfig {
+            gmail_base: gmail.uri(),
+            ..CoreConfig::default()
+        })
+        .await;
+    enroll(&a, &b, "Viewer").await;
+    let request = b.handover_request().await.unwrap();
+    a.handover_approve(request, device_of(&b).await).await.unwrap();
+    assert!(matches!(b.handover_poll().await.unwrap(), HandoverProgress::Done));
+    b.engine().process_relayed(permission_send("after-handover", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 1, "new primary cannot reuse the previous primary's spent delegation");
+    assert_eq!(b.delegations().await.unwrap()[0].used, 1);
+}
+
+#[tokio::test]
+async fn managed_reads_require_exact_resources_and_never_release_suspected_codes() {
+    use reins_core::permission_types::*;
+    let mut w = world().await;
+    let gmail = MockServer::start().await;
+    let core = permission_phone(&mut w, &gmail).await;
+    core.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+    for id in ["messagea", "messageb"] {
+        Mock::given(method("GET"))
+            .and(path(format!("/users/me/messages/{id}")))
+            .respond_with(ok(common::gmail_message(id, "friend@example.com", "Lunch", Some("At noon"))))
+            .mount(&gmail)
+            .await;
+    }
+    let mut draft = core
+        .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+        .await
+        .unwrap();
+    draft.agent_ids = vec!["c1".into()];
+    draft.grant_account_access = true;
+    draft.max_uses = Some(3);
+    let read = draft.rules.iter_mut().find(|r| r.capability == PermissionCapability::MailRead).unwrap();
+    read.mode = PermissionMode::Auto;
+    read.scope = PermissionScopeSelection {
+        kind: PermissionScopeKind::SelectedResources,
+        ids: vec!["messagea".into()],
+    };
+    core.save_account_permissions(draft, Arc::new(PermissionOwner)).await.unwrap();
+    let read_request = |id: &str, message: &str| {
+        let mut request = permission_send(id, &["friend@example.com"]);
+        request.call = reins_proto::gmail::ToolCall::GmailRead {
+            message_ids: vec![message.into()],
+        };
+        request
+    };
+    core.engine().process_relayed(read_request("read-allowed", "messagea")).await.unwrap();
+    assert!(!core.pending().await.unwrap().iter().any(|p| p.id == "read-allowed"));
+    core.engine().process_relayed(read_request("read-outside", "messageb")).await.unwrap();
+    assert!(core.pending().await.unwrap().iter().any(|p| p.id == "read-outside"));
+    Mock::given(method("GET"))
+        .and(path("/users/me/messages/messagea"))
+        .respond_with(ok(common::gmail_message(
+            "messagea",
+            "security@example.com",
+            "Your verification code 123456",
+            Some("Do not share this sign-in code"),
+        )))
+        .with_priority(1)
+        .mount(&gmail)
+        .await;
+    core.engine().process_relayed(read_request("read-code", "messagea")).await.unwrap();
+    assert!(core.pending().await.unwrap().iter().any(|p| p.id == "read-code"));
+    let custom =
+        core.account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::Custom).await.unwrap();
+    assert_eq!(custom.max_uses, Some(2), "held secret and out-of-scope requests must not spend the permission");
+    let preview = core.preview_account_permissions(custom).await.unwrap();
+    assert!(preview.eligible_history_count.is_some());
+    assert!(preview.review_history_count.is_some());
+}
+
+#[tokio::test]
+async fn ambiguous_gmail_send_retains_consumption_and_prevents_duplicate_retry() {
+    use reins_core::permission_types::*;
+    let mut w = world().await;
+    let gmail = MockServer::start().await;
+    let core = permission_phone(&mut w, &gmail).await;
+    core.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+    let mut draft = core
+        .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+        .await
+        .unwrap();
+    draft.agent_ids = vec!["c1".into()];
+    draft.grant_account_access = true;
+    draft.max_uses = Some(1);
+    let send = draft.rules.iter_mut().find(|r| r.capability == PermissionCapability::MailSend).unwrap();
+    send.mode = PermissionMode::Auto;
+    send.scope.ids = vec!["friend@example.com".into()];
+    core.save_account_permissions(draft, Arc::new(PermissionOwner)).await.unwrap();
+    Mock::given(method("POST"))
+        .and(path("/users/me/messages/send"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&gmail)
+        .await;
+    core.engine().process_relayed(permission_send("uncertain", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 1);
+    let activity = core.activity(20).await.unwrap();
+    assert!(activity.iter().any(|entry| entry.outcome == "unknown" && entry.detail.contains("may have sent")));
+    assert_eq!(core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap().remaining_uses, Some(0));
+    // Same request id cannot acquire another Started receipt, even when no provider result was returned.
+    let _retry = core.engine().process_relayed(permission_send("uncertain", &["friend@example.com"])).await;
+    core.engine().process_relayed(permission_send("new-after-uncertain", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 1);
 }

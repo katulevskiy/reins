@@ -213,6 +213,9 @@ async fn env_models(
         ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
             .unwrap();
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
+    // Existing mode/grant regression fixtures model an account connected before account defaults existed.
+    // Newly verified connections receive their own review baseline (covered by permissions tests).
+    core.engine().store.add_account("gmail", GMAIL, unix_now()).unwrap();
     core.add_account(GMAIL.to_owned()).await.unwrap();
     if let Some(known) = install {
         testing::install(dir.path(), &known, &files);
@@ -350,6 +353,288 @@ impl Env {
 }
 
 // ---- modes -------------------------------------------------------------------------------------------------------------
+
+fn account_send_policy(
+    owner: &str,
+    effect: reins_proto::authorization::PolicyEffect,
+) -> reins_proto::authorization::PolicyRecord {
+    use reins_proto::authorization::{
+        OperationId, PolicyIssuer, PolicyKind, PolicyLifecycle, PolicyScope, UsageLimits,
+    };
+    reins_proto::authorization::PolicyRecord {
+        v: 1,
+        id: "corporate-mail".to_owned(),
+        revision: 1,
+        issuer: PolicyIssuer {
+            principal_id: owner.to_owned(),
+            tenant_id: None,
+        },
+        kind: PolicyKind::Mandatory,
+        lifecycle: PolicyLifecycle::Active,
+        valid_from: 0,
+        expires_at: None,
+        scope: PolicyScope {
+            account_ids: vec![crate::authorization::account_resource_id("gmail", GMAIL)],
+            operations: vec![OperationId {
+                service: "gmail".to_owned(),
+                capability: "write".to_owned(),
+                action: "send".to_owned(),
+            }],
+            ..PolicyScope::default()
+        },
+        conditions: vec![],
+        effect,
+        parent_policy_ids: vec![],
+        limits: UsageLimits::default(),
+    }
+}
+
+#[tokio::test]
+async fn mandatory_owner_review_beats_standing_grants_and_every_automatic_mode() {
+    use reins_proto::authorization::{PolicyEffect, ReviewRequirement};
+    for mode in [AutopilotMode::Manual, AutopilotMode::Auto, AutopilotMode::Bypass, AutopilotMode::Overnight] {
+        let env = env_risk().await;
+        env.model.set_default(logits(0.9999, 0.00005, 0.00005));
+        env.unlock("gmail/send").await;
+        // A real existing grant, created through the owner's approval before policy installation.
+        env.relay("grant", OLD, grant()).await;
+        env.approve("grant").await;
+        let owner = env.core.engine().authorization_policies().unwrap().owner;
+        let policy = account_send_policy(
+            &owner,
+            PolicyEffect::RequireReview {
+                requirements: vec![ReviewRequirement {
+                    role_id: "owner".to_owned(),
+                    quorum: 1,
+                    distinct_humans_group: None,
+                    exclude_requester: false,
+                }],
+            },
+        );
+        env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+        env.mode(None, mode).await;
+        let model_runs = env.model.runs.load(Ordering::SeqCst);
+        env.relay("corporate", OLD, email("friend@x.com", "the existing grant would cover this")).await;
+        assert_eq!(env.model.runs.load(Ordering::SeqCst), model_runs, "policy review needs no model evaluation");
+        assert_eq!(env.sent().await, 0, "{mode:?} must not send");
+        assert!(env.waiting().await.contains(&"corporate".to_owned()), "{mode:?}");
+        assert!(env.decided().is_empty(), "failed automatic attempts are not decisions: {:?}", env.decided());
+        assert_eq!(env.core.grants().await.unwrap()[0].uses, 0, "policy did not consume the standing grant");
+        // Notification and batch paths use approve_quick -> approve -> the same owner gate.
+        env.core.approve_quick("corporate".to_owned()).await.unwrap();
+        assert_eq!(env.sent().await, 1, "one explicit owner approval works in {mode:?}");
+    }
+}
+
+#[tokio::test]
+async fn newly_added_deny_stops_a_previously_parked_owner_approval_and_quick_approval() {
+    let env = env_risk().await;
+    env.relay("pending", OLD, email("friend@x.com", "waiting for an owner")).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
+    env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+    assert!(
+        env.core
+            .approve(
+                "pending".to_owned(),
+                ApprovalChoice {
+                    selected_message_ids: vec![],
+                    standing: None
+                }
+            )
+            .await
+            .is_err()
+    );
+    assert!(env.core.approve_quick("pending".to_owned()).await.is_err());
+    assert!(env.waiting().await.contains(&"pending".to_owned()));
+    assert_eq!(env.sent().await, 0);
+}
+
+#[tokio::test]
+async fn generic_deny_blocks_every_dispatch_family_before_provider_or_slot_calls() {
+    let env = env(false).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let mut policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
+    policy.scope = reins_proto::authorization::PolicyScope::default();
+    env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+    let before = env.gmail.received_requests().await.unwrap().len();
+    for (index, call) in [
+        email("friend@x.com", "no"),
+        json!({"tool":"gmail_search","query":"secret","max_results":10}),
+        json!({"tool":"gmail_read","message_ids":["m1"]}),
+        json!({"tool":"list_accounts","service":"gmail"}),
+        json!({"tool":"list_accounts"}),
+        json!({"tool":"request_upload","name":"report.txt","size":5,"reason":"send it"}),
+        json!({"tool":"connector","service":"github","op":"list_repos","args":{"limit":20}}),
+        json!({"tool":"mcp","server":"notes","name":"search","arguments":{}}),
+        grant(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = format!("blocked-{index}");
+        env.relay(&id, OLD, call).await;
+        let answer = env.answer(&id).await.unwrap();
+        assert_eq!(answer["outcome"], "error", "{id}: {answer}");
+        assert!(answer["message"].as_str().unwrap().contains("blocked by an account policy"), "{id}: {answer}");
+    }
+    assert_eq!(env.gmail.received_requests().await.unwrap().len(), before);
+    assert!(env.waiting().await.is_empty());
+}
+
+#[tokio::test]
+async fn unsupported_auto_permission_and_review_adapter_cannot_be_activated() {
+    let env = env(false).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let mut policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Permit);
+    policy.kind = reins_proto::authorization::PolicyKind::Permission;
+    policy.scope.connection_ids = vec![OLD.to_owned()];
+    assert!(
+        env.core
+            .engine()
+            .save_authorization_policy(0, policy, owner_yes().as_ref())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("not available yet")
+    );
+    let mut policy = account_send_policy(
+        &owner,
+        reins_proto::authorization::PolicyEffect::RequireReview {
+            requirements: vec![reins_proto::authorization::ReviewRequirement {
+                role_id: "owner".to_owned(),
+                quorum: 1,
+                distinct_humans_group: None,
+                exclude_requester: false,
+            }],
+        },
+    );
+    policy.scope.operations[0].action = "search".to_owned();
+    assert!(
+        env.core
+            .engine()
+            .save_authorization_policy(0, policy, owner_yes().as_ref())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("review enforcement adapter")
+    );
+    assert_eq!(env.core.engine().authorization_policies().unwrap().revision, 0);
+}
+
+#[tokio::test]
+async fn external_reviewer_requirement_cannot_be_satisfied_by_an_owner_quick_tap() {
+    let env = env(false).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let policy = account_send_policy(
+        &owner,
+        reins_proto::authorization::PolicyEffect::RequireReview {
+            requirements: vec![reins_proto::authorization::ReviewRequirement {
+                role_id: "legal".to_owned(),
+                quorum: 1,
+                distinct_humans_group: Some("publication".to_owned()),
+                exclude_requester: true,
+            }],
+        },
+    );
+    env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+    env.relay("requires-legal", OLD, email("friend@x.com", "still waiting")).await;
+    assert!(env.core.approve_quick("requires-legal".to_owned()).await.is_err());
+    assert!(env.waiting().await.contains(&"requires-legal".to_owned()));
+    assert_eq!(env.sent().await, 0);
+}
+
+#[tokio::test]
+async fn owner_refusal_and_another_issuer_cannot_write_authorization() {
+    let env = env(false).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
+    let refusal = testing::FakeOwner::new(Ok(false));
+    assert!(env.core.engine().save_authorization_policy(0, policy, refusal.as_ref()).await.is_err());
+    let policy = account_send_policy("another-owner", reins_proto::authorization::PolicyEffect::Deny);
+    assert!(env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.is_err());
+    assert_eq!(env.core.engine().authorization_policies().unwrap().revision, 0);
+}
+
+#[tokio::test]
+async fn account_and_connection_scopes_are_isolated_and_account_case_is_canonicalized() {
+    let env = env(false).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let mut policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
+    policy.scope.connection_ids = vec![OLD.to_owned()];
+    env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+    let mut relayed = request("case", OLD, email("friend@x.com", "cannot avoid policy through case"));
+    relayed.account = Some(GMAIL.to_uppercase());
+    env.core.engine().process_relayed(relayed).await.unwrap();
+    assert!(env.answer("case").await.unwrap()["message"].as_str().unwrap().contains("blocked by an account policy"));
+    // Another agent still follows its existing approval behavior.
+    env.relay("other-agent", OTHER, email("friend@x.com", "asks normally")).await;
+    assert!(env.waiting().await.contains(&"other-agent".to_owned()));
+    env.approve("other-agent").await;
+    // Another account on the same service is independent.
+    let personal = "personal@gmail.com";
+    env.store().add_account("gmail", personal, unix_now()).unwrap();
+    let mut relayed = request("personal", OLD, email("friend@x.com", "asks normally"));
+    relayed.account = Some(personal.to_owned());
+    env.core.engine().process_relayed(relayed).await.unwrap();
+    assert!(env.waiting().await.contains(&"personal".to_owned()));
+    env.approve("personal").await;
+    assert_eq!(env.sent().await, 2);
+}
+
+#[tokio::test]
+async fn unrelated_policy_preserves_valid_raw_mcp_tool_names_without_collisions() {
+    let env = env(false).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
+    env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+    for (index, name) in ["read/file", "read_file", "Read a file", "读文件"].into_iter().enumerate() {
+        let call =
+            request(&format!("mcp-{index}"), OLD, json!({"tool":"mcp", "server":"notes", "name":name, "arguments":{}}));
+        assert!(
+            env.core.engine().authorization_automatic(&call).unwrap(),
+            "unrelated Gmail policy must preserve {name}"
+        );
+        let normalized = env.core.engine().normalized_authorization_action(&call, "notes", unix_now()).unwrap();
+        assert_eq!(normalized.action.operation.action, "call");
+        assert_eq!(normalized.action.resource.resource_id.as_deref(), Some(name), "exact raw names remain distinct");
+    }
+}
+
+#[tokio::test]
+async fn deny_installed_during_legacy_account_discovery_prevents_integration_disclosure() {
+    let env = env(false).await;
+    env.store().remove_account("gmail", GMAIL).unwrap();
+    Mock::given(method("GET"))
+        .and(path("/users/me/profile"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"emailAddress":GMAIL})).set_delay(Duration::from_secs(1)),
+        )
+        .with_priority(1)
+        .mount(&env.gmail)
+        .await;
+    let before = env.gmail.received_requests().await.unwrap().len();
+    let engine = env.core.engine();
+    let waiting = tokio::spawn(async move {
+        engine.process_relayed(request("enumeration", OLD, json!({"tool":"list_accounts"}))).await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if env.gmail.received_requests().await.unwrap().len() > before {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let mut policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
+    policy.scope = reins_proto::authorization::PolicyScope::default();
+    env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+    assert!(waiting.await.unwrap().is_err());
+    assert!(env.answer("enumeration").await.is_none(), "no integration or account names were released");
+}
 
 #[tokio::test]
 async fn without_a_model_requests_wait_as_before_and_say_why() {
@@ -890,7 +1175,11 @@ async fn a_grant_decided_in_a_bypass_but_stored_after_it_stopped_is_not_kept() {
         standing: None,
     };
     let engine = env.core.engine();
-    let (result, _) = super::context::deciding(decision, engine.approve_claimed("r1", once)).await;
+    let (result, _) = super::context::deciding(
+        decision,
+        engine.approve_claimed("r1", once, crate::authorization::AuthorizationSource::Automatic),
+    )
+    .await;
     assert!(matches!(result, Err(CoreError::Invalid { .. })), "{result:?}");
     assert!(env.store().grants().unwrap().is_empty(), "nothing stored");
     assert_eq!(env.waiting().await, ["r1"], "it waits for the user");

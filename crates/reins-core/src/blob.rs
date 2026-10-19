@@ -674,6 +674,7 @@ impl Engine {
         account: &str,
         request: &RelayRequest,
         mut items: Vec<Item>,
+        source: crate::authorization::AuthorizationSource,
     ) -> Result<Vec<Item>, CoreError> {
         for item in &mut items {
             let Some(marker) = item.extra.remove(DELIVER_KEY) else {
@@ -697,6 +698,7 @@ impl Engine {
                         max_bytes: marker["max"].as_u64().unwrap_or(MAX_BLOB_BYTES).min(MAX_BLOB_BYTES),
                         ttl_secs: DEFAULT_BLOB_TTL_SECS,
                     };
+                    self.authorization_execute(request, source)?;
                     api_call!(session, |api| api.blob_fetch(&fetch)).map_err(ApiFailure::into_core)?
                 }
                 Some("output") => {
@@ -705,6 +707,7 @@ impl Engine {
                         BASE64.decode(encoded.as_bytes()).map_err(|_| CoreError::storage("corrupt parked file"))?,
                     );
                     let conn = &request.connection_id;
+                    self.authorization_execute(request, source)?;
                     api_call!(session, |api| api.blob_output(conn, &name, DEFAULT_BLOB_TTL_SECS, bytes.to_vec()))
                         .map_err(ApiFailure::into_core)?
                 }
@@ -876,6 +879,24 @@ impl Engine {
             self.require_decider()?;
         }
         let info = self.parked_blob(id)?;
+        if approve {
+            let request = RelayRequest {
+                v: PROTOCOL_VERSION,
+                id: info.request_id.clone().unwrap_or_else(|| reins_proto::ids::RequestId(info.id.0.clone())),
+                connection_id: info.connection_id.clone(),
+                connection_label: info.connection_label.clone(),
+                created_at: info.created_at,
+                wait_until: None,
+                account: None,
+                call: reins_proto::gmail::ToolCall::RequestUpload {
+                    name: info.name.clone(),
+                    size: info.size,
+                    content_type: Some(info.content_type.clone()),
+                    reason: String::new(),
+                },
+            };
+            self.authorization_preflight(&request)?;
+        }
         let decision = BlobDecision {
             v: PROTOCOL_VERSION,
             approved: approve,

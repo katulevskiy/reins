@@ -210,7 +210,15 @@ fn keyed(
             server: s.get(k),
         };
         // Identical on both sides is that, except a grant: held against its base too (both may have resumed it).
-        let picked = if v.local == v.server && (name != "grants" || v.base.is_none() || v.local.is_none()) {
+        let authorization = name == "meta"
+            && matches!(v.local.or(v.server).and_then(|r| cell(&server.columns, r, "key")), Some(Cell::Text(key_name)) if key_name == super::authorization::STORE_KEY);
+        let receipt = name == "meta"
+            && matches!(v.local.or(v.server).and_then(|r| cell(&server.columns, r, "key")), Some(Cell::Text(key_name)) if key_name.starts_with(super::permissions::RECEIPT_STORE_PREFIX));
+        let picked = if receipt {
+            receipt_versions(&server.columns, &v)
+        } else if authorization {
+            authorization_versions(&server.columns, &v)
+        } else if v.local == v.server && (name != "grants" || v.base.is_none() || v.local.is_none()) {
             v.local.cloned()
         } else {
             match name {
@@ -236,6 +244,38 @@ fn keyed(
         columns: server.columns.clone(),
         rows,
     }
+}
+
+fn authorization_versions(columns: &[String], v: &Versions<'_>) -> Option<Row> {
+    let json = |r: Option<&Row>| match r.and_then(|r| cell(columns, r, "value")) {
+        Some(Cell::Text(text)) => serde_json::from_str::<Json>(text).ok(),
+        _ => None,
+    };
+    let (base, local, server) = (json(v.base), json(v.local), json(v.server));
+    let next = if v.local == v.server || (v.has_base && v.base == v.local) {
+        super::authorization::incoming(base.as_ref(), server.as_ref())
+    } else if v.has_base && v.base == v.server {
+        super::authorization::incoming(base.as_ref(), local.as_ref())
+    } else if v.base.is_none() && v.has_base && (v.local.is_none() || v.server.is_none()) {
+        super::authorization::incoming(None, local.as_ref().or(server.as_ref()))
+    } else {
+        super::authorization::conflict(local.as_ref().unwrap_or(&Json::Null), server.as_ref().unwrap_or(&Json::Null))
+    };
+    let mut row = v.server.or(v.local).or(v.base)?.clone();
+    set_cell(columns, &mut row, "value", Cell::Text(next.to_string()));
+    Some(row)
+}
+
+fn receipt_versions(columns: &[String], v: &Versions<'_>) -> Option<Row> {
+    let json = |row: Option<&Row>| match row.and_then(|r| cell(columns, r, "value")) {
+        Some(Cell::Text(text)) => Some(serde_json::from_str::<Json>(text).unwrap_or(Json::Null)),
+        _ => None,
+    };
+    let (local, server) = (json(v.local), json(v.server));
+    let kept = super::permissions::receipt_incoming(local.as_ref(), server.as_ref());
+    let mut row = v.local.or(v.server).or(v.base)?.clone();
+    set_cell(columns, &mut row, "value", Cell::Text(kept.to_string()));
+    Some(row)
 }
 
 fn is_grant_tombstone(columns: &[String], row: Option<&Row>) -> bool {

@@ -9,7 +9,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use data_encoding::{BASE64, BASE64_NOPAD};
 use reins_proto::blob::INLINE_LIMIT;
 use reins_proto::gmail::ToolCall;
-use reins_proto::ids::ConnectionId;
 use reins_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
 use reins_proto::remote_mcp::{HEAVY_RESULT_BYTES, McpCall};
 use serde_json::{Map, Value, json};
@@ -18,6 +17,10 @@ use super::client::McpError;
 use super::servers::{Failure, Op, Output};
 use super::{
     MAX_ARGUMENTS_SHOWN, McpCallView, ParkedMcp, display_url, grant_service, server_api, service_of, tool_title,
+};
+use crate::authorization::AuthorizationSource;
+use crate::authorization_trace::{
+    AuthorizationInvocation, AuthorizationPhase, AuthorizationTrace, OUTCOME_UNKNOWN, RESULT_WITHHELD,
 };
 use crate::connector::Preview;
 use crate::connector::flow::build_service_grant;
@@ -65,6 +68,9 @@ fn resource_label(server_name: &str, tool: &McpTool) -> String {
 fn ai_message(server_name: &str, f: &Failure) -> String {
     let name = text::one_line(server_name);
     match f {
+        Failure::SucceededWithheld {
+            ..
+        } => RESULT_WITHHELD.to_owned(),
         Failure::NeedsSignIn {
             ..
         } => format!(
@@ -194,7 +200,15 @@ fn link(download: &reins_proto::blob::BlobDownload, mime: &str) -> Value {
 
 /// Replaces every content item (and a `structuredContent`) larger than `INLINE_LIMIT` by a link to a download the
 /// Reins server keeps for the AI.
-async fn shrink(session: &Session, connection: &ConnectionId, tool: &str, result: &mut Value) -> Result<(), CoreError> {
+async fn shrink(
+    engine: &Engine,
+    request: &RelayRequest,
+    source: AuthorizationSource,
+    session: &Session,
+    tool: &str,
+    result: &mut Value,
+) -> Result<(), CoreError> {
+    let connection = &request.connection_id;
     let limit = usize::try_from(INLINE_LIMIT).unwrap_or(usize::MAX);
     let size = |v: &Value| serde_json::to_vec(v).map_or(usize::MAX, |b| b.len());
     let Some(object) = result.as_object_mut() else {
@@ -207,6 +221,7 @@ async fn shrink(session: &Session, connection: &ConnectionId, tool: &str, result
             }
             let (bytes, mime) = item_bytes(item);
             let name = file_name(tool, &(index + 1).to_string(), extension(&mime));
+            engine.authorization_execute(request, source)?;
             let download = server_api::put_output(session, &connection.0, &name, &mime, &bytes).await?;
             *item = link(&download, &mime);
         }
@@ -216,6 +231,7 @@ async fn shrink(session: &Session, connection: &ConnectionId, tool: &str, result
     {
         let bytes = serde_json::to_vec(&structured).unwrap_or_default();
         let name = file_name(tool, "structured", "json");
+        engine.authorization_execute(request, source)?;
         let download = server_api::put_output(session, &connection.0, &name, "application/json", &bytes).await?;
         let item = link(&download, "application/json");
         match object.get_mut("content").and_then(Value::as_array_mut) {
@@ -242,24 +258,42 @@ impl Engine {
     /// linking its large items) when its result is too large.
     async fn mcp_perform(
         &self,
+        request: &RelayRequest,
         session: &Session,
         server: &StoredMcpServer,
         tool: &McpTool,
         arguments: &Map<String, Value>,
-        connection: &ConnectionId,
-    ) -> Result<Value, Failure> {
+        source: AuthorizationSource,
+    ) -> Result<(Value, Option<AuthorizationTrace>), Failure> {
+        self.authorization_execute(request, source)?;
+        let connection = &request.connection_id;
+        let invocation = AuthorizationInvocation::new(request, source);
         let proxy = Op::Proxy {
+            authorization: &invocation,
             tool: &tool.name,
             arguments,
             connection_id: connection,
             session,
         };
         let value = |out: Output| match out {
-            Output::Result(v) => Ok(v),
+            Output::Result(v, trace) => Ok((v, trace.map(|trace| *trace))),
+            Output::Withheld(trace) => Err(Failure::SucceededWithheld {
+                trace,
+            }),
             Output::Tools(_) => Err(Failure::Mcp(McpError::Protocol("unexpected answer".to_owned()))),
         };
+        let disclose = |result: Value, trace: Option<AuthorizationTrace>| {
+            if self.authorization_execute(request, source).is_err() {
+                Err(Failure::SucceededWithheld {
+                    trace: trace.map(Box::new),
+                })
+            } else {
+                Ok((result, trace))
+            }
+        };
         if server.heavy.contains(&tool.name) {
-            return value(self.mcp_run(server, &proxy).await?);
+            let (result, trace) = value(self.mcp_run(server, &proxy).await?)?;
+            return disclose(result, trace);
         }
         let mark_heavy = || {
             if let Err(e) = self.store.mcp_set_heavy(&server.id, &tool.name, true) {
@@ -267,28 +301,40 @@ impl Engine {
             }
         };
         let call = Op::Call {
+            authorization: &invocation,
             tool: &tool.name,
             arguments,
         };
         match self.mcp_run(server, &call).await {
             Ok(out) => {
-                let mut result = value(out)?;
+                let (result, trace) = value(out)?;
+                let (mut result, trace) = disclose(result, trace)?;
                 if serde_json::to_vec(&result).map_or(usize::MAX, |v| v.len()) > HEAVY_RESULT_BYTES {
                     mark_heavy();
-                    shrink(session, connection, &tool.name, &mut result).await?;
+                    if let Err(error) = shrink(self, request, source, session, &tool.name, &mut result).await {
+                        if let Some(trace) = &trace {
+                            self.authorization_attempt_event(request, trace, AuthorizationPhase::Unknown)?;
+                        }
+                        return Err(error.into());
+                    }
                 }
-                Ok(result)
+                disclose(result, trace)
             }
             Err(Failure::Mcp(McpError::TooLarge)) => {
+                self.authorization_execute(request, source)?;
                 mark_heavy();
                 // Asking again changes nothing for a tool that only reads.
                 if tool.read_only {
-                    value(self.mcp_run(server, &proxy).await?)
+                    let (result, trace) = value(self.mcp_run(server, &proxy).await?)?;
+                    disclose(result, trace)
                 } else {
                     Err(Failure::Mcp(McpError::TooLarge))
                 }
             }
-            Err(f) => Err(f),
+            Err(f) => {
+                self.authorization_execute(request, source)?;
+                Err(f)
+            }
         }
     }
 
@@ -340,6 +386,7 @@ impl Engine {
             return self.mcp_fail(session, &request, call, message).await;
         };
         request.account = Some(server.id.clone());
+        self.authorization_preflight(&request)?;
         let Some(tool) = server.tools.iter().find(|t| t.name == call.tool).cloned() else {
             let message = format!(
                 "{} has no tool named {}. Ask the user to refresh the server in the Reins app if it is new.",
@@ -350,7 +397,7 @@ impl Engine {
         };
         let title = tool_title(&tool);
         // A destructive tool is asked for every time and never looks at the permissions.
-        let covered = if tool.destructive {
+        let covered = if tool.destructive || !self.authorization_automatic(&request)? {
             BTreeMap::new()
         } else {
             self.store.service_reserve(
@@ -366,10 +413,13 @@ impl Engine {
             )?
         };
         if let Some(grant) = covered.get(&tool.name) {
-            return match self.mcp_perform(session, &server, &tool, &call.arguments, &request.connection_id).await {
-                Ok(result) => {
+            return match self
+                .mcp_perform(&request, session, &server, &tool, &call.arguments, AuthorizationSource::Automatic)
+                .await
+            {
+                Ok((result, trace)) => {
                     let detail = format!("{}: {title}", text::one_line(&server.name));
-                    let audit = self.mcp_audit(
+                    let mut audit = self.mcp_audit(
                         &request,
                         call,
                         tool.read_only,
@@ -377,6 +427,9 @@ impl Engine {
                         &detail,
                         Some(grant.0.clone()),
                     );
+                    if let Some(trace) = trace {
+                        trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
+                    }
                     self.finish(
                         session,
                         &request,
@@ -389,10 +442,40 @@ impl Engine {
                     )
                     .await
                 }
+                Err(Failure::SucceededWithheld {
+                    trace,
+                }) => {
+                    let mut audit = self.mcp_audit(
+                        &request,
+                        call,
+                        tool.read_only,
+                        outcome_of(tool.read_only),
+                        RESULT_WITHHELD,
+                        Some(grant.0.clone()),
+                    );
+                    if let Some(trace) = trace {
+                        trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
+                    }
+                    self.finish(
+                        session,
+                        &request,
+                        audit,
+                        RelayOutcome::Error {
+                            message: RESULT_WITHHELD.to_owned(),
+                        },
+                    )
+                    .await
+                }
                 Err(f) => {
-                    // Nothing was done: give the reserved use back.
-                    self.store.refund(&BTreeSet::from([grant.clone()]))?;
-                    self.mcp_fail(session, &request, call, &ai_message(&server.name, &f)).await
+                    // A failed response cannot prove that a tool did not act. Keep its consumed use.
+                    let message = if self.store.invocation_started(&request.id.0)? {
+                        OUTCOME_UNKNOWN.to_owned()
+                    } else {
+                        // Session/token preparation or the final gate failed before any tools/call invocation.
+                        self.store.refund(&BTreeSet::from([grant.clone()]))?;
+                        ai_message(&server.name, &f)
+                    };
+                    self.mcp_fail(session, &request, call, &message).await
                 }
             };
         }
@@ -437,6 +520,7 @@ impl Engine {
         parked: &ParkedRequest,
         choice: &ApprovalChoice,
         now: i64,
+        source: AuthorizationSource,
     ) -> Result<(), CoreError> {
         let ToolCall::Mcp(call) = &parked.request.call else {
             return Err(CoreError::invalid("not a call to an MCP server"));
@@ -483,46 +567,57 @@ impl Engine {
                 )
             })
             .transpose()?;
-        let (audit, outcome) =
-            match self.mcp_perform(session, &server, &tool, &call.arguments, &request.connection_id).await {
-                Ok(result) => {
-                    if let Some(grant) = &new_grant {
-                        self.store.insert_grant_from(grant, &parked.label(), "approval")?;
-                    }
-                    let detail = format!("approved: {}: {}", text::one_line(&server.name), tool_title(&tool));
-                    let grant_id = new_grant.map(|g| g.id.0);
-                    let audit =
-                        self.mcp_audit(request, call, tool.read_only, outcome_of(tool.read_only), &detail, grant_id);
-                    (
-                        audit,
-                        RelayOutcome::Result {
-                            result: ToolResult::Mcp {
-                                result,
-                            },
-                        },
-                    )
+        let (audit, outcome) = match self.mcp_perform(request, session, &server, &tool, &call.arguments, source).await {
+            Ok((result, trace)) => {
+                if let Some(grant) = &new_grant {
+                    self.store.insert_grant_from(grant, &parked.label(), "approval")?;
                 }
-                // The server answered (or may have acted): the AI gets the answer, nothing is retried.
-                Err(
-                    f @ Failure::Mcp(
-                        McpError::Rpc {
-                            ..
-                        }
-                        | McpError::TooLarge,
-                    ),
-                ) => {
-                    let message = ai_message(&server.name, &f);
-                    let audit = self.mcp_audit(request, call, tool.read_only, "error", &message, None);
-                    (
-                        audit,
-                        RelayOutcome::Error {
-                            message,
-                        },
-                    )
+                let detail = format!("approved: {}: {}", text::one_line(&server.name), tool_title(&tool));
+                let grant_id = new_grant.map(|g| g.id.0);
+                let mut audit =
+                    self.mcp_audit(request, call, tool.read_only, outcome_of(tool.read_only), &detail, grant_id);
+                if let Some(trace) = trace {
+                    trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
                 }
-                // The call could not be made: the request stays for another try.
-                Err(f) => return Err(f.into_core(&server.name)),
-            };
+                (
+                    audit,
+                    RelayOutcome::Result {
+                        result: ToolResult::Mcp {
+                            result,
+                        },
+                    },
+                )
+            }
+            Err(Failure::SucceededWithheld {
+                trace,
+            }) => {
+                let mut audit =
+                    self.mcp_audit(request, call, tool.read_only, outcome_of(tool.read_only), RESULT_WITHHELD, None);
+                if let Some(trace) = trace {
+                    trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
+                }
+                (
+                    audit,
+                    RelayOutcome::Error {
+                        message: RESULT_WITHHELD.to_owned(),
+                    },
+                )
+            }
+            // Once an invocation crossed the durable barrier, settle even an unknown/network failure. The original
+            // parked approval cannot be blindly rerun by Auto, a later tap, a resumed process or a duplicate poll.
+            Err(f) if self.store.invocation_started(&request.id.0)? => {
+                let message = format!("{} {OUTCOME_UNKNOWN}", ai_message(&server.name, &f));
+                let audit = self.mcp_audit(request, call, tool.read_only, "error", &message, None);
+                (
+                    audit,
+                    RelayOutcome::Error {
+                        message,
+                    },
+                )
+            }
+            // No tool invocation began (e.g. sign-in/session setup failed); retrying this approval is safe.
+            Err(f) => return Err(f.into_core(&server.name)),
+        };
         self.store.append_audit(&audit)?;
         self.store.remove_pending(request_id)?;
         self.store.mark_handled(request_id, unix_now())?;

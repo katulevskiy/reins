@@ -159,6 +159,7 @@ impl Engine {
             // Paid without asking only while the server confirms this phone is still the primary (else it asks).
             && self.require_decider_fresh(session).await.is_ok()
         {
+            self.authorization_preflight(request)?;
             let approval = Approval {
                 request_id: &request.id.0,
                 connection_id: connection,
@@ -220,6 +221,9 @@ impl Engine {
         let reins_proto::gmail::ToolCall::Connector(call) = &parked.request.call else {
             return Err(CoreError::invalid("not a purchase"));
         };
+        // Purchases have a specialized approval entry point, including Auto's defaults, outside approve_claimed.
+        // Generic denial/hold still applies; review policies for purchases cannot be activated in this slice.
+        self.authorization_preflight(&parked.request)?;
         let plan: &Plan = parked
             .connector
             .as_ref()
@@ -264,6 +268,7 @@ impl Engine {
             // A purchase is not taken back: paid (by the user's tap or by Autopilot) only while the server confirms
             // this phone is still the primary.
             self.require_decider_fresh(session).await?;
+            self.authorization_preflight(request)?;
             self.payments.perform(&one, plan, method, choice.address_id.as_deref(), &approval).await?
         };
         let mut note = None;

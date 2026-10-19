@@ -340,6 +340,11 @@ impl State {
 }
 
 impl Engine {
+    /// Serializes bounded positive execution with this phone's role handover. Reservations still reach the server
+    /// before an effect, so an externally initiated recovery cannot omit a consumption that already executed.
+    pub(crate) async fn permission_execution_fence(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.roles.changing.lock().await
+    }
     // ---- keys and stored state ----------------------------------------------------------------------------------
 
     pub(crate) fn sign_key(&self) -> Result<SigningKey, CoreError> {
