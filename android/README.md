@@ -131,9 +131,23 @@ scripts/device-smoke.sh          # real server + simulated AI on this machine, r
   standing, public-domain warning), biometric fail-closed paths, pairing, deep-link spoofing, `FLAG_SECURE`, grants,
   activity.
 * `RealCoreTest` (instrumented) loads the real Rust library and the real Keystore on a device.
+* `TrustReleaseTest` drives the complete Trust navigation and sheets in the minified app, including profiles that
+  arrive after the screen opens. CI runs it on an emulator. `TrustTestRunner` installs the same `FakeCore` used by the
+  JVM flows before the Application starts; the shared fixtures live in `app/src/sharedTest`.
 * `LiveServerTest` + `scripts/device-smoke.sh` run the whole connection flow over `adb reverse`.
-* Some emulator images crash `system_server` when it snapshots a task (`hasReadColorBufferDma` assertion), which is why
-  the UI tests run on the JVM and the device tests avoid UI.
+* Some emulator images crash `system_server` when it snapshots a task (`hasReadColorBufferDma` assertion). Most UI
+  coverage runs on the JVM; the minified Trust regression also runs on a device to cover release-only failures.
+
+To run the Trust release regression on a test device, use an explicit test signing key (never distribute this APK):
+
+```bash
+ANDROID_SERIAL=emulator-5554 ./gradlew connectedFullReleaseAndroidTest \
+  -Preins.testBuildType=release -Preins.testRunner=dev.reins.android.TrustTestRunner \
+  -Preins.secureScreens=false \
+  -Preins.releaseKeystore="$HOME/.android/debug.keystore" \
+  -Preins.releaseKeystorePassword=android -Preins.releaseKeyAlias=androiddebugkey \
+  -Pandroid.testInstrumentationRunnerArguments.class=dev.reins.android.TrustReleaseTest
+```
 
 ## Design review screenshots
 

@@ -19,6 +19,31 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-xxhdpi")
 class TrustPagesFlowTest : FlowHarness() {
     @Test
+    fun trustRecomposesWhenProfilesArriveAfterOpening() {
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO)
+        core.model = TestData.modelStatus(dev.reins.core.ModelState.INSTALLED)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        core.profilesGate = gate
+        launch()
+        tap("tabTrust")
+        awaitTag("mode:AUTO")
+        gate.complete(Unit)
+        core.profilesGate = null
+        tap("profile:personal")
+    }
+
+    @Test
+    fun trustOpensWithAutoAlreadySelectedAndAnInstalledModel() {
+        core.apGlobal = FakeCore.ApRow(mode = dev.reins.core.AutopilotMode.AUTO)
+        core.model = TestData.modelStatus(dev.reins.core.ModelState.INSTALLED, updatedAt = 1_700_000_000L)
+        launch()
+        tap("tabTrust")
+        awaitTag("statScored")
+        rule.onNodeWithTag("mode:AUTO").assertIsSelected()
+        tap("openModel")
+    }
+
+    @Test
     fun aGrantIsExtendedFromItsSheetForAChosenLength() {
         core.grants = listOf(TestData.grant("g1"))
         launch()

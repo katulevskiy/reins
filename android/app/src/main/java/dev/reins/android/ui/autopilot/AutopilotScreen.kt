@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.DontMemoize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -400,7 +401,11 @@ fun AutopilotWeek(viewModel: AutopilotViewModel, s: AutopilotSettings) {
     ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "autopilotError") }
     ui.notice?.let { Banner(it, Modifier.padding(top = 10.dp), tag = "autopilotNotice") }
     if (!AutopilotText.modelUsable(model)) {
-        GetScoreCard(model, ui.job, s.wifiOnly, onDownload = viewModel::download, onPause = viewModel::cancelDownload)
+        GetScoreCard(
+            model, ui.job, s.wifiOnly,
+            onDownload = @DontMemoize { viewModel.download() },
+            onPause = @DontMemoize { viewModel.cancelDownload() },
+        )
     } else {
         StatTiles(
             listOf(
@@ -502,35 +507,43 @@ fun BoxScope.AutopilotSheets(viewModel: AutopilotViewModel, sheets: AutopilotShe
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val model = ui.model ?: settings?.model
-    BypassSheets(sheets.bypass, who = null, onStart = { minutes -> viewModel.startBypass(minutes, authenticator = authenticator) }, onClose = { sheets.bypass = false })
+    // v0.15.0's optimized sheet host retrieved an AutopilotViewModel from a memoized callback slot on
+    // recomposition (ClassCastException). These event handlers capture unstable receivers: do not let the
+    // compiler memoize them. Keep the model, timed-mode and profile handlers consistent with one another.
+    BypassSheets(
+        sheets.bypass,
+        who = null,
+        onStart = @DontMemoize { minutes -> viewModel.startBypass(minutes, authenticator = authenticator) },
+        onClose = @DontMemoize { sheets.bypass = false },
+    )
     OvernightSheets(
         sheets.overnight,
         who = null,
         risky = settings?.overnightWhenRisky ?: dev.reins.core.OvernightRisky.WAIT,
         ratesRisk = model?.risk == true,
-        onRisky = { viewModel.setOvernightWhenRisky(it, authenticator) },
-        onStart = { minutes -> viewModel.startOvernight(minutes, authenticator = authenticator) },
-        onClose = { sheets.overnight = false },
+        onRisky = @DontMemoize { viewModel.setOvernightWhenRisky(it, authenticator) },
+        onStart = @DontMemoize { minutes -> viewModel.startOvernight(minutes, authenticator = authenticator) },
+        onClose = @DontMemoize { sheets.overnight = false },
     )
-    BottomSheet(sheets.model, null, onClose = { sheets.model = false }, tag = "modelSheet") {
+    BottomSheet(sheets.model, null, onClose = @DontMemoize { sheets.model = false }, tag = "modelSheet") {
         // Honest about size and place (iOS-Autopilot 06): "On-device *model*", then the model on its plate.
         Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             AskText("On-device model", LocalColors.current.ink, Modifier.weight(1f), target = "model", style = RType.serif(30f, 34f), minSize = 24.sp, maxLines = 1)
-            RoundIconButton(Glyph.Close, "Close", Modifier.testTag("closeSheet"), size = 36.dp) { sheets.model = false }
+            RoundIconButton(Glyph.Close, "Close", Modifier.testTag("closeSheet"), size = 36.dp, onClick = @DontMemoize { sheets.model = false })
         }
         ModelDetails(
             model,
             job = ui.job,
             wifiOnly = settings?.wifiOnly ?: true,
-            onDownload = viewModel::download,
-            onCancel = viewModel::cancelDownload,
-            onDelete = { sheets.deleteModel = true },
-            onWifiOnly = viewModel::setWifiOnly,
+            onDownload = @DontMemoize { viewModel.download() },
+            onCancel = @DontMemoize { viewModel.cancelDownload() },
+            onDelete = @DontMemoize { sheets.deleteModel = true },
+            onWifiOnly = @DontMemoize { viewModel.setWifiOnly(it) },
             autoUpdate = settings?.autoUpdate ?: true,
-            onAutoUpdate = viewModel::setAutoUpdate,
+            onAutoUpdate = @DontMemoize { viewModel.setAutoUpdate(it) },
             checking = ui.checking,
             checkResult = ui.checkResult,
-            onCheckNow = viewModel::checkNow,
+            onCheckNow = @DontMemoize { viewModel.checkNow() },
         )
     }
     if (sheets.deleteModel) {
@@ -539,12 +552,12 @@ fun BoxScope.AutopilotSheets(viewModel: AutopilotViewModel, sheets: AutopilotShe
             text = "Manual asks without hints and Auto pauses until you download it again.",
             confirmLabel = "Delete",
             destructive = true,
-            onConfirm = {
+            onConfirm = @DontMemoize {
                 sheets.deleteModel = false
                 sheets.model = false
                 viewModel.deleteModel()
             },
-            onDismiss = { sheets.deleteModel = false },
+            onDismiss = @DontMemoize { sheets.deleteModel = false },
         )
     }
     if (sheets.newProfile) {
@@ -553,11 +566,11 @@ fun BoxScope.AutopilotSheets(viewModel: AutopilotViewModel, sheets: AutopilotShe
             initialName = "",
             initialIcon = AutopilotText.icons[2],
             confirmLabel = "Create",
-            onConfirm = { name, icon ->
+            onConfirm = @DontMemoize { name, icon ->
                 sheets.newProfile = false
                 viewModel.createProfile(name, icon, onProfile)
             },
-            onDismiss = { sheets.newProfile = false },
+            onDismiss = @DontMemoize { sheets.newProfile = false },
         )
     }
 }
