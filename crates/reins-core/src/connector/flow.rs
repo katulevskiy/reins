@@ -200,6 +200,7 @@ impl Engine {
             }
         };
         let account = request.account.clone().unwrap_or_default();
+        self.authorization_preflight(&request)?;
         let now = unix_now();
 
         // Ending a work session only takes access away: done at once, never asked.
@@ -293,7 +294,7 @@ impl Engine {
                 )?
             };
             if let Some(grant) = covered.get(&preview.resource) {
-                return match self.perform_write(connector.as_ref(), &account, call, granted_command).await {
+                return match self.perform_write(&request, connector.as_ref(), &account, call, granted_command).await {
                     Ok(data) => {
                         let detail = format!("done: {}", preview.lines.first().map_or("", String::as_str));
                         let audit = self.audit_connector(
@@ -375,6 +376,7 @@ impl Engine {
             items
         };
         if !any_sensitive && (items.is_empty() || covered.len() == resources.len()) {
+            self.authorization_preflight(&request)?;
             // Content too large to go inline becomes a download link, now that it is released.
             let items = match self.deliver_files(session, connector.as_ref(), &account, &request, items).await {
                 Ok(items) => items,
@@ -512,7 +514,7 @@ impl Engine {
                     let plan = crate::work_session::plan(call)?;
                     self.start_work_session(&request.connection_id, &parked.label(), &plan, now)?
                 } else {
-                    self.perform_write(connector.as_ref(), &account, call, granted_command).await?
+                    self.perform_write(request, connector.as_ref(), &account, call, granted_command).await?
                 };
             if let Some(grant) = &new_grant {
                 self.store.insert_grant_from(grant, &parked.label(), "approval")?;
@@ -653,11 +655,13 @@ impl Engine {
     /// the phone's integration, or the integration's own write.
     async fn perform_write(
         &self,
+        request: &RelayRequest,
         connector: &dyn super::Connector,
         account: &str,
         call: &ConnectorCall,
         command: Option<(desktop::CommandScope, Option<i64>)>,
     ) -> Result<serde_json::Value, CoreError> {
+        self.authorization_preflight(request)?;
         // Boxed: each is a large future (a store adds integrations), which would otherwise be inlined into every
         // approval's future, autopilot's included.
         if is_env_release(call) {

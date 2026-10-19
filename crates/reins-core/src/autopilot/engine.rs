@@ -790,6 +790,42 @@ impl Engine {
             return Ok(());
         };
         let mode = self.ap_mode_for(&subject.connection_id, now)?;
+        if row.kind == PendingKind::Request && mode != AutopilotMode::Lockdown {
+            let parked: ParkedRequest =
+                serde_json::from_slice(&row.payload).map_err(|_| CoreError::storage("corrupt parked request"))?;
+            if !self.authorization_automatic(&parked.request).unwrap_or(false) {
+                // A policy requirement is deterministic. It never sends denied/held request content to the model,
+                // and it must notify the owner even during a Bypass rather than repeatedly failing silently.
+                let reason = self
+                    .authorization_execute(&parked.request, crate::authorization::AuthorizationSource::Automatic)
+                    .err()
+                    .map_or_else(|| "Account policy requires review".to_owned(), |e| e.to_string());
+                let suggestion = Suggestion {
+                    request_id: subject.id.clone(),
+                    at: now,
+                    kind: "request".to_owned(),
+                    connection_id: subject.connection_id.clone(),
+                    connection_label: subject.connection_label.clone(),
+                    mode,
+                    profile_id: String::new(),
+                    profile_name: String::new(),
+                    class_key: subject.described.class_key.clone(),
+                    label: subject.described.label.clone(),
+                    target_key: String::new(),
+                    s_facts: String::new(),
+                    s_full: String::new(),
+                    novel: false,
+                    floor: Some(reason.clone()),
+                    judged: None,
+                    verdict: Verdict::Ask,
+                    reason,
+                    decided: None,
+                    risk: None,
+                    deletes: false,
+                };
+                return self.ap_wait(&subject, &suggestion);
+            }
+        }
         if mode == AutopilotMode::Bypass {
             // Before anything that could fail or wait (the profile, the connection list): nothing a bypass covers is
             // left waiting.
@@ -1621,7 +1657,12 @@ impl Engine {
         // and inlined into Autopilot's own futures it outgrows a test thread's stack in debug builds.
         match (subject.kind, verdict) {
             (PendingKind::Request, Verdict::Approve) => {
-                Box::pin(self.approve_claimed(&subject.id, subject.choice.clone())).await
+                Box::pin(self.approve_claimed(
+                    &subject.id,
+                    subject.choice.clone(),
+                    crate::authorization::AuthorizationSource::Automatic,
+                ))
+                .await
             }
             (PendingKind::Request, _) => Box::pin(self.deny_claimed(&subject.id)).await,
             (PendingKind::Blob, v) => Box::pin(self.answer_blob_claimed(&subject.id, v == Verdict::Approve)).await,

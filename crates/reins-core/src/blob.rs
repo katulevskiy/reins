@@ -876,6 +876,24 @@ impl Engine {
             self.require_decider()?;
         }
         let info = self.parked_blob(id)?;
+        if approve {
+            let request = RelayRequest {
+                v: PROTOCOL_VERSION,
+                id: info.request_id.clone().unwrap_or_else(|| reins_proto::ids::RequestId(info.id.0.clone())),
+                connection_id: info.connection_id.clone(),
+                connection_label: info.connection_label.clone(),
+                created_at: info.created_at,
+                wait_until: None,
+                account: None,
+                call: reins_proto::gmail::ToolCall::RequestUpload {
+                    name: info.name.clone(),
+                    size: info.size,
+                    content_type: Some(info.content_type.clone()),
+                    reason: String::new(),
+                },
+            };
+            self.authorization_preflight(&request)?;
+        }
         let decision = BlobDecision {
             v: PROTOCOL_VERSION,
             approved: approve,
