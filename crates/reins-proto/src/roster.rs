@@ -628,6 +628,7 @@ impl HandoverSignature {
 
     /// Verify only the additional software-support claim. Callers must separately verify the ordinary request,
     /// roster membership/epoch and freshness; a capability claim alone never authorizes a role transfer.
+    #[must_use]
     pub fn policy_support_verifies(
         &self,
         account: &str,

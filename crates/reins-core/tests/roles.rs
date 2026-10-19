@@ -965,6 +965,34 @@ async fn managed_handover_requires_the_viewers_signed_policy_support_before_keys
 }
 
 #[tokio::test]
+async fn failed_remote_revocation_still_requires_policy_support_at_handover() {
+    let mut w = world().await;
+    let a = w.phone().await;
+    let b = w.phone().await;
+    a.roster_create("iPhone".into(), Some(PASSWORD.into())).await.unwrap();
+    enroll(&a, &b, "Pixel").await;
+    Mock::given(method("DELETE"))
+        .and(path("/reins/api/connections/c1"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&w.server)
+        .await;
+    let error = a.revoke_connection("c1".into()).await.unwrap_err();
+    assert!(error.to_string().contains("blocked on this phone"), "{error}");
+    // No account permission was installed. The retained local revocation is the only new brake.
+    let id = b.handover_request().await.unwrap();
+    let proof = w.state().handovers.get_mut(&id).unwrap().request.signed.as_mut().unwrap().policy_enforcement.take();
+    let device = device_of(&b).await;
+    let error = a.handover_approve(id.clone(), device.clone()).await.unwrap_err();
+    assert!(error.to_string().contains("policy support"), "{error}");
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
+    assert!(w.state().bundle.is_none(), "a failed remote revoke cannot reopen access through an old phone");
+    w.state().handovers.get_mut(&id).unwrap().request.signed.as_mut().unwrap().policy_enforcement = proof;
+    a.handover_approve(id, device).await.unwrap();
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+}
+
+#[tokio::test]
 async fn unmanaged_handover_keeps_the_legacy_signature_compatible() {
     let mut w = world().await;
     let a = w.phone().await;

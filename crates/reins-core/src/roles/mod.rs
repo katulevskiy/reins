@@ -305,7 +305,7 @@ pub(crate) fn verified_handover(
     if signed.epoch != current.epoch {
         return Err(refuse("the account's phones changed since it was made"));
     }
-    if (now - signed.at).abs() > HANDOVER_REQUEST_SKEW_SECS {
+    if now.abs_diff(signed.at) > HANDOVER_REQUEST_SKEW_SECS.unsigned_abs() {
         return Err(refuse("it is too old"));
     }
     let message = handover_request_message(account, signed.epoch, &member.device_id, &signed.nonce, signed.at)
@@ -1410,7 +1410,7 @@ impl Engine {
     /// time is within the skew window (a request older than that is refused anyway).
     fn answered_nonces(&self, slot: &str, now: i64) -> Result<BTreeMap<String, i64>, CoreError> {
         let mut nonces: BTreeMap<String, i64> = self.load(HANDOVER_NONCES, slot)?.unwrap_or_default();
-        nonces.retain(|_, at| (now - *at).abs() <= HANDOVER_REQUEST_SKEW_SECS);
+        nonces.retain(|_, at| now.abs_diff(*at) <= HANDOVER_REQUEST_SKEW_SECS.unsigned_abs());
         Ok(nonces)
     }
 
@@ -1457,6 +1457,8 @@ impl Engine {
     /// This phone becomes a viewer and drops the owner seed and the keys that moved.
     pub async fn handover_approve(&self, id: &str, device_id: &str) -> Result<(), CoreError> {
         let session = self.session()?;
+        // Freeze policy writers before publishing/checking the outgoing frontier, not only before sealing keys.
+        let _one = self.permission_handover_fence().await?;
         // This phone's last changes go into the log first: the entry names its last op, and the server takes no entry
         // naming an op it does not have.
         if let Err(e) = self.live_sync_now().await {
@@ -1476,7 +1478,6 @@ impl Engine {
                 kept.join(", ")
             )));
         }
-        let _one = self.permission_handover_fence().await?;
         let account = self.roles_account(&session).await?;
         let request = api_call!(&session, |api| api.handover_request(id)).map_err(ApiFailure::into_core)?;
         let (roster, seed) = self.as_primary(&session, &account).await?;
@@ -1619,6 +1620,36 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_handover_extreme_timestamps_are_refused_without_overflow() {
+        use chain::tests::{genesis, member, next};
+        let owner = OwnerSeed::generate().unwrap();
+        let first = genesis(&owner);
+        let enrolled = next(&first, RosterReason::Enroll, member("p", 1), vec![member("v", 2)], &owner);
+        let roster = LocalRoster::created(first.clone()).unwrap().updated(&[first, enrolled]).unwrap();
+        let key = SigningKey::from_seed(&[2; 32]).unwrap();
+        for at in [i64::MIN, i64::MAX] {
+            let nonce = reins_proto::enroll::encode_nonce(&[9; 32]);
+            let message = handover_request_message("acct", roster.epoch(), "v", &nonce, at).unwrap();
+            let request = HandoverRequest {
+                v: 1,
+                id: "handover".into(),
+                device_id: "v".into(),
+                device_name: "Viewer".into(),
+                created_at: at,
+                signed: Some(HandoverSignature {
+                    epoch: roster.epoch(),
+                    nonce,
+                    at,
+                    sig: key.sign_b64(&message),
+                    policy_enforcement: None,
+                }),
+            };
+            let error = verified_handover(&roster, "acct", &request, 100).unwrap_err();
+            assert!(error.to_string().contains("too old"), "{error}");
+        }
+    }
 
     #[test]
     fn recovery_codes_are_told_from_passwords() {

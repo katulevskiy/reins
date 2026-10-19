@@ -17,7 +17,7 @@ impl Engine {
     ) -> Result<(), CoreError> {
         // Revoked/paused policies, managed markers and unresolved history remain relevant. Corrupt state is an
         // error rather than a reason to transfer to an app that could ignore the account's restrictions.
-        if self.store.authorization_state()?.is_none() {
+        if !self.store.has_authorization_protection()? {
             return Ok(());
         }
         let member = roster
@@ -44,7 +44,7 @@ fn require_policy_support(
         return Ok(());
     }
     Err(CoreError::invalid(
-        "This account has authorization policies. Update the receiving phone and Reins server, then request the transfer again so its policy support can be verified.",
+        "This account has authorization protections. Update the receiving phone and Reins server, then request the transfer again so its policy support can be verified.",
     ))
 }
 

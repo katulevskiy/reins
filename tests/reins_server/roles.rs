@@ -908,6 +908,27 @@ async fn a_signed_handover_request_is_kept_and_a_badly_signed_one_refused() {
 }
 
 #[tokio::test]
+async fn signed_extreme_handover_times_are_refused_without_overflow_or_consuming_the_nonce() {
+    let mut acct = Account::new("jon@example.com").await;
+    let viewer = acct.server.second_device("jon@example.com").await;
+    let key = keys(2);
+    acct.enroll(&viewer, &key, "Pixel").await;
+    let epoch = acct.current().epoch;
+    let nonce = encode_payload(&[8; 32]);
+    for at in [i64::MIN, i64::MAX, chrono_now()] {
+        let message =
+            reins_proto::roster::handover_request_message(&acct.user, epoch, &viewer.device_id, &nonce, at).unwrap();
+        let body = json!({"v":1,"signed":{"epoch":epoch,"nonce":nonce,"at":at,"sig":sig(&key.sign,&message)}});
+        let (status, response) = viewer.post("/handovers", &body).await;
+        if matches!(at, i64::MIN | i64::MAX) {
+            assert_eq!((status, error(&response)), (StatusCode::FORBIDDEN, "bad_signature"));
+        } else {
+            assert_eq!(status, StatusCode::OK, "{response}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn handover_policy_support_is_verified_and_forwarded_without_changing_legacy_signatures() {
     let mut acct = Account::new("jon@example.com").await;
     let viewer = acct.server.second_device("jon@example.com").await;

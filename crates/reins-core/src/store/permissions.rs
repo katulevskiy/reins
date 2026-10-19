@@ -308,6 +308,22 @@ fn receipt_key(action: &ActionContext) -> String {
 }
 
 impl Store {
+    /// Handover must preserve brakes and consumption history even when no policy document was installed.
+    pub(crate) fn has_authorization_protection(&self) -> Result<bool, CoreError> {
+        let conn = self.read()?;
+        // Unknown/corrupt policy state fails closed instead of being treated as an unmanaged account.
+        if authorization::read(&conn)?.is_some() {
+            return Ok(true);
+        }
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE key GLOB 'app.authorization.*')
+                 OR EXISTS(SELECT 1 FROM grants WHERE origin=?1)",
+            [BUDGET_ORIGIN],
+            |row| row.get(0),
+        )
+        .map_err(CoreError::from)
+    }
+
     #[cfg(test)]
     fn permission_reserve(
         &self,
@@ -1002,6 +1018,35 @@ mod tests {
             PermissionReservation::Authorized(proof) => proof,
             _ => panic!("expected permit"),
         }
+    }
+
+    #[test]
+    fn handover_protection_includes_retained_brakes_receipts_and_budget_floors() {
+        for key in [
+            "app.authorization.revoked_connection.agent",
+            "app.authorization.receipt.attempt",
+            "app.authorization.future_brake",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = crate::store::tests::open(dir.path());
+            assert!(!store.has_authorization_protection().unwrap());
+            store.lock().unwrap().execute("INSERT INTO meta(key,value) VALUES (?1,'true')", [key]).unwrap();
+            assert!(store.authorization_state().unwrap().is_none());
+            assert!(store.has_authorization_protection().unwrap(), "{key}");
+        }
+        let (_dir, store) = setup(vec![policy("permission", 3)]);
+        assert!(store.has_authorization_protection().unwrap());
+        store.lock().unwrap().execute("DELETE FROM meta WHERE key=?1", [authorization::STORE_KEY]).unwrap();
+        assert!(store.authorization_state().unwrap().is_none());
+        assert!(store.has_authorization_protection().unwrap(), "hidden budget rows still carry consumption");
+        store.lock().unwrap().execute("DELETE FROM grants WHERE origin=?1", [BUDGET_ORIGIN]).unwrap();
+        assert!(!store.has_authorization_protection().unwrap(), "ordinary account grants are not policy state");
+        store
+            .lock()
+            .unwrap()
+            .execute("INSERT INTO meta(key,value) VALUES (?1,'invalid')", [authorization::STORE_KEY])
+            .unwrap();
+        assert!(store.has_authorization_protection().is_err());
     }
 
     #[test]
