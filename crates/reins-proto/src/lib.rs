@@ -4,6 +4,7 @@
 
 pub mod answer;
 pub mod attention;
+pub mod authorization;
 pub mod blob;
 pub mod canon;
 pub mod computer;
