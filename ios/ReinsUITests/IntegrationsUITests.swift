@@ -59,8 +59,23 @@ final class IntegrationsUITests: XCTestCase {
         element("tgPassword").tap()
         element("tgPassword").typeText("hunter2")
         element("submitPassword").tap()
-        _ = waitFor("account:+15550123")
+        _ = waitFor("integrationConnected")
+        text("Account connected")
+        text("+15550123")
         shot("telegram-connected")
+    }
+
+    func testGoogleAccountHasAnExplicitCompletionBeforeAddingAnother() {
+        launch("gmail")
+        waitFor("addAccount").tap()
+        _ = waitFor("integrationConnected")
+        text("Account connected")
+        text("new.account@gmail.com")
+        shot("google-account-connected")
+        waitFor("connectionAddAnother").tap()
+        XCTAssertFalse(element("integrationConnected").exists)
+        _ = waitFor("addAccount")
+        _ = waitFor("account:new.account@gmail.com")
     }
 
     func testARejectedTokenIsExplained() {
@@ -97,10 +112,12 @@ final class IntegrationsUITests: XCTestCase {
         element("mcpName").typeText("Docs")
         shot("mcp-add")
         element("mcpAddSubmit").tap()
-        _ = waitFor("mcpNotice", timeout: 12)
-        text("Signed in to Docs")
-        _ = waitFor("tool:search_issues")
+        _ = waitFor("integrationConnected", timeout: 12)
+        text("Server connected")
+        text("Docs")
         shot("mcp-signed-in")
+        waitFor("connectionDone").tap()
+        _ = waitFor("tool:search_issues")
         // The app's switch (SignalSwitchStyle) is one element, and a tap anywhere on its row toggles it.
         element("heavy:create_issue").tap()
         _ = waitFor("badge:create_issue:heavy")

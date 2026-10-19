@@ -357,8 +357,11 @@ class FakeCore : ReinsCoreInterface {
         return AccountView("gmail", hint.lowercase(), 1_700_000_000L).also { accounts = accounts + it }
     }
 
+    @Volatile var removeAccountGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
     override suspend fun removeAccount(account: String) {
         removedAccounts += account
+        removeAccountGate?.await()
         accounts = accounts.filterNot { it.account == account }
         grants = grants.filterNot { it.account == account }
     }
@@ -388,9 +391,12 @@ class FakeCore : ReinsCoreInterface {
         return withAccount(service, hint.ifEmpty { "this phone" })
     }
 
+    @Volatile var tokenAccountGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
     override suspend fun addTokenAccount(service: String, token: String): AccountView {
         serviceFailure?.let { throw it }
         tokensAdded += service to token
+        tokenAccountGate?.await()
         return withAccount(service, if (service == "vault") "me@example.com" else "octo-cat")
     }
 
@@ -950,6 +956,7 @@ class FakeCore : ReinsCoreInterface {
     @Volatile var mcpNextRefresh: McpAddStep? = null
     /** Thrown by every MCP call that talks to a server. */
     @Volatile var mcpFailure: CoreException? = null
+    @Volatile var mcpAddGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     val mcpAdds = CopyOnWriteArrayList<Pair<String, String?>>()
     val mcpTokenAdds = CopyOnWriteArrayList<List<String?>>()
     val mcpSignIns = CopyOnWriteArrayList<Pair<String, String>>()
@@ -957,11 +964,17 @@ class FakeCore : ReinsCoreInterface {
     val mcpRemoved = CopyOnWriteArrayList<String>()
     val mcpHeavy = CopyOnWriteArrayList<Triple<String, String, Boolean>>()
 
-    override suspend fun mcpServers(): List<McpServerView> = mcp
+    @Volatile var mcpListFailure: CoreException? = null
+
+    override suspend fun mcpServers(): List<McpServerView> {
+        mcpListFailure?.let { throw it }
+        return mcp
+    }
 
     override suspend fun mcpAdd(url: String, name: String?): McpAddStep {
         mcpFailure?.let { throw it }
         mcpAdds += url to name
+        mcpAddGate?.await()
         val step = mcpNextAdd ?: McpAddStep.Added(TestData.mcpServer("added", name ?: "Added", url))
         when (step) {
             is McpAddStep.Added -> mcp = mcp.filterNot { it.id == step.server.id } + step.server

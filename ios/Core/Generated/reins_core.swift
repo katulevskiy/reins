@@ -10298,6 +10298,107 @@ public func FfiConverterTypeCommandOption_lower(_ value: CommandOption) -> RustB
 
 
 /**
+ * Readable command facts derived by the core. The exact original request remains the approval's authority.
+ */
+public struct CommandPresentation: Equatable, Hashable {
+    /**
+     * Fixed words describing only a recognized operation; never an agent's explanation.
+     */
+    public var heading: String
+    /**
+     * Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
+     */
+    public var actionable: String
+    /**
+     * Setup performed before the action. Environment values are concealed; the original is inspected separately.
+     */
+    public var setup: [String]
+    /**
+     * Consequences or limitations that remain visible with the action, including altered execution context.
+     */
+    public var notices: [String]
+    /**
+     * Original pending invocation for explicit inspection, including text beyond the legacy detail limit.
+     * Never persisted here or included in Debug; history uses the source text actually retained with the entry.
+     */
+    public var original: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Fixed words describing only a recognized operation; never an agent's explanation.
+         */heading: String,
+        /**
+         * Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
+         */actionable: String,
+        /**
+         * Setup performed before the action. Environment values are concealed; the original is inspected separately.
+         */setup: [String],
+        /**
+         * Consequences or limitations that remain visible with the action, including altered execution context.
+         */notices: [String],
+        /**
+         * Original pending invocation for explicit inspection, including text beyond the legacy detail limit.
+         * Never persisted here or included in Debug; history uses the source text actually retained with the entry.
+         */original: String = "") {
+        self.heading = heading
+        self.actionable = actionable
+        self.setup = setup
+        self.notices = notices
+        self.original = original
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CommandPresentation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCommandPresentation: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CommandPresentation {
+        return
+            try CommandPresentation(
+                heading: FfiConverterString.read(from: &buf),
+                actionable: FfiConverterString.read(from: &buf),
+                setup: FfiConverterSequenceString.read(from: &buf),
+                notices: FfiConverterSequenceString.read(from: &buf),
+                original: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CommandPresentation, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.heading, into: &buf)
+        FfiConverterString.write(value.actionable, into: &buf)
+        FfiConverterSequenceString.write(value.setup, into: &buf)
+        FfiConverterSequenceString.write(value.notices, into: &buf)
+        FfiConverterString.write(value.original, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandPresentation_lift(_ buf: RustBuffer) throws -> CommandPresentation {
+    return try FfiConverterTypeCommandPresentation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandPresentation_lower(_ value: CommandPresentation) -> RustBuffer {
+    return FfiConverterTypeCommandPresentation.lower(value)
+}
+
+
+/**
  * One connection's Autopilot settings.
  */
 public struct ConnectionAutopilot: Equatable, Hashable {
@@ -15375,6 +15476,10 @@ public struct RequestLabel: Equatable, Hashable {
      * After the subject (" and 2 more"); usually empty.
      */
     public var tail: String
+    /**
+     * Derived for native views from the retained original; never persisted, synced, or an authorization scope.
+     */
+    public var command: CommandPresentation?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -15399,13 +15504,17 @@ public struct RequestLabel: Equatable, Hashable {
          */code: Bool, 
         /**
          * After the subject (" and 2 more"); usually empty.
-         */tail: String) {
+         */tail: String,
+        /**
+         * Derived for native views from the retained original; never persisted, synced, or an authorization scope.
+         */command: CommandPresentation? = nil) {
         self.provider = provider
         self.action = action
         self.lead = lead
         self.subject = subject
         self.code = code
         self.tail = tail
+        self.command = command
     }
 
     
@@ -15429,7 +15538,8 @@ public struct FfiConverterTypeRequestLabel: FfiConverterRustBuffer {
                 lead: FfiConverterString.read(from: &buf), 
                 subject: FfiConverterString.read(from: &buf), 
                 code: FfiConverterBool.read(from: &buf), 
-                tail: FfiConverterString.read(from: &buf)
+                tail: FfiConverterString.read(from: &buf),
+                command: FfiConverterOptionTypeCommandPresentation.read(from: &buf)
         )
     }
 
@@ -15440,6 +15550,7 @@ public struct FfiConverterTypeRequestLabel: FfiConverterRustBuffer {
         FfiConverterString.write(value.subject, into: &buf)
         FfiConverterBool.write(value.code, into: &buf)
         FfiConverterString.write(value.tail, into: &buf)
+        FfiConverterOptionTypeCommandPresentation.write(value.command, into: &buf)
     }
 }
 
@@ -21680,6 +21791,30 @@ fileprivate struct FfiConverterOptionTypeCardProviderView: FfiConverterRustBuffe
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeCardProviderView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeCommandPresentation: FfiConverterRustBuffer {
+    typealias SwiftType = CommandPresentation?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeCommandPresentation.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeCommandPresentation.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

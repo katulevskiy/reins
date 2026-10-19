@@ -202,6 +202,41 @@ abstract class ScreenshotsBase(private val suffix: String) {
     }
 
     @Test
+    fun integrationConnectionCompletion() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        launch()
+        tap("tabConnections")
+        tap("service:gmail")
+        val app = (context.applicationContext as ReinsApp).container
+        kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
+        await("integrationConnected")
+        shoot("integration-account-connected")
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun integrationConnectionCompletionLargeText() {
+        val resources = context.resources
+        val previous = android.content.res.Configuration(resources.configuration)
+        val enlarged = android.content.res.Configuration(previous).apply { fontScale = 1.6f }
+        resources.updateConfiguration(enlarged, resources.displayMetrics)
+        try {
+            core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+            launch()
+            tap("tabConnections")
+            tap("service:gmail")
+            val app = (context.applicationContext as ReinsApp).container
+            kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
+            await("integrationConnected")
+            shoot("integration-account-connected-large-text")
+            tap("connectionDone")
+            await("service:gmail")
+        } finally {
+            resources.updateConfiguration(previous, resources.displayMetrics)
+        }
+    }
+
+    @Test
     fun uncertainExecutionOutcomes() {
         core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
         core.activity = listOf("unknown", "succeeded_withheld", "started").mapIndexed { index, status ->
@@ -855,6 +890,38 @@ abstract class ScreenshotsBase(private val suffix: String) {
         openView(TestData.askView())
         await("askQuestion")
         shoot("48-ask")
+    }
+
+    @Test
+    fun commandPresentation() = renderCommandPresentation("default")
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun commandPresentationLargeText() {
+        val configuration = android.content.res.Configuration(context.resources.configuration).apply { fontScale = 1.6f }
+        context.resources.updateConfiguration(configuration, context.resources.displayMetrics)
+        renderCommandPresentation("large")
+    }
+
+    private fun renderCommandPresentation(size: String) {
+        val raw = "JAVA_HOME=/opt/jdk ANDROID_HOME=/opt/sdk TOKEN=fixture-secret ./gradlew :app:assembleDebug --no-daemon"
+        val command = dev.reins.core.CommandPresentation(
+            "Run Gradle", "./gradlew :app:assembleDebug --no-daemon",
+            listOf("JAVA_HOME=•••• (value hidden)", "ANDROID_HOME=•••• (value hidden)", "TOKEN=•••• (value hidden)", "Requested directory: /home/dana/dev/reins"),
+            listOf("Gradle can execute project build scripts and plugins with this process’s permissions and credentials."),
+        )
+        val view = TestData.askView(detail = "Command:\n$raw\n\nIn: /home/dana/dev/reins", topic = "command:./gradlew").let {
+            it.copy(waitUntil = null, ask = it.ask!!.copy(question = "Run: $raw"))
+        }
+        core.pending = listOf(TestData.pending(view.requestId, "write", 1u, service = "desktop").copy(
+            label = TestData.label("terminal", "run", "Run", raw, code = true).copy(command = command),
+        ))
+        core.approval = view
+        launch(link("request", view.requestId))
+        await("commandPresentation")
+        shoot("48b-command-$size-action")
+        rule.onNodeWithTag("commandSetup").performScrollTo()
+        shoot("48c-command-$size-setup")
     }
 
     @Test

@@ -169,7 +169,7 @@ extension ApprovalRecord {
     /// How `entry` ended, for the approval's hero, with the risk the model saw in it.
     static func of(_ entry: ActivityEntry) -> ApprovalRecord {
         ApprovalRecord(outcome: EntryOutcome.text(entry), symbol: EntryOutcome.symbol(entry), tint: EntryOutcome.tint(entry),
-                       risk: entry.autopilot?.risk)
+                       risk: entry.autopilot?.risk, label: entry.label)
     }
 }
 

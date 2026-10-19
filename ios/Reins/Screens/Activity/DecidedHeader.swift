@@ -25,7 +25,7 @@ struct DecidedHeader: View {
                 .accessibilityLabel(line.text)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("detailTitle")
-            if let mono = line.mono {
+            if entry.label?.command == nil, let mono = line.mono {
                 Text(verbatim: mono)
                     .font(TextRole.value.font())
                     .foregroundStyle(Palette.ink2)

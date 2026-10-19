@@ -104,6 +104,13 @@ enum AskLabels {
         }
         let more = tail.isEmpty ? "" : " " + tail.trimmingCharacters(in: .whitespaces)
         if provider == "terminal" {
+            if let command = label.command {
+                if tense == .done {
+                    let heading = command.heading.hasPrefix("Run ") ? "Approved running " + command.heading.dropFirst(4) : "Approved a shell command"
+                    return AskLine.make(kind: kind, lead: heading, target: nil, mono: command.actionable.isEmpty ? nil : untrusted(command.actionable), icon: icon)
+                }
+                return make(oneLine(command.heading), mono: command.actionable.isEmpty ? nil : untrusted(command.actionable))
+            }
             let m = matched.map(untrusted)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let folder = cwd.map { untrustedName(($0 as NSString).lastPathComponent) }.flatMap { $0.isEmpty || $0 == "/" ? nil : $0 }
             let mono = m.flatMap { $0.isEmpty ? nil : $0 } ?? (subject + more)

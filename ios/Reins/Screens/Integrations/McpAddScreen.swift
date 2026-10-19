@@ -7,6 +7,7 @@ struct McpAddScreen: View {
     @State private var url = ""
     @State private var name = ""
     @State private var token = ""
+    @State private var active = false
     @FocusState private var focus: Field?
 
     private enum Field { case url, name, token }
@@ -77,6 +78,8 @@ struct McpAddScreen: View {
         .navigationSubtitle("Integrations")
         .navigationBarTitleDisplayMode(.large)
         .animation(.smooth, value: mcp?.error)
+        .onAppear { active = true }
+        .onDisappear { active = false }
         .task {
             if mcp == nil { mcp = McpModel(model: model) }
             mcp?.error = nil
@@ -91,10 +94,12 @@ struct McpAddScreen: View {
         let sent = token
         token = ""
         focus = nil
+        let section = model.section
+        let path = model.path(section)
         Task {
             guard let id = await mcp.add(url: url, name: name, token: sent) else { return }
             // From the add page to the new server's page, unless the user went somewhere else meanwhile.
-            if model.path(model.section).last == .mcpAdd {
+            if active, model.section == section, model.path(section) == path, path.last == .mcpAdd {
                 model.back()
                 model.push(.mcpServer(id))
             }
