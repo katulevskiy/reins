@@ -98,7 +98,6 @@ final class GrantsSettingsUITests: XCTestCase {
     // MARK: Screenshots
 
     func testScreenshots() throws {
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Quarantined on CI: expiredHeader times out in the new build-once CI setup (runs 38955143264, 38960576590).")
         launch()
         section("trust")
         wait("grant:g1")
@@ -284,7 +283,6 @@ final class GrantsSettingsUITests: XCTestCase {
     }
 
     func testAConnectionsModeAndIconCanBePickedAndItCanBeDisconnected() throws {
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Quarantined on CI: connection:c2 does not appear after disconnecting c1 (runs 38903795915, 38907389380, 38955143264, 38888346599).")
         launch()
         section("connections")
         scrollTo("connection:c1")
