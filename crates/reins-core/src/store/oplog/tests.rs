@@ -624,6 +624,30 @@ fn json_settings_merge_by_entry_and_asking_every_time_wins() {
 }
 
 #[test]
+fn authorization_state_conflicts_and_removal_are_retained_as_holds() {
+    let mut w = World::new(false);
+    let mut conn = store();
+    let key = crate::store::authorization::RECORD_KEY;
+    let mut initial = crate::store::AuthorizationState::empty("owner");
+    initial.revision = 1;
+    let initial = serde_json::to_value(initial).unwrap();
+    let created = w.op("p", 3, OpClass::Primary, put(Table::Meta, key, None, initial.clone()));
+    assert_eq!(run(&mut conn, &w, 1, &[created]), [Outcome::Applied]);
+    let first = version(&conn, Table::Meta, key);
+    let mut updated = initial;
+    updated["revision"] = json!(2);
+    let update = w.op("p", 3, OpClass::Primary, put(Table::Meta, key, Some(first.clone()), updated.clone()));
+    run(&mut conn, &w, 2, &[update]);
+    // A stale primary edit is not merged field by field into a fabricated policy state.
+    let stale = w.op("p", 3, OpClass::Primary, put(Table::Meta, key, Some(first), updated));
+    run(&mut conn, &w, 3, &[stale]);
+    assert_eq!(value(&conn, Table::Meta, key).unwrap()["conflicted"], true);
+    let removal = w.op("p", 3, OpClass::Primary, remove(Table::Meta, key));
+    run(&mut conn, &w, 4, &[removal]);
+    assert_eq!(value(&conn, Table::Meta, key).unwrap()["conflicted"], true, "deletion is never legacy absence");
+}
+
+#[test]
 fn a_replaced_primary_keeps_only_the_brake() {
     let mut w = World::new(true);
     let mut conn = store();

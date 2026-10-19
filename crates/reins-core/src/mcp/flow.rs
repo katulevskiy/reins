@@ -242,12 +242,14 @@ impl Engine {
     /// linking its large items) when its result is too large.
     async fn mcp_perform(
         &self,
+        request: &RelayRequest,
         session: &Session,
         server: &StoredMcpServer,
         tool: &McpTool,
         arguments: &Map<String, Value>,
         connection: &ConnectionId,
     ) -> Result<Value, Failure> {
+        self.authorization_preflight(request)?;
         let proxy = Op::Proxy {
             tool: &tool.name,
             arguments,
@@ -340,6 +342,7 @@ impl Engine {
             return self.mcp_fail(session, &request, call, message).await;
         };
         request.account = Some(server.id.clone());
+        self.authorization_preflight(&request)?;
         let Some(tool) = server.tools.iter().find(|t| t.name == call.tool).cloned() else {
             let message = format!(
                 "{} has no tool named {}. Ask the user to refresh the server in the Reins app if it is new.",
@@ -366,7 +369,10 @@ impl Engine {
             )?
         };
         if let Some(grant) = covered.get(&tool.name) {
-            return match self.mcp_perform(session, &server, &tool, &call.arguments, &request.connection_id).await {
+            return match self
+                .mcp_perform(&request, session, &server, &tool, &call.arguments, &request.connection_id)
+                .await
+            {
                 Ok(result) => {
                     let detail = format!("{}: {title}", text::one_line(&server.name));
                     let audit = self.mcp_audit(
@@ -484,7 +490,7 @@ impl Engine {
             })
             .transpose()?;
         let (audit, outcome) =
-            match self.mcp_perform(session, &server, &tool, &call.arguments, &request.connection_id).await {
+            match self.mcp_perform(request, session, &server, &tool, &call.arguments, &request.connection_id).await {
                 Ok(result) => {
                     if let Some(grant) = &new_grant {
                         self.store.insert_grant_from(grant, &parked.label(), "approval")?;

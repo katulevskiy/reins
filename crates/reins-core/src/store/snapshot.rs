@@ -257,6 +257,9 @@ pub(super) fn import_snapshot(conn: &mut Connection, snapshot: Snapshot, portabl
     }
     let tx = conn.transaction()?;
     // Rows replaced here were not deleted by anyone: no tombstones for them.
+    let previous_authorization: Option<String> = tx
+        .query_row("SELECT value FROM meta WHERE key=?1", [super::authorization::STORE_KEY], |r| r.get(0))
+        .optional()?;
     super::drop_tombstone_triggers(&tx)?;
     for (name, table) in snapshot.tables {
         if !TABLES.contains(&name.as_str()) {
@@ -316,6 +319,21 @@ pub(super) fn import_snapshot(conn: &mut Connection, snapshot: Snapshot, portabl
         drop(insert);
         if !kept_snapshots.is_empty() {
             move_audit_snapshots(&tx, kept_snapshots, &mut new_seqs)?;
+        }
+    }
+    if let Some(previous) = previous_authorization {
+        let next: Option<String> = tx
+            .query_row("SELECT value FROM meta WHERE key=?1", [super::authorization::STORE_KEY], |r| r.get(0))
+            .optional()?;
+        let previous = serde_json::from_str(&previous).unwrap_or(serde_json::Value::Null);
+        let next = next.as_deref().and_then(|raw| serde_json::from_str(raw).ok());
+        let kept = super::authorization::incoming(Some(&previous), next.as_ref());
+        tx.execute(
+            "INSERT INTO meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            rusqlite::params![super::authorization::STORE_KEY, kept.to_string()],
+        )?;
+        if previous != kept {
+            tx.execute("DELETE FROM autopilot_suggestions", [])?;
         }
     }
     tx.execute_batch(&super::tombstone_triggers())?;

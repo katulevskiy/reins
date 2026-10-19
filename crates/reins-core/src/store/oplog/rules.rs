@@ -90,6 +90,15 @@ pub(super) fn apply_change(
             ..
         } => Ok(Outcome::Superseded),
         Change::Remove {
+            table: Table::Meta,
+            key,
+        } if key == crate::store::authorization::RECORD_KEY => {
+            let current = record(tx, Table::Meta, key)?.and_then(|r| r.value);
+            let held = crate::store::authorization::incoming(current.as_ref(), None);
+            write(tx, Table::Meta, key, Some(&held), &version, seq, now)?;
+            Ok(Outcome::Applied)
+        }
+        Change::Remove {
             table,
             key,
         } => {
@@ -136,7 +145,13 @@ fn put_record(
             }
             put.row
         }
-        Some(r) if saw(&r) => put.row,
+        Some(r) if saw(&r) => {
+            if table == Table::Meta && key == crate::store::authorization::RECORD_KEY {
+                crate::store::authorization::incoming(r.value.as_ref(), Some(&put.row))
+            } else {
+                put.row
+            }
+        }
         Some(r) => {
             let live = r.value.unwrap_or(Json::Null);
             match join(table, key, &live, put.row) {
@@ -162,6 +177,9 @@ fn join(table: Table, key: &str, live: &Json, newer: Json) -> Option<Json> {
         // Meta records are keyed as the app reads them (without the store's `app.` prefix).
         // Two objects or two lists merge entry by entry; two values of one other kind, the later op's; values of
         // different kinds (a stale `false` against `{"a": true}`) keep the stored one.
+        Table::Meta if key == crate::store::authorization::RECORD_KEY => {
+            Some(crate::store::authorization::conflict(live, &newer))
+        }
         Table::Meta => {
             crate::store::lattice::merge_json(None, live, &newer, Some(key) == ALWAYS_ASK_KEY.strip_prefix("app."))
                 .or_else(|| same_kind(live, &newer).then_some(newer))

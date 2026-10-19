@@ -64,6 +64,11 @@ impl Engine {
             return self.reject(session, &request, "The request was malformed.").await;
         };
         request.call = call.clone();
+        // One mandatory preflight before EVERY request dispatcher, including accounts, uploads, desktop secrets,
+        // payment-specialized calls and MCP. Invalid/unavailable policy is never treated as legacy absence.
+        if let Err(error) = self.authorization_preflight(&request) {
+            return self.reject(session, &request, &error.to_string()).await;
+        }
         if let ToolCall::Mcp(mcp_call) = &call {
             return self.handle_mcp(session, request.clone(), mcp_call).await;
         }
@@ -93,6 +98,11 @@ impl Engine {
                 return self.fail_with(session, &request, call_action(&call), &message).await;
             }
         };
+        // Resolve/canonicalize the account before the provider is contacted too: a differently cased address or an
+        // omitted account must not evade a restriction on the actual account used.
+        if let Err(error) = self.authorization_preflight(&request) {
+            return self.reject(session, &request, &error.to_string()).await;
+        }
         match call {
             ToolCall::GmailSearch {
                 query,
@@ -306,6 +316,7 @@ impl Engine {
         };
         let mut summaries: Vec<MessageSummary> = parsed.iter().map(|p| p.summary.clone()).collect();
         if decision.fully_allowed() {
+            self.authorization_preflight(request)?;
             for i in &headlines_only {
                 if let Some(m) = summaries.get_mut(*i) {
                     crate::starter::strip_to_headline(m);
@@ -352,39 +363,58 @@ impl Engine {
         request: &RelayRequest,
         email: &OutgoingEmail,
     ) -> Result<(), CoreError> {
+        // A mandatory review bypasses standing grants, retry passes and grants made during Bypass/Overnight.
+        if !self.authorization_automatic(request)? {
+            return self.park_request(&ParkedRequest {
+                request: request.clone(),
+                messages: Vec::new(),
+                covered: BTreeMap::new(),
+                account: request.account.clone(),
+                accounts: Vec::new(),
+                shared_accounts: Vec::new(),
+                connector: None,
+            });
+        }
         match self.store.evaluate_send_and_reserve(
             &request.connection_id,
             request.account.as_deref(),
             email,
             unix_now(),
         )? {
-            SendDecision::Allowed(grant) => match self.gmail_for(account_of(request)).send(email).await {
-                Ok(sent) => {
-                    let audit = self.audit(
-                        request,
-                        "send",
-                        "sent",
-                        &send_detail(email),
-                        Some(grant.0),
-                        email.recipients().count(),
-                        &[],
-                    );
-                    self.finish(
-                        session,
-                        request,
-                        audit,
-                        RelayOutcome::Result {
-                            result: ToolResult::Sent(sent),
-                        },
-                    )
-                    .await
+            SendDecision::Allowed(grant) => {
+                let sent =
+                    match self.authorization_execute(request, crate::authorization::AuthorizationSource::Automatic) {
+                        Ok(()) => self.gmail_for(account_of(request)).send(email).await,
+                        Err(error) => Err(error),
+                    };
+                match sent {
+                    Ok(sent) => {
+                        let audit = self.audit(
+                            request,
+                            "send",
+                            "sent",
+                            &send_detail(email),
+                            Some(grant.0),
+                            email.recipients().count(),
+                            &[],
+                        );
+                        self.finish(
+                            session,
+                            request,
+                            audit,
+                            RelayOutcome::Result {
+                                result: ToolResult::Sent(sent),
+                            },
+                        )
+                        .await
+                    }
+                    Err(e) => {
+                        // Nothing was sent: give the reserved use back.
+                        self.store.refund(&BTreeSet::from([grant]))?;
+                        self.fail(session, request, "send", &e).await
+                    }
                 }
-                Err(e) => {
-                    // Nothing was sent: give the reserved use back.
-                    self.store.refund(&BTreeSet::from([grant]))?;
-                    self.fail(session, request, "send", &e).await
-                }
-            },
+            }
             SendDecision::NeedsApproval => self.park_request(&ParkedRequest {
                 request: request.clone(),
                 messages: Vec::new(),

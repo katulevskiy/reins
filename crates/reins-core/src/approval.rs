@@ -172,7 +172,11 @@ impl Engine {
             return Err(CoreError::NotFound);
         };
         let decision = Decision::new("", self.ap_human_note(request_id));
-        let (result, _) = deciding(decision, self.approve_claimed(request_id, choice)).await;
+        let (result, _) = deciding(
+            decision,
+            self.approve_claimed(request_id, choice, crate::authorization::AuthorizationSource::OwnerReview),
+        )
+        .await;
         if result.is_ok() {
             self.ap_learn(request_id, Verdict::Approve);
         }
@@ -193,12 +197,19 @@ impl Engine {
     }
 
     /// Approves a request the caller already claimed (the user's tap, or Autopilot).
-    pub(crate) async fn approve_claimed(&self, request_id: &str, choice: ApprovalChoice) -> Result<(), CoreError> {
+    pub(crate) async fn approve_claimed(
+        &self,
+        request_id: &str,
+        choice: ApprovalChoice,
+        source: crate::authorization::AuthorizationSource,
+    ) -> Result<(), CoreError> {
         // Only the phone that decides answers (never a viewer, whatever its modes or grants say), and it checks with
         // the server that it still is the primary before the action runs: an email sent is not taken back.
         let session = self.session()?;
         self.require_decider_fresh(&session).await?;
         let (_, mut parked) = self.parked(request_id)?;
+        // This explicit source follows the entry point; Auto, Bypass and Overnight cannot impersonate an owner tap.
+        self.authorization_execute(&parked.request, source)?;
         let now = unix_now();
         if matches!(parked.request.call, ToolCall::Mcp(_)) {
             return self.approve_mcp(&session, request_id, &parked, &choice, now).await;
@@ -272,6 +283,7 @@ impl Engine {
             ToolCall::GmailSend {
                 email,
             } => {
+                self.authorization_execute(request, source)?;
                 let sent = gmail.send(email).await?;
                 (ToolResult::Sent(sent), "send", send_detail(email))
             }
@@ -289,6 +301,9 @@ impl Engine {
         };
 
         // The action happened: settle local state before answering the server.
+        if matches!(kind, ApprovalKind::Search | ApprovalKind::Read) {
+            self.authorization_execute(request, source)?;
+        }
         let covering: BTreeSet<GrantId> = parked.covered.values().map(|g| GrantId(g.clone())).collect();
         self.store.consume_active(&covering, now)?;
         if let Some(grant) = &new_grant {

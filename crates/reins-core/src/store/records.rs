@@ -25,7 +25,7 @@ use data_encoding::BASE64URL_NOPAD;
 use reins_proto::canon::{hex32, sha256};
 use reins_proto::oplog::{MAX_RECORD_KEY_CHARS, Table};
 use rusqlite::types::Value;
-use rusqlite::{Connection, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, params_from_iter};
 use serde_json::{Map, Value as Json};
 
 use super::snapshot::{DEVICE_META, DEVICE_SECRETS};
@@ -503,6 +503,7 @@ impl Store {
                 Tightened::Write(v)
             }
             Table::Meta => match key {
+                super::authorization::RECORD_KEY => Tightened::Write(super::authorization::unverified(&v)),
                 "secrets.always-ask" => {
                     if let Some(obj) = v.as_object_mut() {
                         for x in obj.values_mut() {
@@ -673,6 +674,20 @@ impl Store {
             return Err(bad("this installation's own setting"));
         }
         let local = Json::Array(vec![Json::String(store_key.clone())]).to_string();
+        if key == super::authorization::RECORD_KEY {
+            let previous: Option<String> =
+                conn.query_row("SELECT value FROM meta WHERE key=?1", [&store_key], |r| r.get(0)).optional()?;
+            let previous = previous.as_deref().and_then(|raw| serde_json::from_str::<Json>(raw).ok());
+            let next = super::authorization::incoming(previous.as_ref(), value);
+            conn.execute(
+                "INSERT INTO meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                rusqlite::params![store_key, next.to_string()],
+            )?;
+            if previous.as_ref() != Some(&next) {
+                conn.execute("DELETE FROM autopilot_suggestions", [])?;
+            }
+            return Ok(Some(local));
+        }
         let Some(value) = value else {
             conn.execute("DELETE FROM meta WHERE key = ?1", [&store_key])?;
             return Ok(Some(local));
