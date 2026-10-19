@@ -410,14 +410,20 @@ async fn revoking_drops_the_key_and_returning_to_its_owner_restores_the_pin() {
     env.core.revoke_connection(DESK.to_owned()).await.unwrap();
     serve(&env, &[fetch("r1", DESK, &key, "me/app")], &[]).await;
     env.core.sync(0).await.unwrap();
-    assert_refused(answer(&env, "r1").await);
+    let refused = answer(&env, "r1").await.unwrap();
+    assert!(refused["message"].as_str().unwrap().contains("connection was revoked"));
 
-    pair(&env, "p2", Some(&key), Some(DESK), true).await;
+    // Reconnection creates a new server identity. Reusing the revoked ID must never resurrect its permissions.
+    let reconnected = "desk-reconnected";
+    pair(&env, "p2", Some(&key), Some(reconnected), true).await;
     env.core.logout().await.unwrap();
     env.core.login(env.server.uri(), "me@example.com".to_owned(), "hunter2".to_owned(), None).await.unwrap();
-    serve(&env, &[fetch("r2", DESK, &key, "me/app")], &[]).await;
+    serve(&env, &[fetch("r2", reconnected, &key, "me/app")], &[]).await;
     env.core.sync(0).await.unwrap();
-    assert!(answer(&env, "r2").await.is_none(), "the owner keeps its pinned computer; sharing still needs approval");
+    assert!(
+        answer(&env, "r2").await.is_none(),
+        "the owner keeps its newly pinned computer; sharing still needs approval"
+    );
     assert!(env.core.pending().await.unwrap().iter().any(|p| p.id == "r2"));
 }
 

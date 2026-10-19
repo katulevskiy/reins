@@ -343,8 +343,8 @@ impl Engine {
         }
     }
 
-    /// Registers an account of any integration once it has been checked (a session that works, a token that was
-    /// accepted). The name is kept in lower case.
+    /// Registers a non-Gmail integration after its session/token was checked. Gmail must use `add_account` so its
+    /// verified identity and managed defaults commit under the asynchronous handover fence. Names use lower case.
     pub fn register_account(&self, service: &str, account: &str) -> Result<AccountView, CoreError> {
         let account = account.trim().to_lowercase();
         if account.is_empty() || account.len() > reins_proto::connector::MAX_ACCOUNT_LEN {
@@ -352,13 +352,12 @@ impl Engine {
         }
         let now = unix_now();
         if service == views::SERVICE_GMAIL {
-            self.store.add_verified_account(&self.policy_owner()?, service, &account, now)?;
-        } else {
-            // Roll out mandatory connected-account defaults together with a usable positive adapter. Other
-            // integrations retain their remembered-grant semantics until that adapter ships; explicit policies
-            // and already managed markers remain enforced by the common gate.
-            self.store.add_account(service, &account, now)?;
+            return Err(CoreError::invalid("connect Gmail through the verified asynchronous add-account flow"));
         }
+        // Roll out mandatory connected-account defaults together with a usable positive adapter. Other
+        // integrations retain their remembered-grant semantics until that adapter ships; explicit policies
+        // and already managed markers remain enforced by the common gate.
+        self.store.add_account(service, &account, now)?;
         Ok(AccountView {
             service: service.to_owned(),
             account,
@@ -389,6 +388,8 @@ impl Engine {
                 CoreError::invalid("Gmail did not verify this account identity; reconnect and try again")
             })?;
         let found = reins_proto::gmail::normalize_account(&found).map_err(|e| CoreError::invalid(e.to_string()))?;
+        let _fence = self.policy_mutation_fence().await?;
+        self.require_decider_fresh(self.session()?.as_ref()).await?;
         let now = unix_now();
         self.store.add_verified_account(&self.policy_owner()?, views::SERVICE_GMAIL, &found, now)?;
         Ok(AccountView {
@@ -1219,16 +1220,25 @@ impl Engine {
     pub async fn revoke_connection(&self, connection_id: &str) -> Result<(), CoreError> {
         check_id(connection_id)?;
         let session = self.session()?;
+        let fence = self.policy_mutation_fence().await?;
+        self.require_decider_fresh(&session).await?;
+        // A failed/ambiguous remote deletion never reopens local authority. Presence is a grow-only synced brake.
+        let connection = ConnectionId(connection_id.to_owned());
+        self.store.remove_connection_grants(&connection)?;
+        drop(fence);
         match api_call!(&session, |api| api.delete_connection(connection_id)) {
             Ok(())
             | Err(ApiFailure::Status {
                 status: 404,
                 ..
             }) => {}
-            Err(e) => return Err(e.into_core()),
+            Err(e) => {
+                return Err(CoreError::service(format!(
+                    "This agent is blocked on this phone. Server revocation could not be confirmed: {}",
+                    e.into_core()
+                )));
+            }
         }
-        let connection = ConnectionId(connection_id.to_owned());
-        self.store.remove_connection_grants(&connection)?;
         self.store.remove_desktop_key(connection_id)?;
         self.store.set_connection_icon(connection_id, None)?;
         self.store.set_connection_blobatar(connection_id, None)?;

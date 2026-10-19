@@ -288,7 +288,7 @@ impl Engine {
             ToolCall::GmailSend {
                 email,
             } => {
-                let _fence = self.permission_execution_fence().await;
+                let _fence = self.permission_execution_fence().await?;
                 self.authorization_execute(request, source)?;
                 let attempt = self.legacy_send_attempt(request)?;
                 if let Err(error) = self.legacy_send_durable().await {

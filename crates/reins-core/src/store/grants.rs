@@ -193,8 +193,11 @@ impl Store {
         if connection.0 == "__reins_policy_budget__" {
             return Err(CoreError::invalid("authorization counters cannot be removed through grant controls"));
         }
-        self.lock()?.execute("DELETE FROM grants WHERE connection_id = ?1", params![connection.0])?;
-        Ok(())
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        super::permissions::revoke_connection_in(&tx, &connection.0)?;
+        tx.execute("DELETE FROM grants WHERE connection_id = ?1", params![connection.0])?;
+        tx.commit().map_err(CoreError::from)
     }
 
     /// Starts a grant that is no longer active over: it lasts `duration_secs` from `now` with all its uses back.

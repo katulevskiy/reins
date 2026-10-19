@@ -205,6 +205,55 @@ impl Engine {
         }))
     }
 
+    /// A signed transfer can be known before its policy/account records have reached the local tables. Never
+    /// interpret that temporary absence as a legacy account. Applied counters include authenticated checkpoints;
+    /// the materialization mark advances only after every record has been written without failure.
+    pub(crate) fn require_authorization_history_ready(&self) -> Result<(), CoreError> {
+        let Some(slot) = self.account_slot_now()? else {
+            return Ok(());
+        };
+        let Some(roster) = self.local_roster(&slot)? else {
+            return Ok(());
+        };
+        if self.standing_in(&roster)? != Standing::Primary {
+            return Ok(());
+        }
+        let Some(transfer) = roster.entries.iter().rev().find(|entry| {
+            matches!(
+                entry.reason,
+                reins_proto::roster::RosterReason::Create
+                    | reins_proto::roster::RosterReason::Handover
+                    | reins_proto::roster::RosterReason::Recovery
+            )
+        }) else {
+            return Ok(());
+        };
+        if transfer.reason != reins_proto::roster::RosterReason::Handover {
+            return Ok(());
+        }
+        let unavailable = || {
+            CoreError::invalid(
+                "Account authorization history is still synchronizing. Wait for complete verified history before executing or changing permissions.",
+            )
+        };
+        let outgoing = roster.at(transfer.epoch.saturating_sub(1)).ok_or_else(unavailable)?;
+        let required = transfer.primary_counter.ok_or_else(unavailable)?;
+        let ready = self.store.oplog(|conn| -> Result<bool, CoreError> {
+            let applied = oplog::state(conn)?;
+            let materialized = local::mark(conn, MATERIALIZED_SEQ)?.and_then(|value| value.parse::<u64>().ok());
+            Ok(applied.forked.is_none()
+                && local::mark(conn, UNTRUSTED_START)?.is_none()
+                && oplog::counter_gaps(conn)?.is_empty()
+                && materialized.is_some_and(|seq| seq >= applied.seq)
+                && oplog::last_counter(conn, &outgoing.primary)? >= required)
+        })??;
+        if ready {
+            Ok(())
+        } else {
+            Err(unavailable())
+        }
+    }
+
     /// One cycle of the live sync (see the module docs): `wait_secs` long-polls for news when there is nothing to do.
     /// On an account without phone roles, only says so (the legacy sync runs as before).
     pub async fn live_sync(&self, wait_secs: u32) -> Result<LiveSyncState, CoreError> {
@@ -280,7 +329,9 @@ impl Engine {
                 }
             }
             self.deliver_grants(account, &keys)?;
-            if self.store.oplog(|c| local::mark(c, MATERIALIZED_SEQ))??.is_some() {
+            if self.store.oplog(|c| local::mark(c, MATERIALIZED_SEQ))??.is_some()
+                && self.require_authorization_history_ready().is_ok()
+            {
                 self.publish(account, &keys)?;
                 self.mark_epoch(account, &keys)?;
             }
@@ -327,6 +378,9 @@ impl Engine {
                     self.maybe_checkpoint(session, account, &keys, response).await;
                 }
             }
+        }
+        if let Err(error) = self.require_authorization_history_ready() {
+            notice = notice.or(Some(error.to_string()));
         }
         self.synced_writes.store(self.store.write_count(), Ordering::Release);
         self.live_state(account, pulled.response.as_ref(), pulled.waiting_for_key, notice)

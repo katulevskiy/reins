@@ -100,7 +100,7 @@ fn description(capability: PermissionCapability) -> &'static str {
         PermissionCapability::MailSend => {
             "Send only to the recipients you explicitly select, including every To and Cc recipient."
         }
-        _ => "This integration supports blocking now. Additional automatic permissions need an enforcing adapter.",
+        _ => "Account defaults are informational until this integration supports reversible review and block settings.",
     }
 }
 
@@ -119,7 +119,7 @@ fn supported_modes(service: &str) -> Vec<PermissionMode> {
     if service == "gmail" {
         vec![PermissionMode::Ask, PermissionMode::Auto, PermissionMode::Block]
     } else {
-        vec![PermissionMode::Block]
+        vec![]
     }
 }
 
@@ -352,6 +352,9 @@ impl Engine {
         let connections = self.connections().await?;
         let mut agents = vec![];
         for connection in connections {
+            if self.store.permission_connection_revoked(&connection.id)? {
+                continue;
+            }
             let access = self
                 .store
                 .account_coverage(&ConnectionId(connection.id.clone()), service, unix_now())?
@@ -423,7 +426,7 @@ impl Engine {
                     controller: PermissionController::UnsupportedAdapter,
                     policy_id: None,
                     reason:
-                        "This integration currently supports blocking; automatic execution needs an enforcing adapter"
+                        "Account defaults are read-only until reversible review and block settings are supported. Existing grants and explicit restrictions still apply."
                             .into(),
                 });
             }
@@ -500,7 +503,7 @@ impl Engine {
                     vec![AccountPermissionPreset::ReviewEveryRequest, AccountPermissionPreset::Custom]
                 }
             } else {
-                vec![AccountPermissionPreset::Custom]
+                vec![]
             },
             expires_at: state.policies.iter().filter(|p| p.id.starts_with(&prefix)).filter_map(|p| p.expires_at).min(),
             maximum_duration_secs: u64::try_from(MAX_PERMISSION_SECS).expect("positive"),
@@ -681,6 +684,9 @@ impl Engine {
         for id in ids {
             let connection =
                 connections.get(id).ok_or_else(|| CoreError::invalid("a selected agent is no longer connected"))?;
+            if self.store.permission_connection_revoked(id)? {
+                return Err(CoreError::invalid("a selected agent was revoked; reconnect it with a new identity"));
+            }
             if self.store.account_coverage(&ConnectionId(id.clone()), service, unix_now())?.covers(account) {
                 continue;
             }
@@ -720,17 +726,16 @@ impl Engine {
         draft: &AccountPermissionsDraft,
         owner: &dyn OwnerCheck,
     ) -> Result<AccountPermissionsView, CoreError> {
-        let (candidate, budgets) = self.candidate_permissions(draft)?;
-        let admissions = self
-            .admissions(
-                &draft.service,
-                &draft.account,
-                &draft.agent_ids,
-                draft.grant_account_access,
-                draft.expires_at,
-                "policy_access",
-            )
-            .await?;
+        self.candidate_permissions(draft)?;
+        self.admissions(
+            &draft.service,
+            &draft.account,
+            &draft.agent_ids,
+            draft.grant_account_access,
+            draft.expires_at,
+            "policy_access",
+        )
+        .await?;
         let summary = format!(
             "Save {} permissions for {}. {} selected agents{}. Ask/Block covers all requests of that capability from those agents. Automatic permissions expire at {:?}, with at most {:?} further uses per capability. {} Existing mandatory requirements remain in force.",
             draft.rules.len(),
@@ -762,8 +767,22 @@ impl Engine {
         if !owner.confirm(summary).await.map_err(|_| CoreError::invalid("the owner check failed"))? {
             return Err(CoreError::invalid("the owner did not confirm these account permissions"));
         }
+        let fence = self.policy_mutation_fence().await?;
+        self.require_decider_fresh(self.session()?.as_ref()).await?;
+        let (candidate, budgets) = self.candidate_permissions(draft)?;
+        let admissions = self
+            .admissions(
+                &draft.service,
+                &draft.account,
+                &draft.agent_ids,
+                draft.grant_account_access,
+                draft.expires_at,
+                "policy_access",
+            )
+            .await?;
         self.require_decider_fresh(self.session()?.as_ref()).await?;
         self.store.permissions_apply(draft.expected_revision, &candidate, &admissions, &budgets)?;
+        drop(fence);
         self.account_permissions(&draft.service, &draft.account).await
     }
 
@@ -1201,17 +1220,16 @@ impl Engine {
         owner: &dyn OwnerCheck,
     ) -> Result<DelegationView, CoreError> {
         let identity = uuid::Uuid::new_v4().to_string();
-        let (candidate, budgets) = self.candidate_delegation(draft, &identity)?;
-        let admissions = self
-            .admissions(
-                &draft.service,
-                &draft.account,
-                &draft.agent_ids,
-                draft.grant_account_access,
-                Some(draft.expires_at),
-                &format!("policy_access:{identity}"),
-            )
-            .await?;
+        self.candidate_delegation(draft, &identity)?;
+        self.admissions(
+            &draft.service,
+            &draft.account,
+            &draft.agent_ids,
+            draft.grant_account_access,
+            Some(draft.expires_at),
+            &format!("policy_access:{identity}"),
+        )
+        .await?;
         let summary = format!(
             "Delegate {} on {} to {} selected agents, at most {} total requests, until {}. {}",
             draft.rules.iter().map(|r| title(r.capability)).collect::<Vec<_>>().join(", "),
@@ -1224,8 +1242,22 @@ impl Engine {
         if !owner.confirm(summary).await.map_err(|_| CoreError::invalid("the owner check failed"))? {
             return Err(CoreError::invalid("the owner did not confirm this delegation"));
         }
+        let fence = self.policy_mutation_fence().await?;
+        self.require_decider_fresh(self.session()?.as_ref()).await?;
+        let (candidate, budgets) = self.candidate_delegation(draft, &identity)?;
+        let admissions = self
+            .admissions(
+                &draft.service,
+                &draft.account,
+                &draft.agent_ids,
+                draft.grant_account_access,
+                Some(draft.expires_at),
+                &format!("policy_access:{identity}"),
+            )
+            .await?;
         self.require_decider_fresh(self.session()?.as_ref()).await?;
         self.store.permissions_apply(draft.expected_revision, &candidate, &admissions, &budgets)?;
+        drop(fence);
         self.delegations()?
             .into_iter()
             .find(|d| d.id == identity)
@@ -1399,8 +1431,18 @@ impl Engine {
         {
             return Err(CoreError::invalid("the owner did not confirm this delegation change"));
         }
+        let fence = self.policy_mutation_fence().await?;
         self.require_decider_fresh(self.session()?.as_ref()).await?;
+        if change == DelegationChange::Resume
+            && state.policies.iter().any(|policy| {
+                (policy.id.starts_with(&child_prefix) || policy.id.starts_with(&parent_prefix))
+                    && policy.expires_at.is_none_or(|expiry| unix_now() >= expiry)
+            })
+        {
+            return Err(CoreError::invalid("the delegation expired while awaiting confirmation"));
+        }
         self.store.permissions_apply(expected_revision, &state, &[], &[])?;
+        drop(fence);
         self.delegations()?.into_iter().find(|d| d.id == identity).ok_or(CoreError::NotFound)
     }
 }

@@ -2462,3 +2462,92 @@ async fn gmail_success_is_withheld_when_policy_changes_during_positive_or_owner_
         }
     }
 }
+
+struct PausedPermissionOwner {
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+#[async_trait::async_trait]
+impl reins_core::OwnerCheck for PausedPermissionOwner {
+    async fn confirm(&self, _reason: String) -> Result<bool, reins_core::ForeignError> {
+        self.started.notify_one();
+        self.release.notified().await;
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn revoking_an_agent_during_owner_confirmation_cannot_recreate_account_or_delegation_authority() {
+    for (delegation, remote_confirmed) in [(false, true), (true, true), (false, false)] {
+        let mut world = world().await;
+        let gmail = MockServer::start().await;
+        let core = permission_phone(&mut world, &gmail).await;
+        core.roster_create("Phone".into(), Some(PASSWORD.into())).await.unwrap();
+        Mock::given(method("DELETE"))
+            .and(path("/reins/api/connections/c1"))
+            .respond_with(ResponseTemplate::new(if remote_confirmed {
+                200
+            } else {
+                500
+            }))
+            .with_priority(1)
+            .expect(1)
+            .mount(&world.server)
+            .await;
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let owner = Arc::new(PausedPermissionOwner {
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+        });
+        let pending = if delegation {
+            let mut draft = core.delegation_draft("gmail".into(), EMAIL.into()).await.unwrap();
+            draft.agent_ids = vec!["c1".into()];
+            draft.grant_account_access = true;
+            let saving = Arc::clone(&core);
+            tokio::spawn(async move { saving.issue_delegation(draft, owner).await.map(|_| ()) })
+        } else {
+            let mut draft = core
+                .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReadAssist)
+                .await
+                .unwrap();
+            draft.agent_ids = vec!["c1".into()];
+            draft.grant_account_access = true;
+            let saving = Arc::clone(&core);
+            tokio::spawn(async move { saving.save_account_permissions(draft, owner).await.map(|_| ()) })
+        };
+        started.notified().await;
+        let revoke = core.revoke_connection("c1".into()).await;
+        assert_eq!(revoke.is_ok(), remote_confirmed);
+        if let Err(error) = revoke {
+            assert!(error.to_string().contains("blocked on this phone"));
+        }
+        assert!(
+            core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap().agents.is_empty(),
+            "stale server connection listings cannot offer revoked agents for new authority"
+        );
+        release.notify_one();
+        assert!(pending.await.unwrap().is_err(), "late owner confirmation must fail after connection revocation");
+        assert!(core.grants().await.unwrap().iter().all(|grant| grant.connection_id != "c1"));
+        assert!(core.delegations().await.unwrap().is_empty());
+        core.engine().process_relayed(permission_send("revoked", &["friend@example.com"])).await.unwrap();
+        assert!(!core.pending().await.unwrap().iter().any(|pending| pending.id == "revoked"));
+        assert_eq!(sent_count(&gmail).await, 0);
+    }
+}
+
+#[tokio::test]
+async fn non_gmail_account_defaults_are_readonly_until_reversible_settings_are_supported() {
+    let mut world = world().await;
+    let gmail = MockServer::start().await;
+    let core = permission_phone(&mut world, &gmail).await;
+    core.engine().register_account("github", "person").unwrap();
+    let view = core.account_permissions("github".into(), "person".into()).await.unwrap();
+    assert!(!view.managed, "informational views cannot migrate legacy authorization");
+    assert!(view.available_presets.is_empty());
+    assert!(view.capabilities.iter().all(|capability| capability.supported_modes.is_empty()));
+    assert!(
+        core.account_permission_draft("github".into(), "person".into(), AccountPermissionPreset::Custom).await.is_err()
+    );
+    assert!(!core.account_permissions("github".into(), "person".into()).await.unwrap().managed);
+}
