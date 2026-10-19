@@ -343,9 +343,11 @@ impl Engine {
                 reason: "Automatic permissions require a complete reconciled policy history".into(),
             });
         }
-        let positive_available = self.holds_roster_now()? && self.decides();
+        let usage_verified = self.store.permission_history_ready().is_ok();
+        let history_ready = self.store.permission_history_ready().unwrap_or(false);
+        let positive_available = self.holds_roster_now()? && self.decides() && history_ready;
         if !positive_available {
-            restrictions.push(PermissionRestriction { controller: PermissionController::UnsupportedAdapter, policy_id: None, reason: "Automatic permissions require this account’s verified primary phone. Set up phone roles before enabling Auto.".into() });
+            restrictions.push(PermissionRestriction { controller: PermissionController::UnsupportedAdapter, policy_id: None, reason: "Automatic permissions require a verified primary phone and complete execution history. Reconcile pending or conflicting attempts before enabling Auto.".into() });
         }
         let connections = self.connections().await?;
         let mut agents = vec![];
@@ -452,21 +454,21 @@ impl Engine {
                 p.id.starts_with(&prefix) && p.effect == PolicyEffect::Permit && p.lifecycle == PolicyLifecycle::Active
             })
             .collect();
-        let used = automatic
-            .iter()
-            .map(|p| self.store.permission_budget_uses(&p.id))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .max()
-            .unwrap_or(0);
-        let remaining_uses = automatic
-            .iter()
-            .map(|p| Ok(p.limits.max_uses.unwrap_or(0).saturating_sub(self.store.permission_budget_uses(&p.id)?)))
-            .collect::<Result<Vec<_>, CoreError>>()?
-            .into_iter()
-            .min();
+        let usage = automatic.iter().map(|p| self.store.permission_budget_uses(&p.id)).collect::<Result<Vec<_>, _>>();
+        let usage_verified = usage_verified && usage.is_ok();
+        let used = usage.as_ref().map_or(0, |uses| uses.iter().copied().max().unwrap_or(0));
+        let remaining_uses = if usage_verified {
+            automatic
+                .iter()
+                .zip(usage.unwrap_or_default())
+                .map(|(policy, uses)| policy.limits.max_uses.unwrap_or(0).saturating_sub(uses))
+                .min()
+        } else {
+            None
+        };
         Ok(AccountPermissionsView {
             used,
+            usage_verified,
             remaining_uses,
             service: service.into(),
             account,
@@ -578,7 +580,9 @@ impl Engine {
                 "save the complete capability choices so an omitted rule cannot retain an earlier permission",
             ));
         }
-        if draft.rules.iter().any(|r| r.mode == PermissionMode::Auto) && !(self.holds_roster_now()? && self.decides()) {
+        if draft.rules.iter().any(|r| r.mode == PermissionMode::Auto)
+            && !(self.holds_roster_now()? && self.decides() && self.store.permission_history_ready().unwrap_or(false))
+        {
             return Err(CoreError::invalid("automatic permissions require the verified primary phone"));
         }
         let now = unix_now();
@@ -588,7 +592,7 @@ impl Engine {
             return Err(CoreError::invalid("automatic account permissions must expire within seven days"));
         }
         let limit = draft.max_uses.unwrap_or(DEFAULT_USES);
-        if limit == 0 || limit > 100_000 {
+        if draft.rules.iter().any(|rule| rule.mode == PermissionMode::Auto) && (limit == 0 || limit > 100_000) {
             return Err(CoreError::invalid("choose a use limit between one and 100000"));
         }
         let account_id = crate::authorization::account_resource_id(&draft.service, &draft.account);
@@ -608,11 +612,14 @@ impl Engine {
                     || format!("{prefix}{}:{key}", uuid::Uuid::new_v4(), key = capability_key(rule.capability)),
                     |policy| policy.id.clone(),
                 );
-            let maximum = self
-                .store
-                .permission_budget_uses(&id)?
-                .checked_add(limit)
-                .ok_or_else(|| CoreError::invalid("permission usage is exhausted"))?;
+            let maximum = if rule.mode == PermissionMode::Auto {
+                self.store
+                    .permission_budget_uses(&id)?
+                    .checked_add(limit)
+                    .ok_or_else(|| CoreError::invalid("permission usage is exhausted"))?
+            } else {
+                0
+            };
             u32::try_from(maximum).map_err(|_| CoreError::invalid("permission usage is exhausted"))?;
             let mut record = rule_record(
                 &state.owner,
@@ -1025,7 +1032,7 @@ impl Engine {
         request: &RelayRequest,
         proof: &VerifiedPermission,
     ) -> Result<(), CoreError> {
-        if !(self.holds_roster_now()? && self.decides()) {
+        if !(self.holds_roster_now()? && self.decides() && self.store.permission_history_ready().unwrap_or(false)) {
             return Err(CoreError::invalid("automatic execution requires a verified single-primary roster"));
         }
         self.authorization_attempt_event(
@@ -1071,7 +1078,7 @@ impl Engine {
         draft: &DelegationDraft,
         identity: &str,
     ) -> Result<(AuthorizationState, Vec<Grant>), CoreError> {
-        if !(self.holds_roster_now()? && self.decides()) {
+        if !(self.holds_roster_now()? && self.decides() && self.store.permission_history_ready().unwrap_or(false)) {
             return Err(CoreError::invalid("delegations require this account’s verified primary phone"));
         }
         self.permission_account(&draft.service, &draft.account)?;
@@ -1138,7 +1145,7 @@ impl Engine {
     }
 
     pub async fn delegation_draft(&self, service: &str, account: &str) -> Result<DelegationDraft, CoreError> {
-        if !(self.holds_roster_now()? && self.decides()) {
+        if !(self.holds_roster_now()? && self.decides() && self.store.permission_history_ready().unwrap_or(false)) {
             return Err(CoreError::invalid("delegations require this account’s verified primary phone"));
         }
         let defaults = self.account_permission_draft(service, account, AccountPermissionPreset::ReadAssist).await?;
@@ -1267,9 +1274,11 @@ impl Engine {
                 .map(|r| format!("{}: {}", title(r.capability), scope_summary(&r.scope)))
                 .collect::<Vec<_>>()
                 .join("; ");
-            let used = self.store.permission_budget_uses(&first.id)?;
+            let usage = self.store.permission_budget_uses(&first.id);
+            let usage_verified = usage.is_ok();
+            let used = usage.unwrap_or(0);
             let ids: Vec<_> = all.iter().map(|p| p.id.clone()).collect();
-            let unresolved = self.store.permission_unresolved(&ids)?;
+            let unresolved = self.store.permission_unresolved(&ids).unwrap_or(0);
             let max_uses = policies
                 .iter()
                 .filter_map(|p| p.limits.max_uses)
@@ -1301,10 +1310,13 @@ impl Engine {
                 agent_ids: first.scope.connection_ids.clone(),
                 rules,
                 used,
+                usage_verified,
                 unresolved,
                 max_uses,
                 scope_summary,
-                effective_reason: if used >= max_uses {
+                effective_reason: if !usage_verified {
+                    "Execution usage could not be verified; automatic execution is held".into()
+                } else if used >= max_uses {
                     "Usage limit reached; further requests require review".into()
                 } else if status == DelegationState::Active {
                     "Within the delegation and every mandatory account requirement".into()

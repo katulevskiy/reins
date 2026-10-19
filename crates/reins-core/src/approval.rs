@@ -304,6 +304,11 @@ impl Engine {
                     self.notifier.item_resolved(request_id.to_owned());
                     return self.send_outcome_unknown(&session, request).await;
                 };
+                if self.authorization_execute(request, source).is_err() {
+                    self.store.remove_pending(request_id)?;
+                    self.notifier.item_resolved(request_id.to_owned());
+                    return self.result_withheld(&session, request).await;
+                }
                 (ToolResult::Sent(sent), "send", send_detail(email))
             }
             ToolCall::RequestGrant {
@@ -374,18 +379,29 @@ impl Engine {
             &released,
         );
         audit.info.note = note;
-        self.store.append_audit(&audit)?;
         self.store.remove_pending(request_id)?;
-        self.store.mark_handled(request_id, now)?;
         self.notifier.item_resolved(request_id.to_owned());
-        self.respond(
-            &session,
-            request_id,
-            RelayOutcome::Result {
-                result,
-            },
-        )
-        .await
+        let mut held = false;
+        let answered = self
+            .finish_checked(
+                &session,
+                request,
+                audit,
+                RelayOutcome::Result {
+                    result,
+                },
+                || {
+                    let checked = self.authorization_execute(request, source);
+                    held |= checked.is_err();
+                    checked
+                },
+            )
+            .await;
+        if held {
+            self.result_withheld(&session, request).await
+        } else {
+            answered
+        }
     }
 
     /// Denies a request the caller already claimed (the user's tap, or Autopilot).

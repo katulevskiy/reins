@@ -330,13 +330,14 @@ impl Engine {
                 let audit = self.audit(request, action, "released", detail, None, summaries.len(), &refs);
                 let full = parsed.into_iter().map(ParsedMessage::into_full).collect();
                 let result = self
-                    .finish(
+                    .finish_checked(
                         session,
                         request,
                         audit,
                         RelayOutcome::Result {
                             result: build(summaries, full),
                         },
+                        || self.revalidate_permission(request, &proof),
                     )
                     .await;
                 self.permission_finished(request, proof, result.is_ok())?;
@@ -383,13 +384,14 @@ impl Engine {
                 audit.info.note = Some(crate::starter::HEADLINES_NOTE.to_owned());
             }
             return self
-                .finish(
+                .finish_checked(
                     session,
                     request,
                     audit,
                     RelayOutcome::Result {
                         result: build(summaries, full),
                     },
+                    || self.authorization_execute(request, crate::authorization::AuthorizationSource::Automatic),
                 )
                 .await;
         }
@@ -426,9 +428,12 @@ impl Engine {
                     .gmail_for(account_of(request))
                     .send_checked(email, || self.permission_before_send(session, request, &proof))
                     .await;
-                self.permission_finished(request, proof, sent.is_ok())?;
                 return match sent {
                     Ok(sent) => {
+                        if self.revalidate_permission(request, &proof).is_err() {
+                            self.permission_finished(request, proof, true)?;
+                            return self.result_withheld(session, request).await;
+                        }
                         let audit = self.audit(
                             request,
                             "send",
@@ -438,17 +443,33 @@ impl Engine {
                             email.recipients().count(),
                             &[],
                         );
-                        self.finish(
-                            session,
-                            request,
-                            audit,
-                            RelayOutcome::Result {
-                                result: ToolResult::Sent(sent),
-                            },
-                        )
-                        .await
+                        let mut held = false;
+                        let result = self
+                            .finish_checked(
+                                session,
+                                request,
+                                audit,
+                                RelayOutcome::Result {
+                                    result: ToolResult::Sent(sent),
+                                },
+                                || {
+                                    let checked = self.revalidate_permission(request, &proof);
+                                    held |= checked.is_err();
+                                    checked
+                                },
+                            )
+                            .await;
+                        self.permission_finished(request, proof, true)?;
+                        if held {
+                            self.result_withheld(session, request).await
+                        } else {
+                            result
+                        }
                     }
-                    Err(_) => self.send_outcome_unknown(session, request).await,
+                    Err(_) => {
+                        self.permission_finished(request, proof, false)?;
+                        self.send_outcome_unknown(session, request).await
+                    }
                 };
             }
             crate::permissions::PermissionReservation::Review => {
@@ -510,6 +531,13 @@ impl Engine {
                 self.legacy_send_finished(attempt, sent.is_ok())?;
                 match sent {
                     Ok(sent) => {
+                        if self
+                            .authorization_execute(request, crate::authorization::AuthorizationSource::Automatic)
+                            .is_err()
+                        {
+                            return self.result_withheld(session, request).await;
+                        }
+
                         let audit = self.audit(
                             request,
                             "send",
@@ -519,15 +547,30 @@ impl Engine {
                             email.recipients().count(),
                             &[],
                         );
-                        self.finish(
-                            session,
-                            request,
-                            audit,
-                            RelayOutcome::Result {
-                                result: ToolResult::Sent(sent),
-                            },
-                        )
-                        .await
+                        let mut held = false;
+                        let result = self
+                            .finish_checked(
+                                session,
+                                request,
+                                audit,
+                                RelayOutcome::Result {
+                                    result: ToolResult::Sent(sent),
+                                },
+                                || {
+                                    let checked = self.authorization_execute(
+                                        request,
+                                        crate::authorization::AuthorizationSource::Automatic,
+                                    );
+                                    held |= checked.is_err();
+                                    checked
+                                },
+                            )
+                            .await;
+                        if held {
+                            self.result_withheld(session, request).await
+                        } else {
+                            result
+                        }
                     }
                     Err(_) => self.send_outcome_unknown(session, request).await,
                 }
@@ -542,6 +585,20 @@ impl Engine {
                 connector: None,
             }),
         }
+    }
+
+    pub(crate) async fn result_withheld(&self, session: &Session, request: &RelayRequest) -> Result<(), CoreError> {
+        let message = crate::authorization_trace::RESULT_WITHHELD;
+        let audit = self.audit(request, call_action(&request.call), "succeeded_withheld", message, None, 0, &[]);
+        self.finish(
+            session,
+            request,
+            audit,
+            RelayOutcome::Error {
+                message: message.into(),
+            },
+        )
+        .await
     }
 
     pub(crate) async fn send_outcome_unknown(
@@ -619,12 +676,49 @@ impl Engine {
         audit: AuditRecord,
         outcome: RelayOutcome,
     ) -> Result<(), CoreError> {
-        self.store.append_audit(&audit)?;
-        self.store.mark_handled(&request.id.0, unix_now())?;
-        self.respond(session, &request.id.0, outcome).await
+        self.finish_checked(session, request, audit, outcome, || Ok(())).await
+    }
+
+    pub(crate) async fn finish_checked<Check>(
+        &self,
+        session: &Session,
+        request: &RelayRequest,
+        audit: AuditRecord,
+        outcome: RelayOutcome,
+        mut check: Check,
+    ) -> Result<(), CoreError>
+    where
+        Check: FnMut() -> Result<(), CoreError> + Send,
+    {
+        let mut recorded = false;
+        self.respond_checked(session, &request.id.0, outcome, || {
+            check()?;
+            if !recorded {
+                self.store.append_audit(&audit)?;
+                self.store.mark_handled(&request.id.0, unix_now())?;
+                recorded = true;
+            }
+            Ok(())
+        })
+        .await
     }
 
     pub(crate) async fn respond(&self, session: &Session, id: &str, outcome: RelayOutcome) -> Result<(), CoreError> {
+        self.respond_checked(session, id, outcome, || Ok(())).await
+    }
+
+    /// Runs the original authorization check after every token acquisition/refresh and immediately before each
+    /// response HTTP attempt. Guard errors retain their original CoreError so callers can settle withheld results.
+    pub(crate) async fn respond_checked<Check>(
+        &self,
+        session: &Session,
+        id: &str,
+        outcome: RelayOutcome,
+        mut check: Check,
+    ) -> Result<(), CoreError>
+    where
+        Check: FnMut() -> Result<(), CoreError> + Send,
+    {
         // Every answer to a request goes through here: a phone that does not decide sends none.
         self.require_decider()?;
         let response = RelayResponse {
@@ -635,9 +729,17 @@ impl Engine {
         let bytes = serde_json::to_vec(&response).map_err(|e| CoreError::storage(e.to_string()))?;
         let signed = self.signed_answer(session, reins_proto::answer::AnswerKind::Request, id, &bytes).await?;
         let sent = if let Some(signed) = &signed {
-            api_call!(session, |api| api.respond_body(id, signed))
+            api_call!(session, |api| async {
+                self.require_decider().map_err(ApiFailure::Core)?;
+                check().map_err(ApiFailure::Core)?;
+                api.respond_body(id, signed).await
+            })
         } else {
-            api_call!(session, |api| api.respond(id, &response))
+            api_call!(session, |api| async {
+                self.require_decider().map_err(ApiFailure::Core)?;
+                check().map_err(ApiFailure::Core)?;
+                api.respond(id, &response).await
+            })
         };
         match sent {
             // Ok, or expired on the server / answered already: nothing more to do.

@@ -643,6 +643,12 @@ impl Store {
         Ok(())
     }
 
+    pub(crate) fn permission_history_ready(&self) -> Result<bool, CoreError> {
+        let conn = self.read()?;
+        Ok(receipt_rows(&conn)?.iter().filter(|(_, receipt)| receipt.outcome != ReceiptOutcome::Succeeded).count()
+            < MAX_UNRESOLVED)
+    }
+
     pub(crate) fn permission_budget_uses(&self, policy_id: &str) -> Result<u64, CoreError> {
         let conn = self.read()?;
         let id = budget_id(policy_id);
@@ -704,9 +710,11 @@ pub(crate) fn receipt_incoming(previous: Option<&Value>, next: Option<&Value>) -
                 let mut comparison = new.clone();
                 comparison.outcome = old.outcome;
                 if old == comparison {
-                    if new.outcome == ReceiptOutcome::Succeeded {
-                        old.outcome = ReceiptOutcome::Succeeded;
-                    }
+                    old.outcome = match (old.outcome, new.outcome) {
+                        (ReceiptOutcome::Succeeded, _) | (_, ReceiptOutcome::Succeeded) => ReceiptOutcome::Succeeded,
+                        (ReceiptOutcome::Unknown, _) | (_, ReceiptOutcome::Unknown) => ReceiptOutcome::Unknown,
+                        _ => ReceiptOutcome::Started,
+                    };
                     return serde_json::to_value(old).expect("receipt serializes");
                 }
             }
