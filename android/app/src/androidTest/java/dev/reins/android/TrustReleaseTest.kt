@@ -10,6 +10,7 @@ import androidx.test.runner.AndroidJUnitRunner
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
@@ -60,7 +61,7 @@ class TrustReleaseTest {
     @Test
     fun trustSurvivesAsyncRefreshesAndItsSheetsStillWork() {
         click("Trust")
-        find(By.textStartsWith("Auto"))
+        find(By.text("Auto"))
         FakeCore.shared.profilesGate!!.complete(Unit)
         repeat(3) {
             click("Manual")
@@ -75,12 +76,12 @@ class TrustReleaseTest {
         click("On-device model")
         click("Delete model")
         click("Cancel")
-        find(By.desc("Close")).click()
+        click(By.desc("Close"))
         click("New")
         click("Cancel")
         click("Activity")
         click("Trust")
-        find(By.textStartsWith("Auto"))
+        find(By.text("Auto"))
         awaitMode(AutopilotMode.AUTO)
     }
 
@@ -90,15 +91,27 @@ class TrustReleaseTest {
         assertEquals(mode, FakeCore.shared.apGlobal.mode)
     }
 
-    private fun click(text: String) = find(By.textStartsWith(text)).click()
+    private fun click(text: String) = click(By.text(text))
+
+    private fun click(selector: BySelector) {
+        repeat(3) {
+            device.waitForIdle(1_000)
+            try {
+                find(selector).click()
+                return
+            } catch (_: StaleObjectException) {
+                // Async state updates can replace an accessibility node between lookup and the tap.
+            }
+        }
+        find(selector).click()
+    }
 
     private fun find(selector: BySelector): UiObject2 {
         device.wait(Until.findObject(selector), 1_000)?.let { return it }
-        val scroll = device.findObject(By.scrollable(true))
-        scroll?.scroll(Direction.UP, 1f)
+        device.findObject(By.scrollable(true))?.scroll(Direction.UP, 1f)
         repeat(6) {
             device.wait(Until.findObject(selector), 500)?.let { return it }
-            scroll?.scroll(Direction.DOWN, 0.75f)
+            device.findObject(By.scrollable(true))?.scroll(Direction.DOWN, 0.75f)
         }
         val node = device.wait(Until.findObject(selector), 5_000)
         if (node == null) {
