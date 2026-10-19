@@ -370,7 +370,9 @@ final class ActivityFlowTests: XCTestCase {
         let end = origin.withOffset(CGVector(dx: band.midX, dy: y + dy))
         start.press(
             forDuration: 0.02, thenDragTo: end,
-            withVelocity: XCUIGestureVelocity(rawValue: 700), thenHoldForDuration: 0.25
+            // Positioning is not the scroll regression: a fast nudge can coast several times its travel even
+            // with a hold at the end. Take about a second, slowing further as the correction gets smaller.
+            withVelocity: XCUIGestureVelocity(rawValue: max(1, abs(dy))), thenHoldForDuration: 0.5
         )
     }
 
@@ -378,7 +380,7 @@ final class ActivityFlowTests: XCTestCase {
     private func centerInList(_ app: XCUIApplication, _ row: XCUIElement) {
         expectToAppear(row)
         settle(row)
-        for _ in 0..<10 {
+        for _ in 0..<20 {
             let band = listBand(app).band
             guard row.frame.height > 1 else {
                 nudge(app, dy: -140, avoiding: row)
@@ -388,9 +390,13 @@ final class ActivityFlowTests: XCTestCase {
             let delta = row.frame.midY - band.midY
             if abs(delta) <= 36, band.contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { return }
             let before = row.frame.midY
-            nudge(app, dy: max(-160, min(160, -delta)), avoiding: row)
+            // Correct half the measured error so residual glide cannot bounce indefinitely across the centre.
+            let correction = max(-160, min(160, -delta * 0.5))
+            nudge(app, dy: correction, avoiding: row)
             settle(row)
-            if abs(row.frame.midY - before) < 1 { break }
+            let after = row.frame.midY
+            print("Activity centering: before=\(before), target=\(band.midY), drag=\(correction), after=\(after)")
+            if abs(after - before) < 1 { break }
         }
         let band = listBand(app).band
         XCTAssertLessThan(
@@ -611,10 +617,13 @@ final class ActivityFlowTests: XCTestCase {
             element(app, "quickScrim").tap()
             XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
         }
-        // A tap on the row, once the menu is open, does it.
+        // A tap on the row, once the menu is open, does it. Wait for the reopened
+        // container first: a busy simulator can spend most of five seconds taking
+        // one accessibility snapshot after the repeated press/slide gestures.
         pill.tap()
+        expectToAppear(element(app, "autopilotQuick"))
         let manual = element(app, "quick:MANUAL")
-        expectToAppear(manual, timeout: 5)
+        expectToAppear(manual, timeout: 15)
         shot(app, "lockdown-menu")
         manual.tap()
         XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))

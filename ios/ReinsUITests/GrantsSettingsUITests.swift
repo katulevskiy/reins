@@ -53,9 +53,10 @@ final class GrantsSettingsUITests: XCTestCase {
         let x = pad ? (detail ? 0.78 : 0.4) : 0.5
         // Lazy List rows can exist in the accessibility tree with an empty/offscreen
         // frame. Asking isHittable then can itself fail on Xcode 27, before we scroll.
-        // Check geometry first, and keep the target clear of the navigation/tab bars.
-        let screen = app.frame
-        let visible = screen.insetBy(dx: 0, dy: screen.height * 0.15)
+        // Check geometry first; isHittable then accounts for bars and overlays.
+        // Do not exclude a percentage of the screen: controls at the bottom of a
+        // short form cannot scroll into that artificial inset even when reachable.
+        let visible = app.frame.insetBy(dx: 1, dy: 1)
         for attempt in 0...8 {
             let target = element(id)
             if target.exists {
@@ -72,7 +73,8 @@ final class GrantsSettingsUITests: XCTestCase {
                 .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: above ? 0.75 : 0.3)),
                        withVelocity: XCUIGestureVelocity(rawValue: 500), thenHoldForDuration: 0.25)
         }
-        XCTFail("\(id) did not become visible and hittable")
+        let target = element(id)
+        XCTFail("\(id) did not become visible and hittable (frame \(target.exists ? target.frame : .zero), viewport \(visible))")
     }
 
     /// The confirming button of a confirmation dialog, not a same-named button behind it.
@@ -96,7 +98,6 @@ final class GrantsSettingsUITests: XCTestCase {
     // MARK: Screenshots
 
     func testScreenshots() throws {
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Quarantined on CI: expiredHeader times out in the new build-once CI setup (runs 38955143264, 38960576590).")
         launch()
         section("trust")
         wait("grant:g1")
@@ -282,7 +283,6 @@ final class GrantsSettingsUITests: XCTestCase {
     }
 
     func testAConnectionsModeAndIconCanBePickedAndItCanBeDisconnected() throws {
-        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Quarantined on CI: connection:c2 does not appear after disconnecting c1 (runs 38903795915, 38907389380, 38955143264, 38888346599).")
         launch()
         section("connections")
         scrollTo("connection:c1")
