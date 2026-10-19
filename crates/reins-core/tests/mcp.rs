@@ -170,6 +170,101 @@ fn tool_names(server: &McpServerView) -> Vec<&str> {
 }
 
 #[tokio::test]
+async fn mcp_final_response_rechecks_policy_after_refresh_for_grants_and_owner() {
+    use reins_proto::authorization::PolicyEffect;
+    for automatic in [false, true] {
+        for (tool, args) in [("search", json!({"query":"PRIVATE QUERY"})), ("create_issue", json!({"title":"example"}))]
+        {
+            let w = World::new(|_| {}).await;
+            w.add_open().await;
+            if automatic {
+                w.relay("seed", tool, &args).await;
+                w.core.approve("seed".into(), remember(tool)).await.unwrap();
+            }
+            let engine = w.core.engine();
+            let unrelated = policy_runtime::policy(&engine, "gmail", "write", "send", PolicyEffect::Deny);
+            engine.save_authorization_policy(0, unrelated, &policy_runtime::Owner).await.unwrap();
+            if !automatic {
+                w.relay("refresh", tool, &args).await;
+            }
+            let entered = policy_runtime::suspend_refresh(&w.rw, "POST", "/reins/api/requests/refresh/response").await;
+            let core = Arc::clone(&w.core);
+            let task = tokio::spawn(async move {
+                if automatic {
+                    core.engine().process_relayed(mcp_request("refresh", "tracker", tool, &args)).await
+                } else {
+                    core.approve("refresh".into(), once()).await
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(2), entered.notified()).await.unwrap();
+            let effect = if automatic && tool == "search" {
+                policy_runtime::review("owner")
+            } else {
+                PolicyEffect::Deny
+            };
+            let mut stop = policy_runtime::policy(&engine, "mcp_tracker", "tool", "call", effect);
+            stop.id = "late-stop".into();
+            engine.save_authorization_policy(1, stop, &policy_runtime::Owner).await.unwrap();
+            task.await.unwrap().unwrap();
+            let answer = w.answer("refresh").await;
+            assert_eq!(answer["outcome"], "error");
+            assert!(answer.get("result").is_none());
+            assert!(answer["message"].as_str().unwrap().contains("provider reported success"));
+            assert!(answer["message"].as_str().unwrap().contains("Do not repeat"));
+            assert_eq!(w.core.activity(1).await.unwrap()[0].outcome, "succeeded_withheld");
+            assert!(!w.is_pending("refresh").await);
+            assert_eq!(
+                w.state.lock().unwrap().calls.len(),
+                if automatic {
+                    2
+                } else {
+                    1
+                }
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_output_handoff_and_proxy_recheck_after_token_refresh() {
+    use reins_proto::authorization::PolicyEffect;
+    for proxy in [false, true] {
+        let w = World::new(|state| state.big = 5_000_000).await;
+        w.add_open().await;
+        if proxy {
+            w.core.mcp_set_heavy("tracker".into(), "export".into(), true).await.unwrap();
+        }
+        let engine = w.core.engine();
+        let unrelated = policy_runtime::policy(&engine, "gmail", "write", "send", PolicyEffect::Deny);
+        engine.save_authorization_policy(0, unrelated, &policy_runtime::Owner).await.unwrap();
+        w.relay("handoff", "export", &json!({})).await;
+        let (verb, endpoint) = if proxy {
+            ("POST", "/reins/api/mcp/call")
+        } else {
+            ("PUT", "/reins/api/blobs/output")
+        };
+        let entered = policy_runtime::suspend_refresh(&w.rw, verb, endpoint).await;
+        let core = Arc::clone(&w.core);
+        let task = tokio::spawn(async move { core.approve("handoff".into(), once()).await });
+        tokio::time::timeout(Duration::from_secs(2), entered.notified()).await.unwrap();
+        let mut stop = policy_runtime::policy(&engine, "mcp_tracker", "tool", "call", PolicyEffect::Deny);
+        stop.id = "late-stop".into();
+        engine.save_authorization_policy(1, stop, &policy_runtime::Owner).await.unwrap();
+        task.await.unwrap().unwrap();
+        assert_eq!(
+            bodies(&w.rw, verb, endpoint).await.len(),
+            1,
+            "no proxy call or result upload after revoked authority"
+        );
+        let answer = w.answer("handoff").await;
+        assert_eq!(answer["outcome"], "error");
+        assert!(answer.get("result").is_none());
+        assert!(answer["message"].as_str().unwrap().contains("Do not repeat"));
+        assert!(!w.is_pending("handoff").await);
+    }
+}
+
+#[tokio::test]
 async fn a_server_is_added_with_an_oauth_sign_in_and_its_tools_are_reported() {
     let w = World::new(|s| s.valid_token = Some("MCP-ACCESS-1".to_owned())).await;
     let (id, page) = w.start_sign_in().await;

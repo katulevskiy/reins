@@ -15,10 +15,12 @@ use crate::session::Session;
 async fn authorized<T: DeserializeOwned>(
     session: &Session,
     build: impl Fn(&str) -> RequestBuilder,
+    mut check: impl FnMut() -> Result<(), CoreError> + Send,
 ) -> Result<T, CoreError> {
     let mut retried = false;
     loop {
         let token = session.access_token().await?;
+        check()?;
         let resp = build(&token).send().await?;
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
@@ -59,18 +61,27 @@ pub async fn put_output(
     name: &str,
     content_type: &str,
     bytes: &[u8],
+    check: impl FnMut() -> Result<(), CoreError> + Send,
 ) -> Result<BlobDownload, CoreError> {
     let ttl = DEFAULT_BLOB_TTL_SECS.to_string();
-    authorized(session, |token| {
-        request(session, Method::PUT, "/blobs/output", token)
-            .query(&[("connection_id", connection_id), ("name", name), ("ttl_secs", ttl.as_str())])
-            .header("Content-Type", content_type)
-            .body(bytes.to_vec())
-    })
+    authorized(
+        session,
+        |token| {
+            request(session, Method::PUT, "/blobs/output", token)
+                .query(&[("connection_id", connection_id), ("name", name), ("ttl_secs", ttl.as_str())])
+                .header("Content-Type", content_type)
+                .body(bytes.to_vec())
+        },
+        check,
+    )
     .await
 }
 
 /// Has the server make one MCP call for the phone.
-pub async fn proxy_call(session: &Session, call: &ProxyCall) -> Result<ProxyCallResult, CoreError> {
-    authorized(session, |token| request(session, Method::POST, "/mcp/call", token).json(call)).await
+pub async fn proxy_call(
+    session: &Session,
+    call: &ProxyCall,
+    check: impl FnMut() -> Result<(), CoreError> + Send,
+) -> Result<ProxyCallResult, CoreError> {
+    authorized(session, |token| request(session, Method::POST, "/mcp/call", token).json(call), check).await
 }

@@ -968,3 +968,133 @@ async fn immediate_session_end_cannot_advertise_an_unsupported_review_adapter() 
     assert!(error.to_string().contains("review enforcement adapter"));
     assert_eq!(engine.authorization_policies().unwrap().revision, 0);
 }
+
+#[tokio::test]
+async fn connector_final_response_rechecks_policy_after_auth_refresh_for_grants_and_owner() {
+    use reins_proto::authorization::PolicyEffect;
+    for automatic in [false, true] {
+        for (op, args, selected) in [
+            ("read", json!({"chat":"Family"}), vec!["100:1"]),
+            ("send", json!({"chat":"Family","text":"hello"}), vec![]),
+        ] {
+            let env = env().await;
+            serve_pending(&env, &[]).await;
+            let engine = env.core.engine();
+            if automatic {
+                let seed = serde_json::from_value(call_request("seed", "c1", op, &args)).unwrap();
+                engine.process_relayed(seed).await.unwrap();
+                let grant = StandingGrant {
+                    duration_secs: Some(3600),
+                    max_uses: Some(3),
+                    scope: scope(&["100"], false),
+                };
+                env.core.approve("seed".into(), choice(&selected, Some(grant))).await.unwrap();
+            }
+            let unrelated = policy_runtime::policy(&engine, "gmail", "write", "send", PolicyEffect::Deny);
+            engine.save_authorization_policy(0, unrelated, &policy_runtime::Owner).await.unwrap();
+            let request = serde_json::from_value(call_request("refresh", "c1", op, &args)).unwrap();
+            if !automatic {
+                engine.process_relayed(request).await.unwrap();
+            }
+            let entered =
+                policy_runtime::suspend_refresh(&env.server, "POST", "/reins/api/requests/refresh/response").await;
+            let core = Arc::clone(&env.core);
+            let selected = selected.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+            let task = tokio::spawn(async move {
+                if automatic {
+                    let request = serde_json::from_value(call_request("refresh", "c1", op, &args)).unwrap();
+                    core.engine().process_relayed(request).await
+                } else {
+                    let selected = selected.iter().map(String::as_str).collect::<Vec<_>>();
+                    core.approve("refresh".into(), choice(&selected, None)).await
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(2), entered.notified()).await.unwrap();
+            let mut stop = policy_runtime::policy(
+                &engine,
+                "telegram",
+                if op == "read" {
+                    "read"
+                } else {
+                    "write"
+                },
+                op,
+                if automatic && op == "read" {
+                    policy_runtime::review("owner")
+                } else {
+                    PolicyEffect::Deny
+                },
+            );
+            stop.id = "late-stop".into();
+            engine.save_authorization_policy(1, stop, &policy_runtime::Owner).await.unwrap();
+            task.await.unwrap().unwrap();
+            let answer = answers(&env).await.pop().unwrap();
+            assert_eq!(answer["outcome"], "error");
+            assert!(answer.get("result").is_none());
+            assert!(answer["message"].as_str().unwrap().contains("Do not repeat"));
+            let outcome = if op == "send" {
+                "succeeded_withheld"
+            } else {
+                "unknown"
+            };
+            assert_eq!(env.core.activity(1).await.unwrap()[0].outcome, outcome);
+            assert!(env.core.pending().await.unwrap().is_empty());
+            if op == "send" {
+                assert_eq!(
+                    env.telegram.sent.lock().unwrap().len(),
+                    if automatic {
+                        2
+                    } else {
+                        1
+                    }
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn connector_download_handoff_rechecks_after_token_refresh() {
+    use reins_proto::authorization::PolicyEffect;
+    for kind in ["output", "fetch"] {
+        let env = env().await;
+        serve_pending(&env, &[]).await;
+        env.telegram.messages.lock().unwrap().insert(
+            "100".into(),
+            vec![Item {
+                id: "file".into(),
+                resource: "100".into(),
+                resource_label: "Family".into(),
+                body: Some(data_encoding::BASE64.encode(b"PRIVATE FILE")),
+                extra: json!({"_reins_deliver":{"kind":kind,"name":"private.txt","url":"https://example.com/private"}})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Item::default()
+            }],
+        );
+        let engine = env.core.engine();
+        let unrelated = policy_runtime::policy(&engine, "gmail", "write", "send", PolicyEffect::Deny);
+        engine.save_authorization_policy(0, unrelated, &policy_runtime::Owner).await.unwrap();
+        let request = serde_json::from_value(call_request("handoff", "c1", "read", &json!({"chat":"Family"}))).unwrap();
+        engine.process_relayed(request).await.unwrap();
+        let (verb, endpoint) = if kind == "output" {
+            ("PUT", "/reins/api/blobs/output")
+        } else {
+            ("POST", "/reins/api/blobs/fetch")
+        };
+        let entered = policy_runtime::suspend_refresh(&env.server, verb, endpoint).await;
+        let core = Arc::clone(&env.core);
+        let task = tokio::spawn(async move { core.approve("handoff".into(), choice(&["file"], None)).await });
+        tokio::time::timeout(Duration::from_secs(2), entered.notified()).await.unwrap();
+        let mut stop = policy_runtime::policy(&engine, "telegram", "read", "read", PolicyEffect::Deny);
+        stop.id = "late-stop".into();
+        engine.save_authorization_policy(1, stop, &policy_runtime::Owner).await.unwrap();
+        task.await.unwrap().unwrap();
+        let uploads = env.server.received_requests().await.unwrap().iter().filter(|r| r.url.path() == endpoint).count();
+        assert_eq!(uploads, 1, "the denied retry must never upload content or fetch credentials");
+        assert!(answers(&env).await.pop().unwrap().get("result").is_none());
+        assert_eq!(env.core.activity(1).await.unwrap()[0].outcome, "unknown");
+        assert!(env.core.pending().await.unwrap().is_empty());
+    }
+}
