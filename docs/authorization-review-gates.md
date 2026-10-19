@@ -47,6 +47,11 @@ before invocation. Their final activity record carries the same attempt identifi
 - Verified fact keys and provenance/timestamps, without attribute values or provider content.
 - The check time and `started`, `succeeded` or `unknown` phase.
 
+Activity uses exact lifecycle strings `started`, `unknown` and `succeeded_withheld`; normal completed actions keep
+`sent` / `released`. The existing Failed/Needs attention filter includes all four of `error`, `started`, `unknown`
+and `succeeded_withheld`, while Approved excludes the ambiguous and withheld cases. The agent-facing protocol
+continues using its existing error envelope with explicit outcome wording; no wire enum is widened.
+
 The provider result never reconstructs a decision using newer policies. The trace is audit data, deliberately
 separate from execution permission: deserializing it cannot authorize an action. `Engine::activity_authorization`
 is a local Rust query for the captured evidence. Native permission screens can expose it through their own

@@ -862,6 +862,7 @@ async fn connector_attempt_trace_survives_policy_change_while_provider_is_runnin
     task.await.unwrap().unwrap();
     let row = &env.core.activity(1).await.unwrap()[0];
     let trace = engine.activity_authorization(row.id).unwrap().unwrap();
+    assert_eq!(row.outcome, "succeeded_withheld");
     assert_eq!(trace.phase, AuthorizationPhase::Succeeded);
     assert_eq!(
         (trace.policy_state_revision, trace.policies[0].revision),
@@ -903,6 +904,7 @@ async fn connector_unknown_outcome_keeps_consumption_and_records_started_and_unk
     env.core.sync(0).await.unwrap();
     assert_eq!(env.telegram.sent.lock().unwrap().len(), 2, "the provider acted before reporting failure");
     assert_eq!(env.core.grants().await.unwrap()[0].uses, 1);
+    assert_eq!(env.core.activity(1).await.unwrap()[0].outcome, "unknown");
     let traces: Vec<_> = env
         .core
         .activity(8)

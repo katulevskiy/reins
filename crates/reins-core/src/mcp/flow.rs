@@ -449,7 +449,7 @@ impl Engine {
                         &request,
                         call,
                         tool.read_only,
-                        outcome_of(tool.read_only),
+                        "succeeded_withheld",
                         RESULT_WITHHELD,
                         Some(grant.0.clone()),
                     );
@@ -475,7 +475,21 @@ impl Engine {
                         self.store.refund(&BTreeSet::from([grant.clone()]))?;
                         ai_message(&server.name, &f)
                     };
-                    self.mcp_fail(session, &request, call, &message).await
+                    if self.store.invocation_started(&request.id.0)? {
+                        let audit =
+                            self.mcp_audit(&request, call, tool.read_only, "unknown", &message, Some(grant.0.clone()));
+                        self.finish(
+                            session,
+                            &request,
+                            audit,
+                            RelayOutcome::Error {
+                                message,
+                            },
+                        )
+                        .await
+                    } else {
+                        self.mcp_fail(session, &request, call, &message).await
+                    }
                 }
             };
         }
@@ -592,7 +606,7 @@ impl Engine {
                 trace,
             }) => {
                 let mut audit =
-                    self.mcp_audit(request, call, tool.read_only, outcome_of(tool.read_only), RESULT_WITHHELD, None);
+                    self.mcp_audit(request, call, tool.read_only, "succeeded_withheld", RESULT_WITHHELD, None);
                 if let Some(trace) = trace {
                     trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
                 }
@@ -607,7 +621,7 @@ impl Engine {
             // parked approval cannot be blindly rerun by Auto, a later tap, a resumed process or a duplicate poll.
             Err(f) if self.store.invocation_started(&request.id.0)? => {
                 let message = format!("{} {OUTCOME_UNKNOWN}", ai_message(&server.name, &f));
-                let audit = self.mcp_audit(request, call, tool.read_only, "error", &message, None);
+                let audit = self.mcp_audit(request, call, tool.read_only, "unknown", &message, None);
                 (
                     audit,
                     RelayOutcome::Error {

@@ -1040,7 +1040,7 @@ pub enum ActivityOutcome {
     /// Carried out: released, sent or granted.
     Approved,
     Denied,
-    /// Allowed but it failed.
+    /// Needs attention: error, started without a known outcome, unknown outcome, or successful response withheld.
     Failed,
 }
 
