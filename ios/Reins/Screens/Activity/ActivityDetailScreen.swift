@@ -166,7 +166,7 @@ struct ActivityDetailScreen: View {
         let list = entry.info.messages
         let other = !entry.op.isEmpty
         let noun = other ? "Items" : "Emails"
-        GroupCard(header: entry.outcome == "denied" ? "\(noun) that were not shared" : "\(noun) shared (\(list.count))") {
+        GroupCard(header: entry.outcome == "denied" ? "\(noun) that were not shared" : ActivityText.done(entry) ? "\(noun) shared (\(list.count))" : "\(noun) requested (\(list.count))") {
             ForEach(Array(list.enumerated()), id: \.offset) { i, m in
                 if i > 0 { Hairline() }
                 // Only the id is kept, never the text: opening an email fetches it from Gmail again.
@@ -188,7 +188,7 @@ struct ActivityDetailScreen: View {
 
     @ViewBuilder private func accounts(_ entry: ActivityEntry) -> some View {
         let list = entry.info.accounts
-        GroupCard(header: entry.outcome == "denied" ? "Accounts that were not shared" : "Accounts shared (\(list.count))") {
+        GroupCard(header: entry.outcome == "denied" ? "Accounts that were not shared" : ActivityText.done(entry) ? "Accounts shared (\(list.count))" : "Accounts requested (\(list.count))") {
             ForEach(Array(list.enumerated()), id: \.offset) { i, address in
                 if i > 0 { Hairline(inset: 68) }
                 HStack(spacing: 14) {

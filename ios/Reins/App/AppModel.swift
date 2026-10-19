@@ -160,6 +160,33 @@ final class AppModel {
     private(set) var recoveryLoadError: String?
     /// How the last MCP sign-in ended, shown on that server's page until it is left.
     var mcpNotice: McpNotice?
+    /// Verified connection receipts, kept across screen recreation until Done. Session UI, never permission state.
+    var connectedAccounts: [String: String] = [:]
+    var connectedServers: [String: McpServerView] = [:]
+
+    func accountConnected(service: String, account: String, epoch: UInt64) {
+        guard epoch == accountEpoch else { return }
+        connectedAccounts[service] = account
+    }
+
+    func accountConnected(_ account: AccountView, epoch: UInt64) {
+        guard epoch == accountEpoch else { return }
+        accountConnected(service: account.service, account: account.account, epoch: epoch)
+        if account.service == "gmail" {
+            accounts.removeAll { $0.service == account.service && $0.account == account.account }
+            accounts.append(account)
+        }
+        if let i = services.firstIndex(where: { $0.service == account.service }) {
+            services[i].accounts.removeAll { $0.account == account.account }
+            services[i].accounts.append(account)
+        }
+    }
+
+    func serverConnected(_ server: McpServerView, epoch: UInt64) {
+        guard epoch == accountEpoch else { return }
+        setMcpServers(mcpServers.filter { $0.id != server.id } + [server])
+        connectedServers[server.id] = server.status == "ok" ? server : nil
+    }
     /// After a fresh sign-in (or a new account) on the sign-in screen: the steps that connect a computer and an AI
     /// show instead of the app until "Done".
     private(set) var onboarding = false
@@ -329,6 +356,8 @@ final class AppModel {
         vault.reset()
         setMcpServers([])
         mcpNotice = nil
+        connectedAccounts = [:]
+        connectedServers = [:]
         approvalDevice = false
         recoveryCodeAvailable = false
         recoveryToRecord = nil

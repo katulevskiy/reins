@@ -74,6 +74,41 @@ class AppState {
     private val _accounts = MutableStateFlow<List<AccountView>>(emptyList())
     val accounts: StateFlow<List<AccountView>> = _accounts.asStateFlow()
 
+    /** Verified connection receipts, retained across screen recreation until Done. Never authority or persisted credentials. */
+    private val _connectedAccounts = MutableStateFlow<Map<String, String>>(emptyMap())
+    val connectedAccounts: StateFlow<Map<String, String>> = _connectedAccounts.asStateFlow()
+    private val _connectedServers = MutableStateFlow<Map<String, McpServerView>>(emptyMap())
+    val connectedServers: StateFlow<Map<String, McpServerView>> = _connectedServers.asStateFlow()
+
+    fun accountConnected(account: AccountView, epoch: Long) {
+        if (!isCurrent(epoch)) return
+        accountConnected(account.service, account.account, epoch)
+        if (account.service == "gmail") {
+            _accounts.update { it.filterNot { old -> old.service == account.service && old.account == account.account } + account }
+        }
+        _services.update { services -> services.map { service ->
+            if (service.service != account.service) service else service.copy(accounts = service.accounts.filterNot { it.account == account.account } + account)
+        } }
+    }
+
+    fun accountConnected(service: String, account: String, epoch: Long) {
+        if (isCurrent(epoch)) _connectedAccounts.update { it + (service to account) }
+    }
+
+    fun dismissAccountConnection(service: String, account: String? = null) {
+        _connectedAccounts.update { if (account == null || it[service] == account) it - service else it }
+    }
+
+    fun serverConnected(server: McpServerView, epoch: Long) {
+        if (!isCurrent(epoch)) return
+        setMcpServers(_mcpServers.value.filterNot { it.id == server.id } + server)
+        // Added can also contain an error or unfinished OAuth configuration.
+        if (server.status == "ok") _connectedServers.update { it + (server.id to server) }
+        else dismissServerConnection(server.id)
+    }
+
+    fun dismissServerConnection(id: String) { _connectedServers.update { it - id } }
+
     /** The MCP servers the user added, oldest first. */
     private val _mcpServers = MutableStateFlow<List<McpServerView>>(emptyList())
     val mcpServers: StateFlow<List<McpServerView>> = _mcpServers.asStateFlow()
@@ -234,6 +269,8 @@ class AppState {
             _activityDays.value = emptyMap()
             _grants.value = emptyList()
             _accounts.value = emptyList()
+            _connectedAccounts.value = emptyMap()
+            _connectedServers.value = emptyMap()
             _services.value = emptyList()
             _startingPolicy.value = null
             _connections.value = emptyList()

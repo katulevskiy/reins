@@ -54,8 +54,9 @@ extension AppModel {
         let outcome: McpSignInOutcome
         switch result {
         case let .success(server):
-            mcpNotice = McpNotice(serverId: server.id, text: "Signed in to \(untrusted(server.name)). Its tools can be used now.", failed: false)
-            feedback.play(.connected)
+            serverConnected(server, epoch: accountEpoch)
+            mcpNotice = McpNotice(serverId: server.id, text: server.status == "ok" ? "Signed in to \(untrusted(server.name)). Its tools can be used now." : "Server added. Check its connection status below.", failed: server.status != "ok")
+            feedback.play(server.status == "ok" ? .connected : .error)
             outcome = .done(serverId: server.id)
         case let .failure(error):
             mcpNotice = McpNotice(serverId: serverId, text: "Signing in did not work: \(error.userMessage)", failed: true)
@@ -134,7 +135,9 @@ final class DemoIntegrations: IntegrationsPlatform {
     func requestPhoneAccess(service: String) async -> Bool { true }
 
     func mcpSignIn(serverId: String, authorizeUrl: String, model: AppModel) async -> McpSignInOutcome {
+        let epoch = model.accountEpoch
         try? await Task.sleep(for: .milliseconds(900))
+        guard epoch == model.accountEpoch else { return .cancelled }
         let redirect = "\(McpLogic.redirectScheme)://\(McpLogic.redirectHost)?code=demo&state=demo"
         do {
             return await model.finishMcpSignIn(.success(try await model.core.mcpFinishSignIn(serverId: serverId, redirectUrl: redirect)), serverId: serverId)

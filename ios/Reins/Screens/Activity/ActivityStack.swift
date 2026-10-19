@@ -27,7 +27,7 @@ enum ActivityText {
     }
 
     /// An entry that went through (not denied, not failed) reads in the past.
-    static func done(_ entry: ActivityEntry) -> Bool { entry.outcome != "denied" && entry.outcome != "error" }
+    static func done(_ entry: ActivityEntry) -> Bool { ["released", "sent", "granted"].contains(entry.outcome) }
 
     /// The label line of a waiting card: "Gmail · Send" (set in mono capitals), from the core's provider and action.
     static func label(_ item: PendingItem) -> String { AskLabels.pending(item, field: field(item, danger: false)).kind }

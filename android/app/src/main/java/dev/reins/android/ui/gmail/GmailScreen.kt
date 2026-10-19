@@ -50,20 +50,27 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
     val statuses by viewModel.statuses.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val connected by state.connectedAccounts.collectAsStateWithLifecycle()
     var removing by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(viewModel) { viewModel.refresh() }
 
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
-        viewModel.consentFinished()
+        viewModel.consentFinished(it.resultCode == android.app.Activity.RESULT_OK)
     }
     val chooser = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        GoogleAuthorizer.chosenAccount(result.data)?.let { account ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) GoogleAuthorizer.chosenAccount(result.data)?.let { account ->
             viewModel.accountChosen(account) { pending -> consent.launch(IntentSenderRequest.Builder(pending.intentSender).build()) }
         }
     }
     val gmail = accounts.filter { it.service == "gmail" }
 
     Screen(title = "Gmail", onBack = onBack) {
+        connected["gmail"]?.let { identity ->
+            dev.reins.android.ui.common.IntegrationCompletion("Account connected", identity,
+                onDone = { state.dismissAccountConnection("gmail"); onBack() },
+                onAnother = { state.dismissAccountConnection("gmail") },
+            )
+        }
         Group(
             header = "Accounts",
             footer = "Your AIs see this list and pick the account a request is about. Grants belong to one account.\n\n" +
@@ -89,7 +96,7 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
                 )
             }
         }
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
+        if (connected["gmail"] == null) Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {
             dev.reins.android.ui.common.GoogleSignInNote(Modifier.padding(bottom = 12.dp))
             CapsuleButton(
                 "Add account",

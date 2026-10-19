@@ -60,6 +60,7 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
     val statuses by viewModel.statuses.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val connected by state.connectedAccounts.collectAsStateWithLifecycle()
     val login by viewModel.login.collectAsStateWithLifecycle()
     var removing by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(viewModel) { viewModel.refresh() }
@@ -69,17 +70,23 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
         Screen(title = "Integration", onBack = onBack) { Banner("This integration is not available.", kind = BannerKind.Error) }
         return
     }
-    val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { viewModel.consentFinished() }
+    val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { viewModel.consentFinished(it.resultCode == android.app.Activity.RESULT_OK) }
     val chooser = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        GoogleAuthorizer.chosenAccount(result.data)?.let { account ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) GoogleAuthorizer.chosenAccount(result.data)?.let { account ->
             viewModel.accountChosen(account) { pending -> consent.launch(IntentSenderRequest.Builder(pending.intentSender).build()) }
         }
     }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted.values.all { it }) viewModel.addDevice() else viewModel.fail("Not allowed. Turn it on in Android settings.")
+        if (granted.isNotEmpty() && granted.values.all { it }) viewModel.addDevice() else viewModel.fail("Not allowed. Turn it on in Android settings.")
     }
 
     Screen(title = service.name, onBack = onBack) {
+        connected[service.service]?.let { identity ->
+            dev.reins.android.ui.common.IntegrationCompletion("Account connected", identity,
+                onDone = { state.dismissAccountConnection(service.service); onBack() },
+                onAnother = if (service.kind == "device" || service.kind == "vault") null else ({ state.dismissAccountConnection(service.service) }),
+            )
+        }
         // What it is for, how it works and where the secret is kept: all behind the (?).
         Group(header = "Accounts", footer = listOf(intro(service), accountsFooter(service), fineprint(service)).joinToString("\n\n")) {
             if (service.accounts.isEmpty()) {
@@ -118,7 +125,9 @@ fun ServiceScreen(viewModel: ServiceViewModel, state: AppState, onBack: () -> Un
                 )
             }
         }
-        if (service.available) {
+        if (connected[service.service] != null) {
+            // The finishing surface above remains until explicitly acknowledged.
+        } else if (service.available) {
             AddAccount(
                 service = service,
                 viewModel = viewModel,

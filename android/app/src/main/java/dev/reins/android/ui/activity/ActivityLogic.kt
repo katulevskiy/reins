@@ -270,12 +270,16 @@ fun waitCards(pending: List<PendingItem>): List<WaitCard> {
 private fun done(outcome: String) = outcome == "released" || outcome == "sent" || outcome == "granted"
 
 /** How an entry ended, as the marker at the end of its row. */
-enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Bypass, Lockdown, Failed }
+enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Bypass, Lockdown, Failed, Started, Unknown, Withheld }
 
 /** Outcomes of an entry that was carried out (as [dev.reins.android.ui.common.entryTense] reads them). */
 private val DONE = setOf("released", "sent", "granted")
 
 fun outcomeOf(entry: ActivityEntry): Outcome = when {
+    entry.outcome == "started" -> Outcome.Started
+    entry.outcome == "unknown" -> Outcome.Unknown
+    entry.outcome == "succeeded_withheld" -> Outcome.Withheld
+    entry.outcome == "error" -> Outcome.Failed
     entry.decidedBy == "overnight" -> if (entry.outcome == "denied") Outcome.OvernightDenied else Outcome.Overnight
     // How it ended comes first: a bypass never makes a refused or failed entry read as allowed, nor Lockdown the reverse.
     entry.decidedBy == "bypass" -> when (entry.outcome) {
@@ -337,6 +341,11 @@ fun rowTime(epochSeconds: Long, nowSeconds: Long, zone: TimeZone = TimeZone.getD
 
 /** The AI's pick in words, for the entry's outcome pill: "Allowed by Autopilot · 96%". */
 fun outcomeLine(entry: ActivityEntry): String {
+    when (entry.outcome) {
+        "started" -> return "Awaiting outcome"
+        "unknown" -> return "Outcome unknown · do not repeat"
+        "succeeded_withheld" -> return "Completed; response withheld · do not repeat"
+    }
     val note = entry.autopilot
     val denied = entry.outcome == "denied"
     // One that was allowed but not carried out never reads as allowed.

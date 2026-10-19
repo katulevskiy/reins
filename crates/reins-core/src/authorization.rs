@@ -53,6 +53,7 @@ impl Engine {
     }
 
     pub fn authorization_policies(&self) -> Result<AuthorizationState, CoreError> {
+        self.require_authorization_history_ready()?;
         let owner = self.policy_owner()?;
         let state = self.store.authorization_state()?.unwrap_or_else(|| AuthorizationState::empty(&owner));
         if state.owner != owner {
@@ -149,6 +150,7 @@ impl Engine {
     /// Complete authenticated state. Positive adapters must also refuse `overflow_digest`, and must independently
     /// prove account admission; owner-resolved restrictive overflow is not recovered positive authority.
     pub(crate) fn authenticated_authorization_state(&self) -> Result<Option<AuthorizationState>, CoreError> {
+        self.require_authorization_history_ready()?;
         let Some(state) = self.store.authorization_state()? else {
             return Ok(None);
         };
@@ -262,6 +264,7 @@ impl Engine {
         &self,
         request: &RelayRequest,
     ) -> Result<Option<NarrowingAuthorizationSnapshot>, CoreError> {
+        self.require_authorization_history_ready()?;
         if self.store.permission_connection_revoked(&request.connection_id.0)? {
             return Err(CoreError::invalid("this agent connection was revoked; reconnect it before making requests"));
         }
