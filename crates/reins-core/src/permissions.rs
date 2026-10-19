@@ -352,6 +352,9 @@ impl Engine {
         let connections = self.connections().await?;
         let mut agents = vec![];
         for connection in connections {
+            if self.store.permission_connection_revoked(&connection.id)? {
+                continue;
+            }
             let access = self
                 .store
                 .account_coverage(&ConnectionId(connection.id.clone()), service, unix_now())?
