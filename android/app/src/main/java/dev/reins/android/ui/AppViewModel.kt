@@ -204,10 +204,15 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     /** An MCP server's sign-in page came back to the app: finish the sign-in and show that server. */
     fun finishMcpSignIn(redirect: String) {
         viewModelScope.launch {
-            val (id, notice) = when (val result = container.mcpSignIn.finish(redirect)) {
+            val epoch = container.state.accountEpoch.value
+            val result = container.mcpSignIn.finish(redirect)
+            if (!container.state.isCurrent(epoch)) return@launch
+            val (id, notice) = when (result) {
                 McpSignInResult.Ignored -> return@launch
-                is McpSignInResult.Done ->
-                    result.server.id to McpNotice(result.server.id, "Signed in to ${result.server.name}.", failed = false)
+                is McpSignInResult.Done -> {
+                    container.state.serverConnected(result.server, epoch)
+                    result.server.id to McpNotice(result.server.id, if (result.server.status == "ok") "Signed in to ${result.server.name}." else "Server added. Check its connection status below.", failed = result.server.status != "ok")
+                }
                 is McpSignInResult.Failed ->
                     result.serverId to McpNotice(result.serverId, "Signing in did not work: ${result.message}", failed = true)
             }

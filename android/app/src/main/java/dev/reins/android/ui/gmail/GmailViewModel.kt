@@ -28,7 +28,7 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
     /** The account whose Google consent screen is on top, until the user comes back from it. */
-    private var awaitingConsent: String? = null
+    private var awaitingConsent: Pair<String, Long>? = null
 
     fun clearError() {
         _error.value = null
@@ -38,6 +38,7 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
     private fun operation(block: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
+        val epoch = container.state.accountEpoch.value
         _error.value = null
         viewModelScope.launch {
             try {
@@ -45,8 +46,10 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                container.feedback.play(Event.Error)
-                _error.value = e.userMessage()
+                if (container.state.isCurrent(epoch)) {
+                    container.feedback.play(Event.Error)
+                    _error.value = e.userMessage()
+                }
             } finally {
                 _busy.value = false
             }
@@ -56,14 +59,16 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
     /** Checks every connected account (a network call each, all at once). */
     fun refresh() {
         viewModelScope.launch {
+            val epoch = container.state.accountEpoch.value
             val accounts = try {
-                container.core.accounts().also { container.state.setAccounts(it) }
+                container.core.accounts().also { if (container.state.isCurrent(epoch)) container.state.setAccounts(it) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _error.value = e.userMessage()
+                if (container.state.isCurrent(epoch)) _error.value = e.userMessage()
                 return@launch
             }
+            if (!container.state.isCurrent(epoch)) return@launch
             for (account in accounts) {
                 launch {
                     val status = try {
@@ -73,7 +78,7 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
                     } catch (e: Exception) {
                         GmailStatus.Unavailable(e.userMessage())
                     }
-                    _statuses.update { it + (account.account to status) }
+                    if (container.state.isCurrent(epoch)) _statuses.update { it + (account.account to status) }
                 }
             }
         }
@@ -81,9 +86,11 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
 
     /** The user picked [account] in Google's account picker: ask for consent if needed, then connect it. */
     fun accountChosen(account: String, launchConsent: (PendingIntent) -> Unit) = operation {
+        val epoch = container.state.accountEpoch.value
         val intent = container.google.consentIntent(account, "gmail")
+        if (!container.state.isCurrent(epoch)) return@operation
         if (intent != null) {
-            awaitingConsent = account
+            awaitingConsent = account to epoch
             launchConsent(intent)
         } else {
             connect(account)
@@ -91,10 +98,10 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Back from Google's consent screen. */
-    fun consentFinished() {
-        val account = awaitingConsent ?: return
+    fun consentFinished(approved: Boolean) {
+        val (account, epoch) = awaitingConsent ?: return
         awaitingConsent = null
-        operation { connect(account) }
+        if (approved && container.state.isCurrent(epoch)) operation { connect(account) }
     }
 
     /** Asks again for the consent of an account that lost it. */
@@ -105,7 +112,10 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
      * as soon as that answers; the lists catch up in the background.
      */
     suspend fun connect(account: String) {
-        container.core.addAccount(account)
+        val epoch = container.state.accountEpoch.value
+        val verified = container.core.addAccount(account)
+        if (!container.state.isCurrent(epoch)) return
+        container.state.accountConnected(verified, epoch)
         container.feedback.play(Event.Connected)
         viewModelScope.launch { container.refreshPending() }
         refresh()
@@ -115,11 +125,14 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
     fun remove(account: String) {
         if (_busy.value) return
         _busy.value = true
+        val epoch = container.state.accountEpoch.value
         _error.value = null
         viewModelScope.launch {
             try {
                 container.feedback.play(Event.Revoked)
                 container.core.removeAccount(account)
+                if (!container.state.isCurrent(epoch)) return@launch
+                container.state.dismissAccountConnection("gmail", account)
                 _statuses.value = _statuses.value - account
                 container.refreshPending()
                 // Best effort: without a network the access is still gone on this phone.
@@ -127,8 +140,10 @@ class GmailViewModel(private val container: AppContainer) : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                container.feedback.play(Event.Error)
-                _error.value = e.userMessage()
+                if (container.state.isCurrent(epoch)) {
+                    container.feedback.play(Event.Error)
+                    _error.value = e.userMessage()
+                }
             } finally {
                 _busy.value = false
             }

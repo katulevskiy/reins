@@ -46,6 +46,8 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertEqual(platform.googleAsked.map(\.service), ["gcontacts"])
         XCTAssertEqual(contacts.accounts.map(\.account), ["ada@gmail.com"])
         XCTAssertEqual(contacts.statuses["ada@gmail.com"], .ready)
+        XCTAssertEqual(contacts.connectedAccount, "ada@gmail.com")
+        XCTAssertEqual(accounts("gcontacts").connectedAccount, "ada@gmail.com")
         XCTAssertEqual(feedback.cues.last, .reconnected)
     }
 
@@ -91,9 +93,11 @@ final class IntegrationsFlowTests: XCTestCase {
         await codeberg.addSecret("bad")
         XCTAssertEqual(codeberg.error, "Codeberg did not accept that token. Check that it is complete and has the scopes listed.")
         XCTAssertEqual(feedback.cues.last, .error)
+        XCTAssertNil(codeberg.connectedAccount)
         await codeberg.addSecret("  0123456789abcdef0123456789abcdef01234567\n")
         XCTAssertNil(codeberg.error)
         XCTAssertEqual(codeberg.accounts.count, 1)
+        XCTAssertEqual(codeberg.connectedAccount, codeberg.accounts.first?.account)
         XCTAssertEqual(feedback.cues.last, .reconnected)
     }
 
@@ -113,6 +117,7 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertNil(removed.error)
         XCTAssertFalse(removed.refusedByIOS)
         XCTAssertEqual(removed.accounts.map(\.account), ["this phone"])
+        XCTAssertEqual(removed.connectedAccount, "this phone")
         XCTAssertEqual(platform.phoneAsked, ["device_calendar", "device_calendar"])
     }
 
@@ -120,6 +125,46 @@ final class IntegrationsFlowTests: XCTestCase {
         let sms = accounts("sms")
         XCTAssertEqual(sms.view?.available, false)
         XCTAssertFalse(model.services.contains { $0.service == "sms" })
+    }
+
+    func testCompletionIsRetainedAcrossScreenModelsAndDoneDoesNotReconnect() async {
+        let first = accounts("gcontacts")
+        platform.googleAnswer = "new@gmail.com"
+        await first.addGoogle()
+        let reopened = accounts("gcontacts")
+        XCTAssertEqual(reopened.connectedAccount, "new@gmail.com")
+        reopened.dismissConnection()
+        XCTAssertNil(first.connectedAccount)
+        XCTAssertTrue(reopened.accounts.contains { $0.account == "new@gmail.com" })
+        XCTAssertEqual(platform.googleAsked.count, 1)
+    }
+
+    func testRemovingAnAccountClearsItsCompletionOnly() async {
+        let contacts = accounts("gcontacts")
+        await contacts.addGoogle()
+        let device = accounts("device_contacts")
+        await device.addDevice()
+        await contacts.remove("me@gmail.com")
+        XCTAssertNil(contacts.connectedAccount)
+        XCTAssertEqual(device.connectedAccount, "this phone")
+    }
+
+    func testSessionChangeWhileGoogleIsOpenDoesNotRegisterOrShowSuccess() async {
+        let contacts = accounts("gcontacts")
+        platform.googleBeforeAnswer = { [model] in model?.setSession(.signedOut) }
+        await contacts.addGoogle()
+        XCTAssertNil(contacts.connectedAccount)
+        XCTAssertTrue(contacts.accounts.isEmpty)
+        XCTAssertFalse(feedback.cues.contains(.reconnected))
+    }
+
+    func testStaleSuccessCannotRepopulateAnotherSession() {
+        let epoch = model.accountEpoch
+        model.accountConnected(service: "gmail", account: "old@gmail.com", epoch: epoch)
+        model.setSession(.signedOut)
+        model.accountConnected(service: "gmail", account: "late@gmail.com", epoch: epoch)
+        XCTAssertTrue(model.connectedAccounts.isEmpty)
+        XCTAssertTrue(model.connectedServers.isEmpty)
     }
 
     // MARK: Telegram
@@ -136,6 +181,7 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertNil(telegram.error)
         XCTAssertEqual(telegram.login, .phone)
         XCTAssertEqual(telegram.accounts.map(\.account), ["+44 7700 900123"])
+        XCTAssertEqual(telegram.connectedAccount, "+44 7700 900123")
         XCTAssertEqual(feedback.cues.last, .reconnected)
     }
 
@@ -150,6 +196,7 @@ final class IntegrationsFlowTests: XCTestCase {
         await telegram.loginPassword("hunter2")
         XCTAssertEqual(telegram.login, .phone)
         XCTAssertTrue(telegram.accounts.contains { $0.account == "+15550199" })
+        XCTAssertEqual(telegram.connectedAccount, "+15550199")
     }
 
     func testAnotherNumberStartsOver() async {
@@ -173,6 +220,7 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertEqual(server?.name, "Example")
         XCTAssertEqual(server?.status, "ok")
         XCTAssertEqual(server?.tools.count, 4)
+        XCTAssertEqual(model.connectedServers["example"]?.name, "Example")
         XCTAssertTrue(platform.signIns.isEmpty)
         XCTAssertEqual(feedback.cues.last, .reconnected)
     }
@@ -199,6 +247,20 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertFalse(m.busy)
     }
 
+    func testAnOldSessionFailedAddCannotPublishAnErrorAfterSignOut() async {
+        let m = mcp()
+        let pending = Task { await m.add(url: "https://fail.example.com/mcp", name: "", token: "") }
+        // The demo core suspends for its network latency; wait for the actual operation state.
+        for _ in 0..<100 where !m.busy { await Task.yield() }
+        XCTAssertTrue(m.busy)
+        model.setSession(.signedOut)
+        let id = await pending.value
+        XCTAssertNil(id)
+        XCTAssertNil(m.error)
+        XCTAssertTrue(model.connectedServers.isEmpty)
+        XCTAssertFalse(feedback.cues.contains(.error))
+    }
+
     func testAServerThatNeedsSignInOpensItsPageAndTheSignInFinishesIt() async {
         let m = mcp()
         let id = await m.add(url: "https://mcp.auth.example.com/mcp", name: "Docs", token: "")
@@ -217,6 +279,7 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertEqual(id, "notion")
         XCTAssertEqual(model.mcpNotice, McpNotice(serverId: "notion", text: "Signing in did not work: The sign-in was cancelled", failed: true))
         XCTAssertEqual(feedback.cues.last, .error)
+        XCTAssertTrue(model.connectedServers.isEmpty)
     }
 
     func testClosingTheSignInPageStaysOnTheAddPage() async {
@@ -226,6 +289,7 @@ final class IntegrationsFlowTests: XCTestCase {
         XCTAssertNil(id)
         XCTAssertNil(m.error)
         XCTAssertNil(model.mcpNotice)
+        XCTAssertTrue(model.connectedServers.isEmpty)
     }
 
     func testAServerWhoseSignInEndedCanSignInAgainFromItsPage() async {
@@ -280,6 +344,7 @@ private final class FakePlatform: IntegrationsPlatform {
     /// The address Google answers with; nil: the one asked for.
     var googleAnswer: String? = "me@gmail.com"
     var googleCancels = false
+    var googleBeforeAnswer: (() -> Void)?
     var phoneAllows = true
     var signInCancels = false
     var signInFails: Error?
@@ -291,6 +356,7 @@ private final class FakePlatform: IntegrationsPlatform {
 
     func authorizeGoogle(service: String, loginHint: String?) async throws -> String? {
         googleAsked.append((service, loginHint))
+        googleBeforeAnswer?()
         if googleCancels { return nil }
         return googleAnswer ?? loginHint
     }
