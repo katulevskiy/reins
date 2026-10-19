@@ -1,0 +1,43 @@
+# Which UI test class a source file runs. Longest matching prefix wins.
+# A pull request runs ReinsTests plus these classes. Everything runs when a change
+# is outside this map (ios/Reins/Design, App, Shell, Debug, the core, the bindings,
+# this file) or the run is a main push, the nightly, a hand run, or labelled ios-full.
+#
+# prefix                                          classes
+
+ios/Reins/Screens/Activity/                       ActivityFlowTests
+ios/Reins/Screens/Approval/                       ApprovalFieldUITests
+ios/Reins/Screens/Autopilot/                      AutopilotUITests
+ios/Reins/Autopilot/                              AutopilotUITests
+ios/Reins/Screens/Trust/                          AutopilotUITests
+ios/Reins/Screens/SignIn/                         OnboardingUITests
+ios/Reins/Screens/Grants/                         GrantsSettingsUITests
+ios/Reins/Screens/Settings/SoundsScreen.swift     SoundsScreenUITests
+ios/Reins/Screens/Settings/VaultPasskeysScreen.swift PasskeyUITests
+ios/Reins/Screens/Settings/                       GrantsSettingsUITests
+ios/Reins/Screens/Integrations/                   IntegrationsUITests
+ios/Reins/Screens/Connections/                    IntegrationsUITests
+ios/Reins/Screens/Pairing/                        IntegrationsUITests
+ios/Reins/Screens/Upload/                         ActivityFlowTests
+ios/Reins/Screens/Vault/                          PasskeyUITests
+ios/Reins/Feedback/                               SoundsScreenUITests
+ios/Reins/Platform/Notification                   NotificationsUITests
+ios/Reins/Platform/AppNotifier.swift              NotificationsUITests
+ios/Reins/Platform/VaultPasskeys.swift            PasskeyUITests
+ios/Reins/Platform/WebAuth.swift                  PasskeyUITests
+ios/Reins/Platform/GrantReminders.swift           GrantsSettingsUITests
+ios/Reins/Platform/GoogleSignIn.swift             IntegrationsUITests
+ios/Reins/Platform/McpSignIn.swift                IntegrationsUITests
+ios/Reins/Platform/LiveActivityController.swift   ActivityFlowTests
+ios/ReinsUITests/ActivityFlowTests.swift          ActivityFlowTests
+ios/ReinsUITests/ApprovalFieldUITests.swift       ApprovalFieldUITests
+ios/ReinsUITests/AutopilotUITests.swift           AutopilotUITests
+ios/ReinsUITests/GrantsSettingsUITests.swift      GrantsSettingsUITests
+ios/ReinsUITests/IntegrationsUITests.swift        IntegrationsUITests
+ios/ReinsUITests/LaunchTests.swift                LaunchTests
+ios/ReinsUITests/LiveOnboardingUITests.swift      LiveOnboardingUITests
+ios/ReinsUITests/LiveServerUITests.swift          LiveServerUITests
+ios/ReinsUITests/NotificationsUITests.swift       NotificationsUITests
+ios/ReinsUITests/OnboardingUITests.swift          OnboardingUITests
+ios/ReinsUITests/PasskeyUITests.swift             PasskeyUITests
+ios/ReinsUITests/SoundsScreenUITests.swift        SoundsScreenUITests

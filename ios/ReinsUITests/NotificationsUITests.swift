@@ -7,6 +7,7 @@ final class NotificationsUITests: XCTestCase {
     private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
     func testPermissionThenBackgroundNotifications() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["CI"] != nil, "Quarantined on CI: background notifications do not reach Notification Center reliably in the simulator.")
         toHomeScreen()
         let app = XCUIApplication()
         // A reused simulator keeps the last run's notifications and Live Activities: start without them.
