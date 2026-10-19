@@ -291,7 +291,11 @@ pub static DEVICE_PROOFS_PER_DEVICE: LazyLock<FailureLimit<String>> = LazyLock::
 /// How long a right recovery proof exempts that device key from the account-wide limit.
 const PROVEN_FOR: Duration = Duration::from_hours(24);
 
-/// Most device keys remembered at once. A new proof past this drops the oldest.
+/// Most device keys remembered for one account. A new proof past this drops the oldest key of that same account.
+const PROVEN_PER_USER: usize = 8;
+
+/// Most device keys remembered at once, across every account. Past this a new key is refused. Nothing already
+/// remembered is dropped to make room for another account.
 const PROVEN_CAP: usize = 10_000;
 
 struct ProvenEntry {
@@ -350,11 +354,23 @@ impl ProvenDevices {
         let mut entries = self.lock();
         entries.retain(|_, entry| now.saturating_duration_since(entry.at) < PROVEN_FOR);
         let key = Self::map_key(user, device_key);
-        if !entries.contains_key(&key)
-            && entries.len() >= PROVEN_CAP
-            && let Some(oldest) = entries.iter().min_by_key(|(_, entry)| entry.at).map(|(k, _)| k.clone())
+        if let Some(entry) = entries.get_mut(&key) {
+            entry.at = now;
+            device_uuid.clone_into(&mut entry.device_uuid);
+            return;
+        }
+        let prefix = format!("{user}/");
+        if entries.keys().filter(|k| k.starts_with(&prefix)).count() >= PROVEN_PER_USER
+            && let Some(oldest) = entries
+                .iter()
+                .filter(|(k, _)| k.starts_with(&prefix))
+                .min_by_key(|(_, entry)| entry.at)
+                .map(|(k, _)| k.clone())
         {
             entries.remove(&oldest);
+        }
+        if entries.len() >= PROVEN_CAP {
+            return;
         }
         entries.insert(
             key,
@@ -390,8 +406,9 @@ impl ProvenDevices {
 /// Device keys (`<user id>/<device key hash>`) that sent a right recovery proof: for [`PROVEN_FOR`] they keep their
 /// own tries when other devices used up the account's limit, so a flood from new device ids never locks the owner
 /// out. The key is the device key hash, the same identity the approval device and a roster member are checked by. A
-/// caller that sent no device key is never exempt. The entry is dropped when that device is signed out, deleted, or
-/// leaves the roster ([`forget_proven`]).
+/// caller that sent no device key is never exempt. One account holds at most [`PROVEN_PER_USER`] keys; a further proof
+/// drops only that account's oldest. Past [`PROVEN_CAP`] a new key is refused, so one account cannot evict another's.
+/// The entry is dropped when that device is signed out, deleted, or leaves the roster ([`forget_proven`]).
 pub static PROVEN_DEVICES: LazyLock<ProvenDevices> = LazyLock::new(ProvenDevices::default);
 
 /// Drops the proof exemption for this device key, if it has one.
@@ -624,22 +641,66 @@ mod tests {
     }
 
     #[test]
-    fn proven_devices_drop_the_oldest_past_the_cap() {
+    fn a_proof_past_eight_drops_only_that_accounts_oldest_key() {
         let set = ProvenDevices::default();
         let t0 = Instant::now();
-        let cap = u64::try_from(PROVEN_CAP).unwrap();
-        for n in 0..cap {
-            set.remember_at("user", &format!("k{n}"), "device", t0 + Duration::from_secs(n));
+        set.remember_at("victim", "kept", "phone", t0);
+        for n in 0..PROVEN_PER_USER {
+            set.remember_at(
+                "attacker",
+                &format!("k{n}"),
+                "phone",
+                t0 + Duration::from_secs(u64::try_from(n).unwrap() + 1),
+            );
+        }
+        assert_eq!(set.len(), PROVEN_PER_USER + 1);
+        let later = t0 + Duration::from_secs(100);
+        set.remember_at("attacker", "k1", "phone", later);
+        assert_eq!(set.len(), PROVEN_PER_USER + 1, "refreshing a key does not grow the set or drop another");
+        assert!(set.is_proven_at("attacker", "k0", later));
+        assert!(set.is_proven_at("victim", "kept", later));
+        set.remember_at("attacker", "newest", "phone", later + Duration::from_secs(1));
+        assert_eq!(set.len(), PROVEN_PER_USER + 1);
+        assert!(set.is_proven_at("attacker", "newest", later + Duration::from_secs(1)));
+        assert!(
+            !set.is_proven_at("attacker", "k0", later + Duration::from_secs(1)),
+            "the attacker's oldest key is the one dropped"
+        );
+        assert!(set.is_proven_at("attacker", "k1", later + Duration::from_secs(1)));
+        assert!(set.is_proven_at("victim", "kept", later + Duration::from_secs(1)), "another account is left alone");
+    }
+
+    #[test]
+    fn a_full_set_refuses_a_new_account_instead_of_evicting_one() {
+        let set = ProvenDevices::default();
+        let t0 = Instant::now();
+        assert_eq!(PROVEN_CAP % PROVEN_PER_USER, 0, "the safety cap is a whole number of accounts");
+        let users = PROVEN_CAP / PROVEN_PER_USER;
+        for user in 0..users {
+            for key in 0..PROVEN_PER_USER {
+                let n = user * PROVEN_PER_USER + key;
+                set.remember_at(
+                    &format!("u{user}"),
+                    &format!("k{key}"),
+                    "phone",
+                    t0 + Duration::from_secs(u64::try_from(n).unwrap()),
+                );
+            }
         }
         assert_eq!(set.len(), PROVEN_CAP);
-        let later = t0 + Duration::from_secs(cap + 5);
-        set.remember_at("user", "k1", "device", later);
-        assert_eq!(set.len(), PROVEN_CAP, "refreshing a key does not grow the set or drop another");
-        assert!(set.is_proven_at("user", "k0", later));
-        set.remember_at("user", "newest", "device", later + Duration::from_secs(1));
+        let later = t0 + Duration::from_secs(u64::try_from(PROVEN_CAP).unwrap() + 5);
+        set.remember_at("newcomer", "k0", "phone", later);
         assert_eq!(set.len(), PROVEN_CAP);
-        assert!(set.is_proven_at("user", "newest", later + Duration::from_secs(1)));
-        assert!(!set.is_proven_at("user", "k0", later + Duration::from_secs(1)), "the oldest proof is the one dropped");
-        assert!(set.is_proven_at("user", "k1", later + Duration::from_secs(1)));
+        assert!(!set.is_proven_at("newcomer", "k0", later), "a full set refuses the new key");
+        assert!(set.is_proven_at("u0", "k0", later), "the oldest account is not evicted to make room");
+        set.remember_at("u0", "k0", "phone", later);
+        assert!(set.is_proven_at("u0", "k0", later), "refreshing a key that is already remembered still works");
+        assert_eq!(set.len(), PROVEN_CAP);
+        // an account already at its own cap replaces its oldest key, which frees a place in the global set
+        set.remember_at("u1", "extra", "phone", later + Duration::from_secs(1));
+        assert!(set.is_proven_at("u1", "extra", later + Duration::from_secs(1)));
+        assert!(!set.is_proven_at("u1", "k0", later + Duration::from_secs(1)), "only that account's oldest key");
+        assert!(set.is_proven_at("u0", "k0", later + Duration::from_secs(1)));
+        assert!(!set.is_proven_at("newcomer", "k0", later + Duration::from_secs(1)));
     }
 }

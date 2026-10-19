@@ -4,7 +4,8 @@
 //! changes are asked for every time.
 //!
 //! The path is checked before anything else: it is a plain absolute path on the API host (no scheme, host, `//`, `..`
-//! or `.` segment, no encoded slash or dot, no query or fragment, no control or non-ASCII character).
+//! or `.` segment, no encoded slash or dot, no percent-encoded unreserved character, no query or fragment, no control
+//! or non-ASCII character).
 
 use reins_proto::connector::ConnectorCall;
 use reqwest::Method;
@@ -52,6 +53,12 @@ pub struct Target {
     pub sensitive: bool,
 }
 
+/// RFC 3986 unreserved: letters, digits and `-` `.` `_` `~`. Encoding one (`re%66s`) is how a raw-path check is slipped
+/// past, so it is refused rather than decoded.
+fn unreserved(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~')
+}
+
 fn decode(segment: &str) -> Result<String, String> {
     let bytes = segment.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -61,6 +68,9 @@ fn decode(segment: &str) -> Result<String, String> {
             let hex = segment.get(i + 1..i + 3).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()));
             let value =
                 hex.and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or("a % must be followed by two hex digits")?;
+            if unreserved(value) {
+                return Err("an unreserved character is percent-encoded".to_owned());
+            }
             out.push(value);
             i += 3;
         } else {
@@ -350,11 +360,10 @@ fn write_preview(call: &ConnectorCall) -> Result<Preview, CoreError> {
             format!("Body:\n{shown}")
         });
     }
-    // A raw write that can move a branch (a ref, a merge, a file committed, a branch renamed or protected): which
-    // branch is not read from the path, so it counts as the default one (Autopilot never decides it on the model).
-    let lower = path.to_ascii_lowercase();
-    let moves_a_branch =
-        ["/git/refs", "/merges", "/merge", "/contents/", "/branches/"].iter().any(|p| lower.contains(p));
+    // A write under a repository counts as one to the default branch unless its decoded segments are a known other
+    // endpoint. The branch is not read from the path, so Autopilot never decides it on the model. `PATCH` of the
+    // repository itself can change which branch is the default.
+    let moves_a_branch = moves_a_branch(method.as_str(), &path_segments(&path).map_err(CoreError::service)?);
     Ok(Preview {
         resource: target.resource,
         resource_label: target.label,
@@ -366,6 +375,93 @@ fn write_preview(call: &ConnectorCall) -> Result<Preview, CoreError> {
         secrets: None,
         default_branch: moves_a_branch,
     })
+}
+
+/// First segments under `/repos/{owner}/{repo}/` that do not move a branch. Anything else fails closed, including a
+/// segment whose case or spelling only looks like one of these.
+const NON_BRANCH_ROOTS: &[&str] = &[
+    "actions",
+    "activity",
+    "assignees",
+    "attestations",
+    "autolinks",
+    "automated-security-fixes",
+    "check-runs",
+    "check-suites",
+    "code-scanning",
+    "comments",
+    "commits",
+    "community",
+    "contributors",
+    "dependabot",
+    "deployments",
+    "dispatches",
+    "environments",
+    "events",
+    "forks",
+    "hooks",
+    "imports",
+    "interaction-limits",
+    "invitations",
+    "issues",
+    "keys",
+    "labels",
+    "languages",
+    "license",
+    "milestones",
+    "notifications",
+    "pages",
+    "private-vulnerability-reporting",
+    "projects",
+    "properties",
+    "reactions",
+    "readme",
+    "releases",
+    "rulesets",
+    "secret-scanning",
+    "security-advisories",
+    "stargazers",
+    "stats",
+    "statuses",
+    "subscribers",
+    "subscription",
+    "teams",
+    "topics",
+    "traffic",
+    "transfer",
+    "vulnerability-alerts",
+];
+
+/// `rest` is the decoded segments after `/repos/{owner}/{repo}`. A pull request's merge (or an update of its branch)
+/// moves a branch; its comments, reviews and labels do not.
+fn known_non_branch(rest: &[String]) -> bool {
+    let Some(root) = rest.first().map(|s| s.to_ascii_lowercase()) else {
+        return false;
+    };
+    if root == "pulls" {
+        return rest.iter().all(|s| {
+            let lower = s.to_ascii_lowercase();
+            lower != "merge" && lower != "update-branch"
+        });
+    }
+    NON_BRANCH_ROOTS.contains(&root.as_str())
+}
+
+/// A write that counts as one to the default branch: any `POST`, `PUT`, `PATCH` or `DELETE` under
+/// `/repos/{owner}/{repo}/…` whose decoded segments are not a [known other endpoint](known_non_branch), and `PATCH` of
+/// the repository itself. Compared without regard to case. A path that is not a repository write does not.
+fn moves_a_branch(method: &str, segs: &[String]) -> bool {
+    if !matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") {
+        return false;
+    }
+    if segs.first().is_none_or(|s| !s.eq_ignore_ascii_case("repos")) || segs.len() < 3 {
+        return false;
+    }
+    let rest = &segs[3..];
+    if rest.is_empty() {
+        return method == "PATCH";
+    }
+    !known_non_branch(rest)
 }
 
 /// `github_api_write`: does it and hands back GitHub's answer.
@@ -424,5 +520,66 @@ mod tests {
             assert!(path_segments(bad).is_err(), "{bad}");
         }
         assert_eq!(path_segments("/repos/o/r/compare/main...dev").unwrap().len(), 5);
+    }
+
+    #[test]
+    fn an_encoded_unreserved_character_is_refused() {
+        for bad in [
+            "/repos/o/r/git/re%66s/heads/main",
+            "/repos/o/r/git/%72efs/heads/main",
+            "/repos/o/r/GIT/%52efs/heads/main",
+            "/repos/o/r/mer%67es",
+            "/repos/o/r/b%72anches/main",
+            "/repos/o/r/contents/%61.txt",
+            "/repos/o/r/%2e%2e/x",
+            "/repos/o/r/a%2Eb",
+        ] {
+            let err = path_segments(bad).unwrap_err();
+            assert!(err.contains("unreserved"), "{bad}: {err}");
+        }
+        // a reserved character may be encoded; the decoded segment is what is judged
+        assert_eq!(path_segments("/repos/o/r/contents/dir%20x/a.txt").unwrap()[4], "dir x");
+    }
+
+    fn moves(method: &str, path: &str) -> bool {
+        moves_a_branch(method, &path_segments(path).unwrap())
+    }
+
+    #[test]
+    fn a_repository_write_counts_as_the_default_branch_unless_the_endpoint_is_known() {
+        for (method, path) in [
+            ("PATCH", "/repos/octo/cat"),
+            ("POST", "/repos/octo/cat/merges"),
+            ("POST", "/repos/octo/cat/merge-upstream"),
+            ("PUT", "/repos/octo/cat/contents/a.txt"),
+            ("PATCH", "/repos/octo/cat/git/refs/heads/main"),
+            ("PATCH", "/repos/octo/cat/GIT/REFS/heads/Main"),
+            ("POST", "/repos/octo/cat/Branches"),
+            ("PUT", "/repos/octo/cat/pulls/4/merge"),
+            ("PUT", "/repos/octo/cat/pulls/4/update-branch"),
+            ("POST", "/repos/octo/cat/git/commits"),
+            ("POST", "/repos/octo/cat/unknown-plugin"),
+            ("DELETE", "/repos/octo/cat/git/refs/heads/feature/x"),
+        ] {
+            assert!(moves(method, path), "{method} {path}");
+        }
+        for (method, path) in [
+            ("POST", "/repos/octo/cat/issues"),
+            ("POST", "/repos/octo/cat/Issues/3/comments"),
+            ("POST", "/repos/octo/cat/labels"),
+            ("POST", "/repos/octo/cat/comments"),
+            ("POST", "/repos/octo/cat/releases"),
+            ("POST", "/repos/octo/cat/pulls"),
+            ("POST", "/repos/octo/cat/pulls/4/comments"),
+            ("POST", "/repos/octo/cat/pulls/4/reviews"),
+            ("PUT", "/repos/octo/cat/topics"),
+            ("POST", "/repos/octo/cat/dispatches"),
+            ("DELETE", "/repos/octo/cat"),
+            ("POST", "/markdown"),
+            ("PATCH", "/user"),
+            ("GET", "/repos/octo/cat/git/refs/heads/main"),
+        ] {
+            assert!(!moves(method, path), "{method} {path}");
+        }
     }
 }

@@ -11,7 +11,9 @@ final class GrantsSettingsUITests: XCTestCase {
 
     private func launch(_ extra: [String] = []) {
         app = XCUIApplication()
-        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities"] + extra
+        // These tests change settings, not the clock. Keep background countdowns from
+        // invalidating accessibility snapshots while the simulator is busy.
+        app.launchArguments = ["-demo", "-noPopup", "-noLiveActivities", "-freezeTime", String(Int(Date().timeIntervalSince1970))] + extra
         app.launch()
     }
 
@@ -49,13 +51,28 @@ final class GrantsSettingsUITests: XCTestCase {
     /// `detail` scrolls the right-hand column, else the section's list in the middle.
     private func scrollTo(_ id: String, detail: Bool = false) {
         let x = pad ? (detail ? 0.78 : 0.4) : 0.5
-        var tries = 0
-        while !(element(id).exists && element(id).isHittable) && tries < 8 {
-            app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.75))
-                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.3)))
-            tries += 1
+        // Lazy List rows can exist in the accessibility tree with an empty/offscreen
+        // frame. Asking isHittable then can itself fail on Xcode 27, before we scroll.
+        // Check geometry first, and keep the target clear of the navigation/tab bars.
+        let screen = app.frame
+        let visible = screen.insetBy(dx: 0, dy: screen.height * 0.15)
+        for attempt in 0...8 {
+            let target = element(id)
+            if target.exists {
+                let frame = target.frame
+                if frame.width > 1, frame.height > 1,
+                   visible.contains(CGPoint(x: frame.midX, y: frame.midY)), target.isHittable {
+                    return
+                }
+            }
+            guard attempt < 8 else { break }
+            let frame = target.exists ? target.frame : .zero
+            let above = frame.height > 1 && frame.midY < visible.minY
+            app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: above ? 0.3 : 0.75))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: above ? 0.75 : 0.3)),
+                       withVelocity: XCUIGestureVelocity(rawValue: 500), thenHoldForDuration: 0.25)
         }
-        XCTAssertTrue(element(id).exists, "\(id) not found")
+        XCTFail("\(id) did not become visible and hittable")
     }
 
     /// The confirming button of a confirmation dialog, not a same-named button behind it.
@@ -84,6 +101,7 @@ final class GrantsSettingsUITests: XCTestCase {
         section("trust")
         wait("grant:g1")
         shot("grants")
+        scrollTo("expiredHeader")
         tap("expiredHeader")
         wait("ended:g3")
         shot("grants-expired")
@@ -270,15 +288,17 @@ final class GrantsSettingsUITests: XCTestCase {
         scrollTo("connection:c1")
         tap("connection:c1")
         wait("connectionMode")
+        scrollTo("connMode:AUTO", detail: true)
         tap("connMode:AUTO")
         expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element("connMode:AUTO"))
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: 15)
         tap("connMode:follow")
         expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element("connMode:follow"))
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: 15)
         scrollTo("connectionIcon", detail: true)
         tap("connectionIcon")
         tap("icon:grok")
+        XCTAssertTrue(element("iconSheet").waitForNonExistence(timeout: 5), "the icon picker closes before disconnecting")
         // Disconnect is held; no dialog.
         scrollTo("disconnect", detail: true)
         wait("disconnect").press(forDuration: 2.6)
