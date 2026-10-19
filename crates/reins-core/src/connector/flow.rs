@@ -365,7 +365,7 @@ impl Engine {
                         }
                         let outcome = match attempt.disclosure_error {
                             Some(_error) => {
-                                audit.outcome = "succeeded_withheld".to_owned();
+                                "succeeded_withheld".clone_into(&mut audit.outcome);
                                 audit.info.note = Some("The provider returned success; its result was withheld because policy changed while it was running.".to_owned());
                                 RelayOutcome::Error {
                                     message: RESULT_WITHHELD.to_owned(),
@@ -651,7 +651,7 @@ impl Engine {
             }
             let outcome = match attempt.disclosure_error {
                 Some(_error) => {
-                    audit.outcome = "succeeded_withheld".to_owned();
+                    "succeeded_withheld".clone_into(&mut audit.outcome);
                     audit.info.note = Some("The provider returned success; its result was withheld because policy changed while it was running.".to_owned());
                     RelayOutcome::Error {
                         message: RESULT_WITHHELD.to_owned(),
