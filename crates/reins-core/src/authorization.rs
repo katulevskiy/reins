@@ -27,6 +27,12 @@ pub(crate) enum AuthorizationSource {
     OwnerReview,
 }
 
+/// A local normalization result, deliberately not serializable and not an account-access or execution proof.
+pub(crate) struct NormalizedAuthorizationAction {
+    pub action: ActionContext,
+    pub verified_attribute_keys: Vec<AttributeKey>,
+}
+
 impl Engine {
     fn policy_owner(&self) -> Result<String, CoreError> {
         if let Some(owner) = self.store.bound_owner() {
@@ -116,6 +122,7 @@ impl Engine {
             return Err(CoreError::invalid("the owner did not confirm the policy resolution"));
         }
         self.require_decider_fresh(&session).await?;
+        state.resolved_from = Some(crate::store::authorization::conflict_digest(&state));
         state.policies = policies;
         state.conflicted = false;
         state.conflicting_policies.clear();
@@ -130,12 +137,9 @@ impl Engine {
         Ok(state)
     }
 
-    /// Evaluated against all locally authenticated policies. No state preserves legacy personal behavior. An
-    /// invalid/unknown state or issuer is an error, never an absent policy or a permissive fallback.
-    pub(crate) fn authorization_decision(
-        &self,
-        request: &RelayRequest,
-    ) -> Result<Option<AuthorizationDecision>, CoreError> {
+    /// Complete authenticated state. Positive adapters must also refuse `overflow_digest`, and must independently
+    /// prove account admission; owner-resolved restrictive overflow is not recovered positive authority.
+    pub(crate) fn authenticated_authorization_state(&self) -> Result<Option<AuthorizationState>, CoreError> {
         let Some(state) = self.store.authorization_state()? else {
             return Ok(None);
         };
@@ -148,6 +152,88 @@ impl Engine {
         if state.owner != owner || state.policies.iter().any(|p| p.issuer.tenant_id.is_some()) {
             return Err(CoreError::invalid("authorization policy authority could not be verified"));
         }
+        Ok(Some(state))
+    }
+
+    /// Normalize the actual request using the account the connector resolved. The returned facts describe this
+    /// action; the caller still authenticates account admission, complete policies and execution authority.
+    pub(crate) fn normalized_authorization_action(
+        &self,
+        request: &RelayRequest,
+        resolved_account: &str,
+        now: i64,
+    ) -> Result<NormalizedAuthorizationAction, CoreError> {
+        let owner = self.policy_owner()?;
+        let (service, capability, action) = operation(&request.call);
+        let account_id = account_resource_id(&service, resolved_account);
+        let resource_id = if let ToolCall::Mcp(call) = &request.call {
+            Some(call.tool.clone())
+        } else {
+            None
+        };
+        let bytes =
+            serde_json::to_vec(&(request, &owner, &account_id)).map_err(|e| CoreError::storage(e.to_string()))?;
+        let digest = reins_proto::canon::hex32(&reins_proto::canon::sha256(&bytes));
+        let device = self.store.device_id()?;
+        let mut facts = Vec::new();
+        if let ToolCall::GmailSend {
+            email,
+        } = &request.call
+        {
+            facts.push(AttributeFact {
+                key: AttributeKey::Recipients,
+                fact: Fact::Known {
+                    value: AttributeValue::StringSet(
+                        email
+                            .recipients()
+                            .map(str::to_owned)
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .into_iter()
+                            .collect(),
+                    ),
+                    evidence: Evidence {
+                        id: digest.clone(),
+                        source: EvidenceSource::LocalCore,
+                        observed_at: now,
+                        valid_until: now.saturating_add(60),
+                    },
+                },
+            });
+        }
+        let verified_attribute_keys = facts.iter().map(|fact| fact.key).collect();
+        Ok(NormalizedAuthorizationAction {
+            action: ActionContext {
+                v: 1,
+                request_id: request.id.0.clone(),
+                request_digest: digest,
+                actor: ActorContext {
+                    principal_id: owner.clone(),
+                    tenant_id: None,
+                    connection_id: request.connection_id.0.clone(),
+                    device_id: None,
+                    executor_principal_id: owner,
+                    executor_device_id: device,
+                },
+                operation: OperationId {
+                    service,
+                    capability,
+                    action,
+                },
+                resource: ResourceContext {
+                    account_id,
+                    resource_id,
+                },
+                facts,
+            },
+            verified_attribute_keys,
+        })
+    }
+
+    /// Narrowing preflight is private so its legacy baseline cannot be mistaken for new access authority.
+    fn authorization_decision(&self, request: &RelayRequest) -> Result<Option<AuthorizationDecision>, CoreError> {
+        let Some(state) = self.authenticated_authorization_state()? else {
+            return Ok(None);
+        };
         let (service, capability, action) = operation(&request.call);
         // Account IDs are connector-scoped canonical tuples. A display name or an agent-provided repository name
         // is never promoted to an authenticated account, environment, device, or repository classification.
@@ -187,76 +273,24 @@ impl Engine {
         let ids: Vec<String> = state.policies.iter().map(|p| p.id.clone()).collect();
         let mut result = None;
         for account in accounts {
-            let account_id = account_resource_id(&service, &account);
-            let bytes =
-                serde_json::to_vec(&(request, &owner, &account_id)).map_err(|e| CoreError::storage(e.to_string()))?;
-            let digest = reins_proto::canon::hex32(&reins_proto::canon::sha256(&bytes));
-            let device = self.store.device_id()?;
             let now = unix_now();
-            let mut facts = Vec::new();
-            if let ToolCall::GmailSend {
-                email,
-            } = &request.call
-            {
-                facts.push(AttributeFact {
-                    key: AttributeKey::Recipients,
-                    fact: Fact::Known {
-                        value: AttributeValue::StringSet(
-                            email
-                                .recipients()
-                                .map(str::to_owned)
-                                .collect::<std::collections::BTreeSet<_>>()
-                                .into_iter()
-                                .collect(),
-                        ),
-                        evidence: Evidence {
-                            id: digest.clone(),
-                            source: EvidenceSource::LocalCore,
-                            observed_at: now,
-                            valid_until: now.saturating_add(60),
-                        },
-                    },
-                });
-            }
-            let verified: Vec<AttributeKey> = facts.iter().map(|f| f.key).collect();
-            let action = ActionContext {
-                v: 1,
-                request_id: request.id.0.clone(),
-                request_digest: digest.clone(),
-                actor: ActorContext {
-                    principal_id: owner.clone(),
-                    tenant_id: None,
-                    connection_id: request.connection_id.0.clone(),
-                    device_id: None,
-                    executor_principal_id: owner.clone(),
-                    executor_device_id: device.clone(),
-                },
-                operation: OperationId {
-                    service: service.clone(),
-                    capability: capability.clone(),
-                    action: action.clone(),
-                },
-                resource: ResourceContext {
-                    account_id: account_id.clone(),
-                    resource_id: None,
-                },
-                facts,
-            };
+            let normalized = self.normalized_authorization_action(request, &account, now)?;
+            let action = normalized.action;
             // This gate evaluates mandatory restrictions on an already existing legacy authorization path, and
             // never supplies new auto-authority. Account-discovery still goes through its separate grant/owner
             // approval path. Future Permit evaluation must use actual account-access proof, never this preflight.
             let authority = AuthorityBindings {
-                principal_id: &owner,
-                tenant_id: None,
-                connection_id: &request.connection_id.0,
-                device_id: None,
-                executor_principal_id: &owner,
-                executor_device_id: &device,
-                account_id: &account_id,
-                resource_id: None,
-                request_digest: &digest,
+                principal_id: &action.actor.principal_id,
+                tenant_id: action.actor.tenant_id.as_deref(),
+                connection_id: &action.actor.connection_id,
+                device_id: action.actor.device_id.as_deref(),
+                executor_principal_id: &action.actor.executor_principal_id,
+                executor_device_id: &action.actor.executor_device_id,
+                account_id: &action.resource.account_id,
+                resource_id: action.resource.resource_id.as_deref(),
+                request_digest: &action.request_digest,
                 account_access: true,
-                verified_attribute_keys: &verified,
+                verified_attribute_keys: &normalized.verified_attribute_keys,
                 authorized_policy_ids: &ids,
             };
             let decision = authorization::evaluate(&EvaluationInput {
@@ -359,7 +393,7 @@ fn operation(call: &ToolCall) -> (String, String, String) {
         ToolCall::Connector(call) => {
             (call.service.clone(), call.effect().map_or("unknown", |e| e.access()).to_owned(), call.op.clone())
         }
-        ToolCall::Mcp(call) => (crate::mcp::grant_service(&call.server), "tool".to_owned(), call.tool.clone()),
+        ToolCall::Mcp(call) => (crate::mcp::grant_service(&call.server), "tool".to_owned(), "call".to_owned()),
         ToolCall::RequestUpload {
             ..
         } => ("reins".to_owned(), "files".to_owned(), "upload".to_owned()),

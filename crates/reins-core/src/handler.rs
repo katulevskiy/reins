@@ -151,6 +151,7 @@ impl Engine {
             self.resolve_account(None).await.ok();
         }
         let Some(service) = service else {
+            self.authorization_preflight(request)?;
             let integrations: Vec<IntegrationInfo> = self
                 .integrations()
                 .into_iter()
@@ -215,6 +216,7 @@ impl Engine {
         withheld: usize,
         grant_id: Option<String>,
     ) -> Result<(), CoreError> {
+        self.authorization_preflight(request)?;
         let mut detail =
             format!("shared {} of {}", plural(accounts.len(), "account", "accounts"), views::service_name(service));
         if withheld > 0 {

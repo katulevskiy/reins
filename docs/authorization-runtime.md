@@ -27,6 +27,10 @@ agent's display label, repository path, mail domain, or command summary is never
 The requesting paired-device identity is currently absent; policies that need it hold rather than trust a label.
 Recipients are verified from the normalized complete outgoing email, including every recipient.
 
+MCP tools use `mcp_<server> / tool / call`, with the exact original tool name as the bound `resource_id`. This
+preserves valid Unicode, spaces, slashes and other raw names without lossy sanitization. Future positive MCP rules
+must enumerate exact tool resources; a generic operation-family selector alone must not inherit new tools.
+
 This first gate uses the evaluator's legacy baseline solely to *narrow* existing authorization paths. It does not
 prove account access and cannot be reused to activate new permits. The later permit adapter must supply independent
 account-access evidence and replace the managed scope's legacy baseline with `review` or migrate those old grants.
@@ -58,15 +62,22 @@ flows; a tool policy is not a replacement for their owner/role authentication.
 Authorization state is a bounded, versioned `authorization.state` Meta record in the existing account-owned,
 encrypted in-memory SQLite store and authenticated sealed snapshots. The existing signed primary op log carries
 it; ordinary viewer proposals cannot write policy. Local edits use the store's process-safe single-writer lock.
-The aggregate has a 48 KiB encoded limit, leaving room inside the 64 KiB op-body limit, and 64 policy/revocation
-identities. No schema migration creates authority.
+The aggregate has a 48 KiB encoded limit, leaving room inside the 64 KiB op-body limit, a separate 40 KiB policy
+content budget reserving hold metadata space, and 64 policy/revocation identities. No schema migration creates authority.
 
 Concurrent updates do not use ordinary JSON field merging or wall-clock last-write-wins. They retain a conflict
 and the conflicting policy versions for explicit owner resolution. Revocation IDs never disappear. State removal,
 unverified checkpoint/recovery data, an older snapshot that lacks the installed state, unsupported versions,
 corrupt records and ownership mismatch all hold execution. They never mean "no policies". The same conservative
 rules are used by snapshot merges and signed-op application. A clean later authenticated CAS is needed to resolve
-a conflict; an old backup cannot silently resolve it.
+a conflict; its update binds the canonical digest of the exact conflicting versions. Neither a same-revision nor a
+higher stale branch backup can silently resolve it. Held-state updates retain all known competing versions.
+
+If a conflict union exceeds these bounds or belongs to another owner, the last readable state stays held with a
+bounded source commitment instead of writing an unreadable policy union. Restrictive owner recovery remains
+available, and the permanent `overflow_digest` marks incomplete history even after that recovery. Positive-permission
+adapters MUST reject that marker until the complete policy/revocation history is reconciled; clearing the visible
+conflict does not establish that omitted authority was safely recovered.
 
 The current aggregate intentionally has a small configuration bound. Larger enterprise policy sets and archival
 revocation retention need a separately versioned storage scheme before those capabilities are enabled. Old clients

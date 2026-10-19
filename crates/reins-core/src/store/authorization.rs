@@ -17,6 +17,7 @@ pub(crate) const STORE_KEY: &str = "app.authorization.state";
 // Leave room for the signed op envelope and {prev,row}; the op body limit is 64 KiB.
 pub const MAX_STATE_BYTES: usize = 48 * 1024;
 pub const MAX_POLICIES: usize = 64;
+const MAX_POLICY_CONTENT_BYTES: usize = 40 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +31,13 @@ pub struct AuthorizationState {
     /// Concurrent versions are kept for inspection; resolving a conflict is an explicit owner operation.
     #[serde(default)]
     pub conflicting_policies: Vec<PolicyRecord>,
+    /// The exact held state an authenticated owner explicitly resolved. A newer stale branch lacks this proof.
+    #[serde(default)]
+    pub resolved_from: Option<String>,
+    /// Some concurrent source could not fit (or belonged to another owner). Its commitment is retained forever.
+    /// Restrictive owner recovery can proceed; positive authority must wait for complete history reconciliation.
+    #[serde(default)]
+    pub overflow_digest: Option<String>,
     /// Policy identities are never reused, even after a restore or a later deliberate widening.
     pub revoked_ids: BTreeSet<String>,
 }
@@ -43,6 +51,8 @@ impl AuthorizationState {
             conflicted: false,
             policies: Vec::new(),
             conflicting_policies: Vec::new(),
+            resolved_from: None,
+            overflow_digest: None,
             revoked_ids: BTreeSet::new(),
         }
     }
@@ -79,6 +89,20 @@ impl AuthorizationState {
         }
         if !self.conflicted && !self.conflicting_policies.is_empty() {
             return Err(CoreError::invalid("unresolved policy versions remain"));
+        }
+        if self.resolved_from.as_deref().is_some_and(|hash| reins_proto::canon::parse_hex32(hash).is_none()) {
+            return Err(CoreError::invalid("invalid authorization conflict resolution digest"));
+        }
+        if self.overflow_digest.as_deref().is_some_and(|hash| reins_proto::canon::parse_hex32(hash).is_none()) {
+            return Err(CoreError::invalid("invalid authorization overflow commitment"));
+        }
+        // Policy content has a separate budget so a valid state always has room for bounded hold/recovery metadata.
+        if serde_json::to_vec(&(&self.owner, &self.policies, &self.conflicting_policies, &self.revoked_ids))
+            .map_err(|e| CoreError::storage(e.to_string()))?
+            .len()
+            > MAX_POLICY_CONTENT_BYTES
+        {
+            return Err(CoreError::invalid("authorization policy content is too large"));
         }
         if serde_json::to_vec(self).map_err(|e| CoreError::storage(e.to_string()))?.len() > MAX_STATE_BYTES {
             return Err(CoreError::invalid("authorization state is too large"));
@@ -124,6 +148,9 @@ impl Store {
         if let Some(previous) = &previous {
             if previous.owner != next.owner || !previous.revoked_ids.is_subset(&next.revoked_ids) {
                 return Err(CoreError::invalid("authorization owner and revocations are immutable"));
+            }
+            if previous.overflow_digest.is_some() && previous.overflow_digest != next.overflow_digest {
+                return Err(CoreError::invalid("unreconciled authorization history cannot be erased"));
             }
             for old in &previous.policies {
                 let new = next
@@ -174,7 +201,19 @@ pub(crate) fn conflict(a: &Value, b: &Value) -> Value {
         (Err(_), Ok(_)) => return unverified(b),
         (Err(_), Err(_)) => return serde_json::json!({"v":1,"conflicted":true}),
     };
+    let retained = a.clone();
+    let source_digests = [conflict_digest(&a), conflict_digest(&b)].into_iter().collect::<BTreeSet<_>>();
+    let commitment = reins_proto::canon::hex32(&reins_proto::canon::sha256(
+        serde_json::to_string(&source_digests).expect("source digests serialize").as_bytes(),
+    ));
+    if a.owner != b.owner {
+        return overflow_hold(retained, commitment);
+    }
     a.conflicted = true;
+    a.resolved_from = None;
+    if a.overflow_digest.is_some() || b.overflow_digest.is_some() {
+        a.overflow_digest = Some(commitment.clone());
+    }
     a.revision = a.revision.max(b.revision);
     a.revoked_ids.extend(b.revoked_ids);
     a.conflicting_policies.extend(b.conflicting_policies);
@@ -200,13 +239,24 @@ pub(crate) fn conflict(a: &Value, b: &Value) -> Value {
             policy.lifecycle = PolicyLifecycle::Revoked;
         }
     }
+    if a.validate().is_err() {
+        return overflow_hold(retained, commitment);
+    }
     serde_json::to_value(a).unwrap_or_else(|_| serde_json::json!({"v":1,"conflicted":true}))
+}
+
+fn overflow_hold(mut retained: AuthorizationState, commitment: String) -> Value {
+    retained.conflicted = true;
+    retained.resolved_from = None;
+    retained.overflow_digest = Some(commitment);
+    serde_json::to_value(retained).expect("retained authorization state serializes")
 }
 
 pub(crate) fn unverified(value: &Value) -> Value {
     let mut value = value.clone();
     if let Some(map) = value.as_object_mut() {
         map.insert("conflicted".to_owned(), Value::Bool(true));
+        map.insert("resolved_from".to_owned(), Value::Null);
     } else {
         value = serde_json::json!({"v":1,"conflicted":true});
     }
@@ -233,14 +283,57 @@ pub(crate) fn incoming(previous: Option<&Value>, next: Option<&Value>) -> Value 
     if previous_state.validate().is_err() {
         return unverified(previous);
     }
-    if previous_state.owner != next_state.owner
+    if (previous_state.revision == next_state.revision && previous_state != next_state && !next_state.conflicted)
+        || (previous_state.conflicted
+            && next_state.conflicted
+            && !policy_versions(&previous_state).is_subset(&policy_versions(&next_state)))
+        || (previous_state.conflicted
+            && !next_state.conflicted
+            && next_state.resolved_from.as_deref() != Some(&conflict_digest(&previous_state)))
+        || previous_state.owner != next_state.owner
+        || (previous_state.overflow_digest.is_some()
+            && (next_state.overflow_digest.is_none()
+                || (previous_state.overflow_digest != next_state.overflow_digest && !next_state.conflicted)))
         || previous_state.revision > next_state.revision
         || !previous_state.revoked_ids.is_subset(&next_state.revoked_ids)
-        || previous_state.policies.iter().any(|p| !next_state.policies.iter().any(|n| n.id == p.id))
+        || previous_state.policies.iter().any(|p| {
+            !next_state.policies.iter().any(|n| {
+                n.id == p.id
+                    && (n == p
+                        || ((n.revision > p.revision || (next_state.conflicted && n.revision == p.revision))
+                            && n.issuer == p.issuer
+                            && n.kind == p.kind))
+            })
+        })
     {
         return conflict(previous, next);
     }
     next.clone()
+}
+
+pub(crate) fn conflict_digest(state: &AuthorizationState) -> String {
+    // The same versions can occupy opposite current/conflicting slots on two devices. Bind their canonical set,
+    // not incidental array order, so a valid resolution propagates while a stale single branch cannot clear it.
+    let versions = policy_versions(state);
+    let bytes = serde_json::to_vec(&(
+        state.v,
+        &state.owner,
+        state.revision,
+        versions,
+        &state.revoked_ids,
+        &state.overflow_digest,
+    ))
+    .expect("authorization identity is serializable");
+    reins_proto::canon::hex32(&reins_proto::canon::sha256(&bytes))
+}
+
+fn policy_versions(state: &AuthorizationState) -> BTreeSet<String> {
+    state
+        .policies
+        .iter()
+        .chain(&state.conflicting_policies)
+        .map(|p| serde_json::to_string(p).expect("policy is serializable"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -417,6 +510,117 @@ mod tests {
             let restored = incoming(Some(&held), Some(&stale));
             assert_eq!(restored["revoked_ids"], revoked["revoked_ids"]);
             assert_eq!(restored["conflicted"], true);
+        }
+    }
+
+    #[test]
+    fn a_stale_branch_at_the_same_or_higher_revision_cannot_resolve_a_conflict() {
+        let mut left = state();
+        left.revision = 2;
+        left.policies[0].revision = 2;
+        left.policies[0].scope.connection_ids = vec!["c1".to_owned()];
+        let mut right = left.clone();
+        right.policies[0].scope.connection_ids = vec!["c2".to_owned()];
+        let left = serde_json::to_value(left).unwrap();
+        let right = serde_json::to_value(right).unwrap();
+        let held = conflict(&left, &right);
+        let replayed_hold = incoming(Some(&held), Some(&unverified(&left)));
+        let original_hold: AuthorizationState = serde_json::from_value(held.clone()).unwrap();
+        let replayed_hold: AuthorizationState = serde_json::from_value(replayed_hold).unwrap();
+        assert!(
+            policy_versions(&original_hold).is_subset(&policy_versions(&replayed_hold)),
+            "a stale held branch cannot omit competing versions"
+        );
+        let mut lower = original_hold;
+        lower.revision += 1;
+        lower.conflicting_policies.push(lower.policies[0].clone());
+        lower.policies[0].revision = 1;
+        let lower = incoming(Some(&held), Some(&serde_json::to_value(lower).unwrap()));
+        let lower: AuthorizationState = serde_json::from_value(lower).unwrap();
+        assert_eq!(
+            lower.policies[0].revision, 2,
+            "a held branch cannot replace the current record with a lower revision"
+        );
+        for source in [&left, &right] {
+            for revision in [2, 3] {
+                let mut stale = source.clone();
+                stale["revision"] = serde_json::json!(revision);
+                assert_eq!(incoming(Some(&held), Some(&stale))["conflicted"], true);
+            }
+            let branch_dir = tempfile::tempdir().unwrap();
+            let branch = open(branch_dir.path());
+            branch.meta_set(RECORD_KEY, &source.to_string()).unwrap();
+            let backup = snapshot::export(&branch.read().unwrap(), true).unwrap();
+            let restored_dir = tempfile::tempdir().unwrap();
+            let restored = open(restored_dir.path());
+            restored.meta_set(RECORD_KEY, &held.to_string()).unwrap();
+            snapshot::import(&mut restored.lock().unwrap(), &backup, true).unwrap();
+            assert!(
+                restored.authorization_state().unwrap().unwrap().conflicted,
+                "either old branch backup must preserve the conflict hold"
+            );
+        }
+        let mut resolved: AuthorizationState = serde_json::from_value(held.clone()).unwrap();
+        resolved.resolved_from = Some(conflict_digest(&resolved));
+        resolved.revision += 1;
+        resolved.conflicted = false;
+        resolved.conflicting_policies.clear();
+        assert_eq!(incoming(Some(&held), Some(&serde_json::to_value(resolved).unwrap()))["conflicted"], false);
+        // Changing a record without advancing its own revision also holds, even with an aggregate bump.
+        let mut changed = left.clone();
+        changed["revision"] = serde_json::json!(3);
+        changed["policies"][0]["scope"]["connection_ids"] = serde_json::json!(["someone-else"]);
+        assert_eq!(incoming(Some(&left), Some(&changed))["conflicted"], true);
+    }
+
+    #[test]
+    fn near_limit_and_foreign_owner_conflicts_remain_readable_for_owner_recovery() {
+        let mut left = state();
+        let mut right = state();
+        left.policies = (0..MAX_POLICIES)
+            .map(|index| {
+                let mut p = policy();
+                p.id = format!("left-{index}");
+                p
+            })
+            .collect();
+        right.policies = (0..MAX_POLICIES)
+            .map(|index| {
+                let mut p = policy();
+                p.id = format!("right-{index}");
+                p
+            })
+            .collect();
+        left.validate().unwrap();
+        right.validate().unwrap();
+        for right in [
+            right,
+            AuthorizationState {
+                owner: "foreign".to_owned(),
+                policies: vec![],
+                ..state()
+            },
+        ] {
+            let held = conflict(&serde_json::to_value(&left).unwrap(), &serde_json::to_value(right).unwrap());
+            let held: AuthorizationState = serde_json::from_value(held).unwrap();
+            held.validate().unwrap();
+            assert!(held.conflicted);
+            assert!(held.overflow_digest.is_some());
+            assert_eq!(held.owner, "owner");
+            assert_eq!(held.policies, left.policies);
+            let dir = tempfile::tempdir().unwrap();
+            let store = open(dir.path());
+            store.meta_set(RECORD_KEY, &serde_json::to_string(&held).unwrap()).unwrap();
+            assert!(store.authorization_state().unwrap().unwrap().conflicted);
+            let mut resolved = held.clone();
+            resolved.resolved_from = Some(conflict_digest(&held));
+            resolved.conflicted = false;
+            resolved.revision += 1;
+            store.authorization_replace(held.revision, &resolved).unwrap();
+            assert!(
+                store.authorization_state().unwrap().unwrap().overflow_digest.is_some(),
+                "incomplete history remains visible to future Permit adapters"
+            );
         }
     }
 }

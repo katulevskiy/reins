@@ -580,6 +580,60 @@ async fn account_and_connection_scopes_are_isolated_and_account_case_is_canonica
 }
 
 #[tokio::test]
+async fn unrelated_policy_preserves_valid_raw_mcp_tool_names_without_collisions() {
+    let env = env(false).await;
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
+    env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+    for (index, name) in ["read/file", "read_file", "Read a file", "读文件"].into_iter().enumerate() {
+        let call =
+            request(&format!("mcp-{index}"), OLD, json!({"tool":"mcp", "server":"notes", "name":name, "arguments":{}}));
+        assert!(
+            env.core.engine().authorization_automatic(&call).unwrap(),
+            "unrelated Gmail policy must preserve {name}"
+        );
+        let normalized = env.core.engine().normalized_authorization_action(&call, "notes", unix_now()).unwrap();
+        assert_eq!(normalized.action.operation.action, "call");
+        assert_eq!(normalized.action.resource.resource_id.as_deref(), Some(name), "exact raw names remain distinct");
+    }
+}
+
+#[tokio::test]
+async fn deny_installed_during_legacy_account_discovery_prevents_integration_disclosure() {
+    let env = env(false).await;
+    env.store().remove_account("gmail", GMAIL).unwrap();
+    Mock::given(method("GET"))
+        .and(path("/users/me/profile"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"emailAddress":GMAIL})).set_delay(Duration::from_secs(1)),
+        )
+        .with_priority(1)
+        .mount(&env.gmail)
+        .await;
+    let before = env.gmail.received_requests().await.unwrap().len();
+    let engine = env.core.engine();
+    let waiting = tokio::spawn(async move {
+        engine.process_relayed(request("enumeration", OLD, json!({"tool":"list_accounts"}))).await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if env.gmail.received_requests().await.unwrap().len() > before {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let owner = env.core.engine().authorization_policies().unwrap().owner;
+    let mut policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
+    policy.scope = reins_proto::authorization::PolicyScope::default();
+    env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
+    assert!(waiting.await.unwrap().is_err());
+    assert!(env.answer("enumeration").await.is_none(), "no integration or account names were released");
+}
+
+#[tokio::test]
 async fn without_a_model_requests_wait_as_before_and_say_why() {
     let env = env(false).await;
     let settings = env.core.autopilot_settings().await.unwrap();
