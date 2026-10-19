@@ -81,7 +81,7 @@ fun AccountPermissionsScreen(
             state.account?.takeUnless { model.temporary && state.saved }?.let { view ->
                 RText(untrusted(view.scopeSummary), RType.sans(15f), c.ink, Modifier.testTag("effectiveAccountPolicy"))
                 if (!finishing) view.capabilities.forEach { capability ->
-                    capability.configuredMode?.let { RText("${untrusted(capability.title)}: ${permissionModeTitle(it)}", RType.sans(14f), c.ink) }
+                    RText("${untrusted(capability.title)}: ${untrusted(capability.scopeSummary)}", RType.sans(14f), c.ink)
                 }
                 PermissionRestrictions(view.restrictions)
                 if (!view.usageVerified) RText("Usage and remaining quota are unavailable. Automatic permissions cannot be enabled until history is verified.", RType.sans(14f), c.ink2)
@@ -148,7 +148,7 @@ fun AccountPermissionsScreen(
                 Group(header = untrusted(capability.title)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         RText(untrusted(capability.description), RType.sans(14f), c.ink2)
-                        capability.configuredMode?.let { RText("Current: ${permissionModeTitle(it)}", RType.sans(14f), c.ink) }
+                        RText("Current settings: ${untrusted(capability.scopeSummary)}", RType.sans(14f), c.ink)
                         RText(untrusted(capability.effectiveReason), RType.sans(14f), c.ink)
                         PermissionRestrictions(capability.restrictions)
                         if (model.temporary) CheckRow(rule != null, { model.include(capability.capability, it) }, enabled = !state.busy && view.usageVerified, tag = "delegationCapability:${capability.capability}") {

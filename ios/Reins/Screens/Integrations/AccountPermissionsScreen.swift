@@ -152,6 +152,7 @@ struct AccountPermissionsScreen: View {
         if !temporary || capability.supportedModes.contains(.auto) {
             Section(untrusted(capability.title)) {
                 Text(untrusted(capability.description)).foregroundStyle(Palette.ink2)
+                Text("Current settings: \(untrusted(capability.scopeSummary))")
                 Text(untrusted(capability.effectiveReason))
                 PermissionRestrictions(restrictions: capability.restrictions)
                 if temporary {
