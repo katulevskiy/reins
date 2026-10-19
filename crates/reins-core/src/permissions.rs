@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use reins_policy::{AccountsScope, Grant, Scope};
 use reins_proto::authorization::{
     Condition, OperationId, PolicyEffect, PolicyIssuer, PolicyKind, PolicyLifecycle, PolicyRecord, PolicyScope,
-    ReviewRequirement, UsageLimits,
+    UsageLimits,
 };
 use reins_proto::canon::{hex32, sha256};
 use reins_proto::ids::{ConnectionId, GrantId};
@@ -143,7 +143,8 @@ fn mode(effect: &PolicyEffect) -> PermissionMode {
             PermissionMode::Auto
         }
         PolicyEffect::Deny => PermissionMode::Block,
-        PolicyEffect::RequireReview {
+        PolicyEffect::ReviewByDefault
+        | PolicyEffect::RequireReview {
             ..
         } => PermissionMode::Ask,
     }
@@ -186,17 +187,6 @@ fn scope_summary(scope: &PermissionScopeSelection) -> String {
             }
         }
         PermissionScopeKind::SelectedResources => format!("{} selected messages", scope.ids.len()),
-    }
-}
-
-fn owner_review() -> PolicyEffect {
-    PolicyEffect::RequireReview {
-        requirements: vec![ReviewRequirement {
-            role_id: "owner".into(),
-            quorum: 1,
-            distinct_humans_group: None,
-            exclude_requester: false,
-        }],
     }
 }
 
@@ -276,7 +266,7 @@ fn rule_record(
     validate_ids(agents, automatic)?;
     let conditions = conditions(rule)?;
     let effect = match rule.mode {
-        PermissionMode::Ask => owner_review(),
+        PermissionMode::Ask => PolicyEffect::ReviewByDefault,
         PermissionMode::Auto => PolicyEffect::Permit,
         PermissionMode::Block => PolicyEffect::Deny,
     };
@@ -378,21 +368,26 @@ impl Engine {
                 p.id.starts_with(&prefix) && p.id.ends_with(&suffix) && p.lifecycle != PolicyLifecycle::Revoked
             });
             let scope = own.map_or_else(|| default_scope(capability), |p| scope_of(p, capability));
-            let actual_scope_summary =
-                if let Some(policy) = own.filter(|policy| mode(&policy.effect) != PermissionMode::Auto) {
-                    if policy.scope.connection_ids.is_empty() {
-                        "Every request of this capability from all agents".into()
-                    } else {
-                        format!(
-                            "Every request of this capability from {} selected agents",
-                            policy.scope.connection_ids.len()
-                        )
-                    }
-                } else if own.is_none() && managed {
-                    "Review by default for every agent in this account".into()
-                } else {
-                    scope_summary(&scope)
+            let actual_scope_summary = if let Some(policy) =
+                own.filter(|policy| mode(&policy.effect) != PermissionMode::Auto)
+            {
+                let behavior = match policy.effect {
+                    PolicyEffect::ReviewByDefault => "Ask by default",
+                    PolicyEffect::RequireReview {
+                        ..
+                    } => "Always Ask",
+                    _ => "Block",
                 };
+                if policy.scope.connection_ids.is_empty() {
+                    format!("{behavior} for this capability from all agents")
+                } else {
+                    format!("{behavior} for this capability from {} selected agents", policy.scope.connection_ids.len())
+                }
+            } else if own.is_none() && managed {
+                "Review by default for every agent in this account".into()
+            } else {
+                scope_summary(&scope)
+            };
             let mut floors = restrictions.clone();
             for policy in &state.policies {
                 if policy.id.starts_with(&prefix)
@@ -417,7 +412,11 @@ impl Engine {
                             PermissionController::Owner
                         },
                         policy_id: Some(policy.id.clone()),
-                        reason: "Additional policy requirements remain in force for matching actions".into(),
+                        reason: if matches!(policy.effect, PolicyEffect::RequireReview { .. }) {
+                            "Always require review for matching actions; defaults and delegations cannot override this requirement".into()
+                        } else {
+                            "Policy blocks matching actions; defaults and delegations cannot override this restriction".into()
+                        },
                     });
                 }
             }
@@ -434,6 +433,10 @@ impl Engine {
                 "Policy conflict holds execution".into()
             } else if own.is_some_and(|p| p.expires_at.is_some_and(|e| now >= e)) {
                 "This permission expired; requests require review".into()
+            } else if own.is_some_and(|p| p.effect == PolicyEffect::ReviewByDefault) {
+                "Ask by default; explicit scoped permissions or delegations may authorize matching requests. Mandatory requirements still apply".into()
+            } else if own.is_some_and(|p| matches!(p.effect, PolicyEffect::RequireReview { .. })) {
+                "Always Ask: this saved review requirement overrides automatic permissions and delegations. Saving Ask changes it to a review-by-default setting".into()
             } else if own.is_some() {
                 "Applies within the selected scope and all additional requirements".into()
             } else if managed {
@@ -712,13 +715,31 @@ impl Engine {
 
     pub fn preview_account_permissions(&self, draft: &AccountPermissionsDraft) -> Result<PermissionPreview, CoreError> {
         let (candidate, _) = self.candidate_permissions(draft)?;
-        self.permission_preview(
+        let mut preview = self.permission_preview(
             &candidate,
             &draft.service,
             &draft.account,
             draft.expected_revision,
             format!("Save {} account rules for {} selected agents", draft.rules.len(), draft.agent_ids.len()),
-        )
+        )?;
+        preview.warnings.extend(self.review_default_migration_warning(&candidate)?);
+        Ok(preview)
+    }
+
+    fn review_default_migration_warning(&self, candidate: &AuthorizationState) -> Result<Option<String>, CoreError> {
+        let current = self.authorization_policies()?;
+        let changes = current
+            .policies
+            .iter()
+            .filter(|previous| {
+                matches!(previous.effect, PolicyEffect::RequireReview { .. })
+                    && candidate
+                        .policies
+                        .iter()
+                        .any(|next| next.id == previous.id && next.effect == PolicyEffect::ReviewByDefault)
+            })
+            .count();
+        Ok((changes > 0).then(|| format!("Changing {changes} saved Always Ask requirements to Ask by default allows explicit scoped permissions and delegations to authorize matching requests. Mandatory restrictions remain in force.")))
     }
 
     pub async fn save_account_permissions(
@@ -726,7 +747,8 @@ impl Engine {
         draft: &AccountPermissionsDraft,
         owner: &dyn OwnerCheck,
     ) -> Result<AccountPermissionsView, CoreError> {
-        self.candidate_permissions(draft)?;
+        let (candidate, _) = self.candidate_permissions(draft)?;
+        let migration = self.review_default_migration_warning(&candidate)?.unwrap_or_default();
         self.admissions(
             &draft.service,
             &draft.account,
@@ -737,7 +759,7 @@ impl Engine {
         )
         .await?;
         let summary = format!(
-            "Save {} permissions for {}. {} selected agents{}. Ask/Block covers all requests of that capability from those agents. Automatic permissions expire at {:?}, with at most {:?} further uses per capability. {} Existing mandatory requirements remain in force.",
+            "Save {} permissions for {}. {} selected agents{}. Ask reviews by default; explicit scoped permissions or delegations may authorize matching requests. Block always denies matching requests. Automatic permissions expire at {:?}, with at most {:?} further uses per capability. {} Existing mandatory requirements remain in force. {}",
             draft.rules.len(),
             draft.account,
             draft.agent_ids.len(),
@@ -762,7 +784,8 @@ impl Engine {
                     }
                 ))
                 .collect::<Vec<_>>()
-                .join("; ")
+                .join("; "),
+            migration
         );
         if !owner.confirm(summary).await.map_err(|_| CoreError::invalid("the owner check failed"))? {
             return Err(CoreError::invalid("the owner did not confirm these account permissions"));

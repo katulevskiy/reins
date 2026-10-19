@@ -94,6 +94,7 @@ impl AuthorizationState {
                 reins_proto::authorization::PolicyEffect::Permit
                     | reins_proto::authorization::PolicyEffect::EligibleForAuto
                     | reins_proto::authorization::PolicyEffect::DelegationAuthority
+                    | reins_proto::authorization::PolicyEffect::ReviewByDefault
             ) && (policy.scope.account_ids.is_empty()
                 || policy
                     .scope
@@ -101,7 +102,9 @@ impl AuthorizationState {
                     .iter()
                     .any(|account| !self.managed_scopes.iter().any(|scope| &scope.account_id == account)))
             {
-                return Err(CoreError::invalid("authorizing policy requires permanent managed account markers"));
+                return Err(CoreError::invalid(
+                    "automatic permissions and review defaults require permanent managed account markers",
+                ));
             }
             if policy.issuer.principal_id != self.owner || !ids.insert(&policy.id) {
                 return Err(CoreError::invalid("authorization policy has another owner or a duplicate identity"));
@@ -435,6 +438,26 @@ mod tests {
             store.meta_set(RECORD_KEY, raw).unwrap();
             assert!(store.authorization_state().is_err());
         }
+    }
+
+    #[test]
+    fn restored_soft_review_defaults_require_permanent_managed_account_markers() {
+        let mut state = state();
+        let policy = &mut state.policies[0];
+        policy.kind = PolicyKind::AccountDefault;
+        policy.effect = PolicyEffect::ReviewByDefault;
+        policy.scope.account_ids = vec!["account".into()];
+        assert!(state.validate().is_err(), "otherwise a narrowing-only gate could ignore an imported default");
+        state.managed_scopes.insert(ManagedOperation {
+            account_id: "account".into(),
+            operation: state.policies[0].scope.operations[0].clone(),
+        });
+        state.validate().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let store = open(dir.path());
+        store.authorization_replace(0, &state).unwrap();
+        let restored = store.authorization_state().unwrap().unwrap();
+        assert_eq!(restored, state);
     }
 
     #[test]

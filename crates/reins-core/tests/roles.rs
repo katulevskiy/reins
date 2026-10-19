@@ -2098,6 +2098,107 @@ impl reins_core::OwnerCheck for PermissionOwner {
     }
 }
 
+#[tokio::test]
+async fn ask_default_allows_scoped_delegation_but_preserves_saved_hard_reviews_until_owner_changes_them() {
+    use reins_proto::authorization::{PolicyEffect, PolicyKind, ReviewRequirement};
+
+    struct ConfirmedReasons(Arc<Mutex<Vec<String>>>);
+    #[async_trait::async_trait]
+    impl reins_core::OwnerCheck for ConfirmedReasons {
+        async fn confirm(&self, reason: String) -> Result<bool, reins_core::ForeignError> {
+            self.0.lock().unwrap().push(reason);
+            Ok(true)
+        }
+    }
+
+    let mut world = world().await;
+    let gmail = MockServer::start().await;
+    let core = permission_phone(&mut world, &gmail).await;
+    core.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+    let mut defaults = core
+        .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+        .await
+        .unwrap();
+    defaults.agent_ids = vec!["c1".into()];
+    defaults.grant_account_access = true;
+    let saved = core.save_account_permissions(defaults, Arc::new(PermissionOwner)).await.unwrap();
+    assert!(saved.capabilities.iter().all(|view| view.effective_reason.contains("Ask by default")));
+    core.set_autopilot_mode(None, Some(AutopilotMode::Bypass), Some(30)).await.unwrap();
+    core.engine().process_relayed(permission_send("soft-default-alone", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 0, "soft Ask cannot revive Bypass or old grants");
+
+    let mut delegation = core.delegation_draft("gmail".into(), EMAIL.into()).await.unwrap();
+    delegation.agent_ids = vec!["c1".into()];
+    delegation.max_uses = 3;
+    delegation.rules = vec![CapabilityPermissionInput {
+        capability: PermissionCapability::MailSend,
+        mode: PermissionMode::Auto,
+        scope: PermissionScopeSelection {
+            kind: PermissionScopeKind::SelectedRecipients,
+            ids: vec!["friend@example.com".into()],
+        },
+    }];
+    core.issue_delegation(delegation, Arc::new(PermissionOwner)).await.unwrap();
+    core.engine().process_relayed(permission_send("soft-default-delegated", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 1);
+
+    // A record written by an older app remains a hard obligation, including personal AccountDefault records.
+    let engine = core.engine();
+    let state = engine.authorization_policies().unwrap();
+    let mut hard = state
+        .policies
+        .iter()
+        .find(|policy| {
+            policy.kind == PolicyKind::AccountDefault && policy.scope.operations.iter().any(|op| op.action == "send")
+        })
+        .unwrap()
+        .clone();
+    hard.revision += 1;
+    hard.effect = PolicyEffect::RequireReview {
+        requirements: vec![ReviewRequirement {
+            role_id: "owner".into(),
+            quorum: 1,
+            distinct_humans_group: None,
+            exclude_requester: false,
+        }],
+    };
+    engine.save_authorization_policy(state.revision, hard.clone(), &PermissionOwner).await.unwrap();
+    let view = core.account_permissions("gmail".into(), EMAIL.into()).await.unwrap();
+    assert!(
+        view.capabilities
+            .iter()
+            .find(|view| view.capability == PermissionCapability::MailSend)
+            .unwrap()
+            .effective_reason
+            .contains("Always Ask")
+    );
+    engine.process_relayed(permission_send("saved-hard-review", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 1, "new effect never reinterprets old RequireReview");
+    let draft =
+        core.account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::Custom).await.unwrap();
+    let preview = core.preview_account_permissions(draft.clone()).await.unwrap();
+    assert!(preview.warnings.iter().any(|warning| warning.contains("Always Ask") && warning.contains("delegations")));
+    let reasons = Arc::new(Mutex::new(vec![]));
+    core.save_account_permissions(draft, Arc::new(ConfirmedReasons(Arc::clone(&reasons)))).await.unwrap();
+    assert!(reasons.lock().unwrap().iter().any(|reason| reason.contains("Changing 1 saved Always Ask")));
+    engine.process_relayed(permission_send("owner-changed-default", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 2);
+
+    let state = engine.authorization_policies().unwrap();
+    hard.id = "mandatory-always-ask".into();
+    hard.revision = 1;
+    hard.kind = PolicyKind::Mandatory;
+    engine.save_authorization_policy(state.revision, hard.clone(), &PermissionOwner).await.unwrap();
+    engine.process_relayed(permission_send("mandatory-review-delegated", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 2, "mandatory review still wins over delegation");
+    let state = engine.authorization_policies().unwrap();
+    hard.id = "mandatory-deny".into();
+    hard.effect = PolicyEffect::Deny;
+    engine.save_authorization_policy(state.revision, hard, &PermissionOwner).await.unwrap();
+    engine.process_relayed(permission_send("mandatory-deny-delegated", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 2, "mandatory Deny still wins");
+}
+
 struct SendStarted(Arc<tokio::sync::Notify>);
 impl Respond for SendStarted {
     fn respond(&self, _request: &Request) -> ResponseTemplate {

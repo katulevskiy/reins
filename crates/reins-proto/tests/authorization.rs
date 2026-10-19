@@ -194,3 +194,29 @@ fn delegation_parents_expiry_and_explicit_currency_are_required() {
     p["limits"]["cost_currency"] = json!("NEW_CURRENCY");
     assert!(parse_policy(&p).is_err());
 }
+
+#[test]
+fn review_by_default_is_strictly_personal_non_authorizing_account_policy() {
+    let mut value = policy_json();
+    value["kind"] = json!("account_default");
+    value["effect"] = json!({"type":"review_by_default"});
+    value["limits"] = json!({"max_uses":null,"max_cost_microunits":null,"cost_currency":null});
+    assert_eq!(serde_json::to_value(parse_policy(&value).unwrap()).unwrap(), value);
+    for kind in ["mandatory", "permission", "delegation"] {
+        let mut invalid = value.clone();
+        invalid["kind"] = json!(kind);
+        assert!(parse_policy(&invalid).is_err(), "{kind}");
+    }
+    let mut invalid = value.clone();
+    invalid["issuer"]["tenant_id"] = json!("corporation");
+    assert!(parse_policy(&invalid).is_err());
+    invalid = value.clone();
+    invalid["effect"]["requirements"] = json!([]);
+    assert!(parse_policy(&invalid).is_err(), "unknown constraints must not disappear");
+    invalid = value.clone();
+    invalid["limits"]["max_uses"] = json!(1);
+    assert!(parse_policy(&invalid).is_err(), "a default cannot consume execution authority");
+    invalid = value;
+    invalid["parent_policy_ids"] = json!(["authority"]);
+    assert!(parse_policy(&invalid).is_err(), "a default cannot stand in for a delegation");
+}

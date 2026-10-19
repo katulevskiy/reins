@@ -241,6 +241,8 @@ pub enum PolicyEffect {
     RequireReview {
         requirements: Vec<ReviewRequirement>,
     },
+    /// Personal account fallback, not a review obligation or execution authority. Explicit permissions may override it.
+    ReviewByDefault,
     Permit,
     EligibleForAuto,
     /// An upper bound available for issuing delegations. It grants no execution authority by itself.
@@ -258,6 +260,7 @@ impl<'de> Deserialize<'de> for PolicyEffect {
             RequireReview {
                 requirements: Vec<ReviewRequirement>,
             },
+            ReviewByDefault {},
             Permit {},
             EligibleForAuto {},
             DelegationAuthority {},
@@ -269,6 +272,7 @@ impl<'de> Deserialize<'de> for PolicyEffect {
             } => Self::RequireReview {
                 requirements,
             },
+            StrictEffect::ReviewByDefault {} => Self::ReviewByDefault,
             StrictEffect::Permit {} => Self::Permit,
             StrictEffect::EligibleForAuto {} => Self::EligibleForAuto,
             StrictEffect::DelegationAuthority {} => Self::DelegationAuthority,
@@ -410,6 +414,11 @@ impl PolicyRecord {
         }
         if self.effect == PolicyEffect::DelegationAuthority && self.kind != PolicyKind::Permission {
             return Err(invalid("policy.effect", "delegation authority must be a permission"));
+        }
+        if self.effect == PolicyEffect::ReviewByDefault
+            && (self.kind != PolicyKind::AccountDefault || self.issuer.tenant_id.is_some())
+        {
+            return Err(invalid("policy.effect", "review by default is only a personal account default"));
         }
         if self.kind == PolicyKind::Delegation {
             if self.parent_policy_ids.is_empty()
