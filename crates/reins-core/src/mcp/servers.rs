@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crate::authorization_trace::{AuthorizationInvocation, AuthorizationPhase, AuthorizationTrace, RESULT_WITHHELD};
 use reins_proto::ids::ConnectionId;
 use reins_proto::remote_mcp::{MAX_SERVERS, McpServerReport, ProxyCall};
 use serde_json::{Map, Value, json};
@@ -27,14 +28,16 @@ const EXPIRY_MARGIN_SECS: i64 = 60;
 const MAX_TOKEN_LEN: usize = 8_192;
 
 /// One request to a server.
-pub enum Op<'a> {
+pub(crate) enum Op<'a> {
     ListTools,
     Call {
+        authorization: &'a AuthorizationInvocation<'a>,
         tool: &'a str,
         arguments: &'a Map<String, Value>,
     },
     /// A call the Reins server makes for the phone (a heavy tool).
     Proxy {
+        authorization: &'a AuthorizationInvocation<'a>,
         tool: &'a str,
         arguments: &'a Map<String, Value>,
         connection_id: &'a ConnectionId,
@@ -42,9 +45,11 @@ pub enum Op<'a> {
     },
 }
 
-pub enum Output {
+pub(crate) enum Output {
     Tools(Vec<McpTool>),
-    Result(Value),
+    Result(Value, Option<Box<AuthorizationTrace>>),
+    /// The provider returned success, but a later policy check prohibits releasing its result.
+    Withheld(Option<Box<AuthorizationTrace>>),
 }
 
 /// Why a request to a server failed.
@@ -56,6 +61,9 @@ pub enum Failure {
         challenge: Option<String>,
     },
     Mcp(McpError),
+    SucceededWithheld {
+        trace: Option<Box<AuthorizationTrace>>,
+    },
 }
 
 impl From<CoreError> for Failure {
@@ -68,6 +76,9 @@ impl Failure {
     /// What the app shows.
     pub fn into_core(self, server_name: &str) -> CoreError {
         match self {
+            Self::SucceededWithheld {
+                ..
+            } => CoreError::invalid(RESULT_WITHHELD),
             Self::NeedsSignIn {
                 ..
             } => CoreError::needs_attention(format!("Sign in to {server_name} again under MCP servers.")),
@@ -194,17 +205,35 @@ impl Engine {
             self.mcp.sessions.lock().await.insert(server.id.clone(), conn.clone());
             conn
         };
-        match op {
-            Op::ListTools => endpoint.list_tools(&conn).await.map(Output::Tools),
+        let invocation = match op {
+            Op::ListTools => return endpoint.list_tools(&conn).await.map(Output::Tools),
+            Op::Call {
+                authorization,
+                ..
+            }
+            | Op::Proxy {
+                authorization,
+                ..
+            } => *authorization,
+        };
+        let request = invocation.request;
+        let source = invocation.source;
+        // Token renewal/session initialization and every retry can suspend: check at the actual tools/call boundary.
+        invocation.begin(self)?;
+        let trace = self.authorization_attempt_started(request, source)?;
+        let result = match op {
+            Op::ListTools => unreachable!("returned above"),
             Op::Call {
                 tool,
                 arguments,
-            } => endpoint.call_tool(&conn, tool, arguments).await.map(Output::Result),
+                ..
+            } => endpoint.call_tool(&conn, tool, arguments).await,
             Op::Proxy {
                 tool,
                 arguments,
                 connection_id,
                 session,
+                ..
             } => {
                 let (_, request) = endpoint.request("tools/call", &json!({"name": tool, "arguments": arguments}));
                 let call = ProxyCall {
@@ -214,34 +243,47 @@ impl Engine {
                     headers: endpoint.headers(Some(&conn)),
                     request,
                 };
-                let answer = server_api::proxy_call(session, &call).await?;
-                drop(call);
-                if answer.session_id.is_some() && answer.session_id != conn.session_id {
-                    let renewed = Connected {
-                        session_id: answer.session_id.clone(),
-                        protocol: conn.protocol.clone(),
-                    };
-                    self.mcp.sessions.lock().await.insert(server.id.clone(), renewed);
-                }
-                match answer.status {
-                    401 => {
-                        return Err(McpError::Unauthorized {
-                            challenge: None,
-                        });
+                // Keep failure classification in this future so every attempted call records an unknown outcome.
+                async {
+                    let answer = server_api::proxy_call(session, &call).await?;
+                    if answer.session_id.is_some() && answer.session_id != conn.session_id {
+                        let renewed = Connected {
+                            session_id: answer.session_id.clone(),
+                            protocol: conn.protocol.clone(),
+                        };
+                        self.mcp.sessions.lock().await.insert(server.id.clone(), renewed);
                     }
-                    404 if conn.session_id.is_some() => return Err(McpError::SessionGone),
-                    200..=299 => {}
-                    other => return Err(McpError::Status(other)),
+                    match answer.status {
+                        401 => {
+                            return Err(McpError::Unauthorized {
+                                challenge: None,
+                            });
+                        }
+                        404 if conn.session_id.is_some() => return Err(McpError::SessionGone),
+                        200..=299 => {}
+                        other => return Err(McpError::Status(other)),
+                    }
+                    let message = answer.response.ok_or_else(|| McpError::Protocol("no answer".to_owned()))?;
+                    let result = result_of(message)?;
+                    if result.is_object() {
+                        Ok(result)
+                    } else {
+                        Err(McpError::Protocol("the tool result is not an object".to_owned()))
+                    }
                 }
-                let message = answer.response.ok_or_else(|| McpError::Protocol("no answer".to_owned()))?;
-                let result = result_of(message)?;
-                if result.is_object() {
-                    Ok(Output::Result(result))
-                } else {
-                    Err(McpError::Protocol("the tool result is not an object".to_owned()))
-                }
+                .await
             }
+        };
+        if result.is_err()
+            && let Some(trace) = &trace
+        {
+            self.authorization_attempt_event(request, trace, AuthorizationPhase::Unknown)?;
         }
+        if result.is_ok() && self.authorization_execute(request, source).is_err() {
+            // This distinct outcome carries no provider content and cannot be mistaken for a failed write.
+            return Ok(Output::Withheld(trace.map(Box::new)));
+        }
+        result.map(|value| Output::Result(value, trace.map(Box::new)))
     }
 
     /// Runs one request on `server`: a session is opened when there is none, an expired token renewed once, an
@@ -496,7 +538,7 @@ impl Engine {
                 self.mcp_report_now().await;
                 self.mcp_view(&server.id)
             }
-            Ok(Output::Result(_)) => Err(CoreError::storage("unexpected answer")),
+            Ok(Output::Result(..) | Output::Withheld(_)) => Err(CoreError::storage("unexpected answer")),
             Err(f) => {
                 if let Failure::Mcp(e) = &f {
                     self.store.mcp_set_status(&server.id, "error", Some(&e.describe())).ok();
