@@ -350,22 +350,26 @@ final class ActivityFlowTests: XCTestCase {
         }
     }
 
-    /// Moves the list by `dy` without pressing `row`. The mood line when it is on screen; otherwise a point in the
-    /// open list that is not the row.
+    /// Moves the list without pressing `row`. Use fixed screen coordinates in the middle of the visible band:
+    /// a mood-line drag can end above the screen, and XCTest may omit the status bar, making y=28 look like list
+    /// content even though a gesture there belongs to the system. Both ends must stay in the central band.
     private func nudge(_ app: XCUIApplication, dy: CGFloat, avoiding row: XCUIElement) {
         let band = listBand(app).band
-        let mood = element(app, "activityMood")
-        let clearOfRow = !row.frame.insetBy(dx: -8, dy: -8).intersects(mood.frame)
-        if mood.exists, mood.isHittable, mood.frame.height > 1, clearOfRow, band.intersects(mood.frame) {
-            drag(mood, dy: dy, speed: 700, hold: 0.25)
+        let safe = band.insetBy(dx: 0, dy: band.height * 0.2)
+        let blocked = row.frame.insetBy(dx: -12, dy: -12)
+        let firstY = max(safe.minY, safe.minY - dy)
+        let lastY = min(safe.maxY, safe.maxY - dy)
+        let candidates = [(firstY + lastY) / 2, firstY, lastY]
+        guard firstY <= lastY,
+              let y = candidates.first(where: { !blocked.contains(CGPoint(x: band.midX, y: $0)) }) else {
+            XCTFail("no clear centering drag inside \(safe), avoiding \(row.frame), travel \(dy)")
             return
         }
-        let blocked = row.frame.insetBy(dx: -12, dy: -12)
-        let candidates = [band.minY + 28, band.midY, band.maxY - 28]
-        let y = candidates.first { !blocked.contains(CGPoint(x: band.midX, y: $0)) } ?? band.midY
-        let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: band.midX, dy: y))
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let start = origin.withOffset(CGVector(dx: band.midX, dy: y))
+        let end = origin.withOffset(CGVector(dx: band.midX, dy: y + dy))
         start.press(
-            forDuration: 0.02, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)),
+            forDuration: 0.02, thenDragTo: end,
             withVelocity: XCUIGestureVelocity(rawValue: 700), thenHoldForDuration: 0.25
         )
     }
@@ -455,13 +459,18 @@ final class ActivityFlowTests: XCTestCase {
 
     func testAScrollStartingOnAWaitingCardScrollsAndOpensNothing() {
         let app = launch()
-        let card = element(app, "pending:req1")
+        // The first card is already at the top scroll limit and cannot be centred with room to drag down.
+        // Expand the stack and use the third card, with content above and below for both directions.
+        let toggle = element(app, "stackToggle")
+        expectToAppear(toggle)
+        toggle.tap()
+        let card = element(app, "pending:req3")
         expectToAppear(card)
         // On its ask, above its buttons.
         assertScrollsFrom(app, card, at: CGVector(dx: 0.5, dy: 0.3))
         XCTAssertTrue(card.exists, "the card was not answered")
         // A tap still opens it.
-        element(app, "pendingTitle:req1").tap()
+        element(app, "pendingTitle:req3").tap()
         XCTAssertTrue(element(app, "approvalSheet").waitForExistence(timeout: 5))
     }
 
