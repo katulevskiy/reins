@@ -97,7 +97,9 @@ async fn env() -> Env {
         .with_priority(200)
         .mount(&gmail)
         .await;
-    core.add_account(GMAIL.to_owned()).await.unwrap();
+    // Exercise legacy lazy account migration; this suite verifies existing pre-policy grants.
+    let _missing_message = core.engine().fetch_email(None, "").await;
+    assert!(core.accounts().await.unwrap().iter().any(|account| account.account == GMAIL));
     Env {
         server,
         gmail,
@@ -970,7 +972,7 @@ fn send_grant(domain: &str) -> StandingGrant {
 }
 
 #[tokio::test]
-async fn sending_needs_approval_then_a_standing_grant_and_failures_refund() {
+async fn sending_needs_approval_then_a_standing_grant_and_ambiguous_failures_retain_usage() {
     let env = env().await;
     Mock::given(method("POST"))
         .and(path("/users/me/messages/send"))
@@ -999,14 +1001,14 @@ async fn sending_needs_approval_then_a_standing_grant_and_failures_refund() {
     let grant = &env.core.grants().await.unwrap()[0];
     assert_eq!((grant.action.as_str(), grant.uses, grant.max_uses), ("send", 0, Some(1)));
 
-    // Covered by the grant, but Gmail now fails: the AI gets an error and the use is refunded.
+    // Provider invocation failed without a definitive outcome: the request reports Unknown and retains its use.
     serve_pending(&env, &[send_request("s2", "c1", "peer@work.com")], &[]).await;
     env.core.sync(0).await.unwrap();
     let sent = answers(&env).await;
     assert_eq!(sent[1].0, "s2");
     assert_eq!(sent[1].1["outcome"], "error");
-    assert!(sent[1].1["message"].as_str().unwrap().starts_with("Gmail could not complete the request"));
-    assert_eq!(env.core.grants().await.unwrap()[0].uses, 0, "nothing was sent, so the use is back");
+    assert!(sent[1].1["message"].as_str().unwrap().contains("outcome is unknown"));
+    assert_eq!(env.core.grants().await.unwrap()[0].uses, 1, "a provider error does not prove that no email was sent");
     // Outside the granted domain it still needs approval.
     serve_pending(&env, &[send_request("s3", "c1", "x@evil.com")], &[]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
@@ -1524,9 +1526,10 @@ async fn a_request_is_served_from_the_account_it_names_and_grants_stay_with_that
     let entry = &env.core.activity(1).await.unwrap()[0];
     assert_eq!(entry.account.as_deref(), Some(WORK));
 
-    // The same kind of request is now answered for the work account and still asked for the personal one.
+    // A newly connected work account keeps Review required; its legacy read grant cannot bypass that default.
     serve_pending(&env, &[for_account(search_request("r2", "c1", "Claude", "again"), WORK)], &[]).await;
-    assert!(env.core.sync(0).await.unwrap().is_empty(), "covered by the work grant");
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
+    env.core.approve("r2".into(), choice(&["w1"], None)).await.unwrap();
     serve_gmail_account(&env, GMAIL, &[("p2", "boss@corp.com")]).await;
     serve_pending(&env, &[for_account(search_request("r3", "c1", "Claude", "again"), GMAIL)], &[]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 1, "the grant does not reach the personal account");
