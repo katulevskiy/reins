@@ -69,11 +69,11 @@ final class ActivitySearchTests: XCTestCase {
         var stamps = (1...11).map { stamp(Int64($0), noon) }
         stamps += [stamp(12, noon, .denied), stamp(13, noon, .denied), stamp(14, noon, .failed)]
         let day = ActivityDays.group(stamps, calendar: utc)[0]
-        XCTAssertEqual(ActivityDays.summary(day), "14 · 2 denied · 1 failed")
+        XCTAssertEqual(ActivityDays.summary(day), "14 · 2 denied · 1 needs attention")
         XCTAssertEqual(ActivityDays.summary(ActivityDay(key: "", start: .now, end: .now, count: 14, denied: 2)), "14 · 2 denied")
-        XCTAssertEqual(ActivityDays.summary(ActivityDay(key: "", start: .now, end: .now, count: 3, failed: 1)), "3 · 1 failed")
+        XCTAssertEqual(ActivityDays.summary(ActivityDay(key: "", start: .now, end: .now, count: 3, failed: 1)), "3 · 1 needs attention")
         XCTAssertEqual(ActivityDays.summary(ActivityDay(key: "", start: .now, end: .now, count: 14)), "14")
-        XCTAssertEqual(ActivityDays.spoken("Today", day), "Today, 14 entries, 2 denied, 1 failed")
+        XCTAssertEqual(ActivityDays.spoken("Today", day), "Today, 14 entries, 2 denied, 1 needs attention")
     }
 
     func testAnEntryIsStampedAsTheCoreStampsIt() {

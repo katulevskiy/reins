@@ -494,7 +494,7 @@ fn filters(q: &ActivityQuery, fts: Option<&str>) -> (String, Vec<Sql>) {
         .flat_map(|o| match o {
             ActivityOutcome::Approved => &["released", "sent", "granted"][..],
             ActivityOutcome::Denied => &["denied"][..],
-            ActivityOutcome::Failed => &["error"][..],
+            ActivityOutcome::Failed => &["error", "started", "unknown", "succeeded_withheld"][..],
         })
         .map(|s| (*s).to_owned())
         .collect();

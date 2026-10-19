@@ -233,9 +233,11 @@ async fn files_through_the_server() -> String {
         selected_message_ids: ids.iter().map(|i| (*i).to_owned()).collect(),
         standing: None,
     };
-    let refused = core.approve("f2".to_owned(), pick(&[])).await.unwrap_err();
-    assert!(refused.to_string().contains("does not accept the token"), "{refused}");
-    core.deny("f2".to_owned()).await.unwrap();
+    core.approve("f2".to_owned(), pick(&[])).await.unwrap();
+    let refused = common::mcp_mock::bodies(&server, "POST", "/reins/api/requests/f2/response").await.pop().unwrap();
+    assert_eq!(refused["outcome"], "error");
+    assert!(refused["message"].as_str().unwrap().contains("Do not repeat"));
+    assert!(core.approve("f2".to_owned(), pick(&[])).await.is_err());
     core.approve("f3".to_owned(), pick(&["me/app:asset:3"])).await.unwrap();
     let after =
         format!("{refused} {refused:?} {:?} {:?}", core.activity(50).await.unwrap(), core.grants().await.unwrap());
@@ -559,7 +561,10 @@ async fn mcp_through_the_phone() -> String {
     // Then nothing works any more.
     state.lock().unwrap().valid_token = Some("nobody".to_owned());
     core.engine().process_relayed(relay("m3", "tracker")).await.unwrap();
-    let failed = core.approve("m3".to_owned(), approve_once()).await.unwrap_err();
+    core.approve("m3".to_owned(), approve_once()).await.unwrap();
+    let failed = common::mcp_mock::bodies(&rw, "POST", "/reins/api/requests/m3/response").await.pop().unwrap();
+    assert_eq!(failed["outcome"], "error");
+    assert!(failed["message"].as_str().unwrap().contains("Do not repeat"));
     let refreshed = core.mcp_refresh("tracker".to_owned()).await.unwrap();
     let after = format!(
         "{wrong} {wrong:?} {failed} {failed:?} {refreshed:?} {:?} {:?} {:?}",

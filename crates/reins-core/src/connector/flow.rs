@@ -5,6 +5,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{Item, items_json};
+use crate::authorization::AuthorizationSource;
+use crate::authorization_trace::{
+    AuthorizationInvocation, AuthorizationPhase, AuthorizationTrace, OUTCOME_UNKNOWN, RESULT_WITHHELD,
+};
 use crate::engine::Engine;
 use crate::session::Session;
 use crate::store::{AuditMessage, AuditRecord, unix_now};
@@ -16,6 +20,14 @@ use reins_proto::connector::{ConnectorCall, Effect, normalize_account_name};
 use reins_proto::desktop;
 use reins_proto::ids::{ConnectionId, GrantId};
 use reins_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
+
+/// A final gate failure never invokes the provider. Once invoked, keep its actual response separate from a later
+/// disclosure restriction, so withheld results cannot pretend the write failed and cause an automatic retry.
+struct WriteAttempt {
+    result: Result<serde_json::Value, CoreError>,
+    trace: Option<AuthorizationTrace>,
+    disclosure_error: Option<CoreError>,
+}
 
 /// How long a one-time pass lasts after the user approved a request the AI had already stopped waiting for.
 const RETRY_PASS_SECS: i64 = 15 * 60;
@@ -154,6 +166,29 @@ impl Engine {
         .await
     }
 
+    async fn finish_connector_unknown(
+        &self,
+        session: &Session,
+        request: &RelayRequest,
+        call: &ConnectorCall,
+        message: &str,
+        trace: Option<&AuthorizationTrace>,
+    ) -> Result<(), CoreError> {
+        let mut audit = self.audit_connector(request, call, action_of(call), "unknown", message, None, &[]);
+        if let Some(trace) = trace {
+            trace.stamp(&mut audit, AuthorizationPhase::Unknown);
+        }
+        self.finish(
+            session,
+            request,
+            audit,
+            RelayOutcome::Error {
+                message: message.to_owned(),
+            },
+        )
+        .await
+    }
+
     /// Handles a call to another integration received from the server.
     pub(crate) async fn handle_connector(
         &self,
@@ -249,6 +284,7 @@ impl Engine {
                 connector.preview(&account, call).await
             };
             // A store's tokens go to integrations this phone must have.
+            self.authorization_preflight(&request)?;
             let previewed = previewed.and_then(|p| {
                 if is_secrets_store(call) {
                     self.check_store_tokens(&p).map(|()| p)
@@ -266,7 +302,7 @@ impl Engine {
             // A release of secrets is covered only by a permission bound to everything it is about.
             let mut granted_command = None;
             // A change that is asked for every time never looks at the permissions.
-            let covered = if once {
+            let covered = if once || !self.authorization_automatic(&request)? {
                 BTreeMap::new()
             } else if is_env_release(call) {
                 let ask = match crate::connector::vault::release_ask(call) {
@@ -294,10 +330,28 @@ impl Engine {
                 )?
             };
             if let Some(grant) = covered.get(&preview.resource) {
-                return match self.perform_write(&request, connector.as_ref(), &account, call, granted_command).await {
+                let attempt = match self
+                    .perform_write(
+                        &request,
+                        connector.as_ref(),
+                        &account,
+                        call,
+                        granted_command,
+                        AuthorizationSource::Automatic,
+                    )
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        // The final gate failed before invocation, so no external action was attempted.
+                        self.store.refund(&BTreeSet::from([grant.clone()]))?;
+                        return self.fail_connector(session, &request, call, &e).await;
+                    }
+                };
+                return match attempt.result {
                     Ok(data) => {
                         let detail = format!("done: {}", preview.lines.first().map_or("", String::as_str));
-                        let audit = self.audit_connector(
+                        let mut audit = self.audit_connector(
                             &request,
                             call,
                             action_of(call),
@@ -306,22 +360,35 @@ impl Engine {
                             Some(grant.0.clone()),
                             &[],
                         );
-                        self.finish(
-                            session,
-                            &request,
-                            audit,
-                            RelayOutcome::Result {
+                        if let Some(trace) = attempt.trace {
+                            trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
+                        }
+                        let outcome = match attempt.disclosure_error {
+                            Some(_error) => {
+                                "succeeded_withheld".clone_into(&mut audit.outcome);
+                                audit.info.note = Some("The provider returned success; its result was withheld because policy changed while it was running.".to_owned());
+                                RelayOutcome::Error {
+                                    message: RESULT_WITHHELD.to_owned(),
+                                }
+                            }
+                            None => RelayOutcome::Result {
                                 result: ToolResult::Connector {
                                     data,
                                 },
                             },
-                        )
-                        .await
+                        };
+                        self.finish(session, &request, audit, outcome).await
                     }
                     Err(e) => {
-                        // Nothing happened: give the reserved use back.
-                        self.store.refund(&BTreeSet::from([grant.clone()]))?;
-                        self.fail_connector(session, &request, call, &e).await
+                        // Invocation began: a failed response cannot prove that the provider did not act.
+                        self.finish_connector_unknown(
+                            session,
+                            &request,
+                            call,
+                            &format!("{} {OUTCOME_UNKNOWN}", ai_message(&call.service, &e)),
+                            attempt.trace.as_ref(),
+                        )
+                        .await
                     }
                 };
             }
@@ -337,7 +404,10 @@ impl Engine {
             );
         }
 
-        let items = match connector.fetch(&account, call).await {
+        let fetched = connector.fetch(&account, call).await;
+        // Recheck even provider errors: a late deny must not disclose content through an error message.
+        self.authorization_preflight(&request)?;
+        let items = match fetched {
             Ok(items) => items,
             Err(e) => return self.fail_connector(session, &request, call, &e).await,
         };
@@ -345,20 +415,26 @@ impl Engine {
         let resources: Vec<String> =
             items.iter().map(|i| i.resource.clone()).collect::<BTreeSet<_>>().into_iter().collect();
         let any_sensitive = items.iter().any(|i| i.sensitive);
-        let mut covered = self.store.service_reserve(
-            &request.connection_id,
-            Some(&account),
-            &call.service,
-            access,
-            "",
-            &call.op,
-            &resources,
-            !any_sensitive,
-            now,
-        )?;
+        let automatic = self.authorization_automatic(&request)?;
+        let mut covered = if automatic {
+            self.store.service_reserve(
+                &request.connection_id,
+                Some(&account),
+                &call.service,
+                access,
+                "",
+                &call.op,
+                &resources,
+                !any_sensitive,
+                now,
+            )?
+        } else {
+            BTreeMap::new()
+        };
         // A list no grant covers may still be covered by a grant for this integration's headlines (the starting
         // rule): then only the names go out, nothing inside them. Never with a code or a secret among them.
-        let headlines = if !any_sensitive
+        let headlines = if automatic
+            && !any_sensitive
             && !items.iter().any(|i| i.secret)
             && covered.len() < resources.len()
             && crate::starter::headlines_cover(call)
@@ -375,16 +451,26 @@ impl Engine {
         } else {
             items
         };
-        if !any_sensitive && (items.is_empty() || covered.len() == resources.len()) {
-            self.authorization_preflight(&request)?;
+        if automatic && !any_sensitive && (items.is_empty() || covered.len() == resources.len()) {
+            AuthorizationInvocation::new(&request, AuthorizationSource::Automatic).begin(self)?;
+            let trace = self.authorization_attempt_started(&request, AuthorizationSource::Automatic)?;
             // Content too large to go inline becomes a download link, now that it is released.
-            let items = match self.deliver_files(session, connector.as_ref(), &account, &request, items).await {
+            let items = match self
+                .deliver_files(session, connector.as_ref(), &account, &request, items, AuthorizationSource::Automatic)
+                .await
+            {
                 Ok(items) => items,
-                Err(e) => {
-                    self.store.refund(&covered.values().cloned().collect())?;
-                    return self.fail_connector(session, &request, call, &e).await;
+                Err(_error) => {
+                    if let Some(trace) = &trace {
+                        self.authorization_attempt_event(&request, trace, AuthorizationPhase::Unknown)?;
+                    }
+                    // A partial file handoff may already have disclosed content; do not refund its authority.
+                    return self
+                        .finish_connector_unknown(session, &request, call, OUTCOME_UNKNOWN, trace.as_ref())
+                        .await;
                 }
             };
+            self.authorization_disclosure_check(&request, AuthorizationSource::Automatic, trace.as_ref())?;
             let refs: Vec<&Item> = items.iter().collect();
             let grant = covered.values().next().map(|g| g.0.clone());
             let mut detail = released_detail(call, refs.len());
@@ -394,6 +480,9 @@ impl Engine {
             let mut audit = self.audit_connector(&request, call, action_of(call), "released", &detail, grant, &refs);
             if headlines {
                 audit.info.note = Some("Names only. Nothing inside was shared.".to_owned());
+            }
+            if let Some(trace) = trace {
+                trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
             }
             let data = items_json(effect, &refs);
             return self
@@ -446,6 +535,7 @@ impl Engine {
         parked: &ParkedRequest,
         choice: &ApprovalChoice,
         now: i64,
+        source: AuthorizationSource,
     ) -> Result<(), CoreError> {
         let ToolCall::Connector(call) = &parked.request.call else {
             return Err(CoreError::invalid("not a request to another integration"));
@@ -507,35 +597,74 @@ impl Engine {
                 Some((Scope::Secrets(s), ends)) => Some((s.command.clone(), ends)),
                 _ => None,
             };
-            // The action happens first; if it fails the request stays parked. A work session's action is creating
-            // its grants.
-            let data =
+            // The action happens first. After invocation, even an ambiguous failure settles this request rather
+            // than leaving a blind retry. A work session's action is creating its grants.
+            let attempt =
                 if call.service == reins_proto::connector::DESKTOP && call.op == reins_proto::connector::SESSION_OP {
                     let plan = crate::work_session::plan(call)?;
-                    self.start_work_session(&request.connection_id, &parked.label(), &plan, now)?
+                    AuthorizationInvocation::new(request, source).begin(self)?;
+                    let trace = self.authorization_attempt_started(request, source)?;
+                    WriteAttempt {
+                        result: self.start_work_session(&request.connection_id, &parked.label(), &plan, now),
+                        trace,
+                        disclosure_error: None,
+                    }
                 } else {
-                    self.perform_write(request, connector.as_ref(), &account, call, granted_command).await?
+                    self.perform_write(request, connector.as_ref(), &account, call, granted_command, source).await?
                 };
-            if let Some(grant) = &new_grant {
+            let data = match attempt.result {
+                Ok(data) => data,
+                Err(error) => {
+                    let message = format!("{} {OUTCOME_UNKNOWN}", ai_message(&call.service, &error));
+                    let mut audit =
+                        self.audit_connector(request, call, action_of(call), "unknown", &message, None, &[]);
+                    if let Some(trace) = &attempt.trace {
+                        trace.stamp(&mut audit, AuthorizationPhase::Unknown);
+                    }
+                    return self
+                        .settle(
+                            session,
+                            request_id,
+                            request,
+                            audit,
+                            RelayOutcome::Error {
+                                message,
+                            },
+                        )
+                        .await;
+                }
+            };
+            let remembered = if attempt.disclosure_error.is_none() {
+                new_grant.as_ref().map(|grant| grant.id.0.clone())
+            } else {
+                None
+            };
+            if attempt.disclosure_error.is_none()
+                && let Some(grant) = &new_grant
+            {
                 self.store.insert_grant_from(grant, &parked.label(), "approval")?;
             }
             let detail = format!("approved: {}", preview.lines.first().map_or("", String::as_str));
-            let mut audit =
-                self.audit_connector(request, call, action_of(call), "sent", &detail, new_grant.map(|g| g.id.0), &[]);
-            audit.info.targets = crate::quick::approval_targets(parked);
-            return self
-                .settle(
-                    session,
-                    request_id,
-                    request,
-                    audit,
-                    RelayOutcome::Result {
-                        result: ToolResult::Connector {
-                            data,
-                        },
+            let mut audit = self.audit_connector(request, call, action_of(call), "sent", &detail, remembered, &[]);
+            if let Some(trace) = attempt.trace {
+                trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
+            }
+            let outcome = match attempt.disclosure_error {
+                Some(_error) => {
+                    "succeeded_withheld".clone_into(&mut audit.outcome);
+                    audit.info.note = Some("The provider returned success; its result was withheld because policy changed while it was running.".to_owned());
+                    RelayOutcome::Error {
+                        message: RESULT_WITHHELD.to_owned(),
+                    }
+                }
+                None => RelayOutcome::Result {
+                    result: ToolResult::Connector {
+                        data,
                     },
-                )
-                .await;
+                },
+            };
+            audit.info.targets = crate::quick::approval_targets(parked);
+            return self.settle(session, request_id, request, audit, outcome).await;
         }
 
         let shown: BTreeSet<&str> = held.items.iter().map(|i| i.id.as_str()).collect();
@@ -576,6 +705,8 @@ impl Engine {
                 )
             })
             .transpose()?;
+        AuthorizationInvocation::new(request, source).begin(self)?;
+        let trace = self.authorization_attempt_started(request, source)?;
         let delivered = self
             .deliver_files(
                 session,
@@ -583,8 +714,47 @@ impl Engine {
                 &account,
                 request,
                 released.iter().map(|i| (*i).clone()).collect(),
+                source,
             )
-            .await?;
+            .await;
+        let delivered = match delivered {
+            Ok(items) => items,
+            Err(_error) => {
+                let mut audit =
+                    self.audit_connector(request, call, action_of(call), "unknown", OUTCOME_UNKNOWN, None, &[]);
+                if let Some(trace) = &trace {
+                    trace.stamp(&mut audit, AuthorizationPhase::Unknown);
+                }
+                return self
+                    .settle(
+                        session,
+                        request_id,
+                        request,
+                        audit,
+                        RelayOutcome::Error {
+                            message: OUTCOME_UNKNOWN.to_owned(),
+                        },
+                    )
+                    .await;
+            }
+        };
+        if self.authorization_disclosure_check(request, source, trace.as_ref()).is_err() {
+            let mut audit = self.audit_connector(request, call, action_of(call), "unknown", OUTCOME_UNKNOWN, None, &[]);
+            if let Some(trace) = &trace {
+                trace.stamp(&mut audit, AuthorizationPhase::Unknown);
+            }
+            return self
+                .settle(
+                    session,
+                    request_id,
+                    request,
+                    audit,
+                    RelayOutcome::Error {
+                        message: OUTCOME_UNKNOWN.to_owned(),
+                    },
+                )
+                .await;
+        }
         let data = items_json(effect, &delivered.iter().collect::<Vec<_>>());
 
         let covering: BTreeSet<GrantId> = held.covered.values().map(|g| GrantId(g.clone())).collect();
@@ -637,6 +807,9 @@ impl Engine {
             &released,
         );
         audit.info.note = note;
+        if let Some(trace) = trace {
+            trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
+        }
         self.settle(
             session,
             request_id,
@@ -660,20 +833,34 @@ impl Engine {
         account: &str,
         call: &ConnectorCall,
         command: Option<(desktop::CommandScope, Option<i64>)>,
-    ) -> Result<serde_json::Value, CoreError> {
-        self.authorization_preflight(request)?;
+        source: AuthorizationSource,
+    ) -> Result<WriteAttempt, CoreError> {
+        AuthorizationInvocation::new(request, source).begin(self)?;
+        let trace = self.authorization_attempt_started(request, source)?;
         // Boxed: each is a large future (a store adds integrations), which would otherwise be inlined into every
         // approval's future, autopilot's included.
-        if is_env_release(call) {
-            return Box::pin(self.release_env(account, call, command)).await;
-        }
-        if is_token_store(call) {
-            return Box::pin(self.token_store_perform(call)).await;
-        }
-        if is_secrets_store(call) {
-            return Box::pin(self.secrets_store_perform(account, call)).await;
-        }
-        connector.perform(account, call).await
+        // From this point onward return WriteAttempt even on policy/audit failure: outer Err means the provider
+        // was never invoked and is the only case in which the caller may refund a reserved grant use.
+        let result = if is_env_release(call) {
+            Box::pin(self.release_env(account, call, command)).await
+        } else if is_token_store(call) {
+            Box::pin(self.token_store_perform(call)).await
+        } else if is_secrets_store(call) {
+            Box::pin(self.secrets_store_perform(account, call)).await
+        } else {
+            connector.perform(account, call).await
+        };
+        let disclosure_error = self.authorization_execute(request, source).err();
+        // Provider errors may contain content too; suppress them after a late policy restriction.
+        let result = match (result, disclosure_error.as_ref()) {
+            (Err(_), Some(error)) => Err(CoreError::invalid(error.to_string())),
+            (result, _) => result,
+        };
+        Ok(WriteAttempt {
+            result,
+            trace,
+            disclosure_error,
+        })
     }
 
     /// Records the decision, drops the parked request and answers the server.

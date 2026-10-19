@@ -2,6 +2,8 @@
 //! the approvals they need, the grants those leave, and how everything is logged.
 
 mod common;
+#[path = "common/policy_runtime.rs"]
+mod policy_runtime;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -25,6 +27,9 @@ struct FakeTelegram {
     messages: Mutex<BTreeMap<String, Vec<Item>>>,
     sent: Mutex<Vec<(String, String)>>,
     fail: Mutex<bool>,
+    fetch_hold: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
+    perform_hold: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
+    acted_then_failed: Mutex<bool>,
 }
 
 impl FakeTelegram {
@@ -76,6 +81,11 @@ impl Connector for FakeTelegram {
     }
 
     async fn fetch(&self, _account: &str, call: &ConnectorCall) -> Result<Vec<Item>, CoreError> {
+        let hold = self.fetch_hold.lock().unwrap().clone();
+        if let Some((started, release)) = hold {
+            started.notify_one();
+            release.notified().await;
+        }
         if *self.fail.lock().unwrap() {
             return Err(CoreError::service("Telegram is having a bad day"));
         }
@@ -132,11 +142,19 @@ impl Connector for FakeTelegram {
     }
 
     async fn perform(&self, _account: &str, call: &ConnectorCall) -> Result<Value, CoreError> {
+        let hold = self.perform_hold.lock().unwrap().clone();
+        if let Some((started, release)) = hold {
+            started.notify_one();
+            release.notified().await;
+        }
         if *self.fail.lock().unwrap() {
             return Err(CoreError::service("Telegram is having a bad day"));
         }
         let (id, _) = self.chat(call.str_arg("chat").unwrap()).unwrap();
         self.sent.lock().unwrap().push((id, call.str_arg("text").unwrap().to_owned()));
+        if *self.acted_then_failed.lock().unwrap() {
+            return Err(CoreError::service("connection lost after submission"));
+        }
         Ok(json!({"sent": true, "message_id": self.sent.lock().unwrap().len()}))
     }
 
@@ -426,18 +444,23 @@ async fn a_message_is_previewed_sent_once_and_remembered_for_that_chat_only() {
 }
 
 #[tokio::test]
-async fn a_failed_send_keeps_the_request_and_gives_a_used_grant_back() {
+async fn a_failed_send_settles_unknown_and_an_attempted_grant_use_is_not_refunded() {
     let env = env().await;
     serve_pending(&env, &[call_request("r1", "c1", "send", &json!({"chat": "Family", "text": "hi"}))]).await;
     env.core.sync(0).await.unwrap();
     *env.telegram.fail.lock().unwrap() = true;
-    assert!(env.core.approve("r1".to_owned(), choice(&[], None)).await.is_err());
-    assert_eq!(env.core.pending().await.unwrap().len(), 1, "still waiting for another try");
-    *env.telegram.fail.lock().unwrap() = false;
     env.core.approve("r1".to_owned(), choice(&[], None)).await.unwrap();
+    assert!(env.core.pending().await.unwrap().is_empty(), "an unknown attempt cannot remain blindly repeatable");
+    assert!(env.core.approve("r1".to_owned(), choice(&[], None)).await.is_err());
+    assert!(answers(&env).await[0]["message"].as_str().unwrap().contains("Do not repeat"));
+    *env.telegram.fail.lock().unwrap() = false;
+    // A deliberate new request requires a new approval; the old request ID is never reused.
+    serve_pending(&env, &[call_request("r1-new", "c1", "send", &json!({"chat":"Family","text":"hi"}))]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("r1-new".to_owned(), choice(&[], None)).await.unwrap();
     assert_eq!(env.telegram.sent.lock().unwrap().len(), 1);
 
-    // With a one-use grant, a send that fails does not spend it.
+    // A provider error cannot prove that a send did not happen: a one-use grant stays consumed.
     let one = Some(StandingGrant {
         duration_secs: Some(3_600),
         max_uses: Some(1),
@@ -453,7 +476,7 @@ async fn a_failed_send_keeps_the_request_and_gives_a_used_grant_back() {
     let told = answers(&env).await;
     assert_eq!(told.last().unwrap()["outcome"], "error");
     assert!(told.last().unwrap()["message"].as_str().unwrap().contains("bad day"));
-    assert_eq!(env.core.grants().await.unwrap()[0].uses, 0, "the use was given back");
+    assert_eq!(env.core.grants().await.unwrap()[0].uses, 1, "unknown provider effects cannot refund authority");
 }
 
 #[tokio::test]
@@ -744,4 +767,204 @@ async fn the_headlines_rule_lists_names_only_for_an_hour_and_opening_a_chat_stil
     // Another AI connected before has nothing.
     serve_pending(&env, &[call_request("r4", "c1", "list_chats", &json!({"limit": 20}))]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn mandatory_connector_review_overrides_grants_and_bypass_and_records_exact_source() {
+    use reins_core::authorization_trace::{AuthorizationPhase, AuthorizationReviewSource};
+    let env = env().await;
+    let request = |id: &str| call_request(id, "c1", "send", &json!({"chat":"Family","text":"hello"}));
+    serve_pending(&env, &[request("seed")]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("seed".to_owned(), choice(&[], hour(&["100"]))).await.unwrap();
+    let engine = env.core.engine();
+    let policy = policy_runtime::policy(&engine, "telegram", "write", "send", policy_runtime::review("owner"));
+    engine.save_authorization_policy(0, policy, &policy_runtime::Owner).await.unwrap();
+    env.core.set_autopilot_mode(None, Some(reins_core::AutopilotMode::Bypass), Some(15)).await.unwrap();
+    serve_pending(&env, &[request("review")]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
+    assert_eq!(env.telegram.sent.lock().unwrap().len(), 1, "neither the old grant nor Bypass supplies owner review");
+    assert_eq!(env.core.grants().await.unwrap()[0].uses, 0, "review does not reserve old authority");
+    env.core.approve_quick("review".to_owned()).await.unwrap();
+    assert_eq!(env.telegram.sent.lock().unwrap().len(), 2);
+    let activity = env.core.activity(5).await.unwrap();
+    let trace = engine.activity_authorization(activity[0].id).unwrap().unwrap();
+    assert_eq!(trace.source, AuthorizationReviewSource::Owner);
+    assert_eq!(trace.phase, AuthorizationPhase::Succeeded);
+    assert_eq!(trace.policy_state_revision, 1);
+    assert_eq!(trace.determining_policy_ids, ["required-review"]);
+    let start = activity.iter().find(|row| row.outcome == "started").unwrap();
+    assert_eq!(engine.activity_authorization(start.id).unwrap().unwrap().attempt_id, trace.attempt_id);
+}
+
+#[tokio::test]
+async fn mandatory_connector_read_review_does_not_preselect_legacy_grants() {
+    let env = env().await;
+    let request = |id: &str| call_request(id, "c1", "read", &json!({"chat":"Family"}));
+    serve_pending(&env, &[request("seed-read")]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("seed-read".to_owned(), choice(&["100:1"], hour(&["100"]))).await.unwrap();
+    let engine = env.core.engine();
+    let policy = policy_runtime::policy(&engine, "telegram", "read", "read", policy_runtime::review("owner"));
+    engine.save_authorization_policy(0, policy, &policy_runtime::Owner).await.unwrap();
+    serve_pending(&env, &[request("review-read")]).await;
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
+    assert_eq!(answers(&env).await.len(), 1, "phone-only preview is not an agent disclosure");
+    let view = env.core.approval_view("review-read".to_owned()).await.unwrap();
+    assert!(view.messages.iter().all(|message| !message.covered_by_grant));
+    env.core.approve("review-read".to_owned(), choice(&["100:1"], None)).await.unwrap();
+    assert_eq!(answers(&env).await[1]["result"]["data"]["items"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn deny_installed_while_connector_fetch_waits_suppresses_provider_error_disclosure() {
+    use reins_proto::authorization::PolicyEffect;
+    let env = env().await;
+    serve_pending(&env, &[]).await;
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    *env.telegram.fetch_hold.lock().unwrap() = Some((Arc::clone(&started), Arc::clone(&release)));
+    *env.telegram.fail.lock().unwrap() = true;
+    let engine = env.core.engine();
+    let request =
+        serde_json::from_value(call_request("delayed-read", "c1", "read", &json!({"chat":"Family"}))).unwrap();
+    let running = Arc::clone(&engine);
+    let task = tokio::spawn(async move { running.process_relayed(request).await });
+    tokio::time::timeout(Duration::from_secs(2), started.notified()).await.unwrap();
+    let policy = policy_runtime::policy(&engine, "telegram", "read", "read", PolicyEffect::Deny);
+    engine.save_authorization_policy(0, policy, &policy_runtime::Owner).await.unwrap();
+    release.notify_one();
+    assert!(task.await.unwrap().is_err());
+    assert!(answers(&env).await.is_empty(), "no provider error or content was disclosed after deny");
+}
+
+#[tokio::test]
+async fn connector_attempt_trace_survives_policy_change_while_provider_is_running() {
+    use reins_core::authorization_trace::AuthorizationPhase;
+    use reins_proto::authorization::PolicyEffect;
+    let env = env().await;
+    let engine = env.core.engine();
+    let policy = policy_runtime::policy(&engine, "telegram", "write", "send", policy_runtime::review("owner"));
+    engine.save_authorization_policy(0, policy.clone(), &policy_runtime::Owner).await.unwrap();
+    serve_pending(&env, &[call_request("in-flight", "c1", "send", &json!({"chat":"Family","text":"hello"}))]).await;
+    env.core.sync(0).await.unwrap();
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    *env.telegram.perform_hold.lock().unwrap() = Some((Arc::clone(&started), Arc::clone(&release)));
+    let core = Arc::clone(&env.core);
+    let task = tokio::spawn(async move { core.approve("in-flight".to_owned(), choice(&[], None)).await });
+    tokio::time::timeout(Duration::from_secs(2), started.notified()).await.unwrap();
+    let mut deny = policy;
+    deny.revision = 2;
+    deny.effect = PolicyEffect::Deny;
+    engine.save_authorization_policy(1, deny, &policy_runtime::Owner).await.unwrap();
+    release.notify_one();
+    task.await.unwrap().unwrap();
+    let row = &env.core.activity(1).await.unwrap()[0];
+    let trace = engine.activity_authorization(row.id).unwrap().unwrap();
+    assert_eq!(row.outcome, "succeeded_withheld");
+    assert_eq!(trace.phase, AuthorizationPhase::Succeeded);
+    assert_eq!(
+        (trace.policy_state_revision, trace.policies[0].revision),
+        (1, 1),
+        "the pre-invocation evidence is retained"
+    );
+    assert_eq!(engine.authorization_policies().unwrap().revision, 2);
+    let answer = answers(&env).await.pop().unwrap();
+    assert_eq!(answer["outcome"], "error");
+    assert!(answer["message"].as_str().unwrap().contains("provider reported success"));
+    assert!(answer["message"].as_str().unwrap().contains("Do not repeat"));
+    assert!(answer.get("result").is_none());
+    assert!(env.core.pending().await.unwrap().is_empty());
+    assert!(env.core.approve("in-flight".to_owned(), choice(&[], None)).await.is_err());
+}
+
+#[tokio::test]
+async fn connector_unknown_outcome_keeps_consumption_and_records_started_and_unknown() {
+    use reins_core::authorization_trace::AuthorizationPhase;
+    use reins_proto::authorization::PolicyEffect;
+    let env = env().await;
+    serve_pending(&env, &[call_request("seed-use", "c1", "send", &json!({"chat":"Family","text":"seed"}))]).await;
+    env.core.sync(0).await.unwrap();
+    let one = StandingGrant {
+        duration_secs: Some(3600),
+        max_uses: Some(1),
+        scope: scope(&["100"], false),
+    };
+    env.core.approve("seed-use".to_owned(), choice(&[], Some(one))).await.unwrap();
+    let engine = env.core.engine();
+    let unrelated = policy_runtime::policy(&engine, "gmail", "write", "send", PolicyEffect::Deny);
+    engine.save_authorization_policy(0, unrelated, &policy_runtime::Owner).await.unwrap();
+    *env.telegram.acted_then_failed.lock().unwrap() = true;
+    serve_pending(
+        &env,
+        &[call_request("ambiguous", "c1", "send", &json!({"chat":"Family","text":"actually submitted"}))],
+    )
+    .await;
+    env.core.sync(0).await.unwrap();
+    assert_eq!(env.telegram.sent.lock().unwrap().len(), 2, "the provider acted before reporting failure");
+    assert_eq!(env.core.grants().await.unwrap()[0].uses, 1);
+    assert_eq!(env.core.activity(1).await.unwrap()[0].outcome, "unknown");
+    let traces: Vec<_> = env
+        .core
+        .activity(8)
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|row| engine.activity_authorization(row.id).unwrap())
+        .filter(|trace| trace.request_id == "ambiguous")
+        .collect();
+    assert!(traces.iter().any(|trace| trace.phase == AuthorizationPhase::Started));
+    assert!(traces.iter().any(|trace| trace.phase == AuthorizationPhase::Unknown));
+    assert!(traces.iter().all(|trace| trace.phase != AuthorizationPhase::Succeeded));
+}
+
+#[tokio::test]
+async fn failed_connector_file_disclosure_settles_trace_unknown_and_blocks_same_approval() {
+    use reins_core::authorization_trace::AuthorizationPhase;
+    let env = env().await;
+    env.telegram.messages.lock().unwrap().insert(
+        "100".to_owned(),
+        vec![Item {
+            id: "file".to_owned(),
+            resource: "100".to_owned(),
+            resource_label: "Family".to_owned(),
+            body: Some("invalid base64!".to_owned()),
+            extra: json!({"_reins_deliver":{"kind":"output","name":"file.txt"}}).as_object().unwrap().clone(),
+            ..Item::default()
+        }],
+    );
+    let engine = env.core.engine();
+    let review = policy_runtime::policy(&engine, "telegram", "read", "read", policy_runtime::review("owner"));
+    engine.save_authorization_policy(0, review, &policy_runtime::Owner).await.unwrap();
+    serve_pending(&env, &[call_request("bad-disclosure", "c1", "read", &json!({"chat":"Family"}))]).await;
+    env.core.sync(0).await.unwrap();
+    env.core.approve("bad-disclosure".to_owned(), choice(&["file"], None)).await.unwrap();
+    let traces: Vec<_> = env
+        .core
+        .activity(5)
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|row| engine.activity_authorization(row.id).unwrap())
+        .collect();
+    assert!(traces.iter().any(|trace| trace.phase == AuthorizationPhase::Unknown));
+    assert!(env.core.approve("bad-disclosure".to_owned(), choice(&["file"], None)).await.is_err());
+    assert!(env.core.pending().await.unwrap().is_empty());
+    let answer = answers(&env).await.pop().unwrap();
+    assert_eq!(answer["outcome"], "error");
+    assert!(answer["message"].as_str().unwrap().contains("Do not repeat"));
+    assert!(answer.get("result").is_none());
+}
+
+#[tokio::test]
+async fn immediate_session_end_cannot_advertise_an_unsupported_review_adapter() {
+    let env = env().await;
+    let engine = env.core.engine();
+    let spec = reins_proto::connector::spec_for_tool("desktop_session_end").unwrap();
+    let review =
+        policy_runtime::policy(&engine, spec.service, spec.effect.access(), spec.op, policy_runtime::review("owner"));
+    let error = engine.save_authorization_policy(0, review, &policy_runtime::Owner).await.unwrap_err();
+    assert!(error.to_string().contains("review enforcement adapter"));
+    assert_eq!(engine.authorization_policies().unwrap().revision, 0);
 }

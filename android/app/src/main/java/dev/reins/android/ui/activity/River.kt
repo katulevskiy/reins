@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -257,6 +258,9 @@ fun OutcomeEnd(outcome: Outcome, modifier: Modifier = Modifier) {
         Outcome.Bypass -> StatusWord("Bypass", c.danger, modifier)
         Outcome.Lockdown -> StatusWord("Lockdown", c.inkMeta, modifier)
         Outcome.Failed -> StatusWord("Failed", c.warning, modifier)
+        Outcome.Started -> StatusWord("Awaiting outcome", c.warning, modifier.clearAndSetSemantics { contentDescription = "Attempted; awaiting outcome" })
+        Outcome.Unknown -> StatusWord("Outcome unknown", c.warning, modifier.clearAndSetSemantics { contentDescription = "Outcome unknown; do not repeat" })
+        Outcome.Withheld -> StatusWord("Response withheld", c.warning, modifier.clearAndSetSemantics { contentDescription = "Completed; response withheld; do not repeat" })
     }
 }
 

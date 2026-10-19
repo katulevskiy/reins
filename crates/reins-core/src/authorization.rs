@@ -33,6 +33,13 @@ pub(crate) struct NormalizedAuthorizationAction {
     pub verified_attribute_keys: Vec<AttributeKey>,
 }
 
+/// Complete narrowing decision and its exact local normalization. It deliberately does not prove account admission.
+pub(crate) struct NarrowingAuthorizationSnapshot {
+    pub decision: AuthorizationDecision,
+    pub state: AuthorizationState,
+    pub normalized: NormalizedAuthorizationAction,
+}
+
 impl Engine {
     fn policy_owner(&self) -> Result<String, CoreError> {
         if let Some(owner) = self.store.bound_owner() {
@@ -229,8 +236,11 @@ impl Engine {
         })
     }
 
-    /// Narrowing preflight is private so its legacy baseline cannot be mistaken for new access authority.
-    fn authorization_decision(&self, request: &RelayRequest) -> Result<Option<AuthorizationDecision>, CoreError> {
+    /// Internal narrowing snapshot: its legacy baseline must never be mistaken for new access authority.
+    pub(crate) fn authorization_snapshot(
+        &self,
+        request: &RelayRequest,
+    ) -> Result<Option<NarrowingAuthorizationSnapshot>, CoreError> {
         let Some(state) = self.authenticated_authorization_state()? else {
             return Ok(None);
         };
@@ -275,7 +285,7 @@ impl Engine {
         for account in accounts {
             let now = unix_now();
             let normalized = self.normalized_authorization_action(request, &account, now)?;
-            let action = normalized.action;
+            let action = &normalized.action;
             // This gate evaluates mandatory restrictions on an already existing legacy authorization path, and
             // never supplies new auto-authority. Account-discovery still goes through its separate grant/owner
             // approval path. Future Permit evaluation must use actual account-access proof, never this preflight.
@@ -294,33 +304,39 @@ impl Engine {
                 authorized_policy_ids: &ids,
             };
             let decision = authorization::evaluate(&EvaluationInput {
-                action: &action,
+                action,
                 policies: &state.policies,
                 authority: &authority,
                 now,
                 usage: &[],
                 baseline: BaselineDecision::Permit,
             });
-            if result.as_ref().is_none_or(|old: &AuthorizationDecision| rank(decision.outcome) > rank(old.outcome)) {
-                result = Some(decision);
+            if result.as_ref().is_none_or(|(old, _): &(AuthorizationDecision, NormalizedAuthorizationAction)| {
+                rank(decision.outcome) > rank(old.outcome)
+            }) {
+                result = Some((decision, normalized));
             }
         }
-        Ok(result)
+        Ok(result.map(|(decision, normalized)| NarrowingAuthorizationSnapshot {
+            decision,
+            state,
+            normalized,
+        }))
     }
 
     pub(crate) fn authorization_automatic(&self, request: &RelayRequest) -> Result<bool, CoreError> {
-        Ok(self
-            .authorization_decision(request)?
-            .is_none_or(|d| d.outcome == DecisionOutcome::Permit && d.authorization_path.is_empty()))
+        Ok(self.authorization_snapshot(request)?.is_none_or(|snapshot| {
+            snapshot.decision.outcome == DecisionOutcome::Permit && snapshot.decision.authorization_path.is_empty()
+        }))
     }
 
     /// Preflight happens before account resolution can contact a provider, preview collection or model prompts.
-    /// Review is implemented for Gmail sends in this slice; matching unsupported requirements are visibly held.
+    /// Only adapters that separate preview collection from final execution/disclosure can collect a review preview.
     pub(crate) fn authorization_preflight(&self, request: &RelayRequest) -> Result<(), CoreError> {
-        let Some(decision) = self.authorization_decision(request)? else {
+        let Some(snapshot) = self.authorization_snapshot(request)? else {
             return Ok(());
         };
-        if decision.outcome == DecisionOutcome::Review && matches!(request.call, ToolCall::GmailSend { .. }) {
+        if snapshot.decision.outcome == DecisionOutcome::Review && review_adapter_request(&request.call) {
             return Ok(());
         }
         self.authorization_execute(request, AuthorizationSource::Automatic)
@@ -331,30 +347,59 @@ impl Engine {
         request: &RelayRequest,
         source: AuthorizationSource,
     ) -> Result<(), CoreError> {
-        let Some(decision) = self.authorization_decision(request)? else {
+        let Some(snapshot) = self.authorization_snapshot(request)? else {
             return Ok(());
         };
-        match decision.outcome {
-            DecisionOutcome::Permit if decision.authorization_path.is_empty() => Ok(()),
-            DecisionOutcome::Review
-                if matches!(request.call, ToolCall::GmailSend { .. })
-                    && source == AuthorizationSource::OwnerReview
-                    && !decision.required_reviews.is_empty()
-                    && decision.required_reviews.iter().all(|r| {
-                        r.role_id == "owner"
-                            && r.quorum == 1
-                            && !r.exclude_requester
-                            && r.distinct_humans_group.is_none()
-                    }) =>
-            {
-                Ok(())
-            }
-            DecisionOutcome::Deny => Err(CoreError::invalid("this action is blocked by an account policy")),
-            DecisionOutcome::Review => {
-                Err(CoreError::invalid("this action requires the reviewers specified by its account policy"))
-            }
-            _ => Err(CoreError::invalid("this action is held because its authorization cannot be verified")),
+        verify_decision(&request.call, source, &snapshot.decision)
+    }
+}
+
+/// Supported final adapters. This list deliberately excludes specialized purchase, account enumeration, standalone
+/// uploads and permission creation until each has an independently enforced review/disclosure boundary.
+fn review_adapter_operation(op: &OperationId) -> bool {
+    (op.service == "gmail" && op.capability == "write" && op.action == "send")
+        || (op.service.starts_with("mcp_") && op.service.len() > 4 && op.capability == "tool" && op.action == "call")
+        || reins_proto::connector::specs().iter().any(|spec| {
+            spec.service != reins_proto::connector::PAYMENTS
+                && !(spec.service == reins_proto::connector::DESKTOP
+                    && spec.op == reins_proto::connector::SESSION_END_OP)
+                && spec.service == op.service
+                && spec.effect.access() == op.capability
+                && spec.op == op.action
+        })
+}
+
+fn review_adapter_request(call: &ToolCall) -> bool {
+    let (service, capability, action) = operation(call);
+    review_adapter_operation(&OperationId {
+        service,
+        capability,
+        action,
+    })
+}
+
+pub(crate) fn verify_decision(
+    call: &ToolCall,
+    source: AuthorizationSource,
+    decision: &AuthorizationDecision,
+) -> Result<(), CoreError> {
+    match decision.outcome {
+        DecisionOutcome::Permit if decision.authorization_path.is_empty() => Ok(()),
+        DecisionOutcome::Review
+            if review_adapter_request(call)
+                && source == AuthorizationSource::OwnerReview
+                && !decision.required_reviews.is_empty()
+                && decision.required_reviews.iter().all(|r| {
+                    r.role_id == "owner" && r.quorum == 1 && !r.exclude_requester && r.distinct_humans_group.is_none()
+                }) =>
+        {
+            Ok(())
         }
+        DecisionOutcome::Deny => Err(CoreError::invalid("this action is blocked by an account policy")),
+        DecisionOutcome::Review => {
+            Err(CoreError::invalid("this action requires the reviewers specified by its account policy"))
+        }
+        _ => Err(CoreError::invalid("this action is held because its authorization cannot be verified")),
     }
 }
 
@@ -413,14 +458,10 @@ fn validate_activation(policy: &PolicyRecord, owner: &str) -> Result<(), CoreErr
     }
     if matches!(policy.effect, PolicyEffect::RequireReview { .. })
         && (policy.scope.operations.is_empty()
-            || policy
-                .scope
-                .operations
-                .iter()
-                .any(|op| op.service != "gmail" || op.capability != "write" || op.action != "send"))
+            || policy.scope.operations.iter().any(|op| !review_adapter_operation(op)))
     {
         return Err(CoreError::invalid(
-            "review policies currently support Gmail sending only; this operation needs its review enforcement adapter",
+            "this operation needs its review enforcement adapter before a review policy can be activated",
         ));
     }
     Ok(())
