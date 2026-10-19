@@ -559,7 +559,10 @@ async fn mcp_through_the_phone() -> String {
     // Then nothing works any more.
     state.lock().unwrap().valid_token = Some("nobody".to_owned());
     core.engine().process_relayed(relay("m3", "tracker")).await.unwrap();
-    let failed = core.approve("m3".to_owned(), approve_once()).await.unwrap_err();
+    core.approve("m3".to_owned(), approve_once()).await.unwrap();
+    let failed = common::mcp_mock::bodies(&rw, "POST", "/reins/api/requests/m3/response").await.pop().unwrap();
+    assert_eq!(failed["outcome"], "error");
+    assert!(failed["message"].as_str().unwrap().contains("Do not repeat"));
     let refreshed = core.mcp_refresh("tracker".to_owned()).await.unwrap();
     let after = format!(
         "{wrong} {wrong:?} {failed} {failed:?} {refreshed:?} {:?} {:?} {:?}",
