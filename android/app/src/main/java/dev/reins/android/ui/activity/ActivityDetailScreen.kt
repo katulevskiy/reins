@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -193,7 +194,7 @@ fun ActivityDetailScreen(
         )
     } else if (looked) {
         Box(Modifier.fillMaxSize().background(c.background)) {
-            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().imePadding()) {
                 dev.reins.android.ui.approval.HistoryBar(entry?.connectionId.orEmpty(), entry?.connectionLabel.orEmpty(), onBack)
                 Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars)) {
                     if (entry == null) {
