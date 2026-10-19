@@ -36,6 +36,12 @@ fn capability_key(capability: PermissionCapability) -> &'static str {
     }
 }
 
+fn complete_personal_policy(state: &AuthorizationState) -> bool {
+    !state.conflicted
+        && state.overflow_digest.is_none()
+        && state.policies.iter().all(|policy| policy.issuer.tenant_id.is_none())
+}
+
 fn capabilities(service: &str) -> Vec<PermissionCapability> {
     if service == "gmail" {
         vec![PermissionCapability::MailSearch, PermissionCapability::MailRead, PermissionCapability::MailSend]
@@ -330,12 +336,22 @@ impl Engine {
             restrictions.push(PermissionRestriction {
                 controller: PermissionController::Conflict,
                 policy_id: None,
-                reason: "Automatic permissions require a complete reconciled policy history".into(),
+                reason: "Reconcile the complete policy history before changing account defaults".into(),
             });
         }
         let usage_verified = self.store.permission_history_ready().is_ok();
         let history_ready = self.store.permission_history_ready().unwrap_or(false);
-        let positive_available = self.holds_roster_now()? && self.decides() && history_ready;
+        let editable = !state.conflicted && state.overflow_digest.is_none() && self.decides();
+        let authority_ready = complete_personal_policy(&state);
+        let positive_available = authority_ready && self.holds_roster_now()? && editable && history_ready;
+        if state.policies.iter().any(|policy| policy.issuer.tenant_id.is_some()) {
+            restrictions.push(PermissionRestriction {
+                controller: PermissionController::Organization,
+                policy_id: None,
+                reason: "Organization policy authority could not be verified; automatic permissions are unavailable"
+                    .into(),
+            });
+        }
         if !positive_available {
             restrictions.push(PermissionRestriction { controller: PermissionController::UnsupportedAdapter, policy_id: None, reason: "Automatic permissions require a verified primary phone and complete execution history. Reconcile pending or conflicting attempts before enabling Auto.".into() });
         }
@@ -448,7 +464,7 @@ impl Engine {
                 capability,
                 title: title(capability).into(),
                 description: description(capability).into(),
-                supported_modes: if state.conflicted || state.overflow_digest.is_some() {
+                supported_modes: if !editable {
                     vec![]
                 } else {
                     supported_modes(service)
@@ -495,7 +511,7 @@ impl Engine {
             conflicted: state.conflicted,
             capabilities: views,
             agents,
-            available_presets: if service == "gmail" {
+            available_presets: if service == "gmail" && editable {
                 if positive_available {
                     vec![
                         AccountPermissionPreset::ReviewEveryRequest,
@@ -599,7 +615,10 @@ impl Engine {
             ));
         }
         if draft.rules.iter().any(|r| r.mode == PermissionMode::Auto)
-            && !(self.holds_roster_now()? && self.decides() && self.store.permission_history_ready().unwrap_or(false))
+            && !(complete_personal_policy(&state)
+                && self.holds_roster_now()?
+                && self.decides()
+                && self.store.permission_history_ready().unwrap_or(false))
         {
             return Err(CoreError::invalid("automatic permissions require the verified primary phone"));
         }
@@ -1142,6 +1161,9 @@ impl Engine {
         if state.revision != draft.expected_revision || state.conflicted || state.overflow_digest.is_some() {
             return Err(CoreError::invalid("reload and reconcile authorization before issuing a delegation"));
         }
+        if !complete_personal_policy(&state) {
+            return Err(CoreError::invalid("verify policy authority before issuing automatic delegations"));
+        }
         validate_ids(&draft.agent_ids, true)?;
         let now = unix_now();
         if draft.expires_at <= now
@@ -1353,17 +1375,19 @@ impl Engine {
                 .filter_map(|p| p.limits.max_uses)
                 .min()
                 .ok_or_else(|| CoreError::storage("delegation usage limit is missing"))?;
-            let restrictions =
-                if state.conflicted || state.overflow_digest.is_some() || !(self.holds_roster_now()? && self.decides())
-                {
-                    vec![PermissionRestriction {
+            let restrictions = if !complete_personal_policy(&state)
+                || !(self.holds_roster_now()?
+                    && self.decides()
+                    && self.store.permission_history_ready().unwrap_or(false))
+            {
+                vec![PermissionRestriction {
                         controller: PermissionController::Conflict,
                         policy_id: None,
-                        reason: "Automatic authority is held until its complete policy history is reconciled".into(),
+                        reason: "Automatic authority requires a verified primary and complete verified policy and execution history".into(),
                     }]
-                } else {
-                    vec![]
-                };
+            } else {
+                vec![]
+            };
             views.push(DelegationView {
                 id,
                 revision: state.revision,
@@ -1415,6 +1439,9 @@ impl Engine {
         let mut state = self.authorization_policies()?;
         if state.revision != expected_revision || state.conflicted || state.overflow_digest.is_some() {
             return Err(CoreError::invalid("reload and reconcile authorization before changing a delegation"));
+        }
+        if change == DelegationChange::Resume && !complete_personal_policy(&state) {
+            return Err(CoreError::invalid("verify policy authority before resuming automatic delegations"));
         }
         let child_prefix = format!("delegation:{identity}:");
         let parent_prefix = format!("delegation-authority:{identity}:");
