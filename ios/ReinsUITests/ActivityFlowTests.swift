@@ -617,10 +617,13 @@ final class ActivityFlowTests: XCTestCase {
             element(app, "quickScrim").tap()
             XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
         }
-        // A tap on the row, once the menu is open, does it.
+        // A tap on the row, once the menu is open, does it. Wait for the reopened
+        // container first: a busy simulator can spend most of five seconds taking
+        // one accessibility snapshot after the repeated press/slide gestures.
         pill.tap()
+        expectToAppear(element(app, "autopilotQuick"))
         let manual = element(app, "quick:MANUAL")
-        expectToAppear(manual, timeout: 5)
+        expectToAppear(manual, timeout: 15)
         shot(app, "lockdown-menu")
         manual.tap()
         XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
