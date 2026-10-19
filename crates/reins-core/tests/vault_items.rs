@@ -326,6 +326,17 @@ async fn answers(env: &Env) -> Vec<Value> {
         .collect()
 }
 
+/// A provider invocation error settles the original request and tells the agent to inspect before retrying.
+async fn settled_failure(env: &Env, id: &str) -> String {
+    env.core.approve(id.to_owned(), nothing_selected()).await.unwrap();
+    let answer = answers(env).await.pop().unwrap();
+    assert_eq!(answer["outcome"], "error");
+    let message = answer["message"].as_str().unwrap().to_owned();
+    assert!(message.contains("Do not repeat"));
+    assert!(env.core.approve(id.to_owned(), nothing_selected()).await.is_err());
+    message
+}
+
 /// The vault requests that changed something so far: (method, path).
 async fn changes(env: &Env) -> Vec<(String, String)> {
     env.server
@@ -1089,8 +1100,8 @@ async fn a_conflicting_update_and_server_errors_reach_the_ai_in_words() {
     ] {
         let (id, parked) = ask(&env, op, args).await;
         assert!(parked);
-        // The action failed: the request stays parked and the user is told why.
-        let message = env.core.approve(id, nothing_selected()).await.unwrap_err().to_string();
+        // Preserve the sanitized provider reason, but settle the ambiguous attempt rather than silently retrying.
+        let message = settled_failure(&env, &id).await;
         assert!(message.contains(needle), "{op}: {message}");
         assert!(!message.contains("secret-token"), "{message}");
     }
@@ -1183,10 +1194,9 @@ async fn a_failed_upload_removes_the_empty_attachment_and_bad_files_are_refused(
     )
     .await;
     assert!(parked);
-    let message = env.core.approve(id.clone(), nothing_selected()).await.unwrap_err().to_string();
+    let message = settled_failure(&env, &id).await;
     assert!(message.contains("storage limit exceeded"), "{message}");
-    // The request stays parked for the user; they decline it.
-    env.core.deny(id).await.unwrap();
+    assert!(env.core.pending().await.unwrap().is_empty(), "the attempted upload cannot remain repeatable");
     let changes = changes(&env).await;
     assert!(changes.contains(&("DELETE".to_owned(), "/api/ciphers/git/attachment/att-new".to_owned())), "{changes:?}");
 

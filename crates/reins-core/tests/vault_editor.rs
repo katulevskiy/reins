@@ -462,8 +462,11 @@ async fn the_vault_changing_between_the_approval_and_the_save_saves_nothing() {
         .with_priority(1)
         .mount(&desk.server)
         .await;
-    let refused = desk.core.approve("c1".to_owned(), choice(&[], None)).await.unwrap_err();
-    assert!(refused.to_string().contains("The vault changed since you were asked"), "{refused}");
+    desk.core.approve("c1".to_owned(), choice(&[], None)).await.unwrap();
+    let refused = desk.error("c1").await;
+    assert!(refused.contains("The vault changed since you were asked"), "{refused}");
+    assert!(refused.contains("Do not repeat"));
+    assert!(desk.core.approve("c1".to_owned(), choice(&[], None)).await.is_err());
     assert!(sent_bodies(&desk, "PUT", "/api/ciphers/bank").await.is_empty());
 }
 
