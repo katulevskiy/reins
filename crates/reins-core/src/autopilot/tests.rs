@@ -213,6 +213,9 @@ async fn env_models(
         ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
             .unwrap();
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
+    // Existing mode/grant regression fixtures model an account connected before account defaults existed.
+    // Newly verified connections receive their own review baseline (covered by permissions tests).
+    core.engine().store.add_account("gmail", GMAIL, unix_now()).unwrap();
     core.add_account(GMAIL.to_owned()).await.unwrap();
     if let Some(known) = install {
         testing::install(dir.path(), &known, &files);

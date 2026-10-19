@@ -97,6 +97,43 @@ impl Store {
         Ok(added)
     }
 
+    /// Verified new connections start under a durable review baseline before any optional native setup.
+    /// Existing accounts retain their pre-policy semantics; lazy legacy migration still uses `add_account`.
+    pub(crate) fn add_verified_account(
+        &self,
+        owner: &str,
+        service: &str,
+        account: &str,
+        now: i64,
+    ) -> Result<bool, CoreError> {
+        let account = account.trim().to_lowercase();
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let added = tx.execute(
+            "INSERT OR IGNORE INTO accounts(service,account,added_at) VALUES (?1,?2,?3)",
+            params![service, account, now],
+        )? > 0;
+        if added {
+            let mut state = super::authorization::read(&tx)?.unwrap_or_else(|| super::AuthorizationState::empty(owner));
+            if state.owner != owner {
+                return Err(CoreError::invalid("authorization belongs to another owner"));
+            }
+            let previous = state.revision;
+            state.managed_scopes.insert(super::authorization::ManagedOperation {
+                account_id: crate::authorization::account_resource_id(service, &account),
+                operation: reins_proto::authorization::OperationId {
+                    service: service.into(),
+                    capability: "data".into(),
+                    action: "default".into(),
+                },
+            });
+            state.revision = previous.checked_add(1).ok_or_else(|| CoreError::invalid("policy revision exhausted"))?;
+            super::authorization::replace_in(&tx, previous, &state)?;
+        }
+        tx.commit()?;
+        Ok(added)
+    }
+
     /// Forgets an account and deletes its grants. Returns false when it was not registered.
     pub fn remove_account(&self, service: &str, account: &str) -> Result<bool, CoreError> {
         let account = account.trim().to_lowercase();

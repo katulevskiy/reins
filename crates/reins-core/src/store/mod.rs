@@ -18,6 +18,7 @@ mod mcp;
 mod merge;
 pub mod oplog;
 mod pending;
+pub(crate) mod permissions;
 mod protected;
 pub(crate) mod records;
 mod snapshot;

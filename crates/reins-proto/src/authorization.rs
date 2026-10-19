@@ -72,6 +72,7 @@ pub enum AttributeKey {
     ArtifactDigest,
     Workspace,
     NetworkDestinations,
+    ResourceIds,
     NetworkRestricted,
     CostMicrounits,
     CostCurrency,
@@ -542,7 +543,7 @@ impl AttributeKey {
     }
 
     const fn is_set(self) -> bool {
-        matches!(self, Self::Recipients | Self::CredentialIds | Self::NetworkDestinations)
+        matches!(self, Self::Recipients | Self::CredentialIds | Self::NetworkDestinations | Self::ResourceIds)
     }
 }
 

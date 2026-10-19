@@ -54,6 +54,9 @@ fn all_connection_grants(conn: &Connection, connection: &ConnectionId, now: i64)
         .collect::<Result<Vec<_>, _>>()?;
     let mut grants = Vec::with_capacity(rows.len());
     for (id, c, json, origin) in &rows {
+        if origin == super::permissions::BUDGET_ORIGIN {
+            continue;
+        }
         if !crate::autopilot::store::origin_in_force(conn, origin, now)? {
             continue;
         }
@@ -102,6 +105,9 @@ impl Store {
     /// Stores a grant. One a bypass gives is stored only while that bypass is still in force, checked in the same
     /// transaction: a request decided during a bypass that finishes after it was stopped gives nothing standing.
     pub fn insert_grant_from(&self, grant: &Grant, connection_label: &str, origin: &str) -> Result<(), CoreError> {
+        if super::permissions::is_budget(grant) || origin == super::permissions::BUDGET_ORIGIN {
+            return Err(CoreError::invalid("authorization counters cannot be created through grant controls"));
+        }
         let json = serde_json::to_string(grant).map_err(|e| CoreError::storage(e.to_string()))?;
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -123,7 +129,7 @@ impl Store {
         let conn = self.read()?;
         let mut stmt = conn.prepare(
             "SELECT id, connection_id, connection_label, grant_json, last_used_at, origin FROM grants \
-             ORDER BY created_at DESC, id",
+             WHERE origin != 'policy_budget' ORDER BY created_at DESC, id",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -152,6 +158,7 @@ impl Store {
 
     /// Marks a grant revoked. Returns false when no such grant exists.
     pub fn revoke_grant(&self, id: &GrantId) -> Result<bool, CoreError> {
+        super::permissions::reject_budget_id(id)?;
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let Some(mut grant) = load_grant(&tx, id)? else {
@@ -166,6 +173,7 @@ impl Store {
     /// Removes a grant that is no longer active for good (it cannot be resumed afterwards). Returns `Ok(false)` when
     /// there is no such grant; a grant that still works has to be revoked first.
     pub fn delete_ended_grant(&self, id: &GrantId, now: i64) -> Result<bool, CoreError> {
+        super::permissions::reject_budget_id(id)?;
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let Some(grant) = load_grant(&tx, id)? else {
@@ -182,6 +190,9 @@ impl Store {
     /// Deletes every grant of a connection (after the connection itself was revoked): with nothing left to
     /// give them to, there is nothing to resume either.
     pub fn remove_connection_grants(&self, connection: &ConnectionId) -> Result<(), CoreError> {
+        if connection.0 == "__reins_policy_budget__" {
+            return Err(CoreError::invalid("authorization counters cannot be removed through grant controls"));
+        }
         self.lock()?.execute("DELETE FROM grants WHERE connection_id = ?1", params![connection.0])?;
         Ok(())
     }
@@ -210,6 +221,7 @@ impl Store {
         now: i64,
         make: impl FnOnce(&Grant) -> Result<Grant, CoreError>,
     ) -> Result<bool, CoreError> {
+        super::permissions::reject_budget_id(id)?;
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let Some(old) = load_grant(&tx, id)? else {
@@ -219,6 +231,9 @@ impl Store {
             return Err(CoreError::invalid("that grant is still active"));
         }
         let mut fresh = make(&old)?;
+        if super::permissions::is_budget(&fresh) {
+            return Err(CoreError::invalid("authorization counters cannot be created through grant controls"));
+        }
         fresh.id = old.id.clone();
         fresh.connection_id = old.connection_id.clone();
         fresh.created_at = now;
@@ -233,6 +248,7 @@ impl Store {
     /// same limits as a new grant apply (a grant for everything ends within its maximum). `Ok(false)` when there is no
     /// such grant.
     pub fn extend_grant(&self, id: &GrantId, duration_secs: i64, now: i64) -> Result<bool, CoreError> {
+        super::permissions::reject_budget_id(id)?;
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let Some(old) = load_grant(&tx, id)? else {
@@ -482,6 +498,9 @@ impl Store {
 
     /// Gives back uses reserved for a call that then failed to execute.
     pub fn refund(&self, ids: &BTreeSet<GrantId>) -> Result<(), CoreError> {
+        for id in ids {
+            super::permissions::reject_budget_id(id)?;
+        }
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for id in ids {
@@ -496,6 +515,9 @@ impl Store {
     /// Consumes one use of each listed grant that is still active (used when
     /// the user approves a request that some grants partially covered).
     pub fn consume_active(&self, ids: &BTreeSet<GrantId>, now: i64) -> Result<(), CoreError> {
+        for id in ids {
+            super::permissions::reject_budget_id(id)?;
+        }
         let mut conn = self.lock()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for id in ids {

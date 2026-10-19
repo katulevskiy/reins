@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use reins_proto::authorization::{PolicyLifecycle, PolicyRecord};
+use reins_proto::authorization::{OperationId, PolicyLifecycle, PolicyRecord};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,6 +18,14 @@ pub(crate) const STORE_KEY: &str = "app.authorization.state";
 pub const MAX_STATE_BYTES: usize = 48 * 1024;
 pub const MAX_POLICIES: usize = 64;
 const MAX_POLICY_CONTENT_BYTES: usize = 40 * 1024;
+
+/// A scope permanently migrated away from legacy grant/Auto fallback. It cannot be removed by editing a policy.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedOperation {
+    pub account_id: String,
+    pub operation: OperationId,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +48,8 @@ pub struct AuthorizationState {
     pub overflow_digest: Option<String>,
     /// Policy identities are never reused, even after a restore or a later deliberate widening.
     pub revoked_ids: BTreeSet<String>,
+    #[serde(default)]
+    pub managed_scopes: BTreeSet<ManagedOperation>,
 }
 
 impl AuthorizationState {
@@ -54,6 +64,7 @@ impl AuthorizationState {
             resolved_from: None,
             overflow_digest: None,
             revoked_ids: BTreeSet::new(),
+            managed_scopes: BTreeSet::new(),
         }
     }
 
@@ -65,8 +76,15 @@ impl AuthorizationState {
             || self.conflicting_policies.len() > MAX_POLICIES
             || self.revoked_ids.len() > MAX_POLICIES
             || self.revoked_ids.iter().any(|id| id.is_empty() || id.len() > 256)
+            || self.managed_scopes.len() > 256
         {
             return Err(CoreError::invalid("unsupported or oversized authorization state"));
+        }
+        for scope in &self.managed_scopes {
+            if scope.account_id.is_empty() || scope.account_id.len() > 2048 {
+                return Err(CoreError::invalid("invalid managed account scope"));
+            }
+            scope.operation.validate().map_err(|e| CoreError::invalid(e.to_string()))?;
         }
         let mut ids = BTreeSet::new();
         for policy in &self.policies {
@@ -97,9 +115,15 @@ impl AuthorizationState {
             return Err(CoreError::invalid("invalid authorization overflow commitment"));
         }
         // Policy content has a separate budget so a valid state always has room for bounded hold/recovery metadata.
-        if serde_json::to_vec(&(&self.owner, &self.policies, &self.conflicting_policies, &self.revoked_ids))
-            .map_err(|e| CoreError::storage(e.to_string()))?
-            .len()
+        if serde_json::to_vec(&(
+            &self.owner,
+            &self.policies,
+            &self.conflicting_policies,
+            &self.revoked_ids,
+            &self.managed_scopes,
+        ))
+        .map_err(|e| CoreError::storage(e.to_string()))?
+        .len()
             > MAX_POLICY_CONTENT_BYTES
         {
             return Err(CoreError::invalid("authorization policy content is too large"));
@@ -135,58 +159,62 @@ impl Store {
 
     /// An explicit owner's compare-and-swap. The Engine authenticates the owner and verifies the primary role first.
     pub(crate) fn authorization_replace(&self, expected: u64, next: &AuthorizationState) -> Result<(), CoreError> {
-        next.validate()?;
-        let conn = self.lock()?;
-        let previous = read(&conn)?;
-        let revision = previous.as_ref().map_or(0, |s| s.revision);
-        if revision != expected
-            || next.revision
-                != expected.checked_add(1).ok_or_else(|| CoreError::invalid("policy revision exhausted"))?
-        {
-            return Err(CoreError::invalid("authorization changed; reload before saving"));
-        }
-        if let Some(previous) = &previous {
-            if previous.owner != next.owner || !previous.revoked_ids.is_subset(&next.revoked_ids) {
-                return Err(CoreError::invalid("authorization owner and revocations are immutable"));
-            }
-            if previous.overflow_digest.is_some() && previous.overflow_digest != next.overflow_digest {
-                return Err(CoreError::invalid("unreconciled authorization history cannot be erased"));
-            }
-            for old in &previous.policies {
-                let new = next
-                    .policies
-                    .iter()
-                    .find(|p| p.id == old.id)
-                    .ok_or_else(|| CoreError::invalid("revoke a policy instead of deleting it"))?;
-                if old != new
-                    && (new.revision
-                        != old
-                            .revision
-                            .checked_add(1)
-                            .ok_or_else(|| CoreError::invalid("policy revision exhausted"))?
-                        || new.issuer != old.issuer
-                        || new.kind != old.kind)
-                {
-                    return Err(CoreError::invalid("invalid authorization revision or changed policy identity"));
-                }
-            }
-        }
-        for policy in &next.policies {
-            if previous.as_ref().is_none_or(|old| !old.policies.iter().any(|p| p.id == policy.id))
-                && policy.revision != 1
-            {
-                return Err(CoreError::invalid("a new policy starts at revision one"));
-            }
-        }
-        let text = serde_json::to_string(next).map_err(|e| CoreError::storage(e.to_string()))?;
-        conn.execute(
-            "INSERT INTO meta (key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            params![STORE_KEY, text],
-        )?;
-        // Cached model suggestions do not carry authority across a policy revision. Human learning stays intact.
-        conn.execute("DELETE FROM autopilot_suggestions", [])?;
-        Ok(())
+        let mut conn = self.lock()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        replace_in(&tx, expected, next)?;
+        tx.commit().map_err(CoreError::from)
     }
+}
+
+/// Shared CAS transition, called with the writer's transaction for policy/admission/budget atomicity.
+pub(super) fn replace_in(conn: &Connection, expected: u64, next: &AuthorizationState) -> Result<(), CoreError> {
+    next.validate()?;
+    let previous = read(conn)?;
+    let revision = previous.as_ref().map_or(0, |s| s.revision);
+    if revision != expected
+        || next.revision != expected.checked_add(1).ok_or_else(|| CoreError::invalid("policy revision exhausted"))?
+    {
+        return Err(CoreError::invalid("authorization changed; reload before saving"));
+    }
+    if let Some(previous) = &previous {
+        if previous.owner != next.owner
+            || !previous.revoked_ids.is_subset(&next.revoked_ids)
+            || !previous.managed_scopes.is_subset(&next.managed_scopes)
+        {
+            return Err(CoreError::invalid("authorization owner and revocations are immutable"));
+        }
+        if previous.overflow_digest.is_some() && previous.overflow_digest != next.overflow_digest {
+            return Err(CoreError::invalid("unreconciled authorization history cannot be erased"));
+        }
+        for old in &previous.policies {
+            let new = next
+                .policies
+                .iter()
+                .find(|p| p.id == old.id)
+                .ok_or_else(|| CoreError::invalid("revoke a policy instead of deleting it"))?;
+            if old != new
+                && (new.revision
+                    != old.revision.checked_add(1).ok_or_else(|| CoreError::invalid("policy revision exhausted"))?
+                    || new.issuer != old.issuer
+                    || new.kind != old.kind)
+            {
+                return Err(CoreError::invalid("invalid authorization revision or changed policy identity"));
+            }
+        }
+    }
+    for policy in &next.policies {
+        if previous.as_ref().is_none_or(|old| !old.policies.iter().any(|p| p.id == policy.id)) && policy.revision != 1 {
+            return Err(CoreError::invalid("a new policy starts at revision one"));
+        }
+    }
+    let text = serde_json::to_string(next).map_err(|e| CoreError::storage(e.to_string()))?;
+    conn.execute(
+        "INSERT INTO meta (key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![STORE_KEY, text],
+    )?;
+    // Cached model suggestions do not carry authority across a policy revision. Human learning stays intact.
+    conn.execute("DELETE FROM autopilot_suggestions", [])?;
+    Ok(())
 }
 
 /// Merge two authenticated but concurrent state revisions. Retain all restrictions for owner inspection and hold
@@ -216,6 +244,7 @@ pub(crate) fn conflict(a: &Value, b: &Value) -> Value {
     }
     a.revision = a.revision.max(b.revision);
     a.revoked_ids.extend(b.revoked_ids);
+    a.managed_scopes.extend(b.managed_scopes);
     a.conflicting_policies.extend(b.conflicting_policies);
     for policy in b.policies {
         if !a.policies.iter().any(|p| p.id == policy.id) {
@@ -296,6 +325,7 @@ pub(crate) fn incoming(previous: Option<&Value>, next: Option<&Value>) -> Value 
                 || (previous_state.overflow_digest != next_state.overflow_digest && !next_state.conflicted)))
         || previous_state.revision > next_state.revision
         || !previous_state.revoked_ids.is_subset(&next_state.revoked_ids)
+        || !previous_state.managed_scopes.is_subset(&next_state.managed_scopes)
         || previous_state.policies.iter().any(|p| {
             !next_state.policies.iter().any(|n| {
                 n.id == p.id
@@ -321,6 +351,7 @@ pub(crate) fn conflict_digest(state: &AuthorizationState) -> String {
         state.revision,
         versions,
         &state.revoked_ids,
+        &state.managed_scopes,
         &state.overflow_digest,
     ))
     .expect("authorization identity is serializable");

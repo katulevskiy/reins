@@ -283,8 +283,22 @@ impl Engine {
             ToolCall::GmailSend {
                 email,
             } => {
+                let _fence = self.permission_execution_fence().await;
                 self.authorization_execute(request, source)?;
-                let sent = gmail.send(email).await?;
+                let attempt = self.legacy_send_attempt(request)?;
+                if let Err(error) = self.legacy_send_durable().await {
+                    self.legacy_send_finished(attempt, false)?;
+                    return Err(error);
+                }
+                // A roster or mandatory policy may have changed while usage reached durable storage.
+                self.authorization_execute(request, source)?;
+                let sent = gmail.send(email).await;
+                self.legacy_send_finished(attempt, sent.is_ok())?;
+                let Ok(sent) = sent else {
+                    self.store.remove_pending(request_id)?;
+                    self.notifier.item_resolved(request_id.to_owned());
+                    return self.send_outcome_unknown(&session, request).await;
+                };
                 (ToolResult::Sent(sent), "send", send_detail(email))
             }
             ToolCall::RequestGrant {

@@ -3,6 +3,7 @@
 //! never aborts work that already reached the server.
 
 mod payments;
+mod permissions;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -351,7 +351,11 @@ impl Engine {
             return Err(CoreError::invalid("that is not a usable account name"));
         }
         let now = unix_now();
-        self.store.add_account(service, &account, now)?;
+        if service == "vault" {
+            self.store.add_account(service, &account, now)?;
+        } else {
+            self.store.add_verified_account(&self.policy_owner()?, service, &account, now)?;
+        }
         Ok(AccountView {
             service: service.to_owned(),
             account,
@@ -379,7 +383,7 @@ impl Engine {
         let hint = reins_proto::gmail::normalize_account(hint).map_err(|e| CoreError::invalid(e.to_string()))?;
         let found = self.gmail_for(&hint).account().await?.unwrap_or(hint);
         let now = unix_now();
-        self.store.add_account(views::SERVICE_GMAIL, &found, now)?;
+        self.store.add_verified_account(&self.policy_owner()?, views::SERVICE_GMAIL, &found, now)?;
         Ok(AccountView {
             service: views::SERVICE_GMAIL.to_owned(),
             account: found,

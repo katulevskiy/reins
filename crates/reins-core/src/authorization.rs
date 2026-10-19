@@ -34,7 +34,7 @@ pub(crate) struct NormalizedAuthorizationAction {
 }
 
 impl Engine {
-    fn policy_owner(&self) -> Result<String, CoreError> {
+    pub(crate) fn policy_owner(&self) -> Result<String, CoreError> {
         if let Some(owner) = self.store.bound_owner() {
             return Ok(owner.user_id);
         }
@@ -200,6 +200,25 @@ impl Engine {
                 },
             });
         }
+        if let ToolCall::GmailRead {
+            message_ids,
+        } = &request.call
+        {
+            facts.push(AttributeFact {
+                key: AttributeKey::ResourceIds,
+                fact: Fact::Known {
+                    value: AttributeValue::StringSet(
+                        message_ids.iter().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect(),
+                    ),
+                    evidence: Evidence {
+                        id: digest.clone(),
+                        source: EvidenceSource::LocalCore,
+                        observed_at: now,
+                        valid_until: now.saturating_add(60),
+                    },
+                },
+            });
+        }
         let verified_attribute_keys = facts.iter().map(|fact| fact.key).collect();
         Ok(NormalizedAuthorizationAction {
             action: ActionContext {
@@ -270,7 +289,15 @@ impl Engine {
             }
             accounts.push(String::new());
         }
-        let ids: Vec<String> = state.policies.iter().map(|p| p.id.clone()).collect();
+        // The common gate only narrows an independently established path. Positive records are evaluated
+        // separately with actual admission and transactional usage; a missing budget here cannot mint authority.
+        let restrictions: Vec<_> = state
+            .policies
+            .iter()
+            .filter(|policy| matches!(policy.effect, PolicyEffect::Deny | PolicyEffect::RequireReview { .. }))
+            .cloned()
+            .collect();
+        let ids: Vec<String> = restrictions.iter().map(|p| p.id.clone()).collect();
         let mut result = None;
         for account in accounts {
             let now = unix_now();
@@ -295,11 +322,15 @@ impl Engine {
             };
             let decision = authorization::evaluate(&EvaluationInput {
                 action: &action,
-                policies: &state.policies,
+                policies: &restrictions,
                 authority: &authority,
                 now,
                 usage: &[],
-                baseline: BaselineDecision::Permit,
+                baseline: if crate::store::permissions::is_managed(&state, &action) {
+                    BaselineDecision::Review
+                } else {
+                    BaselineDecision::Permit
+                },
             });
             if result.as_ref().is_none_or(|old: &AuthorizationDecision| rank(decision.outcome) > rank(old.outcome)) {
                 result = Some(decision);
@@ -320,7 +351,7 @@ impl Engine {
         let Some(decision) = self.authorization_decision(request)? else {
             return Ok(());
         };
-        if decision.outcome == DecisionOutcome::Review && matches!(request.call, ToolCall::GmailSend { .. }) {
+        if decision.outcome == DecisionOutcome::Review && is_gmail_action(request) {
             return Ok(());
         }
         self.authorization_execute(request, AuthorizationSource::Automatic)
@@ -337,9 +368,8 @@ impl Engine {
         match decision.outcome {
             DecisionOutcome::Permit if decision.authorization_path.is_empty() => Ok(()),
             DecisionOutcome::Review
-                if matches!(request.call, ToolCall::GmailSend { .. })
+                if is_gmail_action(request)
                     && source == AuthorizationSource::OwnerReview
-                    && !decision.required_reviews.is_empty()
                     && decision.required_reviews.iter().all(|r| {
                         r.role_id == "owner"
                             && r.quorum == 1
@@ -356,6 +386,10 @@ impl Engine {
             _ => Err(CoreError::invalid("this action is held because its authorization cannot be verified")),
         }
     }
+}
+
+fn is_gmail_action(request: &RelayRequest) -> bool {
+    matches!(request.call, ToolCall::GmailSend { .. } | ToolCall::GmailSearch { .. } | ToolCall::GmailRead { .. })
 }
 
 pub fn account_resource_id(service: &str, account: &str) -> String {

@@ -674,6 +674,17 @@ impl Store {
             return Err(bad("this installation's own setting"));
         }
         let local = Json::Array(vec![Json::String(store_key.clone())]).to_string();
+        if key.starts_with(super::permissions::RECEIPT_PREFIX) {
+            let previous: Option<String> =
+                conn.query_row("SELECT value FROM meta WHERE key=?1", [&store_key], |r| r.get(0)).optional()?;
+            let previous = previous.as_deref().map(|raw| serde_json::from_str(raw).unwrap_or(Json::Null));
+            let next = super::permissions::receipt_incoming(previous.as_ref(), value);
+            conn.execute(
+                "INSERT INTO meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                rusqlite::params![store_key, next.to_string()],
+            )?;
+            return Ok(Some(local));
+        }
         if key == super::authorization::RECORD_KEY {
             let previous: Option<String> =
                 conn.query_row("SELECT value FROM meta WHERE key=?1", [&store_key], |r| r.get(0)).optional()?;
