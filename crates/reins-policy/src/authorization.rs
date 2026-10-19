@@ -173,9 +173,9 @@ fn evaluate_inner(input: &EvaluationInput<'_>) -> AuthorizationDecision {
             let permission = permission_status(policy, input, &policies, &mut memo);
             if permission.usable {
                 if permission.auto {
-                    auto_paths.push(permission.path);
+                    auto_paths.push((policy.id.clone(), permission.path));
                 } else {
-                    permit_paths.push(permission.path);
+                    permit_paths.push((policy.id.clone(), permission.path));
                 }
             } else {
                 result.reasons.extend(permission.reasons);
@@ -224,16 +224,16 @@ fn evaluate_inner(input: &EvaluationInput<'_>) -> AuthorizationDecision {
         return result.finish(input, DecisionOutcome::Review, vec![]);
     }
     // BTreeMap iteration makes both chosen authorization path and diagnostics independent of policy order.
-    if let Some(path) = permit_paths.into_iter().next() {
-        result.reason(ReasonCode::ExplicitPermission, path.first().map(|p| p.id.as_str()), None);
+    if let Some((id, path)) = permit_paths.into_iter().next() {
+        result.reason(ReasonCode::ExplicitPermission, Some(&id), None);
         return result.finish(input, DecisionOutcome::Permit, path);
     }
     if input.baseline == BaselineDecision::Permit && !supersedes_baseline {
         result.reason(ReasonCode::LegacyPermission, None, None);
         return result.finish(input, DecisionOutcome::Permit, vec![]);
     }
-    if let Some(path) = auto_paths.into_iter().next() {
-        result.reason(ReasonCode::AutoEligible, path.first().map(|p| p.id.as_str()), None);
+    if let Some((id, path)) = auto_paths.into_iter().next() {
+        result.reason(ReasonCode::AutoEligible, Some(&id), None);
         return result.finish(input, DecisionOutcome::EligibleForAuto, path);
     }
     result.reason(ReasonCode::NoPermission, None, None);
@@ -259,9 +259,14 @@ impl DecisionBuilder {
         path: Vec<PolicyVersionRef>,
     ) -> AuthorizationDecision {
         self.policies.extend(path.iter().map(|p| p.id.clone()));
+        self.policies.extend(self.reasons.iter().filter_map(|r| r.policy_id.clone()));
         AuthorizationDecision {
             outcome,
-            request_digest: input.action.request_digest.clone(),
+            request_digest: if input.action.request_digest.len() == 64 {
+                input.action.request_digest.clone()
+            } else {
+                String::new()
+            },
             determining_policies: self.policies.into_iter().collect(),
             required_reviews: self.reviews.into_iter().collect(),
             authorization_path: path,
@@ -506,9 +511,18 @@ fn permission_status(
         id: policy.id.clone(),
         revision: policy.revision,
     });
-    if !ownership_matches(policy, input.action) || scope_matches(policy, input.action) != Match::Yes {
+    let scope = scope_matches(policy, input.action);
+    if !ownership_matches(policy, input.action) || scope != Match::Yes {
         status.usable = false;
-        status.reasons.insert(reason(ReasonCode::ConditionsNotMet, Some(&policy.id), None));
+        status.reasons.insert(reason(
+            if scope == Match::Unknown {
+                ReasonCode::UnknownEvidence
+            } else {
+                ReasonCode::ConditionsNotMet
+            },
+            Some(&policy.id),
+            None,
+        ));
     }
     if !active(policy, input.now) {
         status.usable = false;

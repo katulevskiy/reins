@@ -233,7 +233,7 @@ pub enum Condition {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PolicyEffect {
     Deny,
@@ -244,6 +244,35 @@ pub enum PolicyEffect {
     EligibleForAuto,
     /// An upper bound available for issuing delegations. It grants no execution authority by itself.
     DelegationAuthority,
+}
+
+// Serde's internally tagged *unit* variants accept additional fields despite `deny_unknown_fields` on the enum.
+// Decode the same wire format through empty struct variants so future constraints cannot be silently discarded.
+impl<'de> Deserialize<'de> for PolicyEffect {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+        enum StrictEffect {
+            Deny {},
+            RequireReview {
+                requirements: Vec<ReviewRequirement>,
+            },
+            Permit {},
+            EligibleForAuto {},
+            DelegationAuthority {},
+        }
+        Ok(match StrictEffect::deserialize(deserializer)? {
+            StrictEffect::Deny {} => Self::Deny,
+            StrictEffect::RequireReview {
+                requirements,
+            } => Self::RequireReview {
+                requirements,
+            },
+            StrictEffect::Permit {} => Self::Permit,
+            StrictEffect::EligibleForAuto {} => Self::EligibleForAuto,
+            StrictEffect::DelegationAuthority {} => Self::DelegationAuthority,
+        })
+    }
 }
 
 /// Structural review requirements only. This module does not verify signatures, memberships or approval receipts.
@@ -269,6 +298,7 @@ pub struct UsageLimits {
 impl ActionContext {
     pub fn validate(&self) -> Result<(), ValidationError> {
         version(self.v)?;
+        bounded_encoding(self)?;
         text("request_id", &self.request_id)?;
         if self.request_digest.len() != 64
             || !self.request_digest.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -306,7 +336,7 @@ impl ActionContext {
                 }
             }
         }
-        bounded_encoding(self)
+        Ok(())
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<Self, ValidationError> {
@@ -331,6 +361,7 @@ impl OperationId {
 impl PolicyRecord {
     pub fn validate(&self) -> Result<(), ValidationError> {
         version(self.v)?;
+        bounded_encoding(self)?;
         text("policy.id", &self.id)?;
         text("policy.issuer", &self.issuer.principal_id)?;
         optional_text("policy.tenant", self.issuer.tenant_id.as_deref())?;
@@ -422,7 +453,7 @@ impl PolicyRecord {
         {
             return Err(invalid("policy.limits", "only authorizing effects consume budgets"));
         }
-        bounded_encoding(self)
+        Ok(())
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<Self, ValidationError> {

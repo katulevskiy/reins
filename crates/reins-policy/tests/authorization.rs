@@ -141,7 +141,7 @@ fn repo_condition(repo: &str) -> Condition {
     }
 }
 
-fn assert_no_permit(decision: AuthorizationDecision) {
+fn assert_no_permit(decision: &AuthorizationDecision) {
     assert!(!matches!(decision.outcome, DecisionOutcome::Permit | DecisionOutcome::EligibleForAuto), "{decision:?}");
 }
 
@@ -187,7 +187,10 @@ fn explicit_permission_is_immediate_and_auto_eligibility_never_satisfies_review(
         DecisionOutcome::Permit
     );
     let auto = policy("auto", PolicyEffect::EligibleForAuto);
-    assert_eq!(run(&action(), &[auto.clone()], BaselineDecision::Review).outcome, DecisionOutcome::EligibleForAuto);
+    assert_eq!(
+        run(&action(), std::slice::from_ref(&auto), BaselineDecision::Review).outcome,
+        DecisionOutcome::EligibleForAuto
+    );
     assert_eq!(
         run(
             &action(),
@@ -211,8 +214,8 @@ fn explicit_permission_is_immediate_and_auto_eligibility_never_satisfies_review(
 fn fresh_verified_facts_are_required_and_claimed_provenance_is_not_authority() {
     let mut allow = policy("allow", PolicyEffect::Permit);
     allow.conditions.push(repo_condition("repo-1"));
-    assert_eq!(run(&action(), &[allow.clone()], BaselineDecision::Review).outcome, DecisionOutcome::Permit);
-    assert_no_permit(run_at(&action(), &[allow.clone()], BaselineDecision::Permit, NOW, &[], &[]));
+    assert_eq!(run(&action(), std::slice::from_ref(&allow), BaselineDecision::Review).outcome, DecisionOutcome::Permit);
+    assert_no_permit(&run_at(&action(), std::slice::from_ref(&allow), BaselineDecision::Permit, NOW, &[], &[]));
     for source in [EvidenceSource::Agent, EvidenceSource::Organization] {
         let mut request = action();
         if let Fact::Known {
@@ -227,16 +230,16 @@ fn fresh_verified_facts_are_required_and_claimed_provenance_is_not_authority() {
         } else {
             &[]
         };
-        assert_no_permit(run_at(&request, &[allow.clone()], BaselineDecision::Permit, NOW, keys, &[]));
+        assert_no_permit(&run_at(&request, std::slice::from_ref(&allow), BaselineDecision::Permit, NOW, keys, &[]));
     }
     for now in [89, 110, 111] {
-        assert_no_permit(run_at(&action(), &[allow.clone()], BaselineDecision::Permit, now, KEYS, &[]));
+        assert_no_permit(&run_at(&action(), std::slice::from_ref(&allow), BaselineDecision::Permit, now, KEYS, &[]));
     }
     let mut unknown = action();
     unknown.facts[0].fact = Fact::Unknown {
         reason: UnknownReason::Unresolved,
     };
-    assert_no_permit(run(&unknown, &[allow], BaselineDecision::Permit));
+    assert_no_permit(&run(&unknown, &[allow], BaselineDecision::Permit));
 }
 
 #[test]
@@ -355,7 +358,7 @@ fn wrong_policy_ownership_account_agent_and_future_capability_cannot_authorize()
     p.scope.operations[0].capability = "command_new".into();
     variations.push(p);
     for p in variations {
-        assert_no_permit(run(&action(), &[p], BaselineDecision::Review));
+        assert_no_permit(&run(&action(), &[p], BaselineDecision::Review));
     }
 }
 
@@ -378,13 +381,13 @@ fn recipient_sets_are_conjunctive_and_every_recipient_is_covered() {
     ] {
         a.facts.truncate(1);
         a.facts.push(known(AttributeKey::Recipients, AttributeValue::StringSet(recipients)));
-        assert_eq!(run(&a, &[p.clone()], BaselineDecision::Permit).outcome, expected);
+        assert_eq!(run(&a, std::slice::from_ref(&p), BaselineDecision::Permit).outcome, expected);
     }
     p.conditions.push(Condition::BoolEquals {
         key: AttributeKey::NetworkRestricted,
         value: true,
     });
-    assert_no_permit(run(&a, &[p], BaselineDecision::Permit));
+    assert_no_permit(&run(&a, &[p], BaselineDecision::Permit));
 }
 
 #[test]
@@ -392,7 +395,7 @@ fn paused_revoked_expired_permissions_do_not_resurrect_legacy_grants() {
     for lifecycle in [PolicyLifecycle::Paused, PolicyLifecycle::Revoked] {
         let mut p = policy("limited", PolicyEffect::Permit);
         p.lifecycle = lifecycle;
-        assert_eq!(run(&action(), &[p.clone()], BaselineDecision::Permit).outcome, DecisionOutcome::Review);
+        assert_eq!(run(&action(), std::slice::from_ref(&p), BaselineDecision::Permit).outcome, DecisionOutcome::Review);
         // Independent live permissions remain OR sources; revoking one is not an implicit global deny.
         assert_eq!(
             run(&action(), &[p, policy("independent", PolicyEffect::Permit)], BaselineDecision::Review).outcome,
@@ -401,7 +404,7 @@ fn paused_revoked_expired_permissions_do_not_resurrect_legacy_grants() {
     }
     let p = policy("expiring", PolicyEffect::Permit);
     for now in [79, 120, 121] {
-        assert_no_permit(run_at(&action(), &[p.clone()], BaselineDecision::Permit, now, KEYS, &[]));
+        assert_no_permit(&run_at(&action(), std::slice::from_ref(&p), BaselineDecision::Permit, now, KEYS, &[]));
     }
     assert_eq!(run_at(&action(), &[p], BaselineDecision::Review, 80, KEYS, &[]).outcome, DecisionOutcome::Permit);
 }
@@ -418,7 +421,7 @@ fn delegation() -> (PolicyRecord, PolicyRecord) {
 #[test]
 fn delegation_authority_does_not_execute_and_every_ancestor_remains_a_bound() {
     let (parent, child) = delegation();
-    assert_no_permit(run(&action(), &[parent.clone()], BaselineDecision::Review));
+    assert_no_permit(&run(&action(), std::slice::from_ref(&parent), BaselineDecision::Review));
     let decision = run(&action(), &[parent.clone(), child.clone()], BaselineDecision::Review);
     assert_eq!(decision.outcome, DecisionOutcome::Permit);
     assert_eq!(
@@ -429,15 +432,15 @@ fn delegation_authority_does_not_execute_and_every_ancestor_remains_a_bound() {
         for lifecycle in [PolicyLifecycle::Paused, PolicyLifecycle::Revoked] {
             let mut rules = [parent.clone(), child.clone()];
             rules[which].lifecycle = lifecycle;
-            assert_no_permit(run(&action(), &rules, BaselineDecision::Permit));
+            assert_no_permit(&run(&action(), &rules, BaselineDecision::Permit));
         }
     }
     let mut wrong_repo = action();
     wrong_repo.facts[0] = known(AttributeKey::Repository, AttributeValue::String("another".into()));
-    assert_no_permit(run(&wrong_repo, &[parent.clone(), child.clone()], BaselineDecision::Permit));
+    assert_no_permit(&run(&wrong_repo, &[parent.clone(), child.clone()], BaselineDecision::Permit));
     let mut wrong_scope = parent.clone();
     wrong_scope.scope.account_ids = vec!["another".into()];
-    assert_no_permit(run(&action(), &[wrong_scope, child.clone()], BaselineDecision::Permit));
+    assert_no_permit(&run(&action(), &[wrong_scope, child.clone()], BaselineDecision::Permit));
     let mut auto_parent = parent;
     auto_parent.effect = PolicyEffect::EligibleForAuto;
     assert_eq!(
@@ -449,7 +452,7 @@ fn delegation_authority_does_not_execute_and_every_ancestor_remains_a_bound() {
 #[test]
 fn malformed_and_cyclic_delegations_hold_before_legacy_authority() {
     let (parent, mut child) = delegation();
-    assert_eq!(run(&action(), &[child.clone()], BaselineDecision::Permit).outcome, DecisionOutcome::Hold);
+    assert_eq!(run(&action(), std::slice::from_ref(&child), BaselineDecision::Permit).outcome, DecisionOutcome::Hold);
     let mut parent = parent;
     parent.kind = PolicyKind::Delegation;
     parent.effect = PolicyEffect::Permit;
@@ -476,21 +479,21 @@ fn limits_include_pending_reservations_parent_budgets_and_overflow() {
     let (mut parent, child) = delegation();
     parent.limits.max_uses = Some(2);
     let rules = [parent, child];
-    assert_no_permit(run(&action(), &rules, BaselineDecision::Permit));
+    assert_no_permit(&run(&action(), &rules, BaselineDecision::Permit));
     let mut u = usage("authority");
     u.committed_uses = 1;
     assert_eq!(
-        run_at(&action(), &rules, BaselineDecision::Review, NOW, KEYS, &[u.clone()]).outcome,
+        run_at(&action(), &rules, BaselineDecision::Review, NOW, KEYS, std::slice::from_ref(&u)).outcome,
         DecisionOutcome::Permit
     );
     u.reserved_uses = 1;
-    assert_no_permit(run_at(&action(), &rules, BaselineDecision::Permit, NOW, KEYS, &[u.clone()]));
+    assert_no_permit(&run_at(&action(), &rules, BaselineDecision::Permit, NOW, KEYS, std::slice::from_ref(&u)));
     u.committed_uses = u64::MAX;
-    assert_no_permit(run_at(&action(), &rules, BaselineDecision::Permit, NOW, KEYS, &[u.clone()]));
+    assert_no_permit(&run_at(&action(), &rules, BaselineDecision::Permit, NOW, KEYS, std::slice::from_ref(&u)));
     u.committed_uses = 0;
     u.reserved_uses = 0;
     u.revision = 2;
-    assert_no_permit(run_at(&action(), &rules, BaselineDecision::Permit, NOW, KEYS, &[u]));
+    assert_no_permit(&run_at(&action(), &rules, BaselineDecision::Permit, NOW, KEYS, &[u]));
 }
 
 #[test]
@@ -509,17 +512,31 @@ fn monetary_limits_require_verified_matching_currency_and_include_request_cost()
     u.committed_cost_microunits = 3;
     u.reserved_cost_microunits = 2;
     assert_eq!(
-        run_at(&a, &[p.clone()], BaselineDecision::Review, NOW, KEYS, &[u.clone()]).outcome,
+        run_at(&a, std::slice::from_ref(&p), BaselineDecision::Review, NOW, KEYS, std::slice::from_ref(&u)).outcome,
         DecisionOutcome::Permit
     );
     u.reserved_cost_microunits = 3;
-    assert_no_permit(run_at(&a, &[p.clone()], BaselineDecision::Permit, NOW, KEYS, &[u.clone()]));
+    assert_no_permit(&run_at(
+        &a,
+        std::slice::from_ref(&p),
+        BaselineDecision::Permit,
+        NOW,
+        KEYS,
+        std::slice::from_ref(&u),
+    ));
     u.reserved_cost_microunits = 0;
     u.cost_currency = Some(Currency::Eur);
-    assert_no_permit(run_at(&a, &[p.clone()], BaselineDecision::Permit, NOW, KEYS, &[u.clone()]));
+    assert_no_permit(&run_at(
+        &a,
+        std::slice::from_ref(&p),
+        BaselineDecision::Permit,
+        NOW,
+        KEYS,
+        std::slice::from_ref(&u),
+    ));
     u.cost_currency = Some(Currency::Usd);
     a.facts[2] = known(AttributeKey::CostCurrency, AttributeValue::Currency(Currency::Eur));
-    assert_no_permit(run_at(&a, &[p], BaselineDecision::Permit, NOW, KEYS, &[u]));
+    assert_no_permit(&run_at(&a, &[p], BaselineDecision::Permit, NOW, KEYS, &[u]));
 }
 
 #[test]
@@ -542,7 +559,7 @@ fn unverified_policy_unsupported_version_duplicates_and_oversized_snapshots_hold
     };
     let untrusted = evaluate(&EvaluationInput {
         action: &a,
-        policies: &[p.clone()],
+        policies: std::slice::from_ref(&p),
         authority: &authority,
         now: NOW,
         usage: &[],
@@ -581,8 +598,10 @@ proptest! {
             policy("legal", PolicyEffect::RequireReview { requirements: vec![reviewer("legal", 2)] })];
         if include_deny { rules.push(policy("deny", PolicyEffect::Deny)); }
         let expected = run(&action(), &rules, BaselineDecision::Permit);
-        rules.sort_by_key(|p| order[p.id.len() % order.len()]);
-        prop_assert_eq!(run(&action(), &rules, BaselineDecision::Permit), expected);
+        let mut keyed: Vec<_> = rules.into_iter().enumerate().map(|(i, p)| (order[i], p)).collect();
+        keyed.sort_by_key(|(key, _)| *key);
+        let shuffled: Vec<_> = keyed.into_iter().map(|(_, p)| p).collect();
+        prop_assert_eq!(run(&action(), &shuffled, BaselineDecision::Permit), expected);
     }
 
     #[test]
