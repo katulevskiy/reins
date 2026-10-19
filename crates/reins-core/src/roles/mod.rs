@@ -753,7 +753,8 @@ impl Engine {
         match self.refresh_roster(session, &account).await? {
             Some(roster) if self.standing_in(&roster)? != Standing::Primary => Err(CoreError::ViewerOnly),
             _ => Ok(()),
-        }
+        }?;
+        self.require_authorization_history_ready()
     }
 
     /// The master key and proof of `typed` (a recovery code or the master password), or of the account secret this
