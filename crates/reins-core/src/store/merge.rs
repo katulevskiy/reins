@@ -213,7 +213,7 @@ fn keyed(
         let authorization = name == "meta"
             && matches!(v.local.or(v.server).and_then(|r| cell(&server.columns, r, "key")), Some(Cell::Text(key_name)) if key_name == super::authorization::STORE_KEY);
         let receipt = name == "meta"
-            && matches!(v.local.or(v.server).and_then(|r| cell(&server.columns, r, "key")), Some(Cell::Text(key_name)) if key_name.starts_with(super::permissions::RECEIPT_STORE_PREFIX));
+            && matches!(v.local.or(v.server).and_then(|r| cell(&server.columns, r, "key")), Some(Cell::Text(key_name)) if super::permissions::retained_store_key(key_name));
         let picked = if receipt {
             receipt_versions(&server.columns, &v)
         } else if authorization {

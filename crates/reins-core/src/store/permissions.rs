@@ -26,6 +26,27 @@ pub(crate) const BUDGET_SERVICE: &str = "authorization_budget";
 pub(crate) const BUDGET_PREFIX: &str = "reins-policy-budget-";
 pub(crate) const RECEIPT_PREFIX: &str = "authorization.receipt.";
 pub(crate) const RECEIPT_STORE_PREFIX: &str = "app.authorization.receipt.";
+const REVOKED_CONNECTION_PREFIX: &str = "authorization.revoked_connection.";
+const REVOKED_CONNECTION_STORE_PREFIX: &str = "app.authorization.revoked_connection.";
+
+pub(crate) fn retained_metadata_key(key: &str) -> bool {
+    key.starts_with(RECEIPT_PREFIX) || key.starts_with(REVOKED_CONNECTION_PREFIX)
+}
+pub(crate) fn retained_store_key(key: &str) -> bool {
+    key.starts_with(RECEIPT_STORE_PREFIX) || key.starts_with(REVOKED_CONNECTION_STORE_PREFIX)
+}
+fn revoked_connection_key(id: &str) -> String {
+    format!("{REVOKED_CONNECTION_STORE_PREFIX}{}", hex32(&sha256(id.as_bytes())))
+}
+fn connection_revoked(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM meta WHERE key=?1)", [revoked_connection_key(id)], |r| r.get(0))
+        .map_err(CoreError::from)
+}
+pub(super) fn revoke_connection_in(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES (?1,'true')", [revoked_connection_key(id)])?;
+    Ok(())
+}
+
 const MAX_UNRESOLVED: usize = 128;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,6 +183,9 @@ fn insert_grant(conn: &Connection, grant: &Grant, label: &str, origin: &str) -> 
 }
 
 fn account_admitted(conn: &Connection, action: &ActionContext, now: i64) -> Result<bool, CoreError> {
+    if connection_revoked(conn, &action.actor.connection_id)? {
+        return Ok(false);
+    }
     let tuple: Vec<String> = serde_json::from_str(&action.resource.account_id)
         .map_err(|_| CoreError::invalid("invalid account identity"))?;
     if tuple.len() != 2 || tuple[0] != action.operation.service {
@@ -386,6 +410,9 @@ impl Store {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         authorization::replace_in(&tx, expected, next)?;
         for (grant, label, origin) in admissions {
+            if connection_revoked(&tx, &grant.connection_id.0)? {
+                return Err(CoreError::invalid("a selected agent was revoked; reconnect it with a new identity"));
+            }
             insert_grant(&tx, grant, label, origin)?;
         }
         let mut seen = BTreeSet::new();
@@ -649,6 +676,10 @@ impl Store {
             < MAX_UNRESOLVED)
     }
 
+    pub(crate) fn permission_connection_revoked(&self, id: &str) -> Result<bool, CoreError> {
+        connection_revoked(&*self.read()?, id)
+    }
+
     pub(crate) fn permission_budget_uses(&self, policy_id: &str) -> Result<u64, CoreError> {
         let conn = self.read()?;
         let id = budget_id(policy_id);
@@ -680,6 +711,22 @@ fn receipt_rows(conn: &Connection) -> Result<Vec<(String, ExecutionReceipt)>, Co
         .map(|(key, raw)| {
             let receipt: ExecutionReceipt =
                 serde_json::from_str(&raw).map_err(|_| CoreError::storage("an execution receipt is invalid"))?;
+            if receipt.v != 1 {
+                return Err(CoreError::storage("this execution receipt version needs an app update"));
+            }
+            let identity = serde_json::to_vec(&(&receipt.owner, &receipt.connection_id, &receipt.request_id))
+                .expect("identity serializes");
+            let expected = format!("{RECEIPT_STORE_PREFIX}{}", hex32(&sha256(&identity)));
+            if key != expected
+                || uuid::Uuid::parse_str(&receipt.attempt_id).is_err()
+                || receipt.policies.len() > reins_proto::authorization::MAX_AUTHORIZATION_ITEMS
+                || receipt
+                    .policies
+                    .iter()
+                    .any(|policy| policy.id.is_empty() || policy.id.len() > 2048 || policy.revision == 0)
+            {
+                return Err(CoreError::storage("an execution receipt identity is invalid"));
+            }
             Ok((key, receipt))
         })
         .collect()
@@ -707,6 +754,9 @@ pub(crate) fn receipt_incoming(previous: Option<&Value>, next: Option<&Value>) -
                 serde_json::from_value::<ExecutionReceipt>(b.clone()),
             );
             if let (Ok(mut old), Ok(new)) = parsed {
+                if old.v != 1 || new.v != 1 {
+                    return serde_json::json!({"execution_attempt":"unsupported_version"});
+                }
                 let mut comparison = new.clone();
                 comparison.outcome = old.outcome;
                 if old == comparison {
@@ -792,9 +842,11 @@ pub(super) struct PreservedPermissions {
 }
 
 pub(super) fn before_import(conn: &Connection) -> Result<PreservedPermissions, CoreError> {
-    let mut statement = conn.prepare("SELECT key,value FROM meta WHERE key LIKE ?1")?;
+    let mut statement = conn.prepare("SELECT key,value FROM meta WHERE key LIKE ?1 OR key LIKE ?2")?;
     let receipts = statement
-        .query_map([format!("{RECEIPT_STORE_PREFIX}%")], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+        .query_map([format!("{RECEIPT_STORE_PREFIX}%"), format!("{REVOKED_CONNECTION_STORE_PREFIX}%")], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut statement = conn.prepare("SELECT grant_json FROM grants WHERE origin=?1")?;
     let rows = statement.query_map([BUDGET_ORIGIN], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
@@ -1241,5 +1293,47 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    fn revoked_connections_dominate_admissions_and_survive_sync_and_restore() {
+        let (_dir, store) = setup(vec![policy("permission", 3)]);
+        let proof = reserve(&store, "before-revoke");
+        let prior = store.export_account().unwrap();
+        store.remove_connection_grants(&"agent".into()).unwrap();
+        assert!(store.permission_connection_revoked("agent").unwrap());
+        assert!(store.permission_reserve(&action("after-revoke"), &[AttributeKey::Recipients], 10).is_err());
+        assert!(
+            store.permission_revalidate(&proof, &action("before-revoke"), &[AttributeKey::Recipients], 10).is_err()
+        );
+        let key = revoked_connection_key("agent");
+        let logical = key.strip_prefix("app.").unwrap();
+        store.write_sync_row(reins_proto::oplog::Table::Meta, logical, None, None).unwrap();
+        assert!(store.permission_connection_revoked("agent").unwrap(), "signed remove cannot erase revocation");
+        store.import_account(&prior).unwrap();
+        assert!(store.permission_connection_revoked("agent").unwrap(), "old restore cannot erase revocation");
+        assert!(store.permission_reserve(&action("restored"), &[AttributeKey::Recipients], 10).is_err());
+    }
+
+    #[test]
+    fn unsupported_receipt_versions_hold_and_cannot_promote_settlement() {
+        let (_dir, store) = setup(vec![policy("permission", 3)]);
+        let proof = reserve(&store, "versioned");
+        let valid = serde_json::to_value(&proof.receipt).unwrap();
+        let mut unsupported = valid.clone();
+        unsupported["v"] = serde_json::json!(2);
+        unsupported["outcome"] = serde_json::json!("succeeded");
+        let held = receipt_incoming(Some(&valid), Some(&unsupported));
+        assert_eq!(held, receipt_incoming(Some(&unsupported), Some(&valid)));
+        assert!(serde_json::from_value::<ExecutionReceipt>(held).is_err());
+        store
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE meta SET value=?2 WHERE key=?1",
+                params![format!("app.{}", proof.key), unsupported.to_string()],
+            )
+            .unwrap();
+        assert!(store.permission_history_ready().is_err());
+        assert!(store.permission_reserve(&action("other"), &[AttributeKey::Recipients], 10).is_err());
     }
 }

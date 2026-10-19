@@ -22,7 +22,7 @@ pub(crate) mod permissions;
 mod protected;
 pub(crate) mod records;
 mod snapshot;
-pub(crate) use protected::{Owner, STORE_BUSY, STORE_SUSPENDING, install_lock_guard};
+pub(crate) use protected::{ExecutionLease, Owner, STORE_BUSY, STORE_SUSPENDING, install_lock_guard};
 mod secrets;
 mod sync;
 pub(crate) use sync::Pulled;

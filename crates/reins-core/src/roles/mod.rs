@@ -339,11 +339,43 @@ impl State {
     }
 }
 
+pub(crate) struct PermissionExecutionFence<'a> {
+    _local: tokio::sync::MutexGuard<'a, ()>,
+    _lease: crate::store::ExecutionLease,
+}
+
 impl Engine {
-    /// Serializes bounded positive execution with this phone's role handover. Reservations still reach the server
-    /// before an effect, so an externally initiated recovery cannot omit a consumption that already executed.
-    pub(crate) async fn permission_execution_fence(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.roles.changing.lock().await
+    /// Effects exclude handover across independent app/extension processes. A shared lease deliberately allows
+    /// the owner to install Deny/pause/revoke while a provider or authentication request is suspended.
+    pub(crate) async fn permission_execution_fence(&self) -> Result<PermissionExecutionFence<'_>, CoreError> {
+        let local = self.roles.changing.lock().await;
+        let lease = self.account_execution_lease(true).await?;
+        Ok(PermissionExecutionFence {
+            _local: local,
+            _lease: lease,
+        })
+    }
+
+    /// Policy writers may run concurrently with effects, but never with handover's protected-state check and key
+    /// transfer. Their final fresh-role check and atomic CAS must both happen while this lease is held.
+    pub(crate) async fn policy_mutation_fence(&self) -> Result<crate::store::ExecutionLease, CoreError> {
+        self.account_execution_lease(true).await
+    }
+
+    pub(crate) async fn permission_handover_fence(&self) -> Result<PermissionExecutionFence<'_>, CoreError> {
+        let local = self.roles.changing.lock().await;
+        let lease = self.account_execution_lease(false).await?;
+        Ok(PermissionExecutionFence {
+            _local: local,
+            _lease: lease,
+        })
+    }
+
+    async fn account_execution_lease(&self, shared: bool) -> Result<crate::store::ExecutionLease, CoreError> {
+        let store = std::sync::Arc::clone(&self.store);
+        tokio::task::spawn_blocking(move || store.execution_lease(shared))
+            .await
+            .map_err(|_| CoreError::storage("account execution lease task failed"))?
     }
     // ---- keys and stored state ----------------------------------------------------------------------------------
 
@@ -1421,7 +1453,7 @@ impl Engine {
                 kept.join(", ")
             )));
         }
-        let _one = self.roles.changing.lock().await;
+        let _one = self.permission_handover_fence().await?;
         let account = self.roles_account(&session).await?;
         let request = api_call!(&session, |api| api.handover_request(id)).map_err(ApiFailure::into_core)?;
         let (roster, seed) = self.as_primary(&session, &account).await?;

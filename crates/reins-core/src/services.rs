@@ -125,9 +125,12 @@ impl Engine {
     /// waiting for it are answered with an error.
     pub async fn remove_service_account(&self, service: &str, account: &str) -> Result<(), CoreError> {
         let account = account.trim().to_lowercase();
+        let fence = self.policy_mutation_fence().await?;
+        self.require_decider_fresh(self.session()?.as_ref()).await?;
         if !self.store.remove_account(service, &account)? {
             return Err(CoreError::NotFound);
         }
+        drop(fence);
         if let Some(connector) = self.connectors.get(service) {
             connector.forget(&account).await;
         }

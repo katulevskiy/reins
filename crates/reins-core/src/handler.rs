@@ -310,7 +310,7 @@ impl Engine {
         let facts: Vec<MessageFacts> = parsed.iter().map(|p| p.facts.clone()).collect();
         // A login code or a password is never released by a grant: it always waits for the user's tick.
         let held: Vec<bool> = parsed.iter().map(|p| views::looks_sensitive(&p.summary)).collect();
-        let fence = self.permission_execution_fence().await;
+        let fence = self.permission_execution_fence().await?;
         let reservation = if held.iter().any(|held| *held) && self.permission_managed(request)? {
             crate::permissions::PermissionReservation::Review
         } else {
@@ -413,7 +413,7 @@ impl Engine {
         request: &RelayRequest,
         email: &OutgoingEmail,
     ) -> Result<(), CoreError> {
-        let fence = self.permission_execution_fence().await;
+        let fence = self.permission_execution_fence().await?;
         let reservation = match self.permission_route(request) {
             Ok(reservation) => reservation,
             Err(error) => return self.reject(session, request, &error.to_string()).await,
@@ -495,7 +495,7 @@ impl Engine {
             unix_now(),
         )? {
             SendDecision::Allowed(grant) => {
-                let _fence = self.permission_execution_fence().await;
+                let _fence = self.permission_execution_fence().await?;
                 let prepared = self
                     .authorization_execute(request, crate::authorization::AuthorizationSource::Automatic)
                     .and_then(|()| self.legacy_send_attempt(request));
