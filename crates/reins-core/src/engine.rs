@@ -351,10 +351,13 @@ impl Engine {
             return Err(CoreError::invalid("that is not a usable account name"));
         }
         let now = unix_now();
-        if service == "vault" {
-            self.store.add_account(service, &account, now)?;
-        } else {
+        if service == views::SERVICE_GMAIL {
             self.store.add_verified_account(&self.policy_owner()?, service, &account, now)?;
+        } else {
+            // Roll out mandatory connected-account defaults together with a usable positive adapter. Other
+            // integrations retain their remembered-grant semantics until that adapter ships; explicit policies
+            // and already managed markers remain enforced by the common gate.
+            self.store.add_account(service, &account, now)?;
         }
         Ok(AccountView {
             service: service.to_owned(),
