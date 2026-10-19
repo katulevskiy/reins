@@ -126,7 +126,17 @@ impl Engine {
     pub async fn remove_service_account(&self, service: &str, account: &str) -> Result<(), CoreError> {
         let account = account.trim().to_lowercase();
         let fence = self.policy_mutation_fence().await?;
-        self.require_decider_fresh(self.session()?.as_ref()).await?;
+        match self.session() {
+            Ok(session) => self.require_decider_fresh(&session).await?,
+            Err(CoreError::NotLoggedIn) if self.store.bound_owner().is_none() => {
+                // Device-local integrations can be configured before sign-in. There is no account authority or
+                // handover in this unbound store; removal only narrows its local credentials and grants.
+                if self.store.authorization_state()?.is_some() {
+                    return Err(CoreError::NotLoggedIn);
+                }
+            }
+            Err(error) => return Err(error),
+        }
         if !self.store.remove_account(service, &account)? {
             return Err(CoreError::NotFound);
         }

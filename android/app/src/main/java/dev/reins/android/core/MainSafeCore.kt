@@ -1,5 +1,15 @@
 package dev.reins.android.core
 
+import dev.reins.core.AccountPermissionPreset
+import dev.reins.core.AccountPermissionsDraft
+import dev.reins.core.AccountPermissionsView
+import dev.reins.core.PermissionCapability
+import dev.reins.core.PermissionScopeOptions
+import dev.reins.core.PermissionPreview
+import dev.reins.core.OwnerCheck
+import dev.reins.core.DelegationView
+import dev.reins.core.DelegationDraft
+import dev.reins.core.DelegationChange
 import dev.reins.core.AccountKeys
 import dev.reins.core.BudgetView
 import dev.reins.core.PaymentsOverview
@@ -450,4 +460,15 @@ class MainSafeCore(
     override suspend fun deleteModel() = io { deleteModel() }
 
     override suspend fun autopilotEvaluate(profileId: String?, situation: String): SuggestionView = io { autopilotEvaluate(profileId, situation) }
+
+    override suspend fun accountPermissions(service: String, account: String): AccountPermissionsView = io { accountPermissions(service, account) }
+    override suspend fun accountPermissionDraft(service: String, account: String, preset: AccountPermissionPreset): AccountPermissionsDraft = io { accountPermissionDraft(service, account, preset) }
+    override suspend fun permissionScopeOptions(service: String, account: String, capability: PermissionCapability, query: String, limit: UInt): PermissionScopeOptions = io { permissionScopeOptions(service, account, capability, query, limit) }
+    override suspend fun previewAccountPermissions(draft: AccountPermissionsDraft): PermissionPreview = io { previewAccountPermissions(draft) }
+    override suspend fun saveAccountPermissions(draft: AccountPermissionsDraft, owner: OwnerCheck): AccountPermissionsView = io { saveAccountPermissions(draft, owner) }
+    override suspend fun delegations(): List<DelegationView> = io { delegations() }
+    override suspend fun delegationDraft(service: String, account: String): DelegationDraft = io { delegationDraft(service, account) }
+    override suspend fun previewDelegation(draft: DelegationDraft): PermissionPreview = io { previewDelegation(draft) }
+    override suspend fun issueDelegation(draft: DelegationDraft, owner: OwnerCheck): DelegationView = io { issueDelegation(draft, owner) }
+    override suspend fun changeDelegation(id: String, expectedRevision: ULong, change: DelegationChange, owner: OwnerCheck): DelegationView = io { changeDelegation(id, expectedRevision, change, owner) }
 }

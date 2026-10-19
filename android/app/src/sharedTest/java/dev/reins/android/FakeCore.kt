@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import dev.reins.core.*
 import dev.reins.core.AccountKeys
 import dev.reins.core.BudgetView
 import dev.reins.core.PaymentsOverview
@@ -62,6 +63,61 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /** In-memory core for UI tests: holds state, records the calls that matter. */
 class FakeCore : ReinsCoreInterface {
+    val permissionViews = java.util.concurrent.ConcurrentHashMap<String, AccountPermissionsView>()
+    val savedPermissionDrafts = CopyOnWriteArrayList<AccountPermissionsDraft>()
+    val delegationRecords = CopyOnWriteArrayList<DelegationView>()
+    @Volatile var permissionFailure: Exception? = null
+    val permissionScopeGates = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<Unit>>()
+    @Volatile var permissionScopeOverride: PermissionScopeOptions? = null
+    val permissionSaveCalls = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile var permissionSaveGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun accountPermissions(service: String, account: String): AccountPermissionsView = permissionViews["$service/$account"] ?: PermissionFixtures.view(service, account)
+    override suspend fun accountPermissionDraft(service: String, account: String, preset: AccountPermissionPreset) = PermissionFixtures.draft(accountPermissions(service, account), preset)
+    override suspend fun permissionScopeOptions(service: String, account: String, capability: PermissionCapability, query: String, limit: UInt): PermissionScopeOptions {
+        permissionScopeGates[query]?.await()
+        permissionScopeOverride?.let { return it }
+        val recipient = capability == PermissionCapability.MAIL_SEND
+        val kind = if (recipient) PermissionScopeKind.SELECTED_RECIPIENTS else PermissionScopeKind.SELECTED_RESOURCES
+        return PermissionScopeOptions(if (recipient) listOf(kind) else listOf(PermissionScopeKind.ALL_IN_ACCOUNT, kind),
+            if (query.contains('@')) listOf(PermissionScopeOption("recipient:" + query.lowercase(), query.lowercase(), "Exact address", service, account, kind)) else emptyList(), recipient, null)
+    }
+    override suspend fun previewAccountPermissions(draft: AccountPermissionsDraft): PermissionPreview {
+        permissionFailure?.let { throw it }
+        if (draft.expectedRevision != accountPermissions(draft.service, draft.account).revision) throw CoreException.Invalid("Permissions changed. Reload current settings.")
+        return PermissionFixtures.preview(draft.expectedRevision)
+    }
+    override suspend fun saveAccountPermissions(draft: AccountPermissionsDraft, owner: OwnerCheck): AccountPermissionsView {
+        permissionSaveCalls.incrementAndGet()
+        permissionSaveGate?.await()
+        permissionFailure?.let { throw it }
+        if (!owner.confirm("Save permissions for ${draft.account}")) throw CoreException.Invalid("Owner did not confirm")
+        previewAccountPermissions(draft)
+        savedPermissionDrafts += draft
+        val result = accountPermissions(draft.service, draft.account).copy(revision = draft.expectedRevision + 1u, capabilities = accountPermissions(draft.service, draft.account).capabilities.map { cap -> cap.copy(configuredMode = draft.rules.first { it.capability == cap.capability }.mode) }, expiresAt = draft.expiresAt, remainingUses = draft.maxUses)
+        permissionViews["${draft.service}/${draft.account}"] = result
+        return result
+    }
+    override suspend fun delegations() = delegationRecords.toList()
+    override suspend fun delegationDraft(service: String, account: String): DelegationDraft {
+        val base = accountPermissionDraft(service, account, AccountPermissionPreset.READ_ASSIST)
+        return DelegationDraft(service, account, base.expectedRevision, base.agentIds, false, base.rules.filter { it.mode == PermissionMode.AUTO }, now()+3600, 20u)
+    }
+    override suspend fun previewDelegation(draft: DelegationDraft) = PermissionFixtures.preview(draft.expectedRevision)
+    override suspend fun issueDelegation(draft: DelegationDraft, owner: OwnerCheck): DelegationView {
+        permissionFailure?.let { throw it }
+        if (!owner.confirm("Create temporary permission for ${draft.account}")) throw CoreException.Invalid("Owner did not confirm")
+        val result = DelegationView("temporary-${delegationRecords.size}", draft.expectedRevision + 1u, "Temporary account permission", draft.service, draft.account, DelegationState.ACTIVE, draft.expiresAt, draft.agentIds, draft.rules, 0u, true, 0u, draft.maxUses, "Selected agents only", "Explicit temporary permission", emptyList())
+        delegationRecords += result
+        return result
+    }
+    override suspend fun changeDelegation(id: String, expectedRevision: ULong, change: DelegationChange, owner: OwnerCheck): DelegationView {
+        if (!owner.confirm("Change temporary permission")) throw CoreException.Invalid("Owner did not confirm")
+        val record = delegationRecords.first { it.id == id }
+        if (record.revision != expectedRevision) throw CoreException.Invalid("Permissions changed. Reload current settings.")
+        val result = record.copy(revision = record.revision + 1u, state = when(change) { DelegationChange.RESUME -> DelegationState.ACTIVE; DelegationChange.PAUSE -> DelegationState.PAUSED; DelegationChange.REVOKE -> DelegationState.REVOKED })
+        delegationRecords.remove(record); delegationRecords += result
+        return result
+    }
     @Volatile var session: SessionInfo? = null
     @Volatile var loginError: CoreException? = null
     @Volatile var pending: List<PendingItem> = emptyList()
