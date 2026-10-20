@@ -1467,11 +1467,7 @@ impl Engine {
         let _one = self.permission_handover_fence().await?;
         // This phone's last changes go into the log first: the entry names its last op, and the server takes no entry
         // naming an op it does not have.
-        self.live_sync_now().await.map_err(|error| {
-            CoreError::invalid(format!(
-                "This phone's account history could not sync before transfer: {error}. Retry once sync completes."
-            ))
-        })?;
+        self.live_sync_now().await?;
         if self.has_unsent_ops()? {
             return Err(CoreError::invalid(
                 "This phone's last changes have not reached the server yet. Try the handover again once online.",

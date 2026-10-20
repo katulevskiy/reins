@@ -1042,7 +1042,16 @@ async fn a_failed_first_sync_cannot_hand_over_an_unpublished_policy_and_retry_pr
     let id = b.handover_request().await.unwrap();
     let device = device_of(&b).await;
     let error = a.handover_approve(id.clone(), device.clone()).await.unwrap_err();
-    assert!(error.to_string().contains("sync"), "{error}");
+    assert!(
+        matches!(
+            error,
+            CoreError::Server {
+                status: 503,
+                ..
+            }
+        ),
+        "{error}"
+    );
     assert!(w.state().bundle.is_none(), "an unsynced policy cannot leave with an empty signed frontier");
     assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
     assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
