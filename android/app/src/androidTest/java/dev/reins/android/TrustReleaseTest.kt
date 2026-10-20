@@ -139,6 +139,7 @@ class TrustReleaseTest {
         // Search both directions to their boundary; reacquire nodes after Compose replaces them.
         scrollTo(selector, Direction.DOWN)?.let { return it }
         scrollTo(selector, Direction.UP)?.let { return it }
+        device.wait(Until.findObject(selector), 5_000)
         val node = visible(selector)
         if (node == null) {
             val hierarchy = java.io.ByteArrayOutputStream()
