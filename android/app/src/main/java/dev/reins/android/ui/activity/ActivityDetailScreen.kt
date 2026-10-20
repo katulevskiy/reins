@@ -410,7 +410,7 @@ fun answeredIn(askedAt: Long, decidedAt: Long): String {
 private fun OutcomeLine(entry: ActivityEntry) {
     val c = LocalColors.current
     val tint = when (outcomeOf(entry)) {
-        Outcome.Auto, Outcome.Overnight, Outcome.Grant -> c.accent
+        Outcome.Auto, Outcome.Overnight, Outcome.Grant, Outcome.Permission -> c.accent
         Outcome.Denied, Outcome.AutoDenied, Outcome.OvernightDenied, Outcome.Bypass -> c.danger
         Outcome.Failed, Outcome.Lockdown, Outcome.Started, Outcome.Unknown, Outcome.Withheld -> c.warning
         Outcome.Approved -> c.ink2
@@ -421,7 +421,9 @@ private fun OutcomeLine(entry: ActivityEntry) {
             dev.reins.android.design.GlyphIcon(when (entry.decidedBy) {
                 "overnight" -> Glyph.Moon
                 "lockdown" -> Glyph.Lock
-                else -> Glyph.Autopilot
+                "account_permission", "temporary_permission" -> Glyph.Key
+                "autopilot", "bypass" -> Glyph.Autopilot
+                else -> Glyph.Shield
             }, tint, size = 16.dp)
         }
         RText(outcomeLine(entry), RType.sans(14.5f, FontWeight.Medium), tint, Modifier.testTag("entryAutopilotTitle"))

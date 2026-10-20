@@ -64,7 +64,7 @@ fun outcomeKind(outcome: String): ActivityOutcome = when (outcome) {
     else -> ActivityOutcome.APPROVED
 }
 
-/** Who decided an entry, as the core's filters read it (Overnight is Autopilot, a grant is you). */
+/** Who decided an entry, as the core's filters read it (automatic includes learned decisions and explicit permissions). */
 fun deciderKind(decidedBy: String): ActivityDecider = when (decidedBy) {
     "" -> ActivityDecider.YOU
     "bypass" -> ActivityDecider.BYPASS
@@ -138,7 +138,7 @@ fun outcomeName(o: ActivityOutcome): String = when (o) {
 /** Who decided, in the filter's words. */
 fun deciderName(d: ActivityDecider): String = when (d) {
     ActivityDecider.YOU -> "You"
-    ActivityDecider.AUTOPILOT -> "Autopilot"
+    ActivityDecider.AUTOPILOT -> "Automatic"
     ActivityDecider.BYPASS -> "Bypass"
     ActivityDecider.LOCKDOWN -> "Lockdown"
 }

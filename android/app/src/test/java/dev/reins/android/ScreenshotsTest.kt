@@ -306,6 +306,18 @@ abstract class ScreenshotsBase(private val suffix: String) {
     }
 
     @Test
+    fun permissionAuthorizationActors() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        core.activity = listOf("account_permission", "temporary_permission").mapIndexed { index, actor ->
+            TestData.entry((index + 1).toLong(), "send", "sent", 1u, now - (index + 1) * 60,
+                decidedBy = actor, label = TestData.label("gmail", "send", "Send an email to", "friend@example.com"))
+        }
+        launch(); await("entry:1"); shoot("activity-permission-actors")
+        tap("entry:1"); await("entryOutcome"); shoot("activity-account-permission-detail")
+        pressBack(); await("entry:2"); tap("entry:2"); await("entryOutcome"); shoot("activity-temporary-permission-detail")
+    }
+
+    @Test
     fun uncertainExecutionOutcomes() {
         core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
         core.activity = listOf("unknown", "succeeded_withheld", "started").mapIndexed { index, status ->
