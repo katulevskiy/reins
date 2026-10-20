@@ -46,7 +46,14 @@ final class AutopilotUITests: XCTestCase {
         }
     }
 
-    private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
+    private func element(_ id: String) -> XCUIElement {
+        // The mode's stop control is a Button in both open and compact fields.
+        // Avoid an Any query traversing hidden stacks while that button is visible.
+        if ["stopBypass", "stopOvernight", "endLockdown"].contains(id) {
+            return app.buttons.matching(identifier: id).firstMatch
+        }
+        return app.descendants(matching: .any)[id].firstMatch
+    }
 
     @discardableResult
     private func waitFor(_ id: String, timeout: TimeInterval = 8) -> XCUIElement {
@@ -75,19 +82,41 @@ final class AutopilotUITests: XCTestCase {
     /// Lazy rows may briefly return an invalid AX frame even when their pixels are visible.
     /// Reacquire the actual control and require finite geometry and a usable target before measuring it.
     @discardableResult
-    private func scrollTo(_ id: String, type: XCUIElement.ElementType = .any) -> CGRect {
+    private func scrollTo(_ id: String, type: XCUIElement.ElementType = .any, toEnd: Bool = false) -> CGRect {
+        var previousFrame: CGRect?
+        var unchangedScrolls = 0
         for attempt in 0...12 {
+            var renderedFrame: CGRect?
             for target in app.descendants(matching: type).matching(identifier: id).allElementsBoundByIndex {
                 let frame = target.frame
                 if !frame.isNull, !frame.isInfinite, frame.width > 1, frame.height > 1,
                    frame.minX.isFinite, frame.minY.isFinite, frame.maxX.isFinite, frame.maxY.isFinite,
                    app.frame.contains(CGPoint(x: frame.midX, y: frame.midY)), target.isHittable {
-                    return frame
+                    if !toEnd { return frame }
+                    renderedFrame = frame
+                    break
                 }
+            }
+            if let frame = renderedFrame {
+                // Partly hittable can still mean behind the floating tab bar.
+                // Reach the actual end before the separate inset assertion:
+                // two more real list gestures must leave fresh bounds unchanged.
+                if let previousFrame,
+                   abs(frame.minY - previousFrame.minY) < 0.5,
+                   abs(frame.maxY - previousFrame.maxY) < 0.5 {
+                    unchangedScrolls += 1
+                } else {
+                    unchangedScrolls = 0
+                }
+                if unchangedScrolls >= 2 { return frame }
+                previousFrame = frame
+            } else {
+                previousFrame = nil
+                unchangedScrolls = 0
             }
             if attempt < 12 { visibleList().swipeUp() }
         }
-        XCTFail("\(id) did not become rendered and hittable")
+        XCTFail("\(id) did not become rendered and hittable\(toEnd ? " at the list end" : "")")
         return .null
     }
 
@@ -372,7 +401,7 @@ final class AutopilotUITests: XCTestCase {
 
         XCTAssertTrue(app.openTab("connections"))
         // The button itself: its list cell carries the same identifier and has no frame of its own.
-        let addFrame = scrollTo("addMcp", type: .button)
+        let addFrame = scrollTo("addMcp", type: .button, toEnd: true)
         XCTAssertLessThanOrEqual(addFrame.maxY, app.tab("connections").frame.minY, "Add MCP server clears the tab bar")
         shot("connections-bottom")
     }
