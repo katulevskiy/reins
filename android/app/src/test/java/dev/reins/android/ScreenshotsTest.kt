@@ -976,6 +976,23 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun commandPresentation() = renderCommandPresentation("default")
 
+    /** Identical synthetic release invocation for the reported command-clarity before/after comparison. */
+    @Test
+    fun commandReleaseBuild() {
+        core.activity = listOf(CommandClarityFixtures.entry())
+        core.entryApprovals[7L] = CommandClarityFixtures.view()
+        launch()
+        tap("entry:7")
+        await("entryHero")
+        frames()
+        shoot("command-release-build")
+        tap("revealFullInvocation")
+        await("fullRequestText")
+        rule.onNodeWithTag("fullRequest").performScrollTo()
+        frames()
+        shoot("command-release-build-original")
+    }
+
     @Test
     @Suppress("DEPRECATION")
     fun commandPresentationLargeText() {
