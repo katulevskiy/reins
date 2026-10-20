@@ -23,6 +23,7 @@ import dev.reins.core.AccountView
 import dev.reins.core.AutopilotMode
 import dev.reins.core.ModelState
 import dev.reins.core.SessionInfo
+import java.util.regex.Pattern
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -132,13 +133,13 @@ class TrustReleaseTest {
     }
 
     private fun find(selector: BySelector): UiObject2 {
-        device.wait(Until.findObject(selector), 1_000)?.let { return it }
-        device.findObject(By.scrollable(true))?.scroll(Direction.UP, 1f)
-        repeat(6) {
-            device.wait(Until.findObject(selector), 500)?.let { return it }
-            device.findObject(By.scrollable(true))?.scroll(Direction.DOWN, 0.75f)
-        }
-        val node = device.wait(Until.findObject(selector), 5_000)
+        device.wait(Until.findObject(selector), 1_000)
+        visible(selector)?.let { return it }
+        // A small display can put the editor's review button more than six gestures away.
+        // Search both directions to their boundary; reacquire nodes after Compose replaces them.
+        scrollTo(selector, Direction.DOWN)?.let { return it }
+        scrollTo(selector, Direction.UP)?.let { return it }
+        val node = visible(selector)
         if (node == null) {
             val hierarchy = java.io.ByteArrayOutputStream()
             device.dumpWindowHierarchy(hierarchy)
@@ -146,4 +147,32 @@ class TrustReleaseTest {
         }
         return node!!
     }
+
+    private fun visible(selector: BySelector): UiObject2? = try {
+        device.findObject(selector)?.takeIf { !it.visibleBounds.isEmpty }
+    } catch (_: StaleObjectException) { null }
+
+    private fun scrollTo(selector: BySelector, direction: Direction): UiObject2? {
+        var unchangedFrames = 0
+        repeat(24) {
+            visible(selector)?.let { return it }
+            val scrollable = device.findObject(By.scrollable(true)) ?: return null
+            try {
+                val before = scrollFrame(scrollable)
+                scrollable.scroll(direction, 0.85f)
+                device.waitForIdle(1_000)
+                visible(selector)?.let { return it }
+                val current = device.findObject(By.scrollable(true)) ?: return null
+                // Compose can move without emitting UiAutomator's expected scroll event. Compare the
+                // visible content rather than treating a missing event as the end of the form.
+                unchangedFrames = if (scrollFrame(current) == before) unchangedFrames + 1 else 0
+                if (unchangedFrames >= 2) return null
+            } catch (_: StaleObjectException) { unchangedFrames = 0 }
+        }
+        return null
+    }
+
+    private fun scrollFrame(scrollable: UiObject2): String = scrollable
+        .findObjects(By.text(Pattern.compile(".+")))
+        .joinToString("\n") { "${it.text}|${it.visibleBounds}" }
 }
