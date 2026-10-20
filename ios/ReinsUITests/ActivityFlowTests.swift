@@ -44,7 +44,9 @@ final class ActivityFlowTests: XCTestCase {
     }
 
     private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: id).firstMatch
+        // Callers pass accessibility IDs, not labels. Match only that attribute so a lookup does not
+        // fault in every unrelated node's label, value and placeholder on a busy simulator.
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@", id)).firstMatch
     }
 
     /// Waits for `element` with an explicit expectation, long enough for a simulator sharing the Mac with others.

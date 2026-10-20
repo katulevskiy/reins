@@ -37,10 +37,12 @@ final class GrantsSettingsUITests: XCTestCase {
     }
 
     private func element(_ id: String) -> XCUIElement {
+        // Callers pass accessibility IDs, not labels. Avoid the multi-attribute identifier fallback.
+        let matchingID = NSPredicate(format: "identifier == %@", id)
         // Connection rows are Buttons. A global Any lookup can stall while
         // traversing mounted navigation stacks even with the row visibly ready.
-        if id.hasPrefix("connection:") { return app.buttons.matching(identifier: id).firstMatch }
-        return app.descendants(matching: .any)[id].firstMatch
+        if id.hasPrefix("connection:") { return app.buttons.matching(matchingID).firstMatch }
+        return app.descendants(matching: .any).matching(matchingID).firstMatch
     }
 
     @discardableResult

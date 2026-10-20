@@ -47,12 +47,14 @@ final class AutopilotUITests: XCTestCase {
     }
 
     private func element(_ id: String) -> XCUIElement {
+        // Callers pass accessibility IDs, not labels. Avoid the multi-attribute identifier fallback.
+        let matchingID = NSPredicate(format: "identifier == %@", id)
         // Mode choices and stop controls are Buttons, including after the running field is replaced.
         // Avoid an Any query traversing every hidden tab's text before reaching the visible mode.
         if id.hasPrefix("mode:") || ["stopBypass", "stopOvernight", "endLockdown"].contains(id) {
-            return app.buttons.matching(identifier: id).firstMatch
+            return app.buttons.matching(matchingID).firstMatch
         }
-        return app.descendants(matching: .any)[id].firstMatch
+        return app.descendants(matching: .any).matching(matchingID).firstMatch
     }
 
     @discardableResult
