@@ -36,7 +36,12 @@ final class GrantsSettingsUITests: XCTestCase {
         XCTAssertTrue(app.openTab(name), "no section \(name)")
     }
 
-    private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
+    private func element(_ id: String) -> XCUIElement {
+        // Connection rows are Buttons. A global Any lookup can stall while
+        // traversing mounted navigation stacks even with the row visibly ready.
+        if id.hasPrefix("connection:") { return app.buttons.matching(identifier: id).firstMatch }
+        return app.descendants(matching: .any)[id].firstMatch
+    }
 
     @discardableResult
     private func wait(_ id: String, _ timeout: TimeInterval = 5) -> XCUIElement {
