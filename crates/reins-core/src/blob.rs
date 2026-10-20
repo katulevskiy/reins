@@ -698,8 +698,11 @@ impl Engine {
                         max_bytes: marker["max"].as_u64().unwrap_or(MAX_BLOB_BYTES).min(MAX_BLOB_BYTES),
                         ttl_secs: DEFAULT_BLOB_TTL_SECS,
                     };
-                    self.authorization_execute(request, source)?;
-                    api_call!(session, |api| api.blob_fetch(&fetch)).map_err(ApiFailure::into_core)?
+                    api_call!(session, |api| async {
+                        self.authorization_execute(request, source).map_err(ApiFailure::Core)?;
+                        api.blob_fetch(&fetch).await
+                    })
+                    .map_err(ApiFailure::into_core)?
                 }
                 Some("output") => {
                     let encoded = item.body.take().unwrap_or_default();
@@ -707,9 +710,11 @@ impl Engine {
                         BASE64.decode(encoded.as_bytes()).map_err(|_| CoreError::storage("corrupt parked file"))?,
                     );
                     let conn = &request.connection_id;
-                    self.authorization_execute(request, source)?;
-                    api_call!(session, |api| api.blob_output(conn, &name, DEFAULT_BLOB_TTL_SECS, bytes.to_vec()))
-                        .map_err(ApiFailure::into_core)?
+                    api_call!(session, |api| async {
+                        self.authorization_execute(request, source).map_err(ApiFailure::Core)?;
+                        api.blob_output(conn, &name, DEFAULT_BLOB_TTL_SECS, bytes.to_vec()).await
+                    })
+                    .map_err(ApiFailure::into_core)?
                 }
                 _ => return Err(CoreError::storage("corrupt parked item")),
             };

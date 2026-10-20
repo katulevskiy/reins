@@ -20,7 +20,8 @@ use super::{
 };
 use crate::authorization::AuthorizationSource;
 use crate::authorization_trace::{
-    AuthorizationInvocation, AuthorizationPhase, AuthorizationTrace, OUTCOME_UNKNOWN, RESULT_WITHHELD,
+    AuthorizationInvocation, AuthorizationPhase, AuthorizationTrace, AuthorizedResponse, OUTCOME_UNKNOWN,
+    RESULT_WITHHELD, ResponseEffect,
 };
 use crate::connector::Preview;
 use crate::connector::flow::build_service_grant;
@@ -222,7 +223,10 @@ async fn shrink(
             let (bytes, mime) = item_bytes(item);
             let name = file_name(tool, &(index + 1).to_string(), extension(&mime));
             engine.authorization_execute(request, source)?;
-            let download = server_api::put_output(session, &connection.0, &name, &mime, &bytes).await?;
+            let download = server_api::put_output(session, &connection.0, &name, &mime, &bytes, || {
+                engine.authorization_execute(request, source)
+            })
+            .await?;
             *item = link(&download, &mime);
         }
     }
@@ -232,7 +236,10 @@ async fn shrink(
         let bytes = serde_json::to_vec(&structured).unwrap_or_default();
         let name = file_name(tool, "structured", "json");
         engine.authorization_execute(request, source)?;
-        let download = server_api::put_output(session, &connection.0, &name, "application/json", &bytes).await?;
+        let download = server_api::put_output(session, &connection.0, &name, "application/json", &bytes, || {
+            engine.authorization_execute(request, source)
+        })
+        .await?;
         let item = link(&download, "application/json");
         match object.get_mut("content").and_then(Value::as_array_mut) {
             Some(content) => content.push(item),
@@ -430,7 +437,7 @@ impl Engine {
                     if let Some(trace) = trace {
                         trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
                     }
-                    self.finish(
+                    self.finish_authorized(
                         session,
                         &request,
                         audit,
@@ -438,6 +445,11 @@ impl Engine {
                             result: ToolResult::Mcp {
                                 result,
                             },
+                        },
+                        AuthorizedResponse {
+                            source: AuthorizationSource::Automatic,
+                            effect: ResponseEffect::Succeeded,
+                            settle_pending: false,
                         },
                     )
                     .await
@@ -478,12 +490,17 @@ impl Engine {
                     if self.store.invocation_started(&request.id.0)? {
                         let audit =
                             self.mcp_audit(&request, call, tool.read_only, "unknown", &message, Some(grant.0.clone()));
-                        self.finish(
+                        self.finish_authorized(
                             session,
                             &request,
                             audit,
                             RelayOutcome::Error {
                                 message,
+                            },
+                            AuthorizedResponse {
+                                source: AuthorizationSource::Automatic,
+                                effect: ResponseEffect::Unknown,
+                                settle_pending: false,
                             },
                         )
                         .await
@@ -581,6 +598,7 @@ impl Engine {
                 )
             })
             .transpose()?;
+        let mut effect = ResponseEffect::Succeeded;
         let (audit, outcome) = match self.mcp_perform(request, session, &server, &tool, &call.arguments, source).await {
             Ok((result, trace)) => {
                 if let Some(grant) = &new_grant {
@@ -620,6 +638,7 @@ impl Engine {
             // Once an invocation crossed the durable barrier, settle even an unknown/network failure. The original
             // parked approval cannot be blindly rerun by Auto, a later tap, a resumed process or a duplicate poll.
             Err(f) if self.store.invocation_started(&request.id.0)? => {
+                effect = ResponseEffect::Unknown;
                 let message = format!("{} {OUTCOME_UNKNOWN}", ai_message(&server.name, &f));
                 let audit = self.mcp_audit(request, call, tool.read_only, "unknown", &message, None);
                 (
@@ -632,11 +651,21 @@ impl Engine {
             // No tool invocation began (e.g. sign-in/session setup failed); retrying this approval is safe.
             Err(f) => return Err(f.into_core(&server.name)),
         };
-        self.store.append_audit(&audit)?;
-        self.store.remove_pending(request_id)?;
-        self.store.mark_handled(request_id, unix_now())?;
-        self.notifier.item_resolved(request_id.to_owned());
-        self.respond(session, request_id, outcome).await
+        if request_id != request.id.0 {
+            return Err(CoreError::invalid("the response request identity changed"));
+        }
+        self.finish_authorized(
+            session,
+            request,
+            audit,
+            outcome,
+            AuthorizedResponse {
+                source,
+                effect,
+                settle_pending: true,
+            },
+        )
+        .await
     }
 
     /// The audit entry for a refused MCP call.

@@ -324,13 +324,15 @@ impl Engine {
         };
         match reservation {
             crate::permissions::PermissionReservation::Authorized(proof) => {
+                let stamp = proof.audit_stamp();
                 if let Err(error) = self.permission_durable(request, &proof).await {
                     self.permission_finished(request, proof, false)?;
-                    return self.fail(session, request, action, &error).await;
+                    return self.fail_with_permission(session, request, action, &error, Some(&stamp)).await;
                 }
                 let summaries: Vec<_> = parsed.iter().map(|message| message.summary.clone()).collect();
                 let refs: Vec<_> = summaries.iter().collect();
-                let audit = self.audit(request, action, "released", detail, None, summaries.len(), &refs);
+                let mut audit = self.audit(request, action, "released", detail, None, summaries.len(), &refs);
+                stamp.stamp(&mut audit, crate::authorization_trace::AuthorizationPhase::Succeeded);
                 let full = parsed.into_iter().map(ParsedMessage::into_full).collect();
                 let result = self
                     .finish_checked(
@@ -423,9 +425,10 @@ impl Engine {
         };
         match reservation {
             crate::permissions::PermissionReservation::Authorized(proof) => {
+                let stamp = proof.audit_stamp();
                 if let Err(error) = self.permission_durable(request, &proof).await {
                     self.permission_finished(request, proof, false)?;
-                    return self.fail(session, request, "send", &error).await;
+                    return self.fail_with_permission(session, request, "send", &error, Some(&stamp)).await;
                 }
                 let sent = self
                     .gmail_for(account_of(request))
@@ -434,10 +437,11 @@ impl Engine {
                 return if let Ok(sent) = sent {
                     if self.revalidate_permission(request, &proof).is_err() {
                         self.permission_finished(request, proof, true)?;
-                        return self.result_withheld(session, request).await;
+                        return self.result_withheld_with_permission(session, request, Some(&stamp)).await;
                     }
-                    let audit =
+                    let mut audit =
                         self.audit(request, "send", "sent", &send_detail(email), None, email.recipients().count(), &[]);
+                    stamp.stamp(&mut audit, crate::authorization_trace::AuthorizationPhase::Succeeded);
                     let mut held = false;
                     let result = self
                         .finish_checked(
@@ -456,13 +460,13 @@ impl Engine {
                         .await;
                     self.permission_finished(request, proof, true)?;
                     if held {
-                        self.result_withheld(session, request).await
+                        self.result_withheld_with_permission(session, request, Some(&stamp)).await
                     } else {
                         result
                     }
                 } else {
                     self.permission_finished(request, proof, false)?;
-                    self.send_outcome_unknown(session, request).await
+                    self.send_outcome_unknown_with_permission(session, request, Some(&stamp)).await
                 };
             }
             crate::permissions::PermissionReservation::Review => {
@@ -581,8 +585,20 @@ impl Engine {
     }
 
     pub(crate) async fn result_withheld(&self, session: &Session, request: &RelayRequest) -> Result<(), CoreError> {
+        self.result_withheld_with_permission(session, request, None).await
+    }
+
+    async fn result_withheld_with_permission(
+        &self,
+        session: &Session,
+        request: &RelayRequest,
+        stamp: Option<&crate::store::permissions::PermissionAuditStamp>,
+    ) -> Result<(), CoreError> {
         let message = crate::authorization_trace::RESULT_WITHHELD;
-        let audit = self.audit(request, call_action(&request.call), "succeeded_withheld", message, None, 0, &[]);
+        let mut audit = self.audit(request, call_action(&request.call), "succeeded_withheld", message, None, 0, &[]);
+        if let Some(stamp) = stamp {
+            stamp.stamp(&mut audit, crate::authorization_trace::AuthorizationPhase::Succeeded);
+        }
         self.finish(
             session,
             request,
@@ -599,8 +615,20 @@ impl Engine {
         session: &Session,
         request: &RelayRequest,
     ) -> Result<(), CoreError> {
+        self.send_outcome_unknown_with_permission(session, request, None).await
+    }
+
+    async fn send_outcome_unknown_with_permission(
+        &self,
+        session: &Session,
+        request: &RelayRequest,
+        stamp: Option<&crate::store::permissions::PermissionAuditStamp>,
+    ) -> Result<(), CoreError> {
         let message = "The send outcome is unknown. Gmail may have sent it. Its use was retained; check Sent before issuing a new request.";
-        let audit = self.audit(request, "send", "unknown", message, None, 0, &[]);
+        let mut audit = self.audit(request, "send", "unknown", message, None, 0, &[]);
+        if let Some(stamp) = stamp {
+            stamp.stamp(&mut audit, crate::authorization_trace::AuthorizationPhase::Unknown);
+        }
         self.finish(
             session,
             request,
@@ -771,9 +799,23 @@ impl Engine {
         action: &str,
         e: &CoreError,
     ) -> Result<(), CoreError> {
+        self.fail_with_permission(session, request, action, e, None).await
+    }
+
+    async fn fail_with_permission(
+        &self,
+        session: &Session,
+        request: &RelayRequest,
+        action: &str,
+        e: &CoreError,
+        stamp: Option<&crate::store::permissions::PermissionAuditStamp>,
+    ) -> Result<(), CoreError> {
         // The entry still says how many emails were asked for, never "0".
-        let audit =
+        let mut audit =
             self.audit(request, action, "error", &e.to_string(), None, views::requested_count(&request.call), &[]);
+        if let Some(stamp) = stamp {
+            stamp.stamp(&mut audit, crate::authorization_trace::AuthorizationPhase::Unknown);
+        }
         self.finish(
             session,
             request,

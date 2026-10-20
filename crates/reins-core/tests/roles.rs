@@ -1042,7 +1042,16 @@ async fn a_failed_first_sync_cannot_hand_over_an_unpublished_policy_and_retry_pr
     let id = b.handover_request().await.unwrap();
     let device = device_of(&b).await;
     let error = a.handover_approve(id.clone(), device.clone()).await.unwrap_err();
-    assert!(error.to_string().contains("sync"), "{error}");
+    assert!(
+        matches!(
+            error,
+            CoreError::Server {
+                status: 503,
+                ..
+            }
+        ),
+        "{error}"
+    );
     assert!(w.state().bundle.is_none(), "an unsynced policy cannot leave with an empty signed frontier");
     assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
     assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
@@ -2892,4 +2901,149 @@ async fn logout_while_authorizing_primary_setup_cannot_create_a_roster_for_anoth
     assert!(first.state().roster.is_empty(), "retired account never received setup");
     assert!(second.state().roster.is_empty(), "late consent never reached newly signed-in account");
     assert_eq!(core.phone_role().await.unwrap(), PhoneRole::Legacy);
+}
+
+#[tokio::test]
+async fn verified_account_and_temporary_permissions_stamp_actual_gmail_results_and_attempts() {
+    use reins_core::ApprovalChoice;
+
+    for temporary in [false, true] {
+        let mut w = world().await;
+        let gmail = MockServer::start().await;
+        let core = permission_phone(&mut w, &gmail).await;
+        core.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages/messagea"))
+            .respond_with(ok(common::gmail_message("messagea", "friend@example.com", "Lunch", Some("At noon"))))
+            .mount(&gmail)
+            .await;
+        let mut defaults = core
+            .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+            .await
+            .unwrap();
+        defaults.agent_ids = vec!["c1".into()];
+        defaults.grant_account_access = true;
+        defaults.max_uses = Some(8);
+        let mut rules = vec![];
+        for rule in &mut defaults.rules {
+            if matches!(rule.capability, PermissionCapability::MailRead | PermissionCapability::MailSend) {
+                if rule.capability == PermissionCapability::MailSend {
+                    rule.scope.ids = vec!["friend@example.com".into()];
+                }
+                let mut automatic = rule.clone();
+                automatic.mode = PermissionMode::Auto;
+                rules.push(automatic.clone());
+                if !temporary {
+                    *rule = automatic;
+                }
+            }
+        }
+        core.save_account_permissions(defaults, Arc::new(PermissionOwner)).await.unwrap();
+        let mut delegation = core.delegation_draft("gmail".into(), EMAIL.into()).await.unwrap();
+        delegation.agent_ids = vec!["c1".into()];
+        delegation.max_uses = 8;
+        delegation.rules = if temporary {
+            rules
+        } else {
+            // Its presence in the trace's full policy set must not change the actual account-permission actor.
+            vec![CapabilityPermissionInput {
+                capability: PermissionCapability::MailSend,
+                mode: PermissionMode::Auto,
+                scope: PermissionScopeSelection {
+                    kind: PermissionScopeKind::SelectedRecipients,
+                    ids: vec!["other@example.com".into()],
+                },
+            }]
+        };
+        let issued = core.issue_delegation(delegation, Arc::new(PermissionOwner)).await.unwrap();
+        let engine = core.engine();
+        engine.process_relayed(permission_send("actor-send", &["friend@example.com"])).await.unwrap();
+        let mut read = permission_send("actor-read", &["friend@example.com"]);
+        read.call = reins_proto::gmail::ToolCall::GmailRead {
+            message_ids: vec!["messagea".into()],
+        };
+        engine.process_relayed(read).await.unwrap();
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(2)
+            .mount(&gmail)
+            .await;
+        engine.process_relayed(permission_send("actor-unknown", &["friend@example.com"])).await.unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(SendStarted(Arc::clone(&entered)))
+            .with_priority(1)
+            .mount(&gmail)
+            .await;
+        let sending = Arc::clone(&engine);
+        let withheld = tokio::spawn(async move {
+            sending.process_relayed(permission_send("actor-withheld", &["friend@example.com"])).await
+        });
+        entered.notified().await;
+        if temporary {
+            core.change_delegation(issued.id, issued.revision, DelegationChange::Pause, Arc::new(PermissionOwner))
+                .await
+                .unwrap();
+        } else {
+            let mut ask = core
+                .account_permission_draft("gmail".into(), EMAIL.into(), AccountPermissionPreset::ReviewEveryRequest)
+                .await
+                .unwrap();
+            ask.agent_ids = vec!["c1".into()];
+            core.save_account_permissions(ask, Arc::new(PermissionOwner)).await.unwrap();
+        }
+        withheld.await.unwrap().unwrap();
+        let actor = if temporary {
+            "temporary_permission"
+        } else {
+            "account_permission"
+        };
+        let entries = core.activity(100).await.unwrap();
+        for (id, outcome) in [
+            ("actor-send", "sent"),
+            ("actor-read", "released"),
+            ("actor-unknown", "unknown"),
+            ("actor-withheld", "succeeded_withheld"),
+        ] {
+            let matching: Vec<_> = entries
+                .iter()
+                .filter(|entry| {
+                    engine.activity_authorization(entry.id).unwrap().is_some_and(|trace| trace.request_id == id)
+                })
+                .collect();
+            assert!(matching.iter().any(|entry| entry.outcome == "started"), "{id} needs a stamped attempt");
+            assert!(
+                matching.iter().any(|entry| entry.action != "execute" && entry.outcome == outcome),
+                "{id} needs a stamped actual result"
+            );
+            assert!(matching.iter().all(|entry| entry.decided_by == actor), "{id}: {matching:?}");
+        }
+        let mut owner = permission_send("actor-owner", &["friend@example.com"]);
+        if let reins_proto::gmail::ToolCall::GmailSend {
+            email,
+        } = &mut owner.call
+        {
+            email.subject = "Owner-only".into();
+        }
+        engine.process_relayed(owner).await.unwrap();
+        core.approve(
+            "actor-owner".into(),
+            ApprovalChoice {
+                selected_message_ids: vec![],
+                standing: None,
+            },
+        )
+        .await
+        .unwrap();
+        let owner = core
+            .activity(100)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.action == "send" && entry.detail.contains("Owner-only"))
+            .unwrap();
+        assert!(owner.decided_by.is_empty(), "one-off approval remains the human decision");
+    }
 }

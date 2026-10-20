@@ -245,7 +245,7 @@ impl Engine {
                 };
                 // Keep failure classification in this future so every attempted call records an unknown outcome.
                 async {
-                    let answer = server_api::proxy_call(session, &call).await?;
+                    let answer = server_api::proxy_call(session, &call, || invocation.begin(self)).await?;
                     if answer.session_id.is_some() && answer.session_id != conn.session_id {
                         let renewed = Connected {
                             session_id: answer.session_id.clone(),
