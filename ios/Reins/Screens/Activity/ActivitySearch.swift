@@ -275,7 +275,7 @@ enum ActivitySearchText {
     static func decider(_ d: ActivityDecider) -> String {
         switch d {
         case .you: "You"
-        case .autopilot: "Autopilot"
+        case .autopilot: "Automatic"
         case .bypass: "Bypass"
         case .lockdown: "Lockdown"
         }
@@ -284,7 +284,7 @@ enum ActivitySearchText {
     /// The menu row ids: "filter:denied", "filter:autopilot" (the old filter chips' ids).
     static func id(_ o: ActivityOutcome) -> String { "filter:\(outcome(o).lowercased())" }
 
-    static func id(_ d: ActivityDecider) -> String { "filter:\(decider(d).lowercased())" }
+    static func id(_ d: ActivityDecider) -> String { d == .autopilot ? "filter:autopilot" : "filter:\(decider(d).lowercased())" }
 
     /// A kind in the words the app uses for it: "Search", "Send", "Permission".
     static func kind(_ action: String) -> String {

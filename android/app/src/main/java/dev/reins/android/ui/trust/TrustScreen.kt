@@ -24,6 +24,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.reins.android.autopilot.AutopilotText
+import dev.reins.android.design.CapsuleButton
+import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.Glyph
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RoundIconButton
@@ -65,6 +67,7 @@ fun TrustScreen(
     onOpenGrant: (String) -> Unit,
     onNewGrant: () -> Unit,
     onEnded: () -> Unit,
+    onPermissions: () -> Unit,
     onStartingPolicy: (StartingPolicy) -> Unit,
     /** An entry of the running mode's list: its page. */
     onOpenEntry: (Long) -> Unit = {},
@@ -132,6 +135,7 @@ fun TrustScreen(
                 }
             }
             Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+                CapsuleButton("Account and temporary permissions", Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("trustPermissions"), style = ButtonStyle.Soft, onClick = onPermissions, maxLines = Int.MAX_VALUE)
                 GrantsSection(state, onOpen = onOpenGrant, onEnded = onEnded)
                 val s2 = settings
                 if (s2 != null) {

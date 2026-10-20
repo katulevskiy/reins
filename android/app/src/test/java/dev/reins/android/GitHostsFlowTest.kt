@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.Lifecycle
@@ -55,7 +56,8 @@ class GitHostsFlowTest : FlowHarness() {
         tap("connectSecret")
         awaitCore { core.tokensAdded.isNotEmpty() }
         assertEquals("gitlab" to "glpat-abcdefghijklmnopqrst", core.tokensAdded.single())
-        awaitTag("account:octo-cat")
+        awaitTag("connectedIdentity")
+        rule.onNodeWithTag("connectedIdentity").assertTextEquals("octo-cat")
     }
 
     @Test

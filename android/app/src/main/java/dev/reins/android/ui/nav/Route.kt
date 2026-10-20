@@ -41,6 +41,8 @@ sealed interface Route {
 
     /** The Gmail accounts. */
     data object Gmail : Route
+    data object Permissions : Route
+    data class AccountPermissions(val service: String, val account: String, val temporary: Boolean = false) : Route
 
     /** The accounts of one other integration (its id). */
     data class Service(val id: String) : Route

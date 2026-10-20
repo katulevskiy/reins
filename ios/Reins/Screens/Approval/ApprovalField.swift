@@ -57,8 +57,9 @@ enum FieldLines {
             let keyed = !(ssh.hostKey ?? "").trimmingCharacters(in: .whitespaces).isEmpty
             lines.append(FieldLine(id: "unknownHost", text: keyed ? "Server known only by its key" : "Unknown server", tone: .amber))
         }
-        if !tags.contains(where: \.destructive), let why = alwaysAskReason(view) {
-            lines.append(FieldLine(id: "alwaysAsks", text: "Always asks · \(why)", tone: view.purchase != nil ? .red : .plain))
+        if !tags.contains(where: \.destructive) {
+            if ApprovalWords.mailPermissionSettings(view) { lines.append(FieldLine(id: "alwaysAsks", text: "This approval is once only. Manage ongoing access in Trust.", tone: .plain)) }
+            else if let why = alwaysAskReason(view) { lines.append(FieldLine(id: "alwaysAsks", text: "Always asks · \(why)", tone: view.purchase != nil ? .red : .plain)) }
         }
         if suggestion?.novel == true {
             lines.append(FieldLine(id: "novel", text: "First time for this AI", tone: .amber, glyph: .person))

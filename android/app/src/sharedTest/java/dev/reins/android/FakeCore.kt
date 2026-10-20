@@ -834,10 +834,22 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun joinView(id: String): JoinView = joins[id] ?: throw CoreException.NotFound()
 
-    // Phone roles: a legacy account (no roster) in these tests.
-    override suspend fun phoneRole(): dev.reins.core.PhoneRole = dev.reins.core.PhoneRole.LEGACY
-
-    override suspend fun rosterSummary(refresh: Boolean): dev.reins.core.RosterSummary? = null
+    // Synthetic role setup fixtures; no real keys, authority or recovery proof are persisted here.
+    @Volatile var setupRole = PhoneRole.LEGACY
+    @Volatile var setupRoster: RosterSummary? = null
+    @Volatile var setupRequiresProof = false
+    @Volatile var setupLostReply = false
+    @Volatile var setupAuthorizedGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    val setupCalls = java.util.concurrent.atomic.AtomicInteger()
+    val setupCreated = java.util.concurrent.atomic.AtomicInteger()
+    val setupFinished = java.util.concurrent.atomic.AtomicInteger()
+    val setupProofUsed = java.util.concurrent.atomic.AtomicBoolean()
+    fun resetPrimarySetup() {
+        setupRole = PhoneRole.LEGACY; setupRoster = null; setupRequiresProof = false; setupLostReply = false; setupAuthorizedGate = null
+        setupCalls.set(0); setupCreated.set(0); setupFinished.set(0); setupProofUsed.set(false)
+    }
+    override suspend fun phoneRole(): PhoneRole = setupRole
+    override suspend fun rosterSummary(refresh: Boolean): RosterSummary? = setupRoster
 
     private val legacyLive = dev.reins.core.LiveSyncState(
         dev.reins.core.PhoneRole.LEGACY, 0u, 0u, 0u, "", null, null, false, null, false, false, 0u, 0u, null,
@@ -867,7 +879,24 @@ class FakeCore : ReinsCoreInterface {
         deviceName: String,
         codeOrPassword: String?,
         owner: OwnerCheck,
-    ): dev.reins.core.RosterSummary = throw CoreException.NotFound()
+    ): RosterSummary {
+        setupCalls.incrementAndGet()
+        try {
+            setupAuthorizedGate?.await()
+            if (!owner.confirm("Make this the approval phone for your whole Reins account")) throw CoreException.Invalid("Owner did not confirm")
+            if (setupRole != PhoneRole.LEGACY || setupRoster != null) throw CoreException.Invalid("This account has phone roles already.")
+            setupProofUsed.set(codeOrPassword != null)
+            if (codeOrPassword?.isBlank() == true || (setupRequiresProof && codeOrPassword == null)) throw CoreException.Invalid("Enter the recovery code or master password.")
+            val result = RosterSummary(1u, PhoneRole.PRIMARY, listOf(RosterMemberView("this-phone", deviceName, true, true)), "fixture-owner", emptyList())
+            setupRole = PhoneRole.PRIMARY; setupRoster = result; setupCreated.incrementAndGet()
+            permissionViews.replaceAll { _, view ->
+                if (view.service == "gmail" && !view.conflicted && view.usageVerified) view.copy(availablePresets = AccountPermissionPreset.entries,
+                    capabilities = view.capabilities.map { cap -> cap.copy(supportedModes = PermissionMode.entries) }) else view
+            }
+            if (setupLostReply) { setupLostReply = false; throw CoreException.Network("The setup response was lost. Check the phone status before retrying.") }
+            return result
+        } finally { setupFinished.incrementAndGet() }
+    }
 
     override suspend fun enrollBegin(deviceName: String): dev.reins.core.EnrollStart = throw CoreException.NotFound()
 

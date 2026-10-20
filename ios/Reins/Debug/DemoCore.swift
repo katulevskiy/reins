@@ -86,6 +86,10 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var activity: [ActivityEntry] = []
         var grants: [GrantView] = []
         var accounts: [AccountView] = []
+        var setupRole: PhoneRole = .legacy
+        var setupRoster: RosterSummary?
+        var setupRequiresProof = false
+        var setupCreated = 0
         var permissionViews: [String: AccountPermissionsView] = [:]
         var delegationRecords: [DelegationView] = []
         var accountStatuses: [String: GmailStatus] = [:]
@@ -455,9 +459,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func joinCancel() async throws { locked { $0.joinPolls = nil } }
 
-    // Phone roles: the demo account has none (legacy), so the role calls report that and the changes refuse.
-    func phoneRole() async throws -> PhoneRole { .legacy }
-    func rosterSummary(refresh: Bool) async throws -> RosterSummary? { nil }
+    // Synthetic phone-role setup for native previews and tests; no real authority or proof is persisted.
+    func phoneRole() async throws -> PhoneRole { locked { $0.setupRole } }
+    func rosterSummary(refresh: Bool) async throws -> RosterSummary? { locked { $0.setupRoster } }
+    func configurePrimarySetup(role: PhoneRole, requiresProof: Bool = false) {
+        locked { state in
+            state.setupRole = role; state.setupRequiresProof = requiresProof
+            state.setupRoster = role == .legacy ? nil : RosterSummary(epoch: 1, role: role, members: [RosterMemberView(deviceId: "primary", name: "Primary phone", primary: true, thisPhone: role == .primary)], ownerFingerprint: "fixture-owner", warnings: [])
+        }
+    }
+    var primarySetupCreated: Int { locked { $0.setupCreated } }
     func liveSync(waitSecs: UInt32) async throws -> LiveSyncState { Self.legacyLive }
     func liveSyncState() async throws -> LiveSyncState { Self.legacyLive }
     func proposalCreate(kind: String, title: String, rowsJson: String) async throws -> String {
@@ -476,7 +487,20 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
     func rosterCreateAuthorized(deviceName: String, codeOrPassword: String?, owner: OwnerCheck) async throws -> RosterSummary {
-        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+        try await Self.confirmOwner(owner, "Make this the approval phone for your whole Reins account")
+        return try locked { state in
+            guard state.setupRole == .legacy, state.setupRoster == nil else { throw CoreError.Invalid(reason: "This account has phone roles already.") }
+            if let proof = codeOrPassword, proof.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw CoreError.Invalid(reason: "Enter the recovery code or master password.") }
+            if state.setupRequiresProof, codeOrPassword == nil { throw CoreError.Invalid(reason: "Enter the recovery code or master password.") }
+            let result = RosterSummary(epoch: 1, role: .primary, members: [RosterMemberView(deviceId: "this-phone", name: deviceName, primary: true, thisPhone: true)], ownerFingerprint: "fixture-owner", warnings: [])
+            state.setupRole = .primary; state.setupRoster = result; state.setupCreated += 1
+            for (key, value) in state.permissionViews where value.service == "gmail" && !value.conflicted && value.usageVerified {
+                var view = value; view.availablePresets = [.reviewEveryRequest, .readAssist, .custom]
+                view.capabilities = view.capabilities.map { cap in var next = cap; next.supportedModes = [.ask, .auto, .block]; return next }
+                state.permissionViews[key] = view
+            }
+            return result
+        }
     }
     func enrollBegin(deviceName: String) async throws -> EnrollStart {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")

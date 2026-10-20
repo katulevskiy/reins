@@ -72,6 +72,18 @@ class QuickApprovalsFlowTest : FlowHarness() {
     }
 
     @Test
+    fun managedMailApprovesOnceAndDirectsOngoingAccessToAccountPermissions() {
+        openRequest(TestData.sendView().copy(noStanding = true))
+        awaitTag("noStanding")
+        rule.onNodeWithTag("noStanding").assertTextContains("Approve once", substring = true)
+        rule.onNodeWithTag("accountPermissionHelp").assertTextContains("account or temporary permissions in Trust", substring = true)
+        assertFalse(has("lifetime:HOUR"))
+        tap("approve")
+        awaitCore { core.approvals.isNotEmpty() }
+        assertEquals(null, core.approvals.single().second.standing)
+    }
+
+    @Test
     fun anAisRoutineRequestsAreOneCardAllowedWithOneCheckAndWhatNeedsALookStays() {
         core.pending = listOf(
             TestData.pending("r1", quick = true),

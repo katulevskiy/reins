@@ -150,6 +150,7 @@ struct ActionButton: View {
     var busy = false
     var enabled = true
     var compact = false
+    var lineLimit: Int? = 2
     var action: () -> Void
 
     @Environment(\.feedback) private var feedback
@@ -179,7 +180,7 @@ struct ActionButton: View {
                 Text(title)
                     .font(compact ? TextRole.buttonSmall.font() : TextRole.button.font())
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .lineLimit(lineLimit)
             }
             .foregroundStyle(colors.fg)
             .padding(.horizontal, compact ? 14 : 18)

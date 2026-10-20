@@ -251,6 +251,7 @@ fun OutcomeEnd(outcome: Outcome, modifier: Modifier = Modifier) {
     val c = LocalColors.current
     when (outcome) {
         Outcome.Approved -> GlyphIcon(Glyph.Check, c.success, modifier = modifier.semantics { this.contentDescription = "Approved" }, size = 18.dp)
+        Outcome.Permission -> GlyphIcon(Glyph.Key, c.violet, modifier = modifier.semantics { this.contentDescription = "Permission" }, size = 18.dp)
         Outcome.Grant -> GlyphIcon(Glyph.Key, c.violet, modifier = modifier.semantics { this.contentDescription = "Grant" }, size = 18.dp)
         Outcome.Auto -> StatusWord("Auto", c.violet, modifier)
         Outcome.Overnight -> StatusWord(AutopilotText.OVERNIGHT, c.violet, modifier)

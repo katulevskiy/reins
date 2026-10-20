@@ -74,6 +74,14 @@ func correctionFor(_ entry: ActivityEntry) -> Verdict { entry.outcome == "denied
 /// The outcome pill under an entry's sentence ("Allowed by Autopilot · 96%"), in words, symbol and colour (pure,
 /// unit-tested).
 enum EntryOutcome {
+    static func permissionActor(_ entry: ActivityEntry) -> String? {
+        switch entry.decidedBy {
+        case "account_permission": "account permission"
+        case "temporary_permission": "temporary permission"
+        default: nil
+        }
+    }
+
     static func text(_ entry: ActivityEntry) -> String {
         switch entry.outcome {
         case "started": return "Awaiting outcome"
@@ -83,6 +91,7 @@ enum EntryOutcome {
         default: break
         }
         let denied = entry.outcome == "denied"
+        if let actor = permissionActor(entry) { return denied ? "Denied · \(actor)" : "Allowed by \(actor)" }
         switch entry.decidedBy {
         case "autopilot":
             let p = entry.autopilot.map { denied ? $0.pDeny : $0.pApprove }
@@ -93,6 +102,7 @@ enum EntryOutcome {
         case "lockdown": return "Denied by Lockdown"
         default: break
         }
+        if !entry.decidedBy.isEmpty { return denied ? "Denied" : entry.outcome == "granted" ? "Access given" : "Allowed" }
         if entry.grantId != nil && !denied { return "Covered by a grant" }
         switch entry.outcome {
         case "denied": return "Denied by you"
@@ -109,7 +119,7 @@ enum EntryOutcome {
         case .overnight: AutopilotText.overnightSymbol
         case .bypass: "bolt.fill"
         case .lockdown: "lock.fill"
-        case .grant: "key.horizontal"
+        case .grant, .permission: "key.horizontal"
         case .denied: "xmark"
         case .failed, .started, .unknown, .withheld: "exclamationmark.triangle"
         case .approved: "checkmark"
@@ -118,7 +128,7 @@ enum EntryOutcome {
 
     static func tint(_ entry: ActivityEntry) -> Color {
         switch EntryText.mark(entry) {
-        case .auto, .grant: Palette.violet
+        case .auto, .grant, .permission: Palette.violet
         case .overnight: Palette.violet
         case .bypass, .denied: Palette.danger
         case .lockdown, .failed, .started, .unknown, .withheld: Palette.warning

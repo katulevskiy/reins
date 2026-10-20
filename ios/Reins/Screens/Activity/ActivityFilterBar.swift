@@ -195,7 +195,7 @@ struct ActivityFilterBar: View {
     static func glyph(_ d: ActivityDecider) -> Glyph {
         switch d {
         case .you: .person
-        case .autopilot: .autopilot
+        case .autopilot: .shield
         case .bypass: .autopilotOff
         case .lockdown: .lock
         }
