@@ -10328,16 +10328,16 @@ public struct CommandPresentation: Equatable, Hashable {
     public init(
         /**
          * Fixed words describing only a recognized operation; never an agent's explanation.
-         */heading: String,
+         */heading: String, 
         /**
          * Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
-         */actionable: String,
+         */actionable: String, 
         /**
          * Setup performed before the action. Environment values are concealed; the original is inspected separately.
-         */setup: [String],
+         */setup: [String], 
         /**
          * Consequences or limitations that remain visible with the action, including altered execution context.
-         */notices: [String],
+         */notices: [String], 
         /**
          * Original pending invocation for explicit inspection, including text beyond the legacy detail limit.
          * Never persisted here or included in Debug; history uses the source text actually retained with the entry.
@@ -10349,9 +10349,9 @@ public struct CommandPresentation: Equatable, Hashable {
         self.original = original
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -10365,10 +10365,10 @@ public struct FfiConverterTypeCommandPresentation: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CommandPresentation {
         return
             try CommandPresentation(
-                heading: FfiConverterString.read(from: &buf),
-                actionable: FfiConverterString.read(from: &buf),
-                setup: FfiConverterSequenceString.read(from: &buf),
-                notices: FfiConverterSequenceString.read(from: &buf),
+                heading: FfiConverterString.read(from: &buf), 
+                actionable: FfiConverterString.read(from: &buf), 
+                setup: FfiConverterSequenceString.read(from: &buf), 
+                notices: FfiConverterSequenceString.read(from: &buf), 
                 original: FfiConverterString.read(from: &buf)
         )
     }
@@ -15504,7 +15504,7 @@ public struct RequestLabel: Equatable, Hashable {
          */code: Bool, 
         /**
          * After the subject (" and 2 more"); usually empty.
-         */tail: String,
+         */tail: String, 
         /**
          * Derived for native views from the retained original; never persisted, synced, or an authorization scope.
          */command: CommandPresentation? = nil) {
@@ -15538,7 +15538,7 @@ public struct FfiConverterTypeRequestLabel: FfiConverterRustBuffer {
                 lead: FfiConverterString.read(from: &buf), 
                 subject: FfiConverterString.read(from: &buf), 
                 code: FfiConverterBool.read(from: &buf), 
-                tail: FfiConverterString.read(from: &buf),
+                tail: FfiConverterString.read(from: &buf), 
                 command: FfiConverterOptionTypeCommandPresentation.read(from: &buf)
         )
     }
@@ -18646,7 +18646,7 @@ public enum ActivityOutcome: Equatable, Hashable {
     case approved
     case denied
     /**
-     * Allowed but it failed.
+     * Needs attention: error, started without a known outcome, unknown outcome, or successful response withheld.
      */
     case failed
 
