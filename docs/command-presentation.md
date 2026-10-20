@@ -10,8 +10,9 @@ command means. It uses a bounded display lexer independently of the strict safet
 operation can be summarized even when semantic certainty is unavailable; notices describe shell expressions,
 compound actions, and other limits. Literal leading environment, an exact shell wrapper, and `cd path &&` become
 setup. Known build options/properties move into counted technical configuration with credential values concealed.
-Unknown/effectful flags, every additional command/operator, privilege wrapper, and input/output redirection stay in
-the actionable text. Redirect overwrite/append targets and descriptor joins are also prominent notices. Quoted
+Unknown/effectful flags, additional shell commands/operators, privilege wrappers, and input/output redirections
+stay in the actionable text. Foreign interpreter bodies and source beyond the bounded display reader are explicitly
+marked as omitted, with a prominent instruction to inspect the original; their effects are not claimed to be known. Redirect overwrite/append targets and descriptor joins are also prominent notices. Quoted
 assignment names remain executable names. Unicode formatting controls become visible replacements, while the
 retained original stays exact. Oversized/token-heavy input still requires inspecting the original.
 
@@ -71,3 +72,21 @@ Dynamic assignments and build properties are not folded into technical setup. Ex
 remains visible in the action, even when a sensitive assignment's literal value is concealed. Single-quoted
 substitutions remain literal configuration. URL userinfo is concealed in headings, action text and redirect
 notices. These are display-only distinctions; original source and all guard floors remain unchanged.
+
+## Credential arguments and executable source
+
+Credential display follows fixed curl/wget option grammars, including separate, equals-attached and supported
+short-attached user/password, bearer and sensitive-header values. Non-credential flags and output targets remain
+visible. The exact original remains behind its explicit reveal/copy warning. No authorization input changes.
+
+Observed executable shell source is credential-redacted recursively within a bounded display depth. Assignment
+values, headers and URL userinfo in that source are concealed while commands and operators remain inspectable.
+Git's known executable helper/alias configuration and executable environment overrides (such as
+`GIT_SSH_COMMAND`) are shown as executable source with a specific notice; a name containing “credential” does not
+make its executable body a secret scalar. Shell `eval` and non-unwrapped `-c` bodies get the same source treatment.
+
+Recognized inline foreign-language forms include Python/Python3 `-c CODE` and `-cCODE`, Node `-e CODE`,
+`-eCODE`, `--eval CODE` and `--eval=CODE`, plus Ruby/Perl `-e` forms. These bodies are explicitly omitted from the shortened action, with an
+inline-code heading and notice requiring original-code inspection. Surrounding shell operators and other commands
+remain visible. The display reader does not attempt to certify or interpret Python or arbitrary programs. Unparsed
+or deeply nested source has an explicit incomplete-source marker; no summary claims to recover its missing effects.
