@@ -10770,15 +10770,17 @@ public func FfiConverterTypeCommandOption_lower(_ value: CommandOption) -> RustB
  */
 public struct CommandPresentation: Equatable, Hashable {
     /**
-     * Fixed words describing only a recognized operation; never an agent's explanation.
+     * Observed operation/tasks in core-written words; never proof of semantic certainty or an agent's explanation.
      */
     public var heading: String
     /**
-     * Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
+     * Readable observed actions with operators, additional commands and redirects retained. Known build
+     * configuration moves to setup; credential values are concealed. Never an executable/authorization payload.
      */
     public var actionable: String
     /**
-     * Setup performed before the action. Environment values are concealed; the original is inspected separately.
+     * Literal setup and compact build options/configuration. Credential/environment values are concealed;
+     * the exact original is inspected separately. Moving a value here never exempts it from safety checks.
      */
     public var setup: [String]
     /**
@@ -10795,13 +10797,15 @@ public struct CommandPresentation: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Fixed words describing only a recognized operation; never an agent's explanation.
+         * Observed operation/tasks in core-written words; never proof of semantic certainty or an agent's explanation.
          */heading: String, 
         /**
-         * Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
+         * Readable observed actions with operators, additional commands and redirects retained. Known build
+         * configuration moves to setup; credential values are concealed. Never an executable/authorization payload.
          */actionable: String, 
         /**
-         * Setup performed before the action. Environment values are concealed; the original is inspected separately.
+         * Literal setup and compact build options/configuration. Credential/environment values are concealed;
+         * the exact original is inspected separately. Moving a value here never exempts it from safety checks.
          */setup: [String], 
         /**
          * Consequences or limitations that remain visible with the action, including altered execution context.
