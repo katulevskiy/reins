@@ -78,6 +78,35 @@ final class IntegrationsUITests: XCTestCase {
         _ = waitFor("account:new.account@gmail.com")
     }
 
+    func testGmailPermissionPreviewDisclosesScopeAndCanBeLeftUnsaved() {
+        launch("gmail")
+        waitFor("addAccount").tap()
+        _ = waitFor("integrationConnected")
+        reveal(app.buttons["Allow searching and reading"].firstMatch).tap()
+        reveal(element("permissionsPreview")).tap()
+        _ = waitFor("permissionPreviewSummary")
+        shot("gmail-permissions-review")
+        _ = reveal(app.staticTexts["Claude Code"].firstMatch)
+        _ = reveal(app.staticTexts["No additional agents receive account access."].firstMatch)
+        _ = reveal(app.staticTexts["All in this account"].firstMatch)
+        _ = reveal(app.staticTexts["At most 20 further uses for each automatic operation."].firstMatch)
+        shot("gmail-permissions-review-limits")
+        // Discard the preview, then leave setup without saving or requesting owner authentication.
+        app.navigationBars.buttons["Back"].firstMatch.tap()
+        reveal(element("connectionDone")).tap()
+        _ = waitFor("account:new.account@gmail.com")
+        XCTAssertFalse(element("permissionsSaved").exists)
+    }
+
+    private func reveal(_ control: XCUIElement) -> XCUIElement {
+        for _ in 0..<8 {
+            if control.exists && control.isHittable { return control }
+            app.swipeUp()
+        }
+        XCTAssertTrue(control.exists && control.isHittable, "Permission control is not visible: \(control)")
+        return control
+    }
+
     func testARejectedTokenIsExplained() {
         launch("codeberg")
         waitFor("pasteManually").tap()
