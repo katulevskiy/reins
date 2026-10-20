@@ -203,7 +203,8 @@ fn curl_short(word: &str) -> Option<(&str, &str, ArgumentKind)> {
         }
         // Only documented switches without operands may precede the credential option. Never scan through an
         // unknown/value-taking option, whose apparent credential suffix may actually be a file/output target.
-        if !"sSfvkILjlNnqOR".contains(ch) {
+        // Operand-free short forms listed by `curl --help all`, including protocol/address-family switches.
+        if !"aqfGgI0k46jlLMn:NZ#pJORSis231BvV".contains(ch) {
             return None;
         }
     }
@@ -214,10 +215,10 @@ fn executable_env(name: &str) -> bool {
     matches!(name, "GIT_SSH_COMMAND" | "GIT_ASKPASS" | "SSH_ASKPASS" | "GIT_EDITOR" | "GIT_SEQUENCE_EDITOR")
 }
 fn executable_git_config(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "credential.helper" | "core.sshcommand" | "core.editor" | "core.pager" | "sequence.editor"
-    ) || name.to_ascii_lowercase().starts_with("alias.")
+    // Git accepts both `-c key=value` and `-ckey=value`.
+    let name = name.strip_prefix("-c").unwrap_or(name).to_ascii_lowercase();
+    matches!(name.as_str(), "credential.helper" | "core.sshcommand" | "core.editor" | "core.pager" | "sequence.editor")
+        || name.starts_with("alias.")
 }
 fn foreign_inline<'a>(tool: &str, word: &'a str, previous: &str) -> Option<&'a str> {
     if (matches!(tool, "python" | "python3") && previous == "-c")
@@ -1057,6 +1058,8 @@ mod tests {
             "curl -suUSER:SENTINEL-PASSWORD https://example.test",
             "curl -sH\"Cookie: sid=SENTINEL-COOKIE\" https://example.test",
             "curl -sbSENTINEL-COOKIE https://example.test",
+            "curl -4uUSER:SENTINEL-PASSWORD https://example.test",
+            "curl -6H'Authorization: SENTINEL-TOKEN' https://example.test",
             "curl -Ualice:SENTINEL-PASSWORD --proxy-header='Proxy-Authorization: SENTINEL-TOKEN' https://example.test",
             "wget --http-password SENTINEL-PASSWORD --header='Authorization: SENTINEL-TOKEN' https://example.test",
             "wget --user=alice:SENTINEL-PASSWORD --ftp-password=SENTINEL-PASSWORD https://example.test",
@@ -1065,6 +1068,22 @@ mod tests {
             assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
             assert!(p.actionable.contains("https://example.test"));
             assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn curl_clusters_only_skip_documented_operand_free_switches() {
+        // `curl --help all`: these short switches have no operand. A credential switch may follow any of them.
+        for flag in "aqfGgI0k46jlLMn:NZ#pJORSis231BvV".chars() {
+            let command = format!("curl -{flag}uUSER:SENTINEL-PASSWORD https://example.test");
+            let p = of(&command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.actionable.contains("https://example.test"));
+            assert_eq!(p.original, command);
+        }
+        // These switches consume the remaining spelling; it must not be searched as another credential option.
+        for flag in "EKCcdDhFPmoQrexXYytzTAw".chars() {
+            assert!(curl_short(&format!("-{flag}uoutput")).is_none(), "-{flag}");
         }
     }
 
@@ -1092,6 +1111,8 @@ mod tests {
         for command in [
             "git -c credential.helper='!rm -rf /tmp/reins-credential-review' fetch https://example.test/repo",
             "git -c credential.helper='!sh -c \"TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review\"' fetch https://example.test/repo",
+            "git -ccredential.helper='!rm -rf /tmp/reins-credential-review' fetch https://example.test/repo",
+            "git -ccredential.helper='!sh -c \"TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review\"' fetch https://example.test/repo",
             "GIT_SSH_COMMAND='rm -rf /tmp/reins-credential-review; ssh' git fetch ssh://example.test/repo",
             "eval 'TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review'",
             "bash -c 'TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review' _ argument",
