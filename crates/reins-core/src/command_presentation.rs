@@ -474,7 +474,9 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
         }
         if tool.is_empty() {
             tool = program(&token.value);
-            rendered.push(if token.value.contains('=') {
+            rendered.push(if token.dynamic {
+                shown(token)
+            } else if token.value.contains('=') {
                 concealed(&token.value)
             } else {
                 shown(token)
@@ -643,7 +645,7 @@ fn read(text: &str, depth: usize, out: &mut CommandPresentation) -> Option<()> {
         return read(&toks[start + 2].value, depth + 1, out);
     }
     if first.value == "cd"
-        && toks.get(start + 1).is_some_and(|t| t.kind == Kind::Word)
+        && toks.get(start + 1).is_some_and(|t| t.kind == Kind::Word && !t.dynamic)
         && toks.get(start + 2).is_some_and(|t| t.raw == "&&")
     {
         out.setup.push(format!("Directory change: cd {}", toks[start + 1].raw));
@@ -881,6 +883,19 @@ mod tests {
             let p = of(command);
             assert!(!format!("{p:?}").contains("SENTINEL-URL-CREDENTIAL"));
             assert!(p.actionable.contains("••••@example.com/path"));
+            assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn dynamic_directories_and_executable_names_keep_their_executable_source_visible() {
+        for command in [
+            "cd \"$(rm -rf /tmp/reins-dynamic)\" && ./gradlew test",
+            "\"TOKEN=$(rm -rf /tmp/reins-dynamic)\" ./gradlew test",
+        ] {
+            let p = of(command);
+            assert!(p.actionable.contains("rm -rf /tmp/reins-dynamic"), "{command}: {p:?}");
+            assert!(p.notices.iter().any(|n| n.starts_with("Partial observed")));
             assert_eq!(p.original, command);
         }
     }
