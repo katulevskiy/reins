@@ -446,7 +446,17 @@ async fn the_phone_approves_git_reads_and_pushes_and_refuses_a_force_push() {
         assert_eq!((code, &out["hookSpecificOutput"]["permissionDecision"]), (0, &json!("allow")), "{command}: {out}");
         assert!(started.elapsed() < Duration::from_secs(20), "{command}: answered in {:?}", started.elapsed());
     }
-    assert!(phone.core.pending().await.unwrap().is_empty(), "nothing waits for the user");
+    // The server can deliver the answer before the phone finishes its post-response pending cleanup. Dropping
+    // the polling caller above leaves that core task running, so await local settlement instead of racing it.
+    let settle_by = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let pending = phone.core.pending().await.unwrap();
+        if pending.is_empty() {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < settle_by, "Bypass did not settle its answered requests: {pending:?}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     phone.core.set_autopilot_mode(None, Some(reins_core::AutopilotMode::Manual), None).await.unwrap();
 
     // ---- reins logout / uninstall: the connection ends on the server, not just here ----
