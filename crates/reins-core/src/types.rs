@@ -158,11 +158,13 @@ pub struct RequestLabel {
 /// Readable command facts derived by the core. The exact original request remains the approval's authority.
 #[derive(Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CommandPresentation {
-    /// Fixed words describing only a recognized operation; never an agent's explanation.
+    /// Observed operation/tasks in core-written words; never proof of semantic certainty or an agent's explanation.
     pub heading: String,
-    /// Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
+    /// Readable observed actions with operators, additional commands and redirects retained. Known build
+    /// configuration moves to setup; credential values are concealed. Never an executable/authorization payload.
     pub actionable: String,
-    /// Setup performed before the action. Environment values are concealed; the original is inspected separately.
+    /// Literal setup and compact build options/configuration. Credential/environment values are concealed;
+    /// the exact original is inspected separately. Moving a value here never exempts it from safety checks.
     pub setup: Vec<String>,
     /// Consequences or limitations that remain visible with the action, including altered execution context.
     pub notices: Vec<String>,

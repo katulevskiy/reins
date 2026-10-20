@@ -279,7 +279,7 @@ fun ruleTag(rule: AskRuleView, everyTime: Boolean = false, unread: Boolean = fal
     val help = buildString {
         append("Matched the rule ${untrusted(rule.pattern)} on your computer.")
         if (rule.reported) append(" Your computer says so; this phone doesn't know the rule.")
-        if (unread) append(" This phone couldn't read all of the command.")
+        if (unread) append(" Some request details or behavior could not be verified.")
         append(
             when {
                 rule.destructive -> " It can't be undone, so it's asked every time."
@@ -302,9 +302,9 @@ fun dangerTag(view: ApprovalView): DangerTag? = dangerTags(view).firstOrNull()
 fun dangerTags(view: ApprovalView): List<DangerTag> = buildList {
     val ask = view.ask
     val unread = DangerTag(
-        "Couldn't read this",
+        "Unverified request details",
         "askUncertain",
-        "This phone couldn't read the command for sure, so it's asked every time.",
+        "Some request details or behavior could not be verified, so it's asked every time.",
         destructive = false,
         icon = Icons.Rounded.QuestionMark,
     )

@@ -123,7 +123,7 @@ final class ApprovalFieldTests: XCTestCase {
     }
 
     func testACommandThisPhoneCouldNotReadIsSaidWithOrWithoutARule() {
-        XCTAssertEqual(line(lines(ask(uncertain: true)), "askUncertain")?.text, "Couldn't read this")
+        XCTAssertEqual(line(lines(ask(uncertain: true)), "askUncertain")?.text, "Unverified request details")
         XCTAssertEqual(lines(ask(rule: envRule, uncertain: true)).map(\.id).filter { ["guardRule", "askUncertain"].contains($0) }, ["guardRule", "askUncertain"])
         XCTAssertNotNil(line(lines(ask(uncertain: true, destructive: true)), "askUncertain"), "beside can't be undone too")
     }

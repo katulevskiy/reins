@@ -311,7 +311,7 @@ enum ApprovalWords {
         let label = matched.isEmpty ? rule.label : "\(rule.label) · \(matched)"
         var help = "Matched the rule \(untrusted(rule.pattern)) on your computer."
         if rule.reported { help += " Your computer says so; this phone doesn't know the rule." }
-        if unread { help += " This phone couldn't read all of the command." }
+        if unread { help += " Some request details or behavior could not be verified." }
         help += rule.destructive
             ? " It can't be undone, so it's asked every time."
             : everyTime ? " It's asked every time." : " Autopilot can learn it."
@@ -320,6 +320,12 @@ enum ApprovalWords {
 
     /// The first of `dangerTags`: what a single line has room for.
     static func dangerTag(_ view: ApprovalView) -> DangerTag? { dangerTags(view).first }
+
+    /// History prints complete guard help inline; keep each caveat once without changing waiting-field warnings.
+    static func commandHistoryTags(_ view: ApprovalView) -> [DangerTag] {
+        let tags = dangerTags(view)
+        return view.ask?.rule == nil ? tags : tags.filter { $0.id != "askUncertain" && $0.id != "ruleReported" }
+    }
 
     /// Every warning the request carries, the most serious kinds first. The approval shows each one, never only the
     /// first: a force push with hidden characters says both.
@@ -336,8 +342,8 @@ enum ApprovalWords {
             }
             if ask.uncertain {
                 tags.append(DangerTag(
-                    label: "Couldn't read this", id: "askUncertain",
-                    help: "This phone couldn't read the command for sure, so it's asked every time.",
+                    label: "Unverified request details", id: "askUncertain",
+                    help: "Some request details or behavior could not be verified, so it's asked every time.",
                     destructive: false, symbol: "questionmark.circle"
                 ))
             }

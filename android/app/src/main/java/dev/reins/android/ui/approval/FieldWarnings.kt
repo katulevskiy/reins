@@ -62,6 +62,13 @@ fun fieldWarnings(view: ApprovalView, suggestion: SuggestionView?, risk: RiskVie
     }
 }
 
+/** History prints the complete guard help inline, so uncertainty and reported-rule caveats are already visible. */
+internal fun historyFieldWarnings(view: ApprovalView, command: Boolean): List<FieldWarning> {
+    val warnings = fieldWarnings(view, suggestion = null, risk = null)
+    return if (command && view.ask?.rule != null) warnings.filterNot { it.tag == "askUncertain" || it.tag == "ruleReported" }
+    else warnings
+}
+
 /** The branch a push sends to when it is the repository's default one, as the push names it; null otherwise. */
 fun defaultBranchPush(view: ApprovalView): String? {
     val push = view.git ?: return null
