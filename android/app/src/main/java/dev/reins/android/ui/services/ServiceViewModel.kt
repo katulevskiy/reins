@@ -7,6 +7,7 @@ import dev.reins.android.AppContainer
 import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.userMessage
+import dev.reins.core.AccountView
 import dev.reins.core.GmailStatus
 import dev.reins.core.LoginProgress
 import kotlin.coroutines.cancellation.CancellationException
@@ -44,7 +45,7 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
     val login: StateFlow<LoginStep> = _login.asStateFlow()
 
     /** The account whose Google consent screen is on top, until the user comes back from it. */
-    private var awaitingConsent: String? = null
+    private var awaitingConsent: Pair<String, Long>? = null
 
     /** Shows a failure that happened outside the view model (Android refused a permission). */
     fun fail(message: String) {
@@ -60,6 +61,7 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
     private fun operation(block: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
+        val epoch = container.state.accountEpoch.value
         _error.value = null
         viewModelScope.launch {
             try {
@@ -67,8 +69,10 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                container.feedback.play(Event.Error)
-                _error.value = e.userMessage()
+                if (container.state.isCurrent(epoch)) {
+                    container.feedback.play(Event.Error)
+                    _error.value = e.userMessage()
+                }
             } finally {
                 _busy.value = false
             }
@@ -79,7 +83,9 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
      * An account was added: it sounds and the button is free again at once; the lists and every account's status
      * catch up in the background rather than holding the screen.
      */
-    private fun connected() {
+    private fun connected(account: AccountView, epoch: Long) {
+        if (!container.state.isCurrent(epoch)) return
+        container.state.accountConnected(account, epoch)
         container.feedback.play(Event.Connected)
         refreshed()
     }
@@ -96,14 +102,16 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
     }
 
     private suspend fun refreshNow() {
+        val epoch = container.state.accountEpoch.value
         val accounts = try {
-            container.core.services().also { container.state.setServices(it) }.firstOrNull { it.service == service }?.accounts.orEmpty()
+            container.core.services().also { if (container.state.isCurrent(epoch)) container.state.setServices(it) }.firstOrNull { it.service == service }?.accounts.orEmpty()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _error.value = e.userMessage()
+            if (container.state.isCurrent(epoch)) _error.value = e.userMessage()
             return
         }
+        if (!container.state.isCurrent(epoch)) return
         // One network check per account: all at once, each shown as it comes back.
         coroutineScope {
             for (account in accounts) {
@@ -115,7 +123,7 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
                     } catch (e: Exception) {
                         GmailStatus.Unavailable(e.userMessage())
                     }
-                    _statuses.update { it + (account.account to status) }
+                    if (container.state.isCurrent(epoch)) _statuses.update { it + (account.account to status) }
                 }
             }
         }
@@ -125,9 +133,11 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
 
     /** The user picked [account] in Google's account picker: ask for consent if needed, then connect it. */
     fun accountChosen(account: String, launchConsent: (PendingIntent) -> Unit) = operation {
+        val epoch = container.state.accountEpoch.value
         val intent = container.google.consentIntent(account, service)
+        if (!container.state.isCurrent(epoch)) return@operation
         if (intent != null) {
-            awaitingConsent = account
+            awaitingConsent = account to epoch
             launchConsent(intent)
         } else {
             connect(account)
@@ -135,23 +145,23 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
     }
 
     /** Back from Google's consent screen. */
-    fun consentFinished() {
-        val account = awaitingConsent ?: return
+    fun consentFinished(approved: Boolean) {
+        val (account, epoch) = awaitingConsent ?: return
         awaitingConsent = null
-        operation { connect(account) }
+        if (approved && container.state.isCurrent(epoch)) operation { connect(account) }
     }
 
     /** Registers [account] in the core (which checks with Google that the permission works). */
     suspend fun connect(account: String) {
-        container.core.addServiceAccount(service, account)
-        connected()
+        val epoch = container.state.accountEpoch.value
+        connected(container.core.addServiceAccount(service, account), epoch)
     }
 
     // ---- an access token or the vault's master password -------------------------------------------------------
 
     fun addSecret(secret: String, onDone: () -> Unit = {}) = operation {
-        container.core.addTokenAccount(service, secret.trim())
-        connected()
+        val epoch = container.state.accountEpoch.value
+        connected(container.core.addTokenAccount(service, secret.trim()), epoch)
         onDone()
     }
 
@@ -159,31 +169,42 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
 
     /** Android granted the permissions: connect the phone's calendar, contacts or messages. */
     fun addDevice() = operation {
-        container.core.addServiceAccount(service, "")
-        connected()
+        val epoch = container.state.accountEpoch.value
+        connected(container.core.addServiceAccount(service, ""), epoch)
     }
 
     // ---- a phone number and a code (Telegram) ----------------------------------------------------------------
 
     fun loginBegin(phone: String) = operation {
+        val epoch = container.state.accountEpoch.value
         container.core.loginBegin(service, phone.trim())
+        if (!container.state.isCurrent(epoch)) return@operation
         _login.value = LoginStep.Code(phone.trim())
     }
 
     fun loginCode(code: String) = operation {
-        when (val progress = container.core.loginCode(service, code.trim())) {
+        val epoch = container.state.accountEpoch.value
+        val progress = container.core.loginCode(service, code.trim())
+        if (!container.state.isCurrent(epoch)) return@operation
+        when (progress) {
             is LoginProgress.NeedsPassword -> _login.value = LoginStep.Password(progress.hint)
             is LoginProgress.Done -> {
                 _login.value = LoginStep.Phone
-                connected()
+                if (container.state.isCurrent(epoch)) {
+                    container.state.accountConnected(service, progress.account, epoch)
+                    container.feedback.play(Event.Connected)
+                    refreshed()
+                }
             }
         }
     }
 
     fun loginPassword(password: String) = operation {
-        container.core.loginPassword(service, password)
+        val epoch = container.state.accountEpoch.value
+        val account = container.core.loginPassword(service, password)
+        if (!container.state.isCurrent(epoch)) return@operation
         _login.value = LoginStep.Phone
-        connected()
+        connected(account, epoch)
     }
 
     /** Starts the sign-in over (a wrong number, a code that never came). */
@@ -197,7 +218,10 @@ class ServiceViewModel(private val container: AppContainer, val service: String)
     /** Disconnects [account]: Reins forgets it (signing it out where that applies) and Google is told to revoke. */
     fun remove(account: String, google: Boolean) = operation {
         container.feedback.play(Event.Revoked)
+        val epoch = container.state.accountEpoch.value
         container.core.removeServiceAccount(service, account)
+        if (!container.state.isCurrent(epoch)) return@operation
+        container.state.dismissAccountConnection(service, account)
         _statuses.update { it - account }
         refreshed()
         // Best effort: without a network the access is still gone on this phone.

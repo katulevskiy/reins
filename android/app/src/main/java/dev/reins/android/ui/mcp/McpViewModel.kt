@@ -7,6 +7,7 @@ import dev.reins.android.feedback.Event
 import dev.reins.android.feedback.play
 import dev.reins.android.ui.common.userMessage
 import dev.reins.core.McpAddStep
+import dev.reins.core.McpServerView
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +39,7 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
     private fun operation(block: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
+        val epoch = container.state.accountEpoch.value
         _error.value = null
         viewModelScope.launch {
             try {
@@ -45,8 +47,10 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                container.feedback.play(Event.Error)
-                _error.value = e.userMessage()
+                if (container.state.isCurrent(epoch)) {
+                    container.feedback.play(Event.Error)
+                    _error.value = e.userMessage()
+                }
             } finally {
                 _busy.value = false
             }
@@ -54,7 +58,9 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private suspend fun reload() {
-        container.state.setMcpServers(container.core.mcpServers())
+        val epoch = container.state.accountEpoch.value
+        val servers = container.core.mcpServers()
+        if (container.state.isCurrent(epoch)) container.state.setMcpServers(servers)
     }
 
     fun refreshList() {
@@ -74,16 +80,15 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
      * sign-in, whose page [open] shows). [onAdded] gets the new server's id once it is usable.
      */
     fun add(url: String, name: String, token: String, open: PageOpener, onAdded: (String) -> Unit) = operation {
+        val epoch = container.state.accountEpoch.value
         _signingIn.value = null
         val address = url.trim()
         val label = name.trim().ifEmpty { null }
         if (token.isNotBlank()) {
             val server = container.core.mcpAddWithToken(address, token.trim(), label)
-            container.feedback.play(Event.Connected)
-            reload()
-            onAdded(server.id)
+            added(server, epoch, onAdded)
         } else {
-            step(container.core.mcpAdd(address, label), open, onAdded)
+            step(container.core.mcpAdd(address, label), open, onAdded, epoch)
         }
     }
 
@@ -91,24 +96,35 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
     fun refresh(id: String, open: PageOpener) = operation {
         container.feedback.play(Event.Refresh)
         _signingIn.value = null
-        step(container.core.mcpRefresh(id), open) {}
+        val epoch = container.state.accountEpoch.value
+        step(container.core.mcpRefresh(id), open, {}, epoch)
     }
 
-    private suspend fun step(step: McpAddStep, open: PageOpener, onAdded: (String) -> Unit) {
+    private suspend fun added(server: McpServerView, epoch: Long, onAdded: (String) -> Unit) {
+        if (!container.state.isCurrent(epoch)) return
+        container.state.serverConnected(server, epoch)
+        if (server.status == "ok") container.feedback.play(Event.Connected)
+        // The verified result is enough to finish. A list refresh failure must not prompt another OAuth/token add.
+        onAdded(server.id)
+        refreshList()
+    }
+
+    private suspend fun step(step: McpAddStep, open: PageOpener, onAdded: (String) -> Unit, epoch: Long) {
+        if (!container.state.isCurrent(epoch)) return
         when (step) {
             is McpAddStep.Added -> {
-                container.feedback.play(Event.Connected)
-                reload()
-                onAdded(step.server.id)
+                added(step.server, epoch, onAdded)
             }
             is McpAddStep.NeedsSignIn -> {
                 reload()
+                if (!container.state.isCurrent(epoch)) return
                 if (!webPage(step.authorizeUrl)) {
                     container.feedback.play(Event.Error)
                     _error.value = "This server's sign-in page is not a web page, so it was not opened."
                     return
                 }
                 withContext(Dispatchers.IO) { container.mcpSignIn.begin(step.serverId) }
+                if (!container.state.isCurrent(epoch)) return
                 if (open(step.authorizeUrl)) {
                     _signingIn.value = step.serverId
                 } else {
@@ -140,7 +156,10 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
 
     fun remove(id: String, onDone: () -> Unit) = operation {
         container.feedback.play(Event.Revoked)
+        val epoch = container.state.accountEpoch.value
         container.core.mcpRemove(id)
+        if (!container.state.isCurrent(epoch)) return@operation
+        container.state.dismissServerConnection(id)
         reload()
         container.refreshAfterAnswer()
         onDone()

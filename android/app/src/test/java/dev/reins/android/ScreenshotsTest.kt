@@ -202,6 +202,54 @@ abstract class ScreenshotsBase(private val suffix: String) {
     }
 
     @Test
+    fun integrationConnectionCompletion() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        launch()
+        tap("tabConnections")
+        tap("service:gmail")
+        val app = (context.applicationContext as ReinsApp).container
+        kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
+        await("integrationConnected")
+        shoot("integration-account-connected")
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun integrationConnectionCompletionLargeText() {
+        val resources = context.resources
+        val previous = android.content.res.Configuration(resources.configuration)
+        val enlarged = android.content.res.Configuration(previous).apply { fontScale = 1.6f }
+        resources.updateConfiguration(enlarged, resources.displayMetrics)
+        try {
+            core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+            launch()
+            tap("tabConnections")
+            tap("service:gmail")
+            val app = (context.applicationContext as ReinsApp).container
+            kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
+            await("integrationConnected")
+            shoot("integration-account-connected-large-text")
+            tap("connectionDone")
+            await("service:gmail")
+        } finally {
+            resources.updateConfiguration(previous, resources.displayMetrics)
+        }
+    }
+
+    @Test
+    fun uncertainExecutionOutcomes() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        core.activity = listOf("unknown", "succeeded_withheld", "started").mapIndexed { index, status ->
+            TestData.entry((index + 1).toLong(), "send", status, 1u, now - (index + 1) * 60,
+                decidedBy = "autopilot", grantId = "g1", label = TestData.label("gmail", "send", "Send an email to", "friend@example.com"))
+        }
+        launch(); await("entry:1")
+        shoot("activity-uncertain-outcomes")
+        tap("entry:1"); await("entryOutcome")
+        shoot("activity-unknown-detail")
+    }
+
+    @Test
     fun activity() {
         history()
         core.pending = listOf(

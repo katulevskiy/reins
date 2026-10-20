@@ -131,7 +131,7 @@ enum ActivityDays {
     static func summary(_ day: ActivityDay) -> String {
         var parts = ["\(day.count)"]
         if day.denied > 0 { parts.append("\(day.denied) denied") }
-        if day.failed > 0 { parts.append("\(day.failed) failed") }
+        if day.failed > 0 { parts.append("\(day.failed) \(day.failed == 1 ? "needs" : "need") attention") }
         return parts.joined(separator: " · ")
     }
 
@@ -139,7 +139,7 @@ enum ActivityDays {
     static func spoken(_ title: String, _ day: ActivityDay) -> String {
         var parts = [title, day.count == 1 ? "1 entry" : "\(day.count) entries"]
         if day.denied > 0 { parts.append("\(day.denied) denied") }
-        if day.failed > 0 { parts.append("\(day.failed) failed") }
+        if day.failed > 0 { parts.append("\(day.failed) \(day.failed == 1 ? "needs" : "need") attention") }
         return parts.joined(separator: ", ")
     }
 
@@ -147,7 +147,7 @@ enum ActivityDays {
     static func stamp(_ e: ActivityEntry) -> ActivityStamp {
         let outcome: ActivityOutcome = switch e.outcome {
         case "denied": .denied
-        case "error": .failed
+        case "error", "started", "unknown", "succeeded_withheld": .failed
         default: .approved
         }
         let decider: ActivityDecider = switch e.decidedBy {
@@ -268,7 +268,7 @@ enum ActivitySearchText {
         switch o {
         case .approved: "Approved"
         case .denied: "Denied"
-        case .failed: "Failed"
+        case .failed: "Needs attention"
         }
     }
 

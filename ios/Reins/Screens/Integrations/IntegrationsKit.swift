@@ -1,6 +1,40 @@
 import SwiftUI
 import UIKit
 
+/// The explicit finishing surface. Account permission choices use this same place once supported by the core.
+struct IntegrationCompletion: View {
+    var title: String
+    var identity: String
+    var onDone: () -> Void
+    var onAnother: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(Palette.success)
+                .accessibilityHidden(true)
+            Text(title).textRole(.title).accessibilityAddTraits(.isHeader)
+            Text(untrusted(identity))
+                .textRole(.body)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .environment(\.layoutDirection, .leftToRight)
+                .accessibilityIdentifier("connectedIdentity")
+            Text("The connection is saved. You can manage it here at any time.")
+                .textRole(.body)
+                .foregroundStyle(Palette.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+            ActionButton(title: "Done", action: onDone).accessibilityIdentifier("connectionDone")
+            if let onAnother {
+                ActionButton(title: "Add another account", kind: .secondary, action: onAnother)
+                    .accessibilityIdentifier("connectionAddAnother")
+            }
+        }
+        .accessibilityIdentifier("integrationConnected")
+    }
+}
+
 // The pieces the integration screens share: Zeron's inset grouped lists, banners, buttons that show work in
 // progress, status pills, secret fields with a paste button, and an account's row.
 

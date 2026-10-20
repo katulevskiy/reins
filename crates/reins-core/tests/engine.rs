@@ -1324,6 +1324,101 @@ async fn add_work_account(env: &Env) {
 }
 
 #[tokio::test]
+async fn managed_mail_hides_remember_and_rejects_standing_grants_without_blocking_one_off_approval() {
+    let env = env().await;
+    add_work_account(&env).await;
+    serve_gmail_account(&env, WORK, &[("w1", "boss@corp.com")]).await;
+    Mock::given(method("POST"))
+        .and(path("/users/me/messages/send"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id":"sent","threadId":"t"})))
+        .mount(&env.gmail)
+        .await;
+    let mut late = for_account(search_request("managed-search", "c1", "Claude", "x"), WORK);
+    late["wait_until"] = json!(101);
+    serve_pending(
+        &env,
+        &[
+            late,
+            for_account(read_request("managed-read", "c1", &["w1"]), WORK),
+            for_account(send_request("managed-send", "c1", "friend@example.com"), WORK),
+        ],
+        &[],
+    )
+    .await;
+    let pending = env.core.sync(0).await.unwrap();
+    assert_eq!(pending.len(), 3);
+    assert!(pending.iter().all(|item| !item.quick));
+    assert!(env.notifier.pending.lock().unwrap().iter().all(|item| !item.quick));
+    for id in ["managed-search", "managed-read", "managed-send"] {
+        let view = env.core.approval_view(id.into()).await.unwrap();
+        assert!(view.no_standing && view.quick.is_none(), "{id}");
+        let error = env.core.approve(id.into(), choice(&["w1"], Some(bank_grant()))).await.unwrap_err();
+        assert!(error.to_string().contains("account permissions or temporary permissions"), "{error}");
+        assert!(env.core.approve_quick(id.into()).await.is_err());
+    }
+    assert!(answers(&env).await.is_empty(), "invalid Remember must fail before any disclosure or send");
+    assert!(env.core.grants().await.unwrap().is_empty());
+    env.core.approve("managed-search".into(), choice(&["w1"], None)).await.unwrap();
+    env.core.approve("managed-read".into(), choice(&["w1"], None)).await.unwrap();
+    env.core.approve("managed-send".into(), choice(&[], None)).await.unwrap();
+    assert_eq!(answers(&env).await.len(), 3);
+    assert!(env.core.grants().await.unwrap().is_empty(), "late approval must not mint an ineffective retry grant");
+    serve_pending(&env, &[for_account(grant_request("managed-grant", "c1", "Claude", &bank_ask(3600)), WORK)], &[])
+        .await;
+    assert!(env.core.sync(0).await.unwrap().is_empty(), "unsupported AI grants are rejected before asking the owner");
+    let answers = answers(&env).await;
+    let rejected = answers.iter().find(|(id, _)| id == "managed-grant").unwrap();
+    assert!(rejected.1["message"].as_str().unwrap().contains("account permissions"));
+}
+
+#[tokio::test]
+async fn enabling_managed_defaults_blocks_already_parked_grants_and_legacy_renewals() {
+    struct Owner(Arc<std::sync::Mutex<Vec<String>>>);
+    #[async_trait::async_trait]
+    impl reins_core::OwnerCheck for Owner {
+        async fn confirm(&self, reason: String) -> Result<bool, reins_core::ForeignError> {
+            self.0.lock().unwrap().push(reason);
+            Ok(true)
+        }
+    }
+    let env = env().await;
+    serve_connections(&env).await;
+    env.core.create_grant("c1".into(), GMAIL.into(), ApprovalKind::Read, bank_grant()).await.unwrap();
+    let id = env.core.grants().await.unwrap()[0].id.clone();
+    serve_pending(&env, &[grant_request("parked-before-management", "c1", "Claude", &bank_ask(3600))], &[]).await;
+    env.core.sync(0).await.unwrap();
+    let draft = env
+        .core
+        .account_permission_draft(
+            "gmail".into(),
+            GMAIL.into(),
+            reins_core::permission_types::AccountPermissionPreset::ReviewEveryRequest,
+        )
+        .await
+        .unwrap();
+    let preview = env.core.preview_account_permissions(draft.clone()).await.unwrap();
+    assert!(preview.summary.contains("all current and future agents"));
+    let confirmed = Arc::new(std::sync::Mutex::new(vec![]));
+    let saved = env.core.save_account_permissions(draft, Arc::new(Owner(Arc::clone(&confirmed)))).await.unwrap();
+    assert!(saved.capabilities.iter().all(|view| view.scope_summary.contains("all current and future agents")));
+    assert!(confirmed.lock().unwrap().iter().any(|reason| reason.contains("all current and future agents")
+        && reason.contains("No new agent account access is granted")));
+    let error = env.core.approve("parked-before-management".into(), choice(&[], None)).await.unwrap_err();
+    assert!(error.to_string().contains("temporary permissions"), "{error}");
+    assert!(env.core.approval_view("parked-before-management".into()).await.unwrap().no_standing);
+    for result in [
+        env.core.extend_grant(id.clone(), 3600).await,
+        env.core.resume_grant(id.clone(), 3600).await,
+        env.core.resume_grant_edited(id.clone(), bank_grant()).await,
+    ] {
+        assert!(result.unwrap_err().to_string().contains("account permissions"));
+    }
+    env.core.revoke_grant(id.clone()).await.unwrap();
+    env.core.delete_grant(id).await.unwrap();
+    assert!(env.core.grants().await.unwrap().is_empty(), "narrowing old authority remains available");
+}
+
+#[tokio::test]
 async fn accounts_are_added_listed_and_removed() {
     let env = env().await;
     assert_eq!(env.core.accounts().await.unwrap().len(), 2, "the owning vault and the Gmail account of the setup");
@@ -1496,7 +1591,7 @@ async fn accounts_can_also_be_shown_just_once_and_only_of_a_connected_integratio
 }
 
 #[tokio::test]
-async fn a_request_is_served_from_the_account_it_names_and_grants_stay_with_that_account() {
+async fn a_managed_request_is_served_from_the_account_it_names_and_remember_does_not_create_a_grant() {
     let env = env().await;
     add_work_account(&env).await;
     serve_gmail_account(&env, GMAIL, &[("p1", "friend@example.org")]).await;
@@ -1520,19 +1615,20 @@ async fn a_request_is_served_from_the_account_it_names_and_grants_stay_with_that
             ..scope()
         },
     };
-    env.core.approve("r1".to_owned(), choice(&["w1"], Some(standing))).await.unwrap();
-    let grant = &env.core.grants().await.unwrap()[0];
-    assert_eq!(grant.account.as_deref(), Some(WORK));
+    let error = env.core.approve("r1".to_owned(), choice(&["w1"], Some(standing))).await.unwrap_err();
+    assert!(error.to_string().contains("account permissions"), "{error}");
+    assert!(env.core.grants().await.unwrap().is_empty());
+    env.core.approve("r1".to_owned(), choice(&["w1"], None)).await.unwrap();
     let entry = &env.core.activity(1).await.unwrap()[0];
     assert_eq!(entry.account.as_deref(), Some(WORK));
 
-    // A newly connected work account keeps Review required; its legacy read grant cannot bypass that default.
+    // A one-off approval cannot create automatic authority for either mailbox.
     serve_pending(&env, &[for_account(search_request("r2", "c1", "Claude", "again"), WORK)], &[]).await;
     assert_eq!(env.core.sync(0).await.unwrap().len(), 1);
     env.core.approve("r2".into(), choice(&["w1"], None)).await.unwrap();
     serve_gmail_account(&env, GMAIL, &[("p2", "boss@corp.com")]).await;
     serve_pending(&env, &[for_account(search_request("r3", "c1", "Claude", "again"), GMAIL)], &[]).await;
-    assert_eq!(env.core.sync(0).await.unwrap().len(), 1, "the grant does not reach the personal account");
+    assert_eq!(env.core.sync(0).await.unwrap().len(), 1, "the personal account stays independent");
 
     // Removing the work account takes its grant along.
     env.core.remove_account(WORK.to_owned()).await.unwrap();
@@ -1571,9 +1667,15 @@ async fn a_new_grant_is_made_for_one_of_the_connected_accounts() {
         env.core.create_grant("c1".to_owned(), "nobody@gmail.com".to_owned(), ApprovalKind::Read, clone()).await,
         Err(CoreError::Invalid { .. })
     ));
-    env.core.create_grant("c1".to_owned(), "WORK@gmail.com".to_owned(), ApprovalKind::Read, clone()).await.unwrap();
-    assert_eq!(env.core.grants().await.unwrap()[0].account.as_deref(), Some(WORK));
-    assert_eq!(env.core.activity(1).await.unwrap()[0].account.as_deref(), Some(WORK));
+    let error = env
+        .core
+        .create_grant("c1".to_owned(), "WORK@gmail.com".to_owned(), ApprovalKind::Read, clone())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("account permissions"), "{error}");
+    env.core.create_grant("c1".to_owned(), GMAIL.to_owned(), ApprovalKind::Read, clone()).await.unwrap();
+    assert_eq!(env.core.grants().await.unwrap()[0].account.as_deref(), Some(GMAIL));
+    assert_eq!(env.core.activity(1).await.unwrap()[0].account.as_deref(), Some(GMAIL));
 }
 
 #[tokio::test]
@@ -1777,7 +1879,7 @@ async fn pair_as(env: &Env, id: &str, connection: &str) {
 #[tokio::test]
 async fn a_new_ai_asks_for_everything_until_the_starting_rule_says_otherwise() {
     let env = env().await;
-    env.core.engine().register_account("gmail", "me@gmail.com").unwrap();
+    env.core.add_account("me@gmail.com".into()).await.unwrap();
     assert_eq!(env.core.starting_policy().await.unwrap(), None, "not chosen yet: asks every time");
     pair_as(&env, "p1", "c8").await;
     assert!(env.core.grants().await.unwrap().is_empty(), "nothing is given without the user's choice");
@@ -1790,7 +1892,7 @@ async fn a_new_ai_asks_for_everything_until_the_starting_rule_says_otherwise() {
 #[tokio::test]
 async fn headlines_for_its_first_hour_show_who_what_and_when_but_opening_anything_asks() {
     let env = env().await;
-    env.core.engine().register_account("gmail", "me@gmail.com").unwrap();
+    env.core.add_account("me@gmail.com".into()).await.unwrap();
     env.core.engine().register_account("telegram", "+15550100").unwrap();
     env.core.engine().register_account("vault", "me@example.com").unwrap();
     env.core.set_starting_policy(StartingPolicy::HeadlinesFirstHour).await.unwrap();

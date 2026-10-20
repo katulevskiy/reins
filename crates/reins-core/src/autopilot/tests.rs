@@ -1,7 +1,7 @@
 //! Autopilot inside the core, end to end: a fake Reins server and Gmail (wiremock), the real engine and store, and
 //! the deterministic fake model of [`super::testing`].
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -30,11 +30,15 @@ const OLD: &str = "c1";
 const OTHER: &str = "c2";
 const NEW: &str = "cnew";
 
-struct Google;
+#[derive(Default)]
+struct Google {
+    calls: AtomicUsize,
+}
 
 #[async_trait::async_trait]
 impl GoogleTokenProvider for Google {
     async fn access_token(&self, _account: String, _service: String) -> Result<String, ForeignError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         Ok("google-token".to_owned())
     }
 }
@@ -110,6 +114,7 @@ impl Notifier for Notes {
 struct Env {
     server: MockServer,
     gmail: MockServer,
+    google: Arc<Google>,
     core: Arc<ReinsCore>,
     notes: Arc<Notes>,
     model: Arc<FakeRuntime>,
@@ -150,8 +155,10 @@ async fn env_models(
     models: Vec<KnownModel>,
     github_base: Option<String>,
 ) -> Env {
-    let server = MockServer::start().await;
-    let gmail = MockServer::start().await;
+    // Core work queued on the process-wide runtime can outlive an Env. Dedicated listeners prevent that work
+    // from reaching a later fixture when Wiremock would otherwise recycle the same server and address.
+    let server = MockServer::builder().start().await;
+    let gmail = MockServer::builder().start().await;
     mount(&server, "POST", "/identity/accounts/prelogin", 200, json!({"kdf": 0, "kdfIterations": 5000})).await;
     mount(
         &server,
@@ -209,9 +216,10 @@ async fn env_models(
     };
     let notes = Arc::new(Notes::default());
     let notifier: Arc<dyn Notifier> = Arc::<Notes>::clone(&notes);
+    let google = Arc::new(Google::default());
+    let token: Arc<dyn GoogleTokenProvider> = Arc::<Google>::clone(&google);
     let core =
-        ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
-            .unwrap();
+        ReinsCore::with_config(dir.path().to_str().unwrap(), &FakeKeys::default(), token, notifier, cfg).unwrap();
     core.login(server.uri(), "me@example.com".to_owned(), "pw".to_owned(), None).await.unwrap();
     // Existing mode/grant regression fixtures model an account connected before account defaults existed.
     // Newly verified connections receive their own review baseline (covered by permissions tests).
@@ -226,6 +234,7 @@ async fn env_models(
     Env {
         server,
         gmail,
+        google,
         core,
         notes,
         model,
@@ -457,7 +466,8 @@ async fn generic_deny_blocks_every_dispatch_family_before_provider_or_slot_calls
     let mut policy = account_send_policy(&owner, reins_proto::authorization::PolicyEffect::Deny);
     policy.scope = reins_proto::authorization::PolicyScope::default();
     env.core.engine().save_authorization_policy(0, policy, owner_yes().as_ref()).await.unwrap();
-    let before = env.gmail.received_requests().await.unwrap().len();
+    let before = provider_requests(&env.gmail).await.len();
+    let tokens_before = env.google.calls.load(Ordering::SeqCst);
     for (index, call) in [
         email("friend@x.com", "no"),
         json!({"tool":"gmail_search","query":"secret","max_results":10}),
@@ -477,9 +487,101 @@ async fn generic_deny_blocks_every_dispatch_family_before_provider_or_slot_calls
         let answer = env.answer(&id).await.unwrap();
         assert_eq!(answer["outcome"], "error", "{id}: {answer}");
         assert!(answer["message"].as_str().unwrap().contains("blocked by an account policy"), "{id}: {answer}");
+        assert_eq!(env.google.calls.load(Ordering::SeqCst), tokens_before, "{id}: acquired a provider token");
+        let observed = provider_requests(&env.gmail).await;
+        assert_eq!(observed.len(), before, "{id}: unexpected provider traffic: {observed:?}");
     }
-    assert_eq!(env.gmail.received_requests().await.unwrap().len(), before);
+    assert_eq!(provider_requests(&env.gmail).await.len(), before);
     assert!(env.waiting().await.is_empty());
+}
+
+/// Local preview discovery can probe any listening port. Ignore only its exact unauthenticated root HEAD
+/// signature; every core request carries a User-Agent and every Google API request acquires a token. Both
+/// boundaries are asserted above, so a core-origin HEAD or even an unauthenticated provider request still fails.
+fn is_external_preview_probe(request: &wiremock::Request, server: &MockServer) -> bool {
+    request.method == "HEAD"
+        && request.url.path() == "/"
+        && request.url.query().is_none()
+        && request.body.is_empty()
+        && request.headers.len() == 2
+        && request
+            .headers
+            .get("host")
+            .is_some_and(|host| host.as_bytes() == format!("localhost:{}", server.address().port()).as_bytes())
+        && request.headers.get("connection").is_some_and(|connection| connection == "close")
+}
+
+async fn provider_requests(server: &MockServer) -> Vec<String> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| !is_external_preview_probe(request, server))
+        .map(|request| {
+            format!(
+                "{} {} (auth={}, user-agent={})",
+                request.method,
+                request.url.path(),
+                request.headers.contains_key("authorization"),
+                request.headers.contains_key("user-agent")
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn preview_probe_filter_keeps_core_head_and_authenticated_requests() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let server = MockServer::builder().start().await;
+    Mock::given(method("HEAD")).respond_with(ResponseTemplate::new(204)).mount(&server).await;
+    // The exact probe emitted by desktop preview discovery, deliberately without the core User-Agent.
+    let mut probe = tokio::net::TcpStream::connect(server.address()).await.unwrap();
+    probe
+        .write_all(
+            format!("HEAD / HTTP/1.1\r\nHost: localhost:{}\r\nConnection: close\r\n\r\n", server.address().port())
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    probe.read_to_end(&mut Vec::new()).await.unwrap();
+    let client = crate::http::client().unwrap();
+    client.head(server.uri()).send().await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let external = requests.iter().find(|request| is_external_preview_probe(request, &server)).unwrap();
+    for header in ["authorization", "user-agent"] {
+        let mut identified = external.clone();
+        identified.headers.insert(header, "present".parse().unwrap());
+        assert!(!is_external_preview_probe(&identified, &server), "{header} must retain the request");
+    }
+    let counted = provider_requests(&server).await;
+    assert!(!counted.is_empty(), "the real core HEAD must be counted");
+    assert!(counted.iter().all(|request| request == "HEAD / (auth=false, user-agent=true)"), "{counted:?}");
+}
+
+#[tokio::test]
+async fn retired_fixture_requests_cannot_reach_a_new_fixture() {
+    let (old_relay, old_provider) = {
+        let previous = env(false).await;
+        (previous.server.uri(), previous.gmail.uri())
+    };
+    let current = env(false).await;
+    let before = provider_requests(&current.gmail).await.len();
+    let client = crate::http::client().unwrap();
+    // Work queued by a dropped fixture can still be on the process-wide Rust runtime. Its URL must never start
+    // pointing at a later fixture, regardless of whether the late request reaches the retired server or fails.
+    for url in [format!("{old_relay}/users/me/profile"), format!("{old_provider}/users/me/profile")] {
+        let _late = client.get(url).bearer_auth("retired-fixture").send().await;
+    }
+    let after = provider_requests(&current.gmail).await.len();
+    assert_eq!(
+        after,
+        before,
+        "retired addresses ({old_relay}, {old_provider}) reached current ({}, {})",
+        current.server.uri(),
+        current.gmail.uri()
+    );
 }
 
 #[tokio::test]
@@ -3641,8 +3743,14 @@ fn restart(env: &Env) -> Arc<ReinsCore> {
         ..CoreConfig::default()
     };
     let notifier: Arc<dyn Notifier> = Arc::<Notes>::clone(&env.notes);
-    ReinsCore::with_config(env.dir.path().to_str().unwrap(), &FakeKeys::default(), Arc::new(Google), notifier, cfg)
-        .unwrap()
+    ReinsCore::with_config(
+        env.dir.path().to_str().unwrap(),
+        &FakeKeys::default(),
+        Arc::new(Google::default()),
+        notifier,
+        cfg,
+    )
+    .unwrap()
 }
 
 /// The account store as a version from before entry snapshots (#71) sealed it: no `audit_snapshots` table. Every

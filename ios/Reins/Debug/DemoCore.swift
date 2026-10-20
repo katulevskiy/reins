@@ -86,6 +86,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var activity: [ActivityEntry] = []
         var grants: [GrantView] = []
         var accounts: [AccountView] = []
+        var permissionViews: [String: AccountPermissionsView] = [:]
+        var delegationRecords: [DelegationView] = []
         var accountStatuses: [String: GmailStatus] = [:]
         var emails: [String: EmailContent] = [:]
         var mcp: [McpServerView] = []
@@ -471,6 +473,9 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         live: false, forked: nil, disagrees: false, waitingForKey: false, queued: 0, counterGaps: 0, notice: nil
     )
     func rosterCreate(deviceName: String, codeOrPassword: String?) async throws -> RosterSummary {
+        throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func rosterCreateAuthorized(deviceName: String, codeOrPassword: String?, owner: OwnerCheck) async throws -> RosterSummary {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
     }
     func enrollBegin(deviceName: String) async throws -> EnrollStart {
@@ -1609,6 +1614,58 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         if locked({ $0.overnightWhenRisky }) == risky { return }
         try await Self.confirmOwner(owner, risky == .wait ? "Overnight: wait for you when something is too risky" : "Overnight: deny what is too risky")
         locked { $0.overnightWhenRisky = risky }
+    }
+
+
+    func accountPermissions(service: String, account: String) async throws -> AccountPermissionsView {
+        locked { $0.permissionViews["\(service)/\(account)"] ?? DemoPermissions.view(service, account) }
+    }
+    func accountPermissionDraft(service: String, account: String, preset: AccountPermissionPreset) async throws -> AccountPermissionsDraft {
+        DemoPermissions.draft(try await accountPermissions(service: service, account: account), preset)
+    }
+    func permissionScopeOptions(service: String, account: String, capability: PermissionCapability, query: String, limit: UInt32) async throws -> PermissionScopeOptions {
+        let recipient = capability == .mailSend
+        let kind: PermissionScopeKind = recipient ? .selectedRecipients : .selectedResources
+        let value = query.lowercased()
+        return PermissionScopeOptions(kinds: recipient ? [kind] : [.allInAccount, kind], options: query.contains("@") ? [PermissionScopeOption(id: "recipient:" + value, label: value, detail: "Exact address", service: service, account: account, kind: kind)] : [], allowsAddressEntry: recipient, unsupportedReason: nil)
+    }
+    func previewAccountPermissions(draft: AccountPermissionsDraft) async throws -> PermissionPreview {
+        guard try await accountPermissions(service: draft.service, account: draft.account).revision == draft.expectedRevision else { throw CoreError.Invalid(reason: "Permissions changed. Reload current settings.") }
+        return DemoPermissions.preview(draft.expectedRevision)
+    }
+    func saveAccountPermissions(draft: AccountPermissionsDraft, owner: OwnerCheck) async throws -> AccountPermissionsView {
+        try await Self.confirmOwner(owner, "Save permissions for \(draft.account)")
+        _ = try await previewAccountPermissions(draft: draft)
+        var result = try await accountPermissions(service: draft.service, account: draft.account)
+        result.revision &+= 1
+        result.capabilities = result.capabilities.map { capability in
+            var next = capability; next.configuredMode = draft.rules.first(where: { $0.capability == capability.capability })?.mode; return next
+        }
+        result.expiresAt = draft.expiresAt; result.remainingUses = draft.maxUses
+        locked { $0.permissionViews["\(draft.service)/\(draft.account)"] = result }
+        return result
+    }
+    func delegations() async throws -> [DelegationView] { locked { $0.delegationRecords } }
+    func delegationDraft(service: String, account: String) async throws -> DelegationDraft {
+        let base = try await accountPermissionDraft(service: service, account: account, preset: .readAssist)
+        return DelegationDraft(service: service, account: account, expectedRevision: base.expectedRevision, agentIds: base.agentIds, grantAccountAccess: false, rules: base.rules.filter { $0.mode == .auto }, expiresAt: Int64(Date().timeIntervalSince1970) + 3600, maxUses: 20)
+    }
+    func previewDelegation(draft: DelegationDraft) async throws -> PermissionPreview { DemoPermissions.preview(draft.expectedRevision) }
+    func issueDelegation(draft: DelegationDraft, owner: OwnerCheck) async throws -> DelegationView {
+        try await Self.confirmOwner(owner, "Create temporary permission for \(draft.account)")
+        return locked { state in
+            let record = DelegationView(id: "temporary-\(state.delegationRecords.count)", revision: draft.expectedRevision + 1, title: "Temporary account permission", service: draft.service, account: draft.account, state: .active, expiresAt: draft.expiresAt, agentIds: draft.agentIds, rules: draft.rules, used: 0, usageVerified: true, unresolved: 0, maxUses: draft.maxUses, scopeSummary: "Selected agents only", effectiveReason: "Explicit temporary permission", restrictions: [])
+            state.delegationRecords.append(record); return record
+        }
+    }
+    func changeDelegation(id: String, expectedRevision: UInt64, change: DelegationChange, owner: OwnerCheck) async throws -> DelegationView {
+        try await Self.confirmOwner(owner, "Change temporary permission")
+        return try locked { state in
+            guard let index = state.delegationRecords.firstIndex(where: { $0.id == id }), state.delegationRecords[index].revision == expectedRevision else { throw CoreError.Invalid(reason: "Permissions changed. Reload current settings.") }
+            state.delegationRecords[index].revision &+= 1
+            state.delegationRecords[index].state = change == .pause ? .paused : change == .resume ? .active : .revoked
+            return state.delegationRecords[index]
+        }
     }
 
     /// Refuses unless the owner confirmed now (a cancel or an error refuses too).

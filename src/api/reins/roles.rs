@@ -648,7 +648,7 @@ impl HandoverHub {
     /// Records a signed request's nonce; false when this device sent it already (a replay).
     pub fn fresh_nonce(&self, user: &str, device: &str, signed: &HandoverSignature, now: i64) -> bool {
         let mut nonces = self.nonces.lock().unwrap_or_else(PoisonError::into_inner);
-        nonces.retain(|_, at| (now - *at).abs() <= HANDOVER_REQUEST_SKEW_SECS);
+        nonces.retain(|_, at| now.abs_diff(*at) <= HANDOVER_REQUEST_SKEW_SECS.unsigned_abs());
         nonces.insert((user.to_owned(), device.to_owned(), signed.nonce.clone()), signed.at).is_none()
     }
 
@@ -839,8 +839,21 @@ async fn post_handover(
         let verified = matches!((signer, message, reins_proto::canon::parse_sig(&signed.sig)),
             (Some(key), Some(message), Some(sig)) if ed25519_verify(&key, &message, &sig));
         let now = now_unix();
-        if signed.epoch != current.epoch || !verified || (now - signed.at).abs() > HANDOVER_REQUEST_SKEW_SECS {
+        if signed.epoch != current.epoch
+            || !verified
+            || now.abs_diff(signed.at) > HANDOVER_REQUEST_SKEW_SECS.unsigned_abs()
+        {
             return Err(api_err(Status::Forbidden, codes::BAD_SIGNATURE, "The request is not signed by this phone"));
+        }
+        if signed.policy_enforcement.is_some()
+            && !signer
+                .is_some_and(|key| signed.policy_support_verifies(&user, &member.device_uuid, &key, ed25519_verify))
+        {
+            return Err(api_err(
+                Status::Forbidden,
+                codes::BAD_SIGNATURE,
+                "The policy support is not signed by this phone",
+            ));
         }
         if !HUB.handovers.fresh_nonce(&user, &member.device_uuid, signed, now) {
             return Err(super::device_api::already_answered());

@@ -86,6 +86,12 @@ impl Phone {
         Self::sign_in_with(server_url, email, PASSWORD).await
     }
 
+    /// A pre-upgrade Gmail account discovered through the legacy migration path, with no managed defaults.
+    /// Only compatibility tests use this; ordinary sign-in verifies a new connection and installs Review.
+    pub async fn sign_in_with_existing_gmail(server_url: &str, email: &str) -> Self {
+        Self::start(server_url, email, PASSWORD, false, true, |_| {}).await
+    }
+
     /// Like [`Phone::sign_in`] with an explicit master password (for a real, already deployed server).
     pub async fn sign_in_with(server_url: &str, email: &str, password: &str) -> Self {
         Self::sign_in_configured(server_url, email, password, |_| {}).await
@@ -105,7 +111,7 @@ impl Phone {
     /// Creates the account `email` from the phone (the core's `create_account`, nothing registered before), then goes
     /// on like [`Phone::sign_in`].
     pub async fn create_account(server_url: &str, email: &str) -> Self {
-        Self::start(server_url, email, PASSWORD, true, |_| {}).await
+        Self::start(server_url, email, PASSWORD, true, false, |_| {}).await
     }
 
     async fn sign_in_configured(
@@ -114,7 +120,7 @@ impl Phone {
         password: &str,
         configure: impl FnOnce(&mut CoreConfig),
     ) -> Self {
-        Self::start(server_url, email, password, false, configure).await
+        Self::start(server_url, email, password, false, false, configure).await
     }
 
     async fn start(
@@ -122,6 +128,7 @@ impl Phone {
         email: &str,
         password: &str,
         create: bool,
+        existing_gmail: bool,
         configure: impl FnOnce(&mut CoreConfig),
     ) -> Self {
         let phone = Self::signed_out(configure).await;
@@ -135,7 +142,19 @@ impl Phone {
             phone.core.login(server_url.to_owned(), email.to_owned(), password.to_owned(), None).await.expect("login");
         }
         phone.core.register_device(None).await.expect("register device");
-        phone.connect_gmail().await;
+        if existing_gmail {
+            Mock::given(method("GET"))
+                .and(path("/users/me/profile"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"emailAddress":GMAIL_ACCOUNT})))
+                .mount(&phone.gmail)
+                .await;
+            // Existing installations discover the old account before any explicit verified-add operation.
+            drop(phone.core.engine().fetch_email(None, "").await);
+            assert!(phone.core.accounts().await.unwrap().iter().any(|account| account.service == "gmail"));
+            assert!(!phone.core.account_permissions("gmail".into(), GMAIL_ACCOUNT.into()).await.unwrap().managed);
+        } else {
+            phone.connect_gmail().await;
+        }
         phone
     }
 

@@ -38,13 +38,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -176,6 +177,9 @@ fun OutcomeMark(outcome: Outcome, modifier: Modifier = Modifier) {
         Outcome.Approved -> Icon(Icons.Rounded.CheckCircle, "Approved", modifier.size(19.dp), tint = c.success)
         Outcome.Denied -> Icon(Icons.Rounded.Cancel, "Denied", modifier.size(19.dp), tint = c.danger)
         Outcome.Failed -> Icon(Icons.Rounded.Warning, "Failed", modifier.size(18.dp), tint = c.warning)
+        Outcome.Started -> Marker(Icons.Rounded.Warning, "Awaiting outcome", c.warning, modifier.clearAndSetSemantics { contentDescription = "Attempted; awaiting outcome" })
+        Outcome.Unknown -> Marker(Icons.Rounded.Warning, "Outcome unknown", c.warning, modifier.clearAndSetSemantics { contentDescription = "Outcome unknown; do not repeat" })
+        Outcome.Withheld -> Marker(Icons.Rounded.Warning, "Response withheld", c.warning, modifier.clearAndSetSemantics { contentDescription = "Completed; response withheld; do not repeat" })
         Outcome.Auto -> Marker(Icons.Rounded.Bolt, "Auto", c.accent, modifier)
         Outcome.AutoDenied -> Marker(Icons.Rounded.Bolt, "Auto", c.danger, modifier)
         Outcome.Overnight -> Marker(dev.reins.android.ui.autopilot.OvernightIcon, dev.reins.android.autopilot.AutopilotText.OVERNIGHT, c.night, modifier)

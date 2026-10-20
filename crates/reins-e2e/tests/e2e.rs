@@ -1,13 +1,23 @@
 //! The whole system: real server binary + real phone core + simulated AI client.
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use reins_core::permission_types::AccountPermissionPreset;
 use reins_core::{ApprovalChoice, ApprovalKind, GrantScopeChoice, StandingGrant};
 use reins_e2e::{AiClient, Phone, Server};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
 const EMAIL: &str = "user@example.com";
+
+struct Owner;
+#[async_trait::async_trait]
+impl reins_core::OwnerCheck for Owner {
+    async fn confirm(&self, _reason: String) -> Result<bool, reins_core::ForeignError> {
+        Ok(true)
+    }
+}
 
 fn scope() -> GrantScopeChoice {
     GrantScopeChoice {
@@ -33,9 +43,17 @@ fn pick(ids: &[&str], standing: Option<StandingGrant>) -> ApprovalChoice {
 
 /// Registers the account, signs the phone in and connects an AI client end to end.
 async fn connected(relay_wait: u64, offline: u64) -> (Server, Phone, AiClient) {
+    connected_with_gmail(relay_wait, offline, false).await
+}
+
+async fn connected_with_gmail(relay_wait: u64, offline: u64, existing: bool) -> (Server, Phone, AiClient) {
     let server = Server::start(relay_wait, offline).await;
     server.register(EMAIL).await;
-    let phone = Phone::sign_in(&server.base, EMAIL).await;
+    let phone = if existing {
+        Phone::sign_in_with_existing_gmail(&server.base, EMAIL).await
+    } else {
+        Phone::sign_in(&server.base, EMAIL).await
+    };
     let mut ai = AiClient::new(&server.base);
     ai.register_client().await;
     let wait_url = ai.start_authorization(EMAIL).await;
@@ -51,7 +69,7 @@ async fn connected(relay_wait: u64, offline: u64) -> (Server, Phone, AiClient) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn connect_search_approve_with_a_standing_grant_then_auto_allow() {
+async fn new_gmail_uses_explicit_scoped_permissions_instead_of_ineffective_legacy_remember() {
     let (server, phone, ai) = connected(20, 8).await;
     phone.stock_gmail(&[("m1", "Bank <alerts@bank.com>"), ("m2", "Spam <x@spam.example>")]).await;
 
@@ -63,6 +81,7 @@ async fn connect_search_approve_with_a_standing_grant_then_auto_allow() {
         assert_eq!(item.title, "My Claude wants to search your Gmail");
         let view = phone.core.approval_view(item.id.clone()).await.unwrap();
         assert_eq!((view.kind, view.messages.len()), (ApprovalKind::Search, 2));
+        assert!(view.no_standing, "managed mail uses typed permission setup rather than legacy Remember");
         let mut only_bank = scope();
         only_bank.sender_domains = vec!["bank.com".to_owned()];
         let standing = StandingGrant {
@@ -70,8 +89,11 @@ async fn connect_search_approve_with_a_standing_grant_then_auto_allow() {
             max_uses: None,
             scope: only_bank,
         };
-        // The user shares just the bank message and allows the bank from now on.
-        phone.core.approve(item.id, pick(&["m1"], Some(standing))).await.unwrap();
+        // A stale client cannot create a misleading legacy Remember grant for this managed account.
+        let error = phone.core.approve(item.id.clone(), pick(&["m1"], Some(standing))).await.unwrap_err();
+        assert!(error.to_string().contains("Use account permissions or temporary permissions"), "{error}");
+        // One-off approval remains usable and releases only the message actually selected.
+        phone.core.approve(item.id, pick(&["m1"], None)).await.unwrap();
     };
     let (result, ()) = tokio::join!(search, user);
     assert_eq!(result["isError"], false, "{result}");
@@ -79,18 +101,54 @@ async fn connect_search_approve_with_a_standing_grant_then_auto_allow() {
         result["structuredContent"]["messages"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["m1"], "the unapproved message never left the phone");
 
-    // Now bank mail is covered: the same kind of search is answered without any prompt.
+    // The agent is directed to typed settings without asking for an ineffective legacy grant.
+    let narrow =
+        json!({"action":"read", "duration_seconds":1800, "reason":"Summarise bank statements", "from":["@bank.com"]});
+    let request = ai.tool("reins_request_access", &narrow);
+    let app_open = async { phone.core.sync(10).await.unwrap() };
+    let (rejected, pending) = tokio::join!(request, app_open);
+    assert_eq!(rejected["isError"], true, "{rejected}");
+    assert!(rejected.to_string().contains("Use account permissions or temporary permissions"), "{rejected}");
+    assert!(pending.is_empty(), "unsupported legacy grant never asks the owner");
+
+    // One-off approval leaves the newly connected account's Review baseline intact.
     phone.gmail.reset().await;
     phone.stock_gmail(&[("m1", "Bank <alerts@bank.com>")]).await;
     let query = json!({"query": "from:bank"});
     let again = ai.tool("gmail_search", &query);
-    // The app is open (long-polling): it receives the request and answers it by itself.
-    let app_open = async { phone.core.sync(10).await.unwrap() };
-    let (again, still_pending) = tokio::join!(again, app_open);
-    assert!(still_pending.is_empty(), "nothing needed the user");
+    let review = async {
+        let item = phone.wait_for_item(Duration::from_secs(20)).await;
+        phone.core.approve(item.id, pick(&["m1"], None)).await.unwrap();
+    };
+    let (again, ()) = tokio::join!(again, review);
     assert_eq!(again["isError"], false, "{again}");
+    assert!(phone.core.grants().await.unwrap().is_empty(), "ineffective legacy authority was never installed");
+
+    // Explicit deterministic permissions have separate account admission, a verified primary and bounded usage.
+    phone.core.roster_create("Primary phone".into(), Some(reins_e2e::PASSWORD.into())).await.unwrap();
+    let agent = phone.core.connections().await.unwrap().remove(0).id;
+    let mut defaults = phone
+        .core
+        .account_permission_draft(
+            "gmail".into(),
+            reins_e2e::phone::GMAIL_ACCOUNT.into(),
+            AccountPermissionPreset::ReadAssist,
+        )
+        .await
+        .unwrap();
+    defaults.agent_ids = vec![agent];
+    defaults.grant_account_access = true;
+    defaults.max_uses = Some(2);
+    phone.core.save_account_permissions(defaults, Arc::new(Owner)).await.unwrap();
+    let automatic = ai.tool("gmail_search", &query);
+    let app_open = async { phone.core.sync(10).await.unwrap() };
+    let (automatic, still_pending) = tokio::join!(automatic, app_open);
+    assert!(still_pending.is_empty(), "explicit scoped policy needs no model or owner prompt");
+    assert_eq!(automatic["isError"], false, "{automatic}");
     assert!(phone.core.pending().await.unwrap().is_empty());
-    assert_eq!(phone.core.grants().await.unwrap().len(), 1);
+    let permissions =
+        phone.core.account_permissions("gmail".into(), reins_e2e::phone::GMAIL_ACCOUNT.into()).await.unwrap();
+    assert_eq!(permissions.used, 1);
     assert!(!server.log().contains("panicked"), "server log: {}", server.log());
 }
 
@@ -153,8 +211,8 @@ async fn revoking_the_connection_cuts_the_ai_off() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_ai_asks_for_a_narrow_permission_and_then_reads_without_prompts() {
-    let (server, phone, ai) = connected(20, 8).await;
+async fn an_ai_asks_for_a_narrow_permission_and_then_reads_without_prompts_on_an_existing_account() {
+    let (server, phone, ai) = connected_with_gmail(20, 8, true).await;
     phone.stock_gmail(&[("m1", "Bank <alerts@bank.com>")]).await;
 
     let ask = json!({

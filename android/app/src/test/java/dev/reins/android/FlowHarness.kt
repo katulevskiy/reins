@@ -81,6 +81,8 @@ abstract class FlowHarness {
         core.accountStatuses = emptyMap()
         core.serviceStatuses = emptyMap()
         core.serviceFailure = null
+        core.tokenAccountGate = null
+        core.removeAccountGate = null
         core.tokensAdded.clear()
         core.approvals.clear()
         core.quickApprovals.clear()
@@ -97,8 +99,10 @@ abstract class FlowHarness {
         core.blobAnswers.clear()
         core.mcp = emptyList()
         core.mcpNextAdd = null
+        core.mcpAddGate = null
         core.mcpNextRefresh = null
         core.mcpFailure = null
+        core.mcpListFailure = null
         core.mcpAdds.clear()
         core.mcpTokenAdds.clear()
         core.mcpSignIns.clear()

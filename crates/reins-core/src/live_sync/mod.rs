@@ -24,7 +24,7 @@
 mod net;
 mod proposals;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
@@ -205,6 +205,55 @@ impl Engine {
         }))
     }
 
+    /// A signed transfer can be known before its policy/account records have reached the local tables. Never
+    /// interpret that temporary absence as a legacy account. Applied counters include authenticated checkpoints;
+    /// the materialization mark advances only after every record has been written without failure.
+    pub(crate) fn require_authorization_history_ready(&self) -> Result<(), CoreError> {
+        let Some(slot) = self.account_slot_now()? else {
+            return Ok(());
+        };
+        let Some(roster) = self.local_roster(&slot)? else {
+            return Ok(());
+        };
+        if self.standing_in(&roster)? != Standing::Primary {
+            return Ok(());
+        }
+        let Some(transfer) = roster.entries.iter().rev().find(|entry| {
+            matches!(
+                entry.reason,
+                reins_proto::roster::RosterReason::Create
+                    | reins_proto::roster::RosterReason::Handover
+                    | reins_proto::roster::RosterReason::Recovery
+            )
+        }) else {
+            return Ok(());
+        };
+        if transfer.reason != reins_proto::roster::RosterReason::Handover {
+            return Ok(());
+        }
+        let unavailable = || {
+            CoreError::invalid(
+                "Account authorization history is still synchronizing. Wait for complete verified history before executing or changing permissions.",
+            )
+        };
+        let outgoing = roster.at(transfer.epoch.saturating_sub(1)).ok_or_else(unavailable)?;
+        let required = transfer.primary_counter.ok_or_else(unavailable)?;
+        let ready = self.store.oplog(|conn| -> Result<bool, CoreError> {
+            let applied = oplog::state(conn)?;
+            let materialized = local::mark(conn, MATERIALIZED_SEQ)?.and_then(|value| value.parse::<u64>().ok());
+            Ok(applied.forked.is_none()
+                && local::mark(conn, UNTRUSTED_START)?.is_none()
+                && oplog::counter_gaps(conn)?.is_empty()
+                && materialized.is_some_and(|seq| seq >= applied.seq)
+                && oplog::last_counter(conn, &outgoing.primary)? >= required)
+        })??;
+        if ready {
+            Ok(())
+        } else {
+            Err(unavailable())
+        }
+    }
+
     /// One cycle of the live sync (see the module docs): `wait_secs` long-polls for news when there is nothing to do.
     /// On an account without phone roles, only says so (the legacy sync runs as before).
     pub async fn live_sync(&self, wait_secs: u32) -> Result<LiveSyncState, CoreError> {
@@ -218,6 +267,31 @@ impl Engine {
         *self.live().last.lock().unwrap_or_else(PoisonError::into_inner) = Some(state.clone());
         self.live().refused.lock().unwrap_or_else(PoisonError::into_inner).clear();
         Ok(state)
+    }
+
+    /// Prove what will leave with the deciding role, rather than inferring publication from an empty outbox.
+    /// A cycle can return Ok with a notice before publishing; its final materialization can also change local
+    /// policy joins after publication. Those rows must reach a subsequent signed op before transfer.
+    pub(crate) fn require_handover_publication(&self) -> Result<(), CoreError> {
+        let rows = self.store.sync_rows()?;
+        let (ready, mirror) = self.store.oplog(|conn| -> Result<_, CoreError> {
+            let applied = oplog::state(conn)?;
+            let materialized = local::mark(conn, MATERIALIZED_SEQ)?.and_then(|value| value.parse::<u64>().ok());
+            Ok((
+                applied.forked.is_none()
+                    && local::mark(conn, UNTRUSTED_START)?.is_none()
+                    && oplog::counter_gaps(conn)?.is_empty()
+                    && materialized.is_some_and(|seq| seq >= applied.seq),
+                local::mirror(conn)?,
+            ))
+        })??;
+        if ready && handover_rows_published(&rows, &mirror) {
+            Ok(())
+        } else {
+            Err(CoreError::invalid(
+                "This phone's latest account data has not completed verified sync. Sync and retry the transfer before moving authorization protections.",
+            ))
+        }
     }
 
     /// The live view's state as the last cycle left it (no network).
@@ -280,7 +354,9 @@ impl Engine {
                 }
             }
             self.deliver_grants(account, &keys)?;
-            if self.store.oplog(|c| local::mark(c, MATERIALIZED_SEQ))??.is_some() {
+            if self.store.oplog(|c| local::mark(c, MATERIALIZED_SEQ))??.is_some()
+                && self.require_authorization_history_ready().is_ok()
+            {
                 self.publish(account, &keys)?;
                 self.mark_epoch(account, &keys)?;
             }
@@ -327,6 +403,9 @@ impl Engine {
                     self.maybe_checkpoint(session, account, &keys, response).await;
                 }
             }
+        }
+        if let Err(error) = self.require_authorization_history_ready() {
+            notice = notice.or(Some(error.to_string()));
         }
         self.synced_writes.store(self.store.write_count(), Ordering::Release);
         self.live_state(account, pulled.response.as_ref(), pulled.waiting_for_key, notice)
@@ -564,7 +643,7 @@ impl Engine {
         &self,
         account: &Account,
         keys: &Keys,
-        mirror: &std::collections::HashMap<(String, String), local::Mirrored>,
+        mirror: &HashMap<(String, String), local::Mirrored>,
     ) -> Result<(), CoreError> {
         let audit = table_name(Table::Audit);
         let marked = self.store.oplog(|c| local::mark(c, ACTIVITY_FLOOR))??;
@@ -1773,6 +1852,27 @@ impl Engine {
     }
 }
 
+/// The same row identity/digest comparison publication uses, including pending removals. Activity is published
+/// separately and internal sync records have no corresponding deciding-store row.
+fn handover_rows_published(rows: &[records::SyncRow], mirror: &HashMap<(String, String), local::Mirrored>) -> bool {
+    let current: HashMap<_, _> =
+        rows.iter().map(|row| ((table_name(row.table), row.key.clone()), row.digest())).collect();
+    if current
+        .iter()
+        .any(|(key, digest)| mirror.get(key).is_none_or(|seen| seen.version.is_none() || seen.digest != *digest))
+    {
+        return false;
+    }
+    !mirror.iter().any(|((table, key), seen)| {
+        let synced = records::TABLES.iter().any(|(candidate, _, _)| table_name(*candidate) == *table)
+            || *table == table_name(Table::Meta);
+        synced
+            && !seen.digest.is_empty()
+            && !key.starts_with(RESERVED_PREFIX)
+            && !current.contains_key(&(table.clone(), key.clone()))
+    })
+}
+
 /// When a heartbeat signed at `t` counts as seen, checked at `now`: never later than now (a heartbeat dated ahead of
 /// this phone's clock does not stretch "Live").
 const fn seen_at(t: i64, now: i64) -> i64 {
@@ -1860,6 +1960,46 @@ fn open_body(ring: &ViewKeyring, op: &reins_proto::oplog::Op) -> Option<OpBody> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skipped_publication_and_materialization_joins_do_not_prove_handover_readiness() {
+        let mut row = records::SyncRow {
+            table: Table::Meta,
+            key: "authorization.state".into(),
+            value: json!({"effect":"deny", "revision":1}),
+            local: "[\"app.authorization.state\"]".into(),
+        };
+        let key = (table_name(row.table), row.key.clone());
+        let mut mirror = HashMap::new();
+        assert!(!handover_rows_published(&[row.clone()], &mirror), "Ok without publication is not evidence");
+        let mut seen = local::Mirrored {
+            version: None,
+            digest: row.digest(),
+            local: Some(row.local.clone()),
+        };
+        mirror.insert(key.clone(), seen.clone());
+        assert!(!handover_rows_published(&[row.clone()], &mirror), "matching digest needs a signed version");
+        seen.version = Some(Version {
+            epoch: 1,
+            author: "primary".into(),
+            counter: 1,
+        });
+        mirror.insert(key.clone(), seen.clone());
+        assert!(handover_rows_published(&[row.clone()], &mirror));
+        row.value["revision"] = json!(2);
+        assert!(!handover_rows_published(&[row.clone()], &mirror), "post-publication joins must be republished");
+        seen.digest = row.digest();
+        mirror.insert(key.clone(), seen.clone());
+        assert!(handover_rows_published(&[row], &mirror));
+        assert!(!handover_rows_published(&[], &mirror), "a local removal must be published too");
+        seen.digest.clear();
+        mirror.insert(key, seen.clone());
+        assert!(handover_rows_published(&[], &mirror));
+        seen.digest = "activity-or-internal".into();
+        mirror.insert((table_name(Table::Audit), "old-activity".into()), seen.clone());
+        mirror.insert((table_name(Table::Meta), "~reins.epoch".into()), seen);
+        assert!(handover_rows_published(&[], &mirror), "unrelated activity and internal records are excluded");
+    }
 
     #[test]
     fn a_heartbeat_dated_ahead_never_stretches_live() {

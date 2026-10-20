@@ -418,6 +418,126 @@ fn delegation() -> (PolicyRecord, PolicyRecord) {
     (parent, child)
 }
 
+fn personal_decision(policies: &[PolicyRecord], baseline: BaselineDecision) -> AuthorizationDecision {
+    personal_decision_with_device(policies, baseline, Some("computer"))
+}
+
+fn personal_decision_with_device(
+    policies: &[PolicyRecord],
+    baseline: BaselineDecision,
+    device: Option<&str>,
+) -> AuthorizationDecision {
+    let mut action = action();
+    action.actor.tenant_id = None;
+    action.actor.device_id = device.map(str::to_owned);
+    let mut policies = policies.to_vec();
+    for policy in &mut policies {
+        policy.issuer.tenant_id = None;
+        policy.issuer.principal_id.clone_from(&action.actor.executor_principal_id);
+    }
+    let ids = policies.iter().map(|policy| policy.id.clone()).collect::<Vec<_>>();
+    let authority = AuthorityBindings {
+        principal_id: &action.actor.principal_id,
+        tenant_id: None,
+        connection_id: &action.actor.connection_id,
+        device_id: action.actor.device_id.as_deref(),
+        executor_principal_id: &action.actor.executor_principal_id,
+        executor_device_id: &action.actor.executor_device_id,
+        account_id: &action.resource.account_id,
+        resource_id: action.resource.resource_id.as_deref(),
+        request_digest: &action.request_digest,
+        account_access: true,
+        verified_attribute_keys: KEYS,
+        authorized_policy_ids: &ids,
+    };
+    evaluate(&EvaluationInput {
+        action: &action,
+        policies: &policies,
+        authority: &authority,
+        now: NOW,
+        usage: &[],
+        baseline,
+    })
+}
+
+fn ask_default() -> PolicyRecord {
+    let mut policy = policy("ask-default", PolicyEffect::ReviewByDefault);
+    policy.kind = PolicyKind::AccountDefault;
+    policy
+}
+
+#[test]
+fn personal_ask_default_suppresses_legacy_but_explicit_delegation_can_authorize() {
+    let ask = ask_default();
+    let reviewed = personal_decision(std::slice::from_ref(&ask), BaselineDecision::Permit);
+    assert_eq!(reviewed.outcome, DecisionOutcome::Review);
+    assert!(reviewed.required_reviews.is_empty(), "a fallback imposes no hard review obligation");
+    assert!(reviewed.reasons.iter().any(|r| r.code == ReasonCode::ReviewByDefault));
+    let (parent, child) = delegation();
+    for policies in [vec![ask.clone(), parent.clone(), child.clone()], vec![child.clone(), ask.clone(), parent.clone()]]
+    {
+        let allowed = personal_decision(&policies, BaselineDecision::Review);
+        assert_eq!(allowed.outcome, DecisionOutcome::Permit);
+        assert_eq!(allowed.authorization_path.len(), 2);
+    }
+    let mut expired = child;
+    expired.expires_at = Some(NOW);
+    assert_eq!(personal_decision(&[ask, parent, expired], BaselineDecision::Permit).outcome, DecisionOutcome::Review);
+}
+
+#[test]
+fn hard_reviews_and_denies_still_override_soft_defaults_and_delegations() {
+    let (parent, child) = delegation();
+    for kind in [PolicyKind::Mandatory, PolicyKind::AccountDefault, PolicyKind::Permission] {
+        let mut hard = policy(
+            "always-ask",
+            PolicyEffect::RequireReview {
+                requirements: vec![reviewer("owner", 1)],
+            },
+        );
+        hard.kind = kind;
+        let review = personal_decision(&[ask_default(), parent.clone(), child.clone(), hard], BaselineDecision::Permit);
+        assert_eq!(review.outcome, DecisionOutcome::Review);
+        assert_eq!(review.required_reviews, vec![reviewer("owner", 1)]);
+    }
+    let deny = policy("never", PolicyEffect::Deny);
+    assert_eq!(
+        personal_decision(&[ask_default(), parent, child, deny], BaselineDecision::Permit).outcome,
+        DecisionOutcome::Deny
+    );
+}
+
+#[test]
+fn unknown_soft_default_never_vetoes_a_verified_permission_or_releases_legacy() {
+    for unknown_scope in [false, true] {
+        let mut ask = ask_default();
+        if unknown_scope {
+            ask.scope.device_ids = vec!["computer".into()];
+        } else {
+            ask.conditions.push(Condition::StringEquals {
+                key: AttributeKey::Workspace,
+                value: "workspace".into(),
+            });
+        }
+        assert_eq!(
+            personal_decision_with_device(std::slice::from_ref(&ask), BaselineDecision::Permit, None).outcome,
+            DecisionOutcome::Review
+        );
+        let (parent, child) = delegation();
+        assert_eq!(
+            personal_decision_with_device(&[ask, parent, child], BaselineDecision::Permit, None).outcome,
+            DecisionOutcome::Permit
+        );
+    }
+    let mut ask = ask_default();
+    ask.conditions.push(repo_condition("another"));
+    assert_eq!(
+        personal_decision(&[ask], BaselineDecision::Permit).outcome,
+        DecisionOutcome::Permit,
+        "nonmatching fallback does not alter another scope"
+    );
+}
+
 #[test]
 fn delegation_authority_does_not_execute_and_every_ancestor_remains_a_bound() {
     let (parent, child) = delegation();

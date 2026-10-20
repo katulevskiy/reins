@@ -62,6 +62,7 @@ pub struct EvaluationInput<'a> {
     pub usage: &'a [UsageSnapshot],
     /// Existing grant/Auto result, still subordinate to mandatory policy. A matching explicit authorizing scope
     /// supersedes legacy permits even while paused/revoked/expired or outside its conditions and budget.
+    /// Active personal review defaults also suppress legacy permission, while permitting explicit allow paths.
     pub baseline: BaselineDecision,
 }
 
@@ -110,6 +111,7 @@ pub enum ReasonCode {
     BaselineDenied,
     PolicyDenied,
     ReviewRequired,
+    ReviewByDefault,
     UnknownEvidence,
     UntrustedEvidence,
     StaleEvidence,
@@ -124,7 +126,7 @@ pub enum ReasonCode {
 }
 
 /// Evaluate a request against a complete authenticated policy snapshot. Deny wins; unresolved mandatory guards
-/// hold; all review obligations accumulate; otherwise eligible permission sources are ORed while each delegation
+/// hold; all hard review obligations accumulate; otherwise eligible permission sources are ORed while each delegation
 /// and its ancestors are ANDed. Input/policy order never determines the result.
 #[must_use]
 pub fn evaluate(input: &EvaluationInput<'_>) -> AuthorizationDecision {
@@ -158,6 +160,7 @@ fn evaluate_inner(input: &EvaluationInput<'_>) -> AuthorizationDecision {
     let mut supersedes_baseline = false;
     let mut permit_paths = vec![];
     let mut auto_paths = vec![];
+    let mut default_reviews = vec![];
     let mut memo = BTreeMap::new();
 
     for policy in policies.values() {
@@ -188,6 +191,16 @@ fn evaluate_inner(input: &EvaluationInput<'_>) -> AuthorizationDecision {
         let (conditions, reasons) = conditions_match(policy, input);
         let matched = scope.and(conditions);
         if matched == Match::No {
+            continue;
+        }
+        if policy.effect == PolicyEffect::ReviewByDefault {
+            // Unknown fallback facts still suppress legacy permission, but cannot veto a separately verified allow.
+            supersedes_baseline = true;
+            default_reviews.extend(reasons);
+            if scope == Match::Unknown {
+                default_reviews.push(reason(ReasonCode::UnknownEvidence, Some(&policy.id), None));
+            }
+            default_reviews.push(reason(ReasonCode::ReviewByDefault, Some(&policy.id), None));
             continue;
         }
         result.policies.insert(policy.id.clone());
@@ -236,6 +249,7 @@ fn evaluate_inner(input: &EvaluationInput<'_>) -> AuthorizationDecision {
         result.reason(ReasonCode::AutoEligible, Some(&id), None);
         return result.finish(input, DecisionOutcome::EligibleForAuto, path);
     }
+    result.reasons.extend(default_reviews);
     result.reason(ReasonCode::NoPermission, None, None);
     result.finish(input, DecisionOutcome::Review, vec![])
 }

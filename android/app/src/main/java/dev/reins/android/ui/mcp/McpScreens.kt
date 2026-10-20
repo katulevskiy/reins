@@ -151,6 +151,8 @@ fun McpAddScreen(viewModel: McpViewModel, onBack: () -> Unit, onAdded: (String) 
     var url by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
+    var active by remember { mutableStateOf(true) }
+    DisposableEffect(Unit) { onDispose { active = false } }
     LaunchedEffect(Unit) { viewModel.clearError() }
 
     Screen(title = "Add MCP server", onBack = onBack) {
@@ -177,7 +179,7 @@ fun McpAddScreen(viewModel: McpViewModel, onBack: () -> Unit, onAdded: (String) 
             ) {
                 val sent = token
                 token = ""
-                viewModel.add(url, name, sent, open, onAdded)
+                viewModel.add(url, name, sent, open) { id -> if (active) onAdded(id) }
             }
             if (signingIn != null) {
                 Banner(
@@ -200,6 +202,7 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
     val c = LocalColors.current
     val servers by state.mcpServers.collectAsStateWithLifecycle()
     val notice by state.mcpNotice.collectAsStateWithLifecycle()
+    val connected by state.connectedServers.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val signingIn by viewModel.signingIn.collectAsStateWithLifecycle()
@@ -217,7 +220,13 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
         return
     }
     Screen(title = untrusted(server.name), subtitle = mcpHost(server.url), modifier = Modifier.testTag("mcpDetail"), onBack = onBack) {
-        notice?.takeIf { it.serverId == id }?.let {
+        connected[id]?.takeIf { server.status == "ok" }?.let { receipt ->
+            dev.reins.android.ui.common.IntegrationCompletion(
+                "Server connected", "${receipt.name} · ${mcpHost(receipt.url)}",
+                onDone = { state.dismissServerConnection(id) },
+            )
+        }
+        notice?.takeIf { it.serverId == id && (it.failed || connected[id] == null) }?.let {
             Banner(untrusted(it.text), Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp), if (it.failed) BannerKind.Error else BannerKind.Notice, tag = "mcpNotice")
         }
         Group(header = "Server") {

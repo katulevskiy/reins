@@ -16,7 +16,7 @@ enum McpSignInResult: Equatable {
 /// The MCP screens:
 ///
 ///     case let .needsSignIn(serverId, authorizeUrl):
-///         let result = await McpSignIn.run(serverId: serverId, authorizeUrl: authorizeUrl, model: model)
+///         let result = await McpSignIn.run(serverId: serverId, authorizeUrl: authorizeUrl, model: model, epoch: epoch)
 ///
 /// It plays `.connected` / `.error`, sets `model.mcpNotice` with Android's wording and reloads the servers.
 @MainActor
@@ -26,8 +26,9 @@ enum McpSignIn {
     nonisolated private static let maxRedirectChars = 8_192
 
     static func run(serverId: String, authorizeUrl: String, model: AppModel) async -> McpSignInResult {
+        let epoch = model.accountEpoch
         guard let url = URL(string: authorizeUrl), isWebPage(url) else {
-            return finish(.failed(serverId: serverId, message: "The server's sign-in page is not a web address."), model: model)
+            return finish(.failed(serverId: serverId, message: "The server's sign-in page is not a web address."), model: model, epoch: epoch)
         }
         let redirect: URL
         do {
@@ -35,14 +36,15 @@ enum McpSignIn {
         } catch WebAuth.Failure.cancelled {
             return .cancelled
         } catch WebAuth.Failure.noWindow {
-            return finish(.failed(serverId: serverId, message: "Open Reins to sign in."), model: model)
+            return finish(.failed(serverId: serverId, message: "Open Reins to sign in."), model: model, epoch: epoch)
         } catch let WebAuth.Failure.failed(reason) {
-            return finish(.failed(serverId: serverId, message: reason), model: model)
+            return finish(.failed(serverId: serverId, message: reason), model: model, epoch: epoch)
         } catch {
-            return finish(.failed(serverId: serverId, message: error.userMessage), model: model)
+            return finish(.failed(serverId: serverId, message: error.userMessage), model: model, epoch: epoch)
         }
+        guard epoch == model.accountEpoch else { return .cancelled }
         guard isRedirect(redirect.absoluteString) else {
-            return finish(.failed(serverId: serverId, message: "The sign-in page sent the browser somewhere else."), model: model)
+            return finish(.failed(serverId: serverId, message: "The sign-in page sent the browser somewhere else."), model: model, epoch: epoch)
         }
         let result: McpSignInResult
         do {
@@ -50,14 +52,16 @@ enum McpSignIn {
         } catch {
             result = .failed(serverId: serverId, message: error.userMessage)
         }
-        return finish(result, model: model)
+        return finish(result, model: model, epoch: epoch)
     }
 
-    private static func finish(_ result: McpSignInResult, model: AppModel) -> McpSignInResult {
+    private static func finish(_ result: McpSignInResult, model: AppModel, epoch: UInt64) -> McpSignInResult {
+        guard epoch == model.accountEpoch else { return .cancelled }
         switch result {
         case let .done(server):
-            model.mcpNotice = McpNotice(serverId: server.id, text: "Signed in to \(untrusted(server.name)). Its tools can be used now.", failed: false)
-            model.feedback.play(.connected)
+            model.serverConnected(server, epoch: epoch)
+            model.mcpNotice = McpNotice(serverId: server.id, text: server.status == "ok" ? "Signed in to \(untrusted(server.name)). Its tools can be used now." : "Server added. Check its connection status below.", failed: server.status != "ok")
+            model.feedback.play(server.status == "ok" ? .connected : .error)
         case let .failed(id, message):
             model.mcpNotice = McpNotice(serverId: id, text: "Signing in did not work: \(message)", failed: true)
             model.feedback.play(.error)
