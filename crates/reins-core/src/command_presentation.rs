@@ -180,8 +180,94 @@ fn conceal_url_userinfo(source: &str) -> String {
     result
 }
 
-/// A credential's literal result stays concealed, but executable/dynamic source must remain explicit.
-fn credential_expression(source: &str) -> String {
+const MAX_SOURCE_DEPTH: usize = 8;
+
+#[derive(Clone, Copy)]
+enum ArgumentKind {
+    Secret,
+    Header,
+}
+/// Curl short switches may be clustered until a value-taking option consumes the remaining spelling.
+fn curl_short(word: &str) -> Option<(&str, &str, ArgumentKind)> {
+    if !word.starts_with('-') || word.starts_with("--") {
+        return None;
+    }
+    for (at, ch) in word.char_indices().skip(1) {
+        let kind = match ch {
+            'u' | 'U' | 'b' => Some(ArgumentKind::Secret),
+            'H' => Some(ArgumentKind::Header),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            return Some((&word[..=at], &word[at + 1..], kind));
+        }
+        // Only documented switches without operands may precede the credential option. Never scan through an
+        // unknown/value-taking option, whose apparent credential suffix may actually be a file/output target.
+        // Operand-free short forms listed by `curl --help all`, including protocol/address-family switches.
+        if !"aqfGgI0k46jlLMn:NZ#pJORSis231BvV".contains(ch) {
+            return None;
+        }
+    }
+    None
+}
+
+fn executable_env(name: &str) -> bool {
+    matches!(name, "GIT_SSH_COMMAND" | "GIT_ASKPASS" | "SSH_ASKPASS" | "GIT_EDITOR" | "GIT_SEQUENCE_EDITOR")
+}
+fn executable_git_config(name: &str) -> bool {
+    // Git accepts both `-c key=value` and `-ckey=value`.
+    let name = name.strip_prefix("-c").unwrap_or(name).to_ascii_lowercase();
+    matches!(name.as_str(), "credential.helper" | "core.sshcommand" | "core.editor" | "core.pager" | "sequence.editor")
+        || name.starts_with("alias.")
+}
+fn foreign_inline<'a>(tool: &str, word: &'a str, previous: &str) -> Option<&'a str> {
+    if (matches!(tool, "python" | "python3") && previous == "-c")
+        || (matches!(tool, "node" | "ruby" | "perl") && matches!(previous, "-e" | "--eval" | "-E"))
+    {
+        return Some("");
+    }
+    let prefixes: &[&str] = match tool {
+        "python" | "python3" => &["-c"],
+        "node" => &["--eval=", "-e"],
+        "ruby" | "perl" => &["-e"],
+        _ => &[],
+    };
+    prefixes.iter().find(|p| word.starts_with(**p) && word.len() > p.len()).map(|p| &word[..p.len()])
+}
+fn option_kind(tool: &str, name: &str) -> Option<ArgumentKind> {
+    if matches!(name, "--password" | "--token" | "--secret" | "--credentials" | "--api-key" | "--authorization") {
+        return Some(ArgumentKind::Secret);
+    }
+    match tool.trim_start_matches('!') {
+        "curl"
+            if matches!(
+                name,
+                "-u" | "--user" | "-U" | "--proxy-user" | "--oauth2-bearer" | "--pass" | "-b" | "--cookie"
+            ) =>
+        {
+            Some(ArgumentKind::Secret)
+        }
+        "curl" if matches!(name, "-H" | "--header" | "--proxy-header") => Some(ArgumentKind::Header),
+        "curl" => curl_short(name).filter(|(_, value, _)| value.is_empty()).map(|(_, _, kind)| kind),
+        "wget"
+            if matches!(
+                name,
+                "--user"
+                    | "--http-user"
+                    | "--ftp-user"
+                    | "--proxy-user"
+                    | "--http-password"
+                    | "--ftp-password"
+                    | "--proxy-password"
+            ) =>
+        {
+            Some(ArgumentKind::Secret)
+        }
+        "wget" if name == "--header" => Some(ArgumentKind::Header),
+        _ => None,
+    }
+}
+fn expression_ranges(source: &str) -> Vec<(usize, usize)> {
     let mut expressions = Vec::new();
     let bytes = source.as_bytes();
     let mut i = 0;
@@ -237,41 +323,201 @@ fn credential_expression(source: &str) -> String {
                 i += 1;
             }
         }
-        // Only ASCII delimiters were used; keep the complete source of an unclosed expression visible too.
         while i < bytes.len() && !source.is_char_boundary(i) {
             i += 1;
         }
-        expressions.push(conceal_url_userinfo(&source[start..i]));
+        expressions.push((start, i));
     }
+    expressions
+}
+fn expression_display(source: &str, level: usize) -> String {
+    if level > MAX_SOURCE_DEPTH {
+        return "[nested executable source omitted; inspect original]".into();
+    }
+    if let Some(body) = source.strip_prefix("$(").and_then(|s| s.strip_suffix(')')) {
+        format!("$({})", redact_source(body, level + 1))
+    } else if let Some(body) = source.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+        format!("`{}`", redact_source(body, level + 1))
+    } else if let Some(body) = source.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+        format!("${{{}}}", redact_source(body, level + 1))
+    } else {
+        conceal_url_userinfo(source)
+    }
+}
+/// Conceal literal credential data while retaining bounded, recursively redacted executable source.
+fn credential_expression_at(source: &str, level: usize) -> String {
+    let expressions: Vec<_> = expression_ranges(source)
+        .into_iter()
+        .map(|(start, end)| expression_display(&source[start..end], level + 1))
+        .collect();
     if expressions.is_empty() {
         "•••• [unverified dynamic value; inspect original]".into()
     } else {
         format!("•••• [observed shell source: {}]", expressions.join(" "))
     }
 }
-fn dynamic_assignment(token: &Token<'_>) -> String {
+fn dynamic_source(source: &str, level: usize) -> String {
+    let mut out = String::new();
+    let mut from = 0;
+    for (start, end) in expression_ranges(source) {
+        out.push_str(&source[from..start]);
+        out.push_str(&expression_display(&source[start..end], level + 1));
+        from = end;
+    }
+    out.push_str(&source[from..]);
+    conceal_url_userinfo(&out)
+}
+fn dynamic_assignment_at(token: &Token<'_>, level: usize) -> String {
     let (name, value) = token.raw.split_once('=').unwrap_or(("dynamic value", token.raw));
-    format!("{name}={}", credential_expression(value))
+    format!("{name}={}", credential_expression_at(value, level + 1))
+}
+fn dynamic_assignment(token: &Token<'_>) -> String {
+    dynamic_assignment_at(token, 0)
+}
+fn header_name(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c))
+}
+fn argument_value(kind: ArgumentKind, value: &str, raw: &str, dynamic: bool, level: usize) -> String {
+    match kind {
+        ArgumentKind::Secret => {
+            if dynamic {
+                credential_expression_at(raw, level + 1)
+            } else {
+                "••••".into()
+            }
+        }
+        ArgumentKind::Header => {
+            if let Some((name, _)) = value.split_once(':')
+                && (header_name(name)
+                    && (sensitive(name)
+                        || matches!(name.trim().to_ascii_lowercase().as_str(), "cookie" | "set-cookie")))
+            {
+                format!(
+                    "{name}: {}",
+                    if dynamic {
+                        credential_expression_at(raw, level + 1)
+                    } else {
+                        "••••".into()
+                    }
+                )
+            } else if dynamic {
+                dynamic_source(raw, level + 1)
+            } else {
+                conceal_url_userinfo(raw)
+            }
+        }
+    }
+}
+fn inline_argument(tool: &str, token: &Token<'_>, level: usize) -> Option<String> {
+    if let Some((name, value)) = token.value.split_once('=')
+        && let Some(kind) = option_kind(tool, name)
+    {
+        let raw = token.raw.split_once('=').map_or(value, |(_, v)| v);
+        return Some(format!("{name}={}", argument_value(kind, value, raw, token.dynamic, level + 1)));
+    }
+    if tool.trim_start_matches('!') == "curl"
+        && let Some((prefix, value, kind)) = curl_short(&token.value).filter(|(_, value, _)| !value.is_empty())
+    {
+        let raw = token.raw.strip_prefix(prefix).unwrap_or(value);
+        return Some(format!("{prefix}{}", argument_value(kind, value, raw, token.dynamic, level + 1)));
+    }
+    None
+}
+fn executable_value(name: &str, value: &str, level: usize) -> String {
+    format!("{name}=⟪executable source: {}⟫", redact_source(value, level + 1))
+}
+fn argument_display(tool: &str, token: &Token<'_>, level: usize) -> String {
+    if let Some((name, value)) = token.value.split_once('=')
+        && (executable_env(name) || (tool.trim_start_matches('!') == "git" && executable_git_config(name)))
+    {
+        return executable_value(name, value, level + 1);
+    }
+    inline_argument(tool, token, level + 1).unwrap_or_else(|| shown_at(token, level + 1))
+}
+/// Redact observed shell source without folding any command, option, operator, or executable configuration.
+fn redact_source(source: &str, level: usize) -> String {
+    if level > MAX_SOURCE_DEPTH {
+        return "[nested executable source omitted; inspect original]".into();
+    }
+    let Some(ts) = tokens(source) else {
+        return "[unparsed executable source omitted; inspect original]".into();
+    };
+    let mut out = String::new();
+    let mut from = 0;
+    let mut tool = "";
+    let mut next = None;
+    for (i, token) in ts.iter().enumerate() {
+        let start = token.end - token.raw.len();
+        out.push_str(&source[from..start]);
+        let displayed = if token.kind != Kind::Word {
+            if token.kind == Kind::Control {
+                tool = "";
+                next = None;
+            }
+            token.raw.into()
+        } else if !tool.is_empty()
+            && (tool == "eval"
+                || (matches!(tool, "sh" | "bash" | "zsh" | "dash" | "ksh")
+                    && i > 0
+                    && matches!(ts[i - 1].value.as_str(), "-c" | "-lc")))
+        {
+            format!("⟪executable shell source: {}⟫", redact_source(&token.value, level + 1))
+        } else if let Some(prefix) = foreign_inline(
+            tool,
+            &token.value,
+            if i > 0 {
+                &ts[i - 1].value
+            } else {
+                ""
+            },
+        ) {
+            format!("{prefix}[inline code omitted; inspect original]")
+        } else if let Some(kind) = next.take() {
+            argument_value(kind, &token.value, token.raw, token.dynamic, level + 1)
+        } else {
+            if (tool.is_empty() || (tool == "env" && !token.value.starts_with('-')))
+                && assignment(&token.value).is_none()
+            {
+                tool = program(&token.value).trim_start_matches('!');
+            }
+            next = option_kind(tool, &token.value);
+            argument_display(tool, token, level + 1)
+        };
+        out.push_str(&displayed);
+        from = token.end;
+    }
+    out.push_str(&source[from..]);
+    conceal_url_userinfo(&out)
+}
+fn shown_at(token: &Token<'_>, level: usize) -> String {
+    if let Some((name, _)) = token.value.split_once(':')
+        && (header_name(name)
+            && (sensitive(name) || matches!(name.trim().to_ascii_lowercase().as_str(), "cookie" | "set-cookie")))
+    {
+        return argument_value(ArgumentKind::Header, &token.value, token.raw, token.dynamic, level + 1);
+    }
+    if let Some((name, value)) = token.value.split_once('=') {
+        if executable_env(name) {
+            return executable_value(name, value, level + 1);
+        }
+        if sensitive(name) {
+            if token.dynamic {
+                return dynamic_assignment_at(token, level + 1);
+            }
+            if token.value.contains([';', '\n']) || token.value.contains("&&") || token.value.contains("||") {
+                return format!("{name}=•••• [unclassified argument/source omitted; inspect original]");
+            }
+            return concealed(&token.value);
+        }
+    }
+    if token.dynamic {
+        dynamic_source(token.raw, level + 1)
+    } else {
+        conceal_url_userinfo(token.raw)
+    }
 }
 fn shown(token: &Token<'_>) -> String {
-    if token.value.split_once('=').is_some_and(|(name, _)| sensitive(name)) {
-        if token.dynamic {
-            return dynamic_assignment(token);
-        }
-        return concealed(&token.value);
-    }
-    let lower = token.value.to_ascii_lowercase();
-    if lower.starts_with("authorization:") || lower.starts_with("cookie:") || lower.starts_with("x-api-key:") {
-        if token.dynamic {
-            return format!(
-                "{}: {}",
-                token.value.split(':').next().unwrap_or("credential"),
-                credential_expression(token.raw)
-            );
-        }
-        return format!("{}: ••••", token.value.split(':').next().unwrap_or("credential"));
-    }
-    conceal_url_userinfo(token.raw)
+    shown_at(token, 0)
 }
 
 fn fallback(command: &str) -> CommandPresentation {
@@ -452,7 +698,8 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
     let mut tool = "";
     let mut skip_target = false;
     let mut option_values = true;
-    let mut hide_next = false;
+    let mut hide_next = None;
+    let mut inline_code = false;
     for (i, token) in tokens.iter().enumerate() {
         if token.kind == Kind::Redirect {
             rendered.push(token.raw.into());
@@ -465,11 +712,20 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
             continue;
         }
         if tool.is_empty() && assignment(&token.value).is_some_and(|name| token.raw.starts_with(&format!("{name}="))) {
-            rendered.push(if token.dynamic {
-                dynamic_assignment(token)
+            let name = assignment(&token.value).unwrap_or_default();
+            if executable_env(name) {
+                rendered.push(argument_display(tool, token, 0));
+                notice(
+                    out,
+                    "An executable environment override is supplied; its commands can run as part of this action.",
+                );
             } else {
-                concealed(&token.value)
-            });
+                rendered.push(if token.dynamic {
+                    dynamic_assignment(token)
+                } else {
+                    concealed(&token.value)
+                });
+            }
             continue;
         }
         if tool.is_empty() {
@@ -484,7 +740,14 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
             continue;
         }
         if matches!(tool, "env" | "sudo" | "doas") && token.value.contains('=') && !token.value.starts_with('-') {
-            let redacted = if token.dynamic {
+            let name = token.value.split_once('=').map_or("", |(name, _)| name);
+            let redacted = if executable_env(name) {
+                notice(
+                    out,
+                    "An executable environment override is supplied; its commands can run as part of this action.",
+                );
+                argument_display(tool, token, 0)
+            } else if token.dynamic {
                 dynamic_assignment(token)
             } else {
                 concealed(&token.value)
@@ -493,24 +756,42 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
             rendered.push(redacted);
             continue;
         }
-        if hide_next {
-            rendered.push(if token.dynamic {
-                credential_expression(token.raw)
-            } else {
-                "••••".into()
-            });
-            hide_next = false;
+        let previous = i.checked_sub(1).map(|at| tokens[at].value.as_str()).unwrap_or_default();
+        if tool == "eval"
+            || (matches!(tool, "sh" | "bash" | "zsh" | "dash" | "ksh") && matches!(previous, "-c" | "-lc"))
+        {
+            rendered.push(format!("⟪executable shell source: {}⟫", redact_source(&token.value, 0)));
+            notice(out, "This action executes supplied shell code; inspect every action and its positional arguments.");
+            inline_code = true;
             continue;
         }
-        if option_values
-            && (matches!(
-                token.value.as_str(),
-                "--password" | "--token" | "--secret" | "--credentials" | "--api-key" | "--authorization"
-            ) || (matches!(tool, "curl" | "wget") && matches!(token.value.as_str(), "-u" | "--user")))
-        {
-            rendered.push(token.raw.into());
-            hide_next = true;
+        if option_values && let Some(prefix) = foreign_inline(tool, &token.value, previous) {
+            rendered.push(format!("{prefix}[inline code omitted; inspect original]"));
+            notice(
+                out,
+                "Inline interpreter code is not summarized. Inspect the original code; additional effects and credentials may be present.",
+            );
+            inline_code = true;
             continue;
+        }
+        if let Some(kind) = hide_next.take() {
+            rendered.push(argument_value(kind, &token.value, token.raw, token.dynamic, 0));
+            continue;
+        }
+        if option_values && let Some(kind) = option_kind(tool, &token.value) {
+            rendered.push(token.raw.into());
+            hide_next = Some(kind);
+            continue;
+        }
+        if option_values && let Some(redacted) = inline_argument(tool, token, 0) {
+            rendered.push(redacted);
+            continue;
+        }
+        if tool == "git" && token.value.split_once('=').is_some_and(|(name, _)| executable_git_config(name)) {
+            notice(
+                out,
+                "Git executable configuration is supplied; its helper or alias commands can run as part of this action.",
+            );
         }
         // An option's separate operand is not a task, even when its spelling resembles one.
         let is_value = i > 0
@@ -553,14 +834,14 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
             option_values = false;
         }
         if !is_value {
-            let redacted = shown(token);
+            let redacted = argument_display(tool, token, 0);
             args.push(if redacted == token.raw {
                 token.value.clone()
             } else {
                 redacted
             });
         }
-        rendered.push(shown(token));
+        rendered.push(argument_display(tool, token, 0));
     }
     if matches!(tool, "sudo" | "doas" | "su") {
         notice(out, "This invocation requests a different user or elevated privileges; inspect its exact options.");
@@ -586,7 +867,12 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
             },
         );
     }
-    (heading(tool, &args.iter().map(String::as_str).collect::<Vec<_>>()), rendered.join(" "))
+    let title = if inline_code {
+        format!("Run inline {tool} code (inspect original)")
+    } else {
+        heading(tool, &args.iter().map(String::as_str).collect::<Vec<_>>())
+    };
+    (title, rendered.join(" "))
 }
 
 fn read(text: &str, depth: usize, out: &mut CommandPresentation) -> Option<()> {
@@ -597,7 +883,7 @@ fn read(text: &str, depth: usize, out: &mut CommandPresentation) -> Option<()> {
     let mut start = 0;
     while let Some(t) = toks.get(start).filter(|t| t.kind == Kind::Word) {
         if let Some(name) = assignment(&t.value) {
-            if t.dynamic || !t.raw.starts_with(&format!("{name}=")) {
+            if t.dynamic || executable_env(name) || !t.raw.starts_with(&format!("{name}=")) {
                 break;
             }
             out.setup.push(format!("{name}=•••• (value hidden)"));
@@ -706,6 +992,18 @@ pub fn of(command: &str) -> CommandPresentation {
     if read(command.trim(), 0, &mut out).is_none() {
         return fallback(command);
     }
+    if out.actionable.contains("[inline code omitted;") {
+        notice(
+            &mut out,
+            "Inline interpreter code is not summarized. Inspect the original code; additional effects and credentials may be present.",
+        );
+    }
+    if out.actionable.contains("source omitted;") {
+        notice(
+            &mut out,
+            "Some executable source exceeds the display reader's limits. Inspect the original invocation; additional effects may be present.",
+        );
+    }
     if crate::text::has_invisible(command) {
         notice(
             &mut out,
@@ -748,6 +1046,115 @@ pub(crate) const GRADLE_EXAMPLE: &str = include_str!("../tests/fixtures/gradle-c
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_credential_option_formats_conceal_values_without_losing_actions() {
+        for command in [
+            "curl --user=alice:SENTINEL-PASSWORD https://example.test",
+            "curl -ualice:SENTINEL-PASSWORD https://example.test",
+            "curl --header=\"Authorization: Bearer SENTINEL-TOKEN\" https://example.test",
+            "curl -H\"Authorization: Bearer SENTINEL-TOKEN\" https://example.test",
+            "curl --oauth2-bearer SENTINEL-TOKEN https://example.test",
+            "curl -suUSER:SENTINEL-PASSWORD https://example.test",
+            "curl -sH\"Cookie: sid=SENTINEL-COOKIE\" https://example.test",
+            "curl -sbSENTINEL-COOKIE https://example.test",
+            "curl -4uUSER:SENTINEL-PASSWORD https://example.test",
+            "curl -6H'Authorization: SENTINEL-TOKEN' https://example.test",
+            "curl -Ualice:SENTINEL-PASSWORD --proxy-header='Proxy-Authorization: SENTINEL-TOKEN' https://example.test",
+            "wget --http-password SENTINEL-PASSWORD --header='Authorization: SENTINEL-TOKEN' https://example.test",
+            "wget --user=alice:SENTINEL-PASSWORD --ftp-password=SENTINEL-PASSWORD https://example.test",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.actionable.contains("https://example.test"));
+            assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn curl_clusters_only_skip_documented_operand_free_switches() {
+        // `curl --help all`: these short switches have no operand. A credential switch may follow any of them.
+        for flag in "aqfGgI0k46jlLMn:NZ#pJORSis231BvV".chars() {
+            let command = format!("curl -{flag}uUSER:SENTINEL-PASSWORD https://example.test");
+            let p = of(&command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.actionable.contains("https://example.test"));
+            assert_eq!(p.original, command);
+        }
+        // These switches consume the remaining spelling; it must not be searched as another credential option.
+        for flag in "EKCcdDhFPmoQrexXYytzTAw".chars() {
+            assert!(curl_short(&format!("-{flag}uoutput")).is_none(), "-{flag}");
+        }
+    }
+
+    #[test]
+    fn nested_credentials_are_concealed_while_executable_source_remains_visible() {
+        for command in [
+            "TOKEN=\"$(API_KEY=SENTINEL-KEY ./helper; rm -rf /tmp/reins-credential-review)\" ./gradlew test",
+            "TOKEN=\"$(curl --user=alice:SENTINEL-PASSWORD https://example.test; rm -rf /tmp/reins-credential-review)\" ./gradlew test",
+            "TOKEN=\"$(bash -c 'API_KEY=SENTINEL-KEY; rm -rf /tmp/reins-credential-review' _ argument)\" ./gradlew test",
+            "TOKEN=\"$(env FOO=bar bash -c 'API_KEY=SENTINEL-KEY; rm -rf /tmp/reins-credential-review')\" ./gradlew test",
+            "curl --header=\"Authorization: SENTINEL-TOKEN $(rm -rf /tmp/reins-credential-review)\" https://example.test",
+            "curl -H \"Authorization: Bearer $(TOKEN=SENTINEL-TOKEN rm -rf /tmp/reins-credential-review)\" https://example.test",
+            "curl -u\"SENTINEL-PASSWORD$(rm -rf /tmp/reins-credential-review)\" https://example.test",
+            "wget --header=\"Authorization: SENTINEL-TOKEN $(rm -rf /tmp/reins-credential-review)\" https://example.test",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.actionable.contains("rm -rf /tmp/reins-credential-review"), "{command}: {p:?}");
+            assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn executable_configuration_is_distinct_from_credential_values() {
+        for command in [
+            "git -c credential.helper='!rm -rf /tmp/reins-credential-review' fetch https://example.test/repo",
+            "git -c credential.helper='!sh -c \"TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review\"' fetch https://example.test/repo",
+            "git -ccredential.helper='!rm -rf /tmp/reins-credential-review' fetch https://example.test/repo",
+            "git -ccredential.helper='!sh -c \"TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review\"' fetch https://example.test/repo",
+            "GIT_SSH_COMMAND='rm -rf /tmp/reins-credential-review; ssh' git fetch ssh://example.test/repo",
+            "eval 'TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review'",
+            "bash -c 'TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review' _ argument",
+        ] {
+            let p = of(command);
+            assert!(p.actionable.contains("rm -rf /tmp/reins-credential-review"), "{command}: {p:?}");
+            assert!(!format!("{p:?}").contains("SENTINEL-"));
+            assert!(p.notices.iter().any(|n| n.contains("executable") || n.contains("executes")));
+            assert_eq!(p.original, command);
+        }
+        let command = "TOKEN=\"$(unknownwrapper bash -c 'API_KEY=SENTINEL-KEY; rm -rf /tmp/reins-credential-review')\" ./gradlew test";
+        let p = of(command);
+        assert!(!format!("{p:?}").contains("SENTINEL-"));
+        assert!(p.actionable.contains("source omitted;") && p.notices.iter().any(|n| n.contains("additional effects")));
+        assert_eq!(p.original, command);
+        let command = "python3 -c 'TOKEN=\"SENTINEL-TOKEN\"; import os; os.remove(\"/tmp/reins-credential-review\")'";
+        let p = of(command);
+        assert!(!format!("{p:?}").contains("SENTINEL-"));
+        assert!(p.actionable.contains("inline code omitted"));
+        assert!(p.notices.iter().any(|n| n.contains("Inline interpreter code")));
+        assert_eq!(p.original, command);
+        let command = format!("{command} && rm -rf /tmp/reins-outer-tail");
+        let p = of(&command);
+        assert!(p.heading.contains("inline python3 code") && p.heading.contains("Delete files"));
+        assert!(p.actionable.contains("&& rm -rf /tmp/reins-outer-tail"));
+        assert_eq!(p.original, command);
+        for command in [
+            "python3 -c'TOKEN=\"SENTINEL-TOKEN\"; print(1)' suffix && rm -rf /tmp/reins-outer-tail",
+            "node -e'const TOKEN=\"SENTINEL-TOKEN\"; process.exit()' suffix && rm -rf /tmp/reins-outer-tail",
+            "node --eval='const TOKEN=\"SENTINEL-TOKEN\"; process.exit()' suffix && rm -rf /tmp/reins-outer-tail",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.heading.contains("inline") && p.heading.contains("Delete files"));
+            assert!(
+                p.actionable.contains("[inline code omitted;")
+                    && p.actionable.contains("suffix && rm -rf /tmp/reins-outer-tail")
+            );
+            assert!(p.notices.iter().any(|n| n.contains("Inline interpreter code")));
+            assert_eq!(p.original, command);
+        }
+    }
 
     #[test]
     fn reported_gradle_build_has_a_compact_task_summary_with_log_and_secret_boundaries() {
