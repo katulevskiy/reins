@@ -7,7 +7,7 @@ use reins_policy::authorization::{
     AuthorityBindings, BaselineDecision, DecisionOutcome, EvaluationInput, UsageSnapshot,
 };
 use reins_policy::{Grant, Scope, ServiceScope};
-use reins_proto::authorization::{ActionContext, AttributeKey, PolicyRecord};
+use reins_proto::authorization::{ActionContext, AttributeKey, PolicyKind, PolicyRecord};
 use reins_proto::canon::{hex32, sha256};
 use reins_proto::ids::{ConnectionId, GrantId};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -86,11 +86,38 @@ pub(crate) struct VerifiedPermission {
     key: String,
     receipt: ExecutionReceipt,
     trace: AuthorizationTrace,
+    temporary: bool,
+}
+
+/// Audit-only evidence captured from a locally verified positive path. This is not execution authority.
+#[derive(Clone)]
+pub(crate) struct PermissionAuditStamp {
+    trace: AuthorizationTrace,
+    temporary: bool,
+}
+
+impl PermissionAuditStamp {
+    pub(crate) fn trace(&self) -> &AuthorizationTrace {
+        &self.trace
+    }
+
+    pub(crate) fn stamp(&self, audit: &mut super::AuditRecord, phase: AuthorizationPhase) {
+        audit.info.decided_by = if self.temporary {
+            "temporary_permission"
+        } else {
+            "account_permission"
+        }
+        .into();
+        self.trace.stamp(audit, phase);
+    }
 }
 
 impl VerifiedPermission {
-    pub(crate) fn trace(&self) -> &AuthorizationTrace {
-        &self.trace
+    pub(crate) fn audit_stamp(&self) -> PermissionAuditStamp {
+        PermissionAuditStamp {
+            trace: self.trace.clone(),
+            temporary: self.temporary,
+        }
     }
 }
 
@@ -483,12 +510,14 @@ impl Store {
         let floors = receipt_floors(&tx)?;
         let mut policies = vec![];
         let mut budgets = BTreeSet::new();
+        let mut temporary = false;
         for bound in &decision.authorization_path {
             let policy = state
                 .policies
                 .iter()
                 .find(|p| p.id == bound.id && p.revision == bound.revision)
                 .ok_or_else(|| CoreError::invalid("authorization changed before execution"))?;
+            temporary |= policy.kind == PolicyKind::Delegation;
             if let Some(expiry) = policy.expires_at {
                 expires_at = expires_at.min(expiry);
             }
@@ -580,6 +609,7 @@ impl Store {
             key,
             receipt,
             trace,
+            temporary,
         }))
     }
 

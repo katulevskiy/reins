@@ -473,7 +473,8 @@ fn decider_of(decided_by: &str) -> ActivityDecider {
         "bypass" => ActivityDecider::Bypass,
         "lockdown" => ActivityDecider::Lockdown,
         "" => ActivityDecider::You,
-        // "autopilot", "overnight", and whatever mode a newer version adds.
+        // ABI-retained enum: the native Automatic filter includes learned modes, explicit permissions and
+        // neutral unknown nonempty actors; they must never be classified as a human decision.
         _ => ActivityDecider::Autopilot,
     }
 }

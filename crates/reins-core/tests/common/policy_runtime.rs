@@ -52,3 +52,39 @@ pub fn policy(engine: &Engine, service: &str, capability: &str, action: &str, ef
         limits: UsageLimits::default(),
     }
 }
+
+/// Force an authenticated operation to suspend in its 401 token refresh. Its first invocation was authorized;
+/// any retry must independently recheck the policy installed while this token request is delayed.
+pub async fn suspend_refresh(
+    server: &wiremock::MockServer,
+    method: &str,
+    endpoint: &str,
+) -> std::sync::Arc<tokio::sync::Notify> {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use wiremock::matchers::{method as verb, path};
+    use wiremock::{Mock, ResponseTemplate};
+    Mock::given(verb(method))
+        .and(path(endpoint))
+        .respond_with(ResponseTemplate::new(401))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(server)
+        .await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let signal = Arc::clone(&entered);
+    Mock::given(verb("POST"))
+        .and(path("/identity/connect/token"))
+        .respond_with(move |_: &wiremock::Request| {
+            signal.notify_one();
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({
+                    "access_token": crate::common::account_token(), "refresh_token": "REFRESH", "expires_in": 7200
+                }))
+                .set_delay(Duration::from_millis(600))
+        })
+        .with_priority(1)
+        .mount(server)
+        .await;
+    entered
+}
