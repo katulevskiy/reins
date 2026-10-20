@@ -19,12 +19,14 @@ import dev.reins.android.core.CoreProvider
 import dev.reins.android.platform.ScreenLock
 import dev.reins.android.platform.update.UpdateFetcher
 import dev.reins.android.platform.update.UpdateProvider
+import dev.reins.core.AccountView
 import dev.reins.core.AutopilotMode
 import dev.reins.core.ModelState
 import dev.reins.core.SessionInfo
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -83,6 +85,29 @@ class TrustReleaseTest {
         click("Trust")
         find(By.text("Auto"))
         awaitMode(AutopilotMode.AUTO)
+
+        // Exercise the new typed permission DTOs through the same optimized production navigation.
+        // Preview is read-only: no provider account, policy save or owner-authentication step is involved.
+        FakeCore.shared.accounts = listOf(AccountView("gmail", "synthetic@example.com", 1_700_000_100))
+        click("Account and temporary permissions")
+        click("View Gmail permissions")
+        find(By.text("Account permissions"))
+        find(By.text("synthetic@example.com"))
+        click("Allow searching and reading")
+        click("Review changes")
+        find(By.text("Review permissions"))
+        find(By.text("Claude Code"))
+        find(By.text("Search mail: Allow automatically"))
+        assertTrue(find(By.text("All in this account")).visibleBounds.height() > 0)
+        assertTrue(find(By.text("At most 20 further uses for each automatic operation.")).visibleBounds.height() > 0)
+        assertTrue(FakeCore.shared.savedPermissionDrafts.isEmpty())
+        assertTrue(FakeCore.shared.delegationRecords.isEmpty())
+        device.pressBack() // Discard the preview and keep the editor's unsaved draft.
+        find(By.text("Account permissions"))
+        device.pressBack()
+        find(By.text("Permissions"))
+        device.pressBack()
+        find(By.text("Auto"))
     }
 
     private fun awaitMode(mode: AutopilotMode) {
