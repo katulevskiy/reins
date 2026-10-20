@@ -122,7 +122,8 @@ pub struct AuditInfo {
     /// Accounts shown to the AI.
     #[serde(default)]
     pub accounts: Vec<String>,
-    /// Who decided: "" (the user, or nobody: a grant covered it), "autopilot", "bypass" or "lockdown".
+    /// Who decided: "" (the user or a legacy grant), learned modes, or the verified positive path's
+    /// "account_permission" / "temporary_permission". Positive actor tags never come from agent input.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub decided_by: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

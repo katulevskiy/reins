@@ -1163,17 +1163,29 @@ impl Engine {
         proof: VerifiedPermission,
         succeeded: bool,
     ) -> Result<(), CoreError> {
-        let trace = proof.trace().clone();
+        let stamp = proof.audit_stamp();
         self.store.permission_outcome(proof, succeeded)?;
-        self.authorization_attempt_event(
+        self.permission_attempt_event(
             request,
-            &trace,
+            &stamp,
             if succeeded {
                 crate::authorization_trace::AuthorizationPhase::Succeeded
             } else {
                 crate::authorization_trace::AuthorizationPhase::Unknown
             },
         )
+    }
+
+    fn permission_attempt_event(
+        &self,
+        request: &RelayRequest,
+        stamp: &storage::PermissionAuditStamp,
+        phase: crate::authorization_trace::AuthorizationPhase,
+    ) -> Result<(), CoreError> {
+        let mut audit = self.authorization_attempt_audit(request, stamp.trace(), phase);
+        stamp.stamp(&mut audit, phase);
+        self.store.append_audit(&audit)?;
+        Ok(())
     }
 
     pub(crate) fn legacy_send_attempt(&self, request: &RelayRequest) -> Result<storage::SendAttempt, CoreError> {
@@ -1204,9 +1216,9 @@ impl Engine {
         if !(self.holds_roster_now()? && self.decides() && self.store.permission_history_ready().unwrap_or(false)) {
             return Err(CoreError::invalid("automatic execution requires a verified single-primary roster"));
         }
-        self.authorization_attempt_event(
+        self.permission_attempt_event(
             request,
-            proof.trace(),
+            &proof.audit_stamp(),
             crate::authorization_trace::AuthorizationPhase::Started,
         )?;
         self.execution_attempt_durable().await?;
