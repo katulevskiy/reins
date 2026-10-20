@@ -47,9 +47,9 @@ final class AutopilotUITests: XCTestCase {
     }
 
     private func element(_ id: String) -> XCUIElement {
-        // The mode's stop control is a Button in both open and compact fields.
-        // Avoid an Any query traversing hidden stacks while that button is visible.
-        if ["stopBypass", "stopOvernight", "endLockdown"].contains(id) {
+        // Mode choices and stop controls are Buttons, including after the running field is replaced.
+        // Avoid an Any query traversing every hidden tab's text before reaching the visible mode.
+        if id.hasPrefix("mode:") || ["stopBypass", "stopOvernight", "endLockdown"].contains(id) {
             return app.buttons.matching(identifier: id).firstMatch
         }
         return app.descendants(matching: .any)[id].firstMatch
@@ -132,12 +132,16 @@ final class AutopilotUITests: XCTestCase {
 
     /// As long as `waitFor`: on a busy Mac a switch can take more than 5 s to show.
     private func selected(_ id: String, timeout: TimeInterval = 8) {
-        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element(id))
+        // Stopping a running mode recreates these controls. Resolve their reappearance before
+        // starting the selected-state deadline, rather than spending it locating the new AX node.
+        let e = waitFor(id, timeout: timeout)
+        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: e)
         waitForExpectations(timeout: timeout)
     }
 
     private func notSelected(_ id: String, timeout: TimeInterval = 8) {
-        expectation(for: NSPredicate(format: "isSelected == false"), evaluatedWith: element(id))
+        let e = waitFor(id, timeout: timeout)
+        expectation(for: NSPredicate(format: "isSelected == false"), evaluatedWith: e)
         waitForExpectations(timeout: timeout)
     }
 
