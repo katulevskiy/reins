@@ -4,6 +4,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use reins_proto::authorization::{AttributeKey, EvidenceSource, Fact, ReviewRequirement};
+use reins_proto::relay::RelayOutcome;
 use reins_proto::relay::RelayRequest;
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +46,20 @@ impl<'a> AuthorizationInvocation<'a> {
 
 pub(crate) const RESULT_WITHHELD: &str = "The provider reported success, but its result was withheld because the account policy changed. Do not repeat this action. Check Activity and the provider.";
 pub(crate) const OUTCOME_UNKNOWN: &str = "The action was attempted, but its outcome is unknown. It may already have happened. Do not repeat this request; check Activity and the provider before creating a new request.";
+
+/// What is independently known before response delivery. This is local bookkeeping, never an authority proof.
+#[derive(Clone, Copy)]
+pub(crate) enum ResponseEffect {
+    Read,
+    Succeeded,
+    Unknown,
+}
+
+pub(crate) struct AuthorizedResponse {
+    pub source: AuthorizationSource,
+    pub effect: ResponseEffect,
+    pub settle_pending: bool,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,6 +121,72 @@ impl AuthorizationTrace {
 }
 
 impl Engine {
+    /// Recheck after each session-token await, before sending any result. A policy hold gets only a fixed safe
+    /// response, with the provider's actual outcome retained separately from whether its result was disclosed.
+    pub(crate) async fn finish_authorized(
+        &self,
+        session: &crate::session::Session,
+        request: &RelayRequest,
+        mut audit: AuditRecord,
+        outcome: RelayOutcome,
+        context: AuthorizedResponse,
+    ) -> Result<(), CoreError> {
+        let mut blocked = false;
+        let mut recorded = false;
+        let result = self
+            .respond_checked(session, &request.id.0, outcome, || {
+                if let Err(error) = self.authorization_execute(request, context.source) {
+                    blocked = true;
+                    return Err(error);
+                }
+                if !recorded {
+                    self.store.append_audit(&audit)?;
+                    self.store.mark_handled(&request.id.0, unix_now())?;
+                    recorded = true;
+                }
+                Ok(())
+            })
+            .await;
+        let result = if blocked {
+            let (status, message, phase) = match context.effect {
+                ResponseEffect::Succeeded => ("succeeded_withheld", RESULT_WITHHELD, AuthorizationPhase::Succeeded),
+                ResponseEffect::Read | ResponseEffect::Unknown => {
+                    ("unknown", OUTCOME_UNKNOWN, AuthorizationPhase::Unknown)
+                }
+            };
+            status.clone_into(&mut audit.outcome);
+            message.clone_into(&mut audit.detail);
+            audit.count = 0;
+            audit.info.messages.clear();
+            audit.info.note = Some(message.to_owned());
+            if let Some(trace) = &mut audit.info.authorization {
+                trace.phase = phase;
+            }
+            self.finish(
+                session,
+                request,
+                audit,
+                RelayOutcome::Error {
+                    message: message.to_owned(),
+                },
+            )
+            .await
+        } else {
+            // Token acquisition itself can fail after an effect. Keep the known outcome even when no response
+            // attempt got as far as its guard; never make the original invocation executable again.
+            if !recorded {
+                self.store.append_audit(&audit)?;
+                self.store.mark_handled(&request.id.0, unix_now())?;
+            }
+            result
+        };
+        if context.settle_pending {
+            self.store.remove_pending(&request.id.0)?;
+            self.notifier.item_resolved(request.id.0.clone());
+        }
+        result
+    }
+
     /// Local audit evidence for an activity row. This is deliberately not an execution permission or agent tool.
     pub fn activity_authorization(&self, entry_id: i64) -> Result<Option<AuthorizationTrace>, CoreError> {
         Ok(self.store.audit_entry(entry_id)?.and_then(|record| record.info.authorization))
@@ -197,6 +278,16 @@ impl Engine {
         trace: &AuthorizationTrace,
         phase: AuthorizationPhase,
     ) -> Result<(), CoreError> {
+        self.store.append_audit(&self.authorization_attempt_audit(request, trace, phase))?;
+        Ok(())
+    }
+
+    pub(crate) fn authorization_attempt_audit(
+        &self,
+        request: &RelayRequest,
+        trace: &AuthorizationTrace,
+        phase: AuthorizationPhase,
+    ) -> AuditRecord {
         let (outcome, detail) = match phase {
             AuthorizationPhase::Started => (
                 "started",
@@ -222,7 +313,6 @@ impl Engine {
             _ => {}
         }
         trace.stamp(&mut audit, phase);
-        self.store.append_audit(&audit)?;
-        Ok(())
+        audit
     }
 }

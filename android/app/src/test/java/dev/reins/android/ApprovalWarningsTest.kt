@@ -87,7 +87,7 @@ class ApprovalWarningsTest : FlowHarness() {
         openRequest(view)
         assertWarns("guardRule", "Rewriting git history · git push --force origin main")
         // Said on its own line, not only in the rule's (?).
-        assertWarns("askUncertain", "Couldn't read this")
+        assertWarns("askUncertain", "Unverified request details")
         assertWarns("noStanding", "Asked every time")
     }
 
@@ -95,7 +95,7 @@ class ApprovalWarningsTest : FlowHarness() {
     fun aCommandThisPhoneCouldNotRead() {
         val plain = TestData.askView()
         openRequest(plain.copy(ask = plain.ask!!.copy(uncertain = true)))
-        assertWarns("askUncertain", "Couldn't read this")
+        assertWarns("askUncertain", "Unverified request details")
     }
 
     @Test

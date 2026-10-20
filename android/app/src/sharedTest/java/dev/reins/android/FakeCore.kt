@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import dev.reins.core.*
 import dev.reins.core.AccountKeys
 import dev.reins.core.BudgetView
 import dev.reins.core.PaymentsOverview
@@ -62,6 +63,61 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /** In-memory core for UI tests: holds state, records the calls that matter. */
 class FakeCore : ReinsCoreInterface {
+    val permissionViews = java.util.concurrent.ConcurrentHashMap<String, AccountPermissionsView>()
+    val savedPermissionDrafts = CopyOnWriteArrayList<AccountPermissionsDraft>()
+    val delegationRecords = CopyOnWriteArrayList<DelegationView>()
+    @Volatile var permissionFailure: Exception? = null
+    val permissionScopeGates = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<Unit>>()
+    @Volatile var permissionScopeOverride: PermissionScopeOptions? = null
+    val permissionSaveCalls = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile var permissionSaveGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun accountPermissions(service: String, account: String): AccountPermissionsView = permissionViews["$service/$account"] ?: PermissionFixtures.view(service, account)
+    override suspend fun accountPermissionDraft(service: String, account: String, preset: AccountPermissionPreset) = PermissionFixtures.draft(accountPermissions(service, account), preset)
+    override suspend fun permissionScopeOptions(service: String, account: String, capability: PermissionCapability, query: String, limit: UInt): PermissionScopeOptions {
+        permissionScopeGates[query]?.await()
+        permissionScopeOverride?.let { return it }
+        val recipient = capability == PermissionCapability.MAIL_SEND
+        val kind = if (recipient) PermissionScopeKind.SELECTED_RECIPIENTS else PermissionScopeKind.SELECTED_RESOURCES
+        return PermissionScopeOptions(if (recipient) listOf(kind) else listOf(PermissionScopeKind.ALL_IN_ACCOUNT, kind),
+            if (query.contains('@')) listOf(PermissionScopeOption("recipient:" + query.lowercase(), query.lowercase(), "Exact address", service, account, kind)) else emptyList(), recipient, null)
+    }
+    override suspend fun previewAccountPermissions(draft: AccountPermissionsDraft): PermissionPreview {
+        permissionFailure?.let { throw it }
+        if (draft.expectedRevision != accountPermissions(draft.service, draft.account).revision) throw CoreException.Invalid("Permissions changed. Reload current settings.")
+        return PermissionFixtures.preview(draft.expectedRevision)
+    }
+    override suspend fun saveAccountPermissions(draft: AccountPermissionsDraft, owner: OwnerCheck): AccountPermissionsView {
+        permissionSaveCalls.incrementAndGet()
+        permissionSaveGate?.await()
+        permissionFailure?.let { throw it }
+        if (!owner.confirm("Save permissions for ${draft.account}")) throw CoreException.Invalid("Owner did not confirm")
+        previewAccountPermissions(draft)
+        savedPermissionDrafts += draft
+        val result = accountPermissions(draft.service, draft.account).copy(revision = draft.expectedRevision + 1u, capabilities = accountPermissions(draft.service, draft.account).capabilities.map { cap -> cap.copy(configuredMode = draft.rules.first { it.capability == cap.capability }.mode) }, expiresAt = draft.expiresAt, remainingUses = draft.maxUses)
+        permissionViews["${draft.service}/${draft.account}"] = result
+        return result
+    }
+    override suspend fun delegations() = delegationRecords.toList()
+    override suspend fun delegationDraft(service: String, account: String): DelegationDraft {
+        val base = accountPermissionDraft(service, account, AccountPermissionPreset.READ_ASSIST)
+        return DelegationDraft(service, account, base.expectedRevision, base.agentIds, false, base.rules.filter { it.mode == PermissionMode.AUTO }, now()+3600, 20u)
+    }
+    override suspend fun previewDelegation(draft: DelegationDraft) = PermissionFixtures.preview(draft.expectedRevision)
+    override suspend fun issueDelegation(draft: DelegationDraft, owner: OwnerCheck): DelegationView {
+        permissionFailure?.let { throw it }
+        if (!owner.confirm("Create temporary permission for ${draft.account}")) throw CoreException.Invalid("Owner did not confirm")
+        val result = DelegationView("temporary-${delegationRecords.size}", draft.expectedRevision + 1u, "Temporary account permission", draft.service, draft.account, DelegationState.ACTIVE, draft.expiresAt, draft.agentIds, draft.rules, 0u, true, 0u, draft.maxUses, "Selected agents only", "Explicit temporary permission", emptyList())
+        delegationRecords += result
+        return result
+    }
+    override suspend fun changeDelegation(id: String, expectedRevision: ULong, change: DelegationChange, owner: OwnerCheck): DelegationView {
+        if (!owner.confirm("Change temporary permission")) throw CoreException.Invalid("Owner did not confirm")
+        val record = delegationRecords.first { it.id == id }
+        if (record.revision != expectedRevision) throw CoreException.Invalid("Permissions changed. Reload current settings.")
+        val result = record.copy(revision = record.revision + 1u, state = when(change) { DelegationChange.RESUME -> DelegationState.ACTIVE; DelegationChange.PAUSE -> DelegationState.PAUSED; DelegationChange.REVOKE -> DelegationState.REVOKED })
+        delegationRecords.remove(record); delegationRecords += result
+        return result
+    }
     @Volatile var session: SessionInfo? = null
     @Volatile var loginError: CoreException? = null
     @Volatile var pending: List<PendingItem> = emptyList()
@@ -778,10 +834,22 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun joinView(id: String): JoinView = joins[id] ?: throw CoreException.NotFound()
 
-    // Phone roles: a legacy account (no roster) in these tests.
-    override suspend fun phoneRole(): dev.reins.core.PhoneRole = dev.reins.core.PhoneRole.LEGACY
-
-    override suspend fun rosterSummary(refresh: Boolean): dev.reins.core.RosterSummary? = null
+    // Synthetic role setup fixtures; no real keys, authority or recovery proof are persisted here.
+    @Volatile var setupRole = PhoneRole.LEGACY
+    @Volatile var setupRoster: RosterSummary? = null
+    @Volatile var setupRequiresProof = false
+    @Volatile var setupLostReply = false
+    @Volatile var setupAuthorizedGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    val setupCalls = java.util.concurrent.atomic.AtomicInteger()
+    val setupCreated = java.util.concurrent.atomic.AtomicInteger()
+    val setupFinished = java.util.concurrent.atomic.AtomicInteger()
+    val setupProofUsed = java.util.concurrent.atomic.AtomicBoolean()
+    fun resetPrimarySetup() {
+        setupRole = PhoneRole.LEGACY; setupRoster = null; setupRequiresProof = false; setupLostReply = false; setupAuthorizedGate = null
+        setupCalls.set(0); setupCreated.set(0); setupFinished.set(0); setupProofUsed.set(false)
+    }
+    override suspend fun phoneRole(): PhoneRole = setupRole
+    override suspend fun rosterSummary(refresh: Boolean): RosterSummary? = setupRoster
 
     private val legacyLive = dev.reins.core.LiveSyncState(
         dev.reins.core.PhoneRole.LEGACY, 0u, 0u, 0u, "", null, null, false, null, false, false, 0u, 0u, null,
@@ -806,6 +874,29 @@ class FakeCore : ReinsCoreInterface {
 
     override suspend fun rosterCreate(deviceName: String, codeOrPassword: String?): dev.reins.core.RosterSummary =
         throw CoreException.NotFound()
+
+    override suspend fun rosterCreateAuthorized(
+        deviceName: String,
+        codeOrPassword: String?,
+        owner: OwnerCheck,
+    ): RosterSummary {
+        setupCalls.incrementAndGet()
+        try {
+            setupAuthorizedGate?.await()
+            if (!owner.confirm("Make this the approval phone for your whole Reins account")) throw CoreException.Invalid("Owner did not confirm")
+            if (setupRole != PhoneRole.LEGACY || setupRoster != null) throw CoreException.Invalid("This account has phone roles already.")
+            setupProofUsed.set(codeOrPassword != null)
+            if (codeOrPassword?.isBlank() == true || (setupRequiresProof && codeOrPassword == null)) throw CoreException.Invalid("Enter the recovery code or master password.")
+            val result = RosterSummary(1u, PhoneRole.PRIMARY, listOf(RosterMemberView("this-phone", deviceName, true, true)), "fixture-owner", emptyList())
+            setupRole = PhoneRole.PRIMARY; setupRoster = result; setupCreated.incrementAndGet()
+            permissionViews.replaceAll { _, view ->
+                if (view.service == "gmail" && !view.conflicted && view.usageVerified) view.copy(availablePresets = AccountPermissionPreset.entries,
+                    capabilities = view.capabilities.map { cap -> cap.copy(supportedModes = PermissionMode.entries) }) else view
+            }
+            if (setupLostReply) { setupLostReply = false; throw CoreException.Network("The setup response was lost. Check the phone status before retrying.") }
+            return result
+        } finally { setupFinished.incrementAndGet() }
+    }
 
     override suspend fun enrollBegin(deviceName: String): dev.reins.core.EnrollStart = throw CoreException.NotFound()
 

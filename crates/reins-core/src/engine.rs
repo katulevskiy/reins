@@ -343,14 +343,20 @@ impl Engine {
         }
     }
 
-    /// Registers an account of any integration once it has been checked (a session that works, a token that was
-    /// accepted). The name is kept in lower case.
+    /// Registers a non-Gmail integration after its session/token was checked. Gmail must use `add_account` so its
+    /// verified identity and managed defaults commit under the asynchronous handover fence. Names use lower case.
     pub fn register_account(&self, service: &str, account: &str) -> Result<AccountView, CoreError> {
         let account = account.trim().to_lowercase();
         if account.is_empty() || account.len() > reins_proto::connector::MAX_ACCOUNT_LEN {
             return Err(CoreError::invalid("that is not a usable account name"));
         }
         let now = unix_now();
+        if service == views::SERVICE_GMAIL {
+            return Err(CoreError::invalid("connect Gmail through the verified asynchronous add-account flow"));
+        }
+        // Roll out mandatory connected-account defaults together with a usable positive adapter. Other
+        // integrations retain their remembered-grant semantics until that adapter ships; explicit policies
+        // and already managed markers remain enforced by the common gate.
         self.store.add_account(service, &account, now)?;
         Ok(AccountView {
             service: service.to_owned(),
@@ -377,9 +383,15 @@ impl Engine {
     /// address Gmail reports for it is what gets stored.
     pub async fn add_account(&self, hint: &str) -> Result<AccountView, CoreError> {
         let hint = reins_proto::gmail::normalize_account(hint).map_err(|e| CoreError::invalid(e.to_string()))?;
-        let found = self.gmail_for(&hint).account().await?.unwrap_or(hint);
+        let found =
+            self.gmail_for(&hint).account().await?.ok_or_else(|| {
+                CoreError::invalid("Gmail did not verify this account identity; reconnect and try again")
+            })?;
+        let found = reins_proto::gmail::normalize_account(&found).map_err(|e| CoreError::invalid(e.to_string()))?;
+        let _fence = self.policy_mutation_fence().await?;
+        self.require_decider_fresh(self.session()?.as_ref()).await?;
         let now = unix_now();
-        self.store.add_account(views::SERVICE_GMAIL, &found, now)?;
+        self.store.add_verified_account(&self.policy_owner()?, views::SERVICE_GMAIL, &found, now)?;
         Ok(AccountView {
             service: views::SERVICE_GMAIL.to_owned(),
             account: found,
@@ -800,7 +812,7 @@ impl Engine {
         for row in self.store.pending_rows(unix_now())? {
             let item = match row.kind {
                 PendingKind::Request => {
-                    serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| views::request_item(&p))
+                    serde_json::from_slice::<ParkedRequest>(&row.payload).ok().map(|p| self.pending_request_item(&p))
                 }
                 PendingKind::Pairing => serde_json::from_slice(&row.payload).ok().map(|p| views::pairing_item(&p)),
                 PendingKind::Blob => Self::blob_pending_item(&row.payload),
@@ -841,6 +853,7 @@ impl Engine {
     /// Starts an ended grant over with the changes the user made: how long, how many uses, and who or what it covers.
     /// The kind (read or send) stays as it was.
     pub fn resume_grant_edited(&self, grant_id: &str, standing: &crate::types::StandingGrant) -> Result<(), CoreError> {
+        self.guard_legacy_grant_update(grant_id)?;
         let secs = standing.duration_secs.ok_or_else(|| CoreError::invalid("choose for how long"))?;
         if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&secs) {
             return Err(CoreError::invalid("choose a period between a minute and 30 days"));
@@ -908,6 +921,7 @@ impl Engine {
 
     /// Starts a grant that ended (expired, used up or deleted) over for `duration_secs`.
     pub fn resume_grant(&self, grant_id: &str, duration_secs: u64) -> Result<(), CoreError> {
+        self.guard_legacy_grant_update(grant_id)?;
         if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&duration_secs) {
             return Err(CoreError::invalid("choose a period between a minute and 30 days"));
         }
@@ -921,6 +935,7 @@ impl Engine {
 
     /// Lets an active grant run for `duration_secs` from now (its uses so far stay).
     pub fn extend_grant(&self, grant_id: &str, duration_secs: u64) -> Result<(), CoreError> {
+        self.guard_legacy_grant_update(grant_id)?;
         if !(reins_proto::gmail::MIN_GRANT_SECS..=reins_proto::gmail::MAX_GRANT_SECS).contains(&duration_secs) {
             return Err(CoreError::invalid("choose a period between a minute and 30 days"));
         }
@@ -1208,16 +1223,25 @@ impl Engine {
     pub async fn revoke_connection(&self, connection_id: &str) -> Result<(), CoreError> {
         check_id(connection_id)?;
         let session = self.session()?;
+        let fence = self.policy_mutation_fence().await?;
+        self.require_decider_fresh(&session).await?;
+        // A failed/ambiguous remote deletion never reopens local authority. Presence is a grow-only synced brake.
+        let connection = ConnectionId(connection_id.to_owned());
+        self.store.remove_connection_grants(&connection)?;
+        drop(fence);
         match api_call!(&session, |api| api.delete_connection(connection_id)) {
             Ok(())
             | Err(ApiFailure::Status {
                 status: 404,
                 ..
             }) => {}
-            Err(e) => return Err(e.into_core()),
+            Err(e) => {
+                return Err(CoreError::service(format!(
+                    "This agent is blocked on this phone. Server revocation could not be confirmed: {}",
+                    e.into_core()
+                )));
+            }
         }
-        let connection = ConnectionId(connection_id.to_owned());
-        self.store.remove_connection_grants(&connection)?;
         self.store.remove_desktop_key(connection_id)?;
         self.store.set_connection_icon(connection_id, None)?;
         self.store.set_connection_blobatar(connection_id, None)?;

@@ -106,7 +106,8 @@ enum AskLabels {
         if provider == "terminal" {
             if let command = label.command {
                 if tense == .done {
-                    let heading = command.heading.hasPrefix("Run ") ? "Approved running " + command.heading.dropFirst(4) : "Approved a shell command"
+                    // This records approval, not execution. Preserve any present or future core operation verb.
+                    let heading = "Approved: " + oneLine(command.heading)
                     return AskLine.make(kind: kind, lead: heading, target: nil, mono: command.actionable.isEmpty ? nil : untrusted(command.actionable), icon: icon)
                 }
                 return make(oneLine(command.heading), mono: command.actionable.isEmpty ? nil : untrusted(command.actionable))

@@ -46,7 +46,14 @@ final class AutopilotUITests: XCTestCase {
         }
     }
 
-    private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
+    private func element(_ id: String) -> XCUIElement {
+        // The mode's stop control is a Button in both open and compact fields.
+        // Avoid an Any query traversing hidden stacks while that button is visible.
+        if ["stopBypass", "stopOvernight", "endLockdown"].contains(id) {
+            return app.buttons.matching(identifier: id).firstMatch
+        }
+        return app.descendants(matching: .any)[id].firstMatch
+    }
 
     @discardableResult
     private func waitFor(_ id: String, timeout: TimeInterval = 8) -> XCUIElement {
@@ -65,13 +72,61 @@ final class AutopilotUITests: XCTestCase {
         e.tap()
     }
 
-    private func scrollTo(_ id: String) {
-        let e = element(id)
-        var tries = 0
-        while !(e.exists && e.isHittable) && tries < 8 {
-            app.swipeUp()
-            tries += 1
+    /// Hidden tab stacks stay mounted. Gesture only on the list accepting touches.
+    private func visibleList() -> XCUIElement {
+        let list = app.collectionViews.allElementsBoundByIndex.first { $0.isHittable }
+        XCTAssertNotNil(list, "the current tab has no hittable list")
+        return list ?? app.collectionViews.firstMatch
+    }
+
+    /// Lazy rows may briefly return an invalid AX frame even when their pixels are visible.
+    /// Reacquire the actual control and require finite geometry and a usable target before measuring it.
+    @discardableResult
+    private func scrollTo(_ id: String, type: XCUIElement.ElementType = .any, toEnd: Bool = false) -> CGRect {
+        var previousFrame: CGRect?
+        var unchangedScrolls = 0
+        for attempt in 0...12 {
+            var renderedFrame: CGRect?
+            for target in app.descendants(matching: type).matching(identifier: id).allElementsBoundByIndex {
+                let frame = target.frame
+                if !frame.isNull, !frame.isInfinite, frame.width > 1, frame.height > 1,
+                   frame.minX.isFinite, frame.minY.isFinite, frame.maxX.isFinite, frame.maxY.isFinite,
+                   app.frame.contains(CGPoint(x: frame.midX, y: frame.midY)), target.isHittable {
+                    if !toEnd { return frame }
+                    renderedFrame = frame
+                    break
+                }
+            }
+            if let frame = renderedFrame {
+                // Partly hittable can still mean behind the floating tab bar.
+                // Reach the actual end before the separate inset assertion:
+                // two more real list gestures must leave fresh bounds unchanged.
+                if let previousFrame,
+                   abs(frame.minY - previousFrame.minY) < 0.5,
+                   abs(frame.maxY - previousFrame.maxY) < 0.5 {
+                    unchangedScrolls += 1
+                } else {
+                    unchangedScrolls = 0
+                }
+                if unchangedScrolls >= 2 { return frame }
+                previousFrame = frame
+            } else {
+                previousFrame = nil
+                unchangedScrolls = 0
+            }
+            if attempt < 12 { visibleList().swipeUp() }
         }
+        XCTFail("\(id) did not become rendered and hittable\(toEnd ? " at the list end" : "")")
+        return .null
+    }
+
+    /// Reach the top through real scrolling, including any small inset offset after the field appears.
+    private func scrollRunningFieldToTop() {
+        for attempt in 0...12 {
+            if element("runningField").value as? String == "open" { return }
+            if attempt < 12 { visibleList().swipeDown() }
+        }
+        waitForFold("open")
     }
 
     /// As long as `waitFor`: on a busy Mac a switch can take more than 5 s to show.
@@ -275,6 +330,7 @@ final class AutopilotUITests: XCTestCase {
     func testTheRunningFieldFoldsIntoACompactBarOnScroll() {
         for (mode, button, clock) in [("bypass", "stopBypass", "bypassClock"), ("overnight", "stopOvernight", "overnightClock"), ("lockdown", "endLockdown", nil)] {
             launchRunning(["-demoMode", mode])
+            scrollRunningFieldToTop()
             waitForFold("open")
             if let clock { waitFor(clock) }
             shot("trust-\(mode)-open")
@@ -296,7 +352,7 @@ final class AutopilotUITests: XCTestCase {
             XCTAssertLessThan(stop.frame.maxY, app.frame.minY + 200, "\(button) moved up into the bar")
             shot("trust-\(mode)-compact")
 
-            for _ in 0..<4 { app.swipeDown() }
+            scrollRunningFieldToTop()
             waitForFold("open")
 
             // Compact again, a finger on the button stops the mode. (XCUITest's isHittable says no here: the faded
@@ -344,12 +400,9 @@ final class AutopilotUITests: XCTestCase {
         shot("trust-bottom")
 
         XCTAssertTrue(app.openTab("connections"))
-        for _ in 0..<8 { app.swipeUp() }
         // The button itself: its list cell carries the same identifier and has no frame of its own.
-        let add = app.buttons["addMcp"].firstMatch
-        XCTAssertTrue(add.waitForExistence(timeout: 8), "Add MCP server never showed")
-        XCTAssertLessThanOrEqual(add.frame.maxY, app.tab("connections").frame.minY, "Add MCP server clears the tab bar")
-        XCTAssertTrue(add.isHittable)
+        let addFrame = scrollTo("addMcp", type: .button, toEnd: true)
+        XCTAssertLessThanOrEqual(addFrame.maxY, app.tab("connections").frame.minY, "Add MCP server clears the tab bar")
         shot("connections-bottom")
     }
 

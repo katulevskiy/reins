@@ -3,6 +3,8 @@ package dev.reins.android
 import android.Manifest
 import android.app.NotificationManager
 import android.content.pm.PackageManager
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.android.platform.PhoneBridge
 import dev.reins.android.platform.update.UpdateNotifier
@@ -50,6 +52,8 @@ class DistributionTest : FlowHarness() {
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.services.ServiceViewModel(container, "sms").addDevice() }
         awaitCore { core.serviceAdded.isNotEmpty() }
         assertEquals(listOf("sms" to ""), core.serviceAdded.toList())
-        awaitTag("account:this phone")
+        awaitTag("connectedIdentity")
+        rule.onNodeWithTag("connectedIdentity").assertTextContains("this phone")
+        awaitTag("permissionsReadOnly")
     }
 }

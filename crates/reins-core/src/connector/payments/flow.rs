@@ -8,6 +8,8 @@ use reins_proto::payments::{PURCHASE_COMPLETE_OP, PURCHASE_REQUEST_OP};
 use reins_proto::relay::{RelayOutcome, RelayRequest, ToolResult};
 
 use super::{Approval, BY_USER, Plan, PurchaseChoice, Seal, VIRTUAL_CARD, limit_may_use};
+use crate::authorization::AuthorizationSource;
+use crate::authorization_trace::{AuthorizedResponse, ResponseEffect};
 use crate::autopilot::context::{Decision, deciding};
 use crate::autopilot::{AutopilotMode, Verdict};
 use crate::connector::flow::{DESKTOP_ONLY, action_of};
@@ -99,12 +101,24 @@ impl Engine {
         if call.op == PURCHASE_COMPLETE_OP {
             let result = {
                 let one = self.payments.purchases.lock().await;
+                self.authorization_preflight(request)?;
                 self.payments.complete(&one, connection, call).await
             };
             return match result {
                 Ok((data, detail)) => {
                     let audit = self.audit_connector(request, call, action_of(call), "sent", &detail, None, &[]);
-                    self.finish(session, request, audit, connector_result(data)).await
+                    self.finish_authorized(
+                        session,
+                        request,
+                        audit,
+                        connector_result(data),
+                        AuthorizedResponse {
+                            source: AuthorizationSource::Automatic,
+                            effect: ResponseEffect::Succeeded,
+                            settle_pending: false,
+                        },
+                    )
+                    .await
                 }
                 Err(e) => self.fail_connector(session, request, call, &e).await,
             };
@@ -189,7 +203,18 @@ impl Engine {
                     };
                     self.names().decision(&mut decided);
                     self.notifier.auto_decided(decided);
-                    self.finish(session, request, audit, connector_result(data)).await
+                    self.finish_authorized(
+                        session,
+                        request,
+                        audit,
+                        connector_result(data),
+                        AuthorizedResponse {
+                            source: AuthorizationSource::Automatic,
+                            effect: ResponseEffect::Succeeded,
+                            settle_pending: false,
+                        },
+                    )
+                    .await
                 }
                 Err(e) => self.fail_connector(session, request, call, &e).await,
             };

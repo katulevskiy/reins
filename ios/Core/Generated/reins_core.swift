@@ -3484,6 +3484,33 @@ public protocol ReinsCoreProtocol: AnyObject, Sendable {
     
     func paymentsSpending(since: Int64) async throws  -> SpendingView
     
+    func accountPermissionDraft(service: String, account: String, preset: AccountPermissionPreset) async throws  -> AccountPermissionsDraft
+    
+    func accountPermissions(service: String, account: String) async throws  -> AccountPermissionsView
+    
+    func changeDelegation(id: String, expectedRevision: UInt64, change: DelegationChange, owner: OwnerCheck) async throws  -> DelegationView
+    
+    func delegationDraft(service: String, account: String) async throws  -> DelegationDraft
+    
+    func delegations() async throws  -> [DelegationView]
+    
+    func issueDelegation(draft: DelegationDraft, owner: OwnerCheck) async throws  -> DelegationView
+    
+    func permissionScopeOptions(service: String, account: String, capability: PermissionCapability, query: String, limit: UInt32) async throws  -> PermissionScopeOptions
+    
+    func previewAccountPermissions(draft: AccountPermissionsDraft) async throws  -> PermissionPreview
+    
+    func previewDelegation(draft: DelegationDraft) async throws  -> PermissionPreview
+    
+    /**
+     * Explicit legacy-account setup. The owner callback runs after preparing this account's engine, so native
+     * code can reject a stale screen/session before consent. Logout retires that engine and cancels the attempt.
+     * Confirm that recovery information is saved before authorizing; existing rosters require their normal flow.
+     */
+    func rosterCreateAuthorized(deviceName: String, codeOrPassword: String?, owner: OwnerCheck) async throws  -> RosterSummary
+    
+    func saveAccountPermissions(draft: AccountPermissionsDraft, owner: OwnerCheck) async throws  -> AccountPermissionsView
+    
     /**
      * Adds an MCP server by its address: added at once, or a sign-in page to open (its redirect goes to
      * `mcp_finish_sign_in`).
@@ -6568,6 +6595,187 @@ open func paymentsSpending(since: Int64)async throws  -> SpendingView  {
         )
 }
     
+open func accountPermissionDraft(service: String, account: String, preset: AccountPermissionPreset)async throws  -> AccountPermissionsDraft  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_account_permission_draft(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(account),FfiConverterTypeAccountPermissionPreset_lower(preset)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeAccountPermissionsDraft_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func accountPermissions(service: String, account: String)async throws  -> AccountPermissionsView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_account_permissions(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(account)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeAccountPermissionsView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func changeDelegation(id: String, expectedRevision: UInt64, change: DelegationChange, owner: OwnerCheck)async throws  -> DelegationView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_change_delegation(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(id),FfiConverterUInt64.lower(expectedRevision),FfiConverterTypeDelegationChange_lower(change),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDelegationView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func delegationDraft(service: String, account: String)async throws  -> DelegationDraft  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_delegation_draft(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(account)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDelegationDraft_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func delegations()async throws  -> [DelegationView]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_delegations(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeDelegationView.lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func issueDelegation(draft: DelegationDraft, owner: OwnerCheck)async throws  -> DelegationView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_issue_delegation(
+                        self.uniffiCloneHandle(),FfiConverterTypeDelegationDraft_lower(draft),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDelegationView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func permissionScopeOptions(service: String, account: String, capability: PermissionCapability, query: String, limit: UInt32)async throws  -> PermissionScopeOptions  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_permission_scope_options(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(service),FfiConverterString.lower(account),FfiConverterTypePermissionCapability_lower(capability),FfiConverterString.lower(query),FfiConverterUInt32.lower(limit)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePermissionScopeOptions_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func previewAccountPermissions(draft: AccountPermissionsDraft)async throws  -> PermissionPreview  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_preview_account_permissions(
+                        self.uniffiCloneHandle(),FfiConverterTypeAccountPermissionsDraft_lower(draft)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePermissionPreview_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func previewDelegation(draft: DelegationDraft)async throws  -> PermissionPreview  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_preview_delegation(
+                        self.uniffiCloneHandle(),FfiConverterTypeDelegationDraft_lower(draft)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypePermissionPreview_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+    /**
+     * Explicit legacy-account setup. The owner callback runs after preparing this account's engine, so native
+     * code can reject a stale screen/session before consent. Logout retires that engine and cancels the attempt.
+     * Confirm that recovery information is saved before authorizing; existing rosters require their normal flow.
+     */
+open func rosterCreateAuthorized(deviceName: String, codeOrPassword: String?, owner: OwnerCheck)async throws  -> RosterSummary  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_roster_create_authorized(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(deviceName),FfiConverterOptionString.lower(codeOrPassword),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeRosterSummary_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
+open func saveAccountPermissions(draft: AccountPermissionsDraft, owner: OwnerCheck)async throws  -> AccountPermissionsView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_reins_core_fn_method_reinscore_save_account_permissions(
+                        self.uniffiCloneHandle(),FfiConverterTypeAccountPermissionsDraft_lower(draft),FfiConverterTypeOwnerCheck_lower(owner)
+                )
+            },
+            pollFunc: ffi_reins_core_rust_future_poll_rust_buffer,
+            completeFunc: ffi_reins_core_rust_future_complete_rust_buffer,
+            freeFunc: ffi_reins_core_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeAccountPermissionsView_lift,
+            errorHandler: FfiConverterTypeCoreError_lift
+        )
+}
+    
     /**
      * Adds an MCP server by its address: added at once, or a sign-in page to open (its redirect goes to
      * `mcp_finish_sign_in`).
@@ -7002,6 +7210,208 @@ public func FfiConverterTypeStoreLockGuard_lower(_ value: StoreLockGuard) -> UIn
 }
 
 
+
+
+public struct AccountPermissionsDraft: Equatable, Hashable {
+    public var service: String
+    public var account: String
+    public var expectedRevision: UInt64
+    public var preset: AccountPermissionPreset
+    public var agentIds: [String]
+    /**
+     * Explicit owner admission of selected agents; never applies to newly paired agents automatically.
+     */
+    public var grantAccountAccess: Bool
+    public var expiresAt: Int64?
+    public var maxUses: UInt64?
+    public var rules: [CapabilityPermissionInput]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(service: String, account: String, expectedRevision: UInt64, preset: AccountPermissionPreset, agentIds: [String], 
+        /**
+         * Explicit owner admission of selected agents; never applies to newly paired agents automatically.
+         */grantAccountAccess: Bool, expiresAt: Int64?, maxUses: UInt64?, rules: [CapabilityPermissionInput]) {
+        self.service = service
+        self.account = account
+        self.expectedRevision = expectedRevision
+        self.preset = preset
+        self.agentIds = agentIds
+        self.grantAccountAccess = grantAccountAccess
+        self.expiresAt = expiresAt
+        self.maxUses = maxUses
+        self.rules = rules
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AccountPermissionsDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAccountPermissionsDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AccountPermissionsDraft {
+        return
+            try AccountPermissionsDraft(
+                service: FfiConverterString.read(from: &buf), 
+                account: FfiConverterString.read(from: &buf), 
+                expectedRevision: FfiConverterUInt64.read(from: &buf), 
+                preset: FfiConverterTypeAccountPermissionPreset.read(from: &buf), 
+                agentIds: FfiConverterSequenceString.read(from: &buf), 
+                grantAccountAccess: FfiConverterBool.read(from: &buf), 
+                expiresAt: FfiConverterOptionInt64.read(from: &buf), 
+                maxUses: FfiConverterOptionUInt64.read(from: &buf), 
+                rules: FfiConverterSequenceTypeCapabilityPermissionInput.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AccountPermissionsDraft, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterString.write(value.account, into: &buf)
+        FfiConverterUInt64.write(value.expectedRevision, into: &buf)
+        FfiConverterTypeAccountPermissionPreset.write(value.preset, into: &buf)
+        FfiConverterSequenceString.write(value.agentIds, into: &buf)
+        FfiConverterBool.write(value.grantAccountAccess, into: &buf)
+        FfiConverterOptionInt64.write(value.expiresAt, into: &buf)
+        FfiConverterOptionUInt64.write(value.maxUses, into: &buf)
+        FfiConverterSequenceTypeCapabilityPermissionInput.write(value.rules, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountPermissionsDraft_lift(_ buf: RustBuffer) throws -> AccountPermissionsDraft {
+    return try FfiConverterTypeAccountPermissionsDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountPermissionsDraft_lower(_ value: AccountPermissionsDraft) -> RustBuffer {
+    return FfiConverterTypeAccountPermissionsDraft.lower(value)
+}
+
+
+public struct AccountPermissionsView: Equatable, Hashable {
+    public var service: String
+    public var account: String
+    public var accountId: String
+    public var revision: UInt64
+    public var managed: Bool
+    public var conflicted: Bool
+    public var capabilities: [PermissionCapabilityView]
+    public var agents: [PermissionAgentView]
+    public var availablePresets: [AccountPermissionPreset]
+    public var expiresAt: Int64?
+    public var maximumDurationSecs: UInt64
+    public var delegationMaximumDurationSecs: UInt64
+    public var used: UInt64
+    public var usageVerified: Bool
+    public var remainingUses: UInt64?
+    public var scopeSummary: String
+    public var restrictions: [PermissionRestriction]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(service: String, account: String, accountId: String, revision: UInt64, managed: Bool, conflicted: Bool, capabilities: [PermissionCapabilityView], agents: [PermissionAgentView], availablePresets: [AccountPermissionPreset], expiresAt: Int64?, maximumDurationSecs: UInt64, delegationMaximumDurationSecs: UInt64, used: UInt64, usageVerified: Bool, remainingUses: UInt64?, scopeSummary: String, restrictions: [PermissionRestriction]) {
+        self.service = service
+        self.account = account
+        self.accountId = accountId
+        self.revision = revision
+        self.managed = managed
+        self.conflicted = conflicted
+        self.capabilities = capabilities
+        self.agents = agents
+        self.availablePresets = availablePresets
+        self.expiresAt = expiresAt
+        self.maximumDurationSecs = maximumDurationSecs
+        self.delegationMaximumDurationSecs = delegationMaximumDurationSecs
+        self.used = used
+        self.usageVerified = usageVerified
+        self.remainingUses = remainingUses
+        self.scopeSummary = scopeSummary
+        self.restrictions = restrictions
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AccountPermissionsView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAccountPermissionsView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AccountPermissionsView {
+        return
+            try AccountPermissionsView(
+                service: FfiConverterString.read(from: &buf), 
+                account: FfiConverterString.read(from: &buf), 
+                accountId: FfiConverterString.read(from: &buf), 
+                revision: FfiConverterUInt64.read(from: &buf), 
+                managed: FfiConverterBool.read(from: &buf), 
+                conflicted: FfiConverterBool.read(from: &buf), 
+                capabilities: FfiConverterSequenceTypePermissionCapabilityView.read(from: &buf), 
+                agents: FfiConverterSequenceTypePermissionAgentView.read(from: &buf), 
+                availablePresets: FfiConverterSequenceTypeAccountPermissionPreset.read(from: &buf), 
+                expiresAt: FfiConverterOptionInt64.read(from: &buf), 
+                maximumDurationSecs: FfiConverterUInt64.read(from: &buf), 
+                delegationMaximumDurationSecs: FfiConverterUInt64.read(from: &buf), 
+                used: FfiConverterUInt64.read(from: &buf), 
+                usageVerified: FfiConverterBool.read(from: &buf), 
+                remainingUses: FfiConverterOptionUInt64.read(from: &buf), 
+                scopeSummary: FfiConverterString.read(from: &buf), 
+                restrictions: FfiConverterSequenceTypePermissionRestriction.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AccountPermissionsView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterString.write(value.account, into: &buf)
+        FfiConverterString.write(value.accountId, into: &buf)
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterBool.write(value.managed, into: &buf)
+        FfiConverterBool.write(value.conflicted, into: &buf)
+        FfiConverterSequenceTypePermissionCapabilityView.write(value.capabilities, into: &buf)
+        FfiConverterSequenceTypePermissionAgentView.write(value.agents, into: &buf)
+        FfiConverterSequenceTypeAccountPermissionPreset.write(value.availablePresets, into: &buf)
+        FfiConverterOptionInt64.write(value.expiresAt, into: &buf)
+        FfiConverterUInt64.write(value.maximumDurationSecs, into: &buf)
+        FfiConverterUInt64.write(value.delegationMaximumDurationSecs, into: &buf)
+        FfiConverterUInt64.write(value.used, into: &buf)
+        FfiConverterBool.write(value.usageVerified, into: &buf)
+        FfiConverterOptionUInt64.write(value.remainingUses, into: &buf)
+        FfiConverterString.write(value.scopeSummary, into: &buf)
+        FfiConverterSequenceTypePermissionRestriction.write(value.restrictions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountPermissionsView_lift(_ buf: RustBuffer) throws -> AccountPermissionsView {
+    return try FfiConverterTypeAccountPermissionsView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountPermissionsView_lower(_ value: AccountPermissionsView) -> RustBuffer {
+    return FfiConverterTypeAccountPermissionsView.lower(value)
+}
 
 
 /**
@@ -9934,6 +10344,64 @@ public func FfiConverterTypeBudgetView_lower(_ value: BudgetView) -> RustBuffer 
 }
 
 
+public struct CapabilityPermissionInput: Equatable, Hashable {
+    public var capability: PermissionCapability
+    public var mode: PermissionMode
+    public var scope: PermissionScopeSelection
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(capability: PermissionCapability, mode: PermissionMode, scope: PermissionScopeSelection) {
+        self.capability = capability
+        self.mode = mode
+        self.scope = scope
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CapabilityPermissionInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCapabilityPermissionInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CapabilityPermissionInput {
+        return
+            try CapabilityPermissionInput(
+                capability: FfiConverterTypePermissionCapability.read(from: &buf), 
+                mode: FfiConverterTypePermissionMode.read(from: &buf), 
+                scope: FfiConverterTypePermissionScopeSelection.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CapabilityPermissionInput, into buf: inout [UInt8]) {
+        FfiConverterTypePermissionCapability.write(value.capability, into: &buf)
+        FfiConverterTypePermissionMode.write(value.mode, into: &buf)
+        FfiConverterTypePermissionScopeSelection.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCapabilityPermissionInput_lift(_ buf: RustBuffer) throws -> CapabilityPermissionInput {
+    return try FfiConverterTypeCapabilityPermissionInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCapabilityPermissionInput_lower(_ value: CapabilityPermissionInput) -> RustBuffer {
+    return FfiConverterTypeCapabilityPermissionInput.lower(value)
+}
+
+
 /**
  * The connected virtual card provider.
  */
@@ -10302,15 +10770,17 @@ public func FfiConverterTypeCommandOption_lower(_ value: CommandOption) -> RustB
  */
 public struct CommandPresentation: Equatable, Hashable {
     /**
-     * Fixed words describing only a recognized operation; never an agent's explanation.
+     * Observed operation/tasks in core-written words; never proof of semantic certainty or an agent's explanation.
      */
     public var heading: String
     /**
-     * Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
+     * Readable observed actions with operators, additional commands and redirects retained. Known build
+     * configuration moves to setup; credential values are concealed. Never an executable/authorization payload.
      */
     public var actionable: String
     /**
-     * Setup performed before the action. Environment values are concealed; the original is inspected separately.
+     * Literal setup and compact build options/configuration. Credential/environment values are concealed;
+     * the exact original is inspected separately. Moving a value here never exempts it from safety checks.
      */
     public var setup: [String]
     /**
@@ -10327,17 +10797,19 @@ public struct CommandPresentation: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Fixed words describing only a recognized operation; never an agent's explanation.
-         */heading: String,
+         * Observed operation/tasks in core-written words; never proof of semantic certainty or an agent's explanation.
+         */heading: String, 
         /**
-         * Actionable shell text with its operators, additional commands and redirects retained. Empty on fallback.
-         */actionable: String,
+         * Readable observed actions with operators, additional commands and redirects retained. Known build
+         * configuration moves to setup; credential values are concealed. Never an executable/authorization payload.
+         */actionable: String, 
         /**
-         * Setup performed before the action. Environment values are concealed; the original is inspected separately.
-         */setup: [String],
+         * Literal setup and compact build options/configuration. Credential/environment values are concealed;
+         * the exact original is inspected separately. Moving a value here never exempts it from safety checks.
+         */setup: [String], 
         /**
          * Consequences or limitations that remain visible with the action, including altered execution context.
-         */notices: [String],
+         */notices: [String], 
         /**
          * Original pending invocation for explicit inspection, including text beyond the legacy detail limit.
          * Never persisted here or included in Debug; history uses the source text actually retained with the entry.
@@ -10349,9 +10821,9 @@ public struct CommandPresentation: Equatable, Hashable {
         self.original = original
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -10365,10 +10837,10 @@ public struct FfiConverterTypeCommandPresentation: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CommandPresentation {
         return
             try CommandPresentation(
-                heading: FfiConverterString.read(from: &buf),
-                actionable: FfiConverterString.read(from: &buf),
-                setup: FfiConverterSequenceString.read(from: &buf),
-                notices: FfiConverterSequenceString.read(from: &buf),
+                heading: FfiConverterString.read(from: &buf), 
+                actionable: FfiConverterString.read(from: &buf), 
+                setup: FfiConverterSequenceString.read(from: &buf), 
+                notices: FfiConverterSequenceString.read(from: &buf), 
                 original: FfiConverterString.read(from: &buf)
         )
     }
@@ -10694,6 +11166,206 @@ public func FfiConverterTypeConnectionView_lift(_ buf: RustBuffer) throws -> Con
 #endif
 public func FfiConverterTypeConnectionView_lower(_ value: ConnectionView) -> RustBuffer {
     return FfiConverterTypeConnectionView.lower(value)
+}
+
+
+public struct DelegationDraft: Equatable, Hashable {
+    public var service: String
+    public var account: String
+    public var expectedRevision: UInt64
+    public var agentIds: [String]
+    public var grantAccountAccess: Bool
+    public var rules: [CapabilityPermissionInput]
+    public var expiresAt: Int64
+    public var maxUses: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(service: String, account: String, expectedRevision: UInt64, agentIds: [String], grantAccountAccess: Bool, rules: [CapabilityPermissionInput], expiresAt: Int64, maxUses: UInt64) {
+        self.service = service
+        self.account = account
+        self.expectedRevision = expectedRevision
+        self.agentIds = agentIds
+        self.grantAccountAccess = grantAccountAccess
+        self.rules = rules
+        self.expiresAt = expiresAt
+        self.maxUses = maxUses
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DelegationDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDelegationDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DelegationDraft {
+        return
+            try DelegationDraft(
+                service: FfiConverterString.read(from: &buf), 
+                account: FfiConverterString.read(from: &buf), 
+                expectedRevision: FfiConverterUInt64.read(from: &buf), 
+                agentIds: FfiConverterSequenceString.read(from: &buf), 
+                grantAccountAccess: FfiConverterBool.read(from: &buf), 
+                rules: FfiConverterSequenceTypeCapabilityPermissionInput.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf), 
+                maxUses: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DelegationDraft, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterString.write(value.account, into: &buf)
+        FfiConverterUInt64.write(value.expectedRevision, into: &buf)
+        FfiConverterSequenceString.write(value.agentIds, into: &buf)
+        FfiConverterBool.write(value.grantAccountAccess, into: &buf)
+        FfiConverterSequenceTypeCapabilityPermissionInput.write(value.rules, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+        FfiConverterUInt64.write(value.maxUses, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDelegationDraft_lift(_ buf: RustBuffer) throws -> DelegationDraft {
+    return try FfiConverterTypeDelegationDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDelegationDraft_lower(_ value: DelegationDraft) -> RustBuffer {
+    return FfiConverterTypeDelegationDraft.lower(value)
+}
+
+
+public struct DelegationView: Equatable, Hashable {
+    public var id: String
+    /**
+     * Aggregate CAS revision: any concurrent policy edit makes this view stale.
+     */
+    public var revision: UInt64
+    public var title: String
+    public var service: String
+    public var account: String
+    public var state: DelegationState
+    public var expiresAt: Int64
+    public var agentIds: [String]
+    public var rules: [CapabilityPermissionInput]
+    /**
+     * Includes attempted operations with an unresolved external outcome; these are not silently refunded.
+     */
+    public var used: UInt64
+    public var usageVerified: Bool
+    public var unresolved: UInt64
+    public var maxUses: UInt64
+    public var scopeSummary: String
+    public var effectiveReason: String
+    public var restrictions: [PermissionRestriction]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * Aggregate CAS revision: any concurrent policy edit makes this view stale.
+         */revision: UInt64, title: String, service: String, account: String, state: DelegationState, expiresAt: Int64, agentIds: [String], rules: [CapabilityPermissionInput], 
+        /**
+         * Includes attempted operations with an unresolved external outcome; these are not silently refunded.
+         */used: UInt64, usageVerified: Bool, unresolved: UInt64, maxUses: UInt64, scopeSummary: String, effectiveReason: String, restrictions: [PermissionRestriction]) {
+        self.id = id
+        self.revision = revision
+        self.title = title
+        self.service = service
+        self.account = account
+        self.state = state
+        self.expiresAt = expiresAt
+        self.agentIds = agentIds
+        self.rules = rules
+        self.used = used
+        self.usageVerified = usageVerified
+        self.unresolved = unresolved
+        self.maxUses = maxUses
+        self.scopeSummary = scopeSummary
+        self.effectiveReason = effectiveReason
+        self.restrictions = restrictions
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DelegationView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDelegationView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DelegationView {
+        return
+            try DelegationView(
+                id: FfiConverterString.read(from: &buf), 
+                revision: FfiConverterUInt64.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                service: FfiConverterString.read(from: &buf), 
+                account: FfiConverterString.read(from: &buf), 
+                state: FfiConverterTypeDelegationState.read(from: &buf), 
+                expiresAt: FfiConverterInt64.read(from: &buf), 
+                agentIds: FfiConverterSequenceString.read(from: &buf), 
+                rules: FfiConverterSequenceTypeCapabilityPermissionInput.read(from: &buf), 
+                used: FfiConverterUInt64.read(from: &buf), 
+                usageVerified: FfiConverterBool.read(from: &buf), 
+                unresolved: FfiConverterUInt64.read(from: &buf), 
+                maxUses: FfiConverterUInt64.read(from: &buf), 
+                scopeSummary: FfiConverterString.read(from: &buf), 
+                effectiveReason: FfiConverterString.read(from: &buf), 
+                restrictions: FfiConverterSequenceTypePermissionRestriction.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DelegationView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterString.write(value.account, into: &buf)
+        FfiConverterTypeDelegationState.write(value.state, into: &buf)
+        FfiConverterInt64.write(value.expiresAt, into: &buf)
+        FfiConverterSequenceString.write(value.agentIds, into: &buf)
+        FfiConverterSequenceTypeCapabilityPermissionInput.write(value.rules, into: &buf)
+        FfiConverterUInt64.write(value.used, into: &buf)
+        FfiConverterBool.write(value.usageVerified, into: &buf)
+        FfiConverterUInt64.write(value.unresolved, into: &buf)
+        FfiConverterUInt64.write(value.maxUses, into: &buf)
+        FfiConverterString.write(value.scopeSummary, into: &buf)
+        FfiConverterString.write(value.effectiveReason, into: &buf)
+        FfiConverterSequenceTypePermissionRestriction.write(value.restrictions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDelegationView_lift(_ buf: RustBuffer) throws -> DelegationView {
+    return try FfiConverterTypeDelegationView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDelegationView_lower(_ value: DelegationView) -> RustBuffer {
+    return FfiConverterTypeDelegationView.lower(value)
 }
 
 
@@ -14306,6 +14978,484 @@ public func FfiConverterTypePendingItem_lower(_ value: PendingItem) -> RustBuffe
 }
 
 
+public struct PermissionAgentView: Equatable, Hashable {
+    public var connectionId: String
+    public var label: String
+    public var hasAccountAccess: Bool
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(connectionId: String, label: String, hasAccountAccess: Bool, selected: Bool) {
+        self.connectionId = connectionId
+        self.label = label
+        self.hasAccountAccess = hasAccountAccess
+        self.selected = selected
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PermissionAgentView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionAgentView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionAgentView {
+        return
+            try PermissionAgentView(
+                connectionId: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                hasAccountAccess: FfiConverterBool.read(from: &buf), 
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PermissionAgentView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.connectionId, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterBool.write(value.hasAccountAccess, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionAgentView_lift(_ buf: RustBuffer) throws -> PermissionAgentView {
+    return try FfiConverterTypePermissionAgentView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionAgentView_lower(_ value: PermissionAgentView) -> RustBuffer {
+    return FfiConverterTypePermissionAgentView.lower(value)
+}
+
+
+public struct PermissionCapabilityView: Equatable, Hashable {
+    public var capability: PermissionCapability
+    public var title: String
+    public var description: String
+    public var supportedModes: [PermissionMode]
+    public var supportedScopes: [PermissionScopeKind]
+    public var configuredMode: PermissionMode?
+    public var scope: PermissionScopeSelection
+    public var scopeSummary: String
+    public var effectiveReason: String
+    public var restrictions: [PermissionRestriction]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(capability: PermissionCapability, title: String, description: String, supportedModes: [PermissionMode], supportedScopes: [PermissionScopeKind], configuredMode: PermissionMode?, scope: PermissionScopeSelection, scopeSummary: String, effectiveReason: String, restrictions: [PermissionRestriction]) {
+        self.capability = capability
+        self.title = title
+        self.description = description
+        self.supportedModes = supportedModes
+        self.supportedScopes = supportedScopes
+        self.configuredMode = configuredMode
+        self.scope = scope
+        self.scopeSummary = scopeSummary
+        self.effectiveReason = effectiveReason
+        self.restrictions = restrictions
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PermissionCapabilityView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionCapabilityView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionCapabilityView {
+        return
+            try PermissionCapabilityView(
+                capability: FfiConverterTypePermissionCapability.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                description: FfiConverterString.read(from: &buf), 
+                supportedModes: FfiConverterSequenceTypePermissionMode.read(from: &buf), 
+                supportedScopes: FfiConverterSequenceTypePermissionScopeKind.read(from: &buf), 
+                configuredMode: FfiConverterOptionTypePermissionMode.read(from: &buf), 
+                scope: FfiConverterTypePermissionScopeSelection.read(from: &buf), 
+                scopeSummary: FfiConverterString.read(from: &buf), 
+                effectiveReason: FfiConverterString.read(from: &buf), 
+                restrictions: FfiConverterSequenceTypePermissionRestriction.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PermissionCapabilityView, into buf: inout [UInt8]) {
+        FfiConverterTypePermissionCapability.write(value.capability, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.description, into: &buf)
+        FfiConverterSequenceTypePermissionMode.write(value.supportedModes, into: &buf)
+        FfiConverterSequenceTypePermissionScopeKind.write(value.supportedScopes, into: &buf)
+        FfiConverterOptionTypePermissionMode.write(value.configuredMode, into: &buf)
+        FfiConverterTypePermissionScopeSelection.write(value.scope, into: &buf)
+        FfiConverterString.write(value.scopeSummary, into: &buf)
+        FfiConverterString.write(value.effectiveReason, into: &buf)
+        FfiConverterSequenceTypePermissionRestriction.write(value.restrictions, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionCapabilityView_lift(_ buf: RustBuffer) throws -> PermissionCapabilityView {
+    return try FfiConverterTypePermissionCapabilityView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionCapabilityView_lower(_ value: PermissionCapabilityView) -> RustBuffer {
+    return FfiConverterTypePermissionCapabilityView.lower(value)
+}
+
+
+public struct PermissionPreview: Equatable, Hashable {
+    public var revision: UInt64
+    public var summary: String
+    public var warnings: [String]
+    /**
+     * Counts only observed retained requests; no count means the required historical facts were unavailable.
+     */
+    public var eligibleHistoryCount: UInt32?
+    public var reviewHistoryCount: UInt32?
+    public var blockedHistoryCount: UInt32?
+    public var historyComplete: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(revision: UInt64, summary: String, warnings: [String], 
+        /**
+         * Counts only observed retained requests; no count means the required historical facts were unavailable.
+         */eligibleHistoryCount: UInt32?, reviewHistoryCount: UInt32?, blockedHistoryCount: UInt32?, historyComplete: Bool) {
+        self.revision = revision
+        self.summary = summary
+        self.warnings = warnings
+        self.eligibleHistoryCount = eligibleHistoryCount
+        self.reviewHistoryCount = reviewHistoryCount
+        self.blockedHistoryCount = blockedHistoryCount
+        self.historyComplete = historyComplete
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PermissionPreview: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionPreview: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionPreview {
+        return
+            try PermissionPreview(
+                revision: FfiConverterUInt64.read(from: &buf), 
+                summary: FfiConverterString.read(from: &buf), 
+                warnings: FfiConverterSequenceString.read(from: &buf), 
+                eligibleHistoryCount: FfiConverterOptionUInt32.read(from: &buf), 
+                reviewHistoryCount: FfiConverterOptionUInt32.read(from: &buf), 
+                blockedHistoryCount: FfiConverterOptionUInt32.read(from: &buf), 
+                historyComplete: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PermissionPreview, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.revision, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterSequenceString.write(value.warnings, into: &buf)
+        FfiConverterOptionUInt32.write(value.eligibleHistoryCount, into: &buf)
+        FfiConverterOptionUInt32.write(value.reviewHistoryCount, into: &buf)
+        FfiConverterOptionUInt32.write(value.blockedHistoryCount, into: &buf)
+        FfiConverterBool.write(value.historyComplete, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionPreview_lift(_ buf: RustBuffer) throws -> PermissionPreview {
+    return try FfiConverterTypePermissionPreview.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionPreview_lower(_ value: PermissionPreview) -> RustBuffer {
+    return FfiConverterTypePermissionPreview.lower(value)
+}
+
+
+public struct PermissionRestriction: Equatable, Hashable {
+    public var controller: PermissionController
+    public var policyId: String?
+    public var reason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(controller: PermissionController, policyId: String?, reason: String) {
+        self.controller = controller
+        self.policyId = policyId
+        self.reason = reason
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PermissionRestriction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionRestriction: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionRestriction {
+        return
+            try PermissionRestriction(
+                controller: FfiConverterTypePermissionController.read(from: &buf), 
+                policyId: FfiConverterOptionString.read(from: &buf), 
+                reason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PermissionRestriction, into buf: inout [UInt8]) {
+        FfiConverterTypePermissionController.write(value.controller, into: &buf)
+        FfiConverterOptionString.write(value.policyId, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionRestriction_lift(_ buf: RustBuffer) throws -> PermissionRestriction {
+    return try FfiConverterTypePermissionRestriction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionRestriction_lower(_ value: PermissionRestriction) -> RustBuffer {
+    return FfiConverterTypePermissionRestriction.lower(value)
+}
+
+
+public struct PermissionScopeOption: Equatable, Hashable {
+    public var id: String
+    public var label: String
+    public var detail: String
+    public var service: String
+    public var account: String
+    public var kind: PermissionScopeKind
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, label: String, detail: String, service: String, account: String, kind: PermissionScopeKind) {
+        self.id = id
+        self.label = label
+        self.detail = detail
+        self.service = service
+        self.account = account
+        self.kind = kind
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PermissionScopeOption: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionScopeOption: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionScopeOption {
+        return
+            try PermissionScopeOption(
+                id: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf), 
+                service: FfiConverterString.read(from: &buf), 
+                account: FfiConverterString.read(from: &buf), 
+                kind: FfiConverterTypePermissionScopeKind.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PermissionScopeOption, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterString.write(value.service, into: &buf)
+        FfiConverterString.write(value.account, into: &buf)
+        FfiConverterTypePermissionScopeKind.write(value.kind, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionScopeOption_lift(_ buf: RustBuffer) throws -> PermissionScopeOption {
+    return try FfiConverterTypePermissionScopeOption.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionScopeOption_lower(_ value: PermissionScopeOption) -> RustBuffer {
+    return FfiConverterTypePermissionScopeOption.lower(value)
+}
+
+
+public struct PermissionScopeOptions: Equatable, Hashable {
+    public var kinds: [PermissionScopeKind]
+    public var options: [PermissionScopeOption]
+    /**
+     * Typed address entry is canonicalized/validated by the core, never parsed as policy code or a domain glob.
+     */
+    public var allowsAddressEntry: Bool
+    public var unsupportedReason: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kinds: [PermissionScopeKind], options: [PermissionScopeOption], 
+        /**
+         * Typed address entry is canonicalized/validated by the core, never parsed as policy code or a domain glob.
+         */allowsAddressEntry: Bool, unsupportedReason: String?) {
+        self.kinds = kinds
+        self.options = options
+        self.allowsAddressEntry = allowsAddressEntry
+        self.unsupportedReason = unsupportedReason
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PermissionScopeOptions: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionScopeOptions: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionScopeOptions {
+        return
+            try PermissionScopeOptions(
+                kinds: FfiConverterSequenceTypePermissionScopeKind.read(from: &buf), 
+                options: FfiConverterSequenceTypePermissionScopeOption.read(from: &buf), 
+                allowsAddressEntry: FfiConverterBool.read(from: &buf), 
+                unsupportedReason: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PermissionScopeOptions, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypePermissionScopeKind.write(value.kinds, into: &buf)
+        FfiConverterSequenceTypePermissionScopeOption.write(value.options, into: &buf)
+        FfiConverterBool.write(value.allowsAddressEntry, into: &buf)
+        FfiConverterOptionString.write(value.unsupportedReason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionScopeOptions_lift(_ buf: RustBuffer) throws -> PermissionScopeOptions {
+    return try FfiConverterTypePermissionScopeOptions.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionScopeOptions_lower(_ value: PermissionScopeOptions) -> RustBuffer {
+    return FfiConverterTypePermissionScopeOptions.lower(value)
+}
+
+
+public struct PermissionScopeSelection: Equatable, Hashable {
+    public var kind: PermissionScopeKind
+    public var ids: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: PermissionScopeKind, ids: [String]) {
+        self.kind = kind
+        self.ids = ids
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PermissionScopeSelection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionScopeSelection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionScopeSelection {
+        return
+            try PermissionScopeSelection(
+                kind: FfiConverterTypePermissionScopeKind.read(from: &buf), 
+                ids: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PermissionScopeSelection, into buf: inout [UInt8]) {
+        FfiConverterTypePermissionScopeKind.write(value.kind, into: &buf)
+        FfiConverterSequenceString.write(value.ids, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionScopeSelection_lift(_ buf: RustBuffer) throws -> PermissionScopeSelection {
+    return try FfiConverterTypePermissionScopeSelection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionScopeSelection_lower(_ value: PermissionScopeSelection) -> RustBuffer {
+    return FfiConverterTypePermissionScopeSelection.lower(value)
+}
+
+
 /**
  * One decision personality (spec §5.1).
  */
@@ -15504,7 +16654,7 @@ public struct RequestLabel: Equatable, Hashable {
          */code: Bool, 
         /**
          * After the subject (" and 2 more"); usually empty.
-         */tail: String,
+         */tail: String, 
         /**
          * Derived for native views from the retained original; never persisted, synced, or an authorization scope.
          */command: CommandPresentation? = nil) {
@@ -15538,7 +16688,7 @@ public struct FfiConverterTypeRequestLabel: FfiConverterRustBuffer {
                 lead: FfiConverterString.read(from: &buf), 
                 subject: FfiConverterString.read(from: &buf), 
                 code: FfiConverterBool.read(from: &buf), 
-                tail: FfiConverterString.read(from: &buf),
+                tail: FfiConverterString.read(from: &buf), 
                 command: FfiConverterOptionTypeCommandPresentation.read(from: &buf)
         )
     }
@@ -18375,6 +19525,79 @@ public func FfiConverterTypeAccountKeys_lower(_ value: AccountKeys) -> RustBuffe
 
 
 
+
+public enum AccountPermissionPreset: Equatable, Hashable {
+    
+    case reviewEveryRequest
+    case readAssist
+    case custom
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AccountPermissionPreset: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAccountPermissionPreset: FfiConverterRustBuffer {
+    typealias SwiftType = AccountPermissionPreset
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AccountPermissionPreset {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .reviewEveryRequest
+        
+        case 2: return .readAssist
+        
+        case 3: return .custom
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AccountPermissionPreset, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .reviewEveryRequest:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .readAssist:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .custom:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountPermissionPreset_lift(_ buf: RustBuffer) throws -> AccountPermissionPreset {
+    return try FfiConverterTypeAccountPermissionPreset.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAccountPermissionPreset_lower(_ value: AccountPermissionPreset) -> RustBuffer {
+    return FfiConverterTypeAccountPermissionPreset.lower(value)
+}
+
+
+
 /**
  * Who decided an Activity entry.
  */
@@ -18646,7 +19869,7 @@ public enum ActivityOutcome: Equatable, Hashable {
     case approved
     case denied
     /**
-     * Allowed but it failed.
+     * Needs attention: error, started without a known outcome, unknown outcome, or successful response withheld.
      */
     case failed
 
@@ -19346,6 +20569,159 @@ public func FfiConverterTypeCoreError_lift(_ buf: RustBuffer) throws -> CoreErro
 public func FfiConverterTypeCoreError_lower(_ value: CoreError) -> RustBuffer {
     return FfiConverterTypeCoreError.lower(value)
 }
+
+
+
+public enum DelegationChange: Equatable, Hashable {
+    
+    case resume
+    case pause
+    case revoke
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DelegationChange: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDelegationChange: FfiConverterRustBuffer {
+    typealias SwiftType = DelegationChange
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DelegationChange {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .resume
+        
+        case 2: return .pause
+        
+        case 3: return .revoke
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DelegationChange, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .resume:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .pause:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .revoke:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDelegationChange_lift(_ buf: RustBuffer) throws -> DelegationChange {
+    return try FfiConverterTypeDelegationChange.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDelegationChange_lower(_ value: DelegationChange) -> RustBuffer {
+    return FfiConverterTypeDelegationChange.lower(value)
+}
+
+
+
+
+public enum DelegationState: Equatable, Hashable {
+    
+    case active
+    case paused
+    case expired
+    case revoked
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DelegationState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDelegationState: FfiConverterRustBuffer {
+    typealias SwiftType = DelegationState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DelegationState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .active
+        
+        case 2: return .paused
+        
+        case 3: return .expired
+        
+        case 4: return .revoked
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DelegationState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .active:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .paused:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .expired:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .revoked:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDelegationState_lift(_ buf: RustBuffer) throws -> DelegationState {
+    return try FfiConverterTypeDelegationState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDelegationState_lower(_ value: DelegationState) -> RustBuffer {
+    return FfiConverterTypeDelegationState.lower(value)
+}
+
 
 
 /**
@@ -20556,6 +21932,319 @@ public func FfiConverterTypePendingKind_lift(_ buf: RustBuffer) throws -> Pendin
 #endif
 public func FfiConverterTypePendingKind_lower(_ value: PendingKind) -> RustBuffer {
     return FfiConverterTypePendingKind.lower(value)
+}
+
+
+
+
+public enum PermissionCapability: Equatable, Hashable {
+    
+    case mailSearch
+    case mailRead
+    case mailSend
+    case integrationRead
+    case integrationWrite
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PermissionCapability: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionCapability: FfiConverterRustBuffer {
+    typealias SwiftType = PermissionCapability
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionCapability {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .mailSearch
+        
+        case 2: return .mailRead
+        
+        case 3: return .mailSend
+        
+        case 4: return .integrationRead
+        
+        case 5: return .integrationWrite
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PermissionCapability, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .mailSearch:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .mailRead:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .mailSend:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .integrationRead:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .integrationWrite:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionCapability_lift(_ buf: RustBuffer) throws -> PermissionCapability {
+    return try FfiConverterTypePermissionCapability.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionCapability_lower(_ value: PermissionCapability) -> RustBuffer {
+    return FfiConverterTypePermissionCapability.lower(value)
+}
+
+
+
+
+public enum PermissionController: Equatable, Hashable {
+    
+    case owner
+    case organization
+    case unsupportedAdapter
+    case conflict
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PermissionController: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionController: FfiConverterRustBuffer {
+    typealias SwiftType = PermissionController
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionController {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .owner
+        
+        case 2: return .organization
+        
+        case 3: return .unsupportedAdapter
+        
+        case 4: return .conflict
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PermissionController, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .owner:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .organization:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .unsupportedAdapter:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .conflict:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionController_lift(_ buf: RustBuffer) throws -> PermissionController {
+    return try FfiConverterTypePermissionController.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionController_lower(_ value: PermissionController) -> RustBuffer {
+    return FfiConverterTypePermissionController.lower(value)
+}
+
+
+
+
+public enum PermissionMode: Equatable, Hashable {
+    
+    case ask
+    case auto
+    case block
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PermissionMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionMode: FfiConverterRustBuffer {
+    typealias SwiftType = PermissionMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .ask
+        
+        case 2: return .auto
+        
+        case 3: return .block
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PermissionMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .ask:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .auto:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .block:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionMode_lift(_ buf: RustBuffer) throws -> PermissionMode {
+    return try FfiConverterTypePermissionMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionMode_lower(_ value: PermissionMode) -> RustBuffer {
+    return FfiConverterTypePermissionMode.lower(value)
+}
+
+
+
+
+public enum PermissionScopeKind: Equatable, Hashable {
+    
+    case allInAccount
+    case selectedResources
+    case selectedRecipients
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension PermissionScopeKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePermissionScopeKind: FfiConverterRustBuffer {
+    typealias SwiftType = PermissionScopeKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PermissionScopeKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .allInAccount
+        
+        case 2: return .selectedResources
+        
+        case 3: return .selectedRecipients
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PermissionScopeKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .allInAccount:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .selectedResources:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .selectedRecipients:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionScopeKind_lift(_ buf: RustBuffer) throws -> PermissionScopeKind {
+    return try FfiConverterTypePermissionScopeKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePermissionScopeKind_lower(_ value: PermissionScopeKind) -> RustBuffer {
+    return FfiConverterTypePermissionScopeKind.lower(value)
 }
 
 
@@ -22327,6 +24016,30 @@ fileprivate struct FfiConverterOptionTypeAutopilotMode: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypePermissionMode: FfiConverterRustBuffer {
+    typealias SwiftType = PermissionMode?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypePermissionMode.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypePermissionMode.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeStartingPolicy: FfiConverterRustBuffer {
     typealias SwiftType = StartingPolicy?
 
@@ -22701,6 +24414,31 @@ fileprivate struct FfiConverterSequenceTypeBudgetView: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeCapabilityPermissionInput: FfiConverterRustBuffer {
+    typealias SwiftType = [CapabilityPermissionInput]
+
+    public static func write(_ value: [CapabilityPermissionInput], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeCapabilityPermissionInput.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CapabilityPermissionInput] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [CapabilityPermissionInput]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeCapabilityPermissionInput.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeClassOption: FfiConverterRustBuffer {
     typealias SwiftType = [ClassOption]
 
@@ -22818,6 +24556,31 @@ fileprivate struct FfiConverterSequenceTypeConnectionView: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeConnectionView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDelegationView: FfiConverterRustBuffer {
+    typealias SwiftType = [DelegationView]
+
+    public static func write(_ value: [DelegationView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDelegationView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DelegationView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DelegationView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDelegationView.read(from: &buf))
         }
         return seq
     }
@@ -23218,6 +24981,106 @@ fileprivate struct FfiConverterSequenceTypePendingItem: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePendingItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePermissionAgentView: FfiConverterRustBuffer {
+    typealias SwiftType = [PermissionAgentView]
+
+    public static func write(_ value: [PermissionAgentView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePermissionAgentView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PermissionAgentView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PermissionAgentView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePermissionAgentView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePermissionCapabilityView: FfiConverterRustBuffer {
+    typealias SwiftType = [PermissionCapabilityView]
+
+    public static func write(_ value: [PermissionCapabilityView], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePermissionCapabilityView.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PermissionCapabilityView] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PermissionCapabilityView]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePermissionCapabilityView.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePermissionRestriction: FfiConverterRustBuffer {
+    typealias SwiftType = [PermissionRestriction]
+
+    public static func write(_ value: [PermissionRestriction], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePermissionRestriction.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PermissionRestriction] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PermissionRestriction]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePermissionRestriction.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePermissionScopeOption: FfiConverterRustBuffer {
+    typealias SwiftType = [PermissionScopeOption]
+
+    public static func write(_ value: [PermissionScopeOption], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePermissionScopeOption.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PermissionScopeOption] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PermissionScopeOption]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePermissionScopeOption.read(from: &buf))
         }
         return seq
     }
@@ -23726,6 +25589,31 @@ fileprivate struct FfiConverterSequenceTypeVaultUse: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAccountPermissionPreset: FfiConverterRustBuffer {
+    typealias SwiftType = [AccountPermissionPreset]
+
+    public static func write(_ value: [AccountPermissionPreset], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAccountPermissionPreset.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AccountPermissionPreset] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AccountPermissionPreset]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAccountPermissionPreset.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeActivityDecider: FfiConverterRustBuffer {
     typealias SwiftType = [ActivityDecider]
 
@@ -23768,6 +25656,56 @@ fileprivate struct FfiConverterSequenceTypeActivityOutcome: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeActivityOutcome.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePermissionMode: FfiConverterRustBuffer {
+    typealias SwiftType = [PermissionMode]
+
+    public static func write(_ value: [PermissionMode], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePermissionMode.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PermissionMode] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PermissionMode]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePermissionMode.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePermissionScopeKind: FfiConverterRustBuffer {
+    typealias SwiftType = [PermissionScopeKind]
+
+    public static func write(_ value: [PermissionScopeKind], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePermissionScopeKind.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PermissionScopeKind] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PermissionScopeKind]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePermissionScopeKind.read(from: &buf))
         }
         return seq
     }
@@ -24444,6 +26382,39 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_payments_spending() != 36866) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_account_permission_draft() != 51910) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_account_permissions() != 36203) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_change_delegation() != 27433) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_delegation_draft() != 18365) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_delegations() != 14834) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_issue_delegation() != 37664) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_permission_scope_options() != 47900) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_preview_account_permissions() != 48248) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_preview_delegation() != 35239) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_roster_create_authorized() != 4256) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_reins_core_checksum_method_reinscore_save_account_permissions() != 59940) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_reins_core_checksum_method_reinscore_mcp_add() != 53705) {

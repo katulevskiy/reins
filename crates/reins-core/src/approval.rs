@@ -233,6 +233,11 @@ impl Engine {
         }
         self.bind_account(&mut parked).await?;
         let request = &parked.request;
+        if (choice.standing.is_some() || parked.kind() == ApprovalKind::Grant)
+            && self.legacy_mail_grants_unavailable(request)?
+        {
+            return Err(CoreError::invalid(crate::permissions::MANAGED_GRANT_GUIDANCE));
+        }
         let call = request.call.clone().normalized().map_err(policy_error)?;
         let kind = parked.kind();
         if kind == ApprovalKind::Grant {
@@ -288,8 +293,27 @@ impl Engine {
             ToolCall::GmailSend {
                 email,
             } => {
+                let _fence = self.permission_execution_fence().await?;
                 self.authorization_execute(request, source)?;
-                let sent = gmail.send(email).await?;
+                let attempt = self.legacy_send_attempt(request)?;
+                if let Err(error) = self.legacy_send_durable().await {
+                    self.legacy_send_finished(attempt, false)?;
+                    return Err(error);
+                }
+                // A roster or mandatory policy may have changed while usage reached durable storage.
+                self.authorization_execute(request, source)?;
+                let sent = gmail.send_checked(email, || self.legacy_before_send(&session, request, source)).await;
+                self.legacy_send_finished(attempt, sent.is_ok())?;
+                let Ok(sent) = sent else {
+                    self.store.remove_pending(request_id)?;
+                    self.notifier.item_resolved(request_id.to_owned());
+                    return self.send_outcome_unknown(&session, request).await;
+                };
+                if self.authorization_execute(request, source).is_err() {
+                    self.store.remove_pending(request_id)?;
+                    self.notifier.item_resolved(request_id.to_owned());
+                    return self.result_withheld(&session, request).await;
+                }
                 (ToolResult::Sent(sent), "send", send_detail(email))
             }
             ToolCall::RequestGrant {
@@ -325,7 +349,8 @@ impl Engine {
         let needs_pass = late
             && new_grant.is_none()
             && matches!(kind, ApprovalKind::Search | ApprovalKind::Read)
-            && !released_ids.is_empty();
+            && !released_ids.is_empty()
+            && !self.legacy_mail_grants_unavailable(request)?;
         let note = if needs_pass {
             let pass = Grant::new(
                 GrantId(uuid::Uuid::new_v4().to_string()),
@@ -360,18 +385,29 @@ impl Engine {
             &released,
         );
         audit.info.note = note;
-        self.store.append_audit(&audit)?;
         self.store.remove_pending(request_id)?;
-        self.store.mark_handled(request_id, now)?;
         self.notifier.item_resolved(request_id.to_owned());
-        self.respond(
-            &session,
-            request_id,
-            RelayOutcome::Result {
-                result,
-            },
-        )
-        .await
+        let mut held = false;
+        let answered = self
+            .finish_checked(
+                &session,
+                request,
+                audit,
+                RelayOutcome::Result {
+                    result,
+                },
+                || {
+                    let checked = self.authorization_execute(request, source);
+                    held |= checked.is_err();
+                    checked
+                },
+            )
+            .await;
+        if held {
+            self.result_withheld(&session, request).await
+        } else {
+            answered
+        }
     }
 
     /// Denies a request the caller already claimed (the user's tap, or Autopilot).
@@ -544,8 +580,14 @@ impl Engine {
         if !matches!(kind, ApprovalKind::Read | ApprovalKind::Send) {
             return Err(CoreError::invalid("choose whether the permission is for reading or for sending"));
         }
+        if self.managed_mail_account(Some(&account))? {
+            return Err(CoreError::invalid(crate::permissions::MANAGED_GRANT_GUIDANCE));
+        }
         let connection =
             self.connections().await?.into_iter().find(|c| c.id == connection_id).ok_or(CoreError::NotFound)?;
+        if self.managed_mail_account(Some(&account))? {
+            return Err(CoreError::invalid(crate::permissions::MANAGED_GRANT_GUIDANCE));
+        }
         let now = unix_now();
         let conn_id = ConnectionId(connection_id.to_owned());
         let grant = build_standing_grant(&standing, kind, &[], &conn_id, now)?.for_account(Some(account.clone()));

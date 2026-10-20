@@ -6,6 +6,7 @@ import dev.reins.android.ui.approval.WarnTone
 import dev.reins.android.ui.approval.dangerTag
 import dev.reins.android.ui.approval.fieldWarnings
 import dev.reins.android.ui.approval.heldByDanger
+import dev.reins.android.ui.approval.historyFieldWarnings
 import dev.reins.core.ApprovalView
 import dev.reins.core.AskRuleView
 import dev.reins.core.RiskLevel
@@ -24,6 +25,21 @@ class FieldWarningsTest {
 
     private val forceRule = AskRuleView("Rewriting git history", "git push --force*", "git push --force origin main", "git-history", true, false)
     private val envRule = AskRuleView(".env files", ".env", "app/.env", "env-files", false, false)
+
+    @Test
+    fun commandHistoryKeepsGuardEffectsAndUncertaintyOnceWithoutChangingWaitingWarnings() {
+        val ruled = TestData.askView(rule = envRule.copy(reported = true)).let {
+            it.copy(noStanding = true, ask = it.ask!!.copy(uncertain = true))
+        }
+        assertTrue(lines(ruled).any { it.tag == "askUncertain" })
+        val history = historyFieldWarnings(ruled, command = true)
+        assertEquals(listOf("guardRule"), history.map { it.tag })
+        val help = history.single().help!!
+        assertTrue(help.contains("details or behavior could not be verified"))
+        assertTrue(help.contains("Your computer says so"))
+        assertTrue(help.contains("asked every time"))
+        assertEquals(lines(ruled), historyFieldWarnings(ruled, command = false))
+    }
 
     @Test
     fun `a guard rule says its name and what matched`() {
@@ -49,7 +65,7 @@ class FieldWarningsTest {
     @Test
     fun `a command this phone couldn't read is said, with or without a rule`() {
         val plain = TestData.askView()
-        assertEquals("Couldn't read this", lines(plain.copy(ask = plain.ask!!.copy(uncertain = true))).line("askUncertain").text)
+        assertEquals("Unverified request details", lines(plain.copy(ask = plain.ask!!.copy(uncertain = true))).line("askUncertain").text)
         val ruled = TestData.askView(rule = envRule)
         val both = lines(ruled.copy(ask = ruled.ask!!.copy(uncertain = true)))
         assertEquals(listOf("guardRule", "askUncertain"), both.map { it.tag }.filter { it == "guardRule" || it == "askUncertain" })

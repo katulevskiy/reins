@@ -68,6 +68,8 @@ abstract class ScreenshotsBase(private val suffix: String) {
         Timers.frozenNowMillis = now * 1000
         Foreground.focused = false
         Foreground.autoPopup = false
+        core.resetPrimarySetup()
+        core.permissionViews.clear(); core.savedPermissionDrafts.clear(); core.delegationRecords.clear(); core.permissionFailure = null; core.permissionSaveGate = null; core.permissionSaveCalls.set(0); core.permissionScopeGates.clear(); core.permissionScopeOverride = null
         core.session = SessionInfo("https://app.reins2fa.com", "me@example.com")
         core.pending = emptyList()
         core.startingPolicy = null
@@ -209,7 +211,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         tap("service:gmail")
         val app = (context.applicationContext as ReinsApp).container
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
-        await("integrationConnected")
+        await("permissionPreset:REVIEW_EVERY_REQUEST")
         shoot("integration-account-connected")
     }
 
@@ -227,13 +229,92 @@ abstract class ScreenshotsBase(private val suffix: String) {
             tap("service:gmail")
             val app = (context.applicationContext as ReinsApp).container
             kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(app).connect("ada.long.address@gmail.com") }
-            await("integrationConnected")
+            await("permissionPreset:REVIEW_EVERY_REQUEST")
             shoot("integration-account-connected-large-text")
             tap("connectionDone")
             await("service:gmail")
         } finally {
             resources.updateConfiguration(previous, resources.displayMetrics)
         }
+    }
+
+
+    @Test
+    fun permissionChangesReview() {
+        Timers.frozenNowMillis = 1_800_014_400_000L // 2027-01-15; active permissions expire in the future.
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        tap("permissionPreset:READ_ASSIST"); tap("permissionAgent:c2"); tap("permissionsPreview")
+        await("permissionPreviewSummary")
+        shoot("permissions-review")
+        rule.onNodeWithTag("permissionsSave").performScrollTo()
+        shoot("permissions-review-limits")
+    }
+
+    @Test
+    fun temporaryPermissionControls() {
+        Timers.frozenNowMillis = 1_800_014_400_000L // 2027-01-15; active permissions expire in the future.
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        kotlinx.coroutines.runBlocking {
+            val draft = core.delegationDraft("gmail", "me@gmail.com")
+            core.issueDelegation(draft, object : dev.reins.core.OwnerCheck { override suspend fun confirm(reason: String) = true })
+        }
+        launch(); tap("tabTrust"); tap("trustPermissions")
+        await("delegation:temporary-0")
+        rule.onNodeWithTag("delegation:temporary-0").performScrollTo()
+        shoot("permissions-temporary")
+    }
+
+    private fun openPrimaryPhoneSetup() {
+        Timers.frozenNowMillis = 1_800_014_400_000L
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        core.permissionViews["gmail/me@gmail.com"] = PermissionFixtures.view("gmail", "me@gmail.com").let { view ->
+            view.copy(availablePresets = listOf(dev.reins.core.AccountPermissionPreset.REVIEW_EVERY_REQUEST, dev.reins.core.AccountPermissionPreset.CUSTOM),
+                capabilities = view.capabilities.map { it.copy(supportedModes = listOf(dev.reins.core.PermissionMode.ASK, dev.reins.core.PermissionMode.BLOCK)) })
+        }
+        launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        await("primarySetupOpen")
+    }
+
+    @Test
+    fun primaryPhoneSetup() {
+        openPrimaryPhoneSetup(); shoot("permissions-primary-setup-entry")
+        tap("primarySetupOpen"); await("primarySetupDialog"); shoot("permissions-primary-setup", dialogs = true)
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun primaryPhoneSetupLargeText() {
+        val resources = context.resources
+        val previous = android.content.res.Configuration(resources.configuration)
+        resources.updateConfiguration(android.content.res.Configuration(previous).apply { fontScale = 1.6f }, resources.displayMetrics)
+        try {
+            openPrimaryPhoneSetup(); tap("primarySetupOpen"); await("primarySetupDialog")
+            rule.onNodeWithTag("primarySetupConfirm").performScrollTo()
+            shoot("permissions-primary-setup-large-text", dialogs = true)
+        } finally { resources.updateConfiguration(previous, resources.displayMetrics) }
+    }
+
+    @Test
+    fun unsupportedAccountPermissions() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        launch(); tap("tabConnections"); tap("service:github")
+        val app = (context.applicationContext as ReinsApp).container
+        kotlinx.coroutines.runBlocking { app.state.accountConnected(dev.reins.core.AccountView("github", "octo-cat", now), app.state.accountEpoch.value) }
+        await("permissionsReadOnly")
+        shoot("permissions-unsupported-account")
+    }
+
+    @Test
+    fun permissionAuthorizationActors() {
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        core.activity = listOf("account_permission", "temporary_permission").mapIndexed { index, actor ->
+            TestData.entry((index + 1).toLong(), "send", "sent", 1u, now - (index + 1) * 60,
+                decidedBy = actor, label = TestData.label("gmail", "send", "Send an email to", "friend@example.com"))
+        }
+        launch(); await("entry:1"); shoot("activity-permission-actors")
+        tap("entry:1"); await("entryOutcome"); shoot("activity-account-permission-detail")
+        pressBack(); await("entry:2"); tap("entry:2"); await("entryOutcome"); shoot("activity-temporary-permission-detail")
     }
 
     @Test
@@ -895,6 +976,38 @@ abstract class ScreenshotsBase(private val suffix: String) {
     @Test
     fun commandPresentation() = renderCommandPresentation("default")
 
+    /** Identical synthetic release invocation for the reported command-clarity before/after comparison. */
+    @Test
+    fun commandReleaseBuild() = renderReleaseCommand("default")
+
+    @Test
+    fun commandReleaseBuildLargeText() {
+        val configuration = android.content.res.Configuration(context.resources.configuration).apply { fontScale = 1.6f }
+        context.resources.updateConfiguration(configuration, context.resources.displayMetrics)
+        renderReleaseCommand("large")
+    }
+
+    private fun renderReleaseCommand(size: String) {
+        core.activity = listOf(CommandClarityFixtures.entry())
+        core.entryApprovals[7L] = CommandClarityFixtures.view()
+        launch()
+        tap("entry:7")
+        await("entryHero")
+        frames()
+        shoot(if (size == "default") "command-release-build" else "command-release-build-$size")
+        tap("commandTechnicalDetails")
+        await("commandSetup")
+        rule.onNodeWithTag("commandSetup").performScrollTo()
+        frames()
+        shoot("command-release-build-$size-technical")
+        tap("commandTechnicalDetails")
+        tap("revealFullInvocation")
+        await("fullRequestText")
+        rule.onNodeWithTag("fullRequest").performScrollTo()
+        frames()
+        shoot("command-release-build-$size-original")
+    }
+
     @Test
     @Suppress("DEPRECATION")
     fun commandPresentationLargeText() {
@@ -920,6 +1033,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch(link("request", view.requestId))
         await("commandPresentation")
         shoot("48b-command-$size-action")
+        tap("commandTechnicalDetails")
         rule.onNodeWithTag("commandSetup").performScrollTo()
         shoot("48c-command-$size-setup")
     }

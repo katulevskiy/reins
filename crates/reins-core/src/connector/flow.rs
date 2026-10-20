@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{Item, items_json};
 use crate::authorization::AuthorizationSource;
 use crate::authorization_trace::{
-    AuthorizationInvocation, AuthorizationPhase, AuthorizationTrace, OUTCOME_UNKNOWN, RESULT_WITHHELD,
+    AuthorizationInvocation, AuthorizationPhase, AuthorizationTrace, AuthorizedResponse, OUTCOME_UNKNOWN,
+    RESULT_WITHHELD, ResponseEffect,
 };
 use crate::engine::Engine;
 use crate::session::Session;
@@ -178,12 +179,17 @@ impl Engine {
         if let Some(trace) = trace {
             trace.stamp(&mut audit, AuthorizationPhase::Unknown);
         }
-        self.finish(
+        self.finish_authorized(
             session,
             request,
             audit,
             RelayOutcome::Error {
                 message: message.to_owned(),
+            },
+            AuthorizedResponse {
+                source: AuthorizationSource::Automatic,
+                effect: ResponseEffect::Unknown,
+                settle_pending: false,
             },
         )
         .await
@@ -257,7 +263,7 @@ impl Engine {
                 &[],
             );
             return self
-                .finish(
+                .finish_authorized(
                     session,
                     &request,
                     audit,
@@ -265,6 +271,11 @@ impl Engine {
                         result: ToolResult::Connector {
                             data: serde_json::json!({"ended": ended}),
                         },
+                    },
+                    AuthorizedResponse {
+                        source: AuthorizationSource::Automatic,
+                        effect: ResponseEffect::Succeeded,
+                        settle_pending: false,
                     },
                 )
                 .await;
@@ -377,7 +388,18 @@ impl Engine {
                                 },
                             },
                         };
-                        self.finish(session, &request, audit, outcome).await
+                        self.finish_authorized(
+                            session,
+                            &request,
+                            audit,
+                            outcome,
+                            AuthorizedResponse {
+                                source: AuthorizationSource::Automatic,
+                                effect: ResponseEffect::Succeeded,
+                                settle_pending: false,
+                            },
+                        )
+                        .await
                     }
                     Err(e) => {
                         // Invocation began: a failed response cannot prove that the provider did not act.
@@ -486,7 +508,7 @@ impl Engine {
             }
             let data = items_json(effect, &refs);
             return self
-                .finish(
+                .finish_authorized(
                     session,
                     &request,
                     audit,
@@ -494,6 +516,11 @@ impl Engine {
                         result: ToolResult::Connector {
                             data,
                         },
+                    },
+                    AuthorizedResponse {
+                        source: AuthorizationSource::Automatic,
+                        effect: ResponseEffect::Read,
+                        settle_pending: false,
                     },
                 )
                 .await;
@@ -622,7 +649,7 @@ impl Engine {
                         trace.stamp(&mut audit, AuthorizationPhase::Unknown);
                     }
                     return self
-                        .settle(
+                        .settle_authorized(
                             session,
                             request_id,
                             request,
@@ -630,6 +657,8 @@ impl Engine {
                             RelayOutcome::Error {
                                 message,
                             },
+                            source,
+                            ResponseEffect::Unknown,
                         )
                         .await;
                 }
@@ -664,7 +693,9 @@ impl Engine {
                 },
             };
             audit.info.targets = crate::quick::approval_targets(parked);
-            return self.settle(session, request_id, request, audit, outcome).await;
+            return self
+                .settle_authorized(session, request_id, request, audit, outcome, source, ResponseEffect::Succeeded)
+                .await;
         }
 
         let shown: BTreeSet<&str> = held.items.iter().map(|i| i.id.as_str()).collect();
@@ -726,7 +757,7 @@ impl Engine {
                     trace.stamp(&mut audit, AuthorizationPhase::Unknown);
                 }
                 return self
-                    .settle(
+                    .settle_authorized(
                         session,
                         request_id,
                         request,
@@ -734,6 +765,8 @@ impl Engine {
                         RelayOutcome::Error {
                             message: OUTCOME_UNKNOWN.to_owned(),
                         },
+                        source,
+                        ResponseEffect::Unknown,
                     )
                     .await;
             }
@@ -744,7 +777,7 @@ impl Engine {
                 trace.stamp(&mut audit, AuthorizationPhase::Unknown);
             }
             return self
-                .settle(
+                .settle_authorized(
                     session,
                     request_id,
                     request,
@@ -752,6 +785,8 @@ impl Engine {
                     RelayOutcome::Error {
                         message: OUTCOME_UNKNOWN.to_owned(),
                     },
+                    source,
+                    ResponseEffect::Unknown,
                 )
                 .await;
         }
@@ -810,7 +845,7 @@ impl Engine {
         if let Some(trace) = trace {
             trace.stamp(&mut audit, AuthorizationPhase::Succeeded);
         }
-        self.settle(
+        self.settle_authorized(
             session,
             request_id,
             request,
@@ -820,6 +855,8 @@ impl Engine {
                     data,
                 },
             },
+            source,
+            ResponseEffect::Read,
         )
         .await
     }
@@ -864,6 +901,38 @@ impl Engine {
     }
 
     /// Records the decision, drops the parked request and answers the server.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the settled response carries its original reviewer source and independently known effect"
+    )]
+    async fn settle_authorized(
+        &self,
+        session: &Session,
+        request_id: &str,
+        request: &RelayRequest,
+        audit: AuditRecord,
+        outcome: RelayOutcome,
+        source: AuthorizationSource,
+        effect: ResponseEffect,
+    ) -> Result<(), CoreError> {
+        if request_id != request.id.0 {
+            return Err(CoreError::invalid("the response request identity changed"));
+        }
+        self.finish_authorized(
+            session,
+            request,
+            audit,
+            outcome,
+            AuthorizedResponse {
+                source,
+                effect,
+                settle_pending: true,
+            },
+        )
+        .await
+    }
+
+    /// Payment approval uses its own effect boundary; its result still needs a final disclosure guard.
     pub(crate) async fn settle(
         &self,
         session: &Session,
@@ -872,12 +941,16 @@ impl Engine {
         audit: AuditRecord,
         outcome: RelayOutcome,
     ) -> Result<(), CoreError> {
-        self.store.append_audit(&audit)?;
-        self.store.remove_pending(request_id)?;
-        self.store.mark_handled(request_id, unix_now())?;
-        self.notifier.item_resolved(request_id.to_owned());
-        let _ = request;
-        self.respond(session, request_id, outcome).await
+        self.settle_authorized(
+            session,
+            request_id,
+            request,
+            audit,
+            outcome,
+            AuthorizationSource::OwnerReview,
+            ResponseEffect::Succeeded,
+        )
+        .await
     }
 
     /// The audit entry for a refused call to another integration, listing what would have been shared.

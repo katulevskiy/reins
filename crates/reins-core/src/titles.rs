@@ -454,7 +454,11 @@ fn why_asked(call: &ConnectorCall, h: &Hook) -> String {
     let reason = if !risky {
         None
     } else if topic.starts_with("file:") || !h.files.is_empty() {
-        Some(if h.write {
+        Some(if h.command.as_deref().is_some_and(crate::command_presentation::references_signing_key) {
+            "References signing configuration or a signing key"
+        } else if h.command.is_some() {
+            "References a protected file"
+        } else if h.write {
             "Changing a protected file"
         } else {
             "Reading a secret file"
@@ -664,7 +668,12 @@ pub fn activity_request(r: &AuditRequest) -> ActivityRequest {
     ActivityRequest {
         agent: r.agent.clone(),
         cwd: r.cwd.clone(),
-        why: r.why.clone(),
+        // Refresh an old generic file-rule phrase from observed retained command source only.
+        why: if r.why == "Reading a secret file" && crate::command_presentation::references_signing_key(&r.full) {
+            "References signing configuration or a signing key".into()
+        } else {
+            r.why.clone()
+        },
         full: r.full.clone(),
         purpose: r.purpose.clone(),
         asked_at: r.asked_at,
@@ -803,6 +812,58 @@ mod tests {
                 "client_key": "k", "nonce": "n",
             }),
         )
+    }
+
+    #[test]
+    fn reported_gradle_command_is_readable_in_pending_and_rehydrated_history_without_changing_source() {
+        let command = crate::command_presentation::GRADLE_EXAMPLE.trim_end();
+        let call = desktop(
+            "ask",
+            DESKTOP,
+            &json!({
+                "question": format!("Codex wants to run: {command}"),
+                "detail": format!("Command:\n{command}\n\nIn: /project/android\nRule: *.keystore"),
+                "topic": "file:*.keystore",
+            }),
+        );
+        let pending = of(&call);
+        let p = pending.command.as_ref().unwrap();
+        assert_eq!(p.heading, "Build Android release and test APKs");
+        assert!(!format!("{p:?}").contains("sentinel-signing-password"));
+        let mut request = request(&call, 1_700_000_000);
+        assert_eq!(request.full, command);
+        assert_eq!(request.why, "References signing configuration or a signing key");
+        // Existing log entries keep their source and old wording; only the derived view is refreshed.
+        request.why = "Reading a secret file".into();
+        let mut record = AuditRecord {
+            seq: 1,
+            at: 1,
+            connection_id: "c".into(),
+            connection_label: "laptop".into(),
+            action: "write".into(),
+            outcome: "sent".into(),
+            detail: "approved".into(),
+            grant_id: None,
+            service: DESKTOP.into(),
+            account: None,
+            count: 1,
+            op: "ask".into(),
+            info: crate::store::AuditInfo {
+                label: Some(Box::new(pending)),
+                request: Some(Box::new(request.clone())),
+                ..Default::default()
+            },
+        };
+        let history = of_entry(&record).command.unwrap();
+        assert_eq!(history.heading, "Build Android release and test APKs");
+        assert_eq!(history.original, command);
+        assert_eq!(activity_request(&request).why, "References signing configuration or a signing key");
+        assert_eq!(request.why, "Reading a secret file", "stored evidence is untouched");
+        record.info.request.as_mut().unwrap().full = "./gradlew :app:assembleFullRelease …".into();
+        let partial = of_entry(&record).command.unwrap();
+        assert!(partial.actionable.contains(":app:assembleFullRelease"));
+        assert!(!partial.actionable.contains("AndroidTest"), "never fabricate the missing tail");
+        assert!(partial.notices.iter().any(|n| n.contains("unavailable")));
     }
 
     fn of(call: &ToolCall) -> RequestLabel {

@@ -85,6 +85,8 @@ class AppFlowTest {
         Timers.frozenNowMillis = 1_700_000_100_000
         Foreground.focused = false
         Foreground.autoPopup = true
+        core.resetPrimarySetup()
+        core.permissionViews.clear(); core.savedPermissionDrafts.clear(); core.delegationRecords.clear(); core.permissionFailure = null; core.permissionSaveGate = null; core.permissionSaveCalls.set(0); core.permissionScopeGates.clear(); core.permissionScopeOverride = null
         core.session = signedIn
         core.loginError = null
         core.pending = emptyList()
@@ -1585,7 +1587,8 @@ class AppFlowTest {
         val container = (context.applicationContext as ReinsApp).container
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.gmail.GmailViewModel(container).connect("Work@Gmail.com") }
         assertEquals(listOf("Work@Gmail.com"), core.addedAccounts.toList())
-        awaitTag("account:work@gmail.com")
+        awaitTag("connectedIdentity")
+        rule.onNodeWithTag("connectedIdentity").assertTextEquals("work@gmail.com")
     }
 
     // ---- other integrations -----------------------------------------------------------------------------------------
@@ -1618,7 +1621,8 @@ class AppFlowTest {
         awaitTag("tgPassword")
         rule.onNodeWithTag("tgPassword").performTextReplacement("s3cret")
         tap("submitPassword")
-        awaitTag("account:+1 555 010 0100")
+        awaitTag("connectedIdentity")
+        rule.onNodeWithTag("connectedIdentity").assertTextEquals("+1 555 010 0100")
         assertEquals(
             listOf(listOf("begin", "+1 555 010 0100"), listOf("code", "22222"), listOf("password", "s3cret")),
             core.loginCalls.toList(),
@@ -1655,7 +1659,8 @@ class AppFlowTest {
         rule.onNodeWithTag("connectSecret").assertIsNotEnabled()
         rule.onNodeWithTag("secret").performTextReplacement("ghp_secret")
         tap("connectSecret")
-        awaitTag("account:octo-cat")
+        awaitTag("connectedIdentity")
+        rule.onNodeWithTag("connectedIdentity").assertTextEquals("octo-cat")
         assertEquals(listOf("github" to "ghp_secret"), core.tokensAdded.toList())
     }
 
@@ -1667,7 +1672,8 @@ class AppFlowTest {
         awaitTag("secret")
         rule.onNodeWithTag("secret").performTextReplacement("correct horse")
         tap("connectSecret")
-        awaitTag("account:me@example.com")
+        awaitTag("connectedIdentity")
+        rule.onNodeWithTag("connectedIdentity").assertTextEquals("me@example.com")
         assertEquals(listOf("vault" to "correct horse"), core.tokensAdded.toList())
         rule.onAllNodes(hasTestTag("secret")).assertCountEquals(0)
     }
@@ -1696,7 +1702,8 @@ class AppFlowTest {
         kotlinx.coroutines.runBlocking { dev.reins.android.ui.services.ServiceViewModel(container, "device_contacts").addDevice() }
         awaitCore { core.serviceAdded.isNotEmpty() }
         assertEquals(listOf("device_contacts" to ""), core.serviceAdded.toList())
-        awaitTag("account:this phone")
+        awaitTag("connectedIdentity")
+        rule.onNodeWithTag("connectedIdentity").assertTextEquals("this phone")
         rule.onAllNodes(hasTestTag("allowDevice")).assertCountEquals(0)
     }
 

@@ -28,11 +28,22 @@ class AskSentenceTest {
         val sentence = askSentence(label)
         assertEquals("Run Gradle", sentence.text)
         assertEquals("./gradlew test", sentence.details)
-        assertEquals("Approved running Gradle", askSentence(label, tense = Tense.Done, who = "Claude Code").text)
+        assertEquals("Approved: Run Gradle", askSentence(label, tense = Tense.Done, who = "Claude Code").text)
         assertFalse(sentence.toString().contains("secret"))
         val fallback = askSentence(label.copy(command = presentation.copy(heading = "Review a shell command", actionable = "")))
         assertNull(fallback.details)
         assertFalse(fallback.toString().contains("secret"))
+    }
+
+    @Test
+    fun commandApprovalPreservesBuildAndUnknownFutureOperationHeadings() {
+        for (heading in listOf("Build Android release and test APKs", "Synchronize custom artifacts", "Review a shell command")) {
+            val command = dev.reins.core.CommandPresentation(heading, "custom-tool build && sudo rm -rf /tmp/old > /tmp/build.log 2>&1", emptyList(), emptyList())
+            val sentence = askSentence(TestData.label("terminal", "run", "Run", "original", code = true).copy(command = command), tense = Tense.Done)
+            assertEquals("Approved: $heading", sentence.text)
+            assertEquals(command.actionable, sentence.details)
+            assertFalse(sentence.text.startsWith("Ran") || sentence.text.startsWith("Built"))
+        }
     }
 
     private val command = "rm -rf jarx && npm run build && npm test"

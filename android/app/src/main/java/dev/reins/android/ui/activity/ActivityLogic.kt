@@ -270,7 +270,7 @@ fun waitCards(pending: List<PendingItem>): List<WaitCard> {
 private fun done(outcome: String) = outcome == "released" || outcome == "sent" || outcome == "granted"
 
 /** How an entry ended, as the marker at the end of its row. */
-enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Bypass, Lockdown, Failed, Started, Unknown, Withheld }
+enum class Outcome { Approved, Denied, Auto, AutoDenied, Overnight, OvernightDenied, Grant, Permission, Bypass, Lockdown, Failed, Started, Unknown, Withheld }
 
 /** Outcomes of an entry that was carried out (as [dev.reins.android.ui.common.entryTense] reads them). */
 private val DONE = setOf("released", "sent", "granted")
@@ -288,7 +288,8 @@ fun outcomeOf(entry: ActivityEntry): Outcome = when {
         else -> Outcome.Bypass
     }
     entry.decidedBy == "lockdown" -> if (entry.outcome in DONE) Outcome.Approved else Outcome.Lockdown
-    entry.decidedBy.isNotEmpty() -> if (entry.outcome == "denied") Outcome.AutoDenied else Outcome.Auto
+    permissionActor(entry.decidedBy) != null -> if (entry.outcome == "denied") Outcome.Denied else Outcome.Permission
+    entry.decidedBy == "autopilot" -> if (entry.outcome == "denied") Outcome.AutoDenied else Outcome.Auto
     entry.outcome == "error" -> Outcome.Failed
     entry.outcome == "denied" -> Outcome.Denied
     entry.grantId != null -> Outcome.Grant
@@ -298,7 +299,7 @@ fun outcomeOf(entry: ActivityEntry): Outcome = when {
 /** The history's filters, shown as chips once the filter button is tapped. */
 enum class HistoryFilter(val label: String) {
     All("All"),
-    Autopilot("Autopilot"),
+    Autopilot("Automatic"),
     Denied("Denied"),
     Grants("Grants");
 
@@ -339,6 +340,13 @@ fun rowTime(epochSeconds: Long, nowSeconds: Long, zone: TimeZone = TimeZone.getD
     }
 }
 
+/** Canonical core actor tags: a saved permission is distinct from learned Autopilot confidence. */
+fun permissionActor(decidedBy: String): String? = when (decidedBy) {
+    "account_permission" -> "account permission"
+    "temporary_permission" -> "temporary permission"
+    else -> null
+}
+
 /** The AI's pick in words, for the entry's outcome pill: "Allowed by Autopilot · 96%". */
 fun outcomeLine(entry: ActivityEntry): String {
     when (entry.outcome) {
@@ -350,6 +358,7 @@ fun outcomeLine(entry: ActivityEntry): String {
     val denied = entry.outcome == "denied"
     // One that was allowed but not carried out never reads as allowed.
     if (entry.outcome == "error") return "Failed"
+    permissionActor(entry.decidedBy)?.let { return if (denied) "Denied · $it" else "Allowed by $it" }
     return when (entry.decidedBy) {
         "autopilot" -> {
             val p = note?.let { if (denied) it.pDeny else it.pApprove }?.takeIf { it > 0f }
@@ -359,6 +368,7 @@ fun outcomeLine(entry: ActivityEntry): String {
         "bypass" -> if (denied) "Denied" else "Allowed during a bypass"
         "lockdown" -> if (entry.outcome in DONE) "Allowed" else "Denied by Lockdown"
         else -> when {
+            entry.decidedBy.isNotEmpty() -> if (denied) "Denied" else if (entry.outcome == "granted") "Access given" else "Allowed"
             entry.outcome == "error" -> "Failed"
             denied -> "Denied by you"
             entry.grantId != null -> "Covered by a grant"

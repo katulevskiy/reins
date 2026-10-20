@@ -245,6 +245,8 @@ struct RouteView: View {
         case let .tryIt(id): TryItScreen(profileId: id)
         case let .connection(id): ConnectionDetailScreen(connectionId: id)
         case .gmail: GmailScreen()
+        case .permissions: PermissionsHomeScreen()
+        case let .accountPermissions(service, account, temporary): AccountPermissionsScreen(service: service, account: account, temporary: temporary)
         case let .service(id): ServiceScreen(serviceId: id)
         case .mcpAdd: McpAddScreen()
         case let .mcpServer(id): McpServerScreen(serverId: id)

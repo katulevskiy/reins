@@ -118,7 +118,7 @@ class ApprovalWordsTest {
         assertTrue(red.destructive && red.help.contains("asked every time"))
         val plain = TestData.askView()
         val unread = dangerTag(plain.copy(ask = plain.ask!!.copy(uncertain = true)))!!
-        assertEquals("Couldn't read this" to "askUncertain", unread.label to unread.tag)
+        assertEquals("Unverified request details" to "askUncertain", unread.label to unread.tag)
         assertFalse(unread.destructive)
         val own = AskRuleView("Your rule", "make deploy", "make deploy", null, false, true)
         assertTrue(ruleTag(own).help.contains("Your computer says so"))

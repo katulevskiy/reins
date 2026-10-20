@@ -17,6 +17,18 @@ waiting also suppresses provider errors, which can contain content. MCP tools ch
 and token renewal, before every direct or proxy attempt, before large output handoff and before releasing the
 result. A new deny or unsupported reviewer requirement always stops those later boundaries.
 
+Response delivery, connector download handoffs, MCP result uploads and heavy MCP proxy calls also check **after
+each Reins session-token acquisition or refresh**, immediately before that HTTP attempt. A 401 retry does not
+inherit an earlier policy check. Final responses retain the original automatic or owner-review source; a new
+review requirement cannot be satisfied by an automatic response retry. The guard is an explicit local callback,
+not a task-local context or a deserialized audit trace.
+
+If policy changes during response authentication, the original result is discarded. A known successful provider
+action is recorded as `succeeded_withheld` and gets a fixed success/do-not-repeat message. A read with a possible
+partial file handoff, or an uncertain effect, settles as `unknown`. Original pending approvals are removed and
+their durable invocation barriers remain in force. Transport failures retain their own classification and never
+turn into permission to repeat an external action.
+
 The final checks do not roll back a provider action already in flight. A connector that returns success after a
 new deny is recorded as successful, its result is withheld, and the original request is settled with a policy
 error. This avoids pretending that withholding a result means the action did not happen.

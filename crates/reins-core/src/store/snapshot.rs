@@ -256,6 +256,7 @@ pub(super) fn import_snapshot(conn: &mut Connection, snapshot: Snapshot, portabl
         return Err(CoreError::storage("unsupported account data version").into());
     }
     let tx = conn.transaction()?;
+    let previous_permissions = super::permissions::before_import(&tx)?;
     // Rows replaced here were not deleted by anyone: no tombstones for them.
     let previous_authorization: Option<String> = tx
         .query_row("SELECT value FROM meta WHERE key=?1", [super::authorization::STORE_KEY], |r| r.get(0))
@@ -336,6 +337,7 @@ pub(super) fn import_snapshot(conn: &mut Connection, snapshot: Snapshot, portabl
             tx.execute("DELETE FROM autopilot_suggestions", [])?;
         }
     }
+    super::permissions::after_import(&tx, previous_permissions)?;
     tx.execute_batch(&super::tombstone_triggers())?;
     tx.commit()?;
     Ok(())

@@ -425,10 +425,29 @@ fn is_repeat(entry: &AuditRecord, same: &Sameness) -> bool {
 }
 
 impl Engine {
+    pub(crate) fn pending_approval_view(&self, parked: &ParkedRequest) -> ApprovalView {
+        let mut view = crate::views::approval_view(parked);
+        // A failed policy read can never offer Remember. This only narrows presentation; execution checks policy
+        // again and refuses unavailable authority. Account discovery has its own admission grants.
+        if self.legacy_mail_grants_unavailable(&parked.request).unwrap_or(true) {
+            view.no_standing = true;
+            view.quick = None;
+        }
+        view
+    }
+
+    pub(crate) fn pending_request_item(&self, parked: &ParkedRequest) -> crate::types::PendingItem {
+        let mut item = crate::views::request_item(parked);
+        if self.legacy_mail_grants_unavailable(&parked.request).unwrap_or(true) {
+            item.quick = false;
+        }
+        item
+    }
+
     /// The approval sheet's view: the request as parked, with how often the user approved the same thing lately.
     pub fn approval_view(&self, request_id: &str) -> Result<ApprovalView, CoreError> {
         let (_, parked) = self.parked(request_id)?;
-        let mut view = crate::views::approval_view(&parked);
+        let mut view = self.pending_approval_view(&parked);
         if view.quick.is_some() {
             let repeats = self.repeats(&parked).unwrap_or_else(|e| {
                 log::warn!("could not count earlier approvals: {e}");
@@ -450,7 +469,7 @@ impl Engine {
     /// Approves a request as the sheet would untouched (see the module docs), from the notification or "Approve all".
     /// What is asked every time is refused: it must be opened.
     pub async fn approve_quick(&self, request_id: &str) -> Result<(), CoreError> {
-        let view = crate::views::approval_view(&self.parked(request_id)?.1);
+        let view = self.approval_view(request_id)?;
         if let Some(why) = quick_floor(&view) {
             return Err(CoreError::invalid(format!("Open this request to decide: {why}.")));
         }

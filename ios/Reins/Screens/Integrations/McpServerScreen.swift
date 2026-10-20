@@ -52,6 +52,9 @@ struct McpServerScreen: View {
                 }
             }
 
+            Section("Account permissions") {
+                Text("Scoped account permissions are not available for MCP servers yet. Its existing approval and tool settings still apply.").font(.footnote).foregroundStyle(Palette.ink2)
+            }
             Section {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 12) {

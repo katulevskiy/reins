@@ -41,7 +41,7 @@ pub(crate) struct NarrowingAuthorizationSnapshot {
 }
 
 impl Engine {
-    fn policy_owner(&self) -> Result<String, CoreError> {
+    pub(crate) fn policy_owner(&self) -> Result<String, CoreError> {
         if let Some(owner) = self.store.bound_owner() {
             return Ok(owner.user_id);
         }
@@ -53,6 +53,7 @@ impl Engine {
     }
 
     pub fn authorization_policies(&self) -> Result<AuthorizationState, CoreError> {
+        self.require_authorization_history_ready()?;
         let owner = self.policy_owner()?;
         let state = self.store.authorization_state()?.unwrap_or_else(|| AuthorizationState::empty(&owner));
         if state.owner != owner {
@@ -78,6 +79,7 @@ impl Engine {
         {
             return Err(CoreError::invalid("the owner did not confirm the authorization policy"));
         }
+        let _fence = self.policy_mutation_fence().await?;
         self.require_decider_fresh(&session).await?;
         let mut state = self.authorization_policies()?;
         if state.conflicted {
@@ -128,6 +130,7 @@ impl Engine {
         {
             return Err(CoreError::invalid("the owner did not confirm the policy resolution"));
         }
+        let _fence = self.policy_mutation_fence().await?;
         self.require_decider_fresh(&session).await?;
         state.resolved_from = Some(crate::store::authorization::conflict_digest(&state));
         state.policies = policies;
@@ -147,6 +150,7 @@ impl Engine {
     /// Complete authenticated state. Positive adapters must also refuse `overflow_digest`, and must independently
     /// prove account admission; owner-resolved restrictive overflow is not recovered positive authority.
     pub(crate) fn authenticated_authorization_state(&self) -> Result<Option<AuthorizationState>, CoreError> {
+        self.require_authorization_history_ready()?;
         let Some(state) = self.store.authorization_state()? else {
             return Ok(None);
         };
@@ -207,6 +211,25 @@ impl Engine {
                 },
             });
         }
+        if let ToolCall::GmailRead {
+            message_ids,
+        } = &request.call
+        {
+            facts.push(AttributeFact {
+                key: AttributeKey::ResourceIds,
+                fact: Fact::Known {
+                    value: AttributeValue::StringSet(
+                        message_ids.iter().cloned().collect::<std::collections::BTreeSet<_>>().into_iter().collect(),
+                    ),
+                    evidence: Evidence {
+                        id: digest.clone(),
+                        source: EvidenceSource::LocalCore,
+                        observed_at: now,
+                        valid_until: now.saturating_add(60),
+                    },
+                },
+            });
+        }
         let verified_attribute_keys = facts.iter().map(|fact| fact.key).collect();
         Ok(NormalizedAuthorizationAction {
             action: ActionContext {
@@ -241,6 +264,10 @@ impl Engine {
         &self,
         request: &RelayRequest,
     ) -> Result<Option<NarrowingAuthorizationSnapshot>, CoreError> {
+        self.require_authorization_history_ready()?;
+        if self.store.permission_connection_revoked(&request.connection_id.0)? {
+            return Err(CoreError::invalid("this agent connection was revoked; reconnect it before making requests"));
+        }
         let Some(state) = self.authenticated_authorization_state()? else {
             return Ok(None);
         };
@@ -280,7 +307,15 @@ impl Engine {
             }
             accounts.push(String::new());
         }
-        let ids: Vec<String> = state.policies.iter().map(|p| p.id.clone()).collect();
+        // The common gate only narrows an independently established path. Positive records are evaluated
+        // separately with actual admission and transactional usage; a missing budget here cannot mint authority.
+        let restrictions: Vec<_> = state
+            .policies
+            .iter()
+            .filter(|policy| matches!(policy.effect, PolicyEffect::Deny | PolicyEffect::RequireReview { .. }))
+            .cloned()
+            .collect();
+        let ids: Vec<String> = restrictions.iter().map(|p| p.id.clone()).collect();
         let mut result = None;
         for account in accounts {
             let now = unix_now();
@@ -305,11 +340,15 @@ impl Engine {
             };
             let decision = authorization::evaluate(&EvaluationInput {
                 action,
-                policies: &state.policies,
+                policies: &restrictions,
                 authority: &authority,
                 now,
                 usage: &[],
-                baseline: BaselineDecision::Permit,
+                baseline: if crate::store::permissions::is_managed(&state, action) {
+                    BaselineDecision::Review
+                } else {
+                    BaselineDecision::Permit
+                },
             });
             if result.as_ref().is_none_or(|(old, _): &(AuthorizationDecision, NormalizedAuthorizationAction)| {
                 rank(decision.outcome) > rank(old.outcome)
@@ -357,7 +396,9 @@ impl Engine {
 /// Supported final adapters. This list deliberately excludes specialized purchase, account enumeration, standalone
 /// uploads and permission creation until each has an independently enforced review/disclosure boundary.
 fn review_adapter_operation(op: &OperationId) -> bool {
-    (op.service == "gmail" && op.capability == "write" && op.action == "send")
+    (op.service == "gmail"
+        && ((op.capability == "write" && op.action == "send")
+            || (op.capability == "read" && matches!(op.action.as_str(), "search" | "read"))))
         || (op.service.starts_with("mcp_") && op.service.len() > 4 && op.capability == "tool" && op.action == "call")
         || reins_proto::connector::specs().iter().any(|spec| {
             spec.service != reins_proto::connector::PAYMENTS
@@ -388,7 +429,6 @@ pub(crate) fn verify_decision(
         DecisionOutcome::Review
             if review_adapter_request(call)
                 && source == AuthorizationSource::OwnerReview
-                && !decision.required_reviews.is_empty()
                 && decision.required_reviews.iter().all(|r| {
                     r.role_id == "owner" && r.quorum == 1 && !r.exclude_requester && r.distinct_humans_group.is_none()
                 }) =>

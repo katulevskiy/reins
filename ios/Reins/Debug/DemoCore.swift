@@ -86,6 +86,12 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         var activity: [ActivityEntry] = []
         var grants: [GrantView] = []
         var accounts: [AccountView] = []
+        var setupRole: PhoneRole = .legacy
+        var setupRoster: RosterSummary?
+        var setupRequiresProof = false
+        var setupCreated = 0
+        var permissionViews: [String: AccountPermissionsView] = [:]
+        var delegationRecords: [DelegationView] = []
         var accountStatuses: [String: GmailStatus] = [:]
         var emails: [String: EmailContent] = [:]
         var mcp: [McpServerView] = []
@@ -453,9 +459,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
 
     func joinCancel() async throws { locked { $0.joinPolls = nil } }
 
-    // Phone roles: the demo account has none (legacy), so the role calls report that and the changes refuse.
-    func phoneRole() async throws -> PhoneRole { .legacy }
-    func rosterSummary(refresh: Bool) async throws -> RosterSummary? { nil }
+    // Synthetic phone-role setup for native previews and tests; no real authority or proof is persisted.
+    func phoneRole() async throws -> PhoneRole { locked { $0.setupRole } }
+    func rosterSummary(refresh: Bool) async throws -> RosterSummary? { locked { $0.setupRoster } }
+    func configurePrimarySetup(role: PhoneRole, requiresProof: Bool = false) {
+        locked { state in
+            state.setupRole = role; state.setupRequiresProof = requiresProof
+            state.setupRoster = role == .legacy ? nil : RosterSummary(epoch: 1, role: role, members: [RosterMemberView(deviceId: "primary", name: "Primary phone", primary: true, thisPhone: role == .primary)], ownerFingerprint: "fixture-owner", warnings: [])
+        }
+    }
+    var primarySetupCreated: Int { locked { $0.setupCreated } }
     func liveSync(waitSecs: UInt32) async throws -> LiveSyncState { Self.legacyLive }
     func liveSyncState() async throws -> LiveSyncState { Self.legacyLive }
     func proposalCreate(kind: String, title: String, rowsJson: String) async throws -> String {
@@ -472,6 +485,22 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
     )
     func rosterCreate(deviceName: String, codeOrPassword: String?) async throws -> RosterSummary {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
+    }
+    func rosterCreateAuthorized(deviceName: String, codeOrPassword: String?, owner: OwnerCheck) async throws -> RosterSummary {
+        try await Self.confirmOwner(owner, "Make this the approval phone for your whole Reins account")
+        return try locked { state in
+            guard state.setupRole == .legacy, state.setupRoster == nil else { throw CoreError.Invalid(reason: "This account has phone roles already.") }
+            if let proof = codeOrPassword, proof.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw CoreError.Invalid(reason: "Enter the recovery code or master password.") }
+            if state.setupRequiresProof, codeOrPassword == nil { throw CoreError.Invalid(reason: "Enter the recovery code or master password.") }
+            let result = RosterSummary(epoch: 1, role: .primary, members: [RosterMemberView(deviceId: "this-phone", name: deviceName, primary: true, thisPhone: true)], ownerFingerprint: "fixture-owner", warnings: [])
+            state.setupRole = .primary; state.setupRoster = result; state.setupCreated += 1
+            for (key, value) in state.permissionViews where value.service == "gmail" && !value.conflicted && value.usageVerified {
+                var view = value; view.availablePresets = [.reviewEveryRequest, .readAssist, .custom]
+                view.capabilities = view.capabilities.map { cap in var next = cap; next.supportedModes = [.ask, .auto, .block]; return next }
+                state.permissionViews[key] = view
+            }
+            return result
+        }
     }
     func enrollBegin(deviceName: String) async throws -> EnrollStart {
         throw CoreError.Invalid(reason: "Phone roles are not in the demo.")
@@ -1609,6 +1638,58 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         if locked({ $0.overnightWhenRisky }) == risky { return }
         try await Self.confirmOwner(owner, risky == .wait ? "Overnight: wait for you when something is too risky" : "Overnight: deny what is too risky")
         locked { $0.overnightWhenRisky = risky }
+    }
+
+
+    func accountPermissions(service: String, account: String) async throws -> AccountPermissionsView {
+        locked { $0.permissionViews["\(service)/\(account)"] ?? DemoPermissions.view(service, account) }
+    }
+    func accountPermissionDraft(service: String, account: String, preset: AccountPermissionPreset) async throws -> AccountPermissionsDraft {
+        DemoPermissions.draft(try await accountPermissions(service: service, account: account), preset)
+    }
+    func permissionScopeOptions(service: String, account: String, capability: PermissionCapability, query: String, limit: UInt32) async throws -> PermissionScopeOptions {
+        let recipient = capability == .mailSend
+        let kind: PermissionScopeKind = recipient ? .selectedRecipients : .selectedResources
+        let value = query.lowercased()
+        return PermissionScopeOptions(kinds: recipient ? [kind] : [.allInAccount, kind], options: query.contains("@") ? [PermissionScopeOption(id: "recipient:" + value, label: value, detail: "Exact address", service: service, account: account, kind: kind)] : [], allowsAddressEntry: recipient, unsupportedReason: nil)
+    }
+    func previewAccountPermissions(draft: AccountPermissionsDraft) async throws -> PermissionPreview {
+        guard try await accountPermissions(service: draft.service, account: draft.account).revision == draft.expectedRevision else { throw CoreError.Invalid(reason: "Permissions changed. Reload current settings.") }
+        return DemoPermissions.preview(draft.expectedRevision)
+    }
+    func saveAccountPermissions(draft: AccountPermissionsDraft, owner: OwnerCheck) async throws -> AccountPermissionsView {
+        try await Self.confirmOwner(owner, "Save permissions for \(draft.account)")
+        _ = try await previewAccountPermissions(draft: draft)
+        var result = try await accountPermissions(service: draft.service, account: draft.account)
+        result.revision &+= 1
+        result.capabilities = result.capabilities.map { capability in
+            var next = capability; next.configuredMode = draft.rules.first(where: { $0.capability == capability.capability })?.mode; return next
+        }
+        result.expiresAt = draft.expiresAt; result.remainingUses = draft.maxUses
+        locked { $0.permissionViews["\(draft.service)/\(draft.account)"] = result }
+        return result
+    }
+    func delegations() async throws -> [DelegationView] { locked { $0.delegationRecords } }
+    func delegationDraft(service: String, account: String) async throws -> DelegationDraft {
+        let base = try await accountPermissionDraft(service: service, account: account, preset: .readAssist)
+        return DelegationDraft(service: service, account: account, expectedRevision: base.expectedRevision, agentIds: base.agentIds, grantAccountAccess: false, rules: base.rules.filter { $0.mode == .auto }, expiresAt: Int64(Date().timeIntervalSince1970) + 3600, maxUses: 20)
+    }
+    func previewDelegation(draft: DelegationDraft) async throws -> PermissionPreview { DemoPermissions.preview(draft.expectedRevision) }
+    func issueDelegation(draft: DelegationDraft, owner: OwnerCheck) async throws -> DelegationView {
+        try await Self.confirmOwner(owner, "Create temporary permission for \(draft.account)")
+        return locked { state in
+            let record = DelegationView(id: "temporary-\(state.delegationRecords.count)", revision: draft.expectedRevision + 1, title: "Temporary account permission", service: draft.service, account: draft.account, state: .active, expiresAt: draft.expiresAt, agentIds: draft.agentIds, rules: draft.rules, used: 0, usageVerified: true, unresolved: 0, maxUses: draft.maxUses, scopeSummary: "Selected agents only", effectiveReason: "Explicit temporary permission", restrictions: [])
+            state.delegationRecords.append(record); return record
+        }
+    }
+    func changeDelegation(id: String, expectedRevision: UInt64, change: DelegationChange, owner: OwnerCheck) async throws -> DelegationView {
+        try await Self.confirmOwner(owner, "Change temporary permission")
+        return try locked { state in
+            guard let index = state.delegationRecords.firstIndex(where: { $0.id == id }), state.delegationRecords[index].revision == expectedRevision else { throw CoreError.Invalid(reason: "Permissions changed. Reload current settings.") }
+            state.delegationRecords[index].revision &+= 1
+            state.delegationRecords[index].state = change == .pause ? .paused : change == .resume ? .active : .revoked
+            return state.delegationRecords[index]
+        }
     }
 
     /// Refuses unless the owner confirmed now (a cancel or an error refuses too).
