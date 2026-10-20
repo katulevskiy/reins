@@ -27,6 +27,7 @@ final class AccountPermissionsModel {
     private var optionsRevision: UInt64 = 0
     private var active = true
     private var current: Bool { active && app.accountEpoch == epoch }
+    var currentForSetup: Bool { current }
     func deactivate() { active = false; optionsRevision &+= 1 }
 
     init(app: AppModel, service: String, account: String, temporary: Bool = false) {

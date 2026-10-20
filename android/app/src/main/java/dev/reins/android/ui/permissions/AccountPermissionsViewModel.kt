@@ -55,6 +55,7 @@ class AccountPermissionsViewModel(
     init { reload() }
 
     private fun current() = visible && container.state.isCurrent(epoch)
+    fun primaryPhoneSetup() = PrimaryPhoneSetupModel(container, viewModelScope, ::current)
     fun activate() {
         if (!visible) { activation++; visible = true; _ui.value = AccountPermissionsUi() }
     }

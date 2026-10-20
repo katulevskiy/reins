@@ -107,6 +107,7 @@ fun AccountPermissionsScreen(
             }
         }
         val view = state.account
+        if (view?.service == "gmail" && view.capabilities.none { PermissionMode.AUTO in it.supportedModes }) PrimaryPhoneSetupSection(model, authenticator)
         if (view != null && !model.canEdit) Group(header = "Current permissions") {
             Column(Modifier.padding(16.dp).testTag("permissionsReadOnly"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 RText("Permission changes are not available for this account. Existing permissions and approval settings remain in effect.", RType.sans(15f), c.ink)

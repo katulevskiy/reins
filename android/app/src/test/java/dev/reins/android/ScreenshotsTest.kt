@@ -68,6 +68,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         Timers.frozenNowMillis = now * 1000
         Foreground.focused = false
         Foreground.autoPopup = false
+        core.resetPrimarySetup()
         core.permissionViews.clear(); core.savedPermissionDrafts.clear(); core.delegationRecords.clear(); core.permissionFailure = null; core.permissionSaveGate = null; core.permissionSaveCalls.set(0); core.permissionScopeGates.clear(); core.permissionScopeOverride = null
         core.session = SessionInfo("https://app.reins2fa.com", "me@example.com")
         core.pending = emptyList()
@@ -262,6 +263,36 @@ abstract class ScreenshotsBase(private val suffix: String) {
         await("delegation:temporary-0")
         rule.onNodeWithTag("delegation:temporary-0").performScrollTo()
         shoot("permissions-temporary")
+    }
+
+    private fun openPrimaryPhoneSetup() {
+        Timers.frozenNowMillis = 1_800_014_400_000L
+        core.accounts = listOf(dev.reins.core.AccountView("gmail", "me@gmail.com", now))
+        core.permissionViews["gmail/me@gmail.com"] = PermissionFixtures.view("gmail", "me@gmail.com").let { view ->
+            view.copy(availablePresets = listOf(dev.reins.core.AccountPermissionPreset.REVIEW_EVERY_REQUEST, dev.reins.core.AccountPermissionPreset.CUSTOM),
+                capabilities = view.capabilities.map { it.copy(supportedModes = listOf(dev.reins.core.PermissionMode.ASK, dev.reins.core.PermissionMode.BLOCK)) })
+        }
+        launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        await("primarySetupOpen")
+    }
+
+    @Test
+    fun primaryPhoneSetup() {
+        openPrimaryPhoneSetup(); shoot("permissions-primary-setup-entry")
+        tap("primarySetupOpen"); await("primarySetupDialog"); shoot("permissions-primary-setup", dialogs = true)
+    }
+
+    @Suppress("DEPRECATION")
+    @Test
+    fun primaryPhoneSetupLargeText() {
+        val resources = context.resources
+        val previous = android.content.res.Configuration(resources.configuration)
+        resources.updateConfiguration(android.content.res.Configuration(previous).apply { fontScale = 1.6f }, resources.displayMetrics)
+        try {
+            openPrimaryPhoneSetup(); tap("primarySetupOpen"); await("primarySetupDialog")
+            rule.onNodeWithTag("primarySetupConfirm").performScrollTo()
+            shoot("permissions-primary-setup-large-text", dialogs = true)
+        } finally { resources.updateConfiguration(previous, resources.displayMetrics) }
     }
 
     @Test

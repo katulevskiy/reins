@@ -85,6 +85,7 @@ class AppFlowTest {
         Timers.frozenNowMillis = 1_700_000_100_000
         Foreground.focused = false
         Foreground.autoPopup = true
+        core.resetPrimarySetup()
         core.permissionViews.clear(); core.savedPermissionDrafts.clear(); core.delegationRecords.clear(); core.permissionFailure = null; core.permissionSaveGate = null; core.permissionSaveCalls.set(0); core.permissionScopeGates.clear(); core.permissionScopeOverride = null
         core.session = signedIn
         core.loginError = null

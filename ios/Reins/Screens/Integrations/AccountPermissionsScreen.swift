@@ -30,6 +30,7 @@ struct AccountPermissionsScreen: View {
         }
         .pageBackground()
         .task(id: "\(service)/\(account)/\(temporary)/\(app.accountEpoch)") {
+            editor?.deactivate()
             let model = AccountPermissionsModel(app: app, service: service, account: account, temporary: temporary)
             editor = model
             await model.reload()
@@ -77,6 +78,9 @@ struct AccountPermissionsScreen: View {
                 }
             }
             .listRowBackground(Color.clear)
+            if let view = editor.view, view.service == "gmail", !view.capabilities.contains(where: { $0.supportedModes.contains(.auto) }) {
+                PrimaryPhoneSetupSection(editor: editor)
+            }
             if let view = editor.view, !editor.canEdit {
                 Section("Current permissions") {
                     Text("Permission changes are not available for this account. Existing permissions and approval settings remain in effect.").accessibilityIdentifier("permissionsReadOnly")
