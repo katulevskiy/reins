@@ -24,7 +24,27 @@ final class SoundsScreenUITests: XCTestCase {
 
     /// Taps the switch itself (the row's trailing edge): a tap in the middle of a SwiftUI toggle row lands on its label.
     private func flip(_ id: String) {
-        toggle(id).coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        var point: CGPoint?
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            // SwiftUI can replace a switch's AX node after scrolling. Resolve each attempt afresh;
+            // an invalid element's infinite frame must never reach XCTest's touch synthesizer.
+            for target in self.app.switches.matching(identifier: id).allElementsBoundByIndex {
+                let frame = target.frame
+                guard !frame.isNull, !frame.isInfinite, frame.width > 1, frame.height > 1,
+                      frame.minX.isFinite, frame.minY.isFinite, frame.maxX.isFinite, frame.maxY.isFinite else { continue }
+                let candidate = CGPoint(x: frame.minX + frame.width * 0.93, y: frame.midY)
+                if self.app.frame.contains(candidate), target.isHittable {
+                    point = candidate
+                    return true
+                }
+            }
+            return false
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 8), .completed, "\(id) did not become rendered and hittable")
+        guard let point else { return }
+        // Use the validated frame from the successful query; element-bound coordinates re-query a potentially
+        // retired node while synthesizing the event. The target remains the switch's trailing edge.
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x, dy: point.y)).tap()
     }
 
     /// The volume reads a whole tenth, one step from `percent` at most: `adjust(toNormalizedSliderPosition:)` drags to

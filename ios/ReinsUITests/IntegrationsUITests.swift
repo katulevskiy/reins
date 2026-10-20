@@ -94,6 +94,10 @@ final class IntegrationsUITests: XCTestCase {
         // Discard the preview, then leave setup without saving or requesting owner authentication.
         app.navigationBars.buttons["Back"].firstMatch.tap()
         reveal(element("connectionDone")).tap()
+        XCTAssertTrue(element("integrationConnected").waitForNonExistence(timeout: 8), "Later exits account setup")
+        // Done/Later returns to Connections. Reopen Gmail to verify the account remains connected;
+        // Add another account is the distinct action that deliberately stays on its account list.
+        reveal(app.buttons["service:gmail"].firstMatch).tap()
         _ = waitFor("account:new.account@gmail.com")
         XCTAssertFalse(element("permissionsSaved").exists)
     }
