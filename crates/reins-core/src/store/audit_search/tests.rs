@@ -178,6 +178,29 @@ fn each_kind_of_field_is_found_with_where_it_matched() {
 }
 
 #[test]
+fn verified_permission_actors_share_the_automatic_filter_without_becoming_human_or_learned_decisions() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let mut automatic = vec![];
+    for actor in ["autopilot", "overnight", "account_permission", "temporary_permission", "future_automatic"] {
+        let mut row = push(300);
+        row.info.decided_by = actor.into();
+        automatic.push(store.append_audit(&row).unwrap());
+        assert_eq!(decider_of(actor), ActivityDecider::Autopilot, "ABI-retained Automatic filter bucket");
+    }
+    let owner = store.append_audit(&push(400)).unwrap();
+    let mut query = ActivityQuery {
+        deciders: vec![ActivityDecider::You],
+        ..ActivityQuery::default()
+    };
+    assert_eq!(ids(&store, &query), [owner]);
+    query.deciders = vec![ActivityDecider::Autopilot];
+    let found = ids(&store, &query);
+    assert_eq!(found.len(), automatic.len());
+    assert!(automatic.iter().all(|id| found.contains(id)));
+}
+
+#[test]
 fn filters_combine_with_each_other_and_with_words() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(dir.path());

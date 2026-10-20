@@ -278,6 +278,16 @@ impl Engine {
         trace: &AuthorizationTrace,
         phase: AuthorizationPhase,
     ) -> Result<(), CoreError> {
+        self.store.append_audit(&self.authorization_attempt_audit(request, trace, phase))?;
+        Ok(())
+    }
+
+    pub(crate) fn authorization_attempt_audit(
+        &self,
+        request: &RelayRequest,
+        trace: &AuthorizationTrace,
+        phase: AuthorizationPhase,
+    ) -> AuditRecord {
         let (outcome, detail) = match phase {
             AuthorizationPhase::Started => (
                 "started",
@@ -303,7 +313,6 @@ impl Engine {
             _ => {}
         }
         trace.stamp(&mut audit, phase);
-        self.store.append_audit(&audit)?;
-        Ok(())
+        audit
     }
 }
