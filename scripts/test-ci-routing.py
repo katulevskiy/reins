@@ -124,7 +124,10 @@ assert "41 5 * * 1" not in ios_workflow
 assert "github.event_name != 'push'" not in ios_workflow
 # A pull request must not take every macOS runner. The nightly still may.
 assert "max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}" in ios_workflow
-assert "cancel-in-progress: false" in ios_workflow
+# Each PR owns its pending slot; only a newer run of that same PR may cancel it.
+# Main/nightly/manual runs retain their event/commit groups without cancellation.
+assert "group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.sha) }}" in ios_workflow
+assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in ios_workflow
 # A failed shard can be retried for as long as its result bundle is retained.
 for artifact in ("ios-simulator-core", "ios-test-products"):
     block = ios_workflow.split(f"          name: {artifact}\n", 1)[1].split("\n\n", 1)[0]

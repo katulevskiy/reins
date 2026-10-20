@@ -491,6 +491,15 @@ final class ActivityFlowTests: XCTestCase {
         let card = element(app, "pending:req1")
         expectToAppear(pill)
         expectToAppear(card)
+        // Just after midnight every seeded history entry can belong to yesterday, whose rows are folded.
+        // Expand the waiting cards so this is a scrollable page even then; the header/chip stays in place.
+        let toggle = element(app, "stackToggle")
+        expectToAppear(toggle)
+        toggle.tap()
+        let laterCard = element(app, "pending:req3")
+        expectToAppear(laterCard)
+        XCTAssertGreaterThan(laterCard.frame.maxY, element(app, "activityList").frame.maxY + 60,
+                             "there is content beyond the viewport for the full drag")
         let before = card.frame.minY
         drag(pill, dy: -60, speed: 2000)
         XCTAssertLessThan(card.frame.minY, before - 30, "the list scrolled")
