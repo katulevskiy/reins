@@ -159,11 +159,13 @@ final class GrantsSettingsUITests: XCTestCase {
         XCTAssertFalse(element("ended:g3").exists)
         XCTAssertTrue(element("expiredHeader").exists)
         tap("expiredHeader")
-        wait("expiredList")
-        wait("ended:g3")
-        wait("ended:g6")
-        wait("ended:g7")
-        tap("ended:g3")
+        let ended = wait("expiredList")
+        // Each row's opener is a Button. Scope queries to the visible ended list;
+        // a global Any first-match query can traverse the hidden navigation tree.
+        for id in ["g3", "g6", "g7"] {
+            XCTAssertTrue(ended.buttons["ended:\(id)"].waitForExistence(timeout: 5), "ended:\(id) did not appear")
+        }
+        ended.buttons["ended:g3"].tap()
         wait("grantTitle")
         if !pad {
             app.navigationBars.buttons.firstMatch.tap()
@@ -242,7 +244,11 @@ final class GrantsSettingsUITests: XCTestCase {
         }
         tap("conn:c1")
         tap("acct:me@gmail.com")
-        typeInto("parties", "alerts@bank.com, @statements.bank.com\n\n")
+        typeInto("parties", "alerts@bank.com, @statements.bank.com")
+        // This address field is multiline: Return inserts a newline rather than
+        // dismissing its keyboard. Finish through the single-line subject's Done.
+        typeInto("newSubject", "\n")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "Done should dismiss the keyboard")
         scrollTo("newLifetime:oneTime", detail: true)
         tap("newLifetime:oneTime")
         tap("createGrant")
