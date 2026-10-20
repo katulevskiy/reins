@@ -44,6 +44,8 @@ struct TrustScreen: View {
                 ProgressView().padding(.vertical, 40).frame(maxWidth: .infinity).plainRow(EdgeInsets())
             }
 
+            ActionButton(title: "Account and temporary permissions", kind: .secondary, lineLimit: nil) { model.show(.permissions) }
+                .accessibilityIdentifier("trustPermissions").plainListRow(top: 12, bottom: 12)
             grants
 
             if let s = ap.settings {

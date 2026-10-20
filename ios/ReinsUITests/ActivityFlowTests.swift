@@ -370,10 +370,9 @@ final class ActivityFlowTests: XCTestCase {
         let end = origin.withOffset(CGVector(dx: band.midX, dy: y + dy))
         start.press(
             forDuration: 0.02, thenDragTo: end,
-            // Positioning is not the scroll regression: a fast nudge can coast several times its travel even
-            // with a hold at the end. Slow positioning still needs to clear pan slop before a card's context
-            // menu recognises a long press: never crawl below 80 points/second for the final correction.
-            withVelocity: XCUIGestureVelocity(rawValue: max(80, abs(dy))), thenHoldForDuration: 0.5
+            // Positioning is not the scroll regression. Avoid flick momentum, but cross press slop promptly:
+            // a tiny correction at 1 point/second can long-press a neighbouring card and open its context menu.
+            withVelocity: XCUIGestureVelocity(rawValue: max(120, abs(dy))), thenHoldForDuration: 0.5
         )
         XCTAssertFalse(app.menuItems.firstMatch.exists, "centering did not open a context menu")
     }
@@ -432,6 +431,7 @@ final class ActivityFlowTests: XCTestCase {
         let moves: [(dy: CGFloat, speed: CGFloat, pause: TimeInterval)] = [(-200, 2500, 0.02), (200, 900, 0.02), (-200, 900, 0.12), (200, 2500, 0.12)]
         for move in moves {
             centerInList(app, target)
+            XCTAssertFalse(app.menus.firstMatch.exists, "centering did not open a context menu")
             assertDragStartsOnTheList(app, target, at: point)
             let before = target.frame.minY
             drag(target, at: point, dy: move.dy, pause: move.pause, speed: move.speed)

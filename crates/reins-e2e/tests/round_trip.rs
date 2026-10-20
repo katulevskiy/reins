@@ -7,6 +7,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use reins_core::{ApprovalChoice, ApprovalKind};
 use reins_e2e::{AiClient, Phone, Server};
 use serde_json::{Value, json};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
@@ -99,15 +100,34 @@ async fn a_request_reaches_the_phone_and_the_answer_reaches_the_ai_in_millisecon
             // The push wakes the phone, which fetches the request, looks it up in Gmail and shows it.
             let (pushed, id) = push_log.next("req", asked).await;
             phone.core.handle_push("req".to_owned(), id.clone()).await.unwrap();
-            let shown = Instant::now();
             assert!(phone.core.pending().await.unwrap().iter().any(|i| i.id == id), "parked and shown");
+            // New managed Gmail accounts require the full review sheet and explicit message selection.
+            let view = phone.core.approval_view(id.clone()).await.unwrap();
+            assert_eq!(view.kind, ApprovalKind::Search);
+            assert!(view.no_standing, "managed requests cannot offer ineffective Remember grants");
+            assert!(view.quick.is_none(), "managed requests require the full review sheet");
+            assert!(view.messages.iter().any(|message| message.id == "m1"));
+            let shown = Instant::now();
             let approved = Instant::now();
-            phone.core.approve_quick(id).await.unwrap();
+            phone
+                .core
+                .approve(
+                    id,
+                    ApprovalChoice {
+                        selected_message_ids: vec!["m1".into()],
+                        standing: None,
+                    },
+                )
+                .await
+                .unwrap();
             (pushed, shown, approved)
         };
         let (result, (pushed, shown, approved)) = tokio::join!(call, phone_side);
         let answered = Instant::now();
         assert_eq!(result["isError"], false, "{result}");
+        let selected = result["structuredContent"]["messages"].as_array().unwrap();
+        assert_eq!(selected.len(), 1, "the owner selected one message");
+        assert_eq!(selected[0]["id"], "m1", "only the reviewed message reaches the AI");
         to_push.push(pushed - asked);
         to_shown.push(shown - pushed);
         to_answer.push(answered - approved);

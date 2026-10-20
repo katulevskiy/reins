@@ -62,6 +62,8 @@ abstract class FlowHarness {
         Foreground.autoPopup = true
         // Robolectric has no screen lock; the tests that need none set it.
         dev.reins.android.platform.ScreenLock.check = { true }
+        core.resetPrimarySetup()
+        core.permissionViews.clear(); core.savedPermissionDrafts.clear(); core.delegationRecords.clear(); core.permissionFailure = null; core.permissionSaveGate = null; core.permissionSaveCalls.set(0); core.permissionScopeGates.clear(); core.permissionScopeOverride = null
         core.session = SessionInfo("http://127.0.0.1:8000", "me@example.com")
         core.loginError = null
         core.pending = emptyList()
@@ -76,6 +78,7 @@ abstract class FlowHarness {
         core.commitChangeCalls.clear()
         core.commitChangeGate = null
         core.gmail = GmailStatus.Ready
+        core.addedAccounts.clear(); core.removedAccounts.clear(); core.serviceAdded.clear(); core.serviceRemoved.clear()
         core.accounts = listOf(AccountView("gmail", "me@gmail.com", 1_700_000_000))
         core.catalogue = FakeCore.defaultServices()
         core.accountStatuses = emptyMap()

@@ -213,6 +213,10 @@ fun likeThisOn(view: ApprovalView, draft: ApprovalDraft): Boolean =
     view.envRelease == null && draft.likeThis && view.quick?.allow != null && draft.lifetime != LifetimeKind.ONCE && draft.allMail == null && !view.noStanding
 
 /** Nothing here may be remembered: the dock says "Asked every time" instead of offering how long. */
+/** This approval is one-time; ongoing Gmail access belongs to the account permission editor. */
+fun mailPermissionSettings(view: ApprovalView): Boolean = view.noStanding && view.service == "gmail" &&
+    view.kind in listOf(ApprovalKind.SEARCH, ApprovalKind.READ, ApprovalKind.SEND)
+
 fun rememberLocked(view: ApprovalView, draft: ApprovalDraft = ApprovalDraft()): Boolean =
     view.noStanding || view.purchase != null || (view.envRelease != null && !envRememberable(view, draft))
 

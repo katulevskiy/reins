@@ -229,6 +229,7 @@ fun McpServerScreen(viewModel: McpViewModel, state: AppState, id: String, onBack
         notice?.takeIf { it.serverId == id && (it.failed || connected[id] == null) }?.let {
             Banner(untrusted(it.text), Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp), if (it.failed) BannerKind.Error else BannerKind.Notice, tag = "mcpNotice")
         }
+        Group(header = "Account permissions", footer = "Scoped account permissions are not available for MCP servers yet. Its existing approval and tool settings still apply.") {}
         Group(header = "Server") {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

@@ -40,7 +40,8 @@ struct DecidedHeader: View {
                 Text(detail).textRole(.body).foregroundStyle(Palette.ink2).textSelection(.enabled).accessibilityIdentifier("detailSummary")
             }
             HStack(spacing: 6) {
-                if !entry.decidedBy.isEmpty { GlyphIcon(.autopilot, size: 16) }
+                if EntryOutcome.permissionActor(entry) != nil { GlyphIcon(.key, size: 16) }
+                else if ["autopilot", "overnight", "bypass", "lockdown"].contains(entry.decidedBy) { GlyphIcon(.autopilot, size: 16) }
                 Text(EntryOutcome.text(entry)).font(RFont.sans(14.5, .medium))
             }
             .foregroundStyle(Self.verdictTint(entry))
@@ -67,7 +68,7 @@ struct DecidedHeader: View {
     /// Autopilot's verdicts in violet; yours in ink-2; denials, failures and Lockdown in their colour.
     static func verdictTint(_ entry: ActivityEntry) -> Color {
         switch EntryText.mark(entry) {
-        case .auto, .overnight, .grant: Palette.violet
+        case .auto, .overnight, .grant, .permission: Palette.violet
         case .denied, .bypass: Palette.danger
         case .failed, .lockdown, .started, .unknown, .withheld: Palette.warning
         case .approved: Palette.ink2

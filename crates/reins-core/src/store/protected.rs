@@ -38,10 +38,18 @@ pub(crate) fn install_lock_guard(guard: Arc<dyn StoreLockGuard>, wait: Duration)
 /// Takes the exclusive lock on `file`, waiting at most `wait` for another process to give it back. Never blocks
 /// without a bound, so that a process suspended with the lock held cannot stall this one.
 fn lock_within(file: &fs::File, wait: Duration) -> Result<(), CoreError> {
+    lock_within_mode(file, wait, false)
+}
+
+fn lock_within_mode(file: &fs::File, wait: Duration, shared: bool) -> Result<(), CoreError> {
     let started = Instant::now();
     let mut pause = Duration::from_millis(1);
     loop {
-        match file.try_lock() {
+        match if shared {
+            file.try_lock_shared()
+        } else {
+            file.try_lock()
+        } {
             Ok(()) => return Ok(()),
             Err(fs::TryLockError::WouldBlock) => {}
             Err(fs::TryLockError::Error(_)) => return Err(CoreError::storage("cannot lock account data")),
@@ -179,6 +187,51 @@ impl Persistence {
         log::error!("could not persist encrypted account data");
     }
 }
+/// A separate account lease: shared during effects and policy writes, exclusive while transferring authority.
+/// It never holds SQLite or the account persistence lock across asynchronous work. Independent engines/processes
+/// use the same sidecar; the platform guard keeps an extension from being suspended while holding it.
+pub(crate) struct ExecutionLease {
+    file: Option<fs::File>,
+    _awake: Awake,
+}
+impl Drop for ExecutionLease {
+    fn drop(&mut self) {
+        if let Some(file) = &self.file {
+            drop(file.unlock());
+        }
+    }
+}
+impl Store {
+    pub(crate) fn execution_lease(&self, shared: bool) -> Result<ExecutionLease, CoreError> {
+        let Some(persistence) = &self.persistence else {
+            // An ephemeral test/account store cannot be shared with another process.
+            return Ok(ExecutionLease {
+                file: None,
+                _awake: Awake(None),
+            });
+        };
+        let guard = persistence.guard.clone();
+        if let Some(guard) = &guard
+            && !guard.locking()
+        {
+            return Err(CoreError::storage(STORE_SUSPENDING));
+        }
+        let awake = Awake(guard);
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(persistence.path.with_extension("execution.lock"))
+            .map_err(|_| CoreError::storage("cannot acquire account execution lease"))?;
+        lock_within_mode(&file, persistence.wait, shared)?;
+        Ok(ExecutionLease {
+            file: Some(file),
+            _awake: awake,
+        })
+    }
+}
+
 pub(crate) struct StoreLock<'a> {
     store: &'a Store,
     /// Taken back on drop before a write is sealed, so reads wait for the snapshot only, not for the disk.
@@ -565,6 +618,46 @@ mod tests {
         root.meta_set("active-account", &owner.id()).unwrap();
         Store::account(Arc::clone(root), dir, owner, key).unwrap()
     }
+    #[test]
+    fn execution_lease_excludes_cross_process_handover_but_allows_live_policy_brakes() {
+        const CHILD_PATH: &str = "REINS_TEST_EXECUTION_LEASE_PATH";
+        if let Ok(path) = std::env::var(CHILD_PATH) {
+            let file = fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
+            let blocked = std::env::var("REINS_TEST_EXECUTION_LEASE_BLOCKED").unwrap() == "yes";
+            assert_eq!(file.try_lock_shared().is_err(), blocked);
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = Arc::new(Store::open(dir.path(), &FakeKeys::default()).unwrap());
+        let key = VaultKey::from_bytes(&[7; 64]).unwrap();
+        let mut app = open_account(&root, dir.path(), owner("a"), &key);
+        let mut extension = open_account(&root, dir.path(), owner("a"), &key);
+        app.persistence.as_mut().unwrap().wait = Duration::from_millis(20);
+        extension.persistence.as_mut().unwrap().wait = Duration::from_millis(20);
+        let executing = app.execution_lease(true).unwrap();
+        let policy_write = extension.execution_lease(true).unwrap();
+        extension.meta_set("late-deny", "installed").unwrap();
+        assert!(extension.execution_lease(false).is_err(), "handover waits for effects and policy writes");
+        drop(executing);
+        assert!(app.execution_lease(false).is_err(), "another process's policy writer also fences handover");
+        drop(policy_write);
+        let transferring = app.execution_lease(false).unwrap();
+        assert!(extension.execution_lease(true).is_err(), "policy install waits for transfer");
+        let path = app.persistence.as_ref().unwrap().path.with_extension("execution.lock");
+        let child = |blocked: bool| {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "store::protected::tests::execution_lease_excludes_cross_process_handover_but_allows_live_policy_brakes"])
+                .env(CHILD_PATH, &path)
+                .env("REINS_TEST_EXECUTION_LEASE_BLOCKED", if blocked { "yes" } else { "no" })
+                .output().unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        };
+        child(true);
+        drop(transferring);
+        child(false);
+        extension.execution_lease(true).unwrap();
+    }
+
     #[test]
     fn all_metadata_is_ciphertext_and_only_its_owner_can_reopen_it() {
         let dir = tempfile::tempdir().unwrap();

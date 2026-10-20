@@ -76,7 +76,10 @@ internal fun Dock(view: ApprovalView, ui: ApprovalUi, viewModel: ApprovalViewMod
         when {
             view.kind == ApprovalKind.GRANT -> GrantPeriodRow(view, ui)
             // A red line on the field locks the chooser too: what it warns of is asked every time.
-            rememberLocked(view, ui.draft) || view.purchase != null || heldByDanger(view) -> LockedRow()
+            rememberLocked(view, ui.draft) || view.purchase != null || heldByDanger(view) -> {
+                LockedRow(if (mailPermissionSettings(view)) "Approve once" else "Asked every time")
+                if (mailPermissionSettings(view)) RText("For ongoing access, use account or temporary permissions in Trust. Sensitive requests can still require review.", RType.sans(13f), c.ink2, Modifier.fillMaxWidth().testTag("accountPermissionHelp"))
+            }
             else -> {
                 if (likeThisOn(view, ui.draft)) LikeThisNote()
                 envWiderLabel(view, ui.draft)?.let { EnvScopeNote(it) }
@@ -129,7 +132,7 @@ private fun EnvScopeNote(text: String) {
 
 /** Nothing here can be remembered: the chooser's well, locked. */
 @Composable
-private fun LockedRow() {
+private fun LockedRow(text: String = "Asked every time") {
     val c = LocalColors.current
     Row(
         Modifier
@@ -143,7 +146,7 @@ private fun LockedRow() {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         GlyphIcon(Glyph.Lock, c.ink2, size = 16.dp)
-        RText("Asked every time", RType.sans(14f, FontWeight.Medium), c.ink2, maxLines = 1)
+        RText(text, RType.sans(14f, FontWeight.Medium), c.ink2, maxLines = 1)
     }
 }
 

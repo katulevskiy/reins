@@ -56,6 +56,8 @@ enum Route: Hashable {
     case connection(String)
     /// The Gmail accounts.
     case gmail
+    case permissions
+    case accountPermissions(service: String, account: String, temporary: Bool)
     /// The accounts of one other integration (its id).
     case service(String)
     /// Adding an MCP server by its address.

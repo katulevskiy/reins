@@ -32,6 +32,8 @@ pub mod join;
 pub mod live_sync;
 pub mod mcp;
 pub mod names;
+pub mod permission_types;
+pub mod permissions;
 pub mod phone_api;
 pub mod quick;
 pub mod roles;

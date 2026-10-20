@@ -212,7 +212,11 @@ fn keyed(
         // Identical on both sides is that, except a grant: held against its base too (both may have resumed it).
         let authorization = name == "meta"
             && matches!(v.local.or(v.server).and_then(|r| cell(&server.columns, r, "key")), Some(Cell::Text(key_name)) if key_name == super::authorization::STORE_KEY);
-        let picked = if authorization {
+        let receipt = name == "meta"
+            && matches!(v.local.or(v.server).and_then(|r| cell(&server.columns, r, "key")), Some(Cell::Text(key_name)) if super::permissions::retained_store_key(key_name));
+        let picked = if receipt {
+            receipt_versions(&server.columns, &v)
+        } else if authorization {
             authorization_versions(&server.columns, &v)
         } else if v.local == v.server && (name != "grants" || v.base.is_none() || v.local.is_none()) {
             v.local.cloned()
@@ -259,6 +263,18 @@ fn authorization_versions(columns: &[String], v: &Versions<'_>) -> Option<Row> {
     };
     let mut row = v.server.or(v.local).or(v.base)?.clone();
     set_cell(columns, &mut row, "value", Cell::Text(next.to_string()));
+    Some(row)
+}
+
+fn receipt_versions(columns: &[String], v: &Versions<'_>) -> Option<Row> {
+    let json = |row: Option<&Row>| match row.and_then(|r| cell(columns, r, "value")) {
+        Some(Cell::Text(text)) => Some(serde_json::from_str::<Json>(text).unwrap_or(Json::Null)),
+        _ => None,
+    };
+    let (local, server) = (json(v.local), json(v.server));
+    let kept = super::permissions::receipt_incoming(local.as_ref(), server.as_ref());
+    let mut row = v.local.or(v.server).or(v.base)?.clone();
+    set_cell(columns, &mut row, "value", Cell::Text(kept.to_string()));
     Some(row)
 }
 

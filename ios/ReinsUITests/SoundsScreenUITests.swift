@@ -34,13 +34,13 @@ final class SoundsScreenUITests: XCTestCase {
                              height: max(0, screen.maxY - 34 - top))
         var lastFrame = CGRect.zero
         for attempt in 0...8 {
-            let control = toggle(id)
             lastFrame = .zero
-            if control.exists {
+            // SwiftUI may retain an obsolete AX node after scrolling. Inspect fresh matches.
+            for control in app.switches.matching(identifier: id).allElementsBoundByIndex {
                 lastFrame = control.frame
                 let point = CGPoint(x: lastFrame.minX + lastFrame.width * 0.93, y: lastFrame.midY)
                 if lastFrame.width > 1, lastFrame.height > 1,
-                   point.x.isFinite, point.y.isFinite, visible.contains(point) {
+                   point.x.isFinite, point.y.isFinite, visible.contains(point), control.isHittable {
                     app.coordinate(withNormalizedOffset: .zero)
                         .withOffset(CGVector(dx: point.x - screen.minX, dy: point.y - screen.minY)).tap()
                     return

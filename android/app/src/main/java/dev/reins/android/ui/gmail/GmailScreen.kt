@@ -44,7 +44,7 @@ import dev.reins.core.GmailStatus
 
 /** The Gmail accounts: add as many as you like, or remove any of them. */
 @Composable
-fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) {
+fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit, onPermissions: (String) -> Unit = {}, permissionFinish: (@Composable (String, () -> Unit, () -> Unit) -> Unit)? = null) {
     val c = LocalColors.current
     val accounts by state.accounts.collectAsStateWithLifecycle()
     val statuses by viewModel.statuses.collectAsStateWithLifecycle()
@@ -64,6 +64,12 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
     }
     val gmail = accounts.filter { it.service == "gmail" }
 
+    connected["gmail"]?.let { identity ->
+        if (permissionFinish != null) {
+            permissionFinish(identity, { state.dismissAccountConnection("gmail"); onBack() }, { state.dismissAccountConnection("gmail") })
+            return
+        }
+    }
     Screen(title = "Gmail", onBack = onBack) {
         connected["gmail"]?.let { identity ->
             dev.reins.android.ui.common.IntegrationCompletion("Account connected", identity,
@@ -94,6 +100,7 @@ fun GmailScreen(viewModel: GmailViewModel, state: AppState, onBack: () -> Unit) 
                     },
                     onRemove = { removing = account.account },
                 )
+                CapsuleButton("Account permissions", Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("accountPermissions:${account.account}"), style = ButtonStyle.Soft, maxLines = Int.MAX_VALUE) { onPermissions(account.account) }
             }
         }
         if (connected["gmail"] == null) Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp)) {

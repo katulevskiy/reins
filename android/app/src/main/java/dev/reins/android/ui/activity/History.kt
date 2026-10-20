@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.People
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.rounded.ViewHeadline
 import androidx.compose.material.icons.rounded.Visibility
@@ -104,7 +105,7 @@ fun FilterChips(selected: HistoryFilter, modifier: Modifier = Modifier, onSelect
                 on,
                 Modifier.testTag("filter:${f.name.lowercase()}"),
                 leading = if (f == HistoryFilter.Autopilot) {
-                    { Icon(Icons.Rounded.Bolt, null, Modifier.size(15.dp), tint = if (on) c.accent else c.secondary) }
+                    { Icon(Icons.Rounded.Shield, null, Modifier.size(15.dp), tint = if (on) c.accent else c.secondary) }
                 } else {
                     null
                 },
@@ -184,6 +185,7 @@ fun OutcomeMark(outcome: Outcome, modifier: Modifier = Modifier) {
         Outcome.AutoDenied -> Marker(Icons.Rounded.Bolt, "Auto", c.danger, modifier)
         Outcome.Overnight -> Marker(dev.reins.android.ui.autopilot.OvernightIcon, dev.reins.android.autopilot.AutopilotText.OVERNIGHT, c.night, modifier)
         Outcome.OvernightDenied -> Marker(dev.reins.android.ui.autopilot.OvernightIcon, dev.reins.android.autopilot.AutopilotText.OVERNIGHT, c.danger, modifier)
+        Outcome.Permission -> Marker(Icons.Rounded.Key, "Permission", c.accent, modifier)
         Outcome.Grant -> Marker(Icons.Rounded.Key, "Grant", c.accent, modifier)
         Outcome.Bypass -> Marker(Icons.Rounded.Bolt, "Bypass", c.danger, modifier)
         Outcome.Lockdown -> Marker(Icons.Rounded.Lock, "Lockdown", c.secondary, modifier)

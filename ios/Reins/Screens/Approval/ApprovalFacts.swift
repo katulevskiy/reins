@@ -529,7 +529,7 @@ private struct AskFacts: View {
             let original = command.original.isEmpty ? detail : untrusted(command.original)
             if let original {
                 FactGroup {
-                    DrillRow(title: "Full invocation", id: "fullInvocation", page: .text(title: "Full invocation · may contain secrets", body: original, mono: true, id: "fullInvocationText")) {
+                    DrillRow(title: "Original command", id: "fullInvocation", page: .text(title: "Original command · may contain secrets", body: original, mono: true, id: "fullInvocationText")) {
                         Text("Includes setup and environment values").font(RFont.sans(12)).foregroundStyle(Palette.inkMeta)
                     }
                 }
@@ -547,6 +547,13 @@ private struct AskFacts: View {
 /// Core-derived facts: the clients never reinterpret a shell command or turn its summary into permission.
 struct CommandFacts: View {
     var presentation: CommandPresentation
+    @State private var showSetup = false
+
+    private var notices: [String] {
+        presentation.notices.map(untrusted).filter { !$0.isEmpty }.reduce(into: []) { result, notice in
+            if !result.contains(notice) { result.append(notice) }
+        }
+    }
 
     var body: some View {
         FactGroup {
@@ -558,20 +565,34 @@ struct CommandFacts: View {
                         .accessibilityIdentifier("askCommand")
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 12)
             }
-            ForEach(Array(presentation.notices.enumerated()), id: \.offset) { index, notice in
-                Text(untrusted(notice)).font(RFont.sans(14)).foregroundStyle(Palette.ink2)
+            ForEach(Array(notices.enumerated()), id: \.offset) { index, notice in
+                Text(notice).font(RFont.sans(14)).foregroundStyle(Palette.ink2)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 12)
                     .accessibilityIdentifier("commandNotice:\(index)")
             }
             if !presentation.setup.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Setup").font(RFont.sans(15)).foregroundStyle(Palette.inkMeta)
+                Button {
+                    showSetup.toggle()
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Technical details").font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.ink)
+                            Text("Environment and tool configuration · \(presentation.setup.count) items")
+                                .font(RFont.sans(12)).foregroundStyle(Palette.inkMeta)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: showSetup ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.inkMeta)
+                    }.padding(.horizontal, 18).padding(.vertical, 13).contentShape(Rectangle())
+                }.buttonStyle(RowButtonStyle()).accessibilityIdentifier("commandTechnicalDetails")
+                    .accessibilityValue(showSetup ? "Expanded" : "Collapsed")
+                if showSetup {
                     Text(untrusted(presentation.setup.joined(separator: "\n"))).font(RFont.mono(13)).foregroundStyle(Palette.ink)
                         .environment(\.layoutDirection, .leftToRight).textSelection(.enabled)
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 12)
-                    .accessibilityIdentifier("commandSetup")
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 12)
+                        .accessibilityIdentifier("commandSetup")
+                }
             }
-        }.accessibilityContainer("commandPresentation")
+        }.accessibilityContainer("commandPresentation").onChange(of: presentation) { _, _ in showSetup = false }
     }
 }
 

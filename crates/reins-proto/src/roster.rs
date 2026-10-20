@@ -578,6 +578,39 @@ pub struct HandoverSignature {
     pub at: i64,
     /// Ed25519 by the viewer's `sign_pub` at `epoch`, base64url.
     pub sig: String,
+    /// Additional signed capability evidence. Its absence preserves the legacy signature format, but cannot
+    /// authorize transferring a policy-managed account to a client that may ignore its restrictions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_enforcement: Option<HandoverPolicySupport>,
+}
+
+/// The viewer's software capability claim, signed with the same device key as its handover request. This is not
+/// hardware attestation: a malicious paired client remains outside the trusted-enforcer model. Older servers may
+/// omit this optional evidence; a policy-managed primary must then hold the transfer instead of assuming support.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandoverPolicySupport {
+    /// Sorted, distinct, nonzero authorization protocol versions this client enforces (at most eight).
+    pub authorization_versions: Vec<u32>,
+    pub sig: String,
+}
+
+impl HandoverPolicySupport {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if !valid_authorization_versions(&self.authorization_versions) {
+            return Err(invalid(
+                "authorization_versions",
+                "must contain one to eight sorted distinct nonzero versions",
+            ));
+        }
+        parse_sig(&self.sig)
+            .ok_or_else(|| invalid("policy_enforcement.sig", "must be 64 bytes, base64url without padding"))?;
+        Ok(())
+    }
+}
+
+fn valid_authorization_versions(versions: &[u32]) -> bool {
+    !versions.is_empty() && versions.len() <= 8 && versions[0] > 0 && versions.windows(2).all(|pair| pair[0] < pair[1])
 }
 
 impl HandoverSignature {
@@ -587,7 +620,42 @@ impl HandoverSignature {
         }
         crate::enroll::parse_nonce(&self.nonce).ok_or_else(|| invalid("nonce", "must be 32 bytes, base64url"))?;
         parse_sig(&self.sig).ok_or_else(|| invalid("sig", "must be 64 bytes, base64url without padding"))?;
+        if let Some(support) = &self.policy_enforcement {
+            support.validate()?;
+        }
         Ok(())
+    }
+
+    /// Verify only the additional software-support claim. Callers must separately verify the ordinary request,
+    /// roster membership/epoch and freshness; a capability claim alone never authorizes a role transfer.
+    #[must_use]
+    pub fn policy_support_verifies(
+        &self,
+        account: &str,
+        device_id: &str,
+        key: &[u8; 32],
+        verify: impl FnOnce(&[u8; 32], &[u8], &[u8; 64]) -> bool,
+    ) -> bool {
+        let Some(support) = &self.policy_enforcement else {
+            return false;
+        };
+        if support.validate().is_err() {
+            return false;
+        }
+        let Some(message) = handover_policy_support_message(
+            account,
+            self.epoch,
+            device_id,
+            &self.nonce,
+            self.at,
+            &support.authorization_versions,
+        ) else {
+            return false;
+        };
+        let Some(sig) = parse_sig(&support.sig) else {
+            return false;
+        };
+        verify(key, &message, &sig)
     }
 }
 
@@ -598,6 +666,35 @@ pub fn handover_request_message(account: &str, epoch: u64, device_id: &str, nonc
     let nonce = crate::enroll::parse_nonce(nonce)?;
     let mut c = Canon::new(contexts::HANDOVER_REQUEST);
     c.u32(PROTOCOL_VERSION).str(account).u64(epoch).str(device_id).key(&nonce).i64(at);
+    Some(c.finish())
+}
+
+/// Independent capability proof over the exact same identity, nonce and time as the legacy request. Keeping a
+/// separate signature preserves the original handover encoding, so unmanaged transfers remain compatible.
+#[must_use]
+pub fn handover_policy_support_message(
+    account: &str,
+    epoch: u64,
+    device_id: &str,
+    nonce: &str,
+    at: i64,
+    authorization_versions: &[u32],
+) -> Option<Vec<u8>> {
+    if !valid_authorization_versions(authorization_versions) {
+        return None;
+    }
+    let nonce = crate::enroll::parse_nonce(nonce)?;
+    let mut c = Canon::new(contexts::HANDOVER_POLICY_SUPPORT);
+    c.u32(PROTOCOL_VERSION)
+        .str(account)
+        .u64(epoch)
+        .str(device_id)
+        .key(&nonce)
+        .i64(at)
+        .u32(u32::try_from(authorization_versions.len()).ok()?);
+    for version in authorization_versions {
+        c.u32(*version);
+    }
     Some(c.finish())
 }
 
@@ -992,6 +1089,7 @@ pub(crate) mod tests {
             nonce,
             at: 100,
             sig: crate::canon::encode_sig(&[1; 64]),
+            policy_enforcement: None,
         };
         signed.validate().unwrap();
         let no_epoch = HandoverSignature {
@@ -1012,6 +1110,56 @@ pub(crate) mod tests {
             signed: None,
         };
         assert_eq!(serde_json::to_value(unsigned).unwrap(), serde_json::json!({"v": 1}));
+    }
+
+    #[test]
+    fn policy_support_is_bound_to_the_exact_handover_and_separate_from_legacy_signature() {
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+        let ring_verify = |key: &[u8; 32], message: &[u8], signature: &[u8; 64]| {
+            ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key).verify(message, signature).is_ok()
+        };
+        let key = Ed25519KeyPair::from_seed_unchecked(&[41; 32]).unwrap();
+        let public = key.public_key().as_ref().try_into().unwrap();
+        let nonce = crate::canon::encode_payload(&[7; 32]);
+        let legacy = handover_request_message("acct", 3, "viewer", &nonce, 100).unwrap();
+        let mut signed = HandoverSignature {
+            epoch: 3,
+            nonce,
+            at: 100,
+            sig: crate::canon::encode_sig(&key.sign(&legacy).as_ref().try_into().unwrap()),
+            policy_enforcement: None,
+        };
+        let old_wire = serde_json::to_value(&signed).unwrap();
+        assert!(old_wire.get("policy_enforcement").is_none());
+        assert_eq!(serde_json::from_value::<HandoverSignature>(old_wire).unwrap(), signed);
+        assert!(!signed.policy_support_verifies("acct", "viewer", &public, ring_verify));
+        let proof = handover_policy_support_message("acct", 3, "viewer", &signed.nonce, 100, &[1]).unwrap();
+        assert_ne!(proof, legacy);
+        signed.policy_enforcement = Some(HandoverPolicySupport {
+            authorization_versions: vec![1],
+            sig: crate::canon::encode_sig(&key.sign(&proof).as_ref().try_into().unwrap()),
+        });
+        assert!(signed.policy_support_verifies("acct", "viewer", &public, ring_verify));
+        assert!(!signed.policy_support_verifies("another", "viewer", &public, ring_verify));
+        assert!(!signed.policy_support_verifies("acct", "another", &public, ring_verify));
+        let mut changed = signed.clone();
+        changed.epoch += 1;
+        assert!(!changed.policy_support_verifies("acct", "viewer", &public, ring_verify));
+        changed = signed.clone();
+        changed.at += 1;
+        assert!(!changed.policy_support_verifies("acct", "viewer", &public, ring_verify));
+        changed = signed.clone();
+        changed.nonce = crate::canon::encode_payload(&[8; 32]);
+        assert!(!changed.policy_support_verifies("acct", "viewer", &public, ring_verify));
+        changed = signed.clone();
+        changed.policy_enforcement.as_mut().unwrap().authorization_versions = vec![2];
+        assert!(!changed.policy_support_verifies("acct", "viewer", &public, ring_verify));
+        changed = signed.clone();
+        changed.policy_enforcement.as_mut().unwrap().sig.clone_from(&signed.sig);
+        assert!(!changed.policy_support_verifies("acct", "viewer", &public, ring_verify));
+        for versions in [vec![], vec![0], vec![1, 1], vec![2, 1], (1..=9).collect()] {
+            assert!(handover_policy_support_message("acct", 3, "viewer", &signed.nonce, 100, &versions).is_none());
+        }
     }
 
     #[test]

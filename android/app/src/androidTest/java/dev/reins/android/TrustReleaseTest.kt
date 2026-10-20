@@ -19,12 +19,15 @@ import dev.reins.android.core.CoreProvider
 import dev.reins.android.platform.ScreenLock
 import dev.reins.android.platform.update.UpdateFetcher
 import dev.reins.android.platform.update.UpdateProvider
+import dev.reins.core.AccountView
 import dev.reins.core.AutopilotMode
 import dev.reins.core.ModelState
 import dev.reins.core.SessionInfo
+import java.util.regex.Pattern
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -83,6 +86,29 @@ class TrustReleaseTest {
         click("Trust")
         find(By.text("Auto"))
         awaitMode(AutopilotMode.AUTO)
+
+        // Exercise the new typed permission DTOs through the same optimized production navigation.
+        // Preview is read-only: no provider account, policy save or owner-authentication step is involved.
+        FakeCore.shared.accounts = listOf(AccountView("gmail", "synthetic@example.com", 1_700_000_100))
+        click("Account and temporary permissions")
+        click("View Gmail permissions")
+        find(By.text("Account permissions"))
+        find(By.text("synthetic@example.com"))
+        click("Allow searching and reading")
+        click("Review changes")
+        find(By.text("Review permissions"))
+        find(By.text("Claude Code"))
+        find(By.text("Search mail: Allow automatically"))
+        assertTrue(find(By.text("All in this account")).visibleBounds.height() > 0)
+        assertTrue(find(By.text("At most 20 further uses for each automatic operation.")).visibleBounds.height() > 0)
+        assertTrue(FakeCore.shared.savedPermissionDrafts.isEmpty())
+        assertTrue(FakeCore.shared.delegationRecords.isEmpty())
+        device.pressBack() // Discard the preview and keep the editor's unsaved draft.
+        find(By.text("Account permissions"))
+        device.pressBack()
+        find(By.text("Permissions"))
+        device.pressBack()
+        find(By.text("Auto"))
     }
 
     private fun awaitMode(mode: AutopilotMode) {
@@ -107,13 +133,14 @@ class TrustReleaseTest {
     }
 
     private fun find(selector: BySelector): UiObject2 {
-        device.wait(Until.findObject(selector), 1_000)?.let { return it }
-        device.findObject(By.scrollable(true))?.scroll(Direction.UP, 1f)
-        repeat(6) {
-            device.wait(Until.findObject(selector), 500)?.let { return it }
-            device.findObject(By.scrollable(true))?.scroll(Direction.DOWN, 0.75f)
-        }
-        val node = device.wait(Until.findObject(selector), 5_000)
+        device.wait(Until.findObject(selector), 1_000)
+        visible(selector)?.let { return it }
+        // A small display can put the editor's review button more than six gestures away.
+        // Search both directions to their boundary; reacquire nodes after Compose replaces them.
+        scrollTo(selector, Direction.DOWN)?.let { return it }
+        scrollTo(selector, Direction.UP)?.let { return it }
+        device.wait(Until.findObject(selector), 5_000)
+        val node = visible(selector)
         if (node == null) {
             val hierarchy = java.io.ByteArrayOutputStream()
             device.dumpWindowHierarchy(hierarchy)
@@ -121,4 +148,32 @@ class TrustReleaseTest {
         }
         return node!!
     }
+
+    private fun visible(selector: BySelector): UiObject2? = try {
+        device.findObject(selector)?.takeIf { !it.visibleBounds.isEmpty }
+    } catch (_: StaleObjectException) { null }
+
+    private fun scrollTo(selector: BySelector, direction: Direction): UiObject2? {
+        var unchangedFrames = 0
+        repeat(24) {
+            visible(selector)?.let { return it }
+            val scrollable = device.findObject(By.scrollable(true)) ?: return null
+            try {
+                val before = scrollFrame(scrollable)
+                scrollable.scroll(direction, 0.85f)
+                device.waitForIdle(1_000)
+                visible(selector)?.let { return it }
+                val current = device.findObject(By.scrollable(true)) ?: return null
+                // Compose can move without emitting UiAutomator's expected scroll event. Compare the
+                // visible content rather than treating a missing event as the end of the form.
+                unchangedFrames = if (scrollFrame(current) == before) unchangedFrames + 1 else 0
+                if (unchangedFrames >= 2) return null
+            } catch (_: StaleObjectException) { unchangedFrames = 0 }
+        }
+        return null
+    }
+
+    private fun scrollFrame(scrollable: UiObject2): String = scrollable
+        .findObjects(By.text(Pattern.compile(".+")))
+        .joinToString("\n") { "${it.text}|${it.visibleBounds}" }
 }

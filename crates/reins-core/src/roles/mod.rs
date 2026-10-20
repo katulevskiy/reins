@@ -24,6 +24,7 @@ pub mod chain;
 mod enroll;
 pub mod keys;
 mod net;
+mod policy_support;
 pub mod sealed;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,8 +34,9 @@ use data_encoding::BASE64URL_NOPAD;
 use reins_proto::PROTOCOL_VERSION;
 use reins_proto::answer::{AnswerKind, SignedAnswer};
 use reins_proto::roster::{
-    HANDOVER_REQUEST_SKEW_SECS, HandoverRequest, HandoverSignature, HandoverStatus, Member, RecoveryWrapRequest,
-    RosterAppend, RosterEntry, RosterReason, handover_request_message, recovery_wrap_hash, verify_chain,
+    HANDOVER_REQUEST_SKEW_SECS, HandoverPolicySupport, HandoverRequest, HandoverSignature, HandoverStatus, Member,
+    RecoveryWrapRequest, RosterAppend, RosterEntry, RosterReason, handover_policy_support_message,
+    handover_request_message, recovery_wrap_hash, verify_chain,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use zeroize::Zeroizing;
@@ -303,7 +305,7 @@ pub(crate) fn verified_handover(
     if signed.epoch != current.epoch {
         return Err(refuse("the account's phones changed since it was made"));
     }
-    if (now - signed.at).abs() > HANDOVER_REQUEST_SKEW_SECS {
+    if now.abs_diff(signed.at) > HANDOVER_REQUEST_SKEW_SECS.unsigned_abs() {
         return Err(refuse("it is too old"));
     }
     let message = handover_request_message(account, signed.epoch, &member.device_id, &signed.nonce, signed.at)
@@ -312,6 +314,11 @@ pub(crate) fn verified_handover(
     let sig = reins_proto::canon::parse_sig(&signed.sig).ok_or_else(|| refuse("it is malformed"))?;
     if !ed25519_verify(&key, &message, &sig) {
         return Err(refuse("it is not signed by the phone"));
+    }
+    if signed.policy_enforcement.is_some()
+        && !signed.policy_support_verifies(account, &member.device_id, &key, ed25519_verify)
+    {
+        return Err(refuse("the phone's policy support could not be verified"));
     }
     Ok(HandoverView {
         id: request.id.clone(),
@@ -339,7 +346,44 @@ impl State {
     }
 }
 
+pub(crate) struct PermissionExecutionFence<'a> {
+    _local: tokio::sync::MutexGuard<'a, ()>,
+    _lease: crate::store::ExecutionLease,
+}
+
 impl Engine {
+    /// Effects exclude handover across independent app/extension processes. A shared lease deliberately allows
+    /// the owner to install Deny/pause/revoke while a provider or authentication request is suspended.
+    pub(crate) async fn permission_execution_fence(&self) -> Result<PermissionExecutionFence<'_>, CoreError> {
+        let local = self.roles.changing.lock().await;
+        let lease = self.account_execution_lease(true).await?;
+        Ok(PermissionExecutionFence {
+            _local: local,
+            _lease: lease,
+        })
+    }
+
+    /// Policy writers may run concurrently with effects, but never with handover's protected-state check and key
+    /// transfer. Their final fresh-role check and atomic CAS must both happen while this lease is held.
+    pub(crate) async fn policy_mutation_fence(&self) -> Result<crate::store::ExecutionLease, CoreError> {
+        self.account_execution_lease(true).await
+    }
+
+    pub(crate) async fn permission_handover_fence(&self) -> Result<PermissionExecutionFence<'_>, CoreError> {
+        let local = self.roles.changing.lock().await;
+        let lease = self.account_execution_lease(false).await?;
+        Ok(PermissionExecutionFence {
+            _local: local,
+            _lease: lease,
+        })
+    }
+
+    async fn account_execution_lease(&self, shared: bool) -> Result<crate::store::ExecutionLease, CoreError> {
+        let store = std::sync::Arc::clone(&self.store);
+        tokio::task::spawn_blocking(move || store.execution_lease(shared))
+            .await
+            .map_err(|_| CoreError::storage("account execution lease task failed"))?
+    }
     // ---- keys and stored state ----------------------------------------------------------------------------------
 
     pub(crate) fn sign_key(&self) -> Result<SigningKey, CoreError> {
@@ -716,7 +760,8 @@ impl Engine {
         match self.refresh_roster(session, &account).await? {
             Some(roster) if self.standing_in(&roster)? != Standing::Primary => Err(CoreError::ViewerOnly),
             _ => Ok(()),
-        }
+        }?;
+        self.require_authorization_history_ready()
     }
 
     /// The master key and proof of `typed` (a recovery code or the master password), or of the account secret this
@@ -1229,9 +1274,25 @@ impl Engine {
             .ok_or_else(|| CoreError::storage("invalid nonce"))?;
         let signed = HandoverSignature {
             epoch: roster.epoch(),
-            nonce,
+            nonce: nonce.clone(),
             at,
             sig: self.sign_key()?.sign_b64(&message),
+            policy_enforcement: Some({
+                let authorization_versions = vec![reins_proto::authorization::AUTHORIZATION_VERSION];
+                let message = handover_policy_support_message(
+                    &account.id,
+                    roster.epoch(),
+                    &self.store.device_id()?,
+                    &nonce,
+                    at,
+                    &authorization_versions,
+                )
+                .ok_or_else(|| CoreError::storage("invalid policy-support claim"))?;
+                HandoverPolicySupport {
+                    authorization_versions,
+                    sig: self.sign_key()?.sign_b64(&message),
+                }
+            }),
         };
         let created = api_call!(&session, |api| api.create_handover(signed.clone())).map_err(ApiFailure::into_core)?;
         self.save(
@@ -1245,7 +1306,7 @@ impl Engine {
     }
 
     /// Where this phone's handover request stands. `Done`: the primary handed over, and this phone verified and kept
-    /// the bundle (it is the primary now).
+    /// the bundle and materialized the outgoing primary's authorization history (it is the primary now).
     pub async fn handover_poll(&self) -> Result<HandoverProgress, CoreError> {
         let session = self.session()?;
         let _one = self.roles.changing.lock().await;
@@ -1336,6 +1397,11 @@ impl Engine {
             );
             self.adopt_secret(AccountSecret::from_bytes(&raw)?).await?;
         }
+        // The roster's outgoing counter is not enough: catch_up_log can verify it without materializing policy,
+        // retained revocations or usage floors into this phone's deciding store. Keep the bundle/request retryable
+        // until those records are applied. The common authorization gate also holds effects throughout this window.
+        self.live_sync_now().await?;
+        self.require_authorization_history_ready()?;
         match api_call!(session, |api| api.drop_handover_bundle()) {
             Ok(())
             | Err(ApiFailure::Status {
@@ -1350,7 +1416,7 @@ impl Engine {
     /// time is within the skew window (a request older than that is refused anyway).
     fn answered_nonces(&self, slot: &str, now: i64) -> Result<BTreeMap<String, i64>, CoreError> {
         let mut nonces: BTreeMap<String, i64> = self.load(HANDOVER_NONCES, slot)?.unwrap_or_default();
-        nonces.retain(|_, at| (now - *at).abs() <= HANDOVER_REQUEST_SKEW_SECS);
+        nonces.retain(|_, at| now.abs_diff(*at) <= HANDOVER_REQUEST_SKEW_SECS.unsigned_abs());
         Ok(nonces)
     }
 
@@ -1397,11 +1463,11 @@ impl Engine {
     /// This phone becomes a viewer and drops the owner seed and the keys that moved.
     pub async fn handover_approve(&self, id: &str, device_id: &str) -> Result<(), CoreError> {
         let session = self.session()?;
+        // Freeze policy writers before publishing/checking the outgoing frontier, not only before sealing keys.
+        let _one = self.permission_handover_fence().await?;
         // This phone's last changes go into the log first: the entry names its last op, and the server takes no entry
         // naming an op it does not have.
-        if let Err(e) = self.live_sync_now().await {
-            log::warn!("the last changes did not reach the server before the handover: {e}");
-        }
+        self.live_sync_now().await?;
         if self.has_unsent_ops()? {
             return Err(CoreError::invalid(
                 "This phone's last changes have not reached the server yet. Try the handover again once online.",
@@ -1416,7 +1482,9 @@ impl Engine {
                 kept.join(", ")
             )));
         }
-        let _one = self.roles.changing.lock().await;
+        // An empty outbox also occurs when a cycle skipped publication. Check the actual local rows and mirror,
+        // including changes made by materialization after publication, before signing the outgoing frontier.
+        self.require_handover_publication()?;
         let account = self.roles_account(&session).await?;
         let request = api_call!(&session, |api| api.handover_request(id)).map_err(ApiFailure::into_core)?;
         let (roster, seed) = self.as_primary(&session, &account).await?;
@@ -1425,6 +1493,7 @@ impl Engine {
         if shown.device_id != device_id {
             return Err(CoreError::invalid("That request is from another phone than the one shown."));
         }
+        self.require_handover_policy_support(&roster, &account.id, &request)?;
         let nonce = request.signed.as_ref().map(|s| (s.nonce.clone(), s.at)).unwrap_or_default();
         if self.answered_nonces(&account.slot, now)?.contains_key(&nonce.0) {
             return Err(CoreError::invalid("That request was answered already."));
@@ -1558,6 +1627,36 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_handover_extreme_timestamps_are_refused_without_overflow() {
+        use chain::tests::{genesis, member, next};
+        let owner = OwnerSeed::generate().unwrap();
+        let first = genesis(&owner);
+        let enrolled = next(&first, RosterReason::Enroll, member("p", 1), vec![member("v", 2)], &owner);
+        let roster = LocalRoster::created(first.clone()).unwrap().updated(&[first, enrolled]).unwrap();
+        let key = SigningKey::from_seed(&[2; 32]).unwrap();
+        for at in [i64::MIN, i64::MAX] {
+            let nonce = reins_proto::enroll::encode_nonce(&[9; 32]);
+            let message = handover_request_message("acct", roster.epoch(), "v", &nonce, at).unwrap();
+            let request = HandoverRequest {
+                v: 1,
+                id: "handover".into(),
+                device_id: "v".into(),
+                device_name: "Viewer".into(),
+                created_at: at,
+                signed: Some(HandoverSignature {
+                    epoch: roster.epoch(),
+                    nonce,
+                    at,
+                    sig: key.sign_b64(&message),
+                    policy_enforcement: None,
+                }),
+            };
+            let error = verified_handover(&roster, "acct", &request, 100).unwrap_err();
+            assert!(error.to_string().contains("too old"), "{error}");
+        }
+    }
 
     #[test]
     fn recovery_codes_are_told_from_passwords() {

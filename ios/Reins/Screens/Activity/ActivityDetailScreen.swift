@@ -22,7 +22,7 @@ struct ActivityDetailScreen: View {
         Group {
             if let entry, let vm = recorded, let view = vm.view {
                 EntryApprovalPage(entry: entry, vm: vm, view: view, diffs: diffs) {
-                    AskedSections(entry: entry)
+                    AskedSections(entry: entry, includeCommand: false)
                     extras(entry)
                     // A project's environment released to a computer: its values can be dropped everywhere.
                     if let release = view.envRelease {

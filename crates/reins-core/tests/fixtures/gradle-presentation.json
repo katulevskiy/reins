@@ -1,0 +1,17 @@
+{
+  "heading": "Build Android release and test APKs",
+  "actionable": "./gradlew :app:assembleFullRelease :app:assembleFullReleaseAndroidTest > /tmp/reins-controls-bounded-smoke-compile.log 2>&1",
+  "setup": [
+    "Environment wrapper: env",
+    "JAVA_HOME=•••• (value hidden)",
+    "ANDROID_HOME=•••• (value hidden)",
+    "ANDROID_SDK_ROOT=•••• (value hidden)",
+    "gradlew options/configuration (9): -Preins.testBuildType=•••• -Preins.testRunner=•••• -Preins.prebuiltNativeDir=•••• -Preins.releaseKeystore=•••• -Preins.releaseKeystorePassword=•••• -Preins.releaseKeyAlias=•••• -Preins.releaseKeyPassword=•••• -Pkotlin.incremental=•••• --no-configuration-cache"
+  ],
+  "notices": [
+    "Redirected output replaces /tmp/reins-controls-bounded-smoke-compile.log (>).",
+    "Standard error joins standard output (2>&1).",
+    "References signing configuration or a signing key; no read or signature is proven.",
+    "Gradle runs project build scripts/plugins. Options and properties can change behavior and use this process's permissions and credentials."
+  ]
+}

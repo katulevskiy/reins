@@ -87,7 +87,7 @@ enum EntryText {
     }
 
     /// How an entry ended, as the history row's trailing mark.
-    enum Mark: Equatable { case approved, denied, failed, auto, grant, overnight, bypass, lockdown, started, unknown, withheld }
+    enum Mark: Equatable { case approved, denied, failed, auto, grant, permission, overnight, bypass, lockdown, started, unknown, withheld }
 
     static func mark(_ entry: ActivityEntry) -> Mark {
         switch entry.outcome {
@@ -98,6 +98,7 @@ enum EntryText {
         default: break
         }
         switch entry.decidedBy {
+        case "account_permission", "temporary_permission": return entry.outcome == "denied" ? .denied : .permission
         case "autopilot": return .auto
         case "overnight": return .overnight
         case "bypass": return .bypass
@@ -166,6 +167,7 @@ struct EntryMark: View {
         Group {
             switch mark {
             case .approved: GlyphIcon(.check, size: 18).foregroundStyle(Palette.success)
+            case .permission: GlyphIcon(.key, size: 17).foregroundStyle(Palette.violet)
             case .grant: GlyphIcon(.key, size: 17).foregroundStyle(Palette.violet)
             case .denied: word("Denied", Palette.danger)
             case .failed: word("Failed", Palette.warning)
@@ -190,6 +192,7 @@ struct EntryMark: View {
     static func spoken(_ mark: EntryText.Mark) -> String {
         switch mark {
         case .approved: "Approved"
+        case .permission: "Allowed by an explicit permission"
         case .grant: "Under a grant"
         case .denied: "Denied"
         case .failed: "Failed"
