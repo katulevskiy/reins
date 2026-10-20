@@ -35,7 +35,9 @@ history stores at most 8 KiB per request field. Missing originals and retained t
 limitations; this change cannot recover text that was never retained. The audit and sync storage budget is unchanged.
 
 A successful desktop ask records permission rather than an execution report. New terminal presentations therefore
-use approval wording in history instead of claiming that the command ran.
+say “Approved: <core heading>” in history instead of claiming that the command ran. Native views lead with the
+operation, complete readable actions and notices. Literal setup/configuration sits in collapsed Technical details;
+the exact original has a separate explicit reveal with a credentials warning.
 
 Validation covers literal environment + Gradle, shell and cwd setup, multiple and destructive commands, privileged
 wrappers, runtime-injection variables, redirections and substitutions, quoted assignment names, unknown shell paths,
@@ -64,3 +66,8 @@ Tests also pin the separate uncertainty provenance: the exact command and risk c
 `file:*.keystore` topic is also read as strict shell text and its wildcard program makes that overall guard reading
 uncertain. Raw and clamped duplicate questions agree. This change preserves that reading and every existing guard,
 risk, no-standing and automatic-approval floor; it does not reinterpret topic authority or auto-trust build scripts.
+
+Dynamic assignments and build properties are not folded into technical setup. Executable `$()`/backtick source
+remains visible in the action, even when a sensitive assignment's literal value is concealed. Single-quoted
+substitutions remain literal configuration. URL userinfo is concealed in headings, action text and redirect
+notices. These are display-only distinctions; original source and all guard floors remain unchanged.

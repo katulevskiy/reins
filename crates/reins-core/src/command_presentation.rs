@@ -163,15 +163,115 @@ fn sensitive(name: &str) -> bool {
 fn concealed(word: &str) -> String {
     format!("{}=••••", word.split_once('=').map_or(word, |(name, _)| name))
 }
+/// Conceal URL userinfo anywhere in a displayed source fragment, including quoted arguments and redirects.
+fn conceal_url_userinfo(source: &str) -> String {
+    let mut result = source.to_owned();
+    let mut from = 0;
+    while let Some(at) = result[from..].find("://") {
+        let begin = from + at + 3;
+        let end = result[begin..].find(['/', '?', '#', ' ', '\t', '\n', '\'', '"']).map_or(result.len(), |n| begin + n);
+        if let Some(at) = result[begin..end].rfind('@') {
+            result.replace_range(begin..begin + at, "••••");
+            from = begin + "••••".len() + 1;
+        } else {
+            from = end;
+        }
+    }
+    result
+}
+
+/// A credential's literal result stays concealed, but executable/dynamic source must remain explicit.
+fn credential_expression(source: &str) -> String {
+    let mut expressions = Vec::new();
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !matches!(bytes[i], b'$' | b'`') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let marker = bytes[i];
+        i += 1;
+        if marker == b'`' {
+            while i < bytes.len() {
+                if bytes[i] == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                } else if bytes[i] == b'`' {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+        } else if matches!(bytes.get(i), Some(b'(' | b'{')) {
+            let open = bytes[i];
+            let close = if open == b'(' {
+                b')'
+            } else {
+                b'}'
+            };
+            let mut depth = 1;
+            let mut quote = None;
+            i += 1;
+            while i < bytes.len() && depth > 0 {
+                if bytes[i] == b'\\' && quote != Some(b'\'') {
+                    i = (i + 2).min(bytes.len());
+                    continue;
+                }
+                if matches!(bytes[i], b'\'' | b'"' | b'`') && (quote.is_none() || quote == Some(bytes[i])) {
+                    quote = if quote == Some(bytes[i]) {
+                        None
+                    } else {
+                        Some(bytes[i])
+                    };
+                } else if quote.is_none() && bytes[i] == open {
+                    depth += 1;
+                } else if quote.is_none() && bytes[i] == close {
+                    depth -= 1;
+                }
+                i += 1;
+            }
+        } else {
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+        }
+        // Only ASCII delimiters were used; keep the complete source of an unclosed expression visible too.
+        while i < bytes.len() && !source.is_char_boundary(i) {
+            i += 1;
+        }
+        expressions.push(conceal_url_userinfo(&source[start..i]));
+    }
+    if expressions.is_empty() {
+        "•••• [unverified dynamic value; inspect original]".into()
+    } else {
+        format!("•••• [observed shell source: {}]", expressions.join(" "))
+    }
+}
+fn dynamic_assignment(token: &Token<'_>) -> String {
+    let (name, value) = token.raw.split_once('=').unwrap_or(("dynamic value", token.raw));
+    format!("{name}={}", credential_expression(value))
+}
 fn shown(token: &Token<'_>) -> String {
     if token.value.split_once('=').is_some_and(|(name, _)| sensitive(name)) {
+        if token.dynamic {
+            return dynamic_assignment(token);
+        }
         return concealed(&token.value);
     }
     let lower = token.value.to_ascii_lowercase();
     if lower.starts_with("authorization:") || lower.starts_with("cookie:") || lower.starts_with("x-api-key:") {
+        if token.dynamic {
+            return format!(
+                "{}: {}",
+                token.value.split(':').next().unwrap_or("credential"),
+                credential_expression(token.raw)
+            );
+        }
         return format!("{}: ••••", token.value.split(':').next().unwrap_or("credential"));
     }
-    token.raw.into()
+    conceal_url_userinfo(token.raw)
 }
 
 fn fallback(command: &str) -> CommandPresentation {
@@ -365,7 +465,11 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
             continue;
         }
         if tool.is_empty() && assignment(&token.value).is_some_and(|name| token.raw.starts_with(&format!("{name}="))) {
-            rendered.push(concealed(&token.value));
+            rendered.push(if token.dynamic {
+                dynamic_assignment(token)
+            } else {
+                concealed(&token.value)
+            });
             continue;
         }
         if tool.is_empty() {
@@ -378,13 +482,21 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
             continue;
         }
         if matches!(tool, "env" | "sudo" | "doas") && token.value.contains('=') && !token.value.starts_with('-') {
-            let redacted = concealed(&token.value);
+            let redacted = if token.dynamic {
+                dynamic_assignment(token)
+            } else {
+                concealed(&token.value)
+            };
             args.push(redacted.clone());
             rendered.push(redacted);
             continue;
         }
         if hide_next {
-            rendered.push("••••".into());
+            rendered.push(if token.dynamic {
+                credential_expression(token.raw)
+            } else {
+                "••••".into()
+            });
             hide_next = false;
             continue;
         }
@@ -421,7 +533,11 @@ fn segment(tokens: &[Token<'_>], out: &mut CommandPresentation) -> (String, Stri
                     | "-C"
                     | "--prefix"
             );
-        if option_values && build_option(tool, &token.value) {
+        if option_values && token.dynamic && token.value.contains('=') && build_option(tool, &token.value) {
+            rendered.push(dynamic_assignment(token));
+            continue;
+        }
+        if option_values && !token.dynamic && build_option(tool, &token.value) {
             let property =
                 token.value.starts_with("-P") || token.value.starts_with("-D") || assignment(&token.value).is_some();
             options.push(if property && token.value.contains('=') {
@@ -479,7 +595,7 @@ fn read(text: &str, depth: usize, out: &mut CommandPresentation) -> Option<()> {
     let mut start = 0;
     while let Some(t) = toks.get(start).filter(|t| t.kind == Kind::Word) {
         if let Some(name) = assignment(&t.value) {
-            if !t.raw.starts_with(&format!("{name}=")) {
+            if t.dynamic || !t.raw.starts_with(&format!("{name}=")) {
                 break;
             }
             out.setup.push(format!("{name}=•••• (value hidden)"));
@@ -594,7 +710,7 @@ pub fn of(command: &str) -> CommandPresentation {
             "Invisible formatting characters are shown as replacements. Inspect the original invocation; displayed text is not an execution payload.",
         );
     }
-    out.heading = crate::text::one_line(&crate::text::mark_invisible(&out.heading));
+    out.heading = conceal_url_userinfo(&crate::text::one_line(&crate::text::mark_invisible(&out.heading)));
     out.actionable = crate::text::mark_invisible(&out.actionable);
     out.setup.iter_mut().for_each(|line| *line = crate::text::mark_invisible(line));
     out.notices.iter_mut().for_each(|line| *line = crate::text::mark_invisible(line));
@@ -718,6 +834,55 @@ mod tests {
         assert!(!p.actionable.contains('\u{202e}'));
         assert!(p.notices.iter().any(|n| n.contains("Invisible formatting")));
         assert!(p.original.contains('\u{202e}'));
+    }
+
+    #[test]
+    fn executable_substitutions_are_not_folded_with_literal_build_configuration() {
+        for command in [
+            "FOO=\"$(rm -rf /tmp/reins-dynamic)\" ./gradlew test",
+            "TOKEN=\"$(rm -rf /tmp/reins-dynamic)\" ./gradlew test",
+            "./gradlew test -Pfoo=\"$(rm -rf /tmp/reins-dynamic)\"",
+            "./gradlew test -Dfoo=\"`rm -rf /tmp/reins-dynamic`\"",
+            "env -i TOKEN=\"$(rm -rf /tmp/reins-dynamic)\" ./gradlew test",
+            "curl -H \"Authorization: $(rm -rf /tmp/reins-dynamic)\" https://example.com",
+        ] {
+            let p = of(command);
+            assert!(p.actionable.contains("rm -rf /tmp/reins-dynamic"), "{command}: {p:?}");
+            assert!(p.notices.iter().any(|n| n.starts_with("Partial observed")));
+            assert_eq!(p.original, command);
+        }
+        for literal in
+            ["FOO='$(rm -rf /tmp/reins-literal)' ./gradlew test", "./gradlew test -Pfoo='`rm -rf /tmp/reins-literal`'"]
+        {
+            let p = of(literal);
+            assert!(!p.actionable.contains("rm -rf"), "single-quoted text is literal configuration");
+            assert!(!p.notices.iter().any(|n| n.starts_with("Partial observed")));
+        }
+        let p =
+            of("TOKEN=\"SENTINEL-literal$(printf ')' ; rm -rf /tmp/reins-dynamic)SENTINEL-literal\" ./gradlew test");
+        assert!(
+            p.actionable.contains("rm -rf /tmp/reins-dynamic"),
+            "quoted delimiters cannot conceal a dangerous tail"
+        );
+        assert!(!format!("{p:?}").contains("SENTINEL-literal"));
+        let p = of(
+            "FOO=\"SENTINEL-literal$(rm -rf /tmp/reins-dynamic)SENTINEL-literal\" ./gradlew test -Pfoo=\"SENTINEL-literal$(true)\"",
+        );
+        assert!(p.actionable.contains("rm -rf /tmp/reins-dynamic") && p.actionable.contains("$(true)"));
+        assert!(!format!("{p:?}").contains("SENTINEL-literal"));
+    }
+
+    #[test]
+    fn url_userinfo_never_leaks_through_operation_or_redirect_notices() {
+        for command in [
+            "curl 'https://name:SENTINEL-URL-CREDENTIAL@example.com/path'",
+            "./gradlew test > 'https://name:SENTINEL-URL-CREDENTIAL@example.com/path'",
+        ] {
+            let p = of(command);
+            assert!(!format!("{p:?}").contains("SENTINEL-URL-CREDENTIAL"));
+            assert!(p.actionable.contains("••••@example.com/path"));
+            assert_eq!(p.original, command);
+        }
     }
 
     #[test]
