@@ -32,6 +32,8 @@ final class SoundsScreenUITests: XCTestCase {
         let top = navigation.exists ? max(screen.minY + 1, navigation.frame.maxY) : screen.minY + 1
         let visible = CGRect(x: screen.minX + 1, y: top, width: screen.width - 2,
                              height: max(0, screen.maxY - 34 - top))
+        let list = app.collectionViews["soundsList"]
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
         var lastFrame = CGRect.zero
         for attempt in 0...8 {
             lastFrame = .zero
@@ -49,9 +51,21 @@ final class SoundsScreenUITests: XCTestCase {
             guard attempt < 8 else { break }
             let down = lastFrame.midY.isFinite && lastFrame.height > 1
                 ? lastFrame.midY < visible.minY : towardTop
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.3 : 0.75))
+            // The center drag can land on the volume thumb and be consumed by
+            // Slider. Use the inset List's empty leading gutter, also in split view.
+            let scrollFrame = list.frame.intersection(visible)
+            guard scrollFrame.minX.isFinite, scrollFrame.minY.isFinite,
+                  scrollFrame.width.isFinite, scrollFrame.height.isFinite,
+                  scrollFrame.width > 20, scrollFrame.height > 1 else {
+                return XCTFail("Sounds list has no finite visible scroll area: \(scrollFrame)")
+            }
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let x = scrollFrame.minX + 10 - screen.minX
+            let startY = scrollFrame.minY + scrollFrame.height * (down ? 0.2 : 0.75) - screen.minY
+            let endY = scrollFrame.minY + scrollFrame.height * (down ? 0.75 : 0.2) - screen.minY
+            origin.withOffset(CGVector(dx: x, dy: startY))
                 .press(forDuration: 0.05,
-                       thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.75 : 0.3)),
+                       thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
                        withVelocity: XCUIGestureVelocity(rawValue: 300), thenHoldForDuration: 0.4)
         }
         XCTFail("\(id) has no finite visible switch point (frame \(lastFrame), viewport \(visible))")
