@@ -9,10 +9,19 @@ final class AskLabelsTests: XCTestCase {
         var command = label("terminal", "run", "Run", "TOKEN=secret JAVA_HOME=/jdk ./gradlew test", code: true)
         command.command = presentation
         check(AskLabels.line(command, field: .push), "Run Gradle", mono: "./gradlew test")
-        check(AskLabels.line(command, field: .push, tense: .done, who: "Claude Code"), "Approved running Gradle", mono: "./gradlew test")
+        check(AskLabels.line(command, field: .push, tense: .done, who: "Claude Code"), "Approved: Run Gradle", mono: "./gradlew test")
         command.command?.heading = "Review a shell command"
         command.command?.actionable = ""
         check(AskLabels.line(command, field: .push), "Review a shell command")
+    }
+
+    func testCommandApprovalsPreserveBuildAndFutureOperationHeadings() {
+        for heading in ["Build Android release and test APKs", "Synchronize custom artifacts", "Review a shell command"] {
+            let actionable = "custom-tool build && sudo rm -rf /tmp/old > /tmp/build.log 2>&1"
+            var command = label("terminal", "run", "Run", "original", code: true)
+            command.command = CommandPresentation(heading: heading, actionable: actionable, setup: [], notices: [])
+            check(AskLabels.line(command, field: .push, tense: .done), "Approved: " + heading, mono: actionable)
+        }
     }
 
     private func label(_ provider: String, _ action: String, _ lead: String, _ subject: String = "", code: Bool = false, tail: String = "") -> RequestLabel {

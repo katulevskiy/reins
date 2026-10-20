@@ -978,19 +978,34 @@ abstract class ScreenshotsBase(private val suffix: String) {
 
     /** Identical synthetic release invocation for the reported command-clarity before/after comparison. */
     @Test
-    fun commandReleaseBuild() {
+    fun commandReleaseBuild() = renderReleaseCommand("default")
+
+    @Test
+    fun commandReleaseBuildLargeText() {
+        val configuration = android.content.res.Configuration(context.resources.configuration).apply { fontScale = 1.6f }
+        context.resources.updateConfiguration(configuration, context.resources.displayMetrics)
+        renderReleaseCommand("large")
+    }
+
+    private fun renderReleaseCommand(size: String) {
         core.activity = listOf(CommandClarityFixtures.entry())
         core.entryApprovals[7L] = CommandClarityFixtures.view()
         launch()
         tap("entry:7")
         await("entryHero")
         frames()
-        shoot("command-release-build")
+        shoot(if (size == "default") "command-release-build" else "command-release-build-$size")
+        tap("commandTechnicalDetails")
+        await("commandSetup")
+        rule.onNodeWithTag("commandSetup").performScrollTo()
+        frames()
+        shoot("command-release-build-$size-technical")
+        tap("commandTechnicalDetails")
         tap("revealFullInvocation")
         await("fullRequestText")
         rule.onNodeWithTag("fullRequest").performScrollTo()
         frames()
-        shoot("command-release-build-original")
+        shoot("command-release-build-$size-original")
     }
 
     @Test
@@ -1018,6 +1033,7 @@ abstract class ScreenshotsBase(private val suffix: String) {
         launch(link("request", view.requestId))
         await("commandPresentation")
         shoot("48b-command-$size-action")
+        tap("commandTechnicalDetails")
         rule.onNodeWithTag("commandSetup").performScrollTo()
         shoot("48c-command-$size-setup")
     }

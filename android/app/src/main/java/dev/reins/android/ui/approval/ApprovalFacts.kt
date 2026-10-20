@@ -31,6 +31,9 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +42,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -508,8 +512,8 @@ private fun AskFacts(ask: dev.reins.core.AskView, label: dev.reins.core.RequestL
         CommandFacts(presentation, cwd)
         val original = presentation.original.takeIf { it.isNotBlank() }?.let(::untrusted) ?: detail
         if (original != null) FactGroup(rows = listOf {
-            DrillRow("Full invocation", "fullInvocation", {
-                nav.push(ApprovalPage.Text("Full invocation · may contain secrets", original, mono = true, tag = "fullInvocationText"))
+            DrillRow("Original command", "fullInvocation", {
+                nav.push(ApprovalPage.Text("Original command · may contain secrets", original, mono = true, tag = "fullInvocationText"))
             }) { RText("Includes setup and environment values", RType.sans(12f), LocalColors.current.ink2, maxLines = 2) }
         })
         return
@@ -542,19 +546,26 @@ private fun AskFacts(ask: dev.reins.core.AskView, label: dev.reins.core.RequestL
 @Composable
 internal fun CommandFacts(presentation: dev.reins.core.CommandPresentation, cwd: String? = null) {
     val c = LocalColors.current
+    var showSetup by remember(presentation, cwd) { mutableStateOf(false) }
+    val setup = (presentation.setup + listOfNotNull(cwd?.takeIf { it.isNotBlank() }?.let { "Requested directory: $it" })).distinct()
     FactGroup(tag = "commandPresentation", rows = buildList<@Composable () -> Unit> {
         if (presentation.actionable.isNotBlank()) add { CommandRow(untrusted(presentation.actionable)) }
-        presentation.notices.forEachIndexed { i, notice -> add {
+        presentation.notices.filter { it.isNotBlank() }.distinct().forEachIndexed { i, notice -> add {
             RText(untrusted(notice), RType.sans(14f, lineHeight = 20f), c.ink2,
                 Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag("commandNotice:$i"))
         } }
-        cwd?.takeIf { it.isNotBlank() }?.let { add { FactRow("In", untrusted(it), mono = true, valueTag = "askIn", maxLines = Int.MAX_VALUE) } }
-        if (presentation.setup.isNotEmpty()) add {
-            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag("commandSetup")) {
-                RText("Setup", RType.sans(15f), c.ink2)
-                RText(untrusted(presentation.setup.joinToString("\n")), RType.mono(13f), c.ink,
-                    Modifier.fillMaxWidth().padding(top = 6.dp), ltr = true)
+        if (setup.isNotEmpty()) add {
+            Column(Modifier.fillMaxWidth().pressable(label = if (showSetup) "Hide technical details" else "Show technical details") { showSetup = !showSetup }
+                .semantics { stateDescription = if (showSetup) "Expanded" else "Collapsed" }
+                .padding(vertical = 13.dp).testTag("commandTechnicalDetails")) {
+                RText(if (showSetup) "Technical details −" else "Technical details +", RType.sans(15.5f, FontWeight.Medium), c.ink)
+                RText("Environment and tool configuration · ${setup.size} items", RType.sans(12f), c.ink2,
+                    Modifier.padding(top = 3.dp))
             }
+        }
+        if (showSetup) add {
+            RText(untrusted(setup.distinct().joinToString("\n")), RType.mono(13f), c.ink,
+                Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag("commandSetup"), ltr = true)
         }
     })
 }
@@ -565,7 +576,8 @@ private fun CommandRow(command: String) {
     val c = LocalColors.current
     Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
         RText("Command", RType.sans(15f), c.ink2, maxLines = 1)
-        RText(command, RType.mono(13.5f), c.ink, Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp).testTag("askCommand"), ltr = true)
+        RText(command, RType.mono(13.5f).copy(lineBreak = androidx.compose.ui.text.style.LineBreak.Paragraph), c.ink,
+            Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 12.dp).testTag("askCommand"), ltr = true)
     }
 }
 

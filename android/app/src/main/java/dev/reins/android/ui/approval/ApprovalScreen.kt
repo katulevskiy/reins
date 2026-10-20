@@ -251,7 +251,8 @@ fun ApprovalScreen(
                         when (shown) {
                             null -> {
                                 record?.header?.invoke()
-                                if (record != null) HistoryWarnings(view)
+                                record?.label?.command?.let { CommandFacts(it) }
+                                if (record != null) HistoryWarnings(view, command = record.label?.command != null)
                                 MainPage(view, ui, viewModel)
                                 record?.below?.invoke()
                             }
@@ -290,9 +291,9 @@ internal fun HistoryBar(connectionId: String, connectionLabel: String, onBack: (
 
 /** The field's warnings stay available on paper, including the longer explanation behind each warning. */
 @Composable
-private fun HistoryWarnings(view: ApprovalView) {
+private fun HistoryWarnings(view: ApprovalView, command: Boolean) {
     val c = LocalColors.current
-    val warnings = fieldWarnings(view, suggestion = null, risk = null)
+    val warnings = historyFieldWarnings(view, command)
     if (warnings.isEmpty()) return
     FactGroup(rows = warnings.map { warning ->
         {

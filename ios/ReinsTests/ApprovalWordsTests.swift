@@ -5,6 +5,18 @@ import XCTest
 final class ApprovalWordsTests: XCTestCase {
     private typealias T = ApprovalLogicTests
 
+    func testCommandHistoryKeepsTheCompleteGuardHelpWithoutDuplicateWarnings() {
+        var view = T.view(kind: .write, service: "desktop", noStanding: true, action: "write")
+        view.ask = AskView(question: "Run?", detail: nil, topic: nil,
+            rule: AskRuleView(label: "Keys and certificates", pattern: "*.keystore", matched: "test.keystore", group: "key-files", destructive: false, reported: true), uncertain: true)
+        XCTAssertTrue(ApprovalWords.dangerTags(view).contains { $0.id == "askUncertain" })
+        let history = ApprovalWords.commandHistoryTags(view)
+        XCTAssertEqual(history.map(\.id), ["guardRule"])
+        XCTAssertTrue(history[0].help.contains("details or behavior could not be verified"))
+        XCTAssertTrue(history[0].help.contains("Your computer says so"))
+        XCTAssertTrue(history[0].help.contains("asked every time"))
+    }
+
     private func sentence(_ view: ApprovalView) -> String {
         ApprovalWords.sentence(view).map { $0.bold ? "**\($0.text)**" : $0.text }.joined()
     }

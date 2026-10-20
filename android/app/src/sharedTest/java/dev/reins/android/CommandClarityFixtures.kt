@@ -16,10 +16,15 @@ object CommandClarityFixtures {
         "-Preins.releaseKeyAlias=androiddebugkey -Preins.releaseKeyPassword=fixture-secret-sentinel " +
         "-Pkotlin.incremental=false --no-configuration-cache > $log 2>&1"
 
-    // Exact old-core fallback for this command's unsupported redirects, retained for before/after evidence.
+    // Same raw input as the baseline; this is display metadata, never authority or an executed command.
     fun presentation() = CommandPresentation(
-        "Review a shell command", "", emptyList(),
-        listOf("Reins cannot safely shorten this invocation. Inspect the full invocation, including its setup and shell syntax."),
+        "Build Android release and test APKs",
+        "./gradlew :app:assembleFullRelease :app:assembleFullReleaseAndroidTest > $log 2>&1",
+        listOf("Environment wrapper: env", "JAVA_HOME=•••• (value hidden)", "ANDROID_HOME=•••• (value hidden)", "ANDROID_SDK_ROOT=•••• (value hidden)",
+            "gradlew options/configuration (9): -Preins.testBuildType=•••• -Preins.testRunner=•••• -Preins.prebuiltNativeDir=•••• -Preins.releaseKeystore=•••• -Preins.releaseKeystorePassword=•••• -Preins.releaseKeyAlias=•••• -Preins.releaseKeyPassword=•••• -Pkotlin.incremental=•••• --no-configuration-cache"),
+        listOf("Redirected output replaces $log (>).", "Standard error joins standard output (2>&1).",
+            "References signing configuration or a signing key; no read or signature is proven.",
+            "Gradle runs project build scripts/plugins. Options and properties can change behavior and use this process's permissions and credentials."),
         raw,
     )
 
@@ -31,5 +36,5 @@ object CommandClarityFixtures {
 
     fun entry() = TestData.entry(7, "write", "released", service = "desktop", op = "ask", label = label(),
         decidedBy = "bypass", request = TestData.asked(raw, "Build and test release APKs", "Codex", cwd,
-            "Reading a secret file", 1_700_000_000)).copy(connectionLabel = "honeypot", account = null)
+            "References signing configuration or a signing key", 1_700_000_000)).copy(connectionLabel = "honeypot", account = null)
 }

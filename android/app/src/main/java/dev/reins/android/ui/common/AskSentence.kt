@@ -124,8 +124,8 @@ fun askSentence(
     val sentence = phrase.told(tense, who, kindOf(provider, action), provider, action)
     if (provider == "terminal" && label.command != null && tense == Tense.Done) {
         // A desktop ask records permission, not an executor's report that the command actually ran.
-        val heading = label.command!!.heading
-        return sentence.copy(text = if (heading.startsWith("Run ")) "Approved running ${heading.drop(4)}" else "Approved a shell command", target = null)
+        val heading = serifLine(label.command!!.heading)
+        return sentence.copy(text = "Approved: $heading", target = null)
     }
     return sentence
 }

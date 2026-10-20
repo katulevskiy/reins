@@ -173,7 +173,7 @@ fun ActivityDetailScreen(
                     DecidedHeader(entry, askSentence(shown, dev.reins.android.ui.common.entryTense(entry.outcome), label = entry.label, cwd = entry.request?.cwd))
                 },
                 below = {
-                    AskedSections(entry)
+                    AskedSections(entry, includeCommand = false)
                     if (entry.grantId != null || entry.autopilot != null) {
                         SettingsGroup(gap = 14.dp) { DecisionDetails(entry, grants.any { it.id == entry.grantId }, onOpenGrant) }
                     }
@@ -311,8 +311,8 @@ internal fun askedWho(entry: ActivityEntry, host: String?): String {
  * and a copy button.
  */
 @Composable
-internal fun AskedSections(entry: ActivityEntry) {
-    entry.label?.command?.let { dev.reins.android.ui.approval.CommandFacts(it) }
+internal fun AskedSections(entry: ActivityEntry, includeCommand: Boolean = true) {
+    if (includeCommand) entry.label?.command?.let { dev.reins.android.ui.approval.CommandFacts(it) }
     val r = entry.request ?: return
     var showInvocation by remember(entry.id) { mutableStateOf(false) }
     val c = LocalColors.current
@@ -321,7 +321,7 @@ internal fun AskedSections(entry: ActivityEntry) {
     SettingsGroup(header = "What it asked", gap = 18.dp) {
         AskedRow("Who", who, Modifier.testTag("askedWho")) { ConnectionIcon(entry.connectionId, entry.connectionLabel, size = 18.dp) }
         if (r.cwd.isNotBlank()) AskedRow("In", untrusted(r.cwd), Modifier.testTag("askedIn"), mono = true)
-        if (r.why.isNotBlank()) AskedRow("Why asked", untrusted(r.why), Modifier.testTag("askedWhy"))
+        if (r.why.isNotBlank()) AskedRow(if (entry.label?.command != null) "Recorded request reason" else "Why asked", untrusted(r.why), Modifier.testTag("askedWhy"))
         AskedRow("When", whenLine(entry.at) + answeredIn(r.askedAt, entry.at), Modifier.testTag("askedWhen"))
     }
     val full = untrustedLine(r.full).trimEnd()
@@ -330,7 +330,7 @@ internal fun AskedSections(entry: ActivityEntry) {
     val clipboard = LocalClipboardManager.current
     val feedback = LocalFeedback.current
     Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 16.dp, top = 18.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        RText("Full request", RType.sans(14f, FontWeight.Medium), c.accent, Modifier.weight(1f), maxLines = 1)
+        RText(if (entry.label?.command != null) "Original command" else "Full request", RType.sans(14f, FontWeight.Medium), c.accent, Modifier.weight(1f), maxLines = 1)
         Box(
             Modifier
                 .size(36.dp)
@@ -346,9 +346,9 @@ internal fun AskedSections(entry: ActivityEntry) {
     }
     if (entry.label?.command != null) {
         Box(Modifier.fillMaxWidth().padding(horizontal = 22.dp)
-            .pressable(label = if (showInvocation) "Hide full invocation" else "Show full invocation") { showInvocation = !showInvocation }
+            .pressable(label = if (showInvocation) "Hide original command" else "Show original command") { showInvocation = !showInvocation }
             .padding(vertical = 14.dp).testTag("revealFullInvocation")) {
-            RText(if (showInvocation) "Hide full invocation" else "Show full invocation · may contain secrets", RType.sans(14f), c.accent)
+            RText(if (showInvocation) "Hide original command" else "Show original command · may contain secrets", RType.sans(14f), c.accent)
         }
     }
     if (entry.label?.command == null || showInvocation) {
@@ -385,7 +385,7 @@ private fun AskedRow(label: String, value: String, modifier: Modifier = Modifier
         modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp).padding(horizontal = 16.dp, vertical = 12.dp).semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RText(label, RType.sans(15f), c.tertiary, Modifier.width(96.dp), maxLines = 1)
+        RText(label, RType.sans(15f), c.tertiary, Modifier.width(96.dp), maxLines = 3)
         if (leading != null) {
             leading()
             Spacer(Modifier.width(7.dp))
