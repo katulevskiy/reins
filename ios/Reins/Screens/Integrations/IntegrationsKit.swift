@@ -31,7 +31,7 @@ struct IntegrationCompletion: View {
                     .accessibilityIdentifier("connectionAddAnother")
             }
         }
-        .accessibilityIdentifier("integrationConnected")
+        .accessibilityContainer("integrationConnected")
     }
 }
 
