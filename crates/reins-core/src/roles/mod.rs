@@ -1467,9 +1467,11 @@ impl Engine {
         let _one = self.permission_handover_fence().await?;
         // This phone's last changes go into the log first: the entry names its last op, and the server takes no entry
         // naming an op it does not have.
-        if let Err(e) = self.live_sync_now().await {
-            log::warn!("the last changes did not reach the server before the handover: {e}");
-        }
+        self.live_sync_now().await.map_err(|error| {
+            CoreError::invalid(format!(
+                "This phone's account history could not sync before transfer: {error}. Retry once sync completes."
+            ))
+        })?;
         if self.has_unsent_ops()? {
             return Err(CoreError::invalid(
                 "This phone's last changes have not reached the server yet. Try the handover again once online.",
@@ -1484,6 +1486,9 @@ impl Engine {
                 kept.join(", ")
             )));
         }
+        // An empty outbox also occurs when a cycle skipped publication. Check the actual local rows and mirror,
+        // including changes made by materialization after publication, before signing the outgoing frontier.
+        self.require_handover_publication()?;
         let account = self.roles_account(&session).await?;
         let request = api_call!(&session, |api| api.handover_request(id)).map_err(ApiFailure::into_core)?;
         let (roster, seed) = self.as_primary(&session, &account).await?;

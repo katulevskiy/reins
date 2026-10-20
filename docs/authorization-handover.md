@@ -27,6 +27,12 @@ authority after acquiring their lease. This prevents a second process from insta
 capability check and key release. Shared administration leases also let a new Deny or revocation become effective
 while an execution is awaiting provider authentication or a response.
 
+Before signing the outgoing frontier, the primary requires a successful sync, complete verified materialization,
+and a matching signed mirror version/digest for every current syncable row and removal. An empty outbox does not
+prove publication: an initial pull can fail before rows are queued, or a cycle can skip publication with a notice.
+A join made during final materialization must also be published before transfer. Failed or incomplete sync keeps
+both roles and the bundle unchanged, so retrying after sync preserves the actual policies and retained brakes.
+
 The receiving phone does not report the transfer complete or delete its retryable bundle until it has materialized
 the outgoing primary's signed history frontier. Verified op counters alone are insufficient. The common decision
 and policy-administration gates hold while materialization is incomplete, including after keys have been installed

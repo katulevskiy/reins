@@ -1005,6 +1005,64 @@ async fn failed_remote_revocation_still_requires_policy_support_at_handover() {
 }
 
 #[tokio::test]
+async fn a_failed_first_sync_cannot_hand_over_an_unpublished_policy_and_retry_preserves_it() {
+    use reins_proto::authorization::{
+        PolicyEffect, PolicyIssuer, PolicyKind, PolicyLifecycle, PolicyRecord, PolicyScope, UsageLimits,
+    };
+
+    let mut w = world().await;
+    // Keep every scheduled initial sync before its publish step. Enrollment/roster endpoints remain online.
+    w.state().pulls_down = true;
+    let gmail = MockServer::start().await;
+    let a = permission_phone(&mut w, &gmail).await;
+    a.roster_create("Primary".into(), Some(PASSWORD.into())).await.unwrap();
+    let b = w.phone().await;
+    enroll(&a, &b, "Viewer").await;
+    let state = a.engine().authorization_policies().unwrap();
+    let policy = PolicyRecord {
+        v: 1,
+        id: "deny-before-first-sync".into(),
+        revision: 1,
+        issuer: PolicyIssuer {
+            principal_id: USER.into(),
+            tenant_id: None,
+        },
+        kind: PolicyKind::Mandatory,
+        lifecycle: PolicyLifecycle::Active,
+        valid_from: reins_core::store::unix_now(),
+        expires_at: None,
+        scope: PolicyScope::default(),
+        conditions: vec![],
+        effect: PolicyEffect::Deny,
+        parent_policy_ids: vec![],
+        limits: UsageLimits::default(),
+    };
+    a.engine().save_authorization_policy(state.revision, policy.clone(), &PermissionOwner).await.unwrap();
+    assert!(w.state().ops.is_empty(), "no initial publish or policy counter exists yet");
+    let id = b.handover_request().await.unwrap();
+    let device = device_of(&b).await;
+    let error = a.handover_approve(id.clone(), device.clone()).await.unwrap_err();
+    assert!(error.to_string().contains("sync"), "{error}");
+    assert!(w.state().bundle.is_none(), "an unsynced policy cannot leave with an empty signed frontier");
+    assert_eq!(a.phone_role().await.unwrap(), PhoneRole::Primary);
+    assert_eq!(b.phone_role().await.unwrap(), PhoneRole::Viewer);
+    w.state().pulls_down = false;
+    a.handover_approve(id, device).await.unwrap();
+    assert_eq!(b.handover_poll().await.unwrap(), HandoverProgress::Done);
+    assert!(b.engine().authorization_policies().unwrap().policies.contains(&policy));
+    b.engine().process_relayed(permission_send("retained-deny", &["friend@example.com"])).await.unwrap();
+    assert_eq!(sent_count(&gmail).await, 0, "the transferred deny remains effective");
+    let answer = w
+        .state()
+        .signed
+        .iter()
+        .find(|(_, id, _)| id == "retained-deny")
+        .map(|(_, _, body)| String::from_utf8(body.clone()).unwrap())
+        .unwrap();
+    assert!(answer.contains("blocked by an account policy"), "{answer}");
+}
+
+#[tokio::test]
 async fn unmanaged_handover_keeps_the_legacy_signature_compatible() {
     let mut w = world().await;
     let a = w.phone().await;
