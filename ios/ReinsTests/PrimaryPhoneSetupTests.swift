@@ -51,6 +51,14 @@ final class PrimaryPhoneSetupTests: XCTestCase {
         await model.enable(backupConfirmed: true, proof: "synthetic-fixture-password") {}
         XCTAssertTrue(model.complete); XCTAssertEqual(core.primarySetupCreated, 1)
     }
+    func testWhitespaceProofIsValidatedRatherThanUsingTheSavedSecret() async {
+        let core = DemoReinsCore(syncCap: 0.1); let auth = Answer(); let app = await app(core, auth)
+        let model = PrimaryPhoneSetupModel(app: app, parentCurrent: { true })
+        await model.check(); await model.enable(backupConfirmed: true, proof: "        ") {}
+        XCTAssertNotNil(model.error); XCTAssertEqual(core.primarySetupCreated, 0)
+        await model.enable(backupConfirmed: true, proof: nil) {}
+        XCTAssertTrue(model.complete); XCTAssertEqual(core.primarySetupCreated, 1)
+    }
     func testNavigationAndAccountChangesInvalidateTheOriginalOwnerAttempt() async {
         let core = DemoReinsCore(syncCap: 0.1); let auth = Answer(); let app = await app(core, auth)
         let model = PrimaryPhoneSetupModel(app: app, parentCurrent: { true })

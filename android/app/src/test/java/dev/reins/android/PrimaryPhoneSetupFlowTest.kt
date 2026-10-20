@@ -73,6 +73,17 @@ class PrimaryPhoneSetupFlowTest : FlowHarness() {
         assertTrue(core.setupProofUsed.get()); assertEquals(1, core.setupCreated.get())
     }
 
+    @Test fun suppliedWhitespaceProofIsValidatedRatherThanUsingTheSavedSecret() {
+        open(); dialog(); tap("primarySetupBackup")
+        rule.onNodeWithText("Use a recovery code or master password").performScrollTo().performClick()
+        rule.onNodeWithTag("primarySetupProof").performTextReplacement("        ")
+        tap("primarySetupConfirm"); awaitTag("primarySetupError")
+        assertTrue(core.setupProofUsed.get()); assertEquals(0, core.setupCreated.get())
+        // The proof field was cleared after submission; an explicit retry can use the locally retained secret.
+        tap("primarySetupConfirm"); awaitGone("primarySetupDialog")
+        assertFalse(core.setupProofUsed.get()); assertEquals(1, core.setupCreated.get())
+    }
+
     @Test fun roleChangedDuringOwnerPromptCannotBeTakenOver() {
         legacyView(); launch(); awaitTag("tabConnections")
         val editor = AccountPermissionsViewModel(container, "gmail", "me@gmail.com")

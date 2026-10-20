@@ -490,7 +490,8 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         try await Self.confirmOwner(owner, "Make this the approval phone for your whole Reins account")
         return try locked { state in
             guard state.setupRole == .legacy, state.setupRoster == nil else { throw CoreError.Invalid(reason: "This account has phone roles already.") }
-            if state.setupRequiresProof, codeOrPassword?.isEmpty != false { throw CoreError.Invalid(reason: "Enter the recovery code or master password.") }
+            if let proof = codeOrPassword, proof.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw CoreError.Invalid(reason: "Enter the recovery code or master password.") }
+            if state.setupRequiresProof, codeOrPassword == nil { throw CoreError.Invalid(reason: "Enter the recovery code or master password.") }
             let result = RosterSummary(epoch: 1, role: .primary, members: [RosterMemberView(deviceId: "this-phone", name: deviceName, primary: true, thisPhone: true)], ownerFingerprint: "fixture-owner", warnings: [])
             state.setupRole = .primary; state.setupRoster = result; state.setupCreated += 1
             for (key, value) in state.permissionViews where value.service == "gmail" && !value.conflicted && value.usageVerified {

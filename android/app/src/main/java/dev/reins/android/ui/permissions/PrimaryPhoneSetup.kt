@@ -93,7 +93,7 @@ class PrimaryPhoneSetupModel(
                 }
                 val created = try {
                     // Core rechecks the server/local roster after owner confirmation, before creating authority.
-                    container.core.rosterCreateAuthorized(Build.MODEL, proof?.takeIf { it.isNotBlank() }, owner)
+                    container.core.rosterCreateAuthorized(Build.MODEL, proof?.takeIf { it.isNotEmpty() }, owner)
                 } catch (e: CancellationException) { throw e } catch (e: Exception) {
                     when (owner.last) {
                         AuthResult.Cancelled -> return@launch

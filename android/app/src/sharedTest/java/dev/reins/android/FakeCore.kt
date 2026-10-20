@@ -885,8 +885,8 @@ class FakeCore : ReinsCoreInterface {
             setupAuthorizedGate?.await()
             if (!owner.confirm("Make this the approval phone for your whole Reins account")) throw CoreException.Invalid("Owner did not confirm")
             if (setupRole != PhoneRole.LEGACY || setupRoster != null) throw CoreException.Invalid("This account has phone roles already.")
-            if (setupRequiresProof && codeOrPassword.isNullOrBlank()) throw CoreException.Invalid("Enter the recovery code or master password.")
-            setupProofUsed.set(!codeOrPassword.isNullOrBlank())
+            setupProofUsed.set(codeOrPassword != null)
+            if (codeOrPassword?.isBlank() == true || (setupRequiresProof && codeOrPassword == null)) throw CoreException.Invalid("Enter the recovery code or master password.")
             val result = RosterSummary(1u, PhoneRole.PRIMARY, listOf(RosterMemberView("this-phone", deviceName, true, true)), "fixture-owner", emptyList())
             setupRole = PhoneRole.PRIMARY; setupRoster = result; setupCreated.incrementAndGet()
             permissionViews.replaceAll { _, view ->
