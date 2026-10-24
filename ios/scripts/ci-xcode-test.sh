@@ -79,21 +79,25 @@ import json, os, subprocess, sys
 def load(kind):
     return json.loads(subprocess.check_output(["xcrun", "simctl", "list", kind, "-j"]))
 
-runtimes = []
-for runtime in load("runtimes")["runtimes"]:
-    if not runtime.get("isAvailable"):
-        continue
-    if runtime.get("platform", "iOS") != "iOS":
-        continue
-    name = str(runtime.get("name", ""))
-    if not name.startswith("iOS"):
-        continue
-    parts = [int(piece) for piece in str(runtime.get("version", "0")).split(".") if piece.isdigit()]
-    runtimes.append((tuple(parts), runtime["identifier"], name))
-if not runtimes:
-    sys.exit("no available iOS simulator runtime")
-runtimes.sort()
-_, runtime_id, runtime_name = runtimes[-1]
+def version(value):
+    parts = [int(piece) for piece in str(value).split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+# This lane tests the selected SDK, not whichever runtime the runner image added most recently.
+# A newer runtime can be device-specific (iOS 27.1 supports the Duo, not the 18 Pro Max).
+sdk = subprocess.check_output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True).strip()
+runtimes = [
+    runtime for runtime in load("runtimes")["runtimes"]
+    if runtime.get("isAvailable")
+    and runtime.get("platform", "iOS") == "iOS"
+    and str(runtime.get("name", "")).startswith("iOS")
+]
+matching = [runtime for runtime in runtimes if version(runtime["version"]) == version(sdk)]
+if not matching:
+    available = ", ".join(runtime["identifier"] for runtime in runtimes) or "none"
+    sys.exit("no available iOS simulator runtime matching SDK %s (available: %s)" % (sdk, available))
 
 prefer = (
     "iPhone-18-Pro-Max",
@@ -103,25 +107,25 @@ prefer = (
     "iPhone-17-Pro",
     "iPhone-16-Pro",
 )
+preferred = {"com.apple.CoreSimulator.SimDeviceType." + suffix: rank for rank, suffix in enumerate(prefer)}
 types = {item["identifier"]: item["name"] for item in load("devicetypes")["devicetypes"]}
-device = None
-for suffix in prefer:
-    identifier = "com.apple.CoreSimulator.SimDeviceType." + suffix
-    if identifier in types:
-        device = identifier
-        break
-if device is None:
-    for identifier, dev_name in types.items():
-        if dev_name.startswith("iPhone"):
-            device = identifier
-            break
-if device is None:
-    sys.exit("no iPhone simulator device type")
+choices = []
+for runtime in matching:
+    supported = {item["identifier"] for item in runtime.get("supportedDeviceTypes", [])}
+    for identifier, name in types.items():
+        if identifier in supported and name.startswith("iPhone"):
+            choices.append((preferred.get(identifier, len(prefer)), runtime["identifier"], identifier, runtime))
+if not choices:
+    candidates = ", ".join(runtime["identifier"] for runtime in matching)
+    sys.exit("no compatible iPhone device type for iOS simulator SDK %s (runtimes: %s; check supportedDeviceTypes)" % (sdk, candidates))
 
+# Prefer a supported phone across all matching runtimes, with stable tie-breaking.
+_, runtime_id, device, runtime = min(choices, key=lambda choice: choice[:3])
 path = os.environ["RUNNER_TEMP"] + "/sim-choice.env"
 with open(path, "w", encoding="utf-8") as handle:
     handle.write("RUNTIME=%s\nDEVTYPE=%s\n" % (runtime_id, device))
-print("runtime %s (%s), device %s" % (runtime_name, runtime_id, types[device]), flush=True)
+print("SDK %s, runtime %s (%s, build %s), device %s" % (
+    sdk, runtime["name"], runtime_id, runtime.get("buildversion", "unknown"), types[device]), flush=True)
 PY
 
 # shellcheck disable=SC1091
