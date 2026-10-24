@@ -37,10 +37,12 @@ final class GrantsSettingsUITests: XCTestCase {
     }
 
     private func element(_ id: String) -> XCUIElement {
+        // Callers pass accessibility IDs, not labels. Avoid the multi-attribute identifier fallback.
+        let matchingID = NSPredicate(format: "identifier == %@", id)
         // Connection rows are Buttons. A global Any lookup can stall while
         // traversing mounted navigation stacks even with the row visibly ready.
-        if id.hasPrefix("connection:") { return app.buttons.matching(identifier: id).firstMatch }
-        return app.descendants(matching: .any)[id].firstMatch
+        if id.hasPrefix("connection:") { return app.buttons.matching(matchingID).firstMatch }
+        return app.descendants(matching: .any).matching(matchingID).firstMatch
     }
 
     @discardableResult
@@ -80,6 +82,57 @@ final class GrantsSettingsUITests: XCTestCase {
         }
         let target = element(id)
         XCTFail("\(id) did not become visible and hittable (frame \(target.exists ? target.frame : .zero), viewport \(visible))")
+    }
+
+    /// Inspect a single List snapshot: an offscreen lazy row can disappear between
+    /// separate `exists` and `frame` queries on Xcode 27.
+    private func revealSignOut() -> Bool {
+        let list = app.collectionViews["settingsList"]
+        guard list.waitForExistence(timeout: 5) else {
+            XCTFail("Settings list did not appear")
+            return false
+        }
+        func find(_ id: String, in snapshot: any XCUIElementSnapshot) -> (any XCUIElementSnapshot)? {
+            if snapshot.identifier == id { return snapshot }
+            for child in snapshot.children {
+                if let match = find(id, in: child) { return match }
+            }
+            return nil
+        }
+        for attempt in 0...8 {
+            do {
+                let snapshot = try list.snapshot()
+                var visible = snapshot.frame.intersection(app.frame).insetBy(dx: 1, dy: 1)
+                for bar in app.navigationBars.allElementsBoundByIndex {
+                    let frame = bar.frame
+                    if frame.width > 1, frame.height > 1, frame.intersects(visible) {
+                        let top = max(visible.minY, frame.maxY + 1)
+                        visible = CGRect(x: visible.minX, y: top, width: visible.width, height: max(0, visible.maxY - top))
+                    }
+                }
+                if !pad {
+                    // The phone's floating tab bar overlays the List's bottom rows.
+                    visible.size.height = min(visible.maxY, app.tab("settings").frame.minY - 12) - visible.minY
+                }
+                if let row = find("signOut", in: snapshot) {
+                    let frame = row.frame
+                    if frame.minX.isFinite, frame.minY.isFinite,
+                       frame.width.isFinite, frame.height.isFinite,
+                       frame.width > 1, frame.height > 1, visible.contains(frame) {
+                        return true
+                    }
+                }
+            } catch {
+                XCTFail("Could not inspect Settings list: \(error)")
+                return false
+            }
+            guard attempt < 8 else { break }
+            list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                .press(forDuration: 0.05, thenDragTo: list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)),
+                       withVelocity: XCUIGestureVelocity(rawValue: 500), thenHoldForDuration: 0.25)
+        }
+        XCTFail("Sign out did not scroll fully into the Settings viewport")
+        return false
     }
 
     /// The confirming button of a confirmation dialog, not a same-named button behind it.
@@ -249,11 +302,16 @@ final class GrantsSettingsUITests: XCTestCase {
         }
         tap("conn:c1")
         tap("acct:me@gmail.com")
-        typeInto("parties", "alerts@bank.com, @statements.bank.com")
-        // This address field is multiline: Return inserts a newline rather than
-        // dismissing its keyboard. Finish through the single-line subject's Done.
-        typeInto("newSubject", "\n")
-        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5), "Done should dismiss the keyboard")
+        let parties = "alerts@bank.com, @statements.bank.com"
+        typeInto("parties", parties)
+        // Return inserts a newline in the multiline parties field. Move focus to
+        // the single-line subject field and explicitly submit its Done key instead.
+        tap("newSubject")
+        let done = app.keyboards.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(element("parties").value as? String, parties)
         scrollTo("newLifetime:oneTime", detail: true)
         tap("newLifetime:oneTime")
         tap("createGrant")
@@ -352,7 +410,7 @@ final class GrantsSettingsUITests: XCTestCase {
     func testSigningOutReturnsToSignIn() {
         launch()
         section("settings")
-        scrollTo("signOut")
+        guard revealSignOut() else { return }
         tap("signOut")
         confirm("Sign out")
         wait("continue")

@@ -44,7 +44,9 @@ final class ActivityFlowTests: XCTestCase {
     }
 
     private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(identifier: id).firstMatch
+        // Callers pass accessibility IDs, not labels. Match only that attribute so a lookup does not
+        // fault in every unrelated node's label, value and placeholder on a busy simulator.
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier == %@", id)).firstMatch
     }
 
     /// Waits for `element` with an explicit expectation, long enough for a simulator sharing the Mac with others.
@@ -374,6 +376,7 @@ final class ActivityFlowTests: XCTestCase {
             // a tiny correction at 1 point/second can long-press a neighbouring card and open its context menu.
             withVelocity: XCUIGestureVelocity(rawValue: max(120, abs(dy))), thenHoldForDuration: 0.5
         )
+        XCTAssertFalse(app.menuItems.firstMatch.exists, "centering did not open a context menu")
     }
 
     /// Scrolls until `row`'s centre is in the middle of the open list, not merely hittable.
@@ -391,7 +394,10 @@ final class ActivityFlowTests: XCTestCase {
             if abs(delta) <= 36, band.contains(CGPoint(x: row.frame.midX, y: row.frame.midY)) { return }
             let before = row.frame.midY
             // Correct half the measured error so residual glide cannot bounce indefinitely across the centre.
-            let correction = max(-160, min(160, -delta * 0.5))
+            // A sub-20-point drag can remain within the context menu's movement allowance. Commit to a pan
+            // even for the last correction; 32 points is still smaller than the 36-point centering window.
+            let distance = min(160, max(32, abs(delta) * 0.5))
+            let correction = delta > 0 ? -distance : distance
             nudge(app, dy: correction, avoiding: row)
             settle(row)
             let after = row.frame.midY
@@ -487,6 +493,15 @@ final class ActivityFlowTests: XCTestCase {
         let card = element(app, "pending:req1")
         expectToAppear(pill)
         expectToAppear(card)
+        // Just after midnight every seeded history entry can belong to yesterday, whose rows are folded.
+        // Expand the waiting cards so this is a scrollable page even then; the header/chip stays in place.
+        let toggle = element(app, "stackToggle")
+        expectToAppear(toggle)
+        toggle.tap()
+        let laterCard = element(app, "pending:req3")
+        expectToAppear(laterCard)
+        XCTAssertGreaterThan(laterCard.frame.maxY, element(app, "activityList").frame.maxY + 60,
+                             "there is content beyond the viewport for the full drag")
         let before = card.frame.minY
         drag(pill, dy: -60, speed: 2000)
         XCTAssertLessThan(card.frame.minY, before - 30, "the list scrolled")

@@ -104,6 +104,7 @@ jobs:
       - run: python3 scripts/check-doc-links.py
       - run: python3 scripts/test-ci-routing.py
       - run: python3 scripts/test-ios-ui-plan.py
+      - run: python3 scripts/test-ios-simulator-selection.py
       - name: Conflict markers and shell syntax
         run: |
           status=0

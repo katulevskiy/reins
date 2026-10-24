@@ -1766,7 +1766,7 @@ jobs:
       - name: Install Rust toolchain
         if: steps.core.outputs.cache-hit != 'true'
         run: rustup toolchain install && rustup target add aarch64-apple-ios
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.core.outputs.cache-hit != 'true'
         with:
           shared-key: release-ios-core

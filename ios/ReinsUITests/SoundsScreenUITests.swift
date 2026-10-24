@@ -22,29 +22,53 @@ final class SoundsScreenUITests: XCTestCase {
 
     private func toggle(_ id: String) -> XCUIElement { app.switches[id].firstMatch }
 
-    /// Taps the switch itself (the row's trailing edge): a tap in the middle of a SwiftUI toggle row lands on its label.
-    private func flip(_ id: String) {
-        var point: CGPoint?
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            // SwiftUI can replace a switch's AX node after scrolling. Resolve each attempt afresh;
-            // an invalid element's infinite frame must never reach XCTest's touch synthesizer.
-            for target in self.app.switches.matching(identifier: id).allElementsBoundByIndex {
-                let frame = target.frame
-                guard !frame.isNull, !frame.isInfinite, frame.width > 1, frame.height > 1,
-                      frame.minX.isFinite, frame.minY.isFinite, frame.maxX.isFinite, frame.maxY.isFinite else { continue }
-                let candidate = CGPoint(x: frame.minX + frame.width * 0.93, y: frame.midY)
-                if self.app.frame.contains(candidate), target.isHittable {
-                    point = candidate
-                    return true
+    /// Taps the switch itself (the row's trailing edge): a tap in the middle lands on its label.
+    /// A lazy List can report an offscreen switch with an infinite frame. Scroll until its
+    /// actual tap point is visible, then anchor to the app so XCTest cannot resolve it again
+    /// to an infinite element-relative coordinate while synthesizing the event.
+    private func flip(_ id: String, towardTop: Bool = false) {
+        let screen = app.frame
+        let navigation = app.navigationBars.firstMatch
+        let top = navigation.exists ? max(screen.minY + 1, navigation.frame.maxY) : screen.minY + 1
+        let visible = CGRect(x: screen.minX + 1, y: top, width: screen.width - 2,
+                             height: max(0, screen.maxY - 34 - top))
+        let list = app.collectionViews["soundsList"]
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
+        var lastFrame = CGRect.zero
+        for attempt in 0...8 {
+            lastFrame = .zero
+            // SwiftUI may retain an obsolete AX node after scrolling. Inspect fresh matches.
+            for control in app.switches.matching(identifier: id).allElementsBoundByIndex {
+                lastFrame = control.frame
+                let point = CGPoint(x: lastFrame.minX + lastFrame.width * 0.93, y: lastFrame.midY)
+                if lastFrame.width > 1, lastFrame.height > 1,
+                   point.x.isFinite, point.y.isFinite, visible.contains(point), control.isHittable {
+                    app.coordinate(withNormalizedOffset: .zero)
+                        .withOffset(CGVector(dx: point.x - screen.minX, dy: point.y - screen.minY)).tap()
+                    return
                 }
             }
-            return false
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 8), .completed, "\(id) did not become rendered and hittable")
-        guard let point else { return }
-        // Use the validated frame from the successful query; element-bound coordinates re-query a potentially
-        // retired node while synthesizing the event. The target remains the switch's trailing edge.
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x, dy: point.y)).tap()
+            guard attempt < 8 else { break }
+            let down = lastFrame.midY.isFinite && lastFrame.height > 1
+                ? lastFrame.midY < visible.minY : towardTop
+            // The center drag can land on the volume thumb and be consumed by
+            // Slider. Use the inset List's empty leading gutter, also in split view.
+            let scrollFrame = list.frame.intersection(visible)
+            guard scrollFrame.minX.isFinite, scrollFrame.minY.isFinite,
+                  scrollFrame.width.isFinite, scrollFrame.height.isFinite,
+                  scrollFrame.width > 20, scrollFrame.height > 1 else {
+                return XCTFail("Sounds list has no finite visible scroll area: \(scrollFrame)")
+            }
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let x = scrollFrame.minX + 10 - screen.minX
+            let startY = scrollFrame.minY + scrollFrame.height * (down ? 0.2 : 0.75) - screen.minY
+            let endY = scrollFrame.minY + scrollFrame.height * (down ? 0.75 : 0.2) - screen.minY
+            origin.withOffset(CGVector(dx: x, dy: startY))
+                .press(forDuration: 0.05,
+                       thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
+                       withVelocity: XCUIGestureVelocity(rawValue: 300), thenHoldForDuration: 0.4)
+        }
+        XCTFail("\(id) has no finite visible switch point (frame \(lastFrame), viewport \(visible))")
     }
 
     /// The volume reads a whole tenth, one step from `percent` at most: `adjust(toNormalizedSliderPosition:)` drags to
@@ -82,11 +106,7 @@ final class SoundsScreenUITests: XCTestCase {
         app.swipeUp()
         app.buttons["try:Slider"].firstMatch.tap()
         shot("sounds-bottom")
-        app.swipeDown()
-        app.swipeDown()
-        app.swipeDown()
-
-        flip("soundsMaster")
+        flip("soundsMaster", towardTop: true)
         XCTAssertFalse(toggle("haptics").isEnabled, "the master turns everything off")
         flip("soundsMaster")
         XCTAssertTrue(toggle("haptics").isEnabled)

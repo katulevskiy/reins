@@ -47,12 +47,14 @@ final class AutopilotUITests: XCTestCase {
     }
 
     private func element(_ id: String) -> XCUIElement {
-        // The mode's stop control is a Button in both open and compact fields.
-        // Avoid an Any query traversing hidden stacks while that button is visible.
-        if ["stopBypass", "stopOvernight", "endLockdown"].contains(id) {
-            return app.buttons.matching(identifier: id).firstMatch
+        // Callers pass accessibility IDs, not labels. Avoid the multi-attribute identifier fallback.
+        let matchingID = NSPredicate(format: "identifier == %@", id)
+        // Mode choices and stop controls are Buttons, including after the running field is replaced.
+        // Avoid an Any query traversing every hidden tab's text before reaching the visible mode.
+        if id.hasPrefix("mode:") || ["stopBypass", "stopOvernight", "endLockdown"].contains(id) {
+            return app.buttons.matching(matchingID).firstMatch
         }
-        return app.descendants(matching: .any)[id].firstMatch
+        return app.descendants(matching: .any).matching(matchingID).firstMatch
     }
 
     @discardableResult
@@ -80,7 +82,8 @@ final class AutopilotUITests: XCTestCase {
     }
 
     /// Lazy rows may briefly return an invalid AX frame even when their pixels are visible.
-    /// Reacquire the actual control and require finite geometry and a usable target before measuring it.
+    /// Reacquire the actual control and require finite geometry before measuring it. Normal callers also require
+    /// AX hittability; the end-of-list layout test proves hittability with a real tap after its geometry assertion.
     @discardableResult
     private func scrollTo(_ id: String, type: XCUIElement.ElementType = .any, toEnd: Bool = false) -> CGRect {
         var previousFrame: CGRect?
@@ -91,14 +94,14 @@ final class AutopilotUITests: XCTestCase {
                 let frame = target.frame
                 if !frame.isNull, !frame.isInfinite, frame.width > 1, frame.height > 1,
                    frame.minX.isFinite, frame.minY.isFinite, frame.maxX.isFinite, frame.maxY.isFinite,
-                   app.frame.contains(CGPoint(x: frame.midX, y: frame.midY)), target.isHittable {
+                   app.frame.contains(CGPoint(x: frame.midX, y: frame.midY)), (toEnd || target.isHittable) {
                     if !toEnd { return frame }
                     renderedFrame = frame
                     break
                 }
             }
             if let frame = renderedFrame {
-                // Partly hittable can still mean behind the floating tab bar.
+                // A frame inside the app can still be behind the floating tab bar.
                 // Reach the actual end before the separate inset assertion:
                 // two more real list gestures must leave fresh bounds unchanged.
                 if let previousFrame,
@@ -131,12 +134,16 @@ final class AutopilotUITests: XCTestCase {
 
     /// As long as `waitFor`: on a busy Mac a switch can take more than 5 s to show.
     private func selected(_ id: String, timeout: TimeInterval = 8) {
-        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element(id))
+        // Stopping a running mode recreates these controls. Resolve their reappearance before
+        // starting the selected-state deadline, rather than spending it locating the new AX node.
+        let e = waitFor(id, timeout: timeout)
+        expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: e)
         waitForExpectations(timeout: timeout)
     }
 
     private func notSelected(_ id: String, timeout: TimeInterval = 8) {
-        expectation(for: NSPredicate(format: "isSelected == false"), evaluatedWith: element(id))
+        let e = waitFor(id, timeout: timeout)
+        expectation(for: NSPredicate(format: "isSelected == false"), evaluatedWith: e)
         waitForExpectations(timeout: timeout)
     }
 
@@ -404,6 +411,13 @@ final class AutopilotUITests: XCTestCase {
         let addFrame = scrollTo("addMcp", type: .button, toEnd: true)
         XCTAssertLessThanOrEqual(addFrame.maxY, app.tab("connections").frame.minY, "Add MCP server clears the tab bar")
         shot("connections-bottom")
+        // isHittable can refault this lazy SwiftUI button to an invalid AX activation point even when its
+        // measured bounds and pixels are valid. Prove it accepts a real touch, using the saved finite frame.
+        let viewport = app.frame
+        XCTAssertTrue(viewport.contains(addFrame), "the whole Add MCP server button is on screen")
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: addFrame.midX - viewport.minX, dy: addFrame.midY - viewport.minY)).tap()
+        XCTAssertTrue(app.textFields["mcpUrl"].waitForExistence(timeout: 8), "Add MCP server opened its form")
     }
 
     func testTryItJudgesAnExample() {

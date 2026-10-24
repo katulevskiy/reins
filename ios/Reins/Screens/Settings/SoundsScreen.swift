@@ -67,6 +67,7 @@ struct SoundsScreen: View {
                 FooterText("Each plays its sound and haptic, even when that kind of sound is off.")
             }
         }
+        .accessibilityIdentifier("soundsList")
         .listStyle(.insetGrouped)
         .listRowSeparatorTint(Palette.rule)
         .scrollContentBackground(.hidden)
