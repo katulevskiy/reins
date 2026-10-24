@@ -159,6 +159,8 @@ class IntegrationCompletionFlowTest : FlowHarness() {
 
     @Test fun removalAndSessionChangeClearOnlyTheirOwnCompletion() {
         launch()
+        // Sign-out must interrupt a signed-in session, not the asynchronous launch's Loading state.
+        awaitCore { container.state.session.value is SessionState.SignedIn && container.state.sessionChecked.value }
         runBlocking { GmailViewModel(container).connect("new@gmail.com") }
         ServiceViewModel(container, "device_contacts").addDevice()
         awaitCore { container.state.connectedAccounts.value.size == 2 }
