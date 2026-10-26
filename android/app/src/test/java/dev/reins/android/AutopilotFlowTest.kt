@@ -234,7 +234,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun bypassAsksHowLongThenCountsDownAndStops() {
         installModel()
         openAutopilot()
-        tap("mode:BYPASS")
+        tap("forAWhile"); tap("mode:BYPASS")
         awaitTag("bypassSheet")
         assertTrue("nothing changes before the hold", core.modeCalls.isEmpty())
         rule.onNodeWithTag("bypassLength:60").assertIsSelected()
@@ -260,7 +260,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         authResult = dev.reins.android.platform.AuthResult.Cancelled
         openAutopilot()
-        tap("mode:BYPASS")
+        tap("forAWhile"); tap("mode:BYPASS")
         heard.clear()
         hold("confirmBypass")
         awaitCore { prompts.get() == 1 }
@@ -272,7 +272,7 @@ class AutopilotFlowTest : FlowHarness() {
 
         // No screen lock at all: it says so, and still nothing changes.
         authResult = dev.reins.android.platform.AuthResult.Unavailable
-        tap("mode:BYPASS")
+        tap("forAWhile"); tap("mode:BYPASS")
         tap("bypassLength:custom")
         rule.onNodeWithTag("bypassFor:untilOff").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
         hold("confirmBypassFor")
@@ -288,7 +288,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun aBypassOfYourOwnLengthIsPickedUnderCustom() {
         installModel()
         openAutopilot()
-        tap("mode:BYPASS")
+        tap("forAWhile"); tap("mode:BYPASS")
         tap("bypassLength:custom")
         awaitTag("bypassForSheet")
         // The sheet slides up first.
@@ -313,7 +313,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun aBypassUntilTurnedOffIsWarnedHeldAndShowsHowLongItRan() {
         installModel()
         openAutopilot()
-        tap("mode:BYPASS")
+        tap("forAWhile"); tap("mode:BYPASS")
         tap("bypassLength:custom")
         tap("bypassFor:untilOff")
         awaitTag("untilOffWarning")
@@ -334,7 +334,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun lockdownIsOneTapAndEndingItAsksTheOwner() {
         openAutopilot()
         heard.clear()
-        tap("mode:LOCKDOWN")
+        tap("forAWhile"); tap("mode:LOCKDOWN")
         awaitCore { core.modeCalls.isNotEmpty() }
         assertEquals("taking power away needs no check", 0, prompts.get())
         assertEquals(AutopilotMode.LOCKDOWN, core.modeCalls.single().second)
@@ -364,13 +364,10 @@ class AutopilotFlowTest : FlowHarness() {
     }
 
     @Test
-    fun theWeekIsCountedOnThePage() {
+    fun theProfilesLineCountsItsDecisions() {
         installModel()
         openAutopilot()
-        awaitTag("statScored")
-        rule.onNodeWithTag("statScored").assertTextContains("142", substring = true)
-        rule.onNodeWithTag("statMatched").assertTextContains("94%", substring = true)
-        rule.onNodeWithTag("statKinds").assertTextContains("2", substring = true)
+        awaitTag("openModel")
         rule.onNodeWithTag("profileLine:personal", useUnmergedTree = true).assertTextContains("64 decisions", substring = true)
     }
 
@@ -453,7 +450,7 @@ class AutopilotFlowTest : FlowHarness() {
         awaitInside("modelInstalled")
         rule.onNodeWithTag("modelVersion", useUnmergedTree = true).assertTextEquals("v1")
         awaitText("Updated today")
-        awaitTag("statScored")
+        awaitTag("openModel")
         assertFalse("a newer model comes by itself: nothing to tap", has("updateModel"))
         assertFalse(has("modelUpdateWaiting"))
         tap("openModel")
@@ -467,7 +464,7 @@ class AutopilotFlowTest : FlowHarness() {
         core.model = TestData.modelStatus(ModelState.DOWNLOADING, downloaded = 120_000_000u, size = 412_000_000u, update = true)
         openAutopilot()
         awaitText("29%")
-        awaitTag("statScored")
+        awaitTag("openModel")
         assertFalse("no offer to get the model while the older one still works", has("getScore"))
     }
 
@@ -757,7 +754,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         core.apGlobal = FakeCore.ApRow(mode = AutopilotMode.AUTO)
         openAutopilot()
-        tap("mode:OVERNIGHT")
+        tap("forAWhile"); tap("mode:OVERNIGHT")
         awaitTag("overnightSheet")
         rule.onNodeWithTag("overnightTitle").assertTextContains("Overnight for every AI?")
         assertTrue("nothing changes before the hold", core.modeCalls.isEmpty())
@@ -772,7 +769,7 @@ class AutopilotFlowTest : FlowHarness() {
         assertTrue(heard.played(Event.AutopilotOn))
         awaitTag("overnightClock")
         rule.onNodeWithTag("overnightClock").assertTextContains("15:00")
-        rule.onNodeWithTag("heroMode").assertTextContains("Overnight", substring = true)
+        rule.onNodeWithTag("runningName", useUnmergedTree = true).assertTextContains("Overnight", substring = true)
         tap("stopOvernight")
         awaitCore { core.modeCalls.size == 2 }
         assertEquals("back to the mode it interrupted", Triple(null, AutopilotMode.AUTO, null), core.modeCalls.last())
@@ -785,7 +782,7 @@ class AutopilotFlowTest : FlowHarness() {
         installModel()
         authResult = dev.reins.android.platform.AuthResult.Cancelled
         openAutopilot()
-        tap("mode:OVERNIGHT")
+        tap("forAWhile"); tap("mode:OVERNIGHT")
         heard.clear()
         hold("confirmOvernight")
         awaitCore { prompts.get() == 1 }
@@ -799,7 +796,7 @@ class AutopilotFlowTest : FlowHarness() {
 
         // No screen lock at all: it says so, and still nothing changes.
         authResult = dev.reins.android.platform.AuthResult.Unavailable
-        tap("mode:OVERNIGHT")
+        tap("forAWhile"); tap("mode:OVERNIGHT")
         hold("confirmOvernight")
         awaitTag("autopilotError")
         awaitText("screen lock", substring = true)
@@ -829,7 +826,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun overnightUntilTurnedOffShowsHowLongItRan() {
         installModel()
         openAutopilot()
-        tap("mode:OVERNIGHT")
+        tap("forAWhile"); tap("mode:OVERNIGHT")
         tap("overnightLength:custom")
         tap("overnightFor:untilOff")
         awaitTag("overnightUntilOffWarning")
@@ -846,7 +843,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun ifSomethingIsTooRiskyIsChosenInTheOvernightSheet() {
         installModel()
         openAutopilot()
-        tap("mode:OVERNIGHT")
+        tap("forAWhile"); tap("mode:OVERNIGHT")
         awaitText("If something is too risky:")
         rule.onNodeWithTag("overnightRisky:WAIT").assertIsSelected()
         tap("overnightRisky:DENY")
@@ -870,7 +867,7 @@ class AutopilotFlowTest : FlowHarness() {
     fun withoutAModelThatRatesRiskOvernightsHelpSaysItDecidesLikeAuto() {
         installModel()
         openAutopilot()
-        tap("mode:OVERNIGHT")
+        tap("forAWhile"); tap("mode:OVERNIGHT")
         tap("help:Overnight")
         awaitTag("overnightHelp")
         awaitText("Your model doesn't rate risk yet", substring = true)
@@ -879,7 +876,7 @@ class AutopilotFlowTest : FlowHarness() {
         core.model = TestData.modelStatus(ModelState.INSTALLED, size = 412_000_000u, risk = true)
         kotlinx.coroutines.runBlocking { container.refreshAutopilot() }
         awaitCore { container.state.autopilot.value?.model?.risk == true }
-        tap("mode:OVERNIGHT")
+        tap("forAWhile"); tap("mode:OVERNIGHT")
         tap("help:Overnight")
         awaitText("weighed by their risk", substring = true)
     }

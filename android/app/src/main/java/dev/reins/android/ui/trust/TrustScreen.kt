@@ -1,7 +1,11 @@
 package dev.reins.android.ui.trust
 
+import dev.reins.android.design.RType
+import dev.reins.android.design.RText
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -102,11 +106,8 @@ fun TrustScreen(
             // While a bypass or an Overnight runs, what it did today (from the same entries as its list); else Autopilot's.
             val moodLine = s?.let { runningMood(it, decidedWhileRunning, (Timers.frozenNowMillis ?: System.currentTimeMillis()) / 1000) }
                 ?: decidedLine(decided)
-            RootHeader(
-                "Trust",
-                mood = mood(null, moodLine),
-                underField = field != null,
-            ) { RoundIconButton(Glyph.Plus, "New grant", Modifier.testTag("newGrant"), onClick = onNewGrant) }
+            // Under a running mode's field the field is the header (Next, Autopilot 02-04).
+            if (field == null) RootHeader("Trust") else Spacer(Modifier.height(4.dp))
             if (s != null && decidedWhileRunning != null) {
                 RunningList(
                     s,
@@ -118,32 +119,53 @@ fun TrustScreen(
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
             }
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 16.dp).testTag("modeHero")) {
+            // Manual or Auto, then the modes that run for a while (Next, Trust 01-05). While a bypass or an Overnight
+            // runs, the field above holds them.
+            Column(Modifier.fillMaxWidth().padding(top = 14.dp).testTag("modeHero"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 if (s == null) {
                     Spacer(Modifier.height(40.dp))
-                } else {
+                } else if (dev.reins.android.ui.autopilot.running(s) == null) {
                     val model = ui.model ?: s.model
-                    AutopilotModes(
-                        s,
-                        AutopilotText.modelUsable(model),
+                    val modelReady = AutopilotText.modelUsable(model)
+                    val needsModel = !modelReady && AutopilotText.needsModel(AutopilotMode.AUTO)
+                    ModeSwitch(
+                        s.mode,
+                        dimAuto = needsModel,
                         onPick = @DontMemoize { mode -> if (mode != s.mode) autopilot.setMode(mode) },
-                        onBypass = { sheets.bypass = true },
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                    if (needsModel) {
+                        RText("Needs the model", RType.meta, c.inkMeta, Modifier.align(Alignment.End).padding(end = 32.dp), maxLines = 1)
+                    }
+                    Column(Modifier.padding(horizontal = 16.dp)) { AutopilotWeek(autopilot, s) }
+                    ForAWhile(
                         onOvernight = { sheets.overnight = true },
                         onLockdown = @DontMemoize { autopilot.setMode(AutopilotMode.LOCKDOWN) },
+                        onBypass = { sheets.bypass = true },
+                        lockdownOn = s.mode == AutopilotMode.LOCKDOWN,
                     )
-                    AutopilotWeek(autopilot, s)
                 }
             }
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
-                CapsuleButton("Account and temporary permissions", Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("trustPermissions"), style = ButtonStyle.Soft, onClick = onPermissions, maxLines = Int.MAX_VALUE)
-                GrantsSection(state, onOpen = onOpenGrant, onEnded = onEnded)
-                val s2 = settings
-                if (s2 != null) {
+            GrantsSection(state, onOpen = onOpenGrant, onEnded = onEnded, onNew = onNewGrant)
+            dev.reins.android.design.PaneGroup(Modifier.padding(top = 12.dp)) {
+                dev.reins.android.design.PaneRow(
+                    "Permissions",
+                    leading = { dev.reins.android.design.RowTile(Glyph.Shield) },
+                    chevron = true,
+                    first = true,
+                    tag = "trustPermissions",
+                    onClick = onPermissions,
+                )
+            }
+            val s2 = settings
+            if (s2 != null) {
+                dev.reins.android.design.SectionHeader("Autopilot", glyph = Glyph.Autopilot)
+                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
                     ProfilesSection(autopilot, s2, connections, sheets, onProfile)
                     ModelRows(autopilot, s2, sheets, onTryIt)
                 }
-                StartingRuleSection(startingPolicy, Modifier.padding(top = 26.dp).testTag("startingRule"), onStartingPolicy)
             }
+            StartingRuleSection(startingPolicy, Modifier.padding(horizontal = 24.dp).padding(top = 26.dp).testTag("startingRule"), onStartingPolicy)
             Spacer(Modifier.height(32.dp).testTag("pageEnd"))
         }
         if (s != null && field != null) {
@@ -151,6 +173,7 @@ fun TrustScreen(
                 s,
                 fold,
                 scrolled = { scroll.value },
+                decided = remember(entries, s) { runningEntries(entries, s)?.size },
                 onStop = @DontMemoize { kind -> if (kind == TimedKind.Bypass) autopilot.stopBypass() else autopilot.stopOvernight() },
                 onEndLockdown = @DontMemoize { autopilot.endLockdown(s.baseMode.takeIf { it != AutopilotMode.LOCKDOWN } ?: AutopilotMode.MANUAL, authenticator) },
             )

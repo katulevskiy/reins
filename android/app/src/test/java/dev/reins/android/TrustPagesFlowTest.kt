@@ -38,7 +38,7 @@ class TrustPagesFlowTest : FlowHarness() {
         core.model = TestData.modelStatus(dev.reins.core.ModelState.INSTALLED, updatedAt = 1_700_000_000L)
         launch()
         tap("tabTrust")
-        awaitTag("statScored")
+        awaitTag("openModel")
         rule.onNodeWithTag("mode:AUTO").assertIsSelected()
         tap("openModel")
     }
@@ -80,7 +80,7 @@ class TrustPagesFlowTest : FlowHarness() {
     fun theBypassSheetAsksInWordsAndHolds() {
         launch()
         tap("tabTrust")
-        tap("mode:BYPASS")
+        tap("forAWhile"); tap("mode:BYPASS")
         awaitTag("bypassSheet")
         rule.onNodeWithTag("bypassTitle").assertTextContains("Bypass every AI?")
         rule.onNodeWithTag("bypassLength:60").assertIsSelected()
