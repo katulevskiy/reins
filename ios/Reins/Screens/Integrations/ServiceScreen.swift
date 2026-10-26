@@ -9,7 +9,8 @@ struct ServiceScreen: View {
     }
 }
 
-/// One integration's page (Gmail's too): its accounts with their status, then connecting another one.
+/// One integration's page (the Connections board, 03, 04 and 06; Gmail's too): a quiet page. Its logo and name, its
+/// accounts (each with its status, its permissions and removing it), then connecting another one.
 struct AccountsScreen: View {
     var serviceId: String
 
@@ -30,15 +31,12 @@ struct AccountsScreen: View {
                     EmptyState(symbol: "puzzlepiece.extension", title: "Integration", message: "This integration is not available.")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .pageBackground()
-                        .navigationTitle("Integration")
                 }
             } else {
                 Color.clear.pageBackground()
             }
         }
-        // From the first frame, so the bar starts with the large title in the serif.
-        .navigationTitle(accounts?.view?.name ?? serviceName(serviceId))
-        .navigationBarTitleDisplayMode(.large)
+        .quietPageBar(accounts?.view?.name ?? serviceName(serviceId))
         .task(id: serviceId) {
             let m: AccountsModel
             if let existing = accounts, existing.service == serviceId {
@@ -53,78 +51,77 @@ struct AccountsScreen: View {
 
     @ViewBuilder
     private func content(_ service: ServiceView, _ m: AccountsModel) -> some View {
-        List {
-            if let identity = m.connectedAccount {
-                Section {
-                    IntegrationCompletion(title: "Account connected", identity: identity, onDone: {
-                        m.dismissConnection()
-                        model.back()
-                    }, onAnother: service.kind == "device" || service.kind == "vault" ? nil : { m.dismissConnection() })
-                        .plainListRow(top: 12, bottom: 12)
-                }
+        NextPage {
+            QuietTitle(title: service.name) {
+                MarkPlate(size: 36) { ServiceAvatar(service: service.service, size: 36) }
             }
-            Section {
+            SectionHeader("Accounts", quiet: true, trailing: service.accounts.isEmpty ? nil : "\(service.accounts.count)")
+            FlatGroup(inset: 44) {
                 if service.accounts.isEmpty {
                     NoAccountsRow(title: ServiceCopy.emptyTitle(service), message: ServiceCopy.intro(service))
                 }
                 ForEach(service.accounts, id: \.account) { account in
                     AccountRowView(
                         title: ServiceCopy.accountTitle(service, account.account),
+                        mono: service.kind == "telegram",
                         status: m.statuses[account.account],
                         needsAgain: ServiceCopy.needsAgain(service),
                         canAllowAgain: ServiceCopy.canAllowAgain(service),
                         busy: m.busy,
                         avatar: {
                             if service.kind == "device" {
-                                ServiceAvatar(service: service.service, size: 40)
+                                ServiceAvatar(service: service.service, size: 32)
                             } else {
-                                BlobAvatar(seed: account.account, size: 40)
+                                BlobAvatar(seed: account.account, size: 32)
                             }
                         },
                         onAllowAgain: { allowAgain(service, account.account, m) },
                         onRemove: { removing = account.account }
                     )
                     .accessibilityIdentifier("account:\(account.account)")
-                    ActionButton(title: "Account permissions", kind: .secondary, lineLimit: nil) { model.show(.accountPermissions(service: serviceId, account: account.account, temporary: false)) }
-                        .accessibilityIdentifier("accountPermissions:\(account.account)")
+                    Button {
+                        model.show(.accountPermissions(service: serviceId, account: account.account, temporary: false))
+                        feedback.defaultTap()
+                    } label: {
+                        TileRow("Permissions", glyph: .shield).padding(.horizontal, -14)
+                    }
+                    .buttonStyle(RowPressStyle())
+                    .accessibilityLabel("Permissions for \(ServiceCopy.accountTitle(service, account.account))")
+                    .accessibilityIdentifier("accountPermissions:\(account.account)")
                 }
-            } header: {
-                GroupHeading("Accounts")
-            } footer: {
-                GroupFootnote(
-                    [ServiceCopy.intro(service), ServiceCopy.accountsFooter(service), ServiceCopy.fineprint(service)]
-                        .filter { !$0.isEmpty }
-                        .joined(separator: "\n\n")
-                )
             }
-            .listRowBackground(Color.clear)
-
-            Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    if m.connectedAccount != nil {
-                        // The finishing surface stays above until Done or Add another account.
-                    } else if service.available {
-                        AddAccountControls(service: service, accounts: m)
-                    } else {
-                        IntegrationBanner(text: untrusted(service.note ?? "Not available in this build."), kind: .warning)
-                            .accessibilityIdentifier("unavailable")
-                    }
-                    if let error = m.error {
-                        IntegrationBanner(text: untrusted(error), kind: .error)
-                            .accessibilityIdentifier("accountError")
-                        if m.refusedByIOS {
-                            ActionButton(title: "Open Settings", symbol: "gear", kind: .secondary) {
-                                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
-                            }
+            let help = [ServiceCopy.intro(service), ServiceCopy.accountsFooter(service), ServiceCopy.fineprint(service)]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+            // What the service is for and its small print (Telegram's warning about automation among them), behind a (?).
+            if !help.isEmpty {
+                GroupFooter(help).padding(.horizontal, 20).padding(.top, 2)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                if service.available {
+                    AddAccountControls(service: service, accounts: m)
+                } else {
+                    IntegrationBanner(text: untrusted(service.note ?? "Not available in this build."), kind: .warning)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 18)
+                        .accessibilityIdentifier("unavailable")
+                }
+                if let error = m.error {
+                    IntegrationBanner(text: untrusted(error), kind: .error)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                        .accessibilityIdentifier("accountError")
+                    if m.refusedByIOS {
+                        Button("Open Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                         }
+                        .buttonStyle(SignalButtonStyle(.soft))
+                        .padding(.horizontal, 20)
+                        .padding(.top, 10)
                     }
                 }
-                .plainListRow(top: 4, bottom: 28)
             }
         }
-        .integrationList()
-        .navigationTitle(service.name)
-        .navigationBarTitleDisplayMode(.large)
         .refreshable {
             feedback.play(.refresh)
             await m.refresh()
@@ -168,10 +165,14 @@ private struct AddAccountControls: View {
     var body: some View {
         switch service.kind {
         case "google":
-            VStack(alignment: .leading, spacing: 10) {
-                ActionButton(title: "Add account", symbol: "plus", busy: accounts.busy) {
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
                     Task { await accounts.addGoogle() }
+                } label: {
+                    BusyLabel(title: "Add account", glyph: .plus, busy: accounts.busy)
                 }
+                .buttonStyle(SignalButtonStyle(.soft))
+                .disabled(accounts.busy)
                 .accessibilityIdentifier("addAccount")
                 // Google's unverified-app screen, and the way past it, behind a (?).
                 if !ServiceCopy.googleSignInNote.isEmpty {
@@ -179,11 +180,19 @@ private struct AddAccountControls: View {
                         .accessibilityIdentifier("googleSignInNote")
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
         case "device":
             if service.accounts.isEmpty {
-                ActionButton(title: "Allow on this phone", symbol: "iphone", busy: accounts.busy) {
+                Button {
                     Task { await accounts.addDevice() }
+                } label: {
+                    BusyLabel(title: "Allow on this phone", glyph: .phone, busy: accounts.busy)
                 }
+                .buttonStyle(SignalButtonStyle(.inverse))
+                .disabled(accounts.busy)
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
                 .accessibilityIdentifier("allowDevice")
             }
         case "token":
@@ -193,74 +202,92 @@ private struct AddAccountControls: View {
                 GitHubConnect(accounts: accounts)
             }
         case "vault":
-            if !service.accounts.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    ActionButton(title: "Open the vault", symbol: "key.horizontal") { model.push(.vault) }
-                        .accessibilityIdentifier("openVault")
-                    Text("See, add and change your API keys, logins and SSH keys. reins run, the API proxy and the SSH agent use them by name.")
-                        .textRole(.meta)
-                        .foregroundStyle(Palette.ink2)
-                        .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                if !service.accounts.isEmpty {
+                    Button { model.push(.vault) } label: {
+                        Label { Text("Open the vault") } icon: { GlyphIcon(.vault, size: 18) }
+                    }
+                    .buttonStyle(SignalButtonStyle(.inverse))
+                    .accessibilityIdentifier("openVault")
+                    GroupFooter("See, add and change your API keys, logins and SSH keys. reins run, the API proxy and the SSH agent use them by name.")
+                }
+                if service.accounts.isEmpty {
+                    SecretForm(
+                        placeholder: "Master password",
+                        button: "Unlock and connect",
+                        busy: accounts.busy,
+                        hint: "The vault of the account this phone is signed in with.",
+                        contentType: .password
+                    ) { secret in Task { await accounts.addSecret(secret) } }
                 }
             }
-            if service.accounts.isEmpty {
-                SecretForm(
-                    placeholder: "Master password",
-                    button: "Unlock and connect",
-                    busy: accounts.busy,
-                    hint: "The vault of the account this phone is signed in with.",
-                    contentType: .password
-                ) { secret in Task { await accounts.addSecret(secret) } }
-            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
         case "telegram":
             TelegramLogin(accounts: accounts)
         default:
             Text("This kind of integration cannot be added here.")
                 .textRole(.body)
                 .foregroundStyle(Palette.ink2)
+                .padding(20)
+        }
+    }
+}
+
+/// A button's label that turns into a spinner while its work runs.
+struct BusyLabel: View {
+    var title: String
+    var glyph: Glyph?
+    var busy: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if busy {
+                ProgressView().controlSize(.small)
+            } else if let glyph {
+                GlyphIcon(glyph, size: 18)
+            }
+            Text(title)
         }
     }
 }
 
 // MARK: Tokens
 
-/// GitHub in a few taps: open GitHub's token page (already filled in), press Generate and Copy there, come back and
-/// paste. A pasted token that looks like one connects at once; typing one in by hand is still possible.
+/// GitHub in a few taps (the Connections board, 03): "Chosen repos" or "Everything" opens GitHub's token page,
+/// already filled in; Generate and Copy there, come back, and the token row's paste connects at once. Typing one in by
+/// hand is still possible.
 private struct GitHubConnect: View {
     var accounts: AccountsModel
     @Environment(\.openURL) private var openURL
-    @State private var manual = false
 
     var body: some View {
-        Text("Add an account")
-            .textRole(.section)
-            .foregroundStyle(Palette.inkMeta)
-            .accessibilityAddTraits(.isHeader)
-        ActionButton(title: "Chosen repositories", enabled: !accounts.busy) {
-            open(GitHubToken.fineGrainedURL())
+        SectionHeader("Add an account", quiet: true)
+        HStack(spacing: 8) {
+            Button { open(GitHubToken.fineGrainedURL()) } label: {
+                Label { Text("Chosen repos") } icon: { GlyphIcon(.folderSearch, size: 18) }
+            }
+            .buttonStyle(SignalButtonStyle(.soft, size: .small))
+            .accessibilityIdentifier("openGithub")
+            Button { open(GitHubToken.classicURL()) } label: {
+                Label { Text("Everything") } icon: { GlyphIcon(.globe, size: 18) }
+            }
+            .buttonStyle(SignalButtonStyle(.soft, size: .small))
+            .accessibilityIdentifier("openGithubClassic")
         }
-        .accessibilityIdentifier("openGithub")
-        ActionButton(title: "Everything", kind: .secondary, enabled: !accounts.busy) {
-            open(GitHubToken.classicURL())
-        }
-        .accessibilityIdentifier("openGithubClassic")
-        Steps(
-            "Either button opens GitHub with the token already set up. Tap Generate token, copy it, and come back to paste it.\n\n" +
-                "Chosen repositories: a fine-grained token, only for the repositories you pick (no gists or notifications).\n\n" +
-                "Everything: a classic token for every repository, plus gists and notifications."
-        )
-        // Fewer steps to a token: the paste box is always there, for a token copied on GitHub just now or before.
-        CopiedTokenButton(busy: accounts.busy, looksLikeToken: GitHubToken.looksLikeToken, hostName: "GitHub") { token in
+        .disabled(accounts.busy)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
+        TokenRow(placeholder: "Token", busy: accounts.busy, looksLikeToken: GitHubToken.looksLikeToken, hostName: "GitHub") { token in
             Task { await accounts.addSecret(token) }
         }
-        if !manual {
-            ActionButton(title: "I already have a token", kind: .ghost, enabled: !accounts.busy) { manual = true }
-                .accessibilityIdentifier("pasteManually")
-        } else {
-            SecretForm(placeholder: "Access token", button: "Connect", busy: accounts.busy, hint: "") { token in
-                Task { await accounts.addSecret(token) }
-            }
-        }
+        .padding(.top, 8)
+        GroupFooter(
+            "Either button opens GitHub with the token already set up. Tap Generate token, copy it, and come back: paste connects it.\n\n" +
+                "Chosen repos: a fine-grained token, only for the repositories you pick (no gists or notifications).\n\n" +
+                "Everything: a classic token for every repository, plus gists and notifications. The token is kept encrypted on this phone."
+        )
+        .padding(.horizontal, 20)
     }
 
     private func open(_ url: String) {
@@ -273,102 +300,116 @@ private struct GitHostConnect: View {
     var host: GitHost
     var accounts: AccountsModel
     @Environment(\.openURL) private var openURL
-    @State private var opened = false
-    @State private var manual = false
 
     var body: some View {
-        ActionButton(title: "Create a token on \(host.name)", symbol: "key.fill", enabled: !accounts.busy) {
-            opened = true
+        SectionHeader("Add an account", quiet: true)
+        Button {
             if let u = URL(string: host.tokenURL()) { openURL(u) }
+        } label: {
+            Label { Text("Create a token on \(host.name)") } icon: { GlyphIcon(.key, size: 18) }
         }
+        .buttonStyle(SignalButtonStyle(.soft, size: .small))
+        .disabled(accounts.busy)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 4)
         .accessibilityIdentifier("openTokenPage")
-        Steps(host.steps)
+        TokenRow(placeholder: host.placeholder, busy: accounts.busy, looksLikeToken: host.looksLikeToken, hostName: host.name) { token in
+            Task { await accounts.addSecret(token) }
+        }
+        .padding(.top, 8)
+        GroupFooter([host.steps, host.hint].filter { !$0.isEmpty }.joined(separator: "\n\n"))
+            .padding(.horizontal, 20)
             .accessibilityIdentifier("tokenSteps")
-        if opened && host.shape != nil {
-            CopiedTokenButton(busy: accounts.busy, looksLikeToken: host.looksLikeToken, hostName: host.name) { token in
-                Task { await accounts.addSecret(token) }
-            }
-        }
-        if !(manual || host.pasteFirst) {
-            ActionButton(title: "I already have a token", kind: .ghost, enabled: !accounts.busy) { manual = true }
-                .accessibilityIdentifier("pasteManually")
-        } else {
-            SecretForm(placeholder: host.placeholder, button: "Connect", busy: accounts.busy, hint: host.hint) { token in
-                Task { await accounts.addSecret(token) }
-            }
-        }
     }
 }
 
-/// "Paste the token I copied": the system's paste button (no "Allow Paste" prompt). Only something shaped like the
-/// host's token is used, and it is taken off the clipboard once read.
-private struct CopiedTokenButton: View {
+/// The token as a flat input row (the kit's `inp` with a paste button): pasting something shaped like the host's
+/// token connects at once and takes it off the clipboard; anything typed connects with Connect. Sent once, then
+/// cleared.
+private struct TokenRow: View {
+    var placeholder: String
     var busy: Bool
     var looksLikeToken: (String?) -> Bool
     var hostName: String
     var onToken: (String) -> Void
     @Environment(\.feedback) private var feedback
+    @State private var secret = ""
     @State private var wrong = false
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Copied the token on \(hostName)?")
-                        .textRole(.row)
-                        .foregroundStyle(Palette.ink)
-                    Text("Paste it here and it connects. It's kept encrypted on this phone.")
-                        .textRole(.meta)
-                        .foregroundStyle(Palette.ink2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                PasteButton(payloadType: String.self) { strings in
-                    Task { @MainActor in
-                        let text = strings.first?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard let text, looksLikeToken(text) else {
-                            feedback.play(.error)
-                            wrong = true
-                            return
-                        }
-                        wrong = false
-                        clearClipboard()
-                        onToken(text)
+        VStack(alignment: .leading, spacing: 10) {
+            FlatFields {
+                InputRow(glyph: .vault) {
+                    SecureField(placeholder, text: $secret)
+                        .font(RFont.mono(15))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focused)
+                        .submitLabel(.go)
+                        .onSubmit(submit)
+                        .disabled(busy)
+                        .accessibilityIdentifier("secret")
+                } trailing: {
+                    PasteButton(payloadType: String.self) { strings in
+                        Task { @MainActor in paste(strings.first) }
                     }
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.circle)
+                    .tint(Palette.ink2)
+                    .controlSize(.small)
+                    .disabled(busy)
+                    .accessibilityLabel("Paste")
+                    .accessibilityIdentifier("useCopied")
                 }
-                .buttonBorderShape(.capsule)
-                .tint(Palette.inverse)
-                .disabled(busy)
-                .accessibilityIdentifier("useCopied")
             }
-            .padding(.leading, 16)
-            .padding(.trailing, 10)
-            .padding(.vertical, 12)
-            .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
             if wrong {
-                Text("That is not a \(hostName) token. Copy it again on \(hostName), or type it in below.")
-                    .textRole(.meta)
+                Text("That is not a \(hostName) token. Copy it again on \(hostName), or type it in.")
+                    .textRole(.sub)
                     .foregroundStyle(Palette.danger)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 20)
+            }
+            if !secret.isEmpty || busy {
+                Button(action: submit) { BusyLabel(title: "Connect", glyph: nil, busy: busy) }
+                    .buttonStyle(SignalButtonStyle(.inverse))
+                    .disabled(busy || secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .padding(.horizontal, 20)
+                    .accessibilityIdentifier("connectSecret")
             }
         }
+        .animation(.smooth(duration: 0.2), value: secret.isEmpty)
     }
-}
 
-/// What to do on a token page.
-private struct Steps: View {
-    var text: String
-    init(_ text: String) { self.text = text }
+    private func paste(_ text: String?) {
+        let clean = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !clean.isEmpty else { return }
+        clearClipboard()
+        if looksLikeToken(clean) {
+            wrong = false
+            secret = ""
+            onToken(clean)
+        } else {
+            feedback.play(.error)
+            wrong = true
+            secret = clean
+        }
+    }
 
-    // How-tos wait behind a (?).
-    var body: some View { GroupFooter(text) }
+    private func submit() {
+        let sent = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !busy, !sent.isEmpty else { return }
+        secret = ""
+        focused = false
+        wrong = false
+        onToken(sent)
+    }
 }
 
 // MARK: Telegram
 
-/// Phone number → code → (password): the same steps as signing in to Telegram anywhere else.
+/// Phone number, code, then (if it has one) the password (the Connections board, 06): the same steps as signing in
+/// to Telegram anywhere else.
 private struct TelegramLogin: View {
     var accounts: AccountsModel
     @Environment(\.feedback) private var feedback
@@ -383,62 +424,103 @@ private struct TelegramLogin: View {
         let busy = accounts.busy
         switch accounts.login {
         case .phone:
-            InputWell {
-                TextField("Phone number, like +1 555 010 0100", text: $phone)
-                    .font(RFont.mono(16))
-                    .keyboardType(.phonePad)
-                    .textContentType(.telephoneNumber)
-                    .focused($focus, equals: .phone)
-                    .disabled(busy)
-                    .accessibilityIdentifier("phone")
+            SectionHeader("Add an account", quiet: true)
+            FlatFields {
+                InputRow(glyph: .phone) {
+                    TextField("Phone number", text: $phone)
+                        .font(RFont.mono(15))
+                        .keyboardType(.phonePad)
+                        .textContentType(.telephoneNumber)
+                        .focused($focus, equals: .phone)
+                        .disabled(busy)
+                        .accessibilityIdentifier("phone")
+                }
             }
-            ActionButton(title: "Send me a code", busy: busy, enabled: TelegramStep.phoneReady(phone)) {
+            Button {
                 focus = nil
                 Task { await accounts.loginBegin(phone) }
+            } label: {
+                BusyLabel(title: "Send me a code", glyph: nil, busy: busy)
             }
+            .buttonStyle(SignalButtonStyle(.inverse))
+            .disabled(busy || !TelegramStep.phoneReady(phone))
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
             .accessibilityIdentifier("sendCode")
         case let .code(number):
-            Steps("Telegram sent a code to \(number). It arrives in the Telegram app on your other devices, or as a text.")
-            DigitBoxes(code: code, focused: focus == .code) {
-                TextField("Login code", text: Binding(get: { code }, set: { new in
-                    let clean = TelegramStep.cleanCode(new)
-                    // Each digit ticks as it lands.
-                    if clean.count > code.count { feedback.play(.detent, step: clean.count) }
-                    code = clean
-                }))
-                .keyboardType(.numberPad)
-                .textContentType(.oneTimeCode)
-                .focused($focus, equals: .code)
-                .disabled(busy)
-                .accessibilityIdentifier("code")
+            SectionHeader("Code sent to", quiet: true) {
+                Text(verbatim: number).font(RFont.mono(13)).foregroundStyle(Palette.ink2).environment(\.layoutDirection, .leftToRight)
             }
-            .onTapGesture { focus = .code }
-            .onAppear { focus = .code }
-            ActionButton(title: "Sign in", busy: busy, enabled: TelegramStep.codeReady(code)) {
-                let sent = code
-                code = ""
-                Task { await accounts.loginCode(sent) }
-            }
-            .accessibilityIdentifier("submitCode")
-            ActionButton(title: "Use another number", kind: .ghost, enabled: !busy) {
-                code = ""
-                accounts.loginRestart()
-            }
-            .accessibilityIdentifier("restartLogin")
-        case let .password(hint):
-            Steps("This account has two-step verification. Enter its Telegram password" + (hint.map(untrusted).flatMap { $0.isEmpty ? nil : " (hint: \($0))" } ?? "") + ".")
-            InputWell {
-                SecureField("Telegram password", text: $password)
-                    .font(RFont.sans(16))
-                    .textContentType(.password)
-                    .focused($focus, equals: .password)
-                    .submitLabel(.go)
-                    .onSubmit(submitPassword)
+            VStack(spacing: 0) {
+                DigitBoxes(code: code, focused: focus == .code) {
+                    TextField("Login code", text: Binding(get: { code }, set: { new in
+                        let clean = TelegramStep.cleanCode(new)
+                        // Each digit ticks as it lands.
+                        if clean.count > code.count { feedback.play(.detent, step: clean.count) }
+                        code = clean
+                    }))
+                    .keyboardType(.numberPad)
+                    .textContentType(.oneTimeCode)
+                    .focused($focus, equals: .code)
                     .disabled(busy)
-                    .accessibilityIdentifier("tgPassword")
+                    .accessibilityIdentifier("code")
+                }
+                .onTapGesture { focus = .code }
+                .onAppear { focus = .code }
+                Button {
+                    let sent = code
+                    code = ""
+                    Task { await accounts.loginCode(sent) }
+                } label: {
+                    BusyLabel(title: "Sign in", glyph: nil, busy: busy)
+                }
+                .buttonStyle(SignalButtonStyle(.inverse))
+                .disabled(busy || !TelegramStep.codeReady(code))
+                .padding(.top, 14)
+                .accessibilityIdentifier("submitCode")
+                Button {
+                    code = ""
+                    accounts.loginRestart()
+                } label: {
+                    Label { Text("Another number") } icon: { GlyphIcon(.pencil, size: 18) }
+                        .labelStyle(SignalLabelStyle())
+                        .font(RFont.sans(16, .semibold))
+                        .foregroundStyle(Palette.ink2)
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                }
+                .buttonStyle(PressDimsStyle())
+                .disabled(busy)
+                .accessibilityIdentifier("restartLogin")
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 4)
+        case let .password(hint):
+            SectionHeader("Two-step password", quiet: true)
+            FlatFields {
+                InputRow(glyph: .lock) {
+                    SecureField("Telegram password", text: $password)
+                        .textContentType(.password)
+                        .focused($focus, equals: .password)
+                        .submitLabel(.go)
+                        .onSubmit(submitPassword)
+                        .disabled(busy)
+                        .accessibilityIdentifier("tgPassword")
+                }
             }
             .onAppear { focus = .password }
-            ActionButton(title: "Sign in", busy: busy, enabled: !password.isEmpty, action: submitPassword)
+            if let shown = hint.map({ untrustedName($0, limit: 40) }), !shown.isEmpty {
+                Text("Hint: \(shown)")
+                    .textRole(.sub)
+                    .foregroundStyle(Palette.inkMeta)
+                    .lineLimit(1)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+            }
+            Button(action: submitPassword) { BusyLabel(title: "Sign in", glyph: nil, busy: busy) }
+                .buttonStyle(SignalButtonStyle(.inverse))
+                .disabled(busy || password.isEmpty)
+                .padding(.horizontal, 20)
+                .padding(.top, 14)
                 .accessibilityIdentifier("submitPassword")
         }
     }
@@ -451,8 +533,8 @@ private struct TelegramLogin: View {
     }
 }
 
-/// Telegram's code, one field per digit (five, more if more are typed): the digits typed so far, the next box ringed.
-/// The real field sits invisible underneath, so typing, pasting and the keyboard's code suggestion all work as usual.
+/// Telegram's code, one cell per digit (five, more if more are typed): the digits typed so far, the next cell ringed in
+/// violet. The real field sits invisible underneath, so typing, pasting and the keyboard's code suggestion all work.
 private struct DigitBoxes<Field: View>: View {
     var code: String
     var focused: Bool
@@ -468,15 +550,7 @@ private struct DigitBoxes<Field: View>: View {
                 .opacity(0.02)
             HStack(spacing: 8) {
                 ForEach(0..<count, id: \.self) { i in
-                    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    let next = i == digits.count && focused
-                    Text(i < digits.count ? String(digits[i]) : " ")
-                        .font(RFont.display(25))
-                        .foregroundStyle(Palette.ink)
-                        .frame(maxWidth: 56, minHeight: 62)
-                        .frame(maxWidth: .infinity)
-                        .background(Palette.paperRaised, in: shape)
-                        .overlay(shape.strokeBorder(next ? Palette.ink : Palette.rule, lineWidth: next ? 1.5 : 1))
+                    CodeCell(character: i < digits.count ? String(digits[i]) : "", next: i == digits.count && focused)
                         .animation(.easeOut(duration: 0.12), value: digits.count)
                 }
             }

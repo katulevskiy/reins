@@ -13,70 +13,73 @@ struct McpAddScreen: View {
     private enum Field { case url, name, token }
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    InputWell {
-                        TextField("https://mcp.example.com/mcp", text: $url)
-                            .font(RFont.mono(15))
-                            .keyboardType(.URL)
-                            .textContentType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focus, equals: .url)
-                            .submitLabel(.next)
-                            .onSubmit { focus = .name }
-                            .accessibilityIdentifier("mcpUrl")
-                    } trailing: {
-                        PasteInto(label: "Paste the address") { url = $0 }
-                    }
-                    InputWell {
-                        TextField("Name (optional)", text: $name)
-                            .font(RFont.sans(16))
-                            .focused($focus, equals: .name)
-                            .submitLabel(.next)
-                            .onSubmit { focus = .token }
-                            .accessibilityIdentifier("mcpName")
-                    }
-                    InputWell {
-                        SecureField("Access token (optional)", text: $token)
-                            .font(RFont.mono(15))
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .focused($focus, equals: .token)
-                            .submitLabel(.go)
-                            .onSubmit(submit)
-                            .accessibilityIdentifier("mcpToken")
-                    } trailing: {
-                        PasteInto(label: "Paste the token") { pasted in
-                            token = pasted
-                            clearClipboard()
-                        }
-                    }
-                    GroupFooter(
-                        "Paste the address the service gives for its MCP server. Reins connects from this phone; if the server wants you to sign in, its page opens here.\n\n" +
-                            "The token is only for servers that give you one instead of a sign-in. It is kept encrypted on this phone."
-                    )
-                    ActionButton(title: "Add", busy: busy, enabled: !url.trimmingCharacters(in: .whitespaces).isEmpty, action: submit)
-                        .padding(.top, 6)
-                        .accessibilityIdentifier("mcpAddSubmit")
-                    if mcp?.signingIn != nil {
-                        IntegrationBanner(text: "Finish signing in on the page that opened.")
-                            .accessibilityIdentifier("mcpSigningIn")
-                    }
-                    if let error = mcp?.error {
-                        IntegrationBanner(text: untrusted(error), kind: .error)
-                            .accessibilityIdentifier("mcpError")
+        NextPage {
+            QuietTitle(title: "Add MCP server") {
+                MarkPlate(size: 36) { ServiceAvatar(service: "mcp", size: 36) }
+            }
+            SectionHeader("Server", quiet: true)
+            FlatFields {
+                InputRow(glyph: .globe) {
+                    TextField("https://mcp.example.com/mcp", text: $url)
+                        .font(RFont.mono(15))
+                        .keyboardType(.URL)
+                        .textContentType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focus, equals: .url)
+                        .submitLabel(.next)
+                        .onSubmit { focus = .name }
+                        .accessibilityIdentifier("mcpUrl")
+                } trailing: {
+                    PasteInto(label: "Paste the address") { url = $0 }
+                }
+                InputRow(glyph: .pencil) {
+                    TextField("Name", text: $name)
+                        .focused($focus, equals: .name)
+                        .submitLabel(.next)
+                        .onSubmit { focus = .token }
+                        .accessibilityIdentifier("mcpName")
+                }
+                InputRow(glyph: .vault) {
+                    SecureField("Token", text: $token)
+                        .font(RFont.mono(15))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focus, equals: .token)
+                        .submitLabel(.go)
+                        .onSubmit(submit)
+                        .accessibilityIdentifier("mcpToken")
+                } trailing: {
+                    PasteInto(label: "Paste the token") { pasted in
+                        token = pasted
+                        clearClipboard()
                     }
                 }
-                .disabled(busy)
-                .plainListRow(top: 8, bottom: 28)
             }
+            GroupFooter(
+                "Paste the address the service gives for its MCP server. The name and the token are optional. Reins connects from this phone; if the server wants you to sign in, its page opens here.\n\n" +
+                    "The token is only for servers that give you one instead of a sign-in. It is kept encrypted on this phone."
+            )
+            .padding(.horizontal, 20)
+            VStack(spacing: 10) {
+                Button(action: submit) { BusyLabel(title: "Add", glyph: nil, busy: busy) }
+                    .buttonStyle(SignalButtonStyle(.inverse))
+                    .disabled(busy || url.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .accessibilityIdentifier("mcpAddSubmit")
+                if mcp?.signingIn != nil {
+                    IntegrationBanner(text: "Finish signing in on the page that opened.")
+                        .accessibilityIdentifier("mcpSigningIn")
+                }
+                if let error = mcp?.error {
+                    IntegrationBanner(text: untrusted(error), kind: .error)
+                        .accessibilityIdentifier("mcpError")
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
         }
-        .integrationList()
-        .navigationTitle("Add MCP server")
-        .navigationSubtitle("Integrations")
-        .navigationBarTitleDisplayMode(.large)
+        .disabled(busy)
+        .quietPageBar("Add MCP server")
         .animation(.smooth, value: mcp?.error)
         .onAppear { active = true }
         .onDisappear { active = false }

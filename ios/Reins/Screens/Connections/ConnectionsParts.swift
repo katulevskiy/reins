@@ -130,7 +130,7 @@ struct QuietTitle<Lead: View>: View {
                 .accessibilityIdentifier(titleId ?? "")
         }
         .padding(.horizontal, 20)
-        .padding(.top, 10)
+        .padding(.top, -2)
     }
 }
 

@@ -23,6 +23,10 @@ final class AccountsModel {
         self.service = service
         self.model = model
         self.platform = platform ?? model.integrations
+        #if DEBUG
+        // `-demo -integration telegram -telegramCode`: the code step, for screenshots.
+        if model.demo, service == "telegram", ProcessInfo.processInfo.arguments.contains("-telegramCode") { login = .code(phone: "+1 555 010 0199") }
+        #endif
     }
 
     var connectedAccount: String? { model.connectedAccounts[service] }
