@@ -18,7 +18,7 @@ enum SlicePosition {
     var bottom: Bool { self == .only || self == .last }
 }
 
-private struct GroupSlice: ViewModifier {
+private struct TrustSlice: ViewModifier {
     var position: SlicePosition
     var inset: CGFloat
     @Environment(\.colorScheme) private var scheme
@@ -46,8 +46,8 @@ private struct GroupSlice: ViewModifier {
 
 extension View {
     /// This list row as a slice of a raised group (`RaisedGroup`'s look), with a hairline after its tile (`inset`).
-    func groupSlice(_ position: SlicePosition, inset: CGFloat = 62) -> some View {
-        modifier(GroupSlice(position: position, inset: inset))
+    func trustSlice(_ position: SlicePosition, inset: CGFloat = 62) -> some View {
+        modifier(TrustSlice(position: position, inset: inset))
     }
 }
 

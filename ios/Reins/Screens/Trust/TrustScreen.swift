@@ -192,7 +192,7 @@ struct TrustScreen: View {
             }
             .buttonStyle(PressDimsStyle())
             .feedbackTap(.tap, feedback)
-            .groupSlice(.only)
+            .trustSlice(.only)
             .accessibilityIdentifier("trustPermissions")
             .plainRow(EdgeInsets(top: 12, leading: 0, bottom: 0, trailing: 0))
 
@@ -280,7 +280,7 @@ struct TrustScreen: View {
                 .foregroundStyle(Palette.inkMeta)
                 .padding(.horizontal, 14)
                 .frame(minHeight: 56, alignment: .leading)
-                .groupSlice(.of(0, count: count), inset: 14)
+                .trustSlice(.of(0, count: count), inset: 14)
                 .accessibilityIdentifier("noGrants")
                 .plainRow(EdgeInsets())
         }
@@ -292,7 +292,7 @@ struct TrustScreen: View {
             }
             .buttonStyle(PressDimsStyle())
             .feedbackTap(.tap, feedback)
-            .groupSlice(.of(i, count: count), inset: 66)
+            .trustSlice(.of(i, count: count), inset: 66)
             .accessibilityIdentifier("grant:\(grant.id)")
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button { tapped { revoking = grant } } label: { Label("End now", systemImage: "nosign") }
@@ -312,7 +312,7 @@ struct TrustScreen: View {
             }
             .buttonStyle(PressDimsStyle())
             .feedbackTap(.tap, feedback)
-            .groupSlice(.of(count - 1, count: count), inset: 14)
+            .trustSlice(.of(count - 1, count: count), inset: 14)
             .accessibilityLabel("Ended, \(endedCount)")
             .accessibilityIdentifier("expiredHeader")
             .plainRow(EdgeInsets())
@@ -343,7 +343,7 @@ struct TrustScreen: View {
             }
             .buttonStyle(PressDimsStyle())
             .feedbackTap(.tap, feedback)
-            .groupSlice(.of(i, count: count))
+            .trustSlice(.of(i, count: count))
             .accessibilityIdentifier("profile:\(profile.id)")
             .plainRow(EdgeInsets())
         }
@@ -354,7 +354,7 @@ struct TrustScreen: View {
         }
         .buttonStyle(PressDimsStyle())
         .feedbackTap(.tap, feedback)
-        .groupSlice(.of(profiles.count, count: count))
+        .trustSlice(.of(profiles.count, count: count))
         .accessibilityIdentifier("openTryIt")
         .plainRow(EdgeInsets())
         Button {
@@ -366,7 +366,7 @@ struct TrustScreen: View {
             }
         }
         .buttonStyle(PressDimsStyle())
-        .groupSlice(.of(profiles.count + 1, count: count))
+        .trustSlice(.of(profiles.count + 1, count: count))
         .accessibilityIdentifier("modelRow")
         .plainRow(EdgeInsets())
     }
