@@ -86,6 +86,24 @@ fn card_of(d: &Data) -> Card {
         glyph,
         field,
     };
+    // A mode running on the phone colours the card (a request waiting keeps the calm card, and Reins' own trouble
+    // comes first).
+    if matches!(d.look, Look::On | Look::Paused)
+        && d.paired
+        && let Some(r) = d.running()
+    {
+        return Card {
+            title: r.name().to_owned(),
+            line: if r == crate::modes::Running::Lockdown {
+                "Everything is denied".to_owned()
+            } else {
+                String::new()
+            },
+            clock: r.clock(d.now).filter(|_| r.until() != Some(i64::MAX)).map(|c| format!("{c} left")),
+            glyph: super::autopilot::glyph_of(r),
+            field: Some(super::autopilot::field_of(r)),
+        };
+    }
     match d.look {
         // A request waiting keeps the calm card: Activity's count and Home's field say it.
         Look::Waiting => card("Reins is on", format!("{} approves", d.phone()), Glyph::ShieldCheck, None),
@@ -258,6 +276,7 @@ impl Root {
             .child(div().mb(px(10.0)).child(Self::status_card(d, pal, cx)))
             .child(nav)
             .child(div().flex_1())
+            .child(self.mode_picker(d, pal, cx))
             .child(Self::pause_box(d, pal, cx))
             .child(
                 div()

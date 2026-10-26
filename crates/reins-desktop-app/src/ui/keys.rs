@@ -313,6 +313,79 @@ impl Root {
             .child(kit::section(Some(Glyph::Terminal), "SSH agent", None, pal))
             .child(kit::group(ssh, kit::pane::INSET, glass, pal));
 
+        // The vault: its items' names, from the phone when asked (never their values).
+        let mut vault: Vec<AnyElement> = Vec::new();
+        match &d.vault_names {
+            Some(names) if names.is_empty() => vault.push(
+                kit::pane_row()
+                    .child(div().text_size(px(14.0)).text_color(pal.ink_meta()).child("The vault is empty"))
+                    .into_any_element(),
+            ),
+            Some(names) => {
+                for (name, kind) in names {
+                    // The item's own name: on its line, cut, never part of a sentence.
+                    vault.push(
+                        kit::pane_row()
+                            .child(kit::pane::tile(
+                                if kind == "note" {
+                                    Glyph::FileText
+                                } else {
+                                    Glyph::Key
+                                },
+                                pal,
+                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .truncate()
+                                    .text_size(px(15.0))
+                                    .text_color(pal.ink())
+                                    .child(super::story::middle(&super::story::clean(name), 60)),
+                            )
+                            .child(kit::pane::row_value(kind_word(kind), pal))
+                            .into_any_element(),
+                    );
+                }
+            }
+            None => vault.push(
+                kit::pane_row()
+                    .child(kit::pane::tile(Glyph::Lock, pal))
+                    .child(kit::title_sub(
+                        "Item names",
+                        Some(div().child("Your phone approves").into_any_element()),
+                        pal,
+                    ))
+                    .child(
+                        kit::button(
+                            "vault-show",
+                            kit::Look::Soft,
+                            kit::Size::Small,
+                            Some(Glyph::Phone),
+                            if d.vault_asking {
+                                "Asking…"
+                            } else {
+                                "Show"
+                            },
+                            pal,
+                        )
+                        .when(!d.vault_asking && d.paired, |b| {
+                            b.on_click(Self::on_model(cx, crate::model::Model::show_vault_names))
+                        })
+                        .when(d.vault_asking || !d.paired, |b| b.opacity(kit::button::DISABLED)),
+                    )
+                    .into_any_element(),
+            ),
+        }
+        right = right
+            .child(kit::section(
+                Some(Glyph::Lock),
+                "Vault",
+                d.vault_names.as_ref().map(|n| kit::section_count(Some(n.len()), None, pal)),
+                pal,
+            ))
+            .child(kit::group(vault, kit::pane::INSET, glass, pal));
+
         // Use them.
         let lines = how_to(
             &listen,
@@ -339,6 +412,18 @@ impl Root {
         right = right.child(kit::section(None, "Use them", None, pal)).child(code);
 
         page.child(super::connections::two_columns(left, right)).into_any_element()
+    }
+}
+
+/// An item's kind in a word.
+fn kind_word(kind: &str) -> &'static str {
+    match kind {
+        "login" => "Login",
+        "note" => "Note",
+        "card" => "Card",
+        "identity" => "Identity",
+        "ssh_key" => "SSH key",
+        _ => "Item",
     }
 }
 

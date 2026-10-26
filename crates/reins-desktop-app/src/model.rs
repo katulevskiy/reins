@@ -28,7 +28,7 @@ use crate::pairing::{self, Approved, DemoFlow, DeviceCode, DeviceFlow, Poll, Ser
 use crate::pause::{Pause, PauseFor};
 use crate::single::Instance;
 use crate::state::{Place, Rect, Saved};
-use crate::tray::{Action, Look, Shown, Tray};
+use crate::tray::{Action, Look, ModeAct, ModeLook, Shown, Tray};
 use crate::ui::kit::Wallpaper;
 use crate::welcome::{self, Stage, ToolRow};
 use crate::work::{self, Work};
@@ -63,6 +63,8 @@ pub enum Chime {
 
 /// `--demo`: how long the phone takes to answer the test.
 const DEMO_ANSWER: Duration = Duration::from_secs(4);
+/// How often the phone's modes are read again from the server.
+const MODES_POLL: Duration = Duration::from_secs(30);
 /// The longest "what" the tray's first line quotes.
 const TRAY_WHAT: usize = 60;
 
@@ -204,6 +206,8 @@ pub struct Model {
     pub show_phone_qr: bool,
     /// The tray's "Until I resume…": the window opens its pause sheet there, to be held.
     pub pause_hold_asked: bool,
+    /// The tray's "Bypass…": the window opens its Bypass sheet.
+    pub bypass_asked: bool,
     /// "Other server" is open.
     pub show_server: bool,
     pub server_input: String,
@@ -223,6 +227,17 @@ pub struct Model {
     /// The name the user gave this computer on the phone ("Work Mac"), opened from the copy sealed to this app's key
     /// (`reins_desktop::computer::phone_name`); `None`: none, or not known yet. `--demo`: `REINS_DEMO_NAME`.
     pub phone_name: Option<String>,
+    /// The phone's Autopilot modes as this computer is shown them (`None`: not known: not reported yet, an older
+    /// phone or server, or not paired). `--demo`: `REINS_DEMO_MODE`.
+    pub modes: Option<reins_proto::autopilot::DesktopModes>,
+    /// A change of mode asked of the phone, until it answers.
+    pub mode_asked: Option<reins_desktop::autopilot::ModeChoice>,
+    /// "This was wrong" sent for these requests (by the phone's request id), and the one on its way.
+    pub corrected: std::collections::HashSet<String>,
+    pub correcting: Option<String>,
+    /// The vault's item names (name, kind) as the phone last gave them, and whether it is being asked.
+    pub vault_names: Option<Vec<(String, String)>>,
+    pub vault_asking: bool,
     /// `--demo`: the pretend pairing went through.
     demo_paired: bool,
     /// `--demo`: the made-up activity and connections.
@@ -360,6 +375,7 @@ impl Model {
                 note: None,
                 show_phone_qr: false,
                 pause_hold_asked: false,
+                bypass_asked: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
                 cli_installed: args_demo || backend_cli,
@@ -377,6 +393,20 @@ impl Model {
                 } else {
                     None
                 },
+                modes: if args_demo {
+                    std::env::var("REINS_DEMO_MODE")
+                        .ok()
+                        .and_then(|m| crate::modes::demo(&m, reins_desktop::now_unix()))
+                } else {
+                    None
+                },
+                mode_asked: None,
+                // `--demo` with `REINS_DEMO_VAULT=1`: the vault's names, as if the phone gave them.
+                vault_names: (args_demo && std::env::var_os("REINS_DEMO_VAULT").is_some_and(|v| !v.is_empty()))
+                    .then(Demo::vault_names),
+                vault_asking: false,
+                corrected: std::collections::HashSet::new(),
+                correcting: None,
                 demo_paired,
                 demo,
                 notified: std::collections::HashSet::new(),
@@ -469,6 +499,23 @@ impl Model {
                 cx.notify();
                 cx.defer(Self::show_window);
             }
+            Action::Mode(ModeAct::Bypass) if self.screen == Screen::Status => {
+                self.bypass_asked = true;
+                self.show_phone_qr = false;
+                cx.notify();
+                cx.defer(Self::show_window);
+            }
+            Action::Mode(ModeAct::Bypass) => cx.defer(Self::show_window),
+            Action::Mode(act) => {
+                use reins_desktop::autopilot::ModeChoice;
+                let choice = match act {
+                    ModeAct::Manual => ModeChoice::Manual,
+                    ModeAct::Auto => ModeChoice::Auto,
+                    ModeAct::Lockdown => ModeChoice::Lockdown,
+                    ModeAct::Stop | ModeAct::Bypass => ModeChoice::Stop,
+                };
+                self.change_mode(choice, cx);
+            }
             Action::Pause(length) => self.pause_for(length, cx),
             Action::Resume => self.resume(cx),
             Action::EndSession => self.end_work_session(cx),
@@ -545,6 +592,15 @@ impl Model {
                     break;
                 };
                 cx.background_executor().timer(HEALTH_TICK).await;
+            }
+        }));
+        // The phone's modes, from the server: often enough for a mode started on the phone to show here soon.
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            loop {
+                if this.update(cx, Self::refresh_modes).is_err() {
+                    break;
+                }
+                cx.background_executor().timer(MODES_POLL).await;
             }
         }));
         self.tasks.push(cx.spawn(async move |this, cx| {
@@ -765,10 +821,36 @@ impl Model {
         // Beside the shield (macOS shows a status item's title): how many wait, or a pause's time left.
         let waiting =
             self.snapshot.as_ref().map_or(0, |s| s.activity.iter().filter(|e| e.outcome == Outcome::Waiting).count());
+        let running = crate::modes::running(self.modes.as_ref(), now).filter(|_| self.paired());
+        let mode = running.map(|r| match r {
+            crate::modes::Running::Bypass {
+                ..
+            } => ModeLook::Bypass,
+            crate::modes::Running::Overnight {
+                ..
+            } => ModeLook::Overnight,
+            crate::modes::Running::Lockdown => ModeLook::Lockdown,
+        });
+        let mode_clock =
+            running.and_then(|r| r.until().filter(|u| *u != i64::MAX).map(|_| r)).and_then(|r| r.clock(now));
         let title = match look {
             Look::Waiting if waiting > 0 => Some(waiting.to_string()),
+            // A running mode's clock, beside its colour.
+            Look::On | Look::Paused if mode_clock.is_some() => mode_clock.clone(),
             Look::Paused => self.pause().clock(now),
             _ => None,
+        };
+        // A running mode names itself in the menu, while all is otherwise calm.
+        let (status, detail) = match running {
+            Some(r) if look == Look::On => (
+                r.name().to_owned(),
+                match mode_clock {
+                    Some(c) => format!("{c} left"),
+                    None if r == crate::modes::Running::Lockdown => "Everything is denied".to_owned(),
+                    None => detail,
+                },
+            ),
+            _ => (status, detail),
         };
         let shown = Shown {
             look,
@@ -778,6 +860,13 @@ impl Model {
             can_pause: self.paired() && !paused,
             can_resume: self.paired() && paused,
             can_end: session.is_some() && !self.work.ending,
+            mode,
+            can_mode: self.paired() && self.mode_asked.is_none(),
+            can_stop: self.mode_asked.is_none()
+                && matches!(
+                    running,
+                    Some(crate::modes::Running::Bypass { .. } | crate::modes::Running::Overnight { .. })
+                ),
         };
         if let Some(tray) = self.tray.as_mut() {
             tray.show(&shown);
@@ -1379,6 +1468,7 @@ impl Model {
     pub fn refresh_all(&mut self, cx: &mut Context<'_, Self>) {
         self.refresh_now(cx);
         self.refresh_phone_name(cx);
+        self.refresh_modes(cx);
         if self.screen == Screen::Status {
             self.run_checks(cx);
         }
@@ -1493,6 +1583,141 @@ impl Model {
                 }
                 Ok(Err(e)) | Err(e) => log::info!("the name the phone gave this computer is not known: {e}"),
             }
+        })
+        .detach();
+    }
+
+    /// Asks the server for the phone's modes. Kept as they were when the server cannot say (offline); cleared when
+    /// it says it has none (an older phone).
+    fn refresh_modes(&mut self, cx: &mut Context<'_, Self>) {
+        if self.args.demo || self.backend.paired_server().is_none() {
+            return;
+        }
+        let backend = Arc::clone(&self.backend);
+        cx.spawn(async move |this, cx| {
+            match Tokio::spawn(cx, async move { backend.phone_modes().await }).await.map_err(|e| e.to_string()) {
+                Ok(Ok(modes)) => {
+                    let _gone = this.update(cx, |m, cx| {
+                        if m.modes != modes {
+                            m.modes = modes;
+                            m.refresh_tray();
+                            cx.notify();
+                        }
+                    });
+                }
+                Ok(Err(e)) | Err(e) => log::info!("the phone's modes are not known: {e}"),
+            }
+        })
+        .detach();
+    }
+
+    /// Asks the phone to change its mode (the sidebar's picker, "For a while", Stop). The phone applies at once what
+    /// is stricter and asks its owner for the rest: nothing changes here until it says so.
+    pub fn change_mode(&mut self, choice: reins_desktop::autopilot::ModeChoice, cx: &mut Context<'_, Self>) {
+        if self.mode_asked.is_some() || !self.paired() {
+            return;
+        }
+        self.notice = None;
+        self.note = None;
+        self.mode_asked = Some(choice);
+        cx.notify();
+        let stricter = reins_desktop::autopilot::is_stricter(choice, self.modes.as_ref());
+        if self.args.demo {
+            cx.spawn(async move |this, cx| {
+                if !stricter {
+                    cx.background_executor().timer(DEMO_ANSWER).await;
+                }
+                let _gone = this.update(cx, |m, cx| {
+                    m.modes = Some(crate::modes::demo_after(choice, reins_desktop::now_unix(), m.modes));
+                    m.mode_asked = None;
+                    m.refresh_tray();
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
+        let backend = Arc::clone(&self.backend);
+        cx.spawn(async move |this, cx| {
+            let result = Tokio::spawn(cx, async move { backend.change_mode(choice).await })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+            let _gone = this.update(cx, |m, cx| {
+                m.mode_asked = None;
+                if let Err(e) = result {
+                    m.notice = Some(format!("Mode not changed: {e}"));
+                }
+                m.refresh_modes(cx);
+                m.refresh_now(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// "This was wrong": tells the phone's Autopilot what it should have done with `request_id` (`approve`: it should
+    /// have allowed it). Teaching it to deny applies at once; teaching it to allow is asked on the phone.
+    pub fn correct_autopilot(&mut self, request_id: String, approve: bool, cx: &mut Context<'_, Self>) {
+        if self.correcting.is_some() || self.corrected.contains(&request_id) {
+            return;
+        }
+        self.notice = None;
+        self.note = None;
+        self.correcting = Some(request_id.clone());
+        cx.notify();
+        let demo = self.args.demo;
+        let backend = Arc::clone(&self.backend);
+        cx.spawn(async move |this, cx| {
+            let id = request_id.clone();
+            let result = if demo {
+                cx.background_executor().timer(Duration::from_millis(600)).await;
+                Ok(())
+            } else {
+                Tokio::spawn(cx, async move { backend.correct_autopilot(id, approve).await })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            };
+            let _gone = this.update(cx, |m, cx| {
+                m.correcting = None;
+                match result {
+                    Ok(()) => {
+                        m.corrected.insert(request_id);
+                    }
+                    Err(e) => m.notice = Some(format!("Autopilot not told: {e}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Keys' "Show": asks the phone for the names of the vault items (never their values).
+    pub fn show_vault_names(&mut self, cx: &mut Context<'_, Self>) {
+        if self.vault_asking || !self.paired() {
+            return;
+        }
+        self.vault_asking = true;
+        self.notice = None;
+        cx.notify();
+        let demo = self.args.demo;
+        let backend = Arc::clone(&self.backend);
+        cx.spawn(async move |this, cx| {
+            let result = if demo {
+                cx.background_executor().timer(Duration::from_millis(800)).await;
+                Ok(Demo::vault_names())
+            } else {
+                Tokio::spawn(cx, async move { backend.vault_names().await })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            };
+            let _gone = this.update(cx, |m, cx| {
+                m.vault_asking = false;
+                match result {
+                    Ok(names) => m.vault_names = Some(names),
+                    Err(e) => m.notice = Some(format!("Vault names not shown: {e}")),
+                }
+                cx.notify();
+            });
         })
         .detach();
     }

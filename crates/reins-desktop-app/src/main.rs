@@ -15,6 +15,7 @@ mod demo_scan;
 mod format;
 mod health;
 mod model;
+mod modes;
 mod pairing;
 mod pause;
 mod qr;

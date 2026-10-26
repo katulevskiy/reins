@@ -727,6 +727,29 @@ impl Backend {
         Ok(ask::send_test(&self.paths, &config, &ask::DesktopAsk).await)
     }
 
+    /// The phone's Autopilot modes as this computer is shown them (`Ok(None)`: not reported yet, or an older server).
+    pub async fn phone_modes(&self) -> Result<Option<reins_proto::autopilot::DesktopModes>, String> {
+        reins_desktop::autopilot::modes(&self.paths).await
+    }
+
+    /// Asks the phone to change its mode: what is stricter applies at once, the rest waits for the owner there.
+    pub async fn change_mode(&self, choice: reins_desktop::autopilot::ModeChoice) -> Result<(), String> {
+        let config = self.config()?;
+        reins_desktop::autopilot::change_mode(&self.paths, &config, choice).await
+    }
+
+    /// "This was wrong" for `request_id`: what Autopilot should have done (`true`: approve).
+    pub async fn correct_autopilot(&self, request_id: String, approve: bool) -> Result<(), String> {
+        let config = self.config()?;
+        reins_desktop::autopilot::correct(&self.paths, &config, &request_id, approve).await
+    }
+
+    /// The names and kinds of the vault items (the phone's owner approves; the phone key must be pinned).
+    pub async fn vault_names(&self) -> Result<Vec<(String, String)>, String> {
+        let config = self.config()?;
+        reins_desktop::vault_cli::names(&self.paths, &config, None, None, "Reins").await
+    }
+
     /// "Ask my phone": asks the phone for a work session (`reins allow`'s way) and waits for the answer, up to the
     /// approval wait. On approval the session is saved (`work-session.json`) for the next snapshot.
     pub async fn start_work_session(&self, request: Request) -> Result<Session, String> {

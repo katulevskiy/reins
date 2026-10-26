@@ -182,6 +182,9 @@ impl Root {
             for (label, entries) in groups {
                 let open = (label == "Waiting" || label == "Today") != self.days_toggled.contains(&label);
                 let t = Tally::of(entries.iter().copied());
+                // What the phone decided without the user counts on its own, as on Home.
+                let yes = (t.approved + t.allowed).saturating_sub(t.auto - t.auto_denied);
+                let no = (t.denied + t.blocked).saturating_sub(t.auto_denied);
                 let count = |g: Glyph, n: usize, color: Hsla| {
                     div()
                         .flex()
@@ -208,10 +211,9 @@ impl Root {
                     .text_color(pal.ink_2())
                     .cursor_pointer()
                     .child(div().flex_1().child(label.clone()))
-                    .when(t.approved + t.allowed > 0, |c| {
-                        c.child(count(Glyph::Check, t.approved + t.allowed, pal.success))
-                    })
-                    .when(t.denied + t.blocked > 0, |c| c.child(count(Glyph::Close, t.denied + t.blocked, pal.danger)))
+                    .when(yes > 0, |c| c.child(count(Glyph::Check, yes, pal.success)))
+                    .when(t.auto > 0, |c| c.child(count(Glyph::Autopilot, t.auto, pal.violet())))
+                    .when(no > 0, |c| c.child(count(Glyph::Close, no, pal.danger)))
                     .when(t.timed_out > 0, |c| c.child(count(Glyph::TimerOff, t.timed_out, pal.warning)))
                     .child(glyph(
                         if open {
@@ -471,6 +473,10 @@ impl Root {
                         _ => said,
                     }),
             );
+        // Decided on the phone without the user: who, and why, and "This was wrong".
+        if let Some(why) = Self::why_panel(e, d, pal, cx) {
+            panel = panel.child(why);
+        }
         if e.outcome == Outcome::Waiting {
             let (total, left) = d.wait_left(e);
             panel = panel.child(
@@ -481,6 +487,7 @@ impl Root {
                     .gap(px(12.0))
                     .mt(px(12.0))
                     .child(kit::timer(left, i64::try_from(total).unwrap_or(i64::MAX), pal.ink()))
+                    .when_some(super::autopilot::lean_pill(e, false, pal), gpui::ParentElement::child)
                     .child(
                         kit::button(
                             "detail-qr",

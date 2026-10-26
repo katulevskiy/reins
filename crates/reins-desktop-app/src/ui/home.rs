@@ -135,6 +135,10 @@ fn otag(g: Glyph, word: &'static str, color: Hsla) -> Div {
 
 /// How a row ended, under its time: a check, a cross, or a tag for what no one answered.
 fn outcome_mark(e: &Entry, pal: Palette) -> AnyElement {
+    // Decided on the phone without the user: who did.
+    if let Some(tag) = super::autopilot::decided_tag(e, pal) {
+        return tag.into_any_element();
+    }
     match e.outcome {
         Outcome::Approved => glyph(Glyph::Check, 17.0, pal.success).into_any_element(),
         Outcome::Denied | Outcome::Blocked => glyph(Glyph::Close, 17.0, pal.danger).into_any_element(),
@@ -303,6 +307,10 @@ impl Root {
             ("Today", todays)
         };
         let t = today(d.activity(), d.now);
+        // What the phone decided without the user counts on its own: the check and the cross are the user's (and the
+        // rules').
+        let yes = (t.approved + t.allowed).saturating_sub(t.auto - t.auto_denied);
+        let no = (t.denied + t.blocked).saturating_sub(t.auto_denied);
         let count = |g: Glyph, n: usize, color: Hsla| {
             div().flex().items_center().gap(px(3.0)).text_color(color).child(glyph(g, 13.0, color)).child(n.to_string())
         };
@@ -310,8 +318,9 @@ impl Root {
             .flex()
             .items_center()
             .gap(px(10.0))
-            .when(t.approved + t.allowed > 0, |c| c.child(count(Glyph::Check, t.approved + t.allowed, pal.success)))
-            .when(t.denied + t.blocked > 0, |c| c.child(count(Glyph::Close, t.denied + t.blocked, pal.danger)))
+            .when(yes > 0, |c| c.child(count(Glyph::Check, yes, pal.success)))
+            .when(t.auto > 0, |c| c.child(count(Glyph::Autopilot, t.auto, pal.violet())))
+            .when(no > 0, |c| c.child(count(Glyph::Close, no, pal.danger)))
             .when(t.timed_out > 0, |c| c.child(count(Glyph::TimerOff, t.timed_out, pal.warning)))
             .child(glyph(Glyph::ChevronRight, 14.0, pal.ink_meta()));
         let head = div()
@@ -780,6 +789,8 @@ impl Root {
             .when(more > 0, |t| {
                 t.child(div().text_size(px(13.5)).text_color(pal.on_field_2()).child(format!("+{more} more waiting")))
             })
+            // Where Autopilot leans, as the phone said (it decides nothing here).
+            .when_some(super::autopilot::lean_pill(e, true, pal), ParentElement::child)
             .child(div().flex_1())
             .child({
                 let id = e.id.clone();
