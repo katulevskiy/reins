@@ -14,7 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-/** Tests pin the panes: true draws them solid, false frosted, null follows the system. */
+/** Tests pin the panes: true draws them solid, false or null frosted (the system's contrast still applies). */
 object Transparency {
     @Volatile var forceSolid: Boolean? = null
 }
@@ -43,7 +43,7 @@ fun ReinsTheme(content: @Composable () -> Unit) {
         }
     }
     val highContrast = rememberHighContrast()
-    val reduceTransparency = Transparency.forceSolid ?: rememberReduceTransparency()
+    val reduceTransparency = Transparency.forceSolid ?: false
     val prefs = remember(appearance, highContrast, reduceTransparency) {
         SignalPrefs(grain = appearance.grain && !highContrast, frosted = !highContrast && !reduceTransparency)
     }
