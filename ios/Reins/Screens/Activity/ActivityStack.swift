@@ -1,30 +1,12 @@
 import SwiftUI
 
-// The stack (iOS-Activity.png, 01): what waits, as cards in their field colour, the first on top and the rest peeking
+// The stack (Next-Activity, 01): what waits, as cards in their field colour, the newest on top and the rest peeking
 // below. Swipe a card right to take Autopilot's pick, left to deny, tap it to review. The answers go through the same
 // paths as the cards' buttons (Burst.answer), with the same feedback, played at the decision.
 
 /// Activity in words (pure, unit-tested).
 enum ActivityText {
-    private static let words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
-
-    private static func number(_ n: Int) -> String { n < words.count ? words[n] : "\(n)" }
-
     private static func capitalized(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
-
-    /// The mood line under the title: "Two things wait for you.", else "All quiet. Three AIs are connected."
-    static func mood(waiting: Int, connections: Int) -> String {
-        switch waiting {
-        case 0:
-            switch connections {
-            case 0: return "All quiet. Nothing is connected yet."
-            case 1: return "All quiet. One AI is connected."
-            default: return "All quiet. \(capitalized(number(connections))) AIs are connected."
-            }
-        case 1: return "One thing waits for you."
-        default: return "\(capitalized(number(waiting))) things wait for you."
-        }
-    }
 
     /// An entry that went through (not denied, not failed) reads in the past.
     static func done(_ entry: ActivityEntry) -> Bool { ["released", "sent", "granted"].contains(entry.outcome) }
@@ -83,8 +65,35 @@ enum ActivityText {
     }
 }
 
-/// The waiting cards as a stack: the first on top, the next two peeking below as edges of their own colour; "Show all"
-/// lays them out one under another.
+/// Who asks, as a waiting card shows it beside its icon (pure, unit-tested; security review rule 4): the other side's
+/// own name, one short clean line in quotes, never part of Reins' sentence. A card offers one-tap Allow (its button
+/// and the swipe right) only while it can show that name: a card that cannot say who asks sends you to Review.
+enum WaitCardIdentity {
+    /// At most this many characters of the name.
+    static let limit = 28
+
+    /// "“Claude Code”", nil when the name is empty after cleaning. A pairing or a new phone shows its name in the
+    /// card's mono line instead (quoted there).
+    static func who(_ item: PendingItem) -> String? {
+        guard item.kind == .request || item.kind == .blob else { return nil }
+        let name = untrustedName(item.connectionLabel, limit: limit)
+        return name.isEmpty ? nil : "“\(name)”"
+    }
+
+    /// One tap may approve only when who asks is on the card.
+    static func allowsOneTap(_ item: PendingItem, pick: AutopilotPick?) -> Bool {
+        guard case .allow = pick else { return true }
+        return who(item) != nil
+    }
+
+    /// The pick a card offers: Autopilot's, unless it is Allow on a card that cannot say who asks.
+    static func pick(_ item: PendingItem, _ pick: AutopilotPick?) -> AutopilotPick? {
+        allowsOneTap(item, pick: pick) ? pick : nil
+    }
+}
+
+/// The waiting cards as a stack (Next-Activity, 01): the newest on top, the next two as edges of their own colour
+/// below it and "+N" for how many more; a tap on the edges or on +N opens the stack in place, one card under another.
 struct WaitStack: View {
     var groups: [WaitGroup]
     var suggestions: [String: SuggestionView]
@@ -96,27 +105,51 @@ struct WaitStack: View {
         VStack(spacing: 10) {
             if expanded {
                 ForEach(groups) { group in card(group) }
-            } else if let top = groups.first {
-                card(top)
-                    .background(alignment: .bottom) { peeks }
-                    .padding(.bottom, CGFloat(min(groups.count - 1, 2)) * 8)
-            }
-            if groups.count > 1 {
-                Button {
-                    withAnimation(Motion.of(Motion.easeOut(Motion.fold), reduce: reduceMotion)) { expanded.toggle() }
-                } label: {
-                    Text(expanded ? "Show one" : "\(groups.count - 1) more waiting · Show all")
-                        .font(RFont.sans(13.5, .medium))
-                        .foregroundStyle(Palette.ink2)
-                        .frame(minHeight: 30)
-                        .contentShape(Rectangle())
+                if groups.count > 1 {
+                    Button { toggle() } label: {
+                        GlyphIcon(.chevronUp, size: 16)
+                            .foregroundStyle(Palette.ink2)
+                            .frame(width: 44, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressDimsStyle())
+                    .accessibilityLabel("Show one")
+                    .accessibilityIdentifier("stackToggle")
                 }
-                .buttonStyle(.plain)
-                .feedbackTap(.tap, feedback)
-                .accessibilityIdentifier("stackToggle")
+            } else if let top = groups.first {
+                let peeks = min(groups.count - 1, 2)
+                card(top)
+                    .background(alignment: .bottom) { edges }
+                    .overlay(alignment: .bottomTrailing) {
+                        if groups.count > 1 {
+                            Button { toggle() } label: {
+                                Text("+\(groups.count - 1)")
+                                    .font(RFont.sans(12, .bold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Palette.onInverse)
+                                    .padding(.horizontal, 7)
+                                    .frame(minWidth: 22, minHeight: 22)
+                                    .background(Palette.inverse, in: Capsule())
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PressDimsStyle())
+                            // The badge's centre sits on the lowest edge, 18 pt in from the right.
+                            .offset(x: -7, y: CGFloat(8 * peeks) + 22)
+                            .accessibilityLabel("\(groups.count - 1) more waiting")
+                            .accessibilityHint("Shows them all")
+                            .accessibilityIdentifier("stackToggle")
+                        }
+                    }
+                    .padding(.bottom, CGFloat(8 * peeks + 6))
             }
         }
         .padding(.horizontal, 16)
+    }
+
+    private func toggle() {
+        withAnimation(Motion.of(Motion.easeOut(Motion.fold), reduce: reduceMotion)) { expanded.toggle() }
+        feedback.play(.expand(expanded))
     }
 
     private func card(_ group: WaitGroup) -> some View {
@@ -130,27 +163,30 @@ struct WaitStack: View {
         .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
     }
 
-    /// The next cards' bottom edges, a little narrower each, in their own colours.
-    private var peeks: some View {
+    /// The next cards' bottom edges, a little narrower and darker each, in their own colours; a tap opens the stack.
+    private var edges: some View {
         ZStack(alignment: .bottom) {
             ForEach(Array(groups.dropFirst().prefix(2).enumerated().reversed()), id: \.element.id) { i, group in
                 let field = ActivityText.field(group.first, danger: group.items.contains { suggestions[$0.id]?.floor == true })
                 UnevenRoundedRectangle(bottomLeadingRadius: 22, bottomTrailingRadius: 22, style: .continuous)
                     .fill(field.fill)
-                    .brightness(-0.08 * Double(i + 1))
+                    .brightness(-0.12 * Double(i + 1))
                     .frame(height: 40)
                     .padding(.horizontal, CGFloat(i + 1) * 10)
                     .offset(y: CGFloat(i + 1) * 8)
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { toggle() }
         .accessibilityHidden(true)
     }
 }
 
-/// A waiting request, connection, new phone or file as a card in its field: the AI's mark, the label line and the time
-/// left; the ask; then Autopilot's pick and Review. Follows the thumb sideways, tilting up to 6°; past 35 % it flies
-/// off and answers: right takes Autopilot's pick (Allow, or Deny), left denies a request. Anything else springs back,
-/// and a pick that is not one (Unsure, Always asks) opens the review instead.
+/// A waiting request, connection, new phone or file as a card in its field (Next-Activity, 01): the request's icon,
+/// who asks (avatar and quoted name, one line), the time left; the ask; the target in mono; then Autopilot's pick and
+/// Review. Follows the thumb sideways, tilting up to 6°; past 35 % it flies off and answers: right takes Autopilot's
+/// pick (Allow, or Deny), left denies a request. Anything else springs back, and a pick that is not one (Unsure,
+/// Always asks) opens the review instead. One-tap Allow, by button or swipe, only while who asks shows.
 struct FieldWaitCard: View {
     var group: WaitGroup
     var advice: WaitAdvice
@@ -165,7 +201,7 @@ struct FieldWaitCard: View {
 
     private var item: PendingItem { group.first }
     private var field: FieldKind { ActivityText.field(item, danger: danger) }
-    private var pick: AutopilotPick? { ActivityText.pick(advice, suggestion) }
+    private var pick: AutopilotPick? { WaitCardIdentity.pick(item, ActivityText.pick(advice, suggestion)) }
 
     var body: some View {
         let line = AskLabels.pending(item, field: field)
@@ -173,29 +209,42 @@ struct FieldWaitCard: View {
             kind: field, label: line.kind, ask: AskText(ActivityText.ask(group, line: line), role: .cardAsk),
             askIdentifier: "pendingTitle:\(item.id)"
         ) {
-            RequestIcon(spec: line.icon, size: 30, ring: field.fill)
+            RequestIcon(spec: line.icon, size: 34, ring: field.fill)
                 .accessibilityIdentifier("cardIcon:\(item.id)")
         } timer: {
-            TimerPill(createdAt: item.createdAt, waitUntil: item.kind == .blob ? nil : group.items.compactMap(\.waitUntil).min(), onField: true)
+            HStack(spacing: 10) {
+                // Who asks, beside the icon: the avatar and the quoted name, one capped line.
+                if let who = WaitCardIdentity.who(item) {
+                    HStack(spacing: 7) {
+                        ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: 26)
+                            .environment(\.colorScheme, .light)
+                        Text(verbatim: who)
+                            .font(RFont.sans(14, .semibold))
+                            .foregroundStyle(Palette.onField)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("From \(who)")
+                    .accessibilityIdentifier("cardWho:\(item.id)")
+                    .layoutPriority(1)
+                }
+                Spacer(minLength: 0)
+                TimerPill(createdAt: item.createdAt, waitUntil: item.kind == .blob ? nil : group.items.compactMap(\.waitUntil).min(), onField: true)
+                    .fixedSize()
+            }
         } actions: {
             VStack(alignment: .leading, spacing: 12) {
-                // Machine details under the ask (a command, a branch, an address), never in the serif.
+                // Machine details under the ask (a command, a branch, an address), never in the display face.
                 if !group.isBurst, let mono = line.mono ?? ActivityText.detail(item) {
                     Text(verbatim: mono)
-                        .font(RFont.mono(12.5))
+                        .font(RFont.mono(13))
                         .foregroundStyle(Palette.onField2)
                         .lineLimit(2)
                         .environment(\.layoutDirection, .leftToRight)
                         .padding(.top, -4)
                         .accessibilityIdentifier("cardDetails:\(item.id)")
                 }
-                // Who asks, now that the icon is the request's.
-                HStack(spacing: 6) {
-                    ConnectionIcon(connectionId: item.connectionId, label: item.connectionLabel, size: 18)
-                        .environment(\.colorScheme, .light)
-                    Text(verbatim: untrustedName(item.connectionLabel)).font(RFont.sans(13)).foregroundStyle(Palette.onField2).lineLimit(1)
-                }
-                .accessibilityElement(children: .combine)
                 if group.isBurst { peek }
                 if let pick {
                     WaitCardButtons(pick: pick, onPick: { pressed { take(pick) } }, onReview: { pressed(review) })
@@ -311,7 +360,10 @@ struct FieldWaitCard: View {
     @ViewBuilder private var menu: some View {
         Button("Review", systemImage: "checkmark.shield", action: review)
         if group.isBurst {
-            Button("Approve all", systemImage: BiometricSymbol.name) { answer(approve: true) }
+            // Approving without opening it needs who asks on the card, as one-tap Allow does.
+            if WaitCardIdentity.who(item) != nil {
+                Button("Approve all", systemImage: BiometricSymbol.name) { answer(approve: true) }
+            }
             Button("Deny all", systemImage: "nosign") { answer(approve: false) }
         }
         Button("Copy", systemImage: "doc.on.doc") {

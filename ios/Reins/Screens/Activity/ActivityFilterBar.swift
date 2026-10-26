@@ -254,6 +254,8 @@ struct FilterMenuChip: View {
 /// The search field under the title: sunken paper, the magnifier, "Search", and a clear button once something is typed.
 struct ActivitySearchField: View {
     @Binding var text: String
+    /// Takes the keyboard as it appears (the header's search bar).
+    var focusOnAppear = false
     @FocusState private var focused: Bool
     @Environment(\.feedback) private var feedback
 
@@ -292,5 +294,6 @@ struct ActivitySearchField: View {
         .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture { focused = true }
+        .onAppear { if focusOnAppear { focused = true } }
     }
 }

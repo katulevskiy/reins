@@ -14,15 +14,6 @@ final class ActivitySignalTests: XCTestCase {
         )
     }
 
-    func testTheMoodSaysHowManyWaitOrThatAllIsQuiet() {
-        XCTAssertEqual(ActivityText.mood(waiting: 2, connections: 3), "Two things wait for you.")
-        XCTAssertEqual(ActivityText.mood(waiting: 1, connections: 3), "One thing waits for you.")
-        XCTAssertEqual(ActivityText.mood(waiting: 25, connections: 3), "25 things wait for you.")
-        XCTAssertEqual(ActivityText.mood(waiting: 0, connections: 3), "All quiet. Three AIs are connected.")
-        XCTAssertEqual(ActivityText.mood(waiting: 0, connections: 1), "All quiet. One AI is connected.")
-        XCTAssertEqual(ActivityText.mood(waiting: 0, connections: 0), "All quiet. Nothing is connected yet.")
-    }
-
     func testAWaitingCardSaysItsKindAndAsksWithItsTargetInItalic() {
         let send = item(label: DemoData.requestLabel("gmail", "send", "Send an email to", "Anna Petrova"))
         XCTAssertEqual(ActivityText.label(send), "Gmail · Send")

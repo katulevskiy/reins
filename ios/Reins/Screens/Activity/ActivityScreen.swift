@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// Activity (iOS-Activity.png): when something is broken, a short amber field at the very top; the title with the mode
-/// chip and the filter button; the search field, and the filter chips when shown or on. Browsing: one mood line, the
-/// stack of what waits (the pond when nothing does), then the river by day, newest first, in hairline rows: today open,
-/// every earlier day folded under its header with its count until opened. An answer folds into the river. Searching
-/// (words typed or a filter on): the matches by day, newest first, their words set apart. On a regular width this is
-/// the content column and an entry opens in the detail column.
+/// Activity (Next-Activity, Next-Wallpaper): when something is broken, a short amber field at the very top; the title
+/// with the mode chip (it opens the Mode sheet), search and the filter button; the filter chips when shown or on.
+/// Browsing, once something is connected, over the wallpaper: the stack of what waits (or the action slot that proposes
+/// the missing half, or the open art), then the river by day, newest first, in raised groups (frosted panes on the
+/// art, the day's header inside its group): today open, earlier days folded until opened. An answer folds into the
+/// river. Searching (the search bar, or a filter on): the matches by day, their words set apart, on plain paper. A new
+/// account: the wallpaper and the two ways to connect something. On a regular width this is the content column and an
+/// entry opens in the detail column.
 struct ActivityScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
@@ -20,6 +22,10 @@ struct ActivityScreen: View {
     @State private var away = false
     /// The filter chips, shown by the filter button (they also show whenever a filter is on).
     @State private var filtersShown = false
+    /// The header is the search bar.
+    @State private var searchOpen = false
+    /// How tall the warn fields above the header are (0 with none).
+    @State private var warningsHeight: CGFloat = 0
     /// The river's days, from the core's stamps of every entry; nil until read (the days of what is loaded until then).
     @State private var days: [ActivityDay]?
     /// The entries read for each opened day, by day.
@@ -84,29 +90,25 @@ struct ActivityScreen: View {
 
     var body: some View {
         let searching = self.searching
+        let wallpaper = wallpaperShown
         ScrollViewReader { proxy in
             ScrollView {
                 // The warnings are often empty: outside the lazy stack, whose first rows must have a size.
                 VStack(alignment: .leading, spacing: 0) {
-                    warnings
+                    VStack(spacing: 0) { warnings }
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { warningsHeight = $0 }
                     LazyVStack(alignment: .leading, spacing: 0) {
                         header.id("top")
-                        ActivitySearchField(text: textBinding)
-                            .padding(.horizontal, 24)
-                            .padding(.top, 12)
-                        if filtersShown || !model.activityFilters.isEmpty {
+                        if !searchOpen && (filtersShown || !model.activityFilters.isEmpty) {
                             ActivityFilterBar(filters: filtersBinding, facets: facets)
-                                .padding(.top, 12)
+                                .padding(.top, 14)
                                 .transition(.opacity)
                         }
+                        if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
                         if searching {
-                            if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
                             found
                         } else {
-                            mood
-                            if let notice = model.syncNotice { SyncNoticeRow(text: notice) }
-                            waiting
-                            river
+                            browse(wallpaper: wallpaper)
                         }
                     }
                 }
@@ -148,6 +150,7 @@ struct ActivityScreen: View {
             }
             .task(id: model.activity.isEmpty) { await position(proxy) }
         }
+        .environment(\.onWallpaper, wallpaper)
         .task(id: model.pending.filter { $0.kind == .request }.map(\.id)) { await loadSuggestions() }
         .task(id: model.fold.request?.at) { await model.fold.run(model) }
         // New entries: the days' counts and the open days again.
@@ -155,8 +158,14 @@ struct ActivityScreen: View {
         .task(id: InFront(key: searchKey, background: model.inBackground)) { await search(searchKey) }
         .onChange(of: atTop) { markSeenSoon() }
         .animation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion), value: searching)
-        .pageBackground()
-        .statusBarBackdrop()
+        .animation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion), value: searchOpen)
+        .background {
+            ZStack {
+                Palette.paper.ignoresSafeArea()
+                if wallpaper { WallpaperLayer().transition(.opacity) }
+            }
+        }
+        .statusBarBackdrop(shown: !wallpaper || !atTop)
         .foldOverlay(model.fold)
         .signalMenuHost()
         .rootNavigationBar()
@@ -165,38 +174,80 @@ struct ActivityScreen: View {
 
     // MARK: Parts
 
-    /// The title with the mode chip and the filter button beside it, or under it when the column is too narrow for both
-    /// (an iPad's content column).
-    private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            PageHeader(title: "Activity") { controls }
-            VStack(alignment: .leading, spacing: 10) {
-                PageHeader(title: "Activity") { EmptyView() }
-                controls
+    /// The art behind the page while browsing (Next-Wallpaper): searching and filtering are on plain paper.
+    private var wallpaperShown: Bool {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-noWallpaper") { return false }
+        #endif
+        return !searchOpen && model.activityFilters.isEmpty
+    }
+
+    /// Something broken shows its amber field above the header.
+    private var bannerShown: Bool { warningsHeight > 1 }
+
+    /// The title with the mode chip, search and the filter button beside it, or under it when the column is too narrow
+    /// for them (an iPad's content column); the search bar while searching.
+    @ViewBuilder private var header: some View {
+        Group {
+            if searchOpen {
+                ActivitySearchBar(text: textBinding) { closeSearch() }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        title
+                        controls
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        title
+                        controls
+                    }
+                }
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 12)
+        .padding(.horizontal, 20)
+        .frame(minHeight: 44)
+        .padding(.top, bannerShown ? 14 : 0)
+    }
+
+    /// "Activity" in the title role; at accessibility sizes it grows less, so the chip and search stay beside it.
+    private var title: some View {
+        Text("Activity")
+            .textRole(.title)
+            .foregroundStyle(Palette.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .dynamicTypeSize(...DynamicTypeSize.xLarge)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("activityMood")
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var controls: some View {
         HStack(spacing: 8) {
             if let autopilot = model.autopilot {
-                ActivityModeMenu(settings: autopilot)
+                ModeChipButton(settings: autopilot)
+                    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                    .padding(.trailing, 4)
             }
+            RoundHeaderButton(glyph: .search, label: "Search") { openSearch() }
+                .accessibilityIdentifier("activitySearch")
             ActivityFilterToggle(shown: filtersShownBinding, active: !model.activityFilters.isEmpty)
         }
         .fixedSize()
     }
 
-    /// "Two things wait for you.", "All quiet. Three AIs are connected."
-    private var mood: some View {
-        Text(ActivityText.mood(waiting: model.pending.count, connections: model.connections.count))
-            .textRole(.body)
-            .foregroundStyle(Palette.ink2)
-            .padding(.horizontal, 24)
-            .padding(.top, 14)
-            .accessibilityIdentifier("activityMood")
+    private func openSearch() {
+        withAnimation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion)) {
+            searchOpen = true
+            filtersShown = false
+        }
+        feedback.play(.tap)
+    }
+
+    private func closeSearch() {
+        model.activitySearchText = ""
+        withAnimation(Motion.of(.smooth(duration: 0.2), reduce: reduceMotion)) { searchOpen = false }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     /// What is broken, as the warn field at the top of the screen.
@@ -227,54 +278,50 @@ struct ActivityScreen: View {
         ScreenLockBanner(compact: true)
     }
 
-    @ViewBuilder private var waiting: some View {
-        if !model.pending.isEmpty {
-            WaitStack(groups: WaitGroup.of(model.pending), suggestions: suggestions)
-                .padding(.top, 16)
-                .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: model.pending.map(\.id))
-        } else if !model.connections.isEmpty {
-            // All quiet: the pond fills the empty stack.
-            Illustration(.pond)
-                .frame(maxWidth: 300)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
-                .accessibilityIdentifier("pond")
+    /// Browsing: what waits (or what to connect, or the open art), then the river.
+    @ViewBuilder private func browse(wallpaper: Bool) -> some View {
+        if model.connections.isEmpty && model.pending.isEmpty && shownDays.isEmpty {
+            // A new account: nothing can ask yet, so offer the ways to connect something, low over the art.
+            NewAccountActivity(connectComputer: { model.openSheet(.connectComputer) }, connectAi: copyAddress)
+                .padding(.top, wallpaper ? 337 : 120)
+        } else {
+            if !model.pending.isEmpty {
+                WaitStack(groups: WaitGroup.of(model.pending), suggestions: suggestions)
+                    .padding(.top, wallpaper ? 70 : 14)
+                    .padding(.bottom, wallpaper ? 10 : 0)
+                    .animation(Motion.of(Motion.cardSpring(0.32), reduce: reduceMotion), value: model.pending.map(\.id))
+            } else if let missing = missingHalf {
+                ActionSlotCard(missing: missing, connect: copyAddress, scan: { model.openSheet(.connectComputer) }, typeCode: { model.openSheet(.connectComputer) })
+                    .padding(.top, 70)
+                    .padding(.bottom, 18)
+            } else if wallpaper {
+                // All quiet: the art stays open under the title.
+                Color.clear.frame(height: 168).accessibilityIdentifier("pond")
+            } else {
+                Illustration(.pond)
+                    .frame(width: 280, height: 148)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 6)
+                    .accessibilityIdentifier("pond")
+            }
+            river(wallpaper: wallpaper)
         }
     }
 
-    @ViewBuilder private var empty: some View {
-        if model.connections.isEmpty {
-            // A new account: nothing can ask yet, so offer the ways to connect something.
-            VStack(spacing: 10) {
-                EmptyState.calm("Nothing has asked yet.")
-                    .accessibilityIdentifier("noActivity")
-                Button {
-                    model.openSheet(.connectComputer)
-                } label: {
-                    Label("Connect a computer", systemImage: "desktopcomputer")
-                }
-                .buttonStyle(CapsuleButtonStyle(kind: .primary, height: 48))
-                .accessibilityIdentifier("emptyConnectComputer")
-                Button {
-                    let address = model.mcpAddress
-                    UIPasteboard.general.string = address
-                    model.notice = "Copied \(address). In Claude.ai or ChatGPT: Settings, Connectors, add a custom connector and paste it."
-                    feedback.play(.copied)
-                } label: {
-                    Label("Connect Claude.ai or ChatGPT", systemImage: "link")
-                }
-                .buttonStyle(CapsuleButtonStyle(kind: .secondary, height: 48))
-                .accessibilityIdentifier("emptyConnectAi")
-            }
-            .padding(.horizontal, 32)
-        } else if model.pending.isEmpty {
-            // The pond already says it.
-            Color.clear.frame(height: 1).accessibilityIdentifier("noActivity")
-        } else {
-            EmptyState(symbol: "waveform.path.ecg", title: "Nothing yet")
-                .accessibilityIdentifier("noActivity")
-        }
+    /// The half of a setup that is missing: only computers are connected, or only AI apps.
+    private var missingHalf: ActionSlotCard.Missing? {
+        let computers = model.connections.filter { $0.keyFingerprint != nil }.count
+        let apps = model.connections.count - computers
+        if computers > 0 && apps == 0 { return .aiApp }
+        if apps > 0 && computers == 0 { return .computer }
+        return nil
+    }
+
+    private func copyAddress() {
+        let address = model.mcpAddress
+        UIPasteboard.general.string = address
+        model.notice = "Copied \(address). In Claude.ai or ChatGPT: Settings, Connectors, add a custom connector and paste it."
+        feedback.play(.copied)
     }
 
     // MARK: The river by day
@@ -304,38 +351,47 @@ struct ActivityScreen: View {
         return all.flatMap { open[$0.key] ?? [] }
     }
 
-    @ViewBuilder private var river: some View {
+    /// The days, each a group: on paper the header over its rows, on the art the header as the group's first row.
+    @ViewBuilder private func river(wallpaper: Bool) -> some View {
         let now = Timers.nowSeconds()
         let today = Date(timeIntervalSince1970: TimeInterval(now))
         let todayKey = todayKey(now)
         let all = shownDays
         if all.isEmpty {
-            empty
+            if model.pending.isEmpty && missingHalf == nil {
+                Color.clear.frame(height: 1).accessibilityIdentifier("noActivity")
+            }
         } else {
             let open = openRows(all, today: todayKey)
             let oldestUnseen = all.flatMap { open[$0.key] ?? [] }.last { $0.id > model.seenActivityId }?.id
             let selected: Int64? = if case let .activityDetail(id)? = model.path(.activity).first { id } else { nil }
-            ForEach(all) { day in
-                let rows = open[day.key]
-                DayHeader(title: EntryText.day(day.start, now: today), day: day, open: rows != nil) { toggle(day, today: todayKey) }
-                    .padding(.top, 10)
-                if let rows {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { i, entry in
-                        let last = i == rows.count - 1
-                        row(entry, selected: selected == entry.id, now: now)
-                            .onAppear {
-                                if last { Task { await loadDay(day, reset: false, upTo: rows.count + Self.pageSize) } }
-                            }
-                        // Where the entries you have not seen end: everything above this line is new.
-                        if entry.id == oldestUnseen && !last {
-                            NewMarker()
-                        } else if !last {
-                            Rectangle().fill(Palette.rule).frame(height: 1).padding(.leading, 76).padding(.trailing, 24)
+            ForEach(Array(all.enumerated()), id: \.element.id) { index, day in
+                let rows = open[day.key] ?? []
+                let isOpen = open[day.key] != nil
+                let header = DayHeader(title: EntryText.day(day.start, now: today), day: day, open: isOpen, inGroup: wallpaper) {
+                    toggle(day, today: todayKey)
+                }
+                if wallpaper {
+                    header
+                        .groupSlice(first: true, last: rows.isEmpty, hairline: false)
+                        .padding(.top, index == 0 ? 0 : 10)
+                } else {
+                    header
+                }
+                ForEach(Array(rows.enumerated()), id: \.element.id) { i, entry in
+                    let last = i == rows.count - 1
+                    row(entry, selected: selected == entry.id, now: now)
+                        // Where the entries you have not seen end: everything above the violet line is new.
+                        .overlay(alignment: .top) {
+                            if i > 0 && rows[i - 1].id == oldestUnseen { NewMarker() }
                         }
-                    }
-                    if pages[day.key]?.loading == true && rows.count < day.count {
-                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, 14)
-                    }
+                        .groupSlice(first: i == 0 && !wallpaper, last: last, hairline: i > 0 && rows[i - 1].id != oldestUnseen)
+                        .onAppear {
+                            if last { Task { await loadDay(day, reset: false, upTo: rows.count + Self.pageSize) } }
+                        }
+                }
+                if pages[day.key]?.loading == true && rows.count < day.count {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 14)
                 }
             }
         }
@@ -406,7 +462,7 @@ struct ActivityScreen: View {
 
     // MARK: Search
 
-    /// The matches by day, newest first, a page at a time; the total beside the first day.
+    /// The matches by day, newest first, a page at a time, each day a group with its count (Next-Activity, 04).
     @ViewBuilder private var found: some View {
         if let r = results {
             if r.hits.isEmpty {
@@ -427,24 +483,29 @@ struct ActivityScreen: View {
                 let selected: Int64? = if case let .activityDetail(id)? = model.path(.activity).first { id } else { nil }
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(groups.enumerated()), id: \.element.day) { index, group in
-                        PageSectionHeader(EntryText.day(group.day, now: today)) {
-                            if index == 0 {
-                                Text("\(r.total) found")
-                                    .textRole(.meta)
-                                    .foregroundStyle(Palette.inkMeta)
-                                    .monospacedDigit()
-                                    .accessibilityIdentifier("searchTotal")
-                            }
+                        HStack(spacing: 6) {
+                            Text(EntryText.day(group.day, now: today))
+                                .font(RFont.sans(13, .semibold))
+                                .tracking(13 * TextRole.section.trackingEm)
+                                .accessibilityAddTraits(.isHeader)
+                            Spacer(minLength: 8)
+                            Text("\(group.entries.count)")
+                                .font(RFont.sans(13, .semibold))
+                                .monospacedDigit()
+                                .accessibilityLabel(index == 0 ? "\(r.total) found" : "\(group.entries.count) found")
+                                .accessibilityIdentifier(index == 0 ? "searchTotal" : "")
+                            GlyphIcon(.chevronDown, size: 14).foregroundStyle(Palette.inkMeta).padding(.leading, 2)
                         }
-                        .padding(.top, 10)
+                        .foregroundStyle(Palette.ink2)
+                        .padding(.horizontal, 24)
+                        .padding(.top, index == 0 ? 14 : 22)
+                        .padding(.bottom, 8)
                         ForEach(Array(group.entries.enumerated()), id: \.element.id) { i, entry in
                             row(entry, selected: selected == entry.id, now: now, terms: r.terms, snippet: snippets[entry.id] ?? nil, tracksSeen: false)
+                                .groupSlice(first: i == 0, last: i == group.entries.count - 1, hairline: i > 0)
                                 .onAppear {
                                     if entry.id == lastId { Task { await loadMoreResults() } }
                                 }
-                            if i < group.entries.count - 1 {
-                                Rectangle().fill(Palette.rule).frame(height: 1).padding(.leading, 76).padding(.trailing, 24)
-                            }
                         }
                     }
                     if r.loadingMore {
@@ -611,58 +672,15 @@ private final class SeenRows {
     var settle: Task<Void, Never>?
 }
 
-/// A day of the river: its label, how many entries and how many were denied or failed, and a chevron that turns as the
-/// day opens or folds. A heading that is also its toggle.
-private struct DayHeader: View {
-    var title: String
-    var day: ActivityDay
-    var open: Bool
-    var toggle: () -> Void
-
-    var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 8) {
-                Text(title)
-                    .textRole(.section)
-                    .foregroundStyle(Palette.inkMeta)
-                Spacer(minLength: 8)
-                Text(ActivityDays.summary(day))
-                    .textRole(.meta)
-                    .foregroundStyle(Palette.inkMeta)
-                    .monospacedDigit()
-                GlyphIcon(.chevronDown, size: 14)
-                    .foregroundStyle(Palette.inkFaint)
-                    .rotationEffect(.degrees(open ? 0 : -90))
-            }
-            .padding(.leading, 22)
-            .padding(.trailing, 20)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PressDimsStyle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(ActivityDays.spoken(title, day))
-        .accessibilityValue(open ? "Expanded" : "Collapsed")
-        .accessibilityHint(open ? "Folds the day" : "Opens the day")
-        .accessibilityAddTraits([.isHeader, .isButton])
-        .accessibilityAction { toggle() }
-        .accessibilityIdentifier("day:\(day.key)")
-    }
-}
-
 /// Where the entries you have not seen begin.
 private struct NewMarker: View {
     var body: some View {
-        HStack(spacing: 10) {
-            Rectangle().fill(Palette.violet.opacity(0.4)).frame(height: 1)
-            Text("New above").textRole(.section).foregroundStyle(Palette.violet).fixedSize()
-            Rectangle().fill(Palette.violet.opacity(0.4)).frame(height: 1)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 6)
-        .accessibilityIdentifier("newMarker")
+        Rectangle()
+            .fill(Palette.violet.opacity(0.5))
+            .frame(height: 1)
+            .padding(.leading, 62)
+            .accessibilityLabel("New above")
+            .accessibilityIdentifier("newMarker")
     }
 }
 
@@ -703,7 +721,7 @@ struct SyncNoticeRow: View {
 extension View {
     /// Paper behind the status bar, fading into the page: rows scroll on beneath it and never run under the clock.
     /// For a root page without a navigation bar whose content is a plain scroll view (a list brings its own).
-    func statusBarBackdrop() -> some View {
+    func statusBarBackdrop(shown: Bool = true) -> some View {
         overlay(alignment: .top) {
             VStack(spacing: 0) {
                 Palette.paper
@@ -712,6 +730,7 @@ extension View {
                 LinearGradient(colors: [Palette.paper, Palette.paper.opacity(0)], startPoint: .top, endPoint: .bottom)
                     .frame(height: 10)
             }
+            .opacity(shown ? 1 : 0)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
