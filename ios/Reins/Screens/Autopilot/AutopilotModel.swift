@@ -145,6 +145,23 @@ final class AutopilotModel {
             await startOvernight(connectionId: connectionId, minutes: minutes)
             return
         }
+        // Leaving a lockdown loosens what runs: only the phone's owner may (Face ID, Touch ID or the passcode), from
+        // whichever control asks (the mode sheet, the chip, Trust's card, a widget or an intent).
+        if leavesLockdown(mode, connectionId: connectionId) {
+            guard let app, await OwnerPrompt.confirm(app, reason: "End lockdown") == .confirmed else { return }
+        }
+        await applyMode(mode, connectionId: connectionId)
+    }
+
+    /// Whether `mode` would end the lockdown in force for that scope (every AI, or one).
+    func leavesLockdown(_ mode: AutopilotMode?, connectionId: String?) -> Bool {
+        guard let s = settings, mode != .lockdown else { return false }
+        guard let connectionId else { return s.mode == .lockdown }
+        return s.connections.first { $0.connectionId == connectionId }?.mode == .lockdown
+    }
+
+    /// The change itself, once whatever check it needs has passed.
+    private func applyMode(_ mode: AutopilotMode?, connectionId: String?) async {
         // Leaving an Overnight by picking another mode: what it interrupted no longer matters.
         if baseOf(connectionId) == .overnight { OvernightReturn.forget(connectionId) }
         guard let app else { return }
@@ -257,7 +274,7 @@ final class AutopilotModel {
     func endLockdown() async {
         guard let s = settings, let app else { return }
         guard await OwnerPrompt.confirm(app, reason: "End lockdown") == .confirmed else { return }
-        await setMode(s.baseMode != .lockdown ? s.baseMode : .manual)
+        await applyMode(s.baseMode != .lockdown ? s.baseMode : .manual, connectionId: nil)
     }
 
     /// Which profile a connection's decisions train (nil = the default profile).
