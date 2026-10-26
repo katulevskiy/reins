@@ -28,8 +28,12 @@ struct SignalTabBar<Tab: Hashable>: View {
     @Namespace private var pill
     @Environment(\.feedback) private var feedback
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        // At accessibility sizes (the Largest text board) the bar keeps its size and its icons; the chosen tab drops its
+        // name, and holding a tab shows it in the Large Content Viewer.
+        let large = typeSize.isAccessibilitySize
         HStack(spacing: 2) {
             ForEach(items) { item in
                 let chosen = item.tab == selection
@@ -49,12 +53,12 @@ struct SignalTabBar<Tab: Hashable>: View {
                                         .offset(x: 11, y: -9)
                                 }
                             }
-                        if chosen {
+                        if chosen, !large {
                             Text(item.title).font(RFont.sans(14.5, .semibold)).lineLimit(1).fixedSize()
                         }
                     }
                     .foregroundStyle(chosen ? Palette.ink : Palette.onInverse)
-                    .padding(.horizontal, chosen ? 15 : 0)
+                    .padding(.horizontal, chosen && !large ? 15 : 0)
                     .frame(minWidth: 50, minHeight: 44)
                     .background {
                         if chosen {
@@ -71,6 +75,9 @@ struct SignalTabBar<Tab: Hashable>: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .accessibilityShowsLargeContentViewer {
+                    Label { Text(item.title) } icon: { GlyphIcon(item.glyph, size: 20) }
+                }
                 .accessibilityLabel(item.title)
                 .accessibilityValue(item.count > 0 ? "\(item.count) waiting" : item.dot != nil ? "A mode is running" : "")
                 .accessibilityAddTraits(chosen ? [.isSelected, .isButton] : .isButton)
@@ -78,6 +85,7 @@ struct SignalTabBar<Tab: Hashable>: View {
             }
         }
         .padding(6)
+        .dynamicTypeSize(...DynamicTypeSize.large)
         .background(Palette.inverse, in: Capsule())
         // The only thing that floats: 0 14 30 -12 rgba(0,0,0,.45), without the negative spread SwiftUI can't draw.
         .shadow(color: .black.opacity(0.3), radius: 12, y: 14)

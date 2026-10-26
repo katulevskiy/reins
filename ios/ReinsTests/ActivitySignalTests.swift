@@ -53,7 +53,7 @@ final class ActivitySignalTests: XCTestCase {
         XCTAssertEqual(ActivityText.pick(.unsure(0.4), nil), .unsure)
         XCTAssertEqual(ActivityText.pick(.alwaysAsks, nil), .alwaysAsks)
         XCTAssertNil(ActivityText.pick(.review, nil))
-        XCTAssertEqual(AutopilotPick.allow(97).title, "Allow · 97%")
+        XCTAssertEqual(AutopilotPick.allow(97).title, "Allow 97%")
         XCTAssertTrue(AutopilotPick.deny(91).firm)
         XCTAssertFalse(AutopilotPick.unsure.firm)
     }

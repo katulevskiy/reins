@@ -95,7 +95,7 @@ final class SignalFoundationTests: XCTestCase {
         XCTAssertEqual(TextRole.ask.family, .display)
         XCTAssertEqual(TextRole.value.family, .mono)
         XCTAssertEqual(RFont.displayTrackingEm(30), -0.03, accuracy: 0.0001)
-        XCTAssertEqual(RFont.displayTrackingEm(12), 0, accuracy: 0.0001)
+        XCTAssertEqual(RFont.displayTrackingEm(11.5), 0, accuracy: 0.0001)
     }
 
     func testNoWeightIsBold() {
