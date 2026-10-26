@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The grants that ended (expired, used up or deleted): each can be resumed, or deleted for good.
+/// The grants that ended (the Trust board, 05; quiet): grouped by how they ended (expired, used up, ended by you), each
+/// can be resumed, or deleted for good.
 struct ExpiredGrantsScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
@@ -11,40 +12,43 @@ struct ExpiredGrantsScreen: View {
     private var ended: [GrantView] { model.grants.filter { !$0.active }.sorted { $0.createdAt > $1.createdAt } }
 
     var body: some View {
-        let ended = ended
+        let groups = EndedGroup.split(ended)
         List {
-            VStack(alignment: .leading, spacing: 4) {
-                PageHeader(title: "Ended") { EmptyView() }
-                Text("Resume any of these as it was, or let them go.")
-                    .textRole(.body)
-                    .foregroundStyle(Palette.ink2)
-            }
-            .plainRow(EdgeInsets(top: 0, leading: 24, bottom: 8, trailing: 24))
+            Text("Ended")
+                .textRole(.quietTitle)
+                .foregroundStyle(Palette.ink)
+                .accessibilityAddTraits(.isHeader)
+                .plainRow(EdgeInsets(top: 4, leading: 20, bottom: 0, trailing: 20))
             if let error {
                 FormBanner(text: error)
                     .accessibilityIdentifier("resumeError")
-                    .plainRow(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .plainRow(EdgeInsets(top: 10, leading: 20, bottom: 0, trailing: 20))
             }
             if ended.isEmpty {
-                EmptyState(symbol: "clock.arrow.circlepath", title: "Nothing ended")
+                EmptyState.calm("Nothing ended.")
                     .padding(.top, 40)
                     .plainRow(EdgeInsets())
             }
-            ForEach(ended, id: \.id) { grant in
-                EndedGrantRow(
-                    grant: grant,
-                    onOpen: {
-                        model.push(.grantDetail(grant.id))
-                        feedback.defaultTap()
-                    },
-                    onResume: { resuming = GrantPick(grant) },
-                    onDelete: { deleting = grant }
-                )
-                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1).padding(.horizontal, 24) }
-                .contextMenu {
-                    Button { tapped { model.push(.grantDetail(grant.id)) } } label: { Label("Open", systemImage: "key.horizontal") }
-                    Button { tapped { resuming = GrantPick(grant) } } label: { Label("Resume", systemImage: "arrow.clockwise") }
-                    Button(role: .destructive) { tapped { deleting = grant } } label: { Label("Delete for good", systemImage: "trash") }
+            ForEach(groups, id: \.kind) { group in
+                SectionHeader(group.kind.title, glyph: group.kind.glyph, quiet: true, trailing: "\(group.grants.count)")
+                    .plainRow(EdgeInsets())
+                FlatGroup(inset: 0) {
+                    ForEach(group.grants, id: \.id) { grant in
+                        EndedGrantRow(
+                            grant: grant,
+                            onOpen: {
+                                model.push(.grantDetail(grant.id))
+                                feedback.defaultTap()
+                            },
+                            onResume: { resuming = GrantPick(grant) },
+                            onDelete: { deleting = grant }
+                        )
+                        .contextMenu {
+                            Button { tapped { model.push(.grantDetail(grant.id)) } } label: { Label("Open", systemImage: "key.horizontal") }
+                            Button { tapped { resuming = GrantPick(grant) } } label: { Label("Resume", systemImage: "arrow.clockwise") }
+                            Button(role: .destructive) { tapped { deleting = grant } } label: { Label("Delete for good", systemImage: "trash") }
+                        }
+                    }
                 }
                 .plainRow(EdgeInsets())
             }
@@ -90,32 +94,56 @@ struct ExpiredGrantsScreen: View {
     }
 }
 
-/// A running grant's card (or, on Trust, its hairline row), following its clock: every second in its last two minutes
-/// (the seconds show), every 10 s before, and not at all for a grant that never ends by itself.
-struct LiveGrantCard: View {
-    var grant: GrantView
-    var row = false
-    /// Two minutes or less left.
-    @State private var close = false
+/// How the ended grants group: expired, used up, ended by you, in that order; empty groups are left out.
+struct EndedGroup {
+    enum Kind: CaseIterable {
+        case expired, usedUp, byYou
 
-    var body: some View {
-        Group {
-            if grant.expiresAt == nil {
-                GrantCard(grant: grant, now: nowSeconds(), row: row)
-            } else {
-                TimelineView(.periodic(from: .now, by: close ? 1 : 10)) { ctx in
-                    GrantCard(grant: grant, now: nowSeconds(ctx.date), row: row)
-                }
+        var title: String {
+            switch self {
+            case .expired: "Expired"
+            case .usedUp: "Used up"
+            case .byYou: "Ended by you"
             }
         }
-        .task(id: grant.expiresAt) {
-            guard let end = grant.expiresAt else { return }
-            let wait = end - 120 - nowSeconds()
-            close = wait <= 0
-            guard wait > 0 else { return }
-            try? await Task.sleep(for: .seconds(wait))
-            if !Task.isCancelled { close = true }
+
+        var glyph: Glyph {
+            switch self {
+            case .expired: .timer
+            case .usedUp: .card
+            case .byYou: .timerOff
+            }
         }
+
+        static func of(_ g: GrantView) -> Kind {
+            switch g.state {
+            case "revoked": .byYou
+            case "used_up": .usedUp
+            default: .expired
+            }
+        }
+    }
+
+    var kind: Kind
+    var grants: [GrantView]
+
+    static func split(_ ended: [GrantView]) -> [EndedGroup] {
+        Kind.allCases.compactMap { kind in
+            let grants = ended.filter { Kind.of($0) == kind }
+            return grants.isEmpty ? nil : EndedGroup(kind: kind, grants: grants)
+        }
+    }
+
+    /// The line under an ended grant: who it was for, and when or how it ended ("Claude · 2 days ago", "notes-bot · 3 of
+    /// 3 uses").
+    static func line(_ g: GrantView, now: Int64 = nowSeconds()) -> String {
+        let who = untrustedName(g.connectionLabel)
+        let why: String? = switch Kind.of(g) {
+        case .expired: g.expiresAt.map { GrantText.relative($0, now: now) }
+        case .usedUp: g.maxUses.map { "\(g.uses) of \($0) uses" }
+        case .byYou: nil
+        }
+        return [who, why].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 

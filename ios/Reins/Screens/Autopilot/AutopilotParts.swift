@@ -409,10 +409,9 @@ struct HelpMark: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "questionmark.circle")
-                .font(.system(size: 16))
+            GlyphIcon(.help, size: 17)
                 .foregroundStyle(open ? Palette.violet : Palette.inkMeta)
-                .frame(width: 30, height: 28)
+                .frame(width: 32, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

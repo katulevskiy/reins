@@ -1,10 +1,11 @@
 import SwiftUI
+import UIKit
 
-// A bypass, an Overnight or a lockdown running, as a field on top of Trust (iOS-Autopilot.png, 02 and 03): a bypass in
-// red, Overnight in violet, Lockdown in amber. The time left in the serif, what it does in a sentence with one italic
-// word, what still asks, and one button that ends it. Under it, what happened while it ran.
+// A timed mode running (the Running board, C; the Autopilot board, 02 to 04): Trust becomes the mode's field. Its name
+// and count sit in the Dynamic Island's ears (or a row under the status bar), then the big clock, what a bypass still
+// asks, and Stop now. Scrolling collapses it to the clock and Stop on one line, then to the ears alone.
 
-/// Which field a running mode paints Trust with; nil when none runs.
+/// Which mode runs on Trust; nil when none does.
 enum TrustRunning: Equatable {
     case bypass(until: Int64)
     case overnight(until: Int64)
@@ -19,29 +20,27 @@ enum TrustRunning: Equatable {
         }
     }
 
-    var field: FieldKind {
+    var kind: ModeKind {
         switch self {
-        case .bypass: .delete
-        case .overnight: .grant
-        case .lockdown: .warn
+        case .bypass: .bypass
+        case .overnight: .overnight
+        case .lockdown: .lockdown
         }
     }
 
-    /// "Autopilot · Bypass".
-    var label: String {
+    var mode: AutopilotMode {
         switch self {
-        case .bypass: "Autopilot · Bypass"
-        case .overnight: "Autopilot · \(AutopilotText.overnightName)"
-        case .lockdown: "Autopilot · Lockdown"
+        case .bypass: .bypass
+        case .overnight: .overnight
+        case .lockdown: .lockdown
         }
     }
 
-    /// The hero sentence: its lead, and the one italic word.
-    var hero: (lead: String, italic: String) {
+    /// When it ends on its own; nil for a lockdown (the core keeps no start or end for it).
+    var until: Int64? {
         switch self {
-        case .bypass: ("Approving ", "everything")
-        case .overnight: ("\(AutopilotText.overnightName) ", "decides")
-        case .lockdown: ("Every request ", "is denied")
+        case let .bypass(until), let .overnight(until): until
+        case .lockdown: nil
         }
     }
 
@@ -54,17 +53,60 @@ enum TrustRunning: Equatable {
         }
     }
 
-    /// "During this bypass", "During this Overnight", "Denied while locked".
+    /// The list's header: "During bypass", "Denied".
     var listTitle: String {
         switch self {
-        case .bypass: "During this bypass"
-        case .overnight: "During this \(AutopilotText.overnightName)"
-        case .lockdown: "Denied while locked"
+        case .bypass: "During bypass"
+        case .overnight: "During \(AutopilotText.overnightName.lowercased())"
+        case .lockdown: "Denied"
+        }
+    }
+
+    /// The right ear's glyph: approved in a bypass, held overnight, denied in a lockdown.
+    var countGlyph: Glyph {
+        switch self {
+        case .bypass: .check
+        case .overnight: .pause
+        case .lockdown: .close
+        }
+    }
+
+    /// The right ear, spoken: "4 approved".
+    func countSpoken(_ n: Int) -> String {
+        switch self {
+        case .bypass: "\(n) approved"
+        case .overnight: "\(n) decided"
+        case .lockdown: "\(n) denied"
+        }
+    }
+
+    /// How its entries end their row.
+    var outcome: Outcome {
+        switch self {
+        case .bypass: .bypass
+        case .overnight: .night
+        case .lockdown: .locked
+        }
+    }
+
+    var clockIdentifier: String {
+        switch self {
+        case .bypass: "bypassClock"
+        case .overnight: "overnightClock"
+        case .lockdown: "lockdownClock"
+        }
+    }
+
+    var stopIdentifier: String {
+        switch self {
+        case .bypass: "stopBypass"
+        case .overnight: "stopOvernight"
+        case .lockdown: "endLockdown"
         }
     }
 
     /// The entries it decided, newest first: since it started, for a bypass or an Overnight; the latest ones for a
-    /// lockdown, whose start the core does not keep. All of them: the list folds to its latest few (`RunningListFold`).
+    /// lockdown, whose start the core does not keep.
     func entries(_ all: [ActivityEntry], settings s: AutopilotSettings) -> [ActivityEntry] {
         let since: Int64? = switch self {
         case .bypass: s.bypassSince
@@ -77,202 +119,271 @@ enum TrustRunning: Equatable {
     }
 }
 
-/// The list under a running mode's field folds to its latest three, so a long bypass does not push Grants and the
-/// profiles out of reach: "Show all 97" opens the rest in place, "Show less" folds it back. Folded each time Trust opens.
+/// The running list folds to its newest entry with the rest stacked under it ("+3"); tapped, it opens in place.
 enum RunningListFold {
-    static let folded = 3
-
     /// How many rows show.
-    static func shown(_ total: Int, expanded: Bool) -> Int { expanded ? total : min(total, folded) }
+    static func shown(_ total: Int, expanded: Bool) -> Int { expanded ? total : min(total, 1) }
 
-    /// How many the fold hides (the number on "Show all"); nil when it hides none.
-    static func hidden(_ total: Int) -> Int? { total > folded ? total - folded : nil }
+    /// How many the fold hides (the number on "+3"); nil when it hides none.
+    static func hidden(_ total: Int) -> Int? { total > 1 ? total - 1 : nil }
 
-    /// "Show all 97".
+    /// "Show all 3", what the "+3" says to VoiceOver.
     static func showAll(_ total: Int) -> String? { hidden(total).map { "Show all \($0)" } }
+
+    /// The cards peeking out under the folded row: none, one or two.
+    static func peeks(_ total: Int) -> Int { min(max(total - 1, 0), 2) }
 }
 
-/// The running mode's field. It folds into a compact bar as Trust scrolls (`TrustFold`, `RunningFieldLayout`): the
-/// label line and the timer stay, the sentence fades and closes, the button moves to the right of the timer. Every
-/// element keeps its label and identifier in both states.
-struct TrustRunningField: View {
+/// The clock's words: "47:12", "5:59:12", "∞" without an end.
+enum RunningClock {
+    static func text(_ running: TrustRunning, now: Int64) -> String? {
+        running.until.map { AutopilotText.clock(until: $0, now: now) }
+    }
+
+    static func spoken(_ running: TrustRunning, now: Int64) -> String {
+        guard let until = running.until else { return running.kind.name }
+        return "\(running.kind.name), \(AutopilotText.timeLeft(until: until, now: now))"
+    }
+}
+
+/// The colour of a running mode with its grain.
+struct ModeSurface: View {
+    var mode: ModeKind
+
+    var body: some View {
+        ZStack {
+            mode.fill
+            Grain()
+        }
+    }
+}
+
+/// The full field: the page's first row, from the very top of the screen. Its colour also runs up past the top, so
+/// pulling to refresh never shows paper above it.
+struct RunningFieldFull: View {
     var running: TrustRunning
-    var settings: AutopilotSettings
-    /// The page's scroll, and where the field's heights are written.
+    var placement: EarsPlacement
+    /// It is the field in force (not scrolled under a pinned bar): its button carries the stop identifier.
+    var current: Bool
+    var onStop: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LiveClock(interval: 1) { now in
+                if let text = RunningClock.text(running, now: Int64(now)) {
+                    BigClock(text: text)
+                        .accessibilityLabel(RunningClock.spoken(running, now: Int64(now)))
+                        .accessibilityIdentifier(current ? running.clockIdentifier : "")
+                } else {
+                    Text(running.kind.effect)
+                        .textRole(.hero)
+                        .foregroundStyle(Palette.onField)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier(current ? running.clockIdentifier : "")
+                }
+            }
+            if running.kind == .bypass {
+                StillAsksRow()
+                    .padding(.top, 12)
+            }
+            Button("Stop now", action: onStop)
+                .buttonStyle(SignalButtonStyle(.onField))
+                .padding(.top, 18)
+                .accessibilityIdentifier(current ? running.stopIdentifier : "\(running.stopIdentifier)Scrolled")
+        }
+        .foregroundStyle(Palette.onField)
+        .padding(.horizontal, 20)
+        .padding(.top, placement.contentTop)
+        .padding(.bottom, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            GeometryReader { geo in
+                let shape = UnevenRoundedRectangle(bottomLeadingRadius: 30, bottomTrailingRadius: 30, style: .continuous)
+                VStack(spacing: 0) {
+                    running.kind.fill.frame(height: 800)
+                    ModeSurface(mode: running.kind).frame(height: geo.size.height)
+                }
+                .clipShape(shape)
+                .offset(y: -800)
+            }
+            .accessibilityHidden(true)
+        }
+    }
+}
+
+/// The clock in the display face, 71 pt (`TextRole.clock`) and tabular, set in a box as tall as its size (the boards' line-height 1).
+struct BigClock: View {
+    var text: String
+    var size: CGFloat = TextRole.clock.size
+
+    var body: some View {
+        let font = UIFont(name: RFont.displayName(false), size: size)
+        let slack = max((font?.lineHeight ?? size * 1.26) - size, 0)
+        Text(verbatim: text)
+            .font(RFont.fixedDisplay(size))
+            .tracking(RFont.displayTracking(size))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.4)
+            .foregroundStyle(Palette.onField)
+            .padding(.vertical, -slack / 2)
+            .accessibilityElement(children: .ignore)
+    }
+}
+
+/// "Still asks  [New AI] [New phone]", wrapping at large text sizes.
+struct StillAsksRow: View {
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            StillAsks()
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Still asks").font(RFont.sans(13, .semibold)).opacity(0.85)
+                HStack(spacing: 6) {
+                    Pill("New AI", tone: .onFieldWash, glyph: .link, size: .pill)
+                    Pill("New phone", tone: .onFieldWash, glyph: .phone, size: .pill)
+                }
+            }
+            .foregroundStyle(.white)
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+/// What floats over the top of Trust while a mode runs: the ears always, and the short or mini bar once the page has
+/// scrolled. It carries the field's identifier and its state ("open", "short", "compact").
+struct RunningOverlay: View {
+    var running: TrustRunning
+    var count: Int
+    var placement: EarsPlacement
     var fold: TrustFold
-    var onStopBypass: () -> Void
-    var onStopOvernight: () -> Void
-    var onEndLockdown: () -> Void
+    var onStop: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let progress = fold.progress(reduceMotion: reduceMotion)
+        let stage = fold.stage
         ZStack(alignment: .top) {
-            // Under Reduce Motion the progress is 0 or 1 and each state is its own view, so a change cross-fades
-            // rather than moving anything.
-            folded(progress)
-                .id(reduceMotion ? Int(progress) : -1)
-                .transition(.opacity)
+            if stage != .full {
+                bar(stage)
+                    .transition(.opacity)
+            }
+            ears(stage)
         }
-        .animation(reduceMotion ? .easeInOut(duration: Motion.fade) : nil, value: progress)
-        .foregroundStyle(Palette.onField)
-        .tint(Palette.onField)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .animation(reduceMotion ? .easeInOut(duration: Motion.fade) : .spring(duration: 0.38, bounce: 0.28), value: stage)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("runningField")
-        .accessibilityValue(TrustFold.stateValue(progress))
+        .accessibilityValue(stage.value)
     }
 
-    private func folded(_ progress: CGFloat) -> some View {
-        let fade = TrustFold.heroOpacity(progress)
-        return RunningFieldLayout(progress: progress) {
-            FieldSurface(kind: running.field)
-                .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: SignalField<EmptyView>.radius, bottomTrailingRadius: SignalField<EmptyView>.radius, style: .continuous))
-                .ignoresSafeArea(edges: .top)
+    /// The pinned bar: short (clock and Stop on one line, under the ears) or mini (the ears' height only).
+    private func bar(_ stage: RunningStage) -> some View {
+        let radius: CGFloat = stage == .mini ? 22 : 30
+        let shape = UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius, style: .continuous)
+        return ZStack(alignment: .topLeading) {
+            ModeSurface(mode: running.kind)
+                .clipShape(shape)
                 .accessibilityHidden(true)
-                .layoutValue(key: RunningFieldPart.self, value: .surface)
-            labelLine
-                .layoutValue(key: RunningFieldPart.self, value: .label)
-            if let until, !AutopilotText.isUntilOff(until) {
-                clock(until)
-                    .scaleEffect(RunningFieldGeometry.clockScale(progress), anchor: .topLeading)
-                    .layoutValue(key: RunningFieldPart.self, value: .clock)
+            if stage == .short {
+                HStack(spacing: 12) {
+                    LiveClock(interval: 1) { now in
+                        if let text = RunningClock.text(running, now: Int64(now)) {
+                            BigClock(text: text, size: 41)
+                                .accessibilityLabel(RunningClock.spoken(running, now: Int64(now)))
+                                .accessibilityIdentifier(running.clockIdentifier)
+                        } else {
+                            Text(running.kind.effect)
+                                .textRole(.cardAsk)
+                                .foregroundStyle(Palette.onField)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .accessibilityIdentifier(running.clockIdentifier)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Button("Stop", action: onStop)
+                        .buttonStyle(SignalButtonStyle(.onField, size: .small))
+                        .fixedSize()
+                        .accessibilityLabel("Stop now")
+                        .accessibilityIdentifier(running.stopIdentifier)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, placement.contentTop - 6)
             }
-            // Faded by its colour, not its opacity, so VoiceOver still reads it when compact; it takes no touches.
-            VStack(alignment: .leading, spacing: 8) {
-                AskText([AskText.Run(text: running.hero.lead), AskText.Run(text: running.hero.italic, target: true)], role: .ask, lineLimit: nil)
-                    .foregroundStyle(Palette.onField.opacity(fade))
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(running.hero.lead + running.hero.italic)
-                    .accessibilityIdentifier("heroMode")
-                line
-                    .font(RFont.sans(14.5))
-                    .foregroundStyle(Palette.onField2.opacity(fade))
-                    .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(height: stage == .mini ? placement.miniHeight : placement.shortHeight)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The left ear: the mode's glyph and name (the clock, mini). The right: its count (Stop, mini).
+    private func ears(_ stage: RunningStage) -> some View {
+        HStack(alignment: .center, spacing: 0) {
+            left(stage)
+                .frame(maxWidth: placement.maxWidth, alignment: .leading)
+                .allowsHitTesting(false)
+            Spacer(minLength: 0)
+            right(stage)
+                .frame(maxWidth: placement.maxWidth, alignment: .trailing)
+        }
+        .frame(height: placement.height)
+        .padding(.horizontal, placement.side)
+        .padding(.top, placement.top)
+        .foregroundStyle(Palette.onField)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+    }
+
+    private var earFont: Font { placement.accessibility ? RFont.sans(22, .semibold) : RFont.fixedSans(13.5, .semibold) }
+
+    @ViewBuilder private func left(_ stage: RunningStage) -> some View {
+        HStack(spacing: 5) {
+            ModeGlyph(running.kind, size: placement.accessibility ? 20 : 16)
+            if stage == .mini, running.until.map({ !AutopilotText.isUntilOff($0) }) ?? false {
+                LiveClock(interval: 1) { now in
+                    Text(verbatim: RunningClock.text(running, now: Int64(now)) ?? "")
+                        .font(RFont.fixedMono(14, .medium))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .accessibilityLabel(RunningClock.spoken(running, now: Int64(now)))
+                        .accessibilityIdentifier(running.clockIdentifier)
+                }
+            } else {
+                Text(running.kind.name)
+                    .font(earFont)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private func right(_ stage: RunningStage) -> some View {
+        if stage == .mini {
+            Button(action: onStop) {
+                Text("Stop")
+                    .font(RFont.fixedSans(13.5, .semibold))
+                    .foregroundStyle(Palette.onFieldInk)
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .background(Color.white, in: Capsule())
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PressDimsStyle())
+            .accessibilityLabel("Stop now")
+            .accessibilityIdentifier(running.stopIdentifier)
+        } else {
+            HStack(spacing: 3) {
+                GlyphIcon(running.countGlyph, size: placement.accessibility ? 20 : 16)
+                Text("\(count)")
+                    .font(earFont)
+                    .monospacedDigit()
+                    .lineLimit(1)
             }
             .allowsHitTesting(false)
-            .layoutValue(key: RunningFieldPart.self, value: .hero)
-            button(height: RunningFieldGeometry.buttonHeight(progress))
-                .layoutValue(key: RunningFieldPart.self, value: .button)
-            // Where the compact field ends, for the page to know how far the fold runs.
-            Color.clear
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.space)).minY } action: { fold.compact = $0 }
-                .layoutValue(key: RunningFieldPart.self, value: .compactEdge)
-        }
-        .coordinateSpace(.named(Self.space))
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fold.open = $0 }
-    }
-
-    private static let space = "runningField"
-
-    /// The dot (the lock for a lockdown), "AUTOPILOT · BYPASS", and the infinity sign for a mode without an end.
-    private var labelLine: some View {
-        HStack(spacing: 8) {
-            if running != .lockdown {
-                Circle().fill(Palette.onField).frame(width: 7, height: 7).accessibilityHidden(true)
-            } else {
-                GlyphIcon(.lock, size: 14)
-            }
-            Text(running.label).textRole(.section).foregroundStyle(Palette.onField2).lineLimit(1)
-            Spacer(minLength: 0)
-            if let until = until, AutopilotText.isUntilOff(until) {
-                GlyphIcon(.infinity, size: 20)
-                    .accessibilityLabel("On until you stop it")
-            }
-        }
-    }
-
-    private var until: Int64? {
-        switch running {
-        case let .bypass(until), let .overnight(until): until
-        case .lockdown: nil
-        }
-    }
-
-    /// "47:12 left": the clock in the serif, "left" in italic; its own clock.
-    private func clock(_ until: Int64) -> some View {
-        LiveClock(interval: 1) { now in
-            HStack(alignment: .lastTextBaseline, spacing: 6) {
-                Text(verbatim: AutopilotText.clock(until: until, now: Int64(now)))
-                    .font(RFont.display(43))
-                    .monospacedDigit()
-                Text("left").font(RFont.display(19, target: true))
-            }
-            .foregroundStyle(Palette.onField)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(running == .lockdown ? "" : AutopilotText.name(running.mode)), \(AutopilotText.timeLeft(until: until, now: Int64(now)))")
-            .accessibilityIdentifier(running.clockIdentifier)
-        }
-    }
-
-    /// What it does, or (without an end) how long it has run; its own clock.
-    @ViewBuilder private var line: some View {
-        switch running {
-        case let .bypass(until):
-            LiveClock(interval: 30) { now in
-                Text(AutopilotText.bypassLine(until: until, since: settings.bypassSince, now: Int64(now)) + ". New connections and new phones still ask.")
-                    .accessibilityIdentifier("bypassLine")
-            }
-            .overlay { if AutopilotText.isUntilOff(until) { clockAnchor(until) } }
-        case let .overnight(until):
-            LiveClock(interval: 30) { now in
-                Text(AutopilotText.overnightLine(until: until, since: settings.overnightSince, now: Int64(now)))
-                    .accessibilityIdentifier("overnightLine")
-            }
-            .overlay { if AutopilotText.isUntilOff(until) { clockAnchor(until) } }
-        case .lockdown:
-            Text("Everything that would ask is denied until you end it.")
-        }
-    }
-
-    /// A bypass or an Overnight without an end has no clock to show; its identifier stays for what checks it is on.
-    private func clockAnchor(_ until: Int64) -> some View {
-        Color.clear
-            .accessibilityElement()
-            .accessibilityLabel("\(AutopilotText.name(running.mode)), on until you stop it")
-            .accessibilityIdentifier(running.clockIdentifier)
-    }
-
-    /// The one way out: across the width open, its own width at the timer's right compact (never under 44 pt tall).
-    @ViewBuilder private func button(height: CGFloat) -> some View {
-        switch running {
-        case .bypass:
-            Button("Stop now", action: onStopBypass)
-                .buttonStyle(SignalButtonStyle(.onField, height: height))
-                .accessibilityIdentifier("stopBypass")
-        case .overnight:
-            Button("Stop now", action: onStopOvernight)
-                .buttonStyle(SignalButtonStyle(.onField, height: height))
-                .accessibilityIdentifier("stopOvernight")
-        case .lockdown:
-            Button(action: onEndLockdown) {
-                Label("End lockdown", systemImage: "lock.open.fill")
-            }
-            .buttonStyle(SignalButtonStyle(.onField, height: height))
-            .accessibilityIdentifier("endLockdown")
-        }
-    }
-}
-
-private extension TrustRunning {
-    var mode: AutopilotMode {
-        switch self {
-        case .bypass: .bypass
-        case .overnight: .overnight
-        case .lockdown: .lockdown
-        }
-    }
-
-    var clockIdentifier: String {
-        switch self {
-        case .bypass: "bypassClock"
-        case .overnight: "overnightClock"
-        case .lockdown: "lockdownClock"
+            .accessibilityLabel(running.countSpoken(count))
         }
     }
 }
