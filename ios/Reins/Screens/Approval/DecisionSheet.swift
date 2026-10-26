@@ -106,34 +106,71 @@ struct DecisionBar: View {
     var accent = false
     var busy = false
     var approveEnabled = true
+    /// On the kit's dock (Next-Connect 05): paper with round top corners and a hairline ring, as under an ask.
+    var docked = false
     var onDeny: () -> Void
     var onApprove: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        RatioRow(spacing: 10, ratio: 1 / 1.35) {
-            Button(action: onDeny) { Text(denyTitle) }
-                .buttonStyle(SignalButtonLook(kind: .outline))
-                .accessibilityIdentifier("deny")
-
-            Button(action: onApprove) {
-                HStack(spacing: 8) {
-                    if busy {
-                        ProgressView().tint(accent ? .white : Palette.onInverse)
-                    } else {
-                        BiometryMark()
-                    }
-                    Text(approveTitle).lineLimit(1)
+        if docked {
+            buttons
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+                .background {
+                    UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
+                        .fill(Palette.paper)
+                        .overlay(alignment: .top) {
+                            UnevenRoundedRectangle(topLeadingRadius: 30, topTrailingRadius: 30, style: .continuous)
+                                .strokeBorder(Palette.rule, lineWidth: 1)
+                        }
+                        .ignoresSafeArea(edges: .bottom)
                 }
-            }
-            .buttonStyle(SignalButtonLook(kind: accent ? .violet : .inverse))
-            .disabled(!approveEnabled)
-            .accessibilityIdentifier("approve")
+        } else {
+            buttons
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
         }
-        .disabled(busy)
-        .frame(height: 54)
-        .padding(.horizontal, 20)
-        .padding(.top, 10)
-        .padding(.bottom, 10)
+    }
+
+    @ViewBuilder private var buttons: some View {
+        if docked && typeSize.isAccessibilitySize {
+            // Approve over Deny, full width (Next-AX).
+            VStack(spacing: 10) {
+                approve.buttonStyle(SignalButtonLook(kind: accent ? .violet : .inverse, height: 64))
+                deny.buttonStyle(SignalButtonLook(kind: .outline, height: 64))
+            }
+            .disabled(busy)
+        } else {
+            RatioRow(spacing: 10, ratio: 1 / 1.35) {
+                deny.buttonStyle(SignalButtonLook(kind: .outline))
+                approve.buttonStyle(SignalButtonLook(kind: accent ? .violet : .inverse))
+            }
+            .disabled(busy)
+            .frame(height: 54)
+        }
+    }
+
+    private var deny: some View {
+        Button(action: onDeny) { Text(denyTitle) }
+            .accessibilityIdentifier("deny")
+    }
+
+    private var approve: some View {
+        Button(action: onApprove) {
+            HStack(spacing: 8) {
+                if busy {
+                    ProgressView().tint(accent ? .white : Palette.onInverse)
+                } else {
+                    BiometryMark()
+                }
+                Text(approveTitle).lineLimit(1)
+            }
+        }
+        .disabled(!approveEnabled)
+        .accessibilityIdentifier("approve")
     }
 }
 
