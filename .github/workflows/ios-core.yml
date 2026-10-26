@@ -1,0 +1,170 @@
+name: iOS core cache
+
+# Builds the Rust core for iOS once per content hash of its sources (ios/scripts/core-cache.sh hash) and publishes it
+# as an asset of the rolling `ios-core-cache` prerelease, where the iOS job (ios-job.yml), CI (ios.yml) and the Mac
+# (scripts/ios-job.sh --mac, core-cache.sh ensure) download it instead of building. A hash already published costs one
+# Linux job of a few seconds. Debug's release-low profile only; the TestFlight archive (release.yml) builds its own.
+#
+# Publishing needs contents: write, so it runs on a Linux job that executes no build: it only uploads the archive the
+# macOS build job made. Runs on main pushes that change the core, by hand, and from ios-job.yml. No pull_request
+# trigger: a pull request never writes the cache (CI's pull request lane builds a missing core itself).
+on:
+  push:
+    branches: [main]
+    paths:
+      - crates/reins-core/**
+      - crates/reins-proto/**
+      - crates/reins-policy/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/**
+      - ios/scripts/build-core.sh
+      - ios/scripts/core-cache.sh
+      - .github/workflows/ios-core.yml
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Platforms to make sure of (space-separated): iphonesimulator iphoneos"
+        default: iphonesimulator iphoneos
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build (default the run's)
+        default: ""
+        type: string
+      platforms:
+        description: "Platforms to make sure of (space-separated): iphonesimulator iphoneos"
+        default: iphonesimulator
+        type: string
+    outputs:
+      hash:
+        description: The core's content hash
+        value: ${{ jobs.plan.outputs.hash }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: iOS core cache (check)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      hash: ${{ steps.check.outputs.hash }}
+      missing: ${{ steps.check.outputs.missing }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Which cores are missing
+        id: check
+        env:
+          PLATFORMS: ${{ inputs.platforms || 'iphonesimulator iphoneos' }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          hash="$(ios/scripts/core-cache.sh hash)"
+          missing=()
+          for platform in $PLATFORMS; do
+            asset="$(ios/scripts/core-cache.sh asset "$platform")"
+            if curl -fsSIL -o /dev/null "https://github.com/$REPO/releases/download/ios-core-cache/$asset"; then
+              echo "prebuilt: $asset"
+            else
+              echo "missing: $asset"
+              missing+=("\"$platform\"")
+            fi
+          done
+          list="$(IFS=,; echo "${missing[*]:-}")"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+          echo "missing=[$list]" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: iOS core (${{ matrix.platform }})
+    needs: plan
+    if: needs.plan.outputs.missing != '[]'
+    runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.plan.outputs.missing) }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          if [[ -d "$DEVELOPER_DIR" ]]; then sudo xcode-select -s "$DEVELOPER_DIR"; else unset DEVELOPER_DIR; fi
+          xcodebuild -version
+      - name: Install Rust toolchain
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          target=aarch64-apple-ios-sim
+          [[ "$PLATFORM" == iphoneos ]] && target=aarch64-apple-ios
+          rustup toolchain install && rustup target add "$target" && rustc -vV
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: macos-ios-core-${{ matrix.platform }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build the core
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          ios/scripts/core-cache.sh ensure "$PLATFORM"
+          echo "core for $PLATFORM ready in $(( $(date +%s) - start )) s"
+          ios/scripts/core-cache.sh pack "$PLATFORM" "$RUNNER_TEMP/$(ios/scripts/core-cache.sh asset "$PLATFORM")"
+          ls -la "$RUNNER_TEMP"/core-*.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-core-${{ matrix.platform }}
+          path: ${{ runner.temp }}/core-*.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: iOS core cache (publish)
+    needs: [plan, build]
+    if: always() && !cancelled() && needs.build.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # upload release assets to the ios-core-cache prerelease
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ios-core-*
+          path: ${{ runner.temp }}/cores
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=("$RUNNER_TEMP"/cores/core-*.tar.gz)
+          [[ ${#files[@]} -gt 0 ]] || { echo "::warning::no core was built"; exit 0; }
+          for file in "${files[@]}"; do
+            name="$(basename "$file" .tar.gz)"
+            platform="${name##*-}"
+            ios/scripts/core-cache.sh publish "$platform" "$file"
+          done
