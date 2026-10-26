@@ -1,13 +1,16 @@
 name: iOS core cache
 
-# Builds the Rust core for iOS once per content hash of its sources (ios/scripts/core-cache.sh hash) and publishes it
-# as an asset of the rolling `ios-core-cache` prerelease, where the iOS job (ios-job.yml), CI (ios.yml) and the Mac
-# (scripts/ios-job.sh --mac, core-cache.sh ensure) download it instead of building. A hash already published costs one
-# Linux job of a few seconds. Debug's release-low profile only; the TestFlight archive (release.yml) builds its own.
+# Builds the Rust core for iOS once per content hash of its sources (ios/scripts/core-cache.sh hash). On main it
+# publishes it as an asset of the rolling `ios-core-cache` prerelease, with a build provenance attestation, where the
+# iOS job (ios-job.yml), CI (ios.yml) and the Mac (core-cache.sh ensure) download it instead of building. A hash
+# already published costs one Linux job of a few seconds. Debug's release-low profile only; the TestFlight archive
+# (release.yml) builds its own.
 #
-# Publishing needs contents: write, so it runs on a Linux job that executes no build: it only uploads the archive the
-# macOS build job made. Runs on main pushes that change the core, by hand, and from ios-job.yml. No pull_request
-# trigger: a pull request never writes the cache (CI's pull request lane builds a missing core itself).
+# Trust (docs/ios-dev.md, "Trust"): only a build of main's own commit is published, by a job that runs no repository
+# code (an inline upload of the archive the macOS job built) and attests it. An asset is never replaced. Every other
+# run (a branch's iOS job, a dispatch with another ref) builds the core for its own run only, as an artifact, with a
+# read-only token. core-cache.sh fetch installs an asset only after `gh attestation verify` traces it to this workflow
+# on main. No pull_request trigger.
 on:
   push:
     branches: [main]
@@ -31,7 +34,7 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: The commit to build (default the run's)
+        description: The commit to build (default the run's). Only the run's own commit on main is published.
         default: ""
         type: string
       platforms:
@@ -58,6 +61,8 @@ jobs:
     outputs:
       hash: ${{ steps.check.outputs.hash }}
       missing: ${{ steps.check.outputs.missing }}
+      # This run builds main's own commit: the only kind of run that may publish or save a cache.
+      trusted: ${{ steps.check.outputs.trusted }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,22 +73,26 @@ jobs:
         env:
           PLATFORMS: ${{ inputs.platforms || 'iphonesimulator iphoneos' }}
           REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          RUN_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           hash="$(ios/scripts/core-cache.sh hash)"
+          trusted=false
+          [[ "$REF" == refs/heads/main && "$(git rev-parse HEAD)" == "$RUN_SHA" ]] && trusted=true
           missing=()
           for platform in $PLATFORMS; do
             asset="$(ios/scripts/core-cache.sh asset "$platform")"
             if curl -fsSIL -o /dev/null "https://github.com/$REPO/releases/download/ios-core-cache/$asset"; then
-              echo "prebuilt: $asset"
+              echo "published: $asset"
             else
               echo "missing: $asset"
               missing+=("\"$platform\"")
             fi
           done
           list="$(IFS=,; echo "${missing[*]:-}")"
-          echo "hash=$hash" >> "$GITHUB_OUTPUT"
-          echo "missing=[$list]" >> "$GITHUB_OUTPUT"
+          echo "hash=$hash trusted=$trusted"
+          { echo "hash=$hash"; echo "missing=[$list]"; echo "trusted=$trusted"; } >> "$GITHUB_OUTPUT"
 
   build:
     name: iOS core (${{ matrix.platform }})
@@ -96,7 +105,7 @@ jobs:
       matrix:
         platform: ${{ fromJSON(needs.plan.outputs.missing) }}
     env:
-      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,7 +114,7 @@ jobs:
       - name: Select Xcode
         run: |
           set -euo pipefail
-          if [[ -d "$DEVELOPER_DIR" ]]; then sudo xcode-select -s "$DEVELOPER_DIR"; else unset DEVELOPER_DIR; fi
+          sudo xcode-select -s "$DEVELOPER_DIR"
           xcodebuild -version
       - name: Install Rust toolchain
         env:
@@ -118,15 +127,18 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: macos-ios-core-${{ matrix.platform }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Main's own commit only: a dispatched ref never writes a cache main's runs restore.
+          save-if: ${{ needs.plan.outputs.trusted == 'true' }}
       - name: Build the core
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           start=$(date +%s)
-          ios/scripts/core-cache.sh ensure "$PLATFORM"
-          echo "core for $PLATFORM ready in $(( $(date +%s) - start )) s"
+          # Built here, never fetched: this is the build that may be published.
+          rm -rf "target/ios-core/$PLATFORM"
+          REINS_CORE_BUILD_ONLY=1 ios/scripts/core-cache.sh ensure "$PLATFORM"
+          echo "core for $PLATFORM built in $(( $(date +%s) - start )) s"
           ios/scripts/core-cache.sh pack "$PLATFORM" "$RUNNER_TEMP/$(ios/scripts/core-cache.sh asset "$PLATFORM")"
           ls -la "$RUNNER_TEMP"/core-*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -136,35 +148,74 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # Main's own commit only. No checkout: nothing from the repository runs next to the write token.
   publish:
     name: iOS core cache (publish)
     needs: [plan, build]
-    if: always() && !cancelled() && needs.build.result != 'skipped'
+    if: >-
+      always() && !cancelled() && needs.plan.outputs.trusted == 'true' && needs.build.result != 'skipped' &&
+      github.ref == 'refs/heads/main' && (inputs.ref == '' || inputs.ref == github.sha)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write # upload release assets to the ios-core-cache prerelease
+      id-token: write # sign the build provenance attestation
+      attestations: write # store it
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: ios-core-*
           path: ${{ runner.temp }}/cores
           merge-multiple: true
-      - name: Publish
+      - name: Check the archives
+        id: files
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          HASH: ${{ needs.plan.outputs.hash }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=("$RUNNER_TEMP"/cores/core-*.tar.gz)
-          [[ ${#files[@]} -gt 0 ]] || { echo "::warning::no core was built"; exit 0; }
+          files=("$RUNNER_TEMP"/cores/*)
+          [[ ${#files[@]} -gt 0 ]] || { echo "::warning::no core was built"; echo "any=false" >> "$GITHUB_OUTPUT"; exit 0; }
           for file in "${files[@]}"; do
-            name="$(basename "$file" .tar.gz)"
-            platform="${name##*-}"
-            ios/scripts/core-cache.sh publish "$platform" "$file"
+            name="$(basename "$file")"
+            [[ "$name" =~ ^core-${HASH}-(iphonesimulator|iphoneos)\.tar\.gz$ ]] || { echo "::error::unexpected file $name"; exit 1; }
+            sha256sum "$file"
+          done
+          echo "any=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: steps.files.outputs.any == 'true'
+        with:
+          subject-path: ${{ runner.temp }}/cores/core-*.tar.gz
+      - name: Upload (never replacing an asset)
+        if: steps.files.outputs.any == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KEEP: "12"
+        run: |
+          set -euo pipefail
+          tag=ios-core-cache
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            # A prerelease whose tag matches no vX.Y.Z: scripts/next-version.sh and releases/latest never see it.
+            gh release create "$tag" --prerelease --latest=false --target main --title "iOS core cache (not a release)" \
+              --notes "Prebuilt Rust cores for iOS Debug builds, one per content hash of the core's sources, each with a build provenance attestation from .github/workflows/ios-core.yml on main. Read by ios/scripts/core-cache.sh. Not a release." ||
+              gh release view "$tag" >/dev/null
+          fi
+          existing="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+          for file in "$RUNNER_TEMP"/cores/core-*.tar.gz; do
+            name="$(basename "$file")"
+            if grep -qxF "$name" <<< "$existing"; then
+              echo "$name is already published; it is never replaced"
+              continue
+            fi
+            gh release upload "$tag" "$file"
+            echo "published $name"
+            platform="${name%.tar.gz}"
+            platform="${platform##*-}"
+            # Keep the newest $KEEP of this platform.
+            gh api "repos/$GH_REPO/releases/tags/$tag" --jq \
+              ".assets | map(select(.name | endswith(\"-$platform.tar.gz\"))) | sort_by(.created_at) | reverse | .[$KEEP:] | .[].id" |
+              while IFS= read -r id; do
+                [[ -n "$id" ]] && gh api -X DELETE "repos/$GH_REPO/releases/assets/$id" >/dev/null && echo "pruned asset $id"
+              done
           done

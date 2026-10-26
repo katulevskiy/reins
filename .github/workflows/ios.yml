@@ -113,6 +113,9 @@ jobs:
     name: iOS Rust core
     needs: changes
     if: needs.changes.outputs.ios == 'true'
+    permissions:
+      contents: read
+      attestations: read # core-cache.sh verifies the prebuilt core's provenance
     runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
     env:
@@ -146,10 +149,13 @@ jobs:
         with:
           path: target/ios-core/iphonesimulator
           key: ios-sim-core-v1-${{ runner.os }}-${{ hashFiles('crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'ios/scripts/build-core.sh') }}
-      # The core ios-core.yml published for this content hash (a public release asset), before building one.
+      # The core ios-core.yml published from main for this content hash (a release asset whose build provenance
+      # core-cache.sh verifies), before building one.
       - name: Prebuilt core
         id: prebuilt
         if: steps.core.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if ios/scripts/core-cache.sh fetch iphonesimulator; then
             echo "hit=true" >> "$GITHUB_OUTPUT"
