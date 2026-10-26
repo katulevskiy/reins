@@ -1,5 +1,10 @@
 package dev.reins.android.ui.pairing
 
+import androidx.compose.ui.semantics.semantics
+import dev.reins.android.design.pressable
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -69,32 +74,73 @@ fun ConnectComputerScreen(app: AppViewModel, onBack: () -> Unit) {
     // Signal (iOS-Connect 02): a back button on paper, the serif title, what to do on the computer, then the scanner.
     Column(Modifier.fillMaxSize().background(c.paper).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
         Box(Modifier.windowInsetsPadding(dev.reins.android.ui.main.HeaderInsets).padding(start = 24.dp, top = 8.dp)) {
-            dev.reins.android.design.RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+            dev.reins.android.design.BackArrow(onBack, Modifier)
         }
-        androidx.compose.foundation.text.BasicText(
-            dev.reins.android.design.askString("Connect a computer", "computer"),
-            Modifier.padding(start = 24.dp, end = 24.dp, top = 14.dp),
-            style = RType.title.copy(color = c.ink),
-        )
-        ComputerHowTo(Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp))
-        ConnectComputerPanel(app, Modifier.padding(horizontal = 24.dp, vertical = 20.dp))
+        // Next (Pair and join 02): the title, the command to run on it, then the code typed or scanned.
+        RText("Computer", RType.pageTitle, c.ink, Modifier.padding(start = 20.dp, end = 20.dp, top = 10.dp), maxLines = 1)
+        ComputerHowTo(Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp))
+        ConnectComputerPanel(app, Modifier.padding(horizontal = 16.dp, vertical = 16.dp))
         DesktopAppLink()
         Spacer(Modifier.height(32.dp))
     }
 }
 
-/** What to do on the computer, with the command set in mono. */
+/** What to do on the computer: "Run  reins login" on a sunken row, the command in mono, with copy. */
 @Composable
 fun ComputerHowTo(modifier: Modifier = Modifier) {
     val c = LocalColors.current
-    val text = buildAnnotatedString {
-        append("Run ")
-        withStyle(SpanStyle(fontFamily = Fonts.mono, fontWeight = FontWeight.Medium, color = c.text, background = c.controlFill)) {
-            append(" reins login ")
-        }
-        append(" or open the desktop app, then scan its code.")
+    val context = LocalContext.current
+    Row(
+        modifier.fillMaxWidth().clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).background(c.paperRaised)
+            .semantics(mergeDescendants = true) {}.testTag("computerHowTo").padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RText("Run  ", RType.sans(15f), c.ink2, maxLines = 1)
+        RText("reins login", RType.mono(15f, FontWeight.Medium), c.ink, Modifier.weight(1f), maxLines = 1, ltr = true)
+        Box(
+            Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape).border(1.dp, c.rule, androidx.compose.foundation.shape.CircleShape)
+                .pressable(shape = androidx.compose.foundation.shape.CircleShape, label = "Copy reins login") {
+                    context.getSystemService(android.content.ClipboardManager::class.java)?.setPrimaryClip(android.content.ClipData.newPlainText("Command", "reins login"))
+                },
+            contentAlignment = Alignment.Center,
+        ) { dev.reins.android.design.GlyphIcon(Glyph.Copy, c.ink, size = 18.dp) }
     }
-    BasicText(text, modifier.testTag("computerHowTo"), RType.sans(15.5f, lineHeight = 22f).copy(color = c.secondary))
+}
+
+/**
+ * The code as eight cells with a dash in the middle (Next "BCDF-GHJK"), over a text field that takes what is typed or
+ * pasted; [PairingCode] reduces it.
+ */
+@Composable
+private fun CodeCells(typed: String, enabled: Boolean, onChange: (String) -> Unit) {
+    val c = LocalColors.current
+    val letters = typed.uppercase().filter { it.isLetterOrDigit() }.take(8)
+    androidx.compose.foundation.text.BasicTextField(
+        typed,
+        onChange,
+        Modifier.fillMaxWidth().testTag("pairCode"),
+        enabled = enabled,
+        singleLine = true,
+        textStyle = RType.mono(1f).copy(color = androidx.compose.ui.graphics.Color.Transparent),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color.Transparent),
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
+        decorationBox = { inner ->
+            Box {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    for (i in 0 until 8) {
+                        if (i == 4) RText("-", RType.mono(18f), c.inkFaint, maxLines = 1)
+                        val on = i == letters.length
+                        Box(
+                            Modifier.weight(1f).height(56.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).background(c.paperRaised)
+                                .border(if (on) 2.dp else 1.dp, if (on) c.violet else c.rule2, androidx.compose.foundation.shape.RoundedCornerShape(14.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) { letters.getOrNull(i)?.let { RText(it.toString(), RType.mono(22f, FontWeight.Medium), c.ink, maxLines = 1) } }
+                    }
+                }
+                Box(Modifier.size(1.dp)) { inner() }
+            }
+        },
+    )
 }
 
 /**
@@ -117,35 +163,30 @@ fun ConnectComputerPanel(app: AppViewModel, modifier: Modifier = Modifier) {
     }
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         justPaired?.let { ConnectedCard(it) }
-        dev.reins.android.design.SignalButton(
-            "Scan QR code",
-            Modifier.fillMaxWidth().testTag("scanQr"),
-            glyph = Glyph.QrCode,
-            enabled = !ui.busy,
-            onClick = scan,
-        )
         ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "connectError") }
         if (ui.manual) {
-            RTextField(
-                typed,
-                { typed = it.take(MAX_TYPED) },
-                "BCDF-GHJK",
-                tag = "pairCode",
-                enabled = !ui.busy,
-                mono = true,
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Characters,
-                    autoCorrectEnabled = false,
-                    keyboardType = KeyboardType.Ascii,
-                ),
-            )
+            CodeCells(typed, enabled = !ui.busy) { typed = it.take(MAX_TYPED) }
             dev.reins.android.design.SignalButton(
-                "Connect",
+                "Continue",
                 Modifier.fillMaxWidth().testTag("submitCode"),
-                style = dev.reins.android.design.ButtonStyle.Soft,
                 enabled = !ui.busy && PairingCode.normalize(typed) != null,
             ) { app.connectTyped(typed) }
+            dev.reins.android.design.SignalButton(
+                "Scan instead",
+                Modifier.fillMaxWidth().testTag("scanQr"),
+                style = dev.reins.android.design.ButtonStyle.Ghost,
+                glyph = Glyph.QrCode,
+                enabled = !ui.busy,
+                onClick = scan,
+            )
         } else {
+            dev.reins.android.design.SignalButton(
+                "Scan QR code",
+                Modifier.fillMaxWidth().testTag("scanQr"),
+                glyph = Glyph.QrCode,
+                enabled = !ui.busy,
+                onClick = scan,
+            )
             dev.reins.android.design.SignalButton(
                 "Type the code instead",
                 Modifier.fillMaxWidth().testTag("typeCode"),

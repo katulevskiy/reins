@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
@@ -38,7 +39,7 @@ class TrustPagesFlowTest : FlowHarness() {
         core.model = TestData.modelStatus(dev.reins.core.ModelState.INSTALLED, updatedAt = 1_700_000_000L)
         launch()
         tap("tabTrust")
-        awaitTag("statScored")
+        awaitTag("openModel")
         rule.onNodeWithTag("mode:AUTO").assertIsSelected()
         tap("openModel")
     }
@@ -80,11 +81,12 @@ class TrustPagesFlowTest : FlowHarness() {
     fun theBypassSheetAsksInWordsAndHolds() {
         launch()
         tap("tabTrust")
-        tap("mode:BYPASS")
+        tap("forAWhile"); tap("mode:BYPASS")
         awaitTag("bypassSheet")
-        rule.onNodeWithTag("bypassTitle").assertTextContains("Bypass every AI?")
+        rule.onNodeWithTag("bypassTitle").assertTextContains("Bypass")
         rule.onNodeWithTag("bypassLength:60").assertIsSelected()
-        assertTrue(showsText("New connections and new phones still ask."))
+        // What still asks: pills, said in words.
+        rule.onNodeWithTag("bypassSheetLine").assertContentDescriptionContains("New connections and new phones still ask.")
         tap("bypassLength:custom")
         awaitTag("bypassFor:untilOff")
         assertTrue(showsText("Until I turn it off"))

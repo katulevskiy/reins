@@ -39,7 +39,7 @@ class ActivityHistoryFlowTest : FlowHarness() {
         awaitTag("entryApproval")
         rule.onNodeWithTag("entryIcon").assertIsDisplayed()
         deep("detailTitle").assertTextEquals("Ran a command in reins")
-        deep("detailKind").assertTextContains("TERMINAL · RUN", substring = true)
+        deep("detailKind").assertTextContains("Terminal · Run", substring = true)
         deep("entryAutopilotTitle").assertTextEquals("Allowed by you")
         assertFalse("a record has no active field", has("hero"))
         assertFalse("a record has no countdown", has("waitLine") || has("lateBanner"))

@@ -104,10 +104,10 @@ import dev.reins.android.feedback.play
 
 // ---- Buttons ---------------------------------------------------------------------------------------------------
 
-/** The two button sizes of the boards: 54 dp (16.5 sp) and small, 40 dp (14.5 sp). */
+/** The two button sizes of the boards: 54 dp (16.5 sp) and small, 42 dp (15 sp). */
 enum class ButtonSize(val height: Dp, val padding: Dp, val text: Float, val glyph: Dp) {
     Large(54.dp, 22.dp, 16.5f, 20.dp),
-    Small(40.dp, 16.dp, 14.5f, 18.dp),
+    Small(42.dp, 16.dp, 15f, 18.dp),
 
     /** The boards' 34 dp buttons inside rows and cards (Later · Install, Resume · Delete). */
     Compact(34.dp, 12.dp, 13.5f, 16.dp),
@@ -127,6 +127,8 @@ fun SignalButton(
     leading: (@Composable () -> Unit)? = null,
     enabled: Boolean = true,
     showFocus: Boolean = false,
+    /** A quieter word after the title, at 55 % and 500 ("Allow  97%"). */
+    trailing: String? = null,
     onClick: () -> Unit,
 ) {
     val c = LocalColors.current
@@ -151,6 +153,7 @@ fun SignalButton(
             glyph != null -> GlyphIcon(glyph, fg, size = size.glyph)
         }
         RText(title, RType.sans(size.text, FontWeight.SemiBold), fg, maxLines = 1)
+        if (trailing != null) RText(trailing, RType.sans(size.text, FontWeight.Medium), fg.copy(alpha = 0.55f), maxLines = 1)
     }
 }
 
@@ -446,47 +449,52 @@ private fun MenuRow(item: MenuItem, highlighted: Boolean, modifier: Modifier) {
 
 // ---- The mode chip ------------------------------------------------------------------------------------------------
 
-/** What the mode chip in every header says. */
+/** What the mode chip in every header says: the same colour, glyph and name in every header (System board). */
 enum class ChipMode(val label: String, val glyph: Glyph?) {
     Manual("Manual", Glyph.Person),
-    Auto("Auto", Glyph.Autopilot),
-    Lockdown("Lockdown", Glyph.Lock),
-    Bypass("Bypass", null),
+    Auto("Auto", Glyph.AutopilotFilled),
+    Lockdown("Lockdown", Glyph.Block),
+    Bypass("Bypass", Glyph.Bypass),
 
-    /** Overnight: violet-fill with the moon (plan: Overnight). */
+    /** Overnight: night blue with the moon. */
     Overnight("Overnight", Glyph.Moon),
 }
 
+/** A running mode's field: Auto violet, Overnight night, Lockdown amber, Bypass red. Manual has none (paper). */
+fun ChipMode.field(): Field? = when (this) {
+    ChipMode.Manual -> null
+    ChipMode.Auto -> Field.Grant
+    ChipMode.Overnight -> Field.Night
+    ChipMode.Lockdown -> Field.Warn
+    ChipMode.Bypass -> Field.Delete
+}
+
 /**
- * The mode chip: Manual on a raised plate, Auto and Overnight violet, Lockdown the warn field, Bypass the delete field
- * with a breathing dot and its time left. [chevron] when it opens the mode menu.
+ * The mode chip (36 dp, 14 / 600): Manual on a raised plate with a hairline, the others on their field colour with
+ * white ink; a running clock follows the name in mono ("Bypass 47:12"). [chevron] when it opens the mode sheet.
  */
 @Composable
 fun ModeChip(mode: ChipMode, modifier: Modifier = Modifier, timer: String? = null, chevron: Boolean = false, onClick: (() -> Unit)? = null) {
     val c = LocalColors.current
-    val (bg, fg) = when (mode) {
-        ChipMode.Manual -> c.paperRaised to c.ink
-        ChipMode.Auto, ChipMode.Overnight -> c.violetFill to Color.White
-        ChipMode.Lockdown -> c.fieldWarn to Color.White
-        ChipMode.Bypass -> c.fieldDelete to Color.White
-    }
+    val field = mode.field()
+    val bg = field?.fill() ?: c.paperRaised
+    val fg = if (field != null) Color.White else c.ink
     Row(
         modifier
-            .height(34.dp)
+            .height(36.dp)
             .clip(CircleShape)
             .background(bg)
-            .then(if (mode == ChipMode.Manual) Modifier.border(1.dp, c.rule, CircleShape) else Modifier)
+            .then(if (field == null) Modifier.border(1.dp, c.rule, CircleShape) else Modifier)
             .then(if (onClick != null) Modifier.pressable(shape = CircleShape, label = mode.label, onClick = onClick) else Modifier)
             .padding(horizontal = 13.dp)
             .testTag("modeChip:${mode.name}"),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (mode == ChipMode.Bypass) BreathingDot(fg)
         mode.glyph?.let { GlyphIcon(it, fg, size = 16.dp) }
-        if (timer != null) RText(timer, RType.mono(13.5f), fg, maxLines = 1, ltr = true)
-        RText(mode.label, RType.sans(14f, FontWeight.Medium), fg, maxLines = 1)
-        if (chevron) GlyphIcon(Glyph.ChevronDown, fg, size = 14.dp)
+        RText(mode.label, RType.sans(14f, FontWeight.SemiBold), fg, maxLines = 1)
+        if (timer != null) RText(timer, RType.mono(13.5f, FontWeight.Medium), fg.copy(alpha = 0.85f), maxLines = 1, ltr = true)
+        if (chevron) GlyphIcon(Glyph.ChevronDown, fg, size = 15.dp)
     }
 }
 
@@ -635,7 +643,7 @@ fun TimerPill(secondsLeft: Long, totalSeconds: Long, modifier: Modifier = Modifi
     } else {
         Row(modifier.testTag("timer"), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Ring(if (totalSeconds > 0) left.toFloat() / totalSeconds else 0f, c.onField, c.onField.copy(alpha = 0.25f), 18.dp)
-            RText(text, RType.mono(13f), c.onField, maxLines = 1, ltr = true)
+            RText(text, RType.mono(13.5f, FontWeight.Medium), c.onField, maxLines = 1, ltr = true)
         }
     }
 }
@@ -882,8 +890,8 @@ val FieldHeaderShape = RoundedCornerShape(bottomStart = 30.dp, bottomEnd = 30.dp
 data class TabItem(val label: String, val glyph: Glyph, val tag: String = "", val badge: Int = 0, val dot: Boolean = false)
 
 /**
- * Android's tab bar: docked on paper-raised with a hairline on top, labels always shown, an inverse pill behind the
- * chosen tab's glyph that slides there (240 ms, a slight overshoot; a cross-fade under Reduce Motion). Choosing a tab
+ * Android's tab bar, the Material 3 navigation bar in Next's colours: docked on paper-raised with a hairline on top,
+ * labels always shown, a violet 18 % pill behind the chosen tab's glyph that slides there (240 ms, a slight overshoot; a cross-fade under Reduce Motion). Choosing a tab
  * is felt (select).
  */
 @Composable
@@ -895,7 +903,7 @@ fun DockedTabBar(tabs: List<TabItem>, selected: Int, onSelect: (Int) -> Unit, mo
     Column(
         modifier
             .fillMaxWidth()
-            .background(c.paperRaised)
+            .background(c.navBar)
             .drawBehind { drawLine(c.rule, Offset(0f, 0.5.dp.toPx()), Offset(size.width, 0.5.dp.toPx()), strokeWidth = 1.dp.toPx()) }
             .windowInsetsPadding(WindowInsets.navigationBars),
     ) {
@@ -907,7 +915,7 @@ fun DockedTabBar(tabs: List<TabItem>, selected: Int, onSelect: (Int) -> Unit, mo
                     Modifier
                         .offset { IntOffset(((tabWidth * pillAt) + (tabWidth - PILL_W) / 2).roundToPx(), 0) }
                         .size(PILL_W, PILL_H)
-                        .background(c.inverse, RoundedCornerShape(16.dp)),
+                        .background(c.navIndicator, RoundedCornerShape(16.dp)),
                 )
             }
             Row(Modifier.fillMaxWidth()) {
@@ -933,18 +941,18 @@ fun DockedTabBar(tabs: List<TabItem>, selected: Int, onSelect: (Int) -> Unit, mo
                         Box(Modifier.size(PILL_W, PILL_H), contentAlignment = Alignment.Center) {
                             if (reduce) {
                                 val a by animateFloatAsState(if (on) 1f else 0f, Motion.reduced(), label = "tabPillFade")
-                                Box(Modifier.size(PILL_W, PILL_H).graphicsLayer { alpha = a }.background(c.inverse, RoundedCornerShape(16.dp)))
+                                Box(Modifier.size(PILL_W, PILL_H).graphicsLayer { alpha = a }.background(c.navIndicator, RoundedCornerShape(16.dp)))
                             }
-                            GlyphIcon(tab.glyph, if (on) c.onInverse else c.ink2, size = 20.dp)
+                            GlyphIcon(tab.glyph, if (on) c.ink else c.ink2, size = 20.dp)
                             if (tab.badge > 0) {
-                                TabBadge(tab.badge, Modifier.align(Alignment.TopEnd).offset(x = (-6).dp, y = (-3).dp).then(if (tab.tag.isNotEmpty()) Modifier.testTag("${tab.tag}:count") else Modifier))
+                                TabBadge(tab.badge, Modifier.align(Alignment.TopStart).offset(x = 34.dp, y = (-2).dp).then(if (tab.tag.isNotEmpty()) Modifier.testTag("${tab.tag}:count") else Modifier))
                             } else if (tab.dot) {
                                 BreathingDot(c.fieldDelete, Modifier.align(Alignment.TopEnd).offset(x = (-14).dp, y = 3.dp).testTag("${tab.tag}:dot"))
                             }
                         }
                         RText(
                             tab.label,
-                            RType.sans(12f, if (on) FontWeight.SemiBold else FontWeight.Medium),
+                            RType.sans(12f, FontWeight.SemiBold),
                             if (on) c.ink else c.ink2,
                             maxLines = 1,
                             align = TextAlign.Center,
@@ -959,13 +967,13 @@ fun DockedTabBar(tabs: List<TabItem>, selected: Int, onSelect: (Int) -> Unit, mo
 private val PILL_W = 60.dp
 private val PILL_H = 32.dp
 
-/** The count on a tab: white on the push field, 17 dp tall and at least as wide (10.5 / 600). */
+/** The count on a tab: white on the delete red, 16 dp tall and at least as wide (10 / 600). */
 @Composable
 private fun TabBadge(count: Int, modifier: Modifier = Modifier) {
     Box(
-        modifier.defaultMinSize(minWidth = 17.dp, minHeight = 17.dp).background(Field.Push.fill(), CircleShape).padding(horizontal = 4.dp),
+        modifier.defaultMinSize(minWidth = 16.dp, minHeight = 16.dp).background(Field.Delete.fill(), CircleShape).padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center,
-    ) { RText(countText(count), RType.sans(10.5f, FontWeight.SemiBold), Color.White, maxLines = 1) }
+    ) { RText(countText(count), RType.sans(10f, FontWeight.SemiBold), Color.White, maxLines = 1) }
 }
 
 // ---- Dialog -------------------------------------------------------------------------------------------------------

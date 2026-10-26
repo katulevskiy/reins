@@ -19,6 +19,8 @@ import dev.reins.android.TestData
 import dev.reins.android.platform.widgets.AutopilotWidgetContent
 import dev.reins.android.platform.widgets.AutopilotWidgetModel
 import dev.reins.android.platform.widgets.WaitingWidgetContent
+import dev.reins.android.platform.widgets.LatestWidgetContent
+import dev.reins.android.platform.widgets.latestWidgetModel
 import dev.reins.android.platform.widgets.waitingWidgetModel
 import dev.reins.core.AutopilotMode
 import java.io.File
@@ -65,7 +67,29 @@ abstract class WidgetShotsBase(private val theme: String) {
     @Test
     fun widgetWaiting() {
         val model = waitingWidgetModel(listOf(TestData.pending("req1", "read", 3u, quick = true), TestData.pending("req2", "send", 1u)))
-        shoot("sg-60-widget-waiting", DpSize(300.dp, 160.dp)) { WaitingWidgetContent(model, open) }
+        shoot("sg-60-widget-waiting", DpSize(300.dp, 160.dp)) { WaitingWidgetContent(model, open, DpSize(300.dp, 160.dp)) }
+    }
+
+    /** The small Waiting widget: the count on the top card's field (Outside 05). */
+    @Test
+    fun widgetWaitingSmall() {
+        val push = TestData.pending("req1", "write", 1u, waitUntil = 1_700_000_160, label = "Claude Code", service = "github", op = "push")
+        val model = waitingWidgetModel(listOf(push, TestData.pending("req2", "read", 3u, quick = true), TestData.pending("req3", "send", 1u)))
+        shoot("next-widget-waiting-small", DpSize(150.dp, 150.dp)) { WaitingWidgetContent(model, open, DpSize(150.dp, 150.dp)) }
+    }
+
+    @Test
+    fun widgetLatest() {
+        val now = 1_700_000_000L
+        val model = latestWidgetModel(
+            listOf(
+                TestData.entry(1, "read", "released", count = 3u, at = now - 120, decidedBy = "autopilot"),
+                TestData.entry(2, "search", "released", at = now - 1_500),
+                TestData.entry(3, "send", "denied", at = now - 7_000),
+            ),
+            now,
+        )
+        shoot("next-widget-latest", DpSize(300.dp, 160.dp)) { LatestWidgetContent(model, open) }
     }
 
     /** A command, written the one way (ASK-TEXT.md): the folder in the serif, the matched part in mono, the icon. */
@@ -73,7 +97,7 @@ abstract class WidgetShotsBase(private val theme: String) {
     fun widgetWaitingCommand() {
         val run = TestData.pending("req1", "write", 1u, waitUntil = 1_700_000_160, label = "Claude Code", service = "desktop", op = "ask")
             .copy(label = TestData.label("terminal", "delete", "Run", "rm -rf jarx && npm run build && npm test", code = true))
-        shoot("sg-63-widget-command", DpSize(300.dp, 180.dp)) { WaitingWidgetContent(waitingWidgetModel(listOf(run)), open) }
+        shoot("sg-63-widget-command", DpSize(150.dp, 150.dp)) { WaitingWidgetContent(waitingWidgetModel(listOf(run)), open, DpSize(150.dp, 150.dp)) }
     }
 
     /** The notifications' large icons (drawn without Compose), each kind ringed in its field, as on a heads-up. */
@@ -106,7 +130,7 @@ abstract class WidgetShotsBase(private val theme: String) {
 
     @Test
     fun widgetPond() {
-        shoot("sg-61-widget-pond", DpSize(300.dp, 160.dp)) { WaitingWidgetContent(waitingWidgetModel(emptyList()), open) }
+        shoot("sg-61-widget-pond", DpSize(150.dp, 150.dp)) { WaitingWidgetContent(waitingWidgetModel(emptyList()), open, DpSize(150.dp, 150.dp)) }
     }
 
     @Test

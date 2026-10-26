@@ -1,5 +1,6 @@
 package dev.reins.android.ui.settings
 
+import dev.reins.android.design.pane
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -109,6 +110,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onSounds: () -> Unit,
     onAppearance: () -> Unit = {},
+    onWallpaper: () -> Unit = {},
     onTour: () -> Unit = {},
     onVaultPasskeys: () -> Unit = {},
     onDevices: () -> Unit = {},
@@ -136,58 +138,75 @@ fun SettingsScreen(
     val signedIn = session as? SessionState.SignedIn
     val channels = remember { notificationChannelCount(context) }
 
+    // Next (Settings 01): the account on its card, then this phone, security and Reins, each a raised group.
     Box(Modifier.fillMaxSize().background(c.paper)) {
         Column(Modifier.fillMaxSize().verticalScroll(androidx.compose.foundation.rememberScrollState())) {
             RootHeader("Settings")
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 18.dp)) {
-                signedIn?.let { AccountBlock(it.info.email, it.info.serverUrl, state, viewModel) }
-                ui.message?.let { Banner(it, Modifier.padding(top = 10.dp)) }
-                ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error) }
+            androidx.compose.runtime.CompositionLocalProvider(LocalRaisedGroups provides true) {
+                signedIn?.let {
+                    Box(Modifier.padding(horizontal = 16.dp).padding(top = 14.dp).fillMaxWidth().pane(radius = 24.dp).padding(14.dp)) {
+                        AccountBlock(it.info.email, it.info.serverUrl, state, viewModel)
+                    }
+                }
+                ui.message?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 10.dp)) }
+                ui.error?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 10.dp), BannerKind.Error) }
 
-                if (signedIn != null) {
-                    SetRow("Devices", Glyph.Phone, Modifier.testTag("devicesRow"), value = devices?.toString(), onClick = onDevices)
-                }
-                SetRow("Sounds and vibration", Glyph.Haptics, Modifier.testTag("openSounds"), value = soundsValue(sounds), onClick = onSounds)
-                SetRow("Notification channels", Glyph.Bell, Modifier.testTag("notificationChannels"), value = channels.takeIf { it > 0 }?.toString()) {
-                    openNotificationChannels(context)
-                }
-                SetRow("Appearance", Glyph.Appearance, Modifier.testTag("openAppearance"), value = appearance.theme.label, onClick = onAppearance)
-                if (signedIn != null && hasRecoveryCode) {
-                    SetRow("Recovery code", Glyph.Key, Modifier.testTag("recoveryCodeRow")) { viewModel.showRecoveryCode(authenticator) }
-                    SetRow("Vault passkeys", Glyph.Fingerprint, Modifier.testTag("vaultPasskeysRow"), value = vaultPasskeysValue(vaultPasskeys), onClick = onVaultPasskeys)
-                }
-                SetRow("Take the tour", Glyph.Help, Modifier.testTag("takeTour"), onClick = onTour)
-            }
-
-            // Below the fold: the version and updates, then the way out.
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 26.dp)) {
-                VersionRow()
-                val updates = viewModel.updates
-                if (updates != null) {
-                    val update by updates.state.collectAsStateWithLifecycle()
-                    UpdateRows(
-                        update,
-                        onCheck = updates::checkNow,
-                        onInstall = updates::install,
-                        onRetry = updates::retry,
-                        onAutoDownload = updates::setAutoDownload,
+                SettingsGroup(header = "This phone", glyph = Glyph.Phone) {
+                    if (signedIn != null) {
+                        SetRow("Devices", Glyph.Devices, Modifier.testTag("devicesRow"), value = devices?.toString(), onClick = onDevices)
+                    }
+                    SetRow("Sounds", Glyph.Speaker, Modifier.testTag("openSounds"), value = soundsValue(sounds), onClick = onSounds)
+                    SetRow("Notification channels", Glyph.Bell, Modifier.testTag("notificationChannels"), value = channels.takeIf { it > 0 }?.toString()) {
+                        openNotificationChannels(context)
+                    }
+                    SetRow("Appearance", Glyph.Appearance, Modifier.testTag("openAppearance"), value = appearance.theme.label, onClick = onAppearance)
+                    val dark = c.dark
+                    val wall = appearance.wallpaper(dark)
+                    SetRow(
+                        "Wallpaper",
+                        Glyph.Photo,
+                        Modifier.testTag("openWallpaper"),
+                        value = wall.label,
+                        divider = false,
+                        leading = { WallpaperThumb(wall, dark, Modifier.size(32.dp), radius = 9.dp) },
+                        onClick = onWallpaper,
                     )
                 }
-            }
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 10.dp)) {
-                SetRow("Sign out", Glyph.Quit, Modifier.testTag("signOut"), destructive = true, chevron = false) { if (!ui.busy) confirmSignOut = true }
-                if (signedIn != null) {
-                    SetRow("Delete account", Glyph.Trash, Modifier.testTag("deleteAccount"), destructive = true, chevron = false, divider = false, onClick = viewModel::openDeletion)
+                if (signedIn != null && hasRecoveryCode) {
+                    SettingsGroup(header = "Security", glyph = Glyph.Shield) {
+                        SetRow("Recovery code", Glyph.Lifebuoy, Modifier.testTag("recoveryCodeRow")) { viewModel.showRecoveryCode(authenticator) }
+                        SetRow("Passkeys", Glyph.Fingerprint, Modifier.testTag("vaultPasskeysRow"), value = vaultPasskeysValue(vaultPasskeys), divider = false, onClick = onVaultPasskeys)
+                    }
                 }
-            }
+                SettingsGroup(header = "Reins", glyph = Glyph.Help) {
+                    SetRow("Tour", Glyph.Play, Modifier.testTag("takeTour"), onClick = onTour)
+                    VersionRow()
+                    val updates = viewModel.updates
+                    if (updates != null) {
+                        val update by updates.state.collectAsStateWithLifecycle()
+                        UpdateRows(
+                            update,
+                            onCheck = updates::checkNow,
+                            onInstall = updates::install,
+                            onRetry = updates::retry,
+                            onAutoDownload = updates::setAutoDownload,
+                        )
+                    }
+                }
+                SettingsGroup {
+                    SetRow("Sign out", Glyph.Quit, Modifier.testTag("signOut"), destructive = true, chevron = false) { if (!ui.busy) confirmSignOut = true }
+                    if (signedIn != null) {
+                        SetRow("Delete account", Glyph.Trash, Modifier.testTag("deleteAccount"), destructive = true, chevron = false, divider = false, onClick = viewModel::openDeletion)
+                    }
+                }
 
-            Footer()
+                Footer()
 
-            if (BuildConfig.DEBUG) {
-                // Debug builds only: every Signal component, to compare with the boards on a phone.
-                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 22.dp)) {
-                    dev.reins.android.design.LabelText("Developer", c.inkMeta)
-                    SetRow("Signal gallery", Glyph.Apps, Modifier.testTag("signalGalleryRow"), divider = false, onClick = onSignalGallery)
+                if (BuildConfig.DEBUG) {
+                    // Debug builds only: every component, to compare with the boards on a phone.
+                    SettingsGroup(header = "Developer") {
+                        SetRow("Component gallery", Glyph.Apps, Modifier.testTag("signalGalleryRow"), divider = false, onClick = onSignalGallery)
+                    }
                 }
             }
             Spacer(Modifier.height(32.dp).testTag("pageEnd"))
@@ -228,8 +247,8 @@ fun SettingsScreen(
 }
 
 /**
- * A row of Settings (Signal `.row`): a monochrome 32 dp tile, the title, a value in meta, a chevron. [destructive]
- * draws the title and glyph in danger.
+ * A row of Settings (Next `.r`): a monochrome 32 dp tile (or [leading]), the title, a value in ink-2, a chevron.
+ * [destructive] draws the title and glyph in danger. Its hairline is below it; the group clips the last one.
  */
 @Composable
 fun SetRow(
@@ -240,6 +259,7 @@ fun SetRow(
     destructive: Boolean = false,
     chevron: Boolean = true,
     divider: Boolean = true,
+    leading: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val c = LocalColors.current
@@ -247,19 +267,23 @@ fun SetRow(
         modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 56.dp)
-            .then(if (divider) Modifier.hairlineBelow(c.rule) else Modifier)
+            .hairlineBelow(c.rule, inset = 44.dp)
             .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 9.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier.size(32.dp).background(if (destructive) c.dangerWash else c.paperSunken, RoundedCornerShape(10.dp)),
-            contentAlignment = Alignment.Center,
-        ) { GlyphIcon(glyph, if (destructive) c.danger else c.ink, size = 18.dp) }
-        RText(title, RType.sans(15f, FontWeight.Medium), if (destructive) c.danger else c.ink, Modifier.weight(1f), maxLines = 1)
-        value?.let { RText(it, RType.sans(14.5f), c.inkMeta, maxLines = 1) }
-        if (chevron) GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 16.dp)
+        if (leading != null) {
+            leading()
+        } else {
+            Box(
+                Modifier.size(32.dp).background(if (destructive) c.dangerWash else c.paperSunken, RoundedCornerShape(9.dp)),
+                contentAlignment = Alignment.Center,
+            ) { GlyphIcon(glyph, if (destructive) c.danger else c.ink2, size = 18.dp) }
+        }
+        RText(title, RType.row, if (destructive) c.danger else c.ink, Modifier.weight(1f), maxLines = 1)
+        value?.let { RText(it, RType.sans(15f), c.ink2, maxLines = 1) }
+        if (chevron) GlyphIcon(Glyph.ChevronRight, c.inkFaint, size = 18.dp)
     }
 }
 

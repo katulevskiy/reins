@@ -1,11 +1,12 @@
-//! The window. Before pairing and setup: the welcome flow, one calm column under its steps (pair, AI tools, turn on,
-//! done). Afterwards the status window: a sidebar (what Reins is doing, the sections, pausing) and the section it
-//! selects: Home, Activity, Connections, Keys, Rules, Settings. In Reins Signal ([`crate::theme`]): paper, ink and
-//! hairlines, a field of colour only where something needs a decision, the Signal glyphs and real logos; its
-//! components are in [`kit`] (and, with `--demo`, in the gallery). Keyboard shortcuts ([`crate::shortcuts`]) work
-//! everywhere in it.
+//! The window. Before pairing and setup: the welcome on the wallpaper, then one calm column under its steps (pair, AI
+//! tools, turn on, done). Afterwards the status window: a sidebar (what Reins is doing, the sections, pausing git) and
+//! the section it selects: Home, Activity, Connections, Keys, Rules, Settings. In Reins Next ([`crate::theme`]): paper,
+//! ink and hairlines, panes of rows (frosted over the wallpaper on Home and Activity), a grained field of colour only
+//! where something needs a decision, the Reins glyphs and real logos; its components are in [`kit`] (and, with
+//! `--demo`, in the gallery). Keyboard shortcuts ([`crate::shortcuts`]) work everywhere in it.
 
 mod activity;
+mod autopilot;
 mod connections;
 mod diff;
 mod field;
@@ -27,7 +28,7 @@ mod story;
 mod work;
 
 /// A request in one sentence, for the notification that says to check the phone.
-pub(crate) use story::spoken;
+pub(crate) use story::banner;
 
 /// A request's sentence as plain text, for the tray.
 pub(crate) fn ask_line(e: &Entry) -> String {
@@ -53,7 +54,7 @@ use crate::model::{Model, Screen, Section};
 use crate::pause::{Pause, PauseFor};
 use crate::shortcuts::{self, Shortcut};
 use crate::state::Saved;
-use crate::theme::{Palette, SANS};
+use crate::theme::Palette;
 use crate::tray::Look;
 use crate::welcome::Stage;
 use crate::work::Work;
@@ -104,6 +105,8 @@ pub struct Root {
     /// across its refs).
     commits_open: BTreeSet<usize>,
     files_open: BTreeSet<(usize, usize)>,
+    /// The sidebar's "For a while" menu is open.
+    while_open: bool,
     /// The "Pause git" sheet is open, and the length picked in it.
     pause_sheet: bool,
     pause_choice: PauseFor,
@@ -112,6 +115,17 @@ pub struct Root {
     presses: u64,
     /// Home's Health tile is open to its checks.
     health_open: bool,
+    /// Settings shows its Wallpaper page, for dark paper's wallpaper (else light's).
+    wallpaper_page: bool,
+    wallpaper_dark_slot: bool,
+    /// The welcome was left (Set up, or Other server): the pairing step shows.
+    welcomed: bool,
+    /// The AI tool Connections shows on a page of its own.
+    tool_page: Option<reins_desktop::harness::Harness>,
+    /// The waiting request whose field Home hides (Hide on the field).
+    hidden_ask: Option<String>,
+    /// Activity's days folded or unfolded from how they start (Today open, the rest folded).
+    days_toggled: BTreeSet<String>,
     /// Settings' Notifications row is open to its two switches.
     notify_open: bool,
     /// Settings' Name row is open to its field.
@@ -169,6 +183,15 @@ struct Data {
     /// This computer's own name, and the one the user gave it on the phone (which the phone shows instead).
     shown_as: String,
     phone_name: Option<String>,
+    /// The phone's modes as this computer is shown them, a change asked of it, and "This was wrong" sent and being
+    /// sent (by request id).
+    modes: Option<reins_proto::autopilot::DesktopModes>,
+    mode_asked: Option<reins_desktop::autopilot::ModeChoice>,
+    /// The vault's item names as the phone gave them, and whether they are being asked for.
+    vault_names: Option<Vec<(String, String)>>,
+    vault_asking: bool,
+    corrected: std::collections::HashSet<String>,
+    correcting: Option<String>,
     /// `--demo`, and the gallery showing.
     demo: bool,
     gallery: bool,
@@ -205,6 +228,12 @@ impl Data {
             machine: m.machine.clone(),
             shown_as: m.shown_as.clone(),
             phone_name: m.phone_name.clone(),
+            modes: m.modes,
+            mode_asked: m.mode_asked,
+            vault_names: m.vault_names.clone(),
+            vault_asking: m.vault_asking,
+            corrected: m.corrected.clone(),
+            correcting: m.correcting.clone(),
             demo: m.demo(),
             gallery: false,
         }
@@ -302,6 +331,7 @@ impl Root {
                 .and_then(|d| d.split_once(':').and_then(|(c, f)| Some((c.parse().ok()?, f.parse().ok()?))))
                 .into_iter()
                 .collect(),
+            while_open: demo_var("REINS_DEMO_WHILE").is_some(),
             pause_sheet: pause_demo.is_some(),
             pause_choice: if matches!(pause_demo.as_deref(), Some("manual" | "hold")) {
                 PauseFor::Manual
@@ -311,6 +341,20 @@ impl Root {
             hold: None,
             presses: 0,
             health_open: demo_var("REINS_DEMO_HEALTH").is_some(),
+            hidden_ask: None,
+            // `--demo` shows the welcome only when `REINS_DEMO_SCREEN=welcome` asks for it.
+            welcomed: demo && std::env::var("REINS_DEMO_SCREEN").is_ok_and(|v| v.trim() != "welcome"),
+            // `REINS_DEMO_WALLPAPER=dark|light`: Settings' Wallpaper page, for that paper.
+            wallpaper_page: demo_var("REINS_DEMO_WALLPAPER").is_some(),
+            wallpaper_dark_slot: demo_var("REINS_DEMO_WALLPAPER").is_none_or(|v| v != "light"),
+            // `REINS_DEMO_TOOL=<id>`: that AI tool's page under Connections.
+            tool_page: demo_var("REINS_DEMO_TOOL").and_then(|id| {
+                use reins_desktop::harness::Harness;
+                [Harness::ClaudeCode, Harness::Codex, Harness::Gemini, Harness::Cursor]
+                    .into_iter()
+                    .find(|h| h.id() == id)
+            }),
+            days_toggled: BTreeSet::new(),
             notify_open: false,
             name_open: demo_var("REINS_DEMO_NAME_OPEN").is_some(),
             profile_open: None,
@@ -365,6 +409,7 @@ impl Root {
             Shortcut::Quit => self.model.update(cx, Model::quit),
             Shortcut::Escape => {
                 let open = self.pause_sheet
+                    || self.while_open
                     || self.filter_open
                     || self.appearance_open
                     || self.help.is_some()
@@ -378,6 +423,7 @@ impl Root {
                     });
                 }
                 self.pause_sheet = false;
+                self.while_open = false;
                 self.filter_open = false;
                 self.appearance_open = false;
                 self.help = None;
@@ -456,20 +502,24 @@ impl Root {
             match d.section {
                 // Home pads itself: a waiting request's field runs to the edges, under the title bar.
                 Section::Home => scroll(id, self.home(d, pal, window, cx), false),
-                Section::Activity => scroll(id, self.activity(d, pal, cx), true),
-                Section::Connections => scroll(id, Self::connections(d, pal, cx), true),
+                // Activity scrolls its list itself, beside the panel of the request picked.
+                Section::Activity => self.activity(d, pal, cx),
+                Section::Connections => scroll(id, self.connections(d, pal, cx), true),
                 Section::Keys => scroll(id, self.keys(d, pal, cx), true),
                 Section::Rules => scroll(id, self.rules(d, pal, window, cx), true),
                 Section::Settings => scroll(id, self.settings(d, pal, cx), true),
             }
         };
-        let mut root = div()
-            .relative()
-            .size_full()
+        // A mode running on the phone lays its band over every page.
+        let page = div()
             .flex()
-            .flex_row()
-            .child(self.sidebar(d, pal, cx))
-            .child(div().flex_1().min_w(px(0.0)).h_full().child(content));
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .children(Self::mode_band(d, pal, cx))
+            .child(div().flex_1().min_h(px(0.0)).child(content));
+        let mut root = div().relative().size_full().flex().flex_row().child(self.sidebar(d, pal, cx)).child(page);
         if self.pause_sheet && d.paired {
             root = root.child(self.pause_sheet(pal, cx));
         }
@@ -480,12 +530,15 @@ impl Root {
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let pal = Palette::of(window, self.model.read(cx).saved.appearance);
+        kit::field::set_grain(!self.model.read(cx).saved.flat_fields);
         let screen = self.model.read(cx).screen;
         let page = (screen, self.model.read(cx).section);
         if page != self.help_page {
             self.help_page = page;
             self.help = None;
             self.filter_open = false;
+            self.tool_page = None;
+            self.wallpaper_page = false;
         }
         // The tray's "Until I resume…": the pause sheet, there, to be held.
         if self.model.read(cx).pause_hold_asked {
@@ -502,11 +555,18 @@ impl Render for Root {
         // Seconds count while a request waits, a work session is being asked for, or the test waits.
         self.keep_ticking(
             matches!(d.test, Test::Waiting(_))
-                || (screen == Screen::Status && (d.waiting().next().is_some() || d.work.asking.is_some())),
+                || (screen == Screen::Status
+                    && (d.waiting().next().is_some()
+                        || d.work.asking.is_some()
+                        || d.running().and_then(crate::modes::Running::until).is_some())),
             window,
             cx,
         );
+        let hero = screen == Screen::Welcome(Stage::Pair)
+            && !self.welcomed
+            && !matches!(self.model.read(cx).pairing, crate::model::Pairing::Approved { .. });
         let body = match screen {
+            Screen::Welcome(Stage::Pair) if hero => None,
             Screen::Welcome(Stage::Pair) => Some((Stage::Pair, self.onboarding(&d, pal, window, cx))),
             Screen::Welcome(Stage::Tools) => Some((Stage::Tools, self.tools_step(&d, pal, cx))),
             Screen::Welcome(Stage::TurnOn) => Some((Stage::TurnOn, self.turn_on_step(&d, pal, cx))),
@@ -522,7 +582,7 @@ impl Render for Root {
             .flex_col()
             .bg(pal.paper())
             .text_color(pal.ink())
-            .font_family(SANS)
+            .font(crate::theme::root_font())
             .text_size(px(13.0))
             .line_height(px(18.0));
         match body {
@@ -544,7 +604,7 @@ impl Render for Root {
                             .flex_col()
                             .items_center()
                             .justify_start()
-                            .gap(px(20.0))
+                            .gap(px(28.0))
                             .px(px(40.0))
                             .pt(px(WELCOME_TOP))
                             .pb(px(36.0))
@@ -552,15 +612,16 @@ impl Render for Root {
                             .child(div().w_full().max_w(px(stage_width(stage))).child(body)),
                     ),
                 ),
+            None if hero => root.child(Self::welcome_hero(&d, pal, cx)),
             None => root.child(self.status(&d, pal, window, cx)),
         }
     }
 }
 
 /// The welcome flow's space above the step indicator.
-const WELCOME_TOP: f32 = 24.0;
+const WELCOME_TOP: f32 = 64.0;
 
 /// How wide a step of the welcome flow is (`Desk-Setup.png`: a 580 px window, 40 px either side).
 fn stage_width(_stage: Stage) -> f32 {
-    500.0
+    620.0
 }

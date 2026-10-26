@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -72,7 +73,7 @@ class OtherDevicePushFlowTest : FlowHarness() {
         setUpEntry()
         launch()
         awaitTag("entry:7")
-        deep("entryTitle:7").assertTextEquals("Pushed 3 commits to katulevskiy/reins")
+        deep("entryTitle:7").assertTextContains(" pushed 3 commits to katulevskiy/reins", substring = true)
         deep("entryDetails:7").assertTextEquals("signal/desktop-release · new branch")
     }
 

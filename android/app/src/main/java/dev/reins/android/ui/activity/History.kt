@@ -93,27 +93,6 @@ fun DayHeader(label: String, modifier: Modifier = Modifier, filterOpen: Boolean?
     }
 }
 
-/** The filter chips over the history: the shared [dev.reins.android.design.SelectChip], one chosen. */
-@Composable
-fun FilterChips(selected: HistoryFilter, modifier: Modifier = Modifier, onSelect: (HistoryFilter) -> Unit) {
-    val c = LocalColors.current
-    Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        HistoryFilter.entries.forEach { f ->
-            val on = f == selected
-            dev.reins.android.design.SelectChip(
-                f.label,
-                on,
-                Modifier.testTag("filter:${f.name.lowercase()}"),
-                leading = if (f == HistoryFilter.Autopilot) {
-                    { Icon(Icons.Rounded.Shield, null, Modifier.size(15.dp), tint = if (on) c.accent else c.secondary) }
-                } else {
-                    null
-                },
-            ) { if (!on) onSelect(f) }
-        }
-    }
-}
-
 /** The background of a history row: rows of a day form one card, with round ends. */
 fun rowShape(first: Boolean, last: Boolean): Shape = RoundedCornerShape(
     topStart = if (first) 24.dp else 0.dp,

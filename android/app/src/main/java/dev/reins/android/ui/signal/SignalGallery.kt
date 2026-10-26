@@ -168,7 +168,7 @@ private fun TypePage() {
         TypeRow("ask-small · 25/26") { androidx.compose.foundation.text.BasicText(dev.reins.android.design.askString("Read 2 emails from Stripe", "Stripe"), style = RType.askSmall.copy(color = c.ink)) }
         TypeRow("mood · italic 24/30") { RText("All quiet. Three AIs are connected.", RType.mood, c.ink2) }
     }
-    Section("Sans · ${if (appearance.geist) "Geist" else "Instrument Sans"}") {
+    Section("Sans · Sora") {
         TypeRow("button · 16.5/600") { RText("Approve", RType.button, c.ink) }
         TypeRow("row · 15.5/500") { RText("Push to feature/* in octo/app", RType.row, c.ink) }
         TypeRow("body · 15/22") { RText("Approved without asking. Sent means sent.", RType.body, c.ink2) }
@@ -204,6 +204,7 @@ private val fieldWords = mapOf(
     Field.Pair to ("Say" to "hello"),
     Field.Accounts to ("Keys" to "change"),
     Field.Warn to ("Fix" to "me"),
+    Field.Night to ("Good" to "night"),
 )
 
 @OptIn(ExperimentalLayoutApi::class)

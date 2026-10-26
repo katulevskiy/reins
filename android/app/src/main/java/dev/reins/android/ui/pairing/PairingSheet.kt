@@ -1,5 +1,7 @@
 package dev.reins.android.ui.pairing
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -91,7 +93,8 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
                     GlyphIcon(if (computer) Glyph.Laptop else Glyph.Apps, c.onField, size = 20.dp)
                     RText(if (computer) "New computer" else "New AI app", RType.sans(14.5f, FontWeight.Medium), c.onField, Modifier.weight(1f), maxLines = 1)
                 },
-                verdict = { FieldVerdict("Only if you just started this yourself.") },
+                verdict = if (computer) null else ({ FieldVerdict("Only if you just started this yourself.") }),
+                below = view.keyFingerprint?.let { key -> { KeyInField(key) } },
             )
             // What the other side says of itself: quoted, one line, on rows of their own, never in the ask.
             FactGroup(
@@ -102,34 +105,35 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
                     { FactRow("From", untrustedName(view.clientHost), mono = true, valueTag = "pairHost") },
                 ),
             )
-            view.keyFingerprint?.let { KeyRow(it) }
+
             Column(Modifier.padding(horizontal = 22.dp).padding(top = 22.dp)) {
                 RText(
-                    if (computer) "Tap the number your computer shows." else "Tap the number your browser shows.",
-                    RType.sans(15f),
+                    if (computer) "Tap the code it shows" else "Tap the number your browser shows",
+                    RType.sans(13f, FontWeight.SemiBold),
                     c.ink2,
                 )
                 Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ui.codes.forEach { code ->
                         val label = "%02d".format(code)
                         val on = ui.chosen == code
+                        // Next: round pills; the one tapped fills violet.
                         Box(
                             Modifier
                                 .weight(1f)
-                                .height(64.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(if (on) c.paperRaised else c.paperSunken)
-                                .then(if (on) Modifier.border(2.dp, c.ink, RoundedCornerShape(18.dp)) else Modifier)
-                                .pressable(shape = RoundedCornerShape(18.dp), label = label, onClick = feedbackAction(Event.Selection) { viewModel.choose(code) })
+                                .height(48.dp)
+                                .clip(CircleShape)
+                                .background(if (on) c.violetFill else c.paperRaised)
+                                .then(if (on) Modifier else Modifier.border(1.5.dp, c.rule2, CircleShape))
+                                .pressable(shape = CircleShape, label = label, onClick = feedbackAction(Event.Selection) { viewModel.choose(code) })
                                 .semantics { selected = on }
                                 .testTag("code:$label"),
                             contentAlignment = Alignment.Center,
-                        ) { RText(label, RType.mono(26f), c.ink, maxLines = 1, ltr = true) }
+                        ) { RText(label, RType.mono(20f, FontWeight.Medium), if (on) Color.White else c.ink, maxLines = 1, ltr = true) }
                     }
                 }
             }
             Column(Modifier.padding(horizontal = 22.dp)) {
-                LabelText("Name it", c.inkMeta, Modifier.padding(top = 18.dp, bottom = 8.dp))
+                LabelText("Name", c.ink2, Modifier.padding(top = 18.dp, bottom = 8.dp))
                 val naming = remember { androidx.compose.ui.focus.FocusRequester() }
                 if (ui.sameClient) {
                     // Two accounts of one AI look the same to Reins: the name is what tells them apart.
@@ -162,30 +166,22 @@ fun PairingSheet(viewModel: PairingViewModel, authenticator: Authenticator, onDo
 internal fun pairingAsk(computer: Boolean): String = if (computer) "Connect a computer" else "Connect an AI app"
 
 /**
- * The Reins desktop app's key, as the digits the computer shows too. Matching them is what stops the server from
- * slipping in a key of its own, so they sit on their own row in mono, apart from anything the other side named.
+ * The Reins desktop app's key, as the digits the computer shows too, inside the field (Next, Pair and join 03).
+ * Matching them is what stops the server from slipping in a key of its own, so they stand in large mono, apart from
+ * anything the other side named.
  */
 @Composable
-private fun KeyRow(fingerprint: String) {
+private fun KeyInField(fingerprint: String) {
     val c = LocalColors.current
     Column(
-        Modifier
-            .padding(horizontal = 22.dp)
-            .padding(top = 22.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(c.paperRaised)
-            .border(1.dp, c.rule, RoundedCornerShape(18.dp))
-            .testTag("keyFingerprint")
-            .semantics(mergeDescendants = true) {}
-            .padding(horizontal = 18.dp, vertical = 16.dp),
+        Modifier.padding(top = 16.dp).fillMaxWidth().testTag("keyFingerprint").semantics(mergeDescendants = true) {},
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GlyphIcon(Glyph.Key, c.ink2, size = 16.dp)
-            LabelText("Desktop key", c.inkMeta)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            GlyphIcon(Glyph.Fingerprint, c.onField2, size = 14.dp)
+            RText("Desktop key", RType.sans(14f, FontWeight.SemiBold), c.onField2, maxLines = 1)
         }
-        RText(fingerprint, RType.mono(30f, FontWeight.Medium).copy(letterSpacing = 1.5.sp), c.ink, Modifier.testTag("keyDigits"), maxLines = 1, ltr = true)
-        RText("This computer's key must match. If it differs, deny.", RType.meta, c.inkMeta, Modifier.testTag("keyMustMatch"))
+        RText(fingerprint, RType.codes.copy(fontSize = 40.sp, letterSpacing = 3.sp), c.onField, Modifier.testTag("keyDigits"), maxLines = 1, ltr = true)
+        RText("Same on your computer? If not, deny.", RType.sans(14f, FontWeight.Medium), c.onField2, Modifier.testTag("keyMustMatch"))
     }
 }

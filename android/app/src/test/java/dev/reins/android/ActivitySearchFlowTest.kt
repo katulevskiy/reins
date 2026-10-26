@@ -3,9 +3,11 @@ package dev.reins.android
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.reins.android.ui.activity.localDay
@@ -54,8 +56,9 @@ class ActivitySearchFlowTest : FlowHarness() {
         awaitTag("day:$today")
         awaitTag("entry:10")
         assertTrue(has("dayEntries:$today"))
-        rule.onNodeWithTag("daySummary:${today - 1}", useUnmergedTree = true).assertTextContains("2 · 1 denied")
-        rule.onNodeWithTag("daySummary:$today", useUnmergedTree = true).assertTextContains("2")
+        // The header counts each kind with its glyph; it says them in words.
+        rule.onNodeWithTag("day:${today - 1}").assertContentDescriptionContains("2 entries, 1 denied", substring = true)
+        rule.onNodeWithTag("day:$today").assertContentDescriptionContains("2 entries", substring = true)
         assertTrue(has("day:${today - 3}"))
         assertFalse(has("entry:5"))
         assertFalse(has("dayEntries:${today - 1}"))
@@ -94,6 +97,9 @@ class ActivitySearchFlowTest : FlowHarness() {
     @Test
     fun aSearchShowsWhatMatchesSetApartWithASnippet() {
         launch()
+        // Search sits behind its button beside the title (Next, Activity 04).
+        awaitTag("openSearch")
+        rule.onNodeWithTag("openSearch").performClick()
         awaitTag("activitySearch")
         rule.onNodeWithTag("activitySearch").performTextInput("invoice")
         awaitTag("searchResults")

@@ -9,6 +9,7 @@ use std::{
 
 use reins_proto::{
     PROTOCOL_VERSION,
+    autopilot::{Decided, Suggestion},
     gmail::ToolCall,
     ids::{ConnectionId, RequestId},
     relay::{RelayOutcome, RelayRequest},
@@ -72,7 +73,7 @@ impl Default for ItemSignal {
 }
 
 /// What a waiting tool call can observe about its request.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct RequestState {
     /// The phone fetched the request (A2 or A3).
     delivered: bool,
@@ -81,6 +82,17 @@ struct RequestState {
     /// Nothing can wake the phone (no push, the app not open) or the push failed: the first wait need not wait for
     /// the offline threshold.
     unreachable: bool,
+    /// Who decided it when the user did not (the phone's answer says; shown on the desktop app only).
+    decided: Option<Decided>,
+    /// Where Autopilot leans while it waits for the user (shown on the desktop app only).
+    suggestion: Option<Suggestion>,
+}
+
+/// What the phone said about a request beside its answer: for the desktop app that asked, never for an AI.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Told {
+    pub decided: Option<Decided>,
+    pub suggestion: Option<Suggestion>,
 }
 
 struct RequestEntry {
@@ -272,7 +284,19 @@ impl RelayHub {
     }
 
     /// Stores the phone's answer; only the first answer counts.
+    #[cfg(test)]
     pub fn answer(&self, user: &str, id: &RequestId, outcome: RelayOutcome) -> Result<(), AnswerError> {
+        self.answer_decided(user, id, outcome, None)
+    }
+
+    /// [`RelayHub::answer`], with who decided it when the user did not (made safe to show).
+    pub fn answer_decided(
+        &self,
+        user: &str,
+        id: &RequestId,
+        outcome: RelayOutcome,
+        decided: Option<Decided>,
+    ) -> Result<(), AnswerError> {
         let map = self.lock();
         let entry = map.get(id).filter(|e| e.user == user).ok_or(AnswerError::NotFound)?;
         let stored = entry.state.send_if_modified(move |s| {
@@ -281,6 +305,7 @@ impl RelayHub {
             }
             s.delivered = true;
             s.outcome = Some(outcome);
+            s.decided = decided.map(Decided::cleaned);
             true
         });
         if stored {
@@ -288,6 +313,54 @@ impl RelayHub {
         } else {
             Err(AnswerError::AlreadyAnswered)
         }
+    }
+
+    /// Where Autopilot leans on `user`'s request `id` while it waits; the latest counts, none once it is answered.
+    pub fn suggest(&self, user: &str, id: &RequestId, suggestion: Suggestion) -> Result<(), AnswerError> {
+        let map = self.lock();
+        let entry = map.get(id).filter(|e| e.user == user).ok_or(AnswerError::NotFound)?;
+        let mut answered = false;
+        // Wakes the waits of the desktop app, which shows it ([`RelayHub::wait_leaning`]); the others wait on.
+        entry.state.send_if_modified(|s| {
+            answered = s.outcome.is_some();
+            let new = !answered && s.suggestion.as_ref() != Some(&suggestion);
+            if new {
+                s.suggestion = Some(suggestion);
+            }
+            new
+        });
+        if answered {
+            Err(AnswerError::AlreadyAnswered)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Where `id` stands now, for the connection that created it, without waiting: answered, with the phone
+    /// (pending), not picked up yet (offline), or unknown.
+    pub fn peek(&self, id: &RequestId, connection_id: &ConnectionId) -> WaitResult {
+        let map = self.lock();
+        let Some(entry) = map.get(id).filter(|e| e.request.connection_id == *connection_id) else {
+            return WaitResult::NotFound;
+        };
+        let state = entry.state.borrow();
+        match (&state.outcome, state.delivered) {
+            (Some(outcome), _) => WaitResult::Answered(outcome.clone()),
+            (None, true) => WaitResult::Pending,
+            (None, false) => WaitResult::Offline,
+        }
+    }
+
+    /// What the phone said beside its answer to `id`, for the connection that created it only.
+    pub fn told(&self, id: &RequestId, connection_id: &ConnectionId) -> Told {
+        let map = self.lock();
+        map.get(id).filter(|e| e.request.connection_id == *connection_id).map_or_else(Told::default, |e| {
+            let s = e.state.borrow();
+            Told {
+                decided: s.decided.clone(),
+                suggestion: s.suggestion.clone().filter(|_| s.outcome.is_none()),
+            }
+        })
     }
 
     /// Nothing can reach the phone for `id` right now (see [`RequestState::unreachable`]): a first wait on it says
@@ -305,17 +378,29 @@ impl RelayHub {
     /// The first wait after submitting: like [`RelayHub::wait`], and `Offline` at once when the phone cannot be
     /// reached ([`RelayHub::mark_unreachable`]), even while waiting.
     pub async fn wait_first(&self, id: &RequestId, connection_id: &ConnectionId) -> WaitResult {
-        self.wait_inner(id, connection_id, true).await
+        self.wait_inner(id, connection_id, true, false).await
+    }
+
+    /// [`RelayHub::wait_first`] or [`RelayHub::wait`] for the desktop app, which shows where Autopilot leans: a new
+    /// leaning ends the wait at once as `Pending` (the app asks again).
+    pub async fn wait_leaning(&self, id: &RequestId, connection_id: &ConnectionId, first: bool) -> WaitResult {
+        self.wait_inner(id, connection_id, first, true).await
     }
 
     /// Waits for the phone per spec §4.3, measured from now: `Offline` if the request is still
     /// undelivered after `timing.offline`, `Pending` after `timing.relay_wait`, else the answer.
     /// Only the connection that created the request may wait on it.
     pub async fn wait(&self, id: &RequestId, connection_id: &ConnectionId) -> WaitResult {
-        self.wait_inner(id, connection_id, false).await
+        self.wait_inner(id, connection_id, false, false).await
     }
 
-    async fn wait_inner(&self, id: &RequestId, connection_id: &ConnectionId, quick_offline: bool) -> WaitResult {
+    async fn wait_inner(
+        &self,
+        id: &RequestId,
+        connection_id: &ConnectionId,
+        quick_offline: bool,
+        leaning: bool,
+    ) -> WaitResult {
         let start = Instant::now();
         let receiver = {
             let map = self.lock();
@@ -326,13 +411,17 @@ impl RelayHub {
         };
         let offline_at = start + self.timing.offline;
         let pending_at = start + self.timing.relay_wait;
+        let leaned = rx.borrow().suggestion.clone();
         loop {
-            let (delivered, outcome, unreachable) = {
+            let (delivered, outcome, unreachable, suggestion) = {
                 let state = rx.borrow_and_update();
-                (state.delivered, state.outcome.clone(), state.unreachable)
+                (state.delivered, state.outcome.clone(), state.unreachable, state.suggestion.clone())
             };
             if let Some(outcome) = outcome {
                 return WaitResult::Answered(outcome);
+            }
+            if leaning && suggestion != leaned {
+                return WaitResult::Pending;
             }
             let now = Instant::now();
             if !delivered && (now >= offline_at || (quick_offline && unreachable)) {
@@ -664,6 +753,91 @@ mod tests {
         h.requeue(USER);
         assert!(h.take_undelivered(USER).is_empty(), "an answered request stays answered");
         assert!(h.peek_waiting("someone-else").is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn who_decided_and_the_leaning_reach_only_the_connection_that_asked() {
+        use reins_proto::autopilot::{DecidedBy, Leaning};
+        let h = hub();
+        let req = h.submit(USER, &conn(), "Desktop", search(), None, 0).unwrap();
+        let leaning = Suggestion {
+            v: 1,
+            leaning: Leaning::Approve,
+            confidence: 0.9,
+        };
+        assert_eq!(h.suggest("user-2", &req.id, leaning.clone()), Err(AnswerError::NotFound), "another account's");
+        h.suggest(USER, &req.id, leaning.clone()).unwrap();
+        assert_eq!(h.told(&req.id, &conn()).suggestion, Some(leaning.clone()));
+        assert_eq!(h.told(&req.id, &"conn-2".into()), Told::default(), "another connection learns nothing");
+        let decided = Decided {
+            by: DecidedBy::Autopilot,
+            confidence: Some(2.0),
+            reasons: vec![reins_proto::autopilot::Reason::Routine {
+                approve: 140,
+            }],
+            correctable: true,
+        };
+        h.answer_decided(USER, &req.id, found(), Some(decided)).unwrap();
+        let told = h.told(&req.id, &conn());
+        assert_eq!(told.suggestion, None, "answered: nothing leans any more");
+        let decided = told.decided.unwrap();
+        assert_eq!(
+            (decided.confidence, decided.reasons[0]),
+            (
+                None,
+                reins_proto::autopilot::Reason::Routine {
+                    approve: 100
+                }
+            ),
+            "made safe to show"
+        );
+        assert_eq!(h.suggest(USER, &req.id, leaning), Err(AnswerError::AlreadyAnswered));
+        // An older phone's answer says nothing of it.
+        let older = h.submit(USER, &conn(), "Desktop", search(), None, 0).unwrap();
+        h.answer(USER, &older.id, found()).unwrap();
+        assert_eq!(h.told(&older.id, &conn()), Told::default());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_new_leaning_ends_the_desktop_apps_wait_only() {
+        use reins_proto::autopilot::Leaning;
+        let h = hub();
+        let req = h.submit(USER, &conn(), "Desktop", search(), None, 0).unwrap();
+        h.fetch(USER, &req.id).unwrap();
+        let lean = |c: f32| Suggestion {
+            v: 1,
+            leaning: Leaning::Ask,
+            confidence: c,
+        };
+        let start = Instant::now();
+        let cid = conn();
+        let (desk, ai, ()) = tokio::join!(h.wait_leaning(&req.id, &cid, true), h.wait(&req.id, &cid), async {
+            sleep(secs(3)).await;
+            h.suggest(USER, &req.id, lean(0.5)).unwrap();
+        });
+        assert_eq!((desk, ai), (WaitResult::Pending, WaitResult::Pending));
+        assert_eq!(start.elapsed(), secs(45), "the AI's wait ran its course");
+        // Already seen: the next wait waits; the same leaning again wakes nobody, a new one does.
+        let start = Instant::now();
+        let (desk, ()) = tokio::join!(h.wait_leaning(&req.id, &cid, false), async {
+            sleep(secs(2)).await;
+            h.suggest(USER, &req.id, lean(0.5)).unwrap();
+            sleep(secs(2)).await;
+            h.suggest(USER, &req.id, lean(0.9)).unwrap();
+        });
+        assert_eq!((desk, start.elapsed()), (WaitResult::Pending, secs(4)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_peek_says_where_a_request_stands_without_waiting() {
+        let h = hub();
+        let req = h.submit(USER, &conn(), "Desktop", search(), None, 0).unwrap();
+        assert_eq!(h.peek(&req.id, &conn()), WaitResult::Offline);
+        h.fetch(USER, &req.id).unwrap();
+        assert_eq!(h.peek(&req.id, &conn()), WaitResult::Pending);
+        h.answer(USER, &req.id, found()).unwrap();
+        assert_eq!(h.peek(&req.id, &conn()), WaitResult::Answered(found()));
+        assert_eq!(h.peek(&req.id, &"conn-2".into()), WaitResult::NotFound, "another connection's");
     }
 
     fn small() -> RelayHub {

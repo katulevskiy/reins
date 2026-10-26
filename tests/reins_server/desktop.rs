@@ -319,3 +319,165 @@ async fn bad_bearers_get_the_mcp_challenge_and_browsers_are_refused() {
         .unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
 }
+
+/// The phone reports its Autopilot modes (the approval device only); each computer is shown the global mode and its
+/// own connection's, nothing of another's, and nothing at all before the phone reported.
+#[tokio::test]
+async fn a_computer_sees_the_phones_modes_its_own_and_no_other_connections() {
+    let (server, phone, tokens) = paired().await;
+    assert_eq!(phone_status(&server, &tokens.access).await["modes"], Value::Null, "not reported yet");
+    let other = server.connect_ai(&phone, "dev@example.com", Some("Claude")).await;
+    let report = json!({"v": 1, "mode": "auto", "base": "auto", "span": {},
+        "connections": [
+            {"connection_id": tokens.connection_id, "mode": "bypass", "span": {"since": 100, "until": 1900}},
+            {"connection_id": other.connection_id, "mode": "lockdown"}],
+        "desktops": [tokens.connection_id]});
+    let (status, body) = phone.put("/modes", &report).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let status = phone_status(&server, &tokens.access).await;
+    let mine = &status["modes"];
+    assert_eq!((mine["mode"].as_str(), mine["global"].as_str()), (Some("bypass"), Some("auto")), "{mine}");
+    assert_eq!(mine["span"]["until"], 1900);
+    assert!(mine["reported_at"].as_i64().unwrap() > 0);
+    assert!(!mine.to_string().contains(&other.connection_id), "never another connection's: {mine}");
+    assert!(!status.to_string().contains("desktops"), "nor which connections are desktop apps");
+    assert_eq!(phone_status(&server, &other.access).await["modes"], Value::Null, "an AI's connection is never told");
+
+    // Only the approval device reports, with a body that keeps to the contract.
+    let second = server.second_device("dev@example.com").await;
+    let (status, body) = second.put("/modes", &json!({"v": 1, "mode": "bypass", "base": "bypass"})).await;
+    assert_eq!((status, body["error"].as_str()), (StatusCode::FORBIDDEN, Some("not_approval_device")));
+    let long = json!({"v": 1, "mode": "manual", "base": "manual",
+        "connections": [{"connection_id": "x".repeat(101), "mode": "manual"}]});
+    for bad in [json!({"v": 1, "mode": "sideways", "base": "manual"}), long, json!({"mode": "manual"})] {
+        let (status, _) = phone.put("/modes", &bad).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    assert_eq!(phone_status(&server, &tokens.access).await["modes"]["mode"], "bypass", "left as it was");
+    // Another account's computer sees nothing of it.
+    let eve = server.phone("eve@example.com").await;
+    eve.register_device().await;
+    let eves = server.connect_ai(&eve, "eve@example.com", None).await;
+    assert_eq!(phone_status(&server, &eves.access).await["modes"], Value::Null);
+}
+
+/// Where Autopilot leans reaches the computer while its call waits; who decided comes with the answer. An older
+/// phone's answer, without either, keeps the old shape.
+#[tokio::test]
+async fn the_computer_hears_where_autopilot_leans_and_who_decided() {
+    let (server, phone, tokens) = paired().await;
+    report_desktops(&phone, &[&tokens.connection_id]).await;
+    let (_, _, offline) = post_call(&server, Some(&tokens.access), &fetch("octo/app")).await;
+    let id = offline["request_id"].as_str().unwrap().to_owned();
+    let lean = json!({"v": 1, "leaning": "approve", "confidence": 0.93});
+    let second = server.second_device("dev@example.com").await;
+    let (status, _) = second.post(&format!("/requests/{id}/suggestion"), &lean).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "the approval device only");
+    let (status, _) = phone.post("/requests/no-such/suggestion", &lean).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = phone
+        .post(&format!("/requests/{id}/suggestion"), &json!({"v": 1, "leaning": "approve", "confidence": 7}))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = phone.post(&format!("/requests/{id}/suggestion"), &lean).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    phone.get(&format!("/requests/{id}")).await;
+    let (_, _, pending) = get_call(&server, Some(&tokens.access), &id).await;
+    assert_eq!(
+        (pending["status"].as_str(), pending["suggestion"]["leaning"].as_str()),
+        (Some("pending"), Some("approve"))
+    );
+
+    let mut answer = sealed_answer();
+    answer["decided"] = json!({"by": "autopilot", "confidence": 0.9, "reasons": [{"code": "routine", "approve": 97}],
+        "correctable": true});
+    let (status, body) = phone.post(&format!("/requests/{id}/response"), &answer).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (_, _, late) = get_call(&server, Some(&tokens.access), &id).await;
+    assert_eq!(late["decided"]["by"], "autopilot", "{late}");
+    assert!(late.get("suggestion").is_none(), "answered: it leans no more");
+    let (status, _) = phone.post(&format!("/requests/{id}/suggestion"), &lean).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let other_call = fetch("octo/other");
+    let app = post_call(&server, Some(&tokens.access), &other_call);
+    let ((_, _, plain), _) = tokio::join!(app, answer_next(&phone, sealed_answer()));
+    assert!(plain.get("decided").is_none() && plain.get("suggestion").is_none(), "{plain}");
+}
+
+/// The phone's modes report, naming `desktops` as its paired desktop apps.
+async fn report_desktops(phone: &Phone, desktops: &[&str]) {
+    let (status, body) =
+        phone.put("/modes", &json!({"v": 1, "mode": "auto", "base": "auto", "desktops": desktops})).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+}
+
+/// Who decided and where Autopilot leans are for the phone's paired desktop apps only: an AI's connection waiting on its
+/// own call hears neither, and a new leaning does not end its wait early (its timing says nothing either); the desktop
+/// app's wait ends at once with it.
+#[tokio::test]
+async fn an_ai_never_hears_where_autopilot_leans_or_who_decided() {
+    let (server, phone, tokens) = paired().await;
+    let ai = server.connect_ai(&phone, "dev@example.com", Some("Claude")).await;
+    report_desktops(&phone, &[&tokens.connection_id]).await;
+    let lean = |c: f64| json!({"v": 1, "leaning": "approve", "confidence": c});
+    // Each asks once and the phone opens it; neither has an answer yet.
+    let mut ids = Vec::new();
+    for (token, repo) in [(&tokens.access, "octo/desk"), (&ai.access, "octo/ai")] {
+        let (status, _, first) = post_call(&server, Some(token), &fetch(repo)).await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        let id = first["request_id"].as_str().unwrap().to_owned();
+        phone.get(&format!("/requests/{id}")).await;
+        ids.push(id);
+    }
+    let (desk_id, ai_id) = (ids[0].clone(), ids[1].clone());
+
+    // A leaning arriving a second into each wait: the desktop's ends then, with it; the AI's runs its course, plain.
+    let wait_with_lean = |token: String, id: String| {
+        let server = &server;
+        let phone = &phone;
+        async move {
+            let start = Instant::now();
+            let (answer, ()) = tokio::join!(get_call(server, Some(&token), &id), async {
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+                let (status, _) = phone.post(&format!("/requests/{id}/suggestion"), &lean(0.91)).await;
+                assert_eq!(status, StatusCode::NO_CONTENT);
+            });
+            (answer, start.elapsed())
+        }
+    };
+    let ((_, _, desk), took) = wait_with_lean(tokens.access.clone(), desk_id.clone()).await;
+    assert_eq!((desk["status"].as_str(), desk["suggestion"]["leaning"].as_str()), (Some("pending"), Some("approve")));
+    assert!(took < Duration::from_millis(3000), "the desktop app's wait ended with the leaning: {took:?}");
+    let ((_, _, plain), took) = wait_with_lean(ai.access.clone(), ai_id.clone()).await;
+    assert_eq!(plain, json!({"request_id": ai_id, "status": "pending"}), "an AI hears nothing of it");
+    assert!(took >= Duration::from_millis(3800), "nor does its wait end early: {took:?}");
+
+    // Answered by Autopilot: only the desktop app is told who decided.
+    let mut decided = sealed_answer();
+    decided["decided"] = json!({"by": "autopilot", "confidence": 0.9, "reasons": [{"code": "routine", "approve": 97}],
+        "correctable": true});
+    for id in [&desk_id, &ai_id] {
+        let (status, body) = phone.post(&format!("/requests/{id}/response"), &decided).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    }
+    let (_, _, desk) = get_call(&server, Some(&tokens.access), &desk_id).await;
+    assert_eq!(desk["decided"]["by"], "autopilot");
+    let (_, _, ai_answer) = get_call(&server, Some(&ai.access), &ai_id).await;
+    assert_eq!(ai_answer["status"], "answered");
+    assert!(ai_answer.get("decided").is_none() && ai_answer.get("suggestion").is_none(), "{ai_answer}");
+    // A peek answers at once, with the same rule.
+    let (_, _, desk_peek) = get_call(&server, Some(&tokens.access), &format!("{desk_id}?peek=true")).await;
+    assert_eq!(desk_peek["decided"]["by"], "autopilot");
+    let (_, _, ai_peek) = get_call(&server, Some(&ai.access), &format!("{ai_id}?peek=true")).await;
+    assert_eq!(ai_peek["status"], "answered");
+    assert!(ai_peek.get("decided").is_none(), "{ai_peek}");
+
+    // Before the phone has said which connections are its desktop apps, nobody is told.
+    let (server, phone, tokens) = paired().await;
+    let (_, _, first) = post_call(&server, Some(&tokens.access), &fetch("octo/app")).await;
+    let id = first["request_id"].as_str().unwrap().to_owned();
+    phone.post(&format!("/requests/{id}/response"), &decided).await;
+    let (_, _, answer) = get_call(&server, Some(&tokens.access), &id).await;
+    assert!(answer.get("decided").is_none(), "{answer}");
+}

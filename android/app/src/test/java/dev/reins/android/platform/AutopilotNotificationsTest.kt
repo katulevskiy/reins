@@ -122,7 +122,7 @@ class AutopilotNotificationsTest {
         assertEquals(900_000L, n.timeoutAfter)
         assertEquals(NotificationManager.IMPORTANCE_LOW, manager.getNotificationChannel(n.channelId).importance)
         val stop = n.actions.single()
-        assertEquals("Stop", stop.title.toString())
+        assertEquals("Stop now", stop.title.toString())
         assertEquals(BypassStopReceiver.ACTION_STOP, shadowOf(stop.actionIntent).savedIntent.action)
         notifier.showBypass(null)
         assertTrue(posted().isEmpty())
@@ -139,7 +139,7 @@ class AutopilotNotificationsTest {
         assertEquals(1_699_800_000_000L, n.`when`)
         assertTrue(!n.extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN))
         assertEquals(0L, n.timeoutAfter)
-        assertEquals("Stop", n.actions.single().title.toString())
+        assertEquals("Stop now", n.actions.single().title.toString())
     }
 
     @Test
@@ -162,7 +162,7 @@ class AutopilotNotificationsTest {
         assertEquals("named by its string resource", context.getString(dev.reins.android.R.string.overnight_name), channel.name.toString())
         assertEquals(NotificationManager.IMPORTANCE_LOW, channel.importance)
         val stop = n.actions.single()
-        assertEquals("Stop", stop.title.toString())
+        assertEquals("Stop now", stop.title.toString())
         assertEquals(BypassStopReceiver.ACTION_STOP_OVERNIGHT, shadowOf(stop.actionIntent).savedIntent.action)
         notifier.showOvernight(null)
         assertEquals("the bypass's stays", 1, posted().size)

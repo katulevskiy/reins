@@ -27,14 +27,14 @@ class IntegrationCompletionFlowTest : FlowHarness() {
         core.serviceAdded.clear()
         core.tokenAccountGate = null
     }
-    private fun openService(id: String) {
+    private fun launchService(id: String) {
         launch()
         tap("tabConnections")
-        tap("service:$id")
+        openService(id)
     }
 
     @Test fun verifiedGoogleIdentityHasAnExplicitFinishAndAddAnotherDoesNotReconnect() {
-        openService("gmail")
+        launchService("gmail")
         runBlocking { GmailViewModel(container).connect("Work@Gmail.com") }
         awaitTag("integrationConnected")
         rule.onNodeWithTag("connectedIdentity").assertTextContains("work@gmail.com")
@@ -46,23 +46,23 @@ class IntegrationCompletionFlowTest : FlowHarness() {
     }
 
     @Test fun connectionSurvivesScreenReentryAndActivityRecreationUntilDone() {
-        openService("gmail")
+        launchService("gmail")
         runBlocking { GmailViewModel(container).connect("new@gmail.com") }
         awaitTag("integrationConnected")
         pressBack()
-        tap("service:gmail")
+        openService("gmail")
         awaitTag("integrationConnected")
         scenario!!.recreate()
         awaitTag("integrationConnected")
         tap("connectionDone")
-        tap("service:gmail")
+        openService("gmail")
         awaitTag("addAccount")
         assertFalse(has("integrationConnected"))
         assertEquals(1, core.addedAccounts.size)
     }
 
     @Test fun verifiedTokenAccountFinishesWithoutKeepingTheSecretFormVisible() {
-        openService("github")
+        launchService("github")
         tap("pasteManually")
         rule.onNodeWithTag("secret").performTextReplacement("ghp_fixture_token")
         tap("connectSecret")
@@ -74,7 +74,7 @@ class IntegrationCompletionFlowTest : FlowHarness() {
 
     @Test fun rejectedTokenNeverShowsCompletion() {
         core.serviceFailure = CoreException.Invalid("Token rejected")
-        openService("github")
+        launchService("github")
         tap("pasteManually")
         rule.onNodeWithTag("secret").performTextReplacement("bad_fixture")
         tap("connectSecret")
@@ -84,7 +84,7 @@ class IntegrationCompletionFlowTest : FlowHarness() {
     }
 
     @Test fun telegramCodeAndDevicePermissionsUseVerifiedIdentities() {
-        openService("telegram")
+        launchService("telegram")
         rule.onNodeWithTag("phone").performTextReplacement("+15550199")
         tap("sendCode")
         rule.onNodeWithTag("code").performTextReplacement("12345")
@@ -92,7 +92,7 @@ class IntegrationCompletionFlowTest : FlowHarness() {
         awaitTag("integrationConnected")
         rule.onNodeWithTag("connectedIdentity").assertTextContains("+15550199")
         tap("connectionDone")
-        tap("service:device_contacts")
+        openService("device_contacts")
         ServiceViewModel(container, "device_contacts").addDevice()
         awaitTag("integrationConnected")
         rule.onNodeWithTag("connectedIdentity").assertTextContains("this phone")

@@ -125,39 +125,3 @@ fun TimeBarFrame(
     ) { content() }
 }
 
-/**
- * The frame of a request that waits for the user: full in the accent colour when the request arrives, emptying as
- * the AI's patience runs out, turning red for the last [URGENT_SECONDS] seconds. [now] is the clock it runs on; a card
- * that also shows the seconds left passes its own, so one clock drives both.
- */
-@Composable
-fun CountdownFrame(
-    createdAt: Long,
-    waitUntil: Long?,
-    modifier: Modifier = Modifier,
-    corner: Dp = 18.dp,
-    now: State<Long> = rememberNowState(untilMillis = waitUntil?.let { it * 1000 }),
-    content: @Composable () -> Unit,
-) {
-    val c = LocalColors.current
-    // Only the change of colour recomposes; the shrinking bar is read while drawing.
-    val tone by remember(createdAt, waitUntil, c, now) {
-        derivedStateOf {
-            val u = urgency(createdAt, waitUntil, now.value)
-            when {
-                u == null -> c.accent
-                u.stale -> c.tertiary
-                u.urgent -> c.danger
-                else -> c.accent
-            }
-        }
-    }
-    val active = animateColorAsState(tone, label = "countdown")
-    TimeBarFrame(
-        fraction = { urgency(createdAt, waitUntil, now.value)?.let { if (it.stale) 0f else it.fraction } ?: 1f },
-        color = { active.value },
-        modifier = modifier,
-        corner = corner,
-        content = content,
-    )
-}

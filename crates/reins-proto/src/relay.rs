@@ -94,11 +94,15 @@ pub enum RelayOutcome {
 }
 
 /// The phone's answer to a `RelayRequest`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RelayResponse {
     pub v: u32,
     #[serde(flatten)]
     pub outcome: RelayOutcome,
+    /// Who decided, when the user did not tap (Autopilot, a bypass, Lockdown): shown by the desktop app. Absent from
+    /// an older phone's answer, and from an answer the user gave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided: Option<crate::autopilot::Decided>,
 }
 
 #[cfg(test)]
@@ -135,6 +139,7 @@ mod tests {
             outcome: RelayOutcome::Denied {
                 reason: None,
             },
+            decided: None,
         };
         assert_eq!(serde_json::to_value(&denied).unwrap(), json!({"v": 1, "outcome": "denied", "reason": null}));
         let sent = RelayResponse {
@@ -145,10 +150,45 @@ mod tests {
                     thread_id: "t9".into(),
                 }),
             },
+            decided: None,
         };
         let v = serde_json::to_value(&sent).unwrap();
         assert_eq!(v, json!({"v": 1, "outcome": "result", "result": {"kind": "sent", "id": "m9", "thread_id": "t9"}}));
         assert_eq!(serde_json::from_value::<RelayResponse>(v).unwrap(), sent);
+    }
+
+    /// Who decided rides beside the outcome; an answer without it (an older phone) reads as before, and an older
+    /// reader of the outcome alone ignores it.
+    #[test]
+    fn who_decided_travels_beside_the_outcome() {
+        let auto = RelayResponse {
+            v: 1,
+            outcome: RelayOutcome::Denied {
+                reason: None,
+            },
+            decided: Some(crate::autopilot::Decided {
+                by: crate::autopilot::DecidedBy::Autopilot,
+                confidence: Some(0.96),
+                reasons: vec![crate::autopilot::Reason::LikeYours {
+                    approved: 0,
+                    denied: 12,
+                }],
+                correctable: true,
+            }),
+        };
+        let v = serde_json::to_value(&auto).unwrap();
+        assert_eq!(v["decided"]["by"], json!("autopilot"));
+        assert_eq!(serde_json::from_value::<RelayResponse>(v.clone()).unwrap(), auto);
+        // What a server that knows only the outcome reads of it.
+        let outcome: RelayOutcome = serde_json::from_value(v).unwrap();
+        assert_eq!(
+            outcome,
+            RelayOutcome::Denied {
+                reason: None
+            }
+        );
+        let old: RelayResponse = serde_json::from_value(json!({"v": 1, "outcome": "denied", "reason": null})).unwrap();
+        assert_eq!(old.decided, None);
     }
 
     #[test]

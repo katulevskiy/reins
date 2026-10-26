@@ -66,7 +66,7 @@ class OutsideNotificationsTest {
         // A promoted notification is coloured, never colorized.
         assertFalse(n.extras.getBoolean(Notification.EXTRA_COLORIZED))
         assertTrue(n.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
-        assertEquals("Stop", n.actions.single().title.toString())
+        assertEquals("Stop now", n.actions.single().title.toString())
     }
 
     @Test

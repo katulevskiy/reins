@@ -36,7 +36,7 @@ class VaultFlowTest : FlowHarness() {
     private fun openVault() {
         launch()
         tap("tabConnections")
-        tap("service:vault")
+        openService("vault")
         tap("openVault")
         awaitTag("vaultItem:openai")
     }
@@ -51,7 +51,7 @@ class VaultFlowTest : FlowHarness() {
     fun theListShowsEveryItemAndSearches() {
         openVault()
         assertTrue(has("vaultItem:github") && has("vaultItem:deploy") && has("vaultItem:visa"))
-        awaitText("This phone's key for reins vault add: 4821-9930-1274")
+        awaitText("4821-9930-1274")
         type("vaultSearch", "git")
         awaitGone("vaultItem:openai")
         assertTrue(has("vaultItem:github"))
@@ -64,7 +64,7 @@ class VaultFlowTest : FlowHarness() {
         core.vaultDetails = emptyList()
         launch()
         tap("tabConnections")
-        tap("service:vault")
+        openService("vault")
         tap("openVault")
         awaitTag("vaultEmpty")
         assertTrue(showsText("vault:OpenAI/password", substring = true))

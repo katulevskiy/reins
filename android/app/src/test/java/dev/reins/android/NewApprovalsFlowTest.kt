@@ -147,7 +147,7 @@ class NewApprovalsFlowTest : FlowHarness() {
         openRequest(TestData.gitPushView(TestData.gitPush(ref)).copy(service = "gitlab"))
         rule.onNodeWithTag("what").assertTextEquals("Delete a branch from octo/app")
         rule.onNodeWithTag("askDetails", useUnmergedTree = true).assertTextEquals("old")
-        rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextContains("GITLAB", substring = true)
+        rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextContains("GitLab", substring = true)
     }
 
     // ---- uploads ------------------------------------------------------------------------------------------------------

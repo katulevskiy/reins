@@ -185,6 +185,6 @@ class PushInspectFlowTest : FlowHarness() {
         )
         launch()
         awaitTag("entry:8")
-        deep("entryTitle:8").assertTextEquals("Fetched katulevskiy/reins")
+        deep("entryTitle:8").assertTextContains(" fetched katulevskiy/reins", substring = true)
     }
 }

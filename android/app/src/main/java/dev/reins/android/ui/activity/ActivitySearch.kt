@@ -36,25 +36,33 @@ fun dayStart(epochDay: Long, zone: ZoneId = ZoneId.systemDefault()): Long =
     LocalDate.ofEpochDay(epochDay).atStartOfDay(zone).toEpochSecond()
 
 /** A day of Activity as its header shows it: how many entries, how many were denied and how many failed. */
-data class DayCount(val day: Long, val count: Int, val denied: Int = 0, val failed: Int = 0)
+data class DayCount(val day: Long, val count: Int, val denied: Int = 0, val failed: Int = 0, val auto: Int = 0) {
+    /** Carried out by you or a grant (not by Autopilot): the ✓ of the header. */
+    val approved: Int get() = (count - denied - failed - auto).coerceAtLeast(0)
+}
 
 /** The stamps (newest first) by local day, newest day first. */
 fun daysOf(stamps: List<ActivityStamp>, zone: ZoneId = ZoneId.systemDefault()): List<DayCount> =
-    countDays(stamps.map { localDay(it.at, zone) to it.outcome })
+    countDays(stamps.map { Triple(localDay(it.at, zone), it.outcome, it.decider) })
 
 /** The entries (newest first) by local day, as [daysOf] counts stamps: until the core's stamps are read. */
 fun daysOfEntries(entries: List<ActivityEntry>, zone: ZoneId = ZoneId.systemDefault()): List<DayCount> =
-    countDays(entries.map { localDay(it.at, zone) to outcomeKind(it.outcome) })
+    countDays(entries.map { Triple(localDay(it.at, zone), outcomeKind(it.outcome), deciderKind(it.decidedBy)) })
 
-private fun countDays(items: List<Pair<Long, ActivityOutcome>>): List<DayCount> {
+/** Each day's count: all, denied, failed, and what Autopilot decided (counted once, under ⚡, whatever it decided). */
+private fun countDays(items: List<Triple<Long, ActivityOutcome, ActivityDecider>>): List<DayCount> {
     val days = LinkedHashMap<Long, IntArray>()
-    for ((day, outcome) in items) {
-        val n = days.getOrPut(day) { IntArray(3) }
+    for ((day, outcome, decider) in items) {
+        val n = days.getOrPut(day) { IntArray(4) }
         n[0]++
-        if (outcome == ActivityOutcome.DENIED) n[1]++
-        if (outcome == ActivityOutcome.FAILED) n[2]++
+        if (decider == ActivityDecider.AUTOPILOT) {
+            n[3]++
+        } else {
+            if (outcome == ActivityOutcome.DENIED) n[1]++
+            if (outcome == ActivityOutcome.FAILED) n[2]++
+        }
     }
-    return days.entries.map { (day, n) -> DayCount(day, n[0], n[1], n[2]) }.sortedByDescending { it.day }
+    return days.entries.map { (day, n) -> DayCount(day, n[0], n[1], n[2], n[3]) }.sortedByDescending { it.day }
 }
 
 /** An entry's outcome as the core's filters read it. */
@@ -82,6 +90,7 @@ fun daySummary(d: DayCount): String = buildString {
 /** What a day's header says it holds, for a screen reader: "14 entries, 2 denied". */
 fun daySpoken(d: DayCount): String = buildString {
     append(if (d.count == 1) "1 entry" else "${d.count} entries")
+    if (d.auto > 0) append(", ${d.auto} by Autopilot")
     if (d.denied > 0) append(", ${d.denied} denied")
     if (d.failed > 0) append(", ${d.failed} ${if (d.failed == 1) "needs" else "need"} attention")
 }
