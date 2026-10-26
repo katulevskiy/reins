@@ -78,44 +78,6 @@ struct ChipFlow: Layout {
     }
 }
 
-/// A small label tinted with a colour ("Reads", "Ends soon", "Active").
-struct TintedTag: View {
-    var text: String
-    var tint: Color?
-    var mono = false
-
-    init(_ text: String, tint: Color? = nil, mono: Bool = false) {
-        self.text = text
-        self.tint = tint
-        self.mono = mono
-    }
-
-    var body: some View {
-        Text(text)
-            .font(mono ? RFont.mono(12, .medium) : RFont.sans(12.5, .medium))
-            .foregroundStyle(tint.map { $0.opacity(0.9) } ?? Palette.ink2)
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .frame(minHeight: 26)
-            .background(tint.map { $0.opacity(0.1) } ?? Palette.paperSunken, in: Capsule())
-    }
-}
-
-/// A heading above a form group in the grant forms ("FOR WHICH AI?").
-struct FormLabel: View {
-    var text: String
-
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text.uppercased())
-            .font(RFont.sans(12.5, .medium))
-            .tracking(0.6)
-            .foregroundStyle(Palette.ink2)
-            .accessibilityAddTraits(.isHeader)
-    }
-}
-
 /// A text field in the grant forms and sign-in: a soft rounded well, mono for addresses.
 struct FieldWell: ViewModifier {
     var mono = false
@@ -157,132 +119,10 @@ struct FormBanner: View {
     }
 }
 
-// MARK: Grant rows
+// MARK: Ended grants
 
-/// A running permission as a card: the service with the AI's avatar, the summary in one sentence, who and how much it
-/// was used, a bar per use when capped, and the time left as a ring. Red when it ends soon.
-struct GrantCard: View {
-    var grant: GrantView
-    var now: Int64
-    /// A hairline row (Trust's list) instead of a card.
-    var row = false
-
-    var body: some View {
-        let clock = grantClock(grant, now: now)
-        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        HStack(alignment: .center, spacing: row ? 14 : 13) {
-            ServiceMini(
-                service: grant.service, symbol: ActionKind.of(grant.action).symbol,
-                connectionId: grant.connectionId, label: grant.connectionLabel, size: row ? 38 : 44
-            )
-            VStack(alignment: .leading, spacing: row ? 2 : 4) {
-                Text(untrusted(grant.summary))
-                    .font(row ? TextRole.row.font() : RFont.sans(15.5, .semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                HStack(spacing: 0) {
-                    Text(untrusted(grant.connectionLabel) + " · ")
-                        .foregroundStyle(Palette.inkMeta)
-                    if clock.soon {
-                        Text("ends soon").fontWeight(.semibold).foregroundStyle(Palette.danger)
-                    } else {
-                        Text(GrantText.usesLine(grant)).foregroundStyle(Palette.inkMeta)
-                    }
-                }
-                .font(RFont.sans(12.5))
-                .lineLimit(1)
-                if let cap = grant.maxUses, cap > 1 {
-                    UseDots(uses: Int(grant.uses), maxUses: Int(cap)).padding(.top, 4)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            TimePie(clock: clock, size: row ? 38 : 48)
-        }
-        .modifier(GrantCardSurface(row: row, soon: clock.soon, shape: shape))
-        .contentShape(row ? AnyShape(Rectangle()) : AnyShape(shape))
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens the grant")
-    }
-}
-
-/// A grant's card surface, or a hairline row's: rows are hairlines, never cards.
-private struct GrantCardSurface<S: InsettableShape>: ViewModifier {
-    var row: Bool
-    var soon: Bool
-    var shape: S
-
-    func body(content: Content) -> some View {
-        if row {
-            content
-                .padding(.vertical, 9)
-                .frame(minHeight: 56)
-                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
-        } else {
-            content
-                .padding(14)
-                .background {
-                    if soon {
-                        shape.fill(LinearGradient(colors: [Palette.danger.opacity(0.07), Palette.danger.opacity(0.02)], startPoint: .top, endPoint: .bottom))
-                            .background(Palette.paperRaised, in: shape)
-                    } else {
-                        shape.fill(Palette.paperRaised)
-                    }
-                }
-                .overlay(shape.strokeBorder(soon ? Palette.danger.opacity(0.35) : Palette.rule, lineWidth: 1))
-        }
-    }
-}
-
-/// One small bar per use, the used ones in the accent; a thin meter when there are too many to count.
-struct UseDots: View {
-    var uses: Int
-    var maxUses: Int
-
-    var body: some View {
-        Group {
-            if maxUses <= 12 {
-                HStack(spacing: 3) {
-                    ForEach(0..<maxUses, id: \.self) { i in
-                        Capsule().fill(i < uses ? Palette.violet : Palette.dynamic(0xDDDDE2, 0x2A2A2F)).frame(width: 14, height: 4)
-                    }
-                }
-            } else {
-                let fraction = min(max(Double(uses) / Double(maxUses), 0), 1)
-                Capsule()
-                    .fill(Palette.dynamic(0xDDDDE2, 0x2A2A2F))
-                    .frame(width: 120, height: 4)
-                    .overlay(alignment: .leading) { Capsule().fill(Palette.violet).frame(width: 120 * fraction, height: 4) }
-            }
-        }
-        .accessibilityElement()
-        .accessibilityLabel("\(uses) of \(maxUses) uses")
-    }
-}
-
-/// The time left as a ring with the amount inside ("4m", "5h", "6d", "∞"): the accent, red when it ends soon.
-struct TimePie: View {
-    var clock: GrantClock
-    var size: CGFloat = 48
-
-    var body: some View {
-        let color = clockColor(clock)
-        ZStack {
-            ArcRing(fraction: clock.fraction, color: color, track: Palette.dynamic(0xE2E2E6, 0x26262B), lineWidth: size * 0.1)
-            Text(clock.label)
-                .font(RFont.fixedMono(size * 0.26, .semibold))
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .environment(\.layoutDirection, .leftToRight)
-        }
-        .frame(width: size, height: size)
-        .accessibilityElement()
-        .accessibilityLabel(clock.remaining.map { "\(compactDuration($0)) left" } ?? "No time limit")
-    }
-}
-
-/// A permission that ended, with the ways to start it again or to get rid of it.
+/// A grant that ended (the Trust board, 05): its dimmed plate and avatar, the summary, who and how it ended, then
+/// Resume and a round Delete.
 struct EndedGrantRow: View {
     var grant: GrantView
     var onOpen: () -> Void
@@ -290,23 +130,18 @@ struct EndedGrantRow: View {
     var onDelete: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ServiceMini(
-                service: grant.service, symbol: ActionKind.of(grant.action).symbol,
-                connectionId: grant.connectionId, label: grant.connectionLabel
-            )
-            // Dimmed, not gone: the service's mark at 55 %.
-            .opacity(0.55)
-            VStack(alignment: .leading, spacing: 5) {
+        HStack(alignment: .top, spacing: 12) {
+            GrantMini(service: grant.service, symbol: ActionKind.of(grant.action).symbol, connectionId: grant.connectionId,
+                      label: grant.connectionLabel, size: 36, dim: true)
+            VStack(alignment: .leading, spacing: 0) {
                 Button(action: onOpen) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(untrusted(grant.summary))
-                            .font(TextRole.row.font())
-                            .foregroundStyle(Palette.ink)
+                        AskRunsText(runs: GrantWords.runs(grant.summary), size: TextRole.row.size)
+                            .foregroundStyle(Palette.ink2)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
-                        Text(untrustedName(grant.connectionLabel) + " · " + GrantText.endedLine(grant))
-                            .textRole(.meta)
+                        Text(verbatim: EndedGroup.line(grant))
+                            .textRole(.sub)
                             .foregroundStyle(Palette.inkMeta)
                             .lineLimit(1)
                     }
@@ -317,113 +152,17 @@ struct EndedGrantRow: View {
                 .accessibilityIdentifier("ended:\(grant.id)")
                 HStack(spacing: 8) {
                     Button(action: onResume) {
-                        Label("Resume", systemImage: "arrow.clockwise")
+                        Label { Text("Resume") } icon: { GlyphIcon(.refresh, size: 15) }
                     }
                     .buttonStyle(SignalButtonStyle(.soft, size: .small))
                     .fixedSize()
                     .accessibilityIdentifier("resume:\(grant.id)")
-                    Button(role: .destructive, action: onDelete) {
-                        Text("Delete")
-                    }
-                    .buttonStyle(SignalButtonStyle(.danger, size: .small))
-                    .fixedSize()
-                    .accessibilityIdentifier("delete:\(grant.id)")
+                    RoundHeaderButton(glyph: .trash, label: "Delete", size: 42, action: onDelete)
+                        .accessibilityIdentifier("delete:\(grant.id)")
                 }
-                .padding(.top, 8)
+                .padding(.top, 10)
             }
         }
-        .padding(.horizontal, 24)
         .padding(.vertical, 14)
-    }
-}
-
-/// A compact capsule button on a row ("Resume", "Delete", "New grant").
-struct SmallCapsuleStyle: PrimitiveButtonStyle {
-    enum Kind { case primary, secondary, danger }
-    var kind: Kind = .secondary
-    var height: CGFloat = 36
-
-    func makeBody(configuration: Configuration) -> some View {
-        DefaultTapStyle(look: SmallCapsuleLook(kind: kind, height: height)).makeBody(configuration: configuration)
-    }
-}
-
-private struct SmallCapsuleLook: ButtonStyle {
-    var kind: SmallCapsuleStyle.Kind
-    var height: CGFloat
-
-    func makeBody(configuration: Configuration) -> some View {
-        let (fg, bg): (Color, Color) = switch kind {
-        case .primary: (Palette.paper, Palette.ink)
-        case .secondary: (Palette.ink, Palette.paperSunken)
-        case .danger: (Palette.danger, Palette.danger.opacity(0.12))
-        }
-        configuration.label
-            .font(RFont.sans(14, .semibold))
-            .labelStyle(TightLabelStyle())
-            .foregroundStyle(fg)
-            .padding(.horizontal, 14)
-            .frame(minHeight: height)
-            .background(bg, in: Capsule())
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .contentShape(Capsule())
-    }
-}
-
-private struct TightLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 6) {
-            configuration.icon.font(.system(size: 13, weight: .semibold))
-            configuration.title
-        }
-    }
-}
-
-/// One operation a grant covered: what it was, when, and how it ended.
-struct GrantUseRow: View {
-    var entry: ActivityEntry
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ActionTile(kind: ActionKind.of(entry.action), count: Int(entry.count), size: 40)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(entry.headline)
-                    .font(RFont.sans(15.5, .semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                let detail = untrusted(entry.detail)
-                if !detail.isEmpty {
-                    Text(detail).font(RFont.sans(13.5)).foregroundStyle(Palette.ink2).lineLimit(2)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .trailing, spacing: 6) {
-                Text(GrantText.relative(entry.at)).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta).lineLimit(1)
-                OutcomePill(text: Self.outcome(entry.outcome), tone: Self.tone(entry.outcome))
-            }
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-    }
-
-    static func outcome(_ o: String) -> String {
-        switch o {
-        case "denied": "Denied"
-        case "error": "Failed"
-        case "granted": "Granted"
-        case "sent": "Sent"
-        case "released": "Allowed"
-        default: o.prefix(1).uppercased() + o.dropFirst()
-        }
-    }
-
-    static func tone(_ o: String) -> OutcomePill.Tone {
-        switch o {
-        case "denied", "error", "failed": .bad
-        case "granted": .accent
-        default: .neutral
-        }
     }
 }

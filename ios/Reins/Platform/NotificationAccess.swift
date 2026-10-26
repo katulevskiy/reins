@@ -85,7 +85,7 @@ struct NotificationsOffCard: View {
         VStack(spacing: 0) {
             if (access.state.needsAttention && !model.demo) || Self.demoWarn {
                 CompactBanner(
-                    text: access.state == .quiet ? "Notifications are quiet" : "Notifications are off",
+                    text: access.state == .quiet ? "Notifications quiet" : "Notifications off",
                     symbol: "bell.slash.fill",
                     button: "Turn on",
                     label: "Reins · Notifications"

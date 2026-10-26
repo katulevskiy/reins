@@ -56,10 +56,9 @@ struct MainPage: View {
         VStack(alignment: .leading, spacing: 10) {
             ApprovalField(vm: vm, view: view, autopilot: autopilot, top: top)
             if gone {
-                Label("No longer waiting", systemImage: "exclamationmark.triangle.fill")
-                    .font(RFont.sans(13.5, .semibold))
-                    .foregroundStyle(Palette.warning)
-                    .padding(.horizontal, 22)
+                WarnTag(text: "No longer waiting", tint: Palette.warning)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
                     .accessibilityIdentifier("noLongerWaiting")
             }
             if nav.riskInFacts, let risk = vm.suggestion?.risk, !untrusted(risk.why).isEmpty {
@@ -68,47 +67,54 @@ struct MainPage: View {
                 }
                 .accessibilityIdentifier("riskWhy")
             }
-            Facts(vm: vm, view: view).padding(.top, 4)
+            Facts(vm: vm, view: view)
         }
         .animation(.smooth(duration: 0.25), value: vm.error)
     }
 }
 
-/// A tinted tag with a real symbol (the warning sign unless said otherwise).
+/// A small tinted tag with a glyph and a few words (the kit's `tagw`: Changes CI, Hidden, Rewrites history): 24 pt,
+/// 12.5 semibold, the tint at 13 %. `lines` > 1 lets a long reason wrap.
 struct WarnTag: View {
     var text: String
     var tint: Color
     var small = false
-    var symbol = "exclamationmark.triangle.fill"
+    var glyph: Glyph? = .warning
+    /// An SF Symbol in place of the glyph, for a mark the glyph set lacks.
+    var symbol: String? = nil
     var lines = 1
 
     var body: some View {
-        Label(text, systemImage: symbol)
-            .labelStyle(.titleAndIcon)
-            .font(RFont.sans(small ? 11.5 : 13.5, .semibold))
-            .foregroundStyle(tint)
-            .padding(.horizontal, small ? 8 : 12)
-            .padding(.vertical, small ? 4 : 7)
-            .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: small ? 11 : 16, style: .continuous))
-            .lineLimit(lines)
-            .fixedSize(horizontal: false, vertical: lines > 1)
+        HStack(alignment: .top, spacing: 4) {
+            if let symbol {
+                Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).padding(.top, 2.5)
+            } else if let glyph {
+                GlyphIcon(glyph, size: 12).padding(.top, 2.5)
+            }
+            Text(verbatim: text)
+                .lineLimit(lines)
+                .fixedSize(horizontal: false, vertical: lines > 1)
+        }
+        .font(RFont.sans(12.5, .semibold))
+        .foregroundStyle(tint)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .frame(minHeight: 24)
+        .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
-/// What deserves a closer look in one commit, file or email: the warning sign and its 1 to 3 reasons. Close is the
-/// filled sign in the warning colour; Look is quieter, the outline sign in a muted ink, so "Changes CI" reads as more
-/// serious than "Runs on build". Red stays for danger. VoiceOver reads "Look closer: Changes CI".
+/// What deserves a closer look in one commit, file or email: the warning sign and its 1 to 3 reasons. Close is in the
+/// warning colour; Look is quieter, in ink-2, so "Changes CI" reads as more serious than "Runs on build". Red stays for
+/// danger. VoiceOver reads "Look closer: Changes CI".
 struct AttentionTag: View {
     var mark: AttentionMark
     var id: String
 
     var body: some View {
-        WarnTag(
-            text: mark.text, tint: mark.level == .close ? Palette.warning : Palette.ink2, small: true,
-            symbol: mark.level == .close ? "exclamationmark.triangle.fill" : "exclamationmark.triangle", lines: 2
-        )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(mark.spoken)
-        .accessibilityIdentifier(id)
+        WarnTag(text: mark.text, tint: mark.level == .close ? Palette.warning : Palette.ink2, small: true, lines: 2)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(mark.spoken)
+            .accessibilityIdentifier(id)
     }
 }

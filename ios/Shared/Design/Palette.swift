@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// Reins Signal (design/signal/tokens/signal.tokens.json): paper, ink and hairlines for everything you read, and seven
-/// fields of colour for the moment something needs a decision. Fields are the same in light and dark; only paper and
-/// ink flip. Colour only; nothing here affects layout. The names from before Signal are gone: use these.
+/// Reins Next (design/next/iphone, the System board): paper, ink and hairlines for everything you read, seven fields of
+/// colour for the moment something needs a decision, and the modes' colours. Fields and modes are the same in light and
+/// dark; only paper and ink flip. Colour only; nothing here affects layout.
 enum Palette {
     static func dynamic(_ light: UInt32, _ dark: UInt32, alpha: CGFloat = 1) -> Color {
         Color(uiColor: UIColor { traits in
@@ -83,6 +83,19 @@ enum Palette {
     static let onFieldWash = Color.white.opacity(0.18)
     /// Ink on a field's white button or pill (Review): light ink in both themes, because the button stays white.
     static let onFieldInk = Color(uiColor: UIColor(hex: 0x16151B))
+
+    // MARK: Modes (the chip, the card, the running field: one colour each, the same in both themes)
+
+    /// Overnight's navy. Auto is `violetFill`, Lockdown `fieldWarn`, Bypass `fieldDelete`, Manual ink.
+    static let modeOvernight = Color(uiColor: UIColor(hex: 0x1E2F5C))
+    /// Overnight as text or a glyph on paper (its navy is too dark on graphite).
+    static let nightText = dynamic(0x2B3F78, 0x9DB1EA)
+
+    // MARK: Service plates
+
+    /// The plate under a service's logo in a grant row, and its edge.
+    static let plate = dynamic(0xFFFFFF, 0x1C1C20)
+    static let plateEdge = dynamic(0xE2E2E6, 0x2C2C31)
 
     // MARK: Kind inks (a kind on paper: tiles, row glyphs; the tile is this at 13 %, lighter in dark)
 

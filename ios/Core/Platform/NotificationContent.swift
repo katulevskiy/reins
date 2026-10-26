@@ -106,7 +106,19 @@ enum NotificationText {
     static let genericTitle = "Reins"
     static let genericBody = "Something is waiting for you"
 
+    /// The bold line (the Outside board): for a request or a file, the ask itself with who asks in front ("Claude: Read
+    /// 3 emails", ASK-TEXT's list form: the name is its own run before the colon, capped, never inside Reins' sentence);
+    /// for a pairing or a new phone, Reins' own words.
     static func title(_ item: PendingItem) -> String {
+        if asksInTitle(item) { return headline(item) }
+        return kindTitle(item)
+    }
+
+    /// Whether the title is the ask (who asks and what), rather than the kind's words.
+    static func asksInTitle(_ item: PendingItem) -> Bool { item.kind == .request || item.kind == .blob }
+
+    /// "Approval needed", "Connect an AI": what kind of thing waits.
+    static func kindTitle(_ item: PendingItem) -> String {
         switch item.kind {
         case .request: item.action == "grant" ? "Permission requested" : "Approval needed"
         case .pairing: "Connect an AI"
@@ -126,29 +138,34 @@ enum NotificationText {
         let subtitle = untrusted(item.subtitle).trimmingCharacters(in: .whitespacesAndNewlines)
         // The details under the sentence, unless they are the summary that comes after the core's sentence anyway.
         let mono = line(item).mono.flatMap { $0 == subtitle ? nil : $0 } ?? ""
-        return [headline(item), mono, untrusted(item.headline), subtitle, item.suggestion.map(untrusted) ?? ""]
+        return [asksInTitle(item) ? "" : headline(item), mono, untrusted(item.headline), subtitle, item.suggestion.map(untrusted) ?? ""]
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
     }
 
     private static func line(_ item: PendingItem) -> AskLine { AskLabels.pending(item, field: FieldKind.of(ActionKind.of(item.action))) }
 
+    /// Who decided, and how: "Approved by Autopilot", "Denied in Bypass".
     static func decisionTitle(_ d: AutoDecisionView) -> String {
         let approved = d.verdict == .approve
         switch d.decidedBy {
         case "bypass": return approved ? "Approved by Bypass" : "Denied in Bypass"
         case "overnight": return approved ? "Approved by \(AutopilotText.overnightName)" : "Denied by \(AutopilotText.overnightName)"
         case "lockdown": return "Denied by Lockdown"
-        default: return approved ? "Autopilot approved" : "Autopilot denied"
+        default: return approved ? "Approved by Autopilot" : "Denied by Autopilot"
         }
     }
 
-    /// "Push to a branch · dkat/reins — Claude Code".
-    static func decisionText(_ d: AutoDecisionView) -> String { "\(untrusted(d.title)) — \(untrusted(d.connectionLabel))" }
+    /// "Claude Code: Push to a branch · dkat/reins": what was asked, who asked in front (its own run, capped).
+    static func decisionText(_ d: AutoDecisionView) -> String {
+        let who = untrustedName(d.connectionLabel, limit: 40)
+        let what = untrusted(d.title)
+        return who.isEmpty ? what : "\(who): \(what)"
+    }
 
-    /// "97% sure" for Autopilot's own decisions (Overnight's too); bypass and lockdown do not judge.
+    /// "97%" for Autopilot's own decisions (Overnight's too); bypass and lockdown do not judge.
     static func decisionDetail(_ d: AutoDecisionView) -> String? {
-        ["autopilot", "overnight"].contains(d.decidedBy) && d.confidence > 0 ? "\(percent(d.confidence)) sure" : nil
+        ["autopilot", "overnight"].contains(d.decidedBy) && d.confidence > 0 ? percent(d.confidence) : nil
     }
 
     static func percent(_ p: Float) -> String { "\(Int((min(max(p, 0), 1) * 100).rounded()))%" }
@@ -204,9 +221,9 @@ enum NotificationContent {
     static func decision(_ d: AutoDecisionView, settings: FeedbackSettings) -> UNMutableNotificationContent {
         let c = UNMutableNotificationContent()
         let approved = d.verdict == .approve
-        c.title = NotificationText.decisionTitle(d)
-        // The detail ("97% sure") goes under the text, not in the bold subtitle above it.
-        c.body = [NotificationText.decisionText(d), NotificationText.decisionDetail(d) ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+        // What happened in the bold line, who decided and how sure under it ("Approved by Autopilot · 97%").
+        c.title = NotificationText.decisionText(d)
+        c.body = [NotificationText.decisionTitle(d), NotificationText.decisionDetail(d) ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
         c.categoryIdentifier = NotificationCategory.autopilot.rawValue
         c.threadIdentifier = NotificationCategory.autopilot.thread
         c.interruptionLevel = approved ? .passive : .active

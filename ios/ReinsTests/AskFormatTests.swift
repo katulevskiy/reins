@@ -185,12 +185,12 @@ final class AskFormatTests: XCTestCase {
     func testPairingAndJoiningAskInReinsOwnWords() {
         let pairing = PairingView(id: "p", clientName: "Gemini", clientHost: "gemini.google.com", choices: Data([1, 2, 3]), createdAt: 0, keyFingerprint: nil)
         check(PairWords.line(pairing), "Connect an AI app", target: "AI app", kind: "AI app · Pair",
-              icon: AskIcon(mark: .glyph(.link), action: .plus, kind: .pair))
+              icon: AskIcon(mark: .glyph(.globe), action: .link, kind: .pair))
         var computer = pairing
         computer.keyFingerprint = "4821 9930"
         check(PairWords.line(computer), "Connect a computer", target: "computer", kind: "Computer · Pair")
         check(JoinWords.line, "Add a phone to your account", target: "your account", kind: "Account · New phone",
-              icon: AskIcon(mark: .glyph(.phone), action: .plus, kind: .accounts))
+              icon: AskIcon(mark: .glyph(.shieldCheck), action: .phone, kind: .accounts))
     }
 
     // MARK: Crafted inputs: the sentence never claims more, or other, than what was asked

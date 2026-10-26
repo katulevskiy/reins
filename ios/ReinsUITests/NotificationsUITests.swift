@@ -31,7 +31,8 @@ final class NotificationsUITests: XCTestCase {
         toHomeScreen()
         // The samples are posted 3 s after the app leaves the front, and a banner stays only a few seconds; a slow
         // simulator can miss it, but Notification Center keeps it.
-        let reins = NSPredicate(format: "label CONTAINS 'Approval needed' OR label CONTAINS 'Connect an AI' OR label CONTAINS 'Permission requested'")
+        // A request's title is the ask with who asks in front ("Claude: Read 3 emails"); Autopilot's says who decided.
+        let reins = NSPredicate(format: "label CONTAINS 'Approved by Autopilot' OR label CONTAINS 'Connect an AI' OR label CONTAINS ': '")
         let banner = springboard.descendants(matching: .any).matching(reins).firstMatch
         let shown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: banner)
         if XCTWaiter().wait(for: [shown], timeout: 30) != .completed {

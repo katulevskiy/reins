@@ -138,32 +138,3 @@ struct UrgencyClock<Content: View>: View {
         }
     }
 }
-
-/// The frame of a request that waits for the user: full in the accent colour when it arrives, emptying as the AI's
-/// patience runs out, red for the last `urgentSeconds`, grey once the AI stopped waiting. Only the frame follows the
-/// clock; `content` draws once (its own time line can use an `UrgencyClock`).
-struct CountdownFrame<Content: View>: View {
-    var createdAt: Int64
-    var waitUntil: Int64?
-    var corner: CGFloat = 18
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        content()
-            .overlay {
-                UrgencyClock(createdAt: createdAt, waitUntil: waitUntil) { u in
-                    Color.clear
-                        .timeBar(fraction: u.map { $0.stale ? 0 : $0.fraction } ?? 1, color: Self.color(u), corner: corner)
-                        .animation(.easeInOut(duration: 0.4), value: u?.urgent)
-                }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-    }
-
-    static func color(_ u: Urgency?) -> Color {
-        guard let u else { return Palette.violet }
-        if u.stale { return Palette.inkMeta }
-        return u.urgent ? Palette.danger : Palette.violet
-    }
-}

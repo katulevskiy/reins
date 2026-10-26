@@ -66,10 +66,4 @@ final class ShellNavigationTests: XCTestCase {
         XCTAssertEqual(ConnectionsText.mood(ais: 0, computers: 0), "Nothing can ask yet.")
     }
 
-    func testTrustSaysWhatAutopilotDid() {
-        XCTAssertNil(TrustText.mood(nil))
-        XCTAssertEqual(TrustText.mood(AutopilotStats(days: 7, scored: 87, matched: 0.96, compared: 80, kindsOnAuto: 1, kinds: 4)), "Autopilot scored 87 requests this week.")
-        XCTAssertEqual(TrustText.mood(AutopilotStats(days: 7, scored: 1, matched: nil, compared: 0, kindsOnAuto: 0, kinds: 0)), "Autopilot scored one request this week.")
-        XCTAssertEqual(TrustText.mood(AutopilotStats(days: 7, scored: 0, matched: nil, compared: 0, kindsOnAuto: 0, kinds: 0)), "Autopilot has not scored anything this week.")
-    }
 }

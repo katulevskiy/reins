@@ -108,13 +108,17 @@ private struct TabShell: View {
         AppSection.allCases.map { section in
             SignalTabBar.Item(
                 tab: section, title: section.title, glyph: section.glyph, identifier: section.identifier,
-                badge: section == .trust && bypassRunning, count: section == .activity ? model.pending.count : 0
+                dot: section == .trust ? runningMode?.fill : nil, count: section == .activity ? model.pending.count : 0
             )
         }
     }
 
-    /// A bypass is on: its dot breathes on Trust.
-    private var bypassRunning: Bool { model.autopilot?.mode == .bypass }
+    /// Overnight, Lockdown or Bypass runs: a dot in its colour on Trust.
+    private var runningMode: ModeKind? {
+        guard let mode = model.autopilot?.mode else { return nil }
+        let kind = ModeKind(mode)
+        return kind.calm ? nil : kind
+    }
 
     /// The tab bar floats this far above the bottom safe area.
     private static let barGap: CGFloat = 4
@@ -236,6 +240,8 @@ struct RouteView: View {
         case .sounds: SoundsScreen()
         case .vaultPasskeys: VaultPasskeysScreen()
         case .appearance: AppearanceScreen()
+        case .wallpaper: WallpaperScreen()
+        case let .ownWallpaper(dark): OwnPhotoScreen(dark: dark)
         case .devices: DevicesScreen()
         case .vault: VaultScreen()
         case .vaultAdd: VaultAddScreen()
@@ -280,7 +286,7 @@ struct SheetContent: View {
         }
         .environment(model)
         .environment(\.feedback, model.feedback)
-        .modifier(SheetShape(regular: regular, fullScreen: target.isApproval))
+        .modifier(SheetShape(regular: regular, fullScreen: target.isApproval, ownDetents: target.ownDetents))
         // Quiet when the request's chime just announced it (a request that pops up by itself).
         .onAppear { model.feedback.sheetOpened() }
     }
@@ -291,9 +297,13 @@ private struct SheetShape: ViewModifier {
     var regular: Bool
     /// A full-screen cover (an approval) takes no detents.
     var fullScreen = false
+    /// Pairing, joining and connecting a computer size themselves (the Connect board's sheets).
+    var ownDetents = false
 
     func body(content: Content) -> some View {
         if fullScreen {
+            content
+        } else if ownDetents && !regular {
             content
         } else if regular {
             content.presentationSizing(.form)

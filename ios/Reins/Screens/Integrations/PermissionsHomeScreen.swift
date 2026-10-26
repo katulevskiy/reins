@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// Permissions (the Permissions board, 01; quiet): every account, each opening its rules, then the temporary
+/// permissions, each opening its page (05) with Pause or Resume and Revoke.
 struct PermissionsHomeScreen: View {
     @Environment(AppModel.self) private var app
     @State private var accounts: [AccountView] = []
@@ -10,55 +12,83 @@ struct PermissionsHomeScreen: View {
     @State private var epoch: UInt64?
     @State private var active = false
     @State private var activation: UInt64 = 0
+    /// The temporary permission whose page is open.
+    @State private var openRecord: String?
     private struct PendingChange: Identifiable {
         var record: DelegationView
         var change: DelegationChange
         var id: String { record.id }
     }
+
     var body: some View {
         List {
-            Section {
+            PermTitle("Permissions").permRow(sides: 0)
+            PermHeader(
+                title: "Accounts", help: "These settings also appear in Connections. Automatic permissions apply only to their selected agents and account. New agents need explicit account access.",
+                count: "\(accounts.count)"
+            )
+            .permRow(sides: 0)
+            FlatGroup(inset: 44) {
                 ForEach(accounts, id: \.permissionIdentity) { account in
                     Button { app.show(.accountPermissions(service: account.service, account: account.account, temporary: false)) } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(untrusted(account.account)).foregroundStyle(Palette.ink)
-                            Text("View \(serviceName(account.service)) permissions").foregroundStyle(Palette.ink2)
-                        }
-                    }.accessibilityIdentifier("managePermissions:\(account.service):\(account.account)")
+                        PermRow(title: untrusted(account.account), mono: true, chevron: true) { ServiceAvatar(service: account.service, size: 32) }
+                    }
+                    .buttonStyle(PressDimsStyle())
+                    .accessibilityLabel("\(untrusted(account.account)), \(serviceName(account.service)) permissions")
+                    .accessibilityIdentifier("managePermissions:\(account.service):\(account.account)")
                 }
-            } header: { Text("Accounts") } footer: { Text("These settings also appear in Connections. Automatic permissions apply only to their selected agents and account. New agents need explicit account access.") }
-            Section {
-                if records.isEmpty { Text("No temporary permissions") }
+            }
+            .permRow(sides: 0)
+            PermHeader(
+                title: "Temporary", glyph: .timer,
+                help: "Open an account with supported automatic permissions above to create a temporary permission. Unknown outcomes still use the reserved budget.",
+                count: "\(records.count)"
+            )
+            .permRow(sides: 0)
+            FlatGroup(inset: 44) {
+                if records.isEmpty {
+                    Text("No temporary permissions").textRole(.body).foregroundStyle(Palette.inkMeta).frame(minHeight: 52)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 ForEach(records, id: \.id) { record in
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(untrusted(record.title)).textRole(.title)
-                        Text("\(stateTitle(record.state)) · \(untrusted(record.account))")
-                        Text(untrusted(record.scopeSummary))
-                        Text((record.usageVerified ? "\(record.used) of \(record.maxUses) uses · \(record.unresolved) unresolved outcomes" : "Usage and quota unavailable") + "\nExpires \(PermissionCopy.expiry(record.expiresAt))").font(.footnote).foregroundStyle(Palette.ink2)
-                        Text(untrusted(record.effectiveReason)).foregroundStyle(Palette.ink2)
-                        PermissionRestrictions(restrictions: record.restrictions)
-                        if record.state == .active { changeButton(record, .pause) }
-                        if record.state == .paused { changeButton(record, .resume) }
-                        if record.state != .revoked, record.state != .expired { changeButton(record, .revoke) }
-                    }.padding(.vertical, 8).accessibilityIdentifier("delegation:\(record.id)")
+                    Button { openRecord = record.id } label: {
+                        PermRow(title: untrusted(record.account), mono: true, value: DelegationText.uses(record), chevron: true) {
+                            ServiceAvatar(service: record.service, size: 32)
+                        }
+                    }
+                    .buttonStyle(PressDimsStyle())
+                    .accessibilityLabel("\(untrusted(record.title)), \(DelegationText.state(record.state)), \(DelegationText.uses(record))")
+                    .accessibilityIdentifier("delegation:\(record.id)")
                 }
-            } header: { Text("Temporary permissions") } footer: { Text("Open an account with supported automatic permissions above to create a temporary permission. Unknown outcomes still use the reserved budget.") }
-            if let error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("delegationError") }
-            ActionButton(title: "Reload", kind: .secondary, busy: busy, lineLimit: nil) { Task { await reload() } }
+            }
+            .permRow(sides: 0)
+            if let error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("delegationError").permRow(top: 14, sides: 16) }
         }
-        .integrationList().navigationTitle("Permissions")
-        .task { activation &+= 1; active = true; busy = false; confirm = nil; epoch = app.accountEpoch; await reload() }
-        .onDisappear { active = false; activation &+= 1 }
+        .integrationList()
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            activation &+= 1; active = true; busy = false; confirm = nil; epoch = app.accountEpoch; await reload()
+            #if DEBUG
+            // `-openRecord` (screenshots): the first temporary permission's page.
+            if ProcessInfo.processInfo.arguments.contains("-openRecord") { openRecord = records.first?.id }
+            #endif
+        }
+        .onDisappear { if openRecord == nil { active = false; activation &+= 1 } }
         .refreshable { await reload() }
-        .confirmationDialog(confirm.map { "\(changeTitle($0.change)) temporary permission?" } ?? "", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible, presenting: confirm) { item in
-            Button(changeTitle(item.change)) { confirm = nil; Task { await change(item) } }
-            Button("Cancel", role: .cancel) {}
-        } message: { item in Text("\(untrusted(item.record.scopeSummary))\n\(untrusted(item.record.account))") }
+        .navigationDestination(item: $openRecord) { id in
+            DelegationPage(
+                record: records.first { $0.id == id }, busy: busy, error: error,
+                onReload: { Task { await reload() } },
+                onChange: { record, change in confirm = PendingChange(record: record, change: change) }
+            )
+            .confirmationDialog(confirm.map { "\(DelegationText.change($0.change)) temporary permission?" } ?? "", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible, presenting: confirm) { item in
+                Button(DelegationText.change(item.change), role: item.change == .revoke ? .destructive : nil) { confirm = nil; Task { await change(item) } }
+                Button("Cancel", role: .cancel) {}
+            } message: { item in Text("\(untrusted(item.record.scopeSummary))\n\(untrusted(item.record.account))") }
+        }
     }
-    private func changeButton(_ record: DelegationView, _ change: DelegationChange) -> some View {
-        ActionButton(title: changeTitle(change), kind: .secondary, lineLimit: nil) { confirm = PendingChange(record: record, change: change) }
-             .disabled(busy || (change == .resume && (!record.usageVerified || record.restrictions.contains(where: { $0.controller == .conflict || $0.controller == .unsupportedAdapter })))).accessibilityIdentifier("\(changeTitle(change).lowercased())Delegation:\(record.id)")
-    }
+
     private func reload() async {
         guard active, let epoch, app.accountEpoch == epoch else { return }
         let token = activation
@@ -74,6 +104,7 @@ struct PermissionsHomeScreen: View {
             error = nil
         } catch { if active, activation == token, app.accountEpoch == epoch { self.error = error.userMessage } }
     }
+
     private func change(_ item: PendingChange) async {
         guard active, let epoch, app.accountEpoch == epoch, !busy else { return }
         busy = true
@@ -88,8 +119,117 @@ struct PermissionsHomeScreen: View {
             if owner.last != .cancelled { self.error = error.userMessage + " Reload before trying again." }
         }
     }
-    private func stateTitle(_ value: DelegationState) -> String { switch value { case .active: "Active"; case .paused: "Paused"; case .expired: "Expired"; case .revoked: "Revoked" } }
-    private func changeTitle(_ value: DelegationChange) -> String { switch value { case .resume: "Resume"; case .pause: "Pause"; case .revoke: "Revoke" } }
+}
+
+/// A temporary permission's words.
+enum DelegationText {
+    static func state(_ value: DelegationState) -> String {
+        switch value {
+        case .active: "Active"
+        case .paused: "Paused"
+        case .expired: "Expired"
+        case .revoked: "Revoked"
+        }
+    }
+
+    static func change(_ value: DelegationChange) -> String {
+        switch value {
+        case .resume: "Resume"
+        case .pause: "Pause"
+        case .revoke: "Revoke"
+        }
+    }
+
+    /// "0/20 uses", or that usage cannot be read.
+    static func uses(_ r: DelegationView) -> String { r.usageVerified ? "\(r.used)/\(r.maxUses) uses" : "Usage unavailable" }
+}
+
+/// One temporary permission (the Permissions board, 05): the account with its state, what it allows and for whom, its
+/// uses, unknown outcomes and expiry; Pause (or Resume) and Revoke, each confirmed and checked by the owner.
+private struct DelegationPage: View {
+    var record: DelegationView?
+    var busy: Bool
+    var error: String?
+    var onReload: () -> Void
+    var onChange: (DelegationView, DelegationChange) -> Void
+
+    var body: some View {
+        Group {
+            if let record {
+                content(record)
+            } else {
+                EmptyState(symbol: "clock", title: "This permission is gone").frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(Palette.paper.ignoresSafeArea())
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: onReload) { GlyphIcon(.refresh, size: 18).foregroundStyle(Palette.ink) }
+                    .accessibilityLabel("Reload")
+                    .accessibilityIdentifier("delegationReload")
+            }
+        }
+    }
+
+    private func content(_ record: DelegationView) -> some View {
+        let tone: Pill.Tone = switch record.state {
+        case .active: .success
+        case .paused: .neutral
+        case .expired: .warning
+        case .revoked: .danger
+        }
+        return List {
+            PermTitle(title: untrusted(record.account)) {
+                ServiceAvatar(service: record.service, size: 32)
+            } trail: {
+                Pill(DelegationText.state(record.state), tone: tone)
+            }
+            .permRow(sides: 0)
+            PermHeader(title: "Temporary", glyph: .timer).permRow(sides: 0)
+            FlatGroup(inset: 44) {
+                PermRow(title: untrusted(record.title)) { GlyphTile(.person) }
+                PermRow(title: "Uses", value: record.usageVerified ? "\(record.used) / \(record.maxUses)" : "Unavailable") { GlyphTile(.card) }
+                PermRow(title: "Unknown outcomes", value: "\(record.unresolved)") { GlyphTile(.help) }
+                PermRow(title: "Expires", value: Date(timeIntervalSince1970: TimeInterval(record.expiresAt)).formatted(.dateTime.month(.abbreviated).day().hour().minute())) { GlyphTile(.timer) }
+            }
+            .permRow(sides: 0)
+            VStack(alignment: .leading, spacing: 8) {
+                PermLine(untrusted(record.scopeSummary))
+                PermLine(untrusted(record.effectiveReason))
+                ForEach(Array(record.restrictions.enumerated()), id: \.offset) { _, r in
+                    PermWarning("\(PermissionCopy.controller(r.controller)): \(untrusted(r.reason))")
+                }
+                if !record.usageVerified { PermWarning("Usage and quota unavailable.") }
+                if let error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("delegationError") }
+            }
+            .permRow(top: 14)
+        }
+        .integrationList()
+        .accessibilityIdentifier("delegationPage:\(record.id)")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if record.state != .revoked, record.state != .expired {
+                PermFoot {
+                    if record.state == .active {
+                        changeButton(record, .pause, kind: .soft, glyph: .pause)
+                    } else if record.state == .paused {
+                        changeButton(record, .resume, kind: .soft, glyph: .play)
+                            .disabled(!record.usageVerified || record.restrictions.contains(where: { $0.controller == .conflict || $0.controller == .unsupportedAdapter }))
+                    }
+                    changeButton(record, .revoke, kind: .danger, glyph: nil)
+                }
+            }
+        }
+    }
+
+    private func changeButton(_ record: DelegationView, _ change: DelegationChange, kind: SignalButtonKind, glyph: Glyph?) -> some View {
+        Button { onChange(record, change) } label: { PermGlyphLabel(DelegationText.change(change), glyph: glyph) }
+            .buttonStyle(SignalButtonLook(kind: kind))
+            .frame(maxWidth: .infinity)
+            .disabled(busy)
+            .accessibilityIdentifier("\(DelegationText.change(change).lowercased())Delegation:\(record.id)")
+    }
 }
 
 private extension AccountView {

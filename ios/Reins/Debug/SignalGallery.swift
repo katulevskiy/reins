@@ -1,11 +1,11 @@
 #if DEBUG
 import SwiftUI
 
-/// The Signal gallery (debug builds; Settings > Developer, or `-signalGallery [page]` at launch): every component, field,
-/// type role and glyph of the foundation, in the system's light or dark, to compare with design/signal/screens/png.
+/// The design gallery (debug builds; Settings > Developer, or `-signalGallery [page]` at launch): every component, field,
+/// type role and glyph of the foundation, in the system's light or dark, to compare with design/next/iphone/previews.
 struct SignalGallery: View {
     enum Page: String, CaseIterable, Identifiable {
-        case type, colour, buttons, controls, cards, field, glyphs
+        case system, type, colour, buttons, controls, cards, field, glyphs
 
         var id: String { rawValue }
         var title: String { rawValue.capitalized }
@@ -16,9 +16,9 @@ struct SignalGallery: View {
     /// `-signalGallery buttons/hold`: the page, and optionally the section label to scroll to.
     private static var launch: (page: Page, anchor: String?) {
         let args = ProcessInfo.processInfo.arguments
-        guard let i = args.firstIndex(of: "-signalGallery"), i + 1 < args.count else { return (.type, nil) }
+        guard let i = args.firstIndex(of: "-signalGallery"), i + 1 < args.count else { return (.system, nil) }
         let parts = args[i + 1].split(separator: "/", maxSplits: 1).map(String.init)
-        return (Page(rawValue: parts[0]) ?? .type, parts.count > 1 ? parts[1] : nil)
+        return (Page(rawValue: parts[0]) ?? .system, parts.count > 1 ? parts[1] : nil)
     }
 
     static var requestedPage: Page { launch.page }
@@ -44,6 +44,7 @@ struct SignalGallery: View {
                 ScrollView {
                     Group {
                         switch page {
+                        case .system: SystemGalleryPage().padding(.horizontal, -24)
                         case .type: TypePage()
                         case .colour: ColourPage()
                         case .buttons: ButtonsPage()
@@ -75,7 +76,7 @@ private struct Label: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text).textRole(.label).foregroundStyle(Palette.inkMeta).padding(.top, 26).padding(.bottom, 10)
+        Text(text).textRole(.section).foregroundStyle(Palette.inkMeta).padding(.top, 26).padding(.bottom, 10)
             .id(text.split(separator: " ").first.map { $0.lowercased() } ?? text)
     }
 }
@@ -83,49 +84,52 @@ private struct Label: View {
 // MARK: Type
 
 private struct TypePage: View {
-    @AppStorage(RFont.sansFamilyKey, store: AppGroup.defaults) private var sans = RFont.SansFamily.instrument.rawValue
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Type").textRole(.title).foregroundStyle(Palette.ink).padding(.top, 8)
-            Text("Three voices.").textRole(.mood).foregroundStyle(Palette.ink2).padding(.top, 4)
-            Label("Sans for reading")
-            Chooser(RFont.SansFamily.allCases.map { family in
-                Chooser.Segment(id: "sans:\(family.rawValue)", title: family.title, selected: sans == family.rawValue) {
-                    sans = family.rawValue
-                }
-            })
-            Label("Serif")
+            Label("Display · Sora 500")
             role(.ask) { AskText("Push 8 commits to", target: "octo/app").foregroundStyle(Palette.ink) }
             role(.title) { Text("Activity").textRole(.title) }
-            role(.stat) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("142").textRole(.stat)
-                    Text("requests").font(RFont.serif(20)).foregroundStyle(Palette.ink2)
-                }
+            role(.cardAsk) { AskText("Push 8 commits to", target: "octo/app", role: .cardAsk) }
+            role(.quietTitle) { Text("Sounds").textRole(.quietTitle) }
+            Label("Cyrillic · Geologica under Sora")
+            AskText("Отправить 8 коммитов в", target: "octo/app", role: .cardAsk).padding(.vertical, 10)
+            Label("Numbers · tabular in timers")
+            HStack(spacing: 28) {
+                Text("9:40").foregroundStyle(Palette.ink)
+                Text("97%").foregroundStyle(Palette.success)
+                Text("47:12").foregroundStyle(Palette.danger)
             }
-            role(.sheetTitle) { Text("Remember \(Text("for").font(RFont.serif(32, italic: true)))").textRole(.sheetTitle) }
-            role(.askSmall) { AskText("Read 2 emails from", target: "Stripe", role: .askSmall) }
-            role(.mood) { Text("All quiet. Three AIs are connected.").textRole(.mood).foregroundStyle(Palette.ink2) }
-            Label("Sans and mono")
+            .font(RFont.display(TextRole.title.size)).tabular().padding(.vertical, 10)
+            role(.clock) { Text("47:12").textRole(.clock) }
+            Label("Text · Sora 400 / 500 / 600")
+            role(.body) {
+                Text("Claude Code pushed 3 commits to \(Text("dkat/reins").font(TextRole.body.font(target: true)))").textRole(.body)
+            }
+            role(.row) { Text("Notification channels").textRole(.row) }
             role(.button) { Text("Approve").textRole(.button) }
-            role(.row) { Text("Push to feature/* in octo/app").textRole(.row) }
-            role(.body) { Text("Approved without asking. Sent means sent.").textRole(.body).foregroundStyle(Palette.ink2) }
-            role(.meta) { Text("Claude Code · 3 of 10 uses").textRole(.meta).foregroundStyle(Palette.inkMeta) }
+            role(.section) { Text("Today").textRole(.section).foregroundStyle(Palette.ink2) }
+            role(.meta) { Text("13m · Oct 23 · 14:02").textRole(.meta).foregroundStyle(Palette.inkMeta) }
             role(.tag) { Pill("Auto", tone: .violet) }
-            role(.label) { Text("GitHub · Push").textRole(.label).foregroundStyle(Palette.inkMeta) }
-            role(.value) { Text("feature/passkeys · 9f86d08").textRole(.value) }
+            Label("Machine values · JetBrains Mono")
+            role(.value) { Text("feature/passkeys · 9f3c2a1").textRole(.value) }
+            role(.detail) { Text("backup-svc@protonmail.example").textRole(.detail).foregroundStyle(Palette.ink2) }
+            role(.codes) { Text("4821 9930").textRole(.codes) }
+            role(.code) {
+                Text("if (await browserSupportsPasskeys()) {\n  return post(\"/login/passkey\", cred);\n}").textRole(.code)
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
             Label("Asks reflow before they shrink")
             AskText("Delete the repository", target: "octo/an-unusually-long-repository-name-for-testing")
                 .foregroundStyle(Palette.ink)
         }
         .foregroundStyle(Palette.ink)
-        .id(sans)
     }
 
     private func role<Content: View>(_ role: TextRole, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(String(describing: role)).textRole(.label).foregroundStyle(Palette.inkFaint)
+            Text(String(describing: role)).textRole(.section).foregroundStyle(Palette.inkFaint)
             content()
         }
         .padding(.vertical, 10)
@@ -159,9 +163,9 @@ private struct ColourPage: View {
                 ForEach(FieldKind.allCases, id: \.self) { kind in
                     let words = Self.words[kind] ?? ("", "")
                     VStack(alignment: .leading) {
-                        Text(kind.rawValue).textRole(.label).foregroundStyle(Palette.onField2)
+                        Text(kind.rawValue).textRole(.section).foregroundStyle(Palette.onField2)
                         Spacer(minLength: 18)
-                        AskText(words.0, target: words.1, role: .askSmall).foregroundStyle(Palette.onField)
+                        AskText(words.0, target: words.1, role: .cardAsk).foregroundStyle(Palette.onField)
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
@@ -187,10 +191,10 @@ private struct ColourPage: View {
             }
             Label("Flat · pigment")
             HStack(spacing: 10) {
-                Text("Flat").textRole(.label).foregroundStyle(Palette.onField2)
+                Text("Flat").textRole(.section).foregroundStyle(Palette.onField2)
                     .padding(14).frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
                     .background(Palette.fieldPush, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                Text("Pigment").textRole(.label).foregroundStyle(Palette.onField2)
+                Text("Pigment").textRole(.section).foregroundStyle(Palette.onField2)
                     .padding(14).frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
                     .fieldBackground(.push, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
@@ -350,7 +354,7 @@ private struct ControlsPage: View {
                 ModeChip(mode: .auto)
                 ModeChip(mode: .lockdown)
                 ModeChip(mode: .bypass(left: "14:05"))
-                ModeChip(mode: .overnight)
+                ModeChip(mode: .overnight(left: "5:59"))
             }
             Label("Controls")
             HStack(spacing: 16) {
@@ -402,21 +406,21 @@ private struct CardsPage: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Cards").textRole(.title).foregroundStyle(Palette.ink).padding(.top, 8)
             Label("Waiting cards · Autopilot's pick first")
-            WaitCardShell(kind: .push, label: "Gmail · Send", ask: AskText("Send an email to", target: "Anna Petrova", role: .askSmall)) {
+            WaitCardShell(kind: .push, label: "Gmail · Send", ask: AskText("Send an email to", target: "Anna Petrova", role: .cardAsk)) {
                 ProviderMark(provider: "claude")
             } timer: {
                 TimerPill(createdAt: Int64(Date().timeIntervalSince1970) - 30, waitUntil: Int64(Date().timeIntervalSince1970) + 72, onField: true)
             } actions: {
                 WaitCardButtons(pick: .allow(97), onPick: {}, onReview: {})
             }
-            WaitCardShell(kind: .read, label: "Gmail · Search", ask: AskText("Search mail for", target: "“invoice”", role: .askSmall)) {
+            WaitCardShell(kind: .read, label: "Gmail · Search", ask: AskText("Search mail for", target: "“invoice”", role: .cardAsk)) {
                 ProviderMark(provider: "openai")
             } timer: {
                 TimerPill(createdAt: Int64(Date().timeIntervalSince1970) - 60, waitUntil: Int64(Date().timeIntervalSince1970) + 12, onField: true)
             } actions: {
                 WaitCardButtons(pick: .unsure, onPick: {}, onReview: {})
             }
-            WaitCardShell(kind: .delete, label: "GitHub · Delete", ask: AskText("Delete the repo", target: "octo/old-api", role: .askSmall)) {
+            WaitCardShell(kind: .delete, label: "GitHub · Delete", ask: AskText("Delete the repo", target: "octo/old-api", role: .cardAsk)) {
                 ProviderMark(provider: "claude")
             } timer: {
                 Text("4:51").font(RFont.mono(13)).foregroundStyle(.white)
@@ -451,7 +455,7 @@ private struct CardsPage: View {
                 Spacer()
                 SignalTabBar(items: [
                     .init(tab: "activity", title: "Activity", glyph: .activity, identifier: "gtab:activity"),
-                    .init(tab: "trust", title: "Trust", glyph: .shield, identifier: "gtab:trust", badge: true),
+                    .init(tab: "trust", title: "Trust", glyph: .shield, identifier: "gtab:trust", dot: Palette.fieldDelete),
                     .init(tab: "connections", title: "Connections", glyph: .link, identifier: "gtab:connections"),
                     .init(tab: "settings", title: "Settings", glyph: .settings, identifier: "gtab:settings"),
                 ], selection: $tab)
@@ -510,7 +514,7 @@ private struct FieldPage: View {
                     Spacer()
                     TimerPill(createdAt: Int64(Date().timeIntervalSince1970) - 20, waitUntil: Int64(Date().timeIntervalSince1970) + 40, onField: true)
                 }
-                Text("GitHub · Push").textRole(.label).foregroundStyle(Palette.onField2).padding(.top, 34)
+                Text("GitHub · Push").textRole(.section).foregroundStyle(Palette.onField2).padding(.top, 34)
                 AskText("Push 8 commits to", target: "octo/app")
                 HStack(spacing: 6) {
                     GlyphIcon(.autopilot, size: 16)
@@ -532,7 +536,7 @@ private struct FieldNotes: View {
             SignalField(kind: .push, band: true) {
                 HStack(spacing: 10) {
                     RoundHeaderButton(glyph: .chevronLeft, label: "Back", onField: true, size: 30) {}
-                    Text("Push 8 commits to \(Text("octo/app").font(RFont.serif(19, italic: true)))").font(RFont.serif(19))
+                    Text("Push 8 commits to \(Text("octo/app").font(RFont.display(14, target: true)))").font(RFont.display(14))
                     Spacer()
                     Text("0:31").font(RFont.mono(13))
                 }

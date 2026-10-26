@@ -67,60 +67,57 @@ final class VaultPasskeysModel {
     }
 }
 
-/// Settings > Vault passkeys: the passkeys that open the vault on a new phone, adding one, removing one.
+/// Settings > Passkeys (the Settings board, 05), quiet: each passkey that opens the vault on a new phone as a device
+/// card (its name, when it was added, Remove), then Add a passkey.
 struct VaultPasskeysScreen: View {
     @Environment(AppModel.self) private var model
     @State private var vm = VaultPasskeysModel()
     @State private var removing: VaultPasskeyView?
 
-    // The code, the unlock form, the passkeys: hidden in the app switcher and while the screen is recorded.
+    // The passkeys: hidden in the app switcher and while the screen is recorded.
     var body: some View { screen.privacyCover() }
 
     @ViewBuilder private var screen: some View {
-        List {
-            Section {
-                switch vm.passkeys {
-                case nil:
-                    InfoRow("Loading…").cardRow()
-                case let list? where list.isEmpty:
-                    InfoRow("No passkey yet", subtitle: "Add one to unlock your vault on a new phone.", symbol: "key")
-                        .accessibilityIdentifier("noPasskeys")
-                        .cardRow()
-                case let list?:
-                    ForEach(list, id: \.credentialId) { passkey in
-                        PasskeyRow(passkey: passkey, busy: vm.busy) { removing = passkey }.cardRow()
-                    }
+        QuietPage("Passkeys") {
+            switch vm.passkeys {
+            case nil:
+                ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+            case let list? where list.isEmpty:
+                FlatGroup {
+                    TileRow("No passkey yet", glyph: .faceId, chevron: false).flatRow()
                 }
-            } header: {
-                GroupHeader("Passkeys")
-            } footer: {
-                GroupFooter("Each one opens your vault on a new or reinstalled phone, without your other phone or the recovery code.")
-            }
-            Section {
+                .padding(.top, 16)
+                .accessibilityIdentifier("noPasskeys")
+            case let list?:
                 VStack(spacing: 12) {
-                    Button {
-                        Task { await vm.add(model) }
-                    } label: {
-                        HStack(spacing: 10) {
-                            if vm.busy { ProgressView().tint(Palette.paper) } else { Image(systemName: "plus") }
-                            Text("Add a passkey")
-                        }
-                    }
-                    .buttonStyle(CapsuleButtonStyle(kind: .primary, height: 50))
-                    .disabled(vm.busy)
-                    .accessibilityIdentifier("addPasskey")
-                    if let error = vm.error {
-                        FormBanner(text: error).accessibilityIdentifier("passkeyError")
+                    ForEach(list, id: \.credentialId) { passkey in
+                        PasskeyCard(passkey: passkey, busy: vm.busy) { removing = passkey }
                     }
                 }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets())
-            } footer: {
-                GroupFooter("Your password manager keeps the passkey. Reins keeps only a copy of the vault's key that the passkey alone opens.")
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
             }
+            Button {
+                Task { await vm.add(model) }
+            } label: {
+                HStack(spacing: 8) {
+                    if vm.busy { ProgressView() } else { GlyphIcon(.plus, size: 18) }
+                    Text("Add a passkey")
+                }
+            }
+            .buttonStyle(SignalButtonStyle(.soft))
+            .disabled(vm.busy)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .accessibilityIdentifier("addPasskey")
+            if let error = vm.error {
+                QuietBanner(text: error).accessibilityIdentifier("passkeyError")
+            }
+            GroupFooter("Each one opens your vault on a new or reinstalled phone, without your other phone or the recovery code. "
+                + "Your password manager keeps the passkey; Reins keeps only a copy of the vault's key that the passkey alone opens.")
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
         }
-        .reinsGrouped()
-        .navigationTitle("Vault passkeys")
         .animation(.smooth(duration: 0.25), value: vm.passkeys)
         .animation(.smooth(duration: 0.25), value: vm.error)
         .task { await vm.load(model) }
@@ -141,34 +138,56 @@ struct VaultPasskeysScreen: View {
     }
 }
 
-/// One passkey: its name, when it was added, and Remove.
-private struct PasskeyRow: View {
+/// One passkey as the quiet page's focal card: an ink tile with the phone, its name in the display face, "Passkey",
+/// Remove, and when it was added.
+private struct PasskeyCard: View {
     var passkey: VaultPasskeyView
     var busy: Bool
     var onRemove: () -> Void
-    @Environment(\.feedback) private var feedback
 
     var body: some View {
         let tag = VaultPasskeysModel.tag(passkey.credentialId)
-        HStack(spacing: 14) {
-            // Its own element, apart from Remove (an `InfoRow` would combine the two).
-            InfoRow(untrusted(passkey.name), subtitle: SettingsText.passkeyAdded(passkey.createdAt), symbol: "key.fill", tint: Palette.violet)
+        let name = untrustedName(passkey.name, limit: 40)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 14) {
+                // Its own element, apart from Remove.
+                HStack(spacing: 14) {
+                    ZStack {
+                        Palette.inverse
+                        Grain()
+                        GlyphIcon(.phone, size: 24).foregroundStyle(Palette.onInverse)
+                    }
+                    .frame(width: 52, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(name)
+                            .font(RFont.display(25.5))
+                            .foregroundStyle(Palette.ink)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        Text("Passkey").font(RFont.sans(13.5)).foregroundStyle(Palette.inkMeta)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("passkey:\(tag)")
-            Button {
-                onRemove()
-                // The dialog it opens has the sound.
-                feedback.defaultTap()
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Palette.danger)
-                    .frame(width: 40, height: 40)
-                    .contentShape(Circle())
+                RowIconButton(glyph: .trash, label: "Remove \(name)", action: onRemove)
+                    .disabled(busy)
+                    .padding(.trailing, -8)
+                    .accessibilityIdentifier("removePasskey:\(tag)")
             }
-            .buttonStyle(.borderless)
-            .disabled(busy)
-            .accessibilityLabel("Remove \(untrusted(passkey.name))")
-            .accessibilityIdentifier("removePasskey:\(tag)")
+            .padding(.bottom, 14)
+            HStack(spacing: 12) {
+                GlyphIcon(.calendar, size: 18).foregroundStyle(Palette.inkMeta).frame(width: 20).accessibilityHidden(true)
+                Text(SettingsText.passkeyAdded(passkey.createdAt)).font(RFont.sans(15)).foregroundStyle(Palette.ink).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
         }
+        .padding(.top, 18)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Palette.rule2, lineWidth: 1))
     }
 }

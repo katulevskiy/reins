@@ -1,30 +1,231 @@
 import SwiftUI
 
-// The shared building blocks, in Signal: paper, ink and hairlines; raised plates with a hairline ring for header
-// controls and toasts; one violet; the type roles of Typography.swift.
+// The shared building blocks, in Next: paper, ink and hairlines; raised groups and plates with a hairline ring; one
+// violet; the type roles of Typography.swift; the three page templates of the System board (hero, standard, quiet).
 
-/// "WAITING FOR YOU": a section label (mono capitals, tracked) above a group.
-struct SectionHeader: View {
+/// A section's header over its group (the System board's `sec`): an optional glyph, the title in `section` (13
+/// semibold, never capitals) in ink-2, and counts or a control at the right. `quiet` is the smaller one of pushed pages
+/// (12.5, ink-meta, closer to its rows).
+struct SectionHeader<Trailing: View>: View {
     var title: String
-    var trailing: String?
+    var glyph: Glyph?
+    var quiet = false
+    var trailing: Trailing
 
-    init(_ title: String, trailing: String? = nil) {
+    init(_ title: String, glyph: Glyph? = nil, quiet: Bool = false, @ViewBuilder trailing: () -> Trailing) {
         self.title = title
-        self.trailing = trailing
+        self.glyph = glyph
+        self.quiet = quiet
+        self.trailing = trailing()
     }
 
     var body: some View {
-        HStack {
+        HStack(spacing: 6) {
+            if let glyph { GlyphIcon(glyph, size: quiet ? 14 : 15) }
             Text(title)
-                .textRole(.label)
-                .foregroundStyle(Palette.inkMeta)
-            Spacer()
-            if let trailing {
-                Text(trailing).textRole(.meta).foregroundStyle(Palette.inkMeta)
+                .font(RFont.sans(quiet ? 12.5 : 13, .semibold))
+                .tracking((quiet ? 12.5 : 13) * TextRole.section.trackingEm)
+                .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 8)
+            trailing
+                .font(RFont.sans(13, .semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(quiet ? Palette.inkMeta : Palette.ink2)
+        .padding(.horizontal, quiet ? 20 : 24)
+        .padding(.top, quiet ? 20 : 22)
+        .padding(.bottom, quiet ? 6 : 8)
+        .frame(minHeight: 30)
+    }
+}
+
+extension SectionHeader where Trailing == Text? {
+    /// A header with a count or a word at the right ("Grants  6").
+    init(_ title: String, glyph: Glyph? = nil, quiet: Bool = false, trailing: String? = nil) {
+        self.init(title, glyph: glyph, quiet: quiet) { trailing.map { Text($0) } }
+    }
+}
+
+/// A standard page's group (the System board's `grp`): rows on raised paper, radius 20, 16 pt in from the page's sides,
+/// a hairline ring in light. Rows are separated by a hairline that starts after their leading tile (`inset`, 62) or at
+/// their text (14 when they have none).
+struct RaisedGroup<Content: View>: View {
+    var inset: CGFloat = 62
+    @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.onWallpaper) private var onWallpaper
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        let glass = onWallpaper && !reduceTransparency
+        VStack(spacing: 0) {
+            // On glass the hairline is softer and stops short of both edges.
+            Separated(
+                inset: inset, trailingInset: glass ? 16 : 0,
+                color: glass ? (scheme == .dark ? .white.opacity(0.09) : .black.opacity(0.08)) : Palette.rule, height: glass ? 0.5 : 1
+            ) { content }
+        }
+        .frame(maxWidth: .infinity)
+        .background {
+            if onWallpaper {
+                FrostedPane(radius: 20)
+            } else {
+                shape.fill(Palette.paperRaised)
+                if scheme == .light { shape.strokeBorder(Palette.rule, lineWidth: 1) }
             }
         }
-        .padding(.horizontal, 4)
-        .accessibilityAddTraits(.isHeader)
+        .clipShape(shape)
+        .padding(.horizontal, 16)
+    }
+}
+
+/// A quiet page's group (the System board's `flat`): rows straight on paper, 20 pt in from the sides, a hairline above,
+/// below and between them (after the tile, 44).
+struct FlatGroup<Content: View>: View {
+    var inset: CGFloat = 44
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Separated(inset: inset, trailingInset: 0) { content }
+        }
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+        .padding(.horizontal, 20)
+    }
+}
+
+/// Lays out its subviews in a column with a hairline between each two, `inset` from the leading edge.
+struct Separated<Content: View>: View {
+    var inset: CGFloat
+    var trailingInset: CGFloat = 0
+    var color: Color = Palette.rule
+    var height: CGFloat = 1
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        Group(subviews: content) { subviews in
+            ForEach(subviews.indices, id: \.self) { i in
+                subviews[i]
+                    .overlay(alignment: .top) {
+                        if i > 0 {
+                            Rectangle().fill(color).frame(height: height)
+                                .padding(.leading, inset).padding(.trailing, trailingInset)
+                        }
+                    }
+            }
+        }
+    }
+}
+
+/// A row's glyph on a 32 pt tile, radius 9: ink-2 on paper-sunken (nothing on these pages asks anything), or the red
+/// wash of a destructive row.
+struct GlyphTile: View {
+    var glyph: Glyph
+    var danger = false
+    var side: CGFloat = 32
+
+    init(_ glyph: Glyph, danger: Bool = false, side: CGFloat = 32) {
+        self.glyph = glyph
+        self.danger = danger
+        self.side = side
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: side * 0.28, style: .continuous)
+            .fill(danger ? Palette.dangerWash : Palette.paperSunken)
+            .frame(width: side, height: side)
+            .overlay { GlyphIcon(glyph, size: side * 0.53).foregroundStyle(danger ? Palette.danger : Palette.ink2) }
+            .accessibilityHidden(true)
+    }
+}
+
+/// A list row (the System board's `lrow`): a tile or any leading view, a title in `row`, an optional value in ink-2
+/// (mono for codes and versions), anything else, and a chevron when it opens a page. No subtitles. At least 56 pt.
+struct TileRow<Leading: View, Trailing: View>: View {
+    var title: String
+    var value: String?
+    var mono = false
+    var danger = false
+    var chevron = true
+    var leading: Leading
+    var trailing: Trailing
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    init(
+        _ title: String, value: String? = nil, mono: Bool = false, danger: Bool = false, chevron: Bool = true,
+        @ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.title = title
+        self.value = value
+        self.mono = mono
+        self.danger = danger
+        self.chevron = chevron
+        self.leading = leading()
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            leading
+            // At the accessibility sizes the value goes under the title, so neither is broken mid-word.
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 2) {
+                    titleText
+                    valueText
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                titleText.frame(maxWidth: .infinity, alignment: .leading)
+                valueText
+            }
+            trailing
+            if chevron { RowChevron() }
+        }
+        .padding(.vertical, 9)
+        .padding(.horizontal, 14)
+        .frame(minHeight: 56)
+        .contentShape(Rectangle())
+    }
+
+    private var titleText: some View {
+        Text(title)
+            .textRole(.row)
+            .foregroundStyle(danger ? Palette.danger : Palette.ink)
+    }
+
+    @ViewBuilder private var valueText: some View {
+        if let value {
+            Text(value)
+                .font(mono ? RFont.mono(13) : RFont.sans(15))
+                .foregroundStyle(Palette.ink2)
+                .lineLimit(1)
+        }
+    }
+}
+
+extension TileRow where Leading == GlyphTile, Trailing == EmptyView {
+    init(_ title: String, glyph: Glyph, value: String? = nil, mono: Bool = false, danger: Bool = false, chevron: Bool = true) {
+        self.init(title, value: value, mono: mono, danger: danger, chevron: chevron) { GlyphTile(glyph, danger: danger) } trailing: { EmptyView() }
+    }
+}
+
+extension TileRow where Leading == GlyphTile {
+    init(
+        _ title: String, glyph: Glyph, value: String? = nil, mono: Bool = false, danger: Bool = false, chevron: Bool = true,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.init(title, value: value, mono: mono, danger: danger, chevron: chevron, leading: { GlyphTile(glyph, danger: danger) }, trailing: trailing)
+    }
+}
+
+/// The chevron at the end of a row that opens a page: 14 pt, ink-faint.
+struct RowChevron: View {
+    var body: some View {
+        GlyphIcon(.chevronRight, size: 14).foregroundStyle(Palette.inkFaint).accessibilityHidden(true)
     }
 }
 
@@ -185,15 +386,6 @@ struct CapsuleButtonStyle: PrimitiveButtonStyle {
     }
 }
 
-/// A compact pill button on a row ("Review").
-struct PillButtonStyle: PrimitiveButtonStyle {
-    var kind: SignalButtonKind = .violet
-
-    func makeBody(configuration: Configuration) -> some View {
-        DefaultTapStyle(look: SignalButtonLook(kind: kind, size: .small, fill: false)).makeBody(configuration: configuration)
-    }
-}
-
 /// The height of everything beside a page title: the glass pills and the round buttons, so none stands taller.
 enum HeaderControl {
     static let height: CGFloat = 40
@@ -223,38 +415,6 @@ struct GlassIconButton: View {
         }
         .buttonStyle(PressDimsStyle())
         .accessibilityLabel(label)
-    }
-}
-
-/// A header chip with an icon and text ("Manual", "Integrations"): `paper-raised` with a hairline ring, or filled in its
-/// tint.
-struct GlassPill: View {
-    var symbol: String?
-    var text: String
-    var tint: Color? = nil
-    var action: () -> Void
-
-    @Environment(\.feedback) private var feedback
-
-    var body: some View {
-        Button {
-            action()
-            feedback.defaultTap()
-        } label: {
-            HStack(spacing: 7) {
-                if let symbol { Image(systemName: symbol).font(.system(size: 14, weight: .semibold)) }
-                Text(text).font(RFont.sans(15, .medium)).lineLimit(1)
-            }
-            .foregroundStyle(tint == nil ? Palette.ink : .white)
-            .padding(.horizontal, 14)
-            .frame(height: HeaderControl.height)
-            .background(tint ?? Palette.paperRaised, in: Capsule())
-            .overlay {
-                if tint == nil { Capsule().strokeBorder(Palette.rule, lineWidth: 1) }
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(PressDimsStyle())
     }
 }
 
@@ -294,7 +454,7 @@ struct CalmState: View {
             Illustration(.pond)
                 .frame(maxWidth: 320)
             Text(mood)
-                .textRole(.mood)
+                .textRole(.body)
                 .foregroundStyle(Palette.ink2)
                 .multilineTextAlignment(.center)
         }

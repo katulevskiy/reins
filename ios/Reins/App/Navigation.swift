@@ -38,6 +38,10 @@ enum Route: Hashable {
     case vaultPasskeys
     /// Settings > Appearance: the theme, grain on fields, the sans.
     case appearance
+    /// Settings > Wallpaper: one for dark, one for light.
+    case wallpaper
+    /// Settings > Wallpaper > Your photo, for the dark theme or the light one.
+    case ownWallpaper(dark: Bool)
     /// Settings > Devices: the account's phones (sign out a lost one) and computers.
     case devices
     /// Integrations > Password vault > Open the vault.
@@ -87,6 +91,14 @@ enum SheetTarget: Hashable, Identifiable {
         switch self {
         case let .approval(id), let .pairing(id), let .upload(id), let .join(id): id
         case .connectComputer: "connectComputer"
+        }
+    }
+
+    /// Pairing, joining and connecting a computer set their own detents.
+    var ownDetents: Bool {
+        switch self {
+        case .pairing, .join, .connectComputer, .upload: true
+        default: false
         }
     }
 

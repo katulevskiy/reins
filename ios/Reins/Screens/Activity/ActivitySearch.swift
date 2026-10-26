@@ -91,8 +91,12 @@ struct ActivityDay: Equatable, Identifiable {
     var count = 0
     var denied = 0
     var failed = 0
+    /// Decided by Autopilot and not denied (the header's bolt count).
+    var auto = 0
 
     var id: String { key }
+    /// Approved by you, a grant, a bypass or anything but Autopilot (the header's check count).
+    var approved: Int { max(count - denied - failed - auto, 0) }
     /// The day's query bounds: `since` inclusive, `until` exclusive (Unix seconds).
     var since: Int64 { Int64(start.timeIntervalSince1970.rounded(.down)) }
     var until: Int64 { Int64(end.timeIntervalSince1970.rounded(.down)) }
@@ -110,6 +114,7 @@ enum ActivityDays {
             day.count += 1
             if stamp.outcome == .denied { day.denied += 1 }
             if stamp.outcome == .failed { day.failed += 1 }
+            if stamp.decider == .autopilot && stamp.outcome == .approved { day.auto += 1 }
             days[start] = day
         }
         return days.values.sorted { $0.start > $1.start }
@@ -332,6 +337,20 @@ enum ActivitySearchText {
         }
     }
 
+    /// Where a match was found, as the glyph before the snippet (the field's label for VoiceOver).
+    static func glyph(_ f: ActivityField) -> Glyph {
+        switch f {
+        case .title, .request: .fileText
+        case .agent: .person
+        case .address, .subject, .body: .mail
+        case .repo, .branch: .gitBranch
+        case .commit: .gitCommit
+        case .file, .diff: .file
+        case .command: .terminal
+        case .url: .globe
+        }
+    }
+
     /// A snippet's span shown: cleaned again, its edge spaces kept so the spans still read as words.
     static func span(_ text: String) -> String {
         let inner = untrusted(text)
@@ -344,13 +363,10 @@ enum ActivitySearchText {
     /// The snippet line: the field's label, then the spans, the matched ones set apart (ink, medium, a soft violet
     /// wash and an underline), the others in meta ink.
     static func snippet(_ s: ActivitySnippet) -> AttributedString {
-        var out = AttributedString(field(s.field))
-        out.font = RFont.mono(10.5, .medium)
-        out.foregroundColor = Palette.inkMeta
-        out += AttributedString("  ")
+        var out = AttributedString()
         for span in s.spans {
             var part = AttributedString(Self.span(span.text))
-            part.font = RFont.sans(13, span.hit ? .medium : .regular)
+            part.font = RFont.mono(12)
             part.foregroundColor = span.hit ? Palette.ink : Palette.inkMeta
             if span.hit {
                 part.backgroundColor = TitleHighlight.wash

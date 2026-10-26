@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Settings > Devices (the Android app's `DevicesViewModel`): the account's devices, and signing one out (a lost
 /// phone).
@@ -7,7 +8,7 @@ import SwiftUI
 final class DevicesModel {
     /// Nil until first read.
     private(set) var devices: [DeviceView]?
-    /// The eight digits of this phone's key, which `reins vault add` asks for once.
+    /// The digits of this phone's key, which `reins vault add` asks for once.
     private(set) var phoneKey: String?
     private(set) var busy = false
     var error: String?
@@ -33,7 +34,7 @@ final class DevicesModel {
             try await model.core.signOutDevice(deviceId: device.id, codeOrPassword: proof)
             model.feedback.play(.revoked)
             devices = try await model.core.devices()
-            message = "\(untrusted(device.name)) is signed out. It can no longer open your vault or answer requests, and cannot sign in again as it is."
+            message = "\(untrustedName(device.name)) is signed out. It can no longer open your vault or answer requests, and cannot sign in again as it is."
         } catch {
             model.feedback.play(.error)
             self.error = Self.message(error)
@@ -48,18 +49,21 @@ final class DevicesModel {
         return error.userMessage
     }
 
-    static func symbol(_ kind: DeviceKind) -> String {
+    static func glyph(_ kind: DeviceKind) -> Glyph {
         switch kind {
-        case .phone: "iphone"
-        case .computer: "laptopcomputer"
-        case .browser: "globe"
-        case .other: "app"
+        case .phone: .phone
+        case .computer: .laptop
+        case .browser: .globe
+        case .other: .devices
         }
     }
 }
 
+/// The page (the Settings board, 02), quiet: this phone and its key, the other phones (Sign out asks for the recovery
+/// code), the computers.
 struct DevicesScreen: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
     @State private var vm = DevicesModel()
     @State private var signingOut: DeviceView?
     @State private var proof = ""
@@ -68,92 +72,101 @@ struct DevicesScreen: View {
         let me = vm.devices?.first { $0.thisDevice }
         let others = (vm.devices ?? []).filter { !$0.thisDevice }
         let computers = model.connections.filter { $0.keyFingerprint != nil }
-        List {
-            if vm.message != nil || vm.error != nil {
-                Section {
-                    if let message = vm.message { FormBanner(text: message, kind: .info).accessibilityIdentifier("devicesMessage") }
-                    if let error = vm.error { FormBanner(text: error).accessibilityIdentifier("devicesError") }
+        QuietPage("Devices") {
+            if let message = vm.message { QuietBanner(text: message, kind: .info).accessibilityIdentifier("devicesMessage") }
+            if let error = vm.error { QuietBanner(text: error).accessibilityIdentifier("devicesError") }
+
+            SectionHeader("This phone", quiet: true)
+            FlatGroup(inset: 0) {
+                TileRow(me.map { untrustedName($0.name) } ?? "This phone", glyph: .phone, chevron: false) {
+                    if me?.approval == true { ApprovesTag() }
                 }
-                .listRowBackground(Color.clear)
-            }
-            Section {
-                let about = [
-                    me?.approval == true ? "Requests come here" : nil,
-                    vm.phoneKey.map { "Key \($0), for reins vault add" },
-                ].compactMap { $0 }.joined(separator: "\n")
-                InfoRow(
-                    title: me.map { untrusted($0.name) } ?? "This phone",
-                    subtitle: about.isEmpty ? nil : about,
-                    symbol: "iphone"
-                ) {
-                    if me?.approval == true { ApprovesPill() }
-                }
+                .flatRow()
+                .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("thisDevice")
-                .cardRow()
-            } header: {
-                GroupHeader("This phone")
+                if let key = vm.phoneKey {
+                    TileRow("Key", chevron: false) {
+                        GlyphTile(.terminal)
+                    } trailing: {
+                        Text(key)
+                            .font(RFont.mono(13))
+                            .foregroundStyle(Palette.ink)
+                            .lineLimit(1)
+                            .environment(\.layoutDirection, .leftToRight)
+                            .accessibilityLabel("Key \(key), for reins vault add")
+                        RowIconButton(glyph: .copy, label: "Copy key") {
+                            UIPasteboard.general.string = key
+                            feedback.play(.copied)
+                            model.notice = "Key copied."
+                        }
+                        .padding(.trailing, -10)
+                    }
+                    .flatRow()
+                    .accessibilityIdentifier("phoneKey")
+                }
             }
-            Section {
+
+            QuietHelpHeader(title: "Other phones", help: "Lost a phone? Sign it out here: the app on it can no longer open your vault or answer requests, nor sign in again as it is. Whoever has it and its passcode could still read your recovery code on it and sign in with a new install; reset the vault if that may happen.")
+            FlatGroup {
                 if vm.devices == nil && vm.error == nil {
-                    InfoRow(title: "Loading…") { EmptyView() }.cardRow()
+                    TileRow("Loading…", glyph: .phone, chevron: false).flatRow()
                 } else if others.isEmpty {
-                    InfoRow(title: "No other device is signed in to your account.") { EmptyView() }
+                    TileRow("None", glyph: .phone, chevron: false)
+                        .flatRow()
+                        .accessibilityLabel("No other device is signed in to your account.")
                         .accessibilityIdentifier("noOtherDevices")
-                        .cardRow()
                 }
                 ForEach(others, id: \.id) { device in
-                    HStack(spacing: 10) {
-                        InfoRow(
-                            title: untrusted(device.name),
-                            subtitle: "\(device.platform) · last seen \(TimeText.relative(device.lastSeenAt))",
-                            symbol: DevicesModel.symbol(device.kind)
-                        ) {
-                            if device.approval { ApprovesPill() }
-                        }
+                    TileRow(untrustedName(device.name, limit: 40), value: TimeText.day(device.lastSeenAt), chevron: false) {
+                        GlyphTile(DevicesModel.glyph(device.kind))
+                    } trailing: {
+                        if device.approval { ApprovesTag() }
                         Button("Sign out", role: .destructive) { signingOut = device }
                             .buttonStyle(.borderless)
-                            .font(TextRole.buttonSmall.font())
+                            .font(RFont.sans(15, .semibold))
+                            .foregroundStyle(Palette.danger)
+                            .frame(minHeight: 44)
                             .disabled(vm.busy)
+                            .accessibilityLabel("Sign out \(untrustedName(device.name, limit: 40))")
                             .accessibilityIdentifier("signOutDevice:\(device.id)")
                     }
+                    .flatRow()
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("device:\(device.id)")
-                    .cardRow()
                 }
-            } header: {
-                GroupHeader("Other phones and apps")
-            } footer: {
-                GroupFooter("Lost a phone? Sign it out here: the app on it can no longer open your vault or answer requests, nor sign in again as it is. Whoever has it and its passcode could still read your recovery code on it and sign in with a new install; reset the vault if that may happen.")
             }
-            Section {
+
+            QuietHelpHeader(title: "Computers", help: "A computer's page removes it; on the computer, reins logout does the same.", count: computers.isEmpty ? nil : "\(computers.count)")
+            FlatGroup {
                 if computers.isEmpty {
-                    InfoRow(title: "No computer is connected.") { EmptyView() }.accessibilityIdentifier("noComputers").cardRow()
+                    TileRow("None", glyph: .laptop, chevron: false)
+                        .flatRow()
+                        .accessibilityLabel("No computer is connected.")
+                        .accessibilityIdentifier("noComputers")
                 }
                 ForEach(computers, id: \.id) { connection in
-                    SettingsLinkRow(
-                        title: untrusted(connection.label),
-                        subtitle: [
-                            connection.keyFingerprint.map { "Key \($0)" },
-                            connection.lastUsedAt.map { "used \(TimeText.relative($0))" } ?? "never used",
-                        ].compactMap { $0 }.joined(separator: " · "),
-                        symbol: "laptopcomputer",
-                        tint: Palette.ink2,
-                        id: "deviceComputer:\(connection.id)"
-                    ) { model.push(.connection(connection.id)) }
+                    Button {
+                        model.push(.connection(connection.id))
+                        feedback.defaultTap()
+                    } label: {
+                        TileRow(untrustedName(connection.label, limit: 40), value: connection.lastUsedAt.map { SettingsText.compactAgo($0) } ?? "Never") {
+                            ConnectionAvatar(connection: connection, size: 32)
+                        } trailing: { EmptyView() }
+                        .flatRow()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(untrustedName(connection.label, limit: 40))
+                    .accessibilityValue(connection.lastUsedAt.map { "used \(TimeText.relative($0))" } ?? "never used")
+                    .accessibilityIdentifier("deviceComputer:\(connection.id)")
                 }
-            } header: {
-                GroupHeader("Computers")
-            } footer: {
-                GroupFooter("A computer's page removes it; on the computer, reins logout does the same.")
             }
         }
-        .reinsGrouped()
-        .navigationTitle("Devices")
         .privacySensitive()
         .animation(.smooth(duration: 0.25), value: vm.devices)
         .task { await vm.load(model) }
         .refreshable { await vm.load(model) }
         .alert(
-            "Sign out \(untrusted(signingOut?.name ?? ""))?",
+            "Sign out \(untrustedName(signingOut?.name ?? "", limit: 40))?",
             isPresented: Binding(get: { signingOut != nil }, set: { if !$0 { signingOut = nil; proof = "" } }),
             presenting: signingOut
         ) { device in
@@ -179,9 +192,8 @@ struct DevicesScreen: View {
 }
 
 /// The phone the requests go to: the only green on the page.
-private struct ApprovesPill: View {
+private struct ApprovesTag: View {
     var body: some View {
-        StatusPill(text: "Approves", tint: Palette.success)
-            .accessibilityLabel("Approval phone")
+        StatusTag(text: "Approves", glyph: .shieldCheck).accessibilityLabel("Approval phone")
     }
 }

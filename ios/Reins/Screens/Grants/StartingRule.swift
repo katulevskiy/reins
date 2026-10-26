@@ -43,7 +43,7 @@ enum StartingRuleText {
 }
 
 /// The starting rule, picked in one tap: "Ask every time" (recommended) or "Headlines for its first hour". In the
-/// onboarding and at the end of Grants; nothing chosen yet means it asks every time.
+/// onboarding and at the end of Trust, as a raised group; nothing chosen yet means it asks every time.
 struct StartingRuleChooser: View {
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
@@ -52,28 +52,25 @@ struct StartingRuleChooser: View {
         let chosen = model.startingPolicy ?? .askEveryTime
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Text(StartingRuleText.header.uppercased())
-                    .textRole(.label)
-                    .foregroundStyle(Palette.inkMeta)
+                GlyphIcon(.link, size: 15)
+                Text(StartingRuleText.header)
+                    .textRole(.section)
                     .accessibilityAddTraits(.isHeader)
                 // The (?) right beside the words it explains.
                 HelpButton(text: StartingRuleText.help)
                     .accessibilityIdentifier("startingRuleHelp")
                 Spacer(minLength: 0)
             }
-            .padding(.leading, 6)
-            .padding(.trailing, 2)
-            .padding(.bottom, 6)
-            // On hairlines, not a card: the chosen one carries the check.
-            VStack(spacing: 0) {
-                Rectangle().fill(Palette.rule).frame(height: 1)
+            .foregroundStyle(Palette.ink2)
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
+            .frame(minHeight: 30)
+            RaisedGroup(inset: 14) {
                 ForEach(StartingRuleText.order, id: \.self) { policy in
                     row(policy, on: chosen == policy)
-                    Rectangle().fill(Palette.rule).frame(height: 1)
                 }
             }
         }
-        .padding(.horizontal, 16)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("startingRule")
     }
@@ -84,8 +81,8 @@ struct StartingRuleChooser: View {
             model.chooseStartingPolicy(policy)
             feedback.play(.selection)
         } label: {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(StartingRuleText.title(policy))
                             .textRole(.row)
@@ -97,24 +94,24 @@ struct StartingRuleChooser: View {
                         }
                     }
                     Text(StartingRuleText.detail(policy))
-                        .textRole(.meta)
-                        .foregroundStyle(Palette.ink2)
+                        .textRole(.sub)
+                        .foregroundStyle(Palette.inkMeta)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 GlyphIcon(.check, size: 18)
-                    .foregroundStyle(Palette.ink)
+                    .foregroundStyle(Palette.violet)
                     .opacity(on ? 1 : 0)
                     .scaleEffect(on ? 1 : 0.6)
                     .animation(.easeOut(duration: Motion.fade), value: on)
-                    .padding(.top, 1)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(minHeight: 56)
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle())
+        .buttonStyle(PressDimsStyle())
         .accessibilityAddTraits(on ? .isSelected : [])
         .accessibilityIdentifier(StartingRuleText.id(policy))
     }
