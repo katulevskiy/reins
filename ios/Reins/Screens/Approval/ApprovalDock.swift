@@ -23,7 +23,7 @@ struct ApprovalDock: View {
                     .padding(.horizontal, 6)
                     .accessibilityIdentifier("approvalError")
             }
-            if view.kind == .grant {
+            if view.kind == .grant, view.grant != nil {
                 GrantPeriodRow(vm: vm, view: view)
             } else if ApprovalWords.rememberLocked(view) || ApprovalWords.held(view) {
                 Chooser.asked(ApprovalWords.mailPermissionSettings(view) ? "Approve once" : "Every time")

@@ -25,6 +25,8 @@ struct Facts: View {
                     GitFacts(view: view, git: git)
                 } else if let mcp = view.mcp {
                     McpFacts(call: mcp)
+                } else if let ask = view.ask, ApprovalWords.autopilotChange(view) {
+                    AutopilotChangeFacts(ask: ask)
                 } else if let ask = view.ask {
                     if record?.label?.command == nil {
                         AskFacts(ask: ask, command: app.pending.first { $0.id == view.requestId }?.label?.command)
@@ -616,6 +618,28 @@ private struct AskFacts: View {
             FactGroup {
                 if let detail { MonoBlock(text: detail, id: "askDetail") }
                 if let topic { FactRow(key: "About", value: topic, mono: true, valueId: "askTopic") }
+            }
+            .accessibilityContainer("ask")
+        }
+    }
+}
+
+/// What a change of Autopilot asked from a computer means, in the core's words (who asked, what it changes, why only
+/// the owner can), as text: it is the phone's own explanation, not the computer's.
+private struct AutopilotChangeFacts: View {
+    var ask: AskView
+
+    var body: some View {
+        if let detail = ask.detail.map(untrusted).flatMap({ $0.isEmpty ? nil : $0 }) {
+            FactGroup {
+                Text(detail)
+                    .textRole(.body)
+                    .foregroundStyle(Palette.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .accessibilityIdentifier("askDetail")
             }
             .accessibilityContainer("ask")
         }

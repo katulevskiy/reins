@@ -198,7 +198,8 @@ enum ApprovalWords {
 
     /// What Approve says it does: "Approve", "Share 2", "Allow", "Yes", "Send", "Delete".
     static func approveLabel(_ view: ApprovalView, _ draft: ApprovalDraft) -> String {
-        if view.ask != nil { return "Yes" }
+        // A question is a yes or no, unless it is held: then it approves something ("Hold to approve").
+        if view.ask != nil { return held(view) ? "Approve" : "Yes" }
         if view.kind == .grant || view.kind == .accounts { return "Allow" }
         if destructive(view) && deletes(view) { return "Delete" }
         if view.kind == .send { return "Send" }
@@ -206,7 +207,7 @@ enum ApprovalWords {
         return "Approve"
     }
 
-    static func denyLabel(_ view: ApprovalView) -> String { view.ask != nil ? "No" : "Deny" }
+    static func denyLabel(_ view: ApprovalView) -> String { view.ask != nil && !held(view) ? "No" : "Deny" }
 
     /// The remembered approval is "anything like this" (the user's explicit choice), wider than the screen shows.
     static func likeThisOn(_ view: ApprovalView, _ draft: ApprovalDraft) -> Bool {
@@ -221,7 +222,17 @@ enum ApprovalWords {
         view.noStanding && view.service == "gmail" && [.search, .read, .send].contains(view.kind)
     }
 
-    static func rememberLocked(_ view: ApprovalView) -> Bool { view.envRelease != nil ? !secretsRememberable(view) : view.noStanding }
+    static func rememberLocked(_ view: ApprovalView) -> Bool {
+        if autopilotChange(view) { return true }
+        return view.envRelease != nil ? !secretsRememberable(view) : view.noStanding
+    }
+
+    /// A change of Autopilot a paired computer can only ask for (the core's `desktop_autopilot_mode` and
+    /// `desktop_autopilot_correct`): the core words its question from the phone's own state, it is held to approve, asked
+    /// every time and never decided for the owner.
+    static func autopilotChange(_ view: ApprovalView) -> Bool {
+        view.service == "desktop" && (view.op == "autopilot_mode" || view.op == "autopilot_correct")
+    }
 
     /// A remembered release covers a wider command than the one asked (`npm run *`): the dock shows which; nil when it
     /// covers the exact command, or nothing is remembered.
@@ -368,6 +379,15 @@ enum ApprovalWords {
         }
         if let mcp = view.mcp, mcp.destructive {
             tags.append(DangerTag(label: "Destructive", id: "mcpDestructive", help: "The server marks this tool as destructive. It is asked for every time and can never be allowed in advance."))
+        }
+        // A change of Autopilot asked from a computer can be changed back, but only the owner may apply it: say that,
+        // not "can't be undone".
+        if autopilotChange(view) {
+            tags.append(DangerTag(
+                label: "Only you can", id: "ownerOnly",
+                help: "Your computer asked for this change of Autopilot. Only your approval here applies it: never Autopilot, a bypass or Overnight. It's asked every time.",
+                symbol: "person.fill.checkmark"
+            ))
         }
         // What can't be undone, unless a red tag already says why it always asks ("rewrites history", a destructive
         // tool): the field would say the same thing twice.
