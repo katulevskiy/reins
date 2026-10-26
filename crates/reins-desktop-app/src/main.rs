@@ -6,6 +6,7 @@
 //! Everything goes through the `reins_desktop` library in this process, or through the running daemon's control API
 //! (`reins_desktop::control`); the app never runs the `reins` command for its normal work. The bundled `reins`
 //! program is what the harnesses and the background service run.
+#![allow(unused, reason = "WIP-NEXT: the screens move onto the Next kit; removed before review")]
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod autostart;

@@ -466,8 +466,8 @@ pub fn stage(from: Mark, to: Mark, badge: Option<(Glyph, Hsla)>, color: Hsla, si
         .child(stage_tile(to, side, badge, pal.paper_raised(), pal))
 }
 
-/// A sentence with its important words (the target) in italic and `ink`; the rest in the caller's colour. Set it in
-/// the serif ([`DISPLAY`]): the italic is Instrument Serif's own.
+/// A sentence with its important words (the target) at 600 and in `ink` (the boards' `em`); the rest in the caller's
+/// colour and weight.
 pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
     let mut text = String::new();
     let mut highlights = Vec::new();
@@ -479,7 +479,7 @@ pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
                 start..text.len(),
                 HighlightStyle {
                     color: Some(pal.ink()),
-                    font_style: Some(FontStyle::Italic),
+                    font_weight: Some(FontWeight::SEMIBOLD),
                     ..HighlightStyle::default()
                 },
             ));
@@ -488,7 +488,7 @@ pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
     StyledText::new(text).with_highlights(highlights)
 }
 
-/// Words with the important ones in italic and nothing else changed (the colour is the caller's: white on a field).
+/// Words with the important ones at 600 and nothing else changed (the colour is the caller's: white on a field).
 pub fn italic(words: &[Words]) -> StyledText {
     let mut text = String::new();
     let mut highlights = Vec::new();
@@ -499,7 +499,7 @@ pub fn italic(words: &[Words]) -> StyledText {
             highlights.push((
                 start..text.len(),
                 HighlightStyle {
-                    font_style: Some(FontStyle::Italic),
+                    font_weight: Some(FontWeight::SEMIBOLD),
                     ..HighlightStyle::default()
                 },
             ));
@@ -508,25 +508,18 @@ pub fn italic(words: &[Words]) -> StyledText {
     StyledText::new(text).with_highlights(highlights)
 }
 
-/// The quiet line under a page's title: serif italic 21 in `ink-2` (the desktop boards' size).
+/// The line under a page's title (`.dsub`): 14.5 in `ink-2`.
 pub fn mood(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div()
-        .mt(px(8.0))
-        .font_family(DISPLAY)
-        .text_size(px(21.0))
-        .line_height(px(26.0))
-        .italic()
-        .text_color(pal.ink_2())
-        .child(text.into())
+    div().mt(px(6.0)).mood().text_color(pal.ink_2()).child(text.into())
 }
 
-/// A page's title (serif 44, `words` with the italic ones in italic) and the mood line under it; `right` beside them,
-/// at the bottom (a button).
+/// A page's title (`words`, the important ones at 600) and the line under it; `right` beside them, at the middle (a
+/// button).
 pub fn page_title(words: &[Words], line: Option<&str>, right: Option<AnyElement>, pal: Palette) -> Div {
     div()
         .flex()
         .flex_wrap()
-        .items_end()
+        .items_center()
         .gap(px(16.0))
         .child(
             div()
@@ -633,20 +626,24 @@ const FACT_KEY_WIDTH: f32 = 96.0;
 /// whole width.
 const FACT_VALUE_MIN: f32 = 160.0;
 
-/// The facts of a request as hairline rows: the key in `ink-2` in a column of its own width, the value in `ink` (mono
-/// for the machine's) taking the rest of the row, or the whole row under the key when the row is narrow.
-pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, pal: Palette) -> Div {
-    let (min_h, text_size) = match look {
-        FactLook::Home => (48.0, 13.5),
-        FactLook::Detail => (0.0, 14.0),
-    };
-    let mut list = div().flex().flex_col();
-    for (i, f) in rows.iter().enumerate() {
-        let key = div().flex_none().w(px(FACT_KEY_WIDTH)).text_color(pal.ink_2()).child(f.key.clone());
-        let value = div().flex_1().min_w(px(FACT_VALUE_MIN)).text_color(pal.ink());
+/// The facts of a request as a pane of rows (`.kv`): the key (13.5, 500, `ink-meta`) in a column of its own width, the
+/// value (15.5, 500, `ink`; mono 14 for the machine's) taking the rest of the row, or the whole row under the key when
+/// the row is narrow.
+pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, glass: super::kit::Glass, pal: Palette) -> AnyElement {
+    let _ = look;
+    let mut out = Vec::new();
+    for f in rows {
+        let key = div()
+            .flex_none()
+            .w(px(FACT_KEY_WIDTH))
+            .text_size(px(13.5))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(pal.ink_meta())
+            .child(f.key.clone());
+        let value = div().flex_1().min_w(px(FACT_VALUE_MIN)).text_color(pal.ink()).font_weight(FontWeight::MEDIUM);
         let value = match f.style {
             // Each part may wrap inside the row (`min_w(0)`) rather than push past it.
-            FactStyle::Text => value.text_size(px(text_size)).child(
+            FactStyle::Text => value.text_size(px(15.5)).child(
                 div()
                     .flex()
                     .flex_wrap()
@@ -658,7 +655,7 @@ pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, pal: Palette) -> D
                             div()
                                 .min_w(px(0.0))
                                 .font_family(MONO)
-                                .text_size(px(13.0))
+                                .text_size(px(14.0))
                                 .text_color(pal.ink_2())
                                 .child(wrap_points(&format!("· {t}"))),
                         )
@@ -666,26 +663,26 @@ pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, pal: Palette) -> D
             ),
             // The machine's, whole: long values wrap after a `/`, a `-`, a `=`..., never cut.
             FactStyle::Mono => {
-                value.font_family(MONO).text_size(px(13.0)).line_height(px(19.0)).child(wrapped(&f.value))
+                value.font_family(MONO).text_size(px(14.0)).line_height(px(20.0)).child(wrapped(&f.value))
             }
-            FactStyle::Changes => value.font_family(MONO).text_size(px(13.0)).child(changes(&f.value, pal)),
+            FactStyle::Changes => value.text_size(px(15.5)).child(changes(&f.value, pal)),
         };
-        list = list.child(
+        out.push(
             div()
                 .flex()
                 .flex_wrap()
-                .items_start()
+                .items_baseline()
                 .gap_x(px(12.0))
                 .gap_y(px(2.0))
-                .min_h(px(min_h))
-                .py(px(6.0))
-                .text_size(px(14.0))
-                .when(i + 1 < rows.len() || look == FactLook::Detail, |r| r.border_b_1().border_color(pal.rule()))
+                .min_h(px(50.0))
+                .px(px(16.0))
+                .py(px(14.0))
                 .child(key)
-                .child(value),
+                .child(value)
+                .into_any_element(),
         );
     }
-    list
+    super::kit::group(out, 16.0, glass, pal)
 }
 
 /// Mono text that may be long (a command, a path): each line its own block, wrapped whole where the line may break
@@ -724,18 +721,23 @@ pub fn wrap_points(line: &str) -> String {
     out
 }
 
-/// `+128 −31 · 9 files` with the additions green and the removals red.
+/// `+128 −31 · 9 files`: the additions green and the removals red in mono, the rest in `ink-2`.
 pub fn changes(text: &str, pal: Palette) -> Div {
-    let mut line = div().flex().flex_wrap().gap_x(px(6.0));
+    let mut line = div().flex().flex_wrap().items_baseline().gap_x(px(6.0));
     for part in text.split_whitespace() {
-        let color = if part.starts_with('+') {
-            pal.success
+        let (color, mono) = if part.starts_with('+') {
+            (pal.success, true)
         } else if part.starts_with(['−', '-']) && part.len() > 1 {
-            pal.danger
+            (pal.danger, true)
         } else {
-            pal.ink()
+            (pal.ink_2(), false)
         };
-        line = line.child(div().text_color(color).child(part.to_owned()));
+        let word = div().text_color(color).child(part.to_owned());
+        line = line.child(if mono {
+            word.font_family(MONO).text_size(px(14.0))
+        } else {
+            word
+        });
     }
     line
 }
@@ -804,46 +806,38 @@ pub fn phone_qr(pal: Palette) -> Div {
         )
 }
 
-/// The welcome flow's steps (`Desk-Setup.png`): "1 Pair — 2 AI tools — 3 Turn on — ✓ Done". Behind: ink dots with a
-/// check; here: an ink ring; ahead: a hairline ring. Numbers in mono.
+/// The welcome flow's steps (`.dstep` in `DeskNext-Setup.dc.html`): "1 Pair — 2 AI tools — 3 Turn on — 4 Done".
+/// Behind: a green dot with a check; here: an ink dot with its number; ahead: a hairline ring.
 pub fn step_indicator(current: Stage, pal: Palette) -> Div {
     let mut bar = div().flex().items_center().justify_center().gap(px(8.0));
     for (i, stage) in Stage::ALL.into_iter().enumerate() {
-        let behind = stage < current || (current == Stage::Done && stage != Stage::Done);
+        let behind = stage < current;
         let here = stage == current;
         if i > 0 {
-            bar = bar.child(div().flex_none().w(px(28.0)).h(px(1.5)).bg(pal.rule_2()));
+            bar = bar.child(div().flex_none().w(px(60.0)).h(px(1.0)).mx(px(4.0)).bg(pal.rule_2()));
         }
-        let (ink, ring) = if behind {
-            (pal.paper(), None)
-        } else if here {
-            (pal.ink(), Some(pal.ink()))
-        } else {
-            (pal.ink_meta(), Some(pal.rule_2()))
-        };
-        // Behind, and Done itself: a check; the rest their number.
-        let mark: AnyElement = match stage.number() {
-            Some(n) if !behind => n.to_string().into_any_element(),
-            _ => glyph(Glyph::Check, 12.0, ink).into_any_element(),
-        };
+        let number = stage.number().unwrap_or(i + 1).to_string();
         let circle = div()
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
-            .size(px(22.0))
+            .size(px(24.0))
             .rounded_full()
-            .font_family(MONO)
-            .text_size(px(11.0))
-            .text_color(ink)
-            .when_some(ring, |c, r| c.border(px(1.5)).border_color(r))
-            .when(behind, |c| c.bg(pal.ink()))
-            .child(mark);
+            .text_size(px(12.5))
+            .font_weight(FontWeight::SEMIBOLD);
+        let circle = if behind {
+            circle.bg(pal.success).child(glyph(Glyph::Check, 13.0, gpui::white()))
+        } else if here {
+            circle.bg(pal.ink()).text_color(pal.paper()).child(number)
+        } else {
+            circle.border(px(1.5)).border_color(pal.rule_2()).text_color(pal.ink_meta()).child(number)
+        };
         bar = bar.child(
             div().flex().flex_none().items_center().gap(px(8.0)).child(circle).child(
-                // One weight for every label: a bolder current step would widen the bar and shift it sideways.
                 div()
-                    .text_size(px(12.5))
+                    .text_size(px(13.5))
+                    .font_weight(FontWeight::MEDIUM)
                     .whitespace_nowrap()
                     .text_color(if here {
                         pal.ink()
@@ -857,7 +851,7 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
     bar
 }
 
-/// The sentence a screen of the welcome flow is about: the serif at 40/42, centred, its target in italic; and a (?).
+/// The sentence a screen of the welcome flow is about (`--s: 40`), centred, its target at 600; and a (?).
 pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette) -> Div {
     div()
         .flex()
@@ -866,14 +860,7 @@ pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette)
         .gap(px(8.0))
         .mt(px(6.0))
         .child(
-            div()
-                .font_family(DISPLAY)
-                .text_size(px(40.0))
-                .line_height(px(42.0))
-                .font_weight(FontWeight::NORMAL)
-                .text_color(pal.ink())
-                .text_center()
-                .child(italic(words)),
+            div().step_title().text_color(pal.ink()).text_center().child(italic(words)),
         )
         .when_some(help, ParentElement::child)
 }

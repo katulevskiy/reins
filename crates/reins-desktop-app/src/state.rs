@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::theme::Appearance;
+use crate::ui::kit::Wallpaper;
 use crate::welcome::Stage;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +33,25 @@ pub struct Saved {
     pub window: Option<Place>,
     /// Light or dark paper, or as the system says (Settings → Appearance).
     pub appearance: Appearance,
+    /// The wallpapers behind Home and Activity, for dark and for light paper (`None`: Halo and Torii dither).
+    pub wallpaper_dark: Option<Wallpaper>,
+    pub wallpaper_light: Option<Wallpaper>,
+    /// Frosted panes turned off in Settings: panes are solid over the wallpaper.
+    pub solid_panes: bool,
+    /// Grain on fields turned off in Settings: fields are flat colour.
+    pub flat_fields: bool,
+}
+
+impl Saved {
+    /// The wallpaper for dark or light paper.
+    #[must_use]
+    pub fn wallpaper(&self, dark: bool) -> Wallpaper {
+        if dark {
+            self.wallpaper_dark.unwrap_or(Wallpaper::DARK)
+        } else {
+            self.wallpaper_light.unwrap_or(Wallpaper::LIGHT)
+        }
+    }
 }
 
 /// A window's place on the screen, in logical pixels.

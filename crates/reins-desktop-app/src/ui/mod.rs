@@ -112,6 +112,10 @@ pub struct Root {
     presses: u64,
     /// Home's Health tile is open to its checks.
     health_open: bool,
+    /// The waiting request whose field Home hides (Hide on the field).
+    hidden_ask: Option<String>,
+    /// Activity's days folded or unfolded from how they start (Today open, the rest folded).
+    days_toggled: BTreeSet<String>,
     /// Settings' Notifications row is open to its two switches.
     notify_open: bool,
     /// Settings' Name row is open to its field.
@@ -311,6 +315,8 @@ impl Root {
             hold: None,
             presses: 0,
             health_open: demo_var("REINS_DEMO_HEALTH").is_some(),
+            hidden_ask: None,
+            days_toggled: BTreeSet::new(),
             notify_open: false,
             name_open: demo_var("REINS_DEMO_NAME_OPEN").is_some(),
             profile_open: None,
@@ -456,7 +462,8 @@ impl Root {
             match d.section {
                 // Home pads itself: a waiting request's field runs to the edges, under the title bar.
                 Section::Home => scroll(id, self.home(d, pal, window, cx), false),
-                Section::Activity => scroll(id, self.activity(d, pal, cx), true),
+                // Activity scrolls its list itself, beside the panel of the request picked.
+                Section::Activity => self.activity(d, pal, cx),
                 Section::Connections => scroll(id, Self::connections(d, pal, cx), true),
                 Section::Keys => scroll(id, self.keys(d, pal, cx), true),
                 Section::Rules => scroll(id, self.rules(d, pal, window, cx), true),
@@ -480,6 +487,7 @@ impl Root {
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let pal = Palette::of(window, self.model.read(cx).saved.appearance);
+        kit::field::set_grain(!self.model.read(cx).saved.flat_fields);
         let screen = self.model.read(cx).screen;
         let page = (screen, self.model.read(cx).section);
         if page != self.help_page {

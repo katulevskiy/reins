@@ -287,8 +287,9 @@ pub fn timer(left_secs: i64, total_secs: i64, on: Hsla) -> Div {
         .gap(px(6.0))
         .text_color(on)
         .font_family(MONO)
-        .text_size(px(13.0))
-        .child(ring(fraction, on, on.opacity(0.25), 14.0, 1.8))
+        .text_size(px(13.5))
+        .font_weight(FontWeight::MEDIUM)
+        .child(ring(fraction, on, on.opacity(0.3), 18.0, 2.2))
         .child(clock)
 }
 
@@ -306,39 +307,41 @@ pub fn logo_tile(m: Mark, pal: Palette) -> Div {
     }
 }
 
-/// A request's icon (`ASK-TEXT.md`): the integration's mark (a logo on its white plate, or a glyph on `paper-sunken`
-/// for what happens on this computer), and the action on a round badge at its bottom-right corner, white on the kind's
+/// A request's icon (`.ri` on the boards): the integration's mark on a white tile (white on dark paper too, so every
+/// logo keeps its colours), and the action on a round badge at its bottom-right corner (`.rib`), white on the kind's
 /// field colour, ringed in `surface` (what the icon sits on) so it stands apart from the mark.
 pub fn request_icon(mark: Mark, badge: Glyph, field: Field, side: f32, surface: Hsla, pal: Palette) -> Div {
-    let plate = div().flex().flex_none().items_center().justify_center().size(px(side)).rounded(px(side * 0.31));
+    let _ = pal;
+    let plate = div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(side))
+        .rounded(px(side * 0.305))
+        .bg(gpui::white())
+        .border_1()
+        .border_color(crate::theme::rgba(0, 0.08));
     let plate = match mark {
-        Mark::Brand(b) => plate
-            .bg(gpui::white())
-            .border_1()
-            .border_color(pal.rule())
-            .child(gpui::img(b.path()).size(gpui::relative(0.58)).flex_none()),
-        Mark::Glyph(g) => plate.bg(pal.paper_sunken()).child(glyph(g, side * 0.53, pal.ink())),
+        Mark::Brand(b) => plate.child(gpui::img(b.path()).size(px(side * 0.53)).flex_none()),
+        Mark::Glyph(g) => plate.child(glyph(g, side * 0.5, crate::theme::token(crate::theme::tokens::INK, false))),
     };
-    let dot = (side * 0.5).round();
-    let ring = if side >= 36.0 {
-        2.0
-    } else {
-        1.5
-    };
+    let dot = (side * 0.47).round();
+    let out = (side * 0.14).round();
     div().relative().flex_none().size(px(side)).child(plate).child(
         div()
             .absolute()
-            .right(px(-dot * 0.22))
-            .bottom(px(-dot * 0.22))
+            .right(px(-out))
+            .bottom(px(-out))
             .flex()
             .items_center()
             .justify_center()
             .size(px(dot))
             .rounded_full()
             .bg(field.field())
-            .border(px(ring))
+            .border(px(2.0))
             .border_color(surface)
-            .child(glyph(badge, dot * 0.56, gpui::white())),
+            .child(glyph(badge, dot * 0.59, gpui::white())),
     )
 }
 
@@ -406,7 +409,7 @@ pub fn field_label(text: impl Into<SharedString>, pal: Palette) -> Div {
     tracked(text).text_color(pal.on_field_2())
 }
 
-/// A serif line with the words after `plain` in italic: "Push 8 commits to *octo/app*".
+/// A line with the words after `plain` at 600: "Push 8 commits to **octo/app**".
 pub fn ask_line(plain: &str, target: &str) -> AnyElement {
     let text = format!("{plain}{target}");
     let start = plain.len();
@@ -414,7 +417,7 @@ pub fn ask_line(plain: &str, target: &str) -> AnyElement {
         .with_highlights([(
             start..start + target.len(),
             gpui::HighlightStyle {
-                font_style: Some(gpui::FontStyle::Italic),
+                font_weight: Some(FontWeight::SEMIBOLD),
                 ..gpui::HighlightStyle::default()
             },
         )])
