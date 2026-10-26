@@ -343,6 +343,23 @@ final class AutopilotFlowTests: XCTestCase {
         XCTAssertEqual(owner.asked.count, 3, "one check per attempt, never two for one tap")
     }
 
+    /// A connection's page (ConnectionDetailScreen) changes the AI's own mode through `setMode`: its Unlock and its
+    /// "Like all" never leave that AI's lockdown without the owner.
+    func testLeavingAConnectionsLockdownWithoutTheOwnerIsRefused() async {
+        await start()
+        await ap.setMode(.lockdown, connectionId: "c1", label: "Claude")
+        XCTAssertEqual(ap.modeOf("c1"), .lockdown)
+        owner.answer = false
+        await ap.setMode(nil, connectionId: "c1", label: "Claude")
+        XCTAssertEqual(ap.modeOf("c1"), .lockdown, "Unlock is no way out of an AI's lockdown without the owner")
+        await ap.setMode(.auto, connectionId: "c1", label: "Claude")
+        XCTAssertEqual(ap.modeOf("c1"), .lockdown, "nor is picking Auto")
+        XCTAssertEqual(owner.asked, ["End lockdown", "End lockdown"])
+        owner.answer = true
+        await ap.setMode(nil, connectionId: "c1", label: "Claude")
+        XCTAssertNotEqual(ap.modeOf("c1"), .lockdown, "with the owner's check it ends")
+    }
+
     func testStartingBypassWithoutTheOwnerIsRefused() async {
         await start()
         owner.answer = false

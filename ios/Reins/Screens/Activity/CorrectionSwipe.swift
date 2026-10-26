@@ -16,13 +16,14 @@ struct CorrectionSwipe: ViewModifier {
     @State private var asking = false
 
     /// How far the row opens.
-    static let reveal: CGFloat = 116
+    static let reveal: CGFloat = 96
 
     func body(content: Content) -> some View {
         if ThisWasWrongDock.offered(entry) {
             content
                 .disabled(swiping)
-                .background(Palette.paper)
+                // Opaque only while it slides, so a frosted group shows through it at rest.
+                .background(offset != 0 ? Palette.paperRaised : .clear)
                 .offset(x: offset)
                 .background(alignment: .trailing) { action }
                 .clipped()
@@ -57,8 +58,8 @@ struct CorrectionSwipe: ViewModifier {
             asking = true
         } label: {
             VStack(spacing: 4) {
-                GlyphIcon(.undo, size: 18)
-                Text("This was wrong").font(RFont.sans(12.5, .semibold)).multilineTextAlignment(.center)
+                GlyphIcon(.undo, size: 20)
+                Text("Wrong").font(RFont.sans(13, .semibold)).multilineTextAlignment(.center)
             }
             .foregroundStyle(Palette.onField)
             .frame(width: Self.reveal)

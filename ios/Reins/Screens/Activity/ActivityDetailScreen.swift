@@ -8,8 +8,6 @@ struct ActivityDetailScreen: View {
     var entryId: Int64
     @Environment(AppModel.self) private var model
     @Environment(\.feedback) private var feedback
-    /// "This was wrong" stays once shown, so its thanks can replace it after the correction.
-    @State private var dockShown = false
     /// The approval as it was shown, read once; nil for older entries.
     @State private var recorded: ApprovalModel?
     /// A push's changes as this iPhone has them, and those loaded from GitHub; nil for anything but a push.
@@ -29,11 +27,10 @@ struct ActivityDetailScreen: View {
                         RevokeEverywhereSection(project: release.project, env: release.env).padding(.top, 14)
                     }
                 }
-                .pageDock(when: dockShown) { ThisWasWrongDock(entry: entry) }
             } else if let entry {
                 if looked {
+                    // No action bar: a past event needs none ("This was wrong" is the last of Autopilot's reasons).
                     ScrollView { content(entry).padding(.bottom, 24) }
-                        .pageDock(when: dockShown) { ThisWasWrongDock(entry: entry) }
                 } else {
                     Color.clear
                 }
@@ -45,9 +42,6 @@ struct ActivityDetailScreen: View {
         }
         // Read again once the entry is there (a link can open it before the history has loaded).
         .task(id: "\(entryId):\(entry != nil)") { await lookUp() }
-        .onChange(of: entry.map(ThisWasWrongDock.offered) ?? false, initial: true) { _, offered in
-            if offered { dockShown = true }
-        }
         .pageBackground()
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -67,7 +61,7 @@ struct ActivityDetailScreen: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(item: summary(entry)) { Image(systemName: "square.and.arrow.up") }
+                    ShareLink(item: summary(entry)) { GlyphIcon(.share, size: 20) }
                         .accessibilityLabel("Share")
                 }
             }
@@ -99,7 +93,7 @@ struct ActivityDetailScreen: View {
                     coveredBy(id)
                 }
                 if let note = entry.autopilot {
-                    if entry.grantId != nil { Hairline() }
+                    if entry.grantId != nil { Hairline(inset: 48) }
                     AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
                 }
             }
@@ -114,40 +108,41 @@ struct ActivityDetailScreen: View {
 
             AskedSections(entry: entry)
 
-            // When is said once: under "What it asked", with how long the answer took, when the request was kept.
+            // The facts: when (said once, under "What it asked" when the request was kept), the account, the service,
+            // the grant that covered it, and Autopilot's reasons.
             let when = entry.request == nil
             let account = entry.account.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
             let service = !entry.service.isEmpty
             if when || account != nil || service || entry.grantId != nil || entry.autopilot != nil {
                 GroupCard {
                     if when {
-                        ValueRow(label: "When", value: TimeText.dateTime(entry.at))
+                        GlyphFact(glyph: .timer, value: AskedText.dayTime(entry.at))
                     }
                     if let account {
-                        if when { Hairline() }
-                        ValueRow(label: "Account", value: account, mono: true)
+                        if when { Hairline(inset: 48) }
+                        GlyphFact(glyph: .person, value: account, mono: true)
                     }
                     if service {
-                        if when || account != nil { Hairline() }
-                        ValueRow(label: "Service", value: serviceName(entry.service))
+                        if when || account != nil { Hairline(inset: 48) }
+                        GlyphFact(glyph: ActivitySearchText.glyph(service: entry.service), value: serviceName(entry.service))
                     }
                     if let id = entry.grantId {
-                        if when || account != nil || service { Hairline() }
+                        if when || account != nil || service { Hairline(inset: 48) }
                         coveredBy(id)
                     }
                     if let note = entry.autopilot {
-                        if when || account != nil || service || entry.grantId != nil { Hairline() }
+                        if when || account != nil || service || entry.grantId != nil { Hairline(inset: 48) }
                         AutopilotWhyRow(note: note, title: EntryOutcome.whyTitle(entry), entry: entry)
                     }
                 }
-                .padding(.top, 14)
+                .padding(.top, 20)
             }
 
             if let query = info.query {
-                GroupCard(header: "Search") { ListRow(title: untrusted(query)).accessibilityIdentifier("detailQuery") }
+                GroupCard(header: "Search", glyph: .search) { ListRow(title: untrusted(query)).accessibilityIdentifier("detailQuery") }
             }
             if let email = info.email {
-                GroupCard(header: "The email") {
+                GroupCard(header: "Email", glyph: .mail) {
                     EmailPreview(email: email, framed: false).accessibilityContainer("detailEmail")
                 }
             }
@@ -210,7 +205,7 @@ struct ActivityDetailScreen: View {
 
     @ViewBuilder private func coveredBy(_ id: String) -> some View {
         let grant = model.grants.first { $0.id == id }
-        ValueRow(label: "Grant", value: grant.map { untrusted($0.summary) } ?? "Ended", action: grant == nil ? nil : {
+        GlyphFact(glyph: .key, value: grant.map { untrusted($0.summary) } ?? "Grant ended", glyphTint: Palette.violet, action: grant == nil ? nil : {
             feedback.play(.tap)
             model.push(.grantDetail(id))
         })

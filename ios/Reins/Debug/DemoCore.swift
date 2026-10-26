@@ -184,6 +184,18 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         }
         // `-demoMode bypass|overnight|lockdown` (screenshots): start with that mode running, as if started 12 minutes ago.
         let args = ProcessInfo.processInfo.arguments
+        // `-demoOnly computers|ais|none` (screenshots): only the computers, only the AI apps, or a new account with
+        // nothing connected, waiting or done.
+        if let i = args.firstIndex(of: "-demoOnly"), i + 1 < args.count {
+            switch args[i + 1] {
+            case "computers": s.connections = s.connections.filter { $0.keyFingerprint != nil }
+            case "ais": s.connections = s.connections.filter { $0.keyFingerprint == nil }
+            default:
+                s.connections = []
+                s.activity = []
+                s.pending = []
+            }
+        }
         if let i = args.firstIndex(of: "-demoMode"), i + 1 < args.count {
             switch args[i + 1] {
             case "bypass": s.apGlobal = ApRow(mode: .manual, bypassUntil: now + 47 * 60 + 12, bypassSince: now - 12 * 60)
