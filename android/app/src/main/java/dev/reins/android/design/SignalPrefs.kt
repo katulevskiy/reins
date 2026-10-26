@@ -21,8 +21,9 @@ data class SignalPrefs(
     /** The grain on colour fields: the Appearance switch, and off when the system asks for more contrast. */
     val grain: Boolean = true,
     /**
-     * Frosted panes over the wallpaper. Off (solid panes, the art unchanged) in Battery Saver or when the system asks
-     * for more contrast.
+     * Frosted panes over the wallpaper. Off (solid panes, the art unchanged) only when the system asks for more
+     * contrast. Battery Saver and phones without window blurs keep them: the frost is the app's own pre-blurred copy
+     * of the art, not a window blur.
      */
     val frosted: Boolean = true,
 )
@@ -105,34 +106,4 @@ fun rememberHighContrast(): Boolean {
         onDispose { ui.removeContrastChangeListener(listener) }
     }
     return high
-}
-
-/**
- * Whether panes should be solid: Battery Saver is on. Kept up to date.
- *
- * Window blurs (`isCrossWindowBlurEnabled`) don't count: the frost is the app's own pre-blurred copy of the art, not a
- * window blur, and many phones report window blurs off only because their compositor can't do them.
- */
-@Composable
-fun rememberReduceTransparency(): Boolean {
-    val context = LocalContext.current
-    val power = remember(context) { context.getSystemService(android.os.PowerManager::class.java) }
-    var saver by remember(power) { mutableStateOf(power?.isPowerSaveMode == true) }
-    DisposableEffect(power) {
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(c: Context, i: android.content.Intent) {
-                saver = power?.isPowerSaveMode == true
-            }
-        }
-        ContextCompat.registerReceiver(
-            context,
-            receiver,
-            android.content.IntentFilter(android.os.PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
-            ContextCompat.RECEIVER_NOT_EXPORTED,
-        )
-        onDispose {
-            runCatching { context.unregisterReceiver(receiver) }
-        }
-    }
-    return saver
 }
