@@ -133,5 +133,13 @@ for artifact in ("ios-simulator-core", "ios-test-products"):
 gate = (ROOT / "scripts/wait-for-ci.sh").read_text()
 assert "--workflow ci.yml" in gate
 assert "ios.yml" not in gate
+# UI tests never gate a merge or a release: ReinsTests has its own shard, which gates the iOS check; the UI shards
+# continue on error (the job, so the check's needs never see it, and the step, so the job stays green).
+assert "shard: [unit, autopilot, grants, onboarding, field, rest]" in ios_workflow
+assert ios_workflow.count("continue-on-error: ${{ matrix.shard != 'unit' }}") == 2
+# The agents' job and core workflows are tools: nothing waits for them.
+for name in ("ios-job", "ios-core"):
+    assert name not in gate, name
+    assert "\n  pull_request:" not in (ROOT / ".github/workflows" / f"{name}.yml").read_text(), name
 
-print(f"{len(cases) + 6} CI component-routing checks passed")
+print(f"{len(cases) + 9} CI component-routing checks passed")
