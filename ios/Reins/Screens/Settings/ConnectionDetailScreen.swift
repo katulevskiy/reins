@@ -105,7 +105,7 @@ private struct ConnectionTitle: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            QuietTitle(title: untrustedName(connection.label, limit: 40), titleId: "connectionName") {
+            MarkedTitle(title: untrustedName(connection.label, limit: 40), titleId: "connectionName") {
                 Button {
                     onIcon()
                     feedback.defaultTap()

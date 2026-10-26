@@ -43,7 +43,7 @@ struct McpServerScreen: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
             }
-            QuietTitle(title: untrustedName(server.name, limit: 40)) {
+            MarkedTitle(title: untrustedName(server.name, limit: 40)) {
                 MarkPlate(size: 36) { ServiceAvatar(service: "mcp", size: 36) }
             }
             if let notice = model.mcpNotice, notice.serverId == serverId, notice.failed || model.connectedServers[serverId] == nil {

@@ -52,7 +52,7 @@ struct AccountsScreen: View {
     @ViewBuilder
     private func content(_ service: ServiceView, _ m: AccountsModel) -> some View {
         NextPage {
-            QuietTitle(title: service.name) {
+            MarkedTitle(title: service.name) {
                 MarkPlate(size: 36) { ServiceAvatar(service: service.service, size: 36) }
             }
             SectionHeader("Accounts", quiet: true, trailing: service.accounts.isEmpty ? nil : "\(service.accounts.count)")
@@ -340,7 +340,7 @@ private struct TokenRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             FlatFields {
-                InputRow(glyph: .vault) {
+                GlyphInputRow(glyph: .vault) {
                     SecureField(placeholder, text: $secret)
                         .font(RFont.mono(15))
                         .textInputAutocapitalization(.never)
@@ -426,7 +426,7 @@ private struct TelegramLogin: View {
         case .phone:
             SectionHeader("Add an account", quiet: true)
             FlatFields {
-                InputRow(glyph: .phone) {
+                GlyphInputRow(glyph: .phone) {
                     TextField("Phone number", text: $phone)
                         .font(RFont.mono(15))
                         .keyboardType(.phonePad)
@@ -497,7 +497,7 @@ private struct TelegramLogin: View {
         case let .password(hint):
             SectionHeader("Two-step password", quiet: true)
             FlatFields {
-                InputRow(glyph: .lock) {
+                GlyphInputRow(glyph: .lock) {
                     SecureField("Telegram password", text: $password)
                         .textContentType(.password)
                         .focused($focus, equals: .password)

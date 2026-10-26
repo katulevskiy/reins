@@ -316,7 +316,7 @@ struct VaultScreen: View {
             .background(Palette.paperSunken, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .padding(.horizontal, 16)
             .padding(.top, 14)
-            AddSectionHeader(title: "Items", glyph: .vault, count: vm.items?.count, addLabel: "Add an item", addId: "vaultAdd") {
+            PlusSectionHeader(title: "Items", glyph: .vault, count: vm.items?.count, addLabel: "Add an item", addId: "vaultAdd") {
                 model.push(.vaultAdd)
             }
             RaisedGroup {
@@ -410,7 +410,7 @@ struct VaultAddScreen: View {
 
     var body: some View {
         NextPage {
-            QuietTitle("Add")
+            MarkedTitle("Add")
             SectionHeader("Kind", quiet: true)
             FlatGroup {
                 ForEach(NewVaultItem.allCases) { kind in
@@ -514,7 +514,7 @@ struct VaultItemScreen: View {
             if let item = vm.item, item.id == id {
                 content(item)
             } else {
-                QuietTitle("Vault item")
+                MarkedTitle("Vault item")
                 Text("Loading…").font(RFont.sans(15)).foregroundStyle(Palette.ink2).padding(20)
             }
             if let error = vm.error {
@@ -540,7 +540,7 @@ struct VaultItemScreen: View {
         let ssh = item.kind == .sshKey
         let publicKey = item.fields.first { $0.key == "public_key" }?.value
         let fingerprint = item.fields.first { $0.key == "fingerprint" }?.value
-        QuietTitle(untrustedName(item.name, limit: 40), titleId: "vaultName")
+        MarkedTitle(untrustedName(item.name, limit: 40), titleId: "vaultName")
         FocalCard(glyph: VaultText.glyph(item.kind), title: ssh ? VaultText.keyType(publicKey) : VaultText.kindLabel(item.kind), sub: ssh ? "SSH key" : "In your vault") {
             if ssh {
                 FocalFact(glyph: .phone, value: "On this phone")
@@ -696,7 +696,7 @@ struct VaultEditScreen: View {
 
     var body: some View {
         NextPage(bottom: 24) {
-            QuietTitle(title)
+            MarkedTitle(title)
             if sshNew {
                 FocalCard(glyph: .terminal, title: "ed25519", sub: "SSH key", dashed: true) {
                     FocalFact(glyph: .phone, value: "On this phone")
@@ -713,7 +713,7 @@ struct VaultEditScreen: View {
             }
             SectionHeader(sshNew ? "Name" : newItem?.title ?? VaultText.kindLabel(kind), quiet: true)
             FlatFields {
-                InputRow(glyph: .pencil) {
+                GlyphInputRow(glyph: .pencil) {
                     TextField(newItem == .apiKey ? "OpenAI" : "Name", text: $name)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -808,7 +808,7 @@ struct VaultEditScreen: View {
     private func input(_ f: VaultFormField) -> some View {
         let binding = Binding(get: { values[f.key] ?? "" }, set: { values[f.key] = $0 })
         let placeholder = f.secret && existing != nil ? "\(f.label): unchanged" : f.label
-        InputRow(glyph: VaultText.glyph(field: f.key)) {
+        GlyphInputRow(glyph: VaultText.glyph(field: f.key)) {
             Group {
                 if f.multiline {
                     TextField(placeholder, text: binding, axis: .vertical).lineLimit(3...12).font(RFont.mono(14.5))

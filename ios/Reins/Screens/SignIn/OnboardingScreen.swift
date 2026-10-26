@@ -1,15 +1,16 @@
 import SwiftUI
 import UIKit
 
-/// The setup after creating an account or signing in, once per account, and again from Settings > Take the tour
-/// (iOS-Tour.png; the Android app's `SetupScreen`): five pages, always skippable. What Reins is; requests coming to this
-/// phone (notifications, the screen lock); what the AIs can use (the services, a computer, an AI app); how much to ask
-/// (how a new AI starts, Autopilot and its model); and where things stand. An integration opens over the setup and
-/// closes back to the same page.
+/// The setup after creating an account or signing in, once per account, and again from Settings > Take the tour (the
+/// Tour board; the Android app's `SetupScreen`): five pages, one idea each, always skippable. Every ask waits for you;
+/// requests come to this phone (notifications, the screen lock); what the AIs can use (the services, a computer, an
+/// AI app); how much to ask (Manual or Auto, the model, how a new AI starts); and where things stand. A service opens
+/// over the setup and closes back to the same page.
 struct OnboardingScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.feedback) private var feedback
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = Page.first
     /// The integration opened from the connections page.
     @State private var service: ServiceSheet?
@@ -30,16 +31,17 @@ struct OnboardingScreen: View {
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
-            SetupTopBar(page: page) { model.finishOnboarding() }
+            TourProgress(page: page.rawValue, count: Page.allCases.count, onSkip: page == .done ? nil : { model.finishOnboarding() })
             GeometryReader { geo in
                 ScrollView {
                     VStack(spacing: 0) {
                         content
-                            .frame(maxWidth: 440)
-                            .padding(.horizontal, sizeClass == .regular ? 32 : 24)
-                            .padding(.top, 20)
+                            .frame(maxWidth: 480)
+                            .padding(.top, 26)
                             .id(page)
-                            .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)).combined(with: .opacity))
+                            .transition(reduceMotion
+                                ? .opacity
+                                : .asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)).combined(with: .opacity))
                         Spacer(minLength: 24)
                     }
                     .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
@@ -60,7 +62,7 @@ struct OnboardingScreen: View {
             SetupButtons(page: page, onBack: { go(-1) }, onNext: { go(1) }, onDone: { model.finishOnboarding() })
         }
         .pageBackground()
-        .animation(.smooth(duration: 0.3), value: page)
+        .animation(reduceMotion ? .easeInOut(duration: 0.15) : .smooth(duration: 0.3), value: page)
         // Swipe sideways between pages, as well as the buttons. Only a sideways movement begins it (SidewaysPan), so the
         // page under it scrolls from the first points of a touch.
         .gesture(SidewaysPan { drag, cancelled in
@@ -108,40 +110,8 @@ private struct ServiceSheet: Identifiable {
     }
 }
 
-/// A bar per page, each filled as you arrive, and "Skip" (the tour lives on under Settings).
-private struct SetupTopBar: View {
-    var page: OnboardingScreen.Page
-    var onSkip: () -> Void
-
-    var body: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 5) {
-                ForEach(OnboardingScreen.Page.allCases, id: \.rawValue) { p in
-                    Capsule()
-                        .fill(p.rawValue <= page.rawValue ? Palette.ink : Palette.rule)
-                        .frame(height: 3)
-                }
-            }
-            .animation(.easeOut(duration: 0.3), value: page)
-            .accessibilityElement()
-            .accessibilityLabel("Step \(page.rawValue + 1) of \(OnboardingScreen.Page.allCases.count)")
-            .accessibilityIdentifier("setupProgress")
-            if page != .done {
-                Button("Skip", action: onSkip)
-                    .font(TextRole.button.font())
-                    .foregroundStyle(Palette.ink2)
-                    .accessibilityLabel("Skip setup")
-                    .accessibilityIdentifier("setupSkip")
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 12)
-        .frame(minHeight: 36)
-    }
-}
-
-/// Back and the page's forward button. On the notifications page, while they were never asked for, forward is
-/// "Not now" beside "Allow" (which shows the system's question).
+/// The page's buttons: Next alone on the welcome, Not now and Allow while notifications were never asked for, Start on
+/// the last page, Back and Next between.
 private struct SetupButtons: View {
     var page: OnboardingScreen.Page
     var onBack: () -> Void
@@ -150,12 +120,14 @@ private struct SetupButtons: View {
     private var access: NotificationAccess { .shared }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             switch page {
             case .welcome:
-                Button("Show me around", action: onNext)
-                    .buttonStyle(SignalButtonStyle(.inverse))
-                    .accessibilityIdentifier("onboardingNext")
+                Button(action: onNext) {
+                    Label { Text("Next") } icon: { GlyphIcon(.arrowForward, size: 18) }
+                }
+                .buttonStyle(SignalButtonStyle(.inverse))
+                .accessibilityIdentifier("onboardingNext")
             case .notifications where access.state == .notAsked:
                 Button("Not now", action: onNext)
                     .buttonStyle(SignalButtonStyle(.outline))
@@ -169,7 +141,7 @@ private struct SetupButtons: View {
                 .buttonStyle(SignalButtonStyle(.inverse))
                 .accessibilityIdentifier("allowNotifications")
             case .done:
-                Button("Start using Reins", action: onDone)
+                Button("Start", action: onDone)
                     .buttonStyle(SignalButtonStyle(.inverse))
                     .accessibilityIdentifier("onboardingDone")
             default:
@@ -181,99 +153,94 @@ private struct SetupButtons: View {
                     .accessibilityIdentifier("onboardingNext")
             }
         }
+        .frame(maxWidth: 480)
         .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
     }
 }
 
-/// A page's title in the serif (its last words in italic) and what it is about.
-private struct PageTitle: View {
-    var lead: String
-    var target: String
-    var text: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AskText([AskText.Run(text: lead), AskText.Run(text: target, target: true)], role: .ask, lineLimit: nil)
-                .foregroundStyle(Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-            if let text {
-                Text(text)
-                    .textRole(.body)
-                    .foregroundStyle(Palette.ink2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-}
-
-/// A row on a hairline: a glyph, a title over a meta line, and what is on its right.
-private struct TourRow<Trailing: View>: View {
+/// A line of what is missing, in its colour, under a page's picture (a warning the setup must not hide).
+private struct SetupNote: View {
     var glyph: Glyph
-    var title: String
     var text: String
-    var tint: Color = Palette.ink2
-    @ViewBuilder var trailing: Trailing
+    var tint: Color = Palette.warning
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            GlyphIcon(glyph, size: 20)
-                .foregroundStyle(tint)
-                .frame(width: 24)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).textRole(.row).foregroundStyle(Palette.ink)
-                Text(text).textRole(.meta).foregroundStyle(Palette.inkMeta).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            trailing
-        }
-        .padding(.vertical, 13)
-        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
-    }
-}
-
-/// A small eyebrow over a group of rows.
-private struct Eyebrow: View {
-    var text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text.uppercased())
-            .textRole(.section)
-            .foregroundStyle(Palette.inkMeta)
-            .padding(.top, 14)
-            .accessibilityAddTraits(.isHeader)
+        Label { Text(text) } icon: { GlyphIcon(glyph, size: 15) }
+            .labelStyle(SignalLabelStyle())
+            .font(RFont.sans(14))
+            .foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
     }
 }
 
 // MARK: 1. Welcome
 
+/// Every ask waits for you, shown as the stack it will be: a push waiting, two more fanned behind it.
 private struct WelcomePage: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Eyebrow("Welcome to Reins").padding(.top, -14)
-            PageTitle(lead: "Nothing happens ", target: "behind your back")
-            VStack(spacing: 0) {
-                TourRow(glyph: .shieldWaiting, title: "Every ask waits for you",
-                        text: "Each read, send or change shows exactly what the AI wants.") { EmptyView() }
-                TourRow(glyph: .key, title: "Your keys stay on this phone",
-                        text: "The server passes requests along and sees nothing inside.") { EmptyView() }
-                TourRow(glyph: .timer, title: "Trust on your terms",
-                        text: "Allow for an hour, or let Autopilot learn what you always allow.") { EmptyView() }
-                TourRow(glyph: .lock, title: "One tap stops everything",
-                        text: "Lockdown denies every request at once, until you lift it.") { EmptyView() }
+        VStack(alignment: .leading, spacing: 0) {
+            HeroText(title: "Welcome", line: "Every ask waits for you.")
+            SkyTile(tint: Palette.fieldPush, height: 400) {
+                ZStack {
+                    fan(.read, angle: -7, x: -6, y: -10)
+                    fan(.delete, angle: 6, x: 8, y: -4)
+                    SampleCard()
+                        .shadow(color: .black.opacity(0.3), radius: 20, y: 18)
+                }
+                .frame(width: 326)
             }
-            .padding(.top, 6)
+            .padding(.horizontal, 16)
+            .padding(.top, 30)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("setupWelcome")
+    }
+
+    private func fan(_ kind: FieldKind, angle: Double, x: CGFloat, y: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 26, style: .continuous)
+            .fill(kind.fill)
+            .overlay { Grain().clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous)) }
+            .frame(height: 200)
+            .padding(.horizontal, 14)
+            .rotationEffect(.degrees(angle))
+            .offset(x: x, y: y)
+            .shadow(color: .black.opacity(0.3), radius: 15, y: 16)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A sample waiting card (not a real request): Push 8 commits to octo/app, Autopilot's pick and Review.
+private struct SampleCard: View {
+    var body: some View {
+        WaitCardShell(
+            kind: .push, label: "GitHub · Push",
+            ask: AskText("Push 8 commits to", target: "octo/app", role: .cardAsk)
+        ) {
+            RequestIcon(spec: AskIcon(mark: .service("github"), action: .gitBranch, kind: .push), size: 36, ring: FieldKind.push.fill)
+        } timer: {
+            HStack(spacing: 8) {
+                BlobAvatar(seed: "M2A", size: 28)
+                ArcRing(fraction: 0.8, color: .white, track: .white.opacity(0.35), lineWidth: 2.5).frame(width: 18, height: 18)
+                Text(verbatim: "9:40").font(RFont.mono(14, .medium)).foregroundStyle(.white)
+            }
+        } actions: {
+            Text(verbatim: "feature/passkeys").font(RFont.mono(14)).foregroundStyle(.white.opacity(0.85)).padding(.top, -6)
+            WaitCardButtons(pick: .allow(97), onPick: {}, onReview: {})
+                .allowsHitTesting(false)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("A sample request: push 8 commits to octo/app")
     }
 }
 
 // MARK: 2. Requests come to you
 
+/// Asks reach this phone first: a lock screen with one notification on a grained sky. What is missing (notifications
+/// refused, no passcode) says so under it.
 private struct NotificationsPage: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
@@ -282,40 +249,42 @@ private struct NotificationsPage: View {
     private var access: NotificationAccess { .shared }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            PageTitle(lead: "Requests come ", target: "to you",
-                      text: "When an AI asks, this phone rings, even with Reins closed. Answer right from the notification.")
-            SampleNotification().padding(.vertical, 8)
-            VStack(spacing: 0) {
-                TourRow(glyph: .bell, title: "Notifications", text: "Requests, grants and your devices only") {
-                    if access.state == .on {
-                        StatusWord(text: "On", ok: true).accessibilityIdentifier("notificationsOn")
-                    } else {
-                        StatusWord(text: access.state == .notAsked ? "Not yet" : "Off", ok: false)
+        VStack(alignment: .leading, spacing: 0) {
+            HeroText(title: "Requests", line: "Asks reach this phone first.")
+            SkyTile(tint: Palette.fieldGrant, height: 380, gradient: LinearGradient(
+                colors: [Color(red: 91 / 255, green: 67 / 255, blue: 232 / 255), Palette.fieldAccounts], startPoint: .topLeading, endPoint: .bottomTrailing
+            )) {
+                VStack(spacing: 22) {
+                    VStack(spacing: 2) {
+                        GlyphIcon(.lock, size: 18)
+                        Text(verbatim: "9:41").font(RFont.fixedSans(76, .semibold)).tracking(-2.3)
                     }
+                    .foregroundStyle(.white)
+                    SampleNotification()
                 }
-                TourRow(glyph: .faceId, title: "Face ID", text: screenLock ? "Every approval asks for it" : "No passcode. Approving needs one: Settings, Face ID & Passcode.",
-                        tint: screenLock ? Palette.ink2 : Palette.warning) {
-                    StatusWord(text: screenLock ? "On" : "Off", ok: screenLock)
-                }
-                .accessibilityIdentifier(screenLock ? "screenLockOn" : "screenLockOff")
             }
-            if access.state != .on {
-                Text(access.state.needsAttention && access.state != .notAsked
-                    ? "\(access.state.summary). Turn them on in the Settings app, under Reins."
-                    : "Without notifications an AI waits for an answer that never comes, and its request times out.")
-                    .textRole(.meta)
-                    .foregroundStyle(Palette.inkMeta)
-                    .fixedSize(horizontal: false, vertical: true)
-                // Refused or quiet: only the Settings app can change it, so a way there.
-                if access.state.needsAttention && access.state != .notAsked {
+            .padding(.horizontal, 16)
+            .padding(.top, 30)
+            VStack(alignment: .leading, spacing: 10) {
+                if access.state == .on {
+                    SetupNote(glyph: .check, text: "Notifications are on", tint: Palette.success).accessibilityIdentifier("notificationsOn")
+                } else if access.state.needsAttention && access.state != .notAsked {
+                    SetupNote(glyph: .bell, text: "\(access.state.summary). Without them an AI waits for an answer that never comes.")
                     Button("Open Settings") {
                         Task { await access.turnOn(openURL: openURL) }
                     }
-                    .buttonStyle(SignalButtonStyle(.outline))
+                    .buttonStyle(SignalButtonStyle(.outline, size: .small))
+                    .padding(.horizontal, 20)
                     .accessibilityIdentifier("openNotificationSettings")
                 }
+                if screenLock {
+                    Color.clear.frame(height: 0).accessibilityIdentifier("screenLockOn")
+                } else {
+                    SetupNote(glyph: .faceId, text: "No passcode. Approving needs one: Settings, Face ID & Passcode.")
+                        .accessibilityIdentifier("screenLockOff")
+                }
             }
+            .padding(.top, 14)
         }
         .task {
             screenLock = ScreenLock.isSet() || model.demo
@@ -332,54 +301,32 @@ private struct NotificationsPage: View {
     }
 }
 
-/// "On" (a check) or what is missing, on the right of a row.
-private struct StatusWord: View {
-    var text: String
-    var ok: Bool
-
-    var body: some View {
-        HStack(spacing: 5) {
-            if ok { GlyphIcon(.check, size: 14) }
-            Text(text)
-        }
-        .font(TextRole.tag.font())
-        .foregroundStyle(ok ? Palette.success : Palette.inkMeta)
-        .fixedSize()
-    }
-}
-
 /// The notification they will get, drawn as it shows on the lock screen.
 private struct SampleNotification: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 GlyphIcon(.shieldCheck, size: 13)
-                    .foregroundStyle(Palette.onInverse)
-                    .frame(width: 20, height: 20)
-                    .background(Palette.inverse, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .accessibilityHidden(true)
-                Text("Reins").font(RFont.sans(13, .semibold)).foregroundStyle(Palette.ink2)
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(Palette.onFieldInk, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                Text("Reins").font(RFont.fixedSans(13, .semibold)).foregroundStyle(Color(red: 95 / 255, green: 94 / 255, blue: 107 / 255))
                 Spacer()
-                Text("now").font(RFont.sans(13)).foregroundStyle(Palette.inkMeta)
+                Text("now").font(RFont.fixedSans(13)).foregroundStyle(Color(red: 107 / 255, green: 106 / 255, blue: 120 / 255))
             }
-            Text("Claude wants to send an email").font(RFont.sans(15.5, .semibold)).foregroundStyle(Palette.ink).padding(.top, 4)
-            // Verbatim: a string literal is Markdown, which would turn the address into a link.
-            Text(verbatim: "To anna@example.com · \u{201C}Draft for Friday\u{201D}").font(RFont.sans(14)).foregroundStyle(Palette.ink2).lineLimit(1)
-            // In the order the notification shows them.
-            HStack(spacing: 8) {
-                Text("Deny").frame(maxWidth: .infinity)
-                Text("Review").frame(maxWidth: .infinity)
+            HStack(spacing: 10) {
+                RequestIcon(spec: AskIcon(mark: .service("gmail"), action: .send, kind: .push), size: 36, ring: .white)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Claude wants to send an email").font(RFont.fixedSans(15.5, .semibold)).foregroundStyle(Palette.onFieldInk)
+                    // Verbatim: a string literal is Markdown, which would turn the address into a link.
+                    Text(verbatim: "anna@example.com").font(RFont.fixedMono(13)).foregroundStyle(Color(red: 95 / 255, green: 94 / 255, blue: 107 / 255))
+                }
             }
-            .font(RFont.sans(14, .medium))
-            .foregroundStyle(Palette.ink)
-            .frame(height: 34)
-            .background(Palette.paperSunken, in: Capsule())
-            .padding(.top, 8)
         }
         .padding(14)
-        .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Palette.rule, lineWidth: 1))
-        .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+        .frame(width: 318)
+        .background(.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.3), radius: 18, y: 18)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("A sample notification: Claude wants to send an email")
     }
@@ -387,7 +334,8 @@ private struct SampleNotification: View {
 
 // MARK: 3. What your AIs can use
 
-/// The services, a computer and an AI app together: they are all connections.
+/// The services as big tiles (a tile opens its service, then returns), a computer to scan, and the address for an AI
+/// app: they are all connections.
 private struct ConnectionsPage: View {
     var onOpen: (String) -> Void
     @Environment(AppModel.self) private var model
@@ -397,53 +345,76 @@ private struct ConnectionsPage: View {
     @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            PageTitle(lead: "What your AIs ", target: "can use",
-                      text: "They reach these only through this phone, one approved request at a time.")
+        VStack(alignment: .leading, spacing: 0) {
+            HeroText(title: "Connect", line: nil)
             if model.services.isEmpty {
                 ProgressView().frame(maxWidth: .infinity).padding(24)
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                     ForEach(model.services, id: \.service) { s in
-                        let count = s.accounts.count
-                        TourServiceTile(
-                            id: s.service, name: s.name,
-                            status: !s.available ? "Not available" : count == 0 ? "Connect" : count == 1 ? "1 account" : "\(count) accounts",
-                            connected: count > 0, available: s.available
-                        ) { onOpen(s.service) }
+                        TourServiceTile(id: s.service, name: s.name, count: s.accounts.count, available: s.available) { onOpen(s.service) }
                     }
-                    TourServiceTile(id: "mcp", name: "Any MCP", status: "Add yours", connected: false, available: true) {
-                        onOpen("mcp")
+                    TourServiceTile(id: "mcp", name: "MCP server", count: model.mcpServers.count, available: true) { onOpen("mcp") }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 30)
+            }
+            RaisedGroup {
+                HStack(spacing: 12) {
+                    GlyphTile(.laptop)
+                    Text("Computer").textRole(.row).foregroundStyle(Palette.ink).frame(maxWidth: .infinity, alignment: .leading)
+                    // The sheet's Open cue is the sound (the style plays the default tap).
+                    Button {
+                        model.openSheet(.connectComputer)
+                    } label: {
+                        Label { Text("Scan") } icon: { GlyphIcon(.qrCode, size: 18) }
                     }
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false, height: 40))
+                    .disabled(!model.approvalDevice)
+                    .accessibilityLabel("Scan QR code")
+                    .accessibilityIdentifier("scanQR")
                 }
-                .padding(.top, 8)
-            }
-
-            VStack(spacing: 0) {
-                // The sheet's Open cue is the sound (the style plays the default tap).
-                TourRow(glyph: .laptop, title: "Your computer", text: "Desktop app or reins login") {
-                    Button("Scan") { model.openSheet(.connectComputer) }
-                        .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
-                        .disabled(!model.approvalDevice)
-                        .opacity(model.approvalDevice ? 1 : 0.45)
-                        .accessibilityLabel("Scan QR code")
-                        .accessibilityIdentifier("scanQR")
+                .padding(.leading, 14)
+                .padding(.trailing, 8)
+                .frame(minHeight: 56)
+                HStack(spacing: 12) {
+                    GlyphTile(.globe)
+                    Text(verbatim: SettingsText.host(model.mcpAddress))
+                        .font(RFont.mono(13.5))
+                        .foregroundStyle(Palette.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel(model.mcpAddress)
+                        .accessibilityIdentifier("mcpAddress")
+                    QuietIconButton(copied ? .check : .copy, label: copied ? "Copied" : "Copy") {
+                        copyPlain(model.mcpAddress, feedback: feedback)
+                        copied = true
+                    }
+                    .accessibilityIdentifier("copyMcp")
                 }
-                aiApp
+                .padding(.leading, 14)
+                .padding(.trailing, 8)
+                .frame(minHeight: 56)
             }
-            .padding(.top, 10)
-            PhoneStatus()
-            if let added {
-                FormBanner(text: "\(untrusted(added.label)) is connected.", kind: .info)
-                    .accessibilityIdentifier("computerConnected")
+            .padding(.top, 14)
+            VStack(alignment: .leading, spacing: 8) {
+                PhoneStatus()
+                if let added {
+                    SetupNote(glyph: .check, text: "\(untrustedName(added.label, limit: 40)) is connected.", tint: Palette.success)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("computerConnected")
+                }
             }
+            .padding(.top, 12)
             Link(destination: URL(string: "https://reins2fa.com/download")!) {
-                Text("No desktop app yet? Get it at reins2fa.com/download")
-                    .textRole(.meta)
+                Text("Get the desktop app")
+                    .textRole(.sub)
                     .foregroundStyle(Palette.ink2)
                     .underline()
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, minHeight: 44)
             }
             .accessibilityIdentifier("downloadDesktop")
         }
@@ -457,105 +428,79 @@ private struct ConnectionsPage: View {
         .accessibilityIdentifier("setupIntegrations")
     }
 
-    /// "Claude.ai or ChatGPT": the server's /mcp address to add as a custom connector, and Copy.
-    private var aiApp: some View {
-        HStack(alignment: .center, spacing: 14) {
-            GlyphIcon(.globe, size: 20)
-                .foregroundStyle(Palette.ink2)
-                .frame(width: 24)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Claude.ai or ChatGPT").textRole(.row).foregroundStyle(Palette.ink)
-                Text(model.mcpAddress)
-                    .font(RFont.mono(13))
-                    .foregroundStyle(Palette.inkMeta)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .environment(\.layoutDirection, .leftToRight)
-                    .accessibilityIdentifier("mcpAddress")
-            }
-            Spacer(minLength: 8)
-            Button(copied ? "Copied" : "Copy") {
-                UIPasteboard.general.string = model.mcpAddress
-                feedback.play(.copied)
-                copied = true
-            }
-            .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
-            .accessibilityIdentifier("copyMcp")
-        }
-        .padding(.vertical, 13)
-        .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
-    }
-
     private var added: ConnectionView? {
         guard let known else { return nil }
         return model.connections.last { !known.contains($0.id) }
     }
 }
 
-/// A service in the grid: its mark, its name, and "Connect" or its accounts (ticked once one lands).
+/// A service as a big tile: its logo, then a green check and how many accounts, or "Add".
 private struct TourServiceTile: View {
     var id: String
     var name: String
-    var status: String
-    var connected: Bool
+    var count: Int
     var available: Bool
     var action: () -> Void
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top) {
-                    ServiceAvatar(service: id, size: 30)
-                    Spacer(minLength: 0)
-                    if connected {
-                        GlyphIcon(.check, size: 14).foregroundStyle(Palette.success).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 0) {
+                MarkPlate(size: 42) { ServiceAvatar(service: id, size: 42) }
+                Spacer(minLength: 8)
+                HStack(spacing: 4) {
+                    if count > 0 {
+                        GlyphIcon(.check, size: 14)
+                        Text("\(count)")
+                    } else if available {
+                        GlyphIcon(.plus, size: 15)
+                        Text("Add")
+                    } else {
+                        Text("Not here")
                     }
                 }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(name).font(RFont.sans(14, .medium)).foregroundStyle(available ? Palette.ink : Palette.inkMeta).lineLimit(1)
-                    Text(status).font(RFont.sans(12)).foregroundStyle(connected ? Palette.success : Palette.inkMeta).lineLimit(1)
-                }
+                .font(RFont.sans(14, .semibold))
+                .foregroundStyle(count > 0 ? Palette.success : Palette.ink2)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.paperSunken, in: shape)
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 108, alignment: .leading)
+            .background(Palette.paperRaised, in: shape)
+            .overlay { if scheme == .light { shape.strokeBorder(Palette.rule, lineWidth: 1) } }
             .contentShape(shape)
         }
         .buttonStyle(PressDimsStyle())
         .disabled(!available)
+        .accessibilityLabel("\(name), \(count > 0 ? (count == 1 ? "1 account" : "\(count) accounts") : available ? "add" : "not available")")
         .accessibilityIdentifier("setupService:\(id)")
     }
 }
 
 // MARK: 4. How much to ask
 
-/// Two decisions, one page: how a new AI starts, and whether a model on this phone helps.
+/// Manual or Auto as two big tiles, the model under them, and how a new AI starts.
 private struct RulesPage: View {
     @Environment(AppModel.self) private var model
     @State private var ap = AutopilotModel()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            PageTitle(lead: "How much ", target: "to ask")
-            // The card brings its own side margin; the page's other content already has one.
-            StartingRuleChooser().padding(.horizontal, -16).padding(.top, 8)
-            Eyebrow("Autopilot · a private model")
-            HStack(spacing: 8) {
-                OnboardingModeTile(mode: .manual, line: "You decide, with a hint", chosen: model.autopilot?.mode == .manual) {
-                    Task { await ap.setMode(.manual) }
-                }
-                OnboardingModeTile(mode: .auto, line: "Decides the easy ones", chosen: model.autopilot?.mode == .auto) {
-                    Task { await ap.setMode(.auto) }
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            HeroText(title: "Asking", line: nil)
+            HStack(spacing: 10) {
+                ModeBigTile(mode: .manual, chosen: model.autopilot?.mode == .manual) { Task { await ap.setMode(.manual) } }
+                ModeBigTile(mode: .auto, chosen: model.autopilot?.mode == .auto) { Task { await ap.setMode(.auto) } }
             }
-            modelRow
-            Text("A small model on this phone learns from your answers. Requests are judged right here; nothing is sent off to be decided. Change modes any time on the Trust tab.")
-                .textRole(.meta)
-                .foregroundStyle(Palette.inkMeta)
-                .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 16)
+            .padding(.top, 30)
+            RaisedGroup { modelRow }
+                .padding(.top, 12)
+            SectionHeader("New AIs", glyph: .link, quiet: true).padding(.top, 2)
+            FlatGroup {
+                StartRow(title: "Ask every time", glyph: .shieldWaiting, policy: .askEveryTime)
+                StartRow(title: "Headlines for 1 hour", glyph: .mail, policy: .headlinesFirstHour)
+            }
+            GroupFooter("A small model on this phone learns from your answers. Requests are judged right here; nothing is sent off to be decided. Change modes any time on the Trust tab.\n\nHeadlines for 1 hour: a new AI sees only sender, subject and date for its first hour; opening anything still asks.")
+                .padding(.horizontal, 20)
         }
         // Someone who just installed Reins starts with the recommended rule; a choice made before stays.
         .task {
@@ -567,59 +512,124 @@ private struct RulesPage: View {
         .accessibilityIdentifier("setupRules")
     }
 
-    /// "Get the model now", or how its download goes.
-    @ViewBuilder private var modelRow: some View {
+    /// The model: its size and Get, or how its download goes.
+    private var modelRow: some View {
         let m = ap.model
-        if m?.state == .installed || ap.modelReady {
-            TourRow(glyph: .chip, title: "The model", text: "On this phone") { StatusWord(text: "Ready", ok: true) }
-        } else if m?.state == .downloading, let m {
-            let percent = m.sizeBytes > 0 ? Int(Double(m.downloadedBytes) / Double(m.sizeBytes) * 100) : 0
-            TourRow(glyph: .chip, title: "The model", text: "Downloading in the background · \(percent)%") { EmptyView() }
-        } else if ap.downloadJob == .waiting {
-            TourRow(glyph: .chip, title: "The model", text: ap.waitingForWifi ? "Waits for Wi-Fi" : "Waits for a network") { EmptyView() }
-        } else {
-            TourRow(glyph: .chip, title: "Get the model now", text: "About 370 MB, on Wi-Fi, runs on this phone") {
+        return HStack(spacing: 12) {
+            GlyphTile(.chip)
+            Text("Model").textRole(.row).foregroundStyle(Palette.ink).frame(maxWidth: .infinity, alignment: .leading)
+            if m?.state == .installed || ap.modelReady {
+                Label { Text("Ready") } icon: { GlyphIcon(.check, size: 14) }
+                    .labelStyle(SignalLabelStyle())
+                    .font(RFont.sans(14, .semibold))
+                    .foregroundStyle(Palette.success)
+            } else if m?.state == .downloading, let m {
+                let percent = m.sizeBytes > 0 ? Int(Double(m.downloadedBytes) / Double(m.sizeBytes) * 100) : 0
+                Text("\(percent)%").font(RFont.sans(15)).foregroundStyle(Palette.ink2).monospacedDigit()
+            } else if ap.downloadJob == .waiting {
+                Text(ap.waitingForWifi ? "Waits for Wi-Fi" : "Waits for a network").font(RFont.sans(14)).foregroundStyle(Palette.ink2)
+            } else {
+                Label { Text("370 MB") } icon: { GlyphIcon(.cloud, size: 15) }
+                    .labelStyle(SignalLabelStyle())
+                    .font(RFont.sans(15))
+                    .foregroundStyle(Palette.ink2)
                 Button("Get") { ap.download() }
-                    .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false, height: 40))
+                    .accessibilityLabel("Get the model, about 370 MB, on Wi-Fi")
                     .accessibilityIdentifier("setupGetModel")
             }
         }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .frame(minHeight: 56)
     }
 }
 
-/// Manual or Auto as a tile, its name in the serif as on the Trust tab.
-private struct OnboardingModeTile: View {
-    var mode: AutopilotMode
-    var line: String
+/// How a new AI starts: a row with a radio.
+private struct StartRow: View {
+    var title: String
+    var glyph: Glyph
+    var policy: StartingPolicy
+    @Environment(AppModel.self) private var model
+    @Environment(\.feedback) private var feedback
+
+    var body: some View {
+        let on = (model.startingPolicy ?? .askEveryTime) == policy
+        Button {
+            guard !on else { return }
+            feedback.play(.selection)
+            model.chooseStartingPolicy(policy)
+        } label: {
+            TileRow(title, glyph: glyph, chevron: false) { RadioDot(selected: on) }
+                .padding(.horizontal, -14)
+        }
+        .buttonStyle(RowPressStyle())
+        .accessibilityAddTraits(on ? .isSelected : [])
+        .accessibilityIdentifier("startingRule:\(policy == .askEveryTime ? "ask" : "headlines")")
+    }
+}
+
+/// Manual (raised; a violet ring and a check once chosen) or Auto (its violet field with the grain) as a big tile.
+private struct ModeBigTile: View {
+    var mode: ModeKind
     var chosen: Bool
     var action: () -> Void
     @Environment(\.feedback) private var feedback
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
+        let field = mode == .auto
         Button {
             guard !chosen else { return }
             feedback.play(.selection)
             action()
         } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(AutopilotText.name(mode)).font(RFont.display(20.5)).foregroundStyle(Palette.ink)
-                Text(line).textRole(.meta).foregroundStyle(Palette.ink2).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 0) {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(field ? .white.opacity(0.2) : Palette.paperSunken)
+                    .frame(width: 48, height: 48)
+                    .overlay { ModeGlyph(mode, size: 22).foregroundStyle(field ? .white : Palette.ink) }
+                Spacer(minLength: 12)
+                Text(mode.name)
+                    .font(RFont.display(23.5))
+                    .tracking(RFont.displayTracking(23.5))
+                    .foregroundStyle(field ? .white : Palette.ink)
+                Text(mode.effect)
+                    .font(RFont.sans(13.5))
+                    .foregroundStyle(field ? .white.opacity(0.85) : Palette.inkMeta)
+                    .padding(.top, 4)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
-            .background(chosen ? Palette.paperRaised : Palette.paperSunken, in: shape)
-            .overlay(shape.strokeBorder(chosen ? Palette.ink : Color.clear, lineWidth: 1.5))
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 176, alignment: .leading)
+            .background {
+                if field {
+                    FieldSurface(kind: .grant).clipShape(shape)
+                } else {
+                    shape.fill(Palette.paperRaised)
+                }
+            }
+            .overlay { if chosen { shape.strokeBorder(field ? .white : Palette.violet, lineWidth: 2.5) } }
+            .overlay(alignment: .topTrailing) {
+                if chosen {
+                    GlyphIcon(.check, size: 14)
+                        .foregroundStyle(field ? Palette.violetFill : .white)
+                        .frame(width: 24, height: 24)
+                        .background(field ? .white : Palette.violetFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .padding(14)
+                }
+            }
             .contentShape(shape)
         }
         .buttonStyle(PressDimsStyle())
+        .accessibilityLabel("\(mode.name), \(mode.effect)")
         .accessibilityAddTraits(chosen ? .isSelected : [])
-        .accessibilityIdentifier("setupMode:\(AutopilotText.key(mode))")
+        .accessibilityIdentifier("setupMode:\(mode.rawValue)")
     }
 }
 
-// MARK: 5. You're in control
+// MARK: 5. All set
 
+/// One big check, and what is ready as chips (a missing one shows a minus).
 private struct DonePage: View {
     @Environment(AppModel.self) private var model
     private var access: NotificationAccess { .shared }
@@ -628,29 +638,32 @@ private struct DonePage: View {
     var body: some View {
         let accounts = model.services.filter { $0.service != "vault" }.reduce(0) { $0 + $1.accounts.count }
         let modelState = model.autopilot?.model.state
-        VStack(alignment: .leading, spacing: 12) {
-            PageTitle(lead: "You're ", target: "in control",
-                      text: "Your AIs can now do real work for you, and nothing happens without your say.")
-            VStack(spacing: 0) {
-                Checklist(glyph: .bell, title: "Notifications",
-                          text: access.state == .on ? "On" : "\(access.state.summary): turn them on from Activity", ok: access.state == .on)
-                Checklist(glyph: .faceId, title: "Screen lock",
-                          text: screenLock ? "On: approvals ask for it" : "Off: approving needs a passcode", ok: screenLock)
-                Checklist(glyph: .database, title: "Services",
-                          text: accounts == 0 ? "None yet: add them from Connections" : accounts == 1 ? "1 account connected" : "\(accounts) accounts connected",
-                          ok: accounts > 0)
-                Checklist(glyph: .chip, title: "Private model",
-                          text: modelState == .installed ? "Installed on this phone" : modelState == .downloading ? "Downloading in the background" : "Not downloaded: Manual needs none",
-                          ok: modelState == .installed)
-                Checklist(glyph: .laptop, title: "Computers and AI apps",
-                          text: model.connections.isEmpty ? "None yet: connect one from Connections" : "\(model.connections.count) connected",
-                          ok: !model.connections.isEmpty)
+        VStack(alignment: .leading, spacing: 0) {
+            HeroText(title: "All set", line: nil)
+            Circle()
+                .fill(Palette.success)
+                .overlay { Grain().clipShape(Circle()) }
+                .overlay { GlyphIcon(.check, size: 80).foregroundStyle(.white) }
+                .frame(width: 168, height: 168)
+                .shadow(color: Palette.success.opacity(0.5), radius: 25, y: 24)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 40)
+                .accessibilityHidden(true)
+            CenteredFlow(spacing: 8) {
+                SetupChip(glyph: .bell, text: "Notifications", ok: access.state == .on)
+                SetupChip(glyph: .faceId, text: "Face ID", ok: screenLock)
+                SetupChip(glyph: .database, text: accounts == 1 ? "1 service" : "\(accounts) services", ok: accounts > 0)
+                SetupChip(glyph: .chip, text: "Model", ok: modelState == .installed)
+                SetupChip(glyph: .laptop, text: model.connections.count == 1 ? "1 app" : "\(model.connections.count) apps", ok: !model.connections.isEmpty)
             }
-            .padding(.top, 6)
-            Text("Everything here can be changed later. The tour lives on under Settings.")
-                .textRole(.meta)
-                .foregroundStyle(Palette.inkMeta)
-                .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 20)
+            .padding(.top, 34)
+            if access.state != .on {
+                SetupNote(glyph: .bell, text: "Turn notifications on from Activity, or asks wait unseen.").padding(.top, 16)
+            }
+            if !screenLock {
+                SetupNote(glyph: .faceId, text: "Approving needs a passcode.").padding(.top, 8)
+            }
         }
         .task {
             screenLock = ScreenLock.isSet() || model.demo
@@ -662,22 +675,6 @@ private struct DonePage: View {
     }
 }
 
-private struct Checklist: View {
-    var glyph: Glyph
-    var title: String
-    var text: String
-    var ok: Bool
-
-    var body: some View {
-        TourRow(glyph: glyph, title: title, text: text) {
-            GlyphIcon(ok ? .circleCheck : .minus, size: 18)
-                .foregroundStyle(ok ? Palette.success : Palette.inkMeta)
-                .accessibilityHidden(true)
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
 /// Whether this phone became the approval device: still on it, done, or why not (with a retry).
 private struct PhoneStatus: View {
     @Environment(AppModel.self) private var model
@@ -686,25 +683,23 @@ private struct PhoneStatus: View {
 
     var body: some View {
         if model.approvalDevice {
-            FormBanner(text: "This phone now approves what your AI assistants ask for.", kind: .info)
-                .fixedSize(horizontal: false, vertical: true)
+            SetupNote(glyph: .shieldCheck, text: "This phone approves what your AIs ask.", tint: Palette.success)
+                .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("phoneReady")
         } else if let error = model.registrationError, !busy {
             VStack(alignment: .leading, spacing: 8) {
-                FormBanner(text: error)
+                FormBanner(text: error).padding(.horizontal, 16)
                 Button("Try again", action: retry)
-                    .font(TextRole.button.font())
-                    .foregroundStyle(Palette.ink)
+                    .buttonStyle(SignalButtonStyle(.soft, size: .small, fill: false))
+                    .padding(.horizontal, 16)
                     .accessibilityIdentifier("registerAgain")
             }
         } else {
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Setting up this phone for approvals")
-                    .textRole(.meta)
-                    .foregroundStyle(Palette.inkMeta)
+                Text("Setting up this phone for approvals").textRole(.sub).foregroundStyle(Palette.inkMeta)
             }
-            .padding(.vertical, 6)
+            .padding(.horizontal, 20)
         }
     }
 

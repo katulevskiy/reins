@@ -23,7 +23,7 @@ struct ConnectionsScreen: View {
         NextPage(bottom: 120) {
             StandardTitle("Connections")
                 .accessibilityIdentifier("connectionsTitle")
-            AddSectionHeader(title: "AI apps", glyph: .globe, count: apps.count, addLabel: "Connect an AI app", addId: "connect") {
+            PlusSectionHeader(title: "AI apps", glyph: .globe, count: apps.count, addLabel: "Connect an AI app", addId: "connect") {
                 connecting = true
             }
             .padding(.top, -4)
@@ -49,7 +49,7 @@ struct ConnectionsScreen: View {
                     .accessibilityIdentifier("showAllApps")
                 }
             }
-            AddSectionHeader(title: "Computers", glyph: .laptop, count: computers.count, addLabel: "Connect a computer", addId: "connectComputer") {
+            PlusSectionHeader(title: "Computers", glyph: .laptop, count: computers.count, addLabel: "Connect a computer", addId: "connectComputer") {
                 connecting = true
             }
             RaisedGroup {
@@ -58,7 +58,7 @@ struct ConnectionsScreen: View {
                 }
                 ForEach(computers, id: \.id) { ConnectionRow(connection: $0) }
             }
-            AddSectionHeader(
+            PlusSectionHeader(
                 title: "Services", glyph: .link, count: reach.count + model.mcpServers.count, addLabel: "Add a service", addId: "addService"
             ) {
                 addingService = true
@@ -303,7 +303,7 @@ private struct ConnectSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SheetTitle("Connect") { dismiss() }
+            SheetHeading("Connect") { dismiss() }
             SectionHeader("AI app", glyph: .link)
             RaisedGroup {
                 HStack(spacing: 8) {
@@ -371,7 +371,7 @@ private struct ConnectSheet: View {
 }
 
 /// A sheet's title row (the kit's `sheet(…, title)`): display 22 and the round close button.
-struct SheetTitle: View {
+struct SheetHeading: View {
     var title: String
     var onClose: () -> Void
 
@@ -408,7 +408,7 @@ private struct AddServiceSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                SheetTitle("Add a service") { dismiss() }
+                SheetHeading("Add a service") { dismiss() }
                 RaisedGroup {
                     ForEach(services, id: \.service) { service in
                         Button { onChoose(service.service) } label: {

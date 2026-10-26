@@ -136,13 +136,13 @@ private struct JoinContent: View {
                         .padding(.top, 12)
                 }
                 RaisedGroup(inset: 48) {
-                    GlyphFact(glyph: .phone, value: PairWords.quoted(view.deviceName), valueId: "joinPhone")
+                    PairFact(glyph: .phone, value: PairWords.quoted(view.deviceName), valueId: "joinPhone")
                 }
                 .padding(.top, 14)
                 SectionHeader("It gets")
                 RaisedGroup(inset: 48) {
-                    GlyphFact(glyph: .vault, value: "Your vault")
-                    GlyphFact(glyph: .shieldCheck, value: "Approves requests")
+                    PairFact(glyph: .vault, value: "Your vault")
+                    PairFact(glyph: .shieldCheck, value: "Approves requests")
                 }
                 .accessibilityIdentifier("joinGets")
                 if let error = vm.error {

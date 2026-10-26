@@ -7,7 +7,7 @@ import UIKit
 
 /// A section you add to (the kit's `sec_add`): the header's glyph and title, its count, and a 30 pt round plus. The
 /// plus lives on its own section, never on the page title.
-struct AddSectionHeader: View {
+struct PlusSectionHeader: View {
     var title: String
     var glyph: Glyph?
     var count: Int?
@@ -112,7 +112,7 @@ extension StandardTitle where Trailing == EmptyView {
 
 /// A quiet page's title (the kit's `page_title(…, 'quiet', lead)`): its mark (a 36 pt logo or avatar), then display 24.
 /// A name from elsewhere arrives cleaned and capped; it is the page's own heading, one line.
-struct QuietTitle<Lead: View>: View {
+struct MarkedTitle<Lead: View>: View {
     var title: String
     var titleId: String?
     @ViewBuilder var lead: Lead
@@ -134,7 +134,7 @@ struct QuietTitle<Lead: View>: View {
     }
 }
 
-extension QuietTitle where Lead == EmptyView {
+extension MarkedTitle where Lead == EmptyView {
     init(_ title: String, titleId: String? = nil) {
         self.init(title: title, titleId: titleId) { EmptyView() }
     }
@@ -185,7 +185,7 @@ extension View {
 }
 
 /// A form field as a row (the kit's `inp`): its glyph says what it is, a short placeholder, anything at its right.
-struct InputRow<Field: View, Trailing: View>: View {
+struct GlyphInputRow<Field: View, Trailing: View>: View {
     var glyph: Glyph
     @ViewBuilder var field: Field
     @ViewBuilder var trailing: Trailing
@@ -205,7 +205,7 @@ struct InputRow<Field: View, Trailing: View>: View {
     }
 }
 
-extension InputRow where Trailing == EmptyView {
+extension GlyphInputRow where Trailing == EmptyView {
     init(glyph: Glyph, @ViewBuilder field: () -> Field) {
         self.glyph = glyph
         self.field = field()

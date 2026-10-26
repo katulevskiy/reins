@@ -9,7 +9,6 @@ import UIKit
 /// proof (`SessionState.otherApprovalDevice`).
 struct UnlockScreen: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.feedback) private var feedback
     @State private var vm = UnlockModel()
     @FocusState private var codeFocused: Bool
@@ -17,21 +16,29 @@ struct UnlockScreen: View {
     // The code, the unlock form, the passkeys: hidden in the app switcher and while the screen is recorded.
     var body: some View { screen.privacyCover() }
 
+    /// The Arrival board, 05: the account's pink field (the other phone, unlocked, beside this one, locked; "Another
+    /// phone"; the account in mono), the passkey first when the account has one, then the other phone or the recovery
+    /// code, and apart from them resetting the vault (a hold, after signing in again) and signing out.
     @ViewBuilder private var screen: some View {
-        GeometryReader { geo in
-            ScrollView {
-                VStack(spacing: 0) {
-                    Spacer(minLength: sizeClass == .regular ? 40 : 24)
-                    content
-                        .frame(maxWidth: 440)
-                        .padding(.horizontal, sizeClass == .regular ? 32 : 24)
-                    Spacer(minLength: 24)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                field
+                switch vm.stage {
+                case .choose: choose
+                case let .waiting(code): waiting(code)
+                case .recovery: recovery
+                case .reset: resetting
                 }
-                .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                if let error = vm.error {
+                    FormBanner(text: error).padding(.horizontal, 16).padding(.top, 12).transition(.opacity).accessibilityIdentifier("unlockError")
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
-            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 24)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .scrollBounceBehavior(.basedOnSize)
         .pageBackground()
         .animation(.smooth(duration: 0.25), value: vm.stage)
         .animation(.smooth(duration: 0.25), value: vm.error)
@@ -46,111 +53,112 @@ struct UnlockScreen: View {
         if case .otherApprovalDevice = model.session { true } else { false }
     }
 
-    @ViewBuilder private var content: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            GlyphIcon(.phone, size: 26)
-                .foregroundStyle(Palette.onField)
-                .frame(width: 56, height: 56)
-                .fieldBackground(.accounts, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .accessibilityHidden(true)
-                .padding(.bottom, 10)
-            AskText(takeover
-                    ? [AskText.Run(text: "Another phone "), AskText.Run(text: "approves", target: true), AskText.Run(text: " for this account")]
-                    : [AskText.Run(text: "Your account is on "), AskText.Run(text: "another phone", target: true)],
-                    role: .ask, lineLimit: nil)
-                .foregroundStyle(Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-            if let info = model.session.unlocking {
-                Text(info.email)
-                    .font(RFont.mono(14))
-                    .foregroundStyle(Palette.ink2)
-                    .environment(\.layoutDirection, .leftToRight)
+    private var field: some View {
+        SignalField(kind: .accounts) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 12) {
+                    ArtPhone(glyph: .lockOpen, width: 58, height: 96, fill: .white.opacity(0.2), ink: .white)
+                    ArtDots(count: 4)
+                    ArtPhone(glyph: .lock, width: 58, height: 96)
+                }
+                Text(takeover ? "Another phone approves" : "Another phone")
+                    .font(RFont.display(37))
+                    .tracking(RFont.displayTracking(37))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 22)
+                    .accessibilityAddTraits(.isHeader)
+                if let info = model.session.unlocking {
+                    Text(verbatim: info.email)
+                        .font(RFont.mono(14))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .environment(\.layoutDirection, .leftToRight)
+                        .padding(.top, 8)
+                }
+                if takeover {
+                    // Why this phone is asked at all: the server keeps another phone for approvals.
+                    Text(CoreError.OtherApprovalDevice.userMessage)
+                        .font(RFont.sans(14.5))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 10)
+                        .accessibilityIdentifier("unlockReason")
+                }
             }
-            switch vm.stage {
-            case .choose: choose
-            case let .waiting(code): waiting(code)
-            case .recovery: recovery
-            case .reset: resetting
-            }
-            if let error = vm.error {
-                FormBanner(text: error).transition(.opacity).accessibilityIdentifier("unlockError")
-            }
-            Button("Sign out") {
-                feedback.play(.tap)
-                vm.stopWaiting()
-                Task { await model.signOut() }
-            }
-            .font(TextRole.button.font())
-            .foregroundStyle(Palette.ink2)
-            .frame(maxWidth: .infinity)
-            .padding(.top, 10)
-            .disabled(vm.busy)
-            .accessibilityIdentifier("unlockSignOut")
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 26)
         }
     }
 
-    private var reason: String {
-        if takeover { return CoreError.OtherApprovalDevice.userMessage }
-        return vm.passkeyUnlock
-            ? "Use your passkey, approve from your other phone, or enter your recovery code."
-            : "Approve from your other phone, or enter your recovery code."
-    }
-
     private var choose: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(reason)
-                .textRole(.body)
-                .foregroundStyle(Palette.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 10)
-                .accessibilityIdentifier("unlockReason")
+        VStack(alignment: .leading, spacing: 0) {
             if vm.passkeyUnlock {
                 // A passkey added for the vault comes first: no other phone or code needed.
                 Button {
                     Task { await vm.unlockWithPasskey(model) }
                 } label: {
-                    HStack(spacing: 10) {
-                        if vm.passkeyBusy { ProgressView().tint(Palette.onInverse) } else { GlyphIcon(.key, size: 18) }
-                        Text("Unlock with a passkey")
+                    HStack(spacing: 8) {
+                        if vm.passkeyBusy { ProgressView().tint(Palette.onInverse) } else { GlyphIcon(.faceId, size: 18) }
+                        Text("Passkey")
                     }
                 }
-                .buttonStyle(CapsuleButtonStyle(kind: .primary))
+                .buttonStyle(SignalButtonStyle(.inverse))
                 .disabled(vm.busy)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
                 .accessibilityIdentifier("unlockWithPasskey")
             }
-            Button {
-                feedback.play(.tap)
-                Task { await vm.ask(model) }
-            } label: {
-                HStack(spacing: 10) {
-                    if vm.busy && !vm.passkeyBusy { ProgressView().tint(vm.passkeyUnlock ? Palette.ink : Palette.onInverse) }
-                    Text("Ask my other phone")
-                }
-            }
-            .buttonStyle(vm.passkeyUnlock ? SignalButtonStyle(.outline) : SignalButtonStyle(.inverse))
-            .disabled(vm.busy)
-            .accessibilityIdentifier("askOtherPhone")
-            Button("Enter my recovery code") {
-                feedback.play(.tap)
-                vm.showRecovery()
-                codeFocused = true
-            }
-            .buttonStyle(SignalButtonStyle(.outline))
-            .disabled(vm.busy)
-            .accessibilityIdentifier("enterRecoveryCode")
-            if !takeover {
-                // Neither the other phone nor the recovery code: start over.
-                Button("Lost both? Reset the vault") {
+            RaisedGroup {
+                Button {
                     feedback.play(.tap)
-                    vm.showReset()
+                    Task { await vm.ask(model) }
+                } label: {
+                    TileRow("Other phone", glyph: .phone) {
+                        if vm.busy && !vm.passkeyBusy { ProgressView() }
+                    }
                 }
-                .font(TextRole.button.font())
-                .foregroundStyle(Palette.danger)
-                .frame(maxWidth: .infinity)
-                .padding(.top, 4)
+                .buttonStyle(RowPressStyle())
                 .disabled(vm.busy)
-                .accessibilityIdentifier("resetVault")
+                .accessibilityIdentifier("askOtherPhone")
+                Button {
+                    feedback.play(.tap)
+                    vm.showRecovery()
+                    codeFocused = true
+                } label: {
+                    TileRow("Recovery code", glyph: .fileLock)
+                }
+                .buttonStyle(RowPressStyle())
+                .disabled(vm.busy)
+                .accessibilityIdentifier("enterRecoveryCode")
             }
+            .padding(.top, 12)
+            RaisedGroup {
+                if !takeover {
+                    // Neither the other phone nor the recovery code: start over (explained, then held).
+                    Button {
+                        feedback.play(.tap)
+                        vm.showReset()
+                    } label: {
+                        TileRow("Reset vault", glyph: .trash, danger: true, chevron: false)
+                    }
+                    .buttonStyle(RowPressStyle())
+                    .disabled(vm.busy)
+                    .accessibilityIdentifier("resetVault")
+                }
+                Button {
+                    feedback.play(.tap)
+                    vm.stopWaiting()
+                    Task { await model.signOut() }
+                } label: {
+                    TileRow("Sign out", glyph: .quit, chevron: false)
+                }
+                .buttonStyle(RowPressStyle())
+                .disabled(vm.busy)
+                .accessibilityIdentifier("unlockSignOut")
+            }
+            .padding(.top, 22)
         }
         .transition(.opacity)
     }
@@ -161,26 +169,23 @@ struct UnlockScreen: View {
                 .textRole(.body)
                 .foregroundStyle(Palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
-            // The hero: serif, spaced, impossible to misread.
-            Text(code)
-                .font(RFont.display(47.5))
-                .tracking(4)
+            // Worked out from this phone's key: the other phone shows the same digits.
+            Text(verbatim: code)
+                .font(RFont.mono(48, .medium))
+                .tracking(3)
                 .monospacedDigit()
                 .foregroundStyle(Palette.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 22)
-                .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
-                .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+                .padding(.vertical, 18)
+                .background(Palette.paperRaised, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .environment(\.layoutDirection, .leftToRight)
                 .accessibilityLabel("Code \(code)")
                 .accessibilityIdentifier("joinCode")
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Waiting for your other phone")
-                    .textRole(.meta)
-                    .foregroundStyle(Palette.inkMeta)
+                Text("Waiting for your other phone").textRole(.meta).foregroundStyle(Palette.inkMeta)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
@@ -191,25 +196,32 @@ struct UnlockScreen: View {
             .buttonStyle(SignalButtonStyle(.outline))
             .accessibilityIdentifier("cancelJoin")
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 18)
         .transition(.opacity)
     }
 
     private var recovery: some View {
         @Bindable var vm = vm
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionHeader("Recovery code", quiet: true)
+            RaisedFields {
+                GlyphInputRow(glyph: .fileLock) {
+                    TextField("Recovery code or master password", text: $vm.code, axis: .vertical)
+                        .font(RFont.mono(16))
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .textContentType(.oneTimeCode)
+                        .lineLimit(1...4)
+                        .submitLabel(.go)
+                        .focused($codeFocused)
+                        .onSubmit { Task { await vm.unlock(model) } }
+                        .disabled(vm.busy)
+                        .accessibilityIdentifier("recoveryCode")
+                }
+            }
             GroupFooter("The recovery code is in thirteen groups of four letters and digits. An account made with a master password opens with that password instead.")
-            TextField("Recovery code or master password", text: $vm.code, axis: .vertical)
-                .font(RFont.mono(16))
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-                .textContentType(.oneTimeCode)
-                .lineLimit(1...4)
-                .submitLabel(.go)
-                .focused($codeFocused)
-                .onSubmit { Task { await vm.unlock(model) } }
-                .disabled(vm.busy)
-                .fieldWell()
-                .accessibilityIdentifier("recoveryCode")
+                .padding(.horizontal, 20)
             Button {
                 codeFocused = false
                 Task { await vm.unlock(model) }
@@ -219,54 +231,54 @@ struct UnlockScreen: View {
                     Text("Open the vault")
                 }
             }
-            .buttonStyle(CapsuleButtonStyle(kind: .primary))
+            .buttonStyle(SignalButtonStyle(.inverse))
             .disabled(vm.busy || vm.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
             .accessibilityIdentifier("unlock")
-            Button("Back") {
-                feedback.play(.tap)
-                vm.back()
-            }
-            .font(TextRole.button.font())
-            .foregroundStyle(Palette.ink2)
-            .frame(maxWidth: .infinity)
-            .disabled(vm.busy)
-            .accessibilityIdentifier("unlockBack")
+            backLink("unlockBack")
         }
         .transition(.opacity)
     }
 
-    /// What a reset deletes and what it keeps; signing in again confirms it.
+    /// What a reset deletes and what it keeps; signing in again confirms it, held.
     private var resetting: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Deletes the vault: items, integrations, grants and activity. Other phones sign out; AIs connect again. Can't be undone.")
                 .textRole(.body)
                 .foregroundStyle(Palette.danger)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Your email and sign-in stay. You get a new recovery code.")
+            Text("Your email and sign-in stay. You get a new recovery code. To confirm, sign in again with this account.")
                 .textRole(.body)
                 .foregroundStyle(Palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("To confirm, sign in again with this account.")
-                .textRole(.body)
-                .foregroundStyle(Palette.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 10)
+                .padding(.bottom, 6)
             // A red hold, never a tap: everything in the vault goes.
             HoldButton(title: "Hold to sign in again and reset", busy: vm.busy) {
                 Task { await vm.reset(model) }
             }
             .accessibilityIdentifier("confirmReset")
-            Button("Back") {
-                feedback.play(.tap)
-                vm.back()
-            }
-            .font(TextRole.button.font())
-            .foregroundStyle(Palette.ink2)
-            .frame(maxWidth: .infinity)
-            .disabled(vm.busy)
-            .accessibilityIdentifier("resetBack")
+            backLink("resetBack").padding(.horizontal, -16)
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 18)
         .transition(.opacity)
+    }
+
+    private func backLink(_ id: String) -> some View {
+        Button {
+            feedback.play(.tap)
+            vm.back()
+        } label: {
+            Text("Back")
+                .font(RFont.sans(16, .semibold))
+                .foregroundStyle(Palette.ink2)
+                .frame(maxWidth: .infinity, minHeight: 46)
+        }
+        .buttonStyle(PressDimsStyle())
+        .disabled(vm.busy)
+        .padding(.horizontal, 16)
+        .accessibilityIdentifier(id)
     }
 }
 

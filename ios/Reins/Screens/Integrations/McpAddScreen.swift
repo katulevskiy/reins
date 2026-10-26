@@ -14,12 +14,12 @@ struct McpAddScreen: View {
 
     var body: some View {
         NextPage {
-            QuietTitle(title: "Add MCP server") {
+            MarkedTitle(title: "Add MCP server") {
                 MarkPlate(size: 36) { ServiceAvatar(service: "mcp", size: 36) }
             }
             SectionHeader("Server", quiet: true)
             FlatFields {
-                InputRow(glyph: .globe) {
+                GlyphInputRow(glyph: .globe) {
                     TextField("https://mcp.example.com/mcp", text: $url)
                         .font(RFont.mono(15))
                         .keyboardType(.URL)
@@ -33,14 +33,14 @@ struct McpAddScreen: View {
                 } trailing: {
                     PasteInto(label: "Paste the address") { url = $0 }
                 }
-                InputRow(glyph: .pencil) {
+                GlyphInputRow(glyph: .pencil) {
                     TextField("Name", text: $name)
                         .focused($focus, equals: .name)
                         .submitLabel(.next)
                         .onSubmit { focus = .token }
                         .accessibilityIdentifier("mcpName")
                 }
-                InputRow(glyph: .vault) {
+                GlyphInputRow(glyph: .vault) {
                     SecureField("Token", text: $token)
                         .font(RFont.mono(15))
                         .textInputAutocapitalization(.never)

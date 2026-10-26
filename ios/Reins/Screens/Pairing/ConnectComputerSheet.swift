@@ -49,7 +49,7 @@ struct ConnectComputerSheet: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SheetTitle("Computer") { model.closeSheet() }
+            SheetHeading("Computer") { model.closeSheet() }
             if typing { typed } else { camera }
             if let error {
                 FormBanner(text: error)

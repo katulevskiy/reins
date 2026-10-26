@@ -207,9 +207,9 @@ private struct PairingContent: View {
                 }
                 // What the other side calls itself: quoted, on rows of their own, never the ask.
                 RaisedGroup(inset: 48) {
-                    GlyphFact(glyph: PairWords.computer(view) ? .laptop : .globe, value: PairWords.quoted(view.clientName), valueId: "pairName")
+                    PairFact(glyph: PairWords.computer(view) ? .laptop : .globe, value: PairWords.quoted(view.clientName), valueId: "pairName")
                     let host = asciiHost(untrustedName(view.clientHost, limit: 64))
-                    if !host.isEmpty { GlyphFact(glyph: .globe, value: host, mono: true, valueId: "pairHost") }
+                    if !host.isEmpty { PairFact(glyph: .globe, value: host, mono: true, valueId: "pairHost") }
                 }
                 .padding(.top, 14)
                 SectionHeader("Tap the code it shows")
@@ -225,7 +225,7 @@ private struct PairingContent: View {
                         .accessibilityIdentifier("pairSameClient")
                 }
                 RaisedFields {
-                    InputRow(glyph: .pencil) {
+                    GlyphInputRow(glyph: .pencil) {
                         TextField(untrustedName(view.clientName, limit: 48), text: Binding(get: { vm.label }, set: { vm.edit($0) }))
                             .focused($naming)
                             .submitLabel(.done)
@@ -332,7 +332,7 @@ struct ConnectField<Extra: View>: View {
 
 /// A fact with no key (the kit's `fact`): its glyph says what it is, the value beside it. Names from the other side
 /// arrive quoted, cleaned and capped; hosts in mono.
-struct GlyphFact: View {
+struct PairFact: View {
     var glyph: Glyph
     var value: String
     var mono = false
