@@ -27,6 +27,10 @@ enum DebugShow {
         case "newgrant": model.show(.newGrant(token: 1), in: .trust)
         case "tour": model.startTour()
         case "entry": model.show(.activityDetail(Int64(id) ?? 0), in: .activity)
+        case "email":
+            // `email:<entry>`: the entry's first email, opened.
+            model.show(.activityDetail(Int64(id) ?? 0), in: .activity)
+            model.push(.email(entryId: Int64(id) ?? 0, index: 0))
         default:
             if let section = AppSection(rawValue: place) { model.select(section) }
         }

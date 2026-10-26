@@ -69,6 +69,8 @@ final class ActivityFlowTests: XCTestCase {
         let card = element(app, "pending:req1")
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "modePill").exists)
+        // Who asks stays on the card beside its one-tap answer (security review, rule 4).
+        XCTAssertTrue(element(app, "cardWho:req1").exists, "who asks is on the card")
         shot(app, "activity-list")
         // The card's sentence opens the full screen; its buttons answer.
         element(app, "pendingTitle:req1").tap()
@@ -77,7 +79,7 @@ final class ActivityFlowTests: XCTestCase {
         shot(app, "activity-sheet-search")
     }
 
-    /// The mode pill drops the compact Autopilot menu, not the page; "Autopilot settings" opens the page.
+    /// The mode chip opens the Mode sheet, not the page; its Autopilot row opens the page.
     func testTheModePillOpensTheQuickMenuAndMoreOpensAutopilot() {
         let app = launch()
         let pill = element(app, "modePill")
@@ -111,8 +113,8 @@ final class ActivityFlowTests: XCTestCase {
             XCTAssertTrue(on.isSelected, "\(picked) is in force")
             XCTAssertFalse(off.isSelected, "\(other) is not")
             XCTAssertTrue(on.isEnabled && off.isEnabled, "both stay enabled")
-            element(app, "quickScrim").tap()
-            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3), "the scrim closes the menu")
+            element(app, "modeSheetClose").tap()
+            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3), "the close button closes the sheet")
         }
         pill.tap()
         element(app, "quick:BYPASS").tap()
@@ -211,6 +213,7 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertFalse(element(app, "pond").exists, "searching hides the stack")
         shot(app, "activity-search")
         element(app, "clearSearch").tap()
+        element(app, "cancelSearch").tap()
         expectToAppear(element(app, "pond"))
         element(app, "filterToggle").tap()
         element(app, "filter:outcome").tap()
@@ -260,6 +263,10 @@ final class ActivityFlowTests: XCTestCase {
 
     func testThisWasWrongAsksAndThanks() {
         let app = launch("reins://activity?id=13")
+        // "This was wrong" is the last of Autopilot's reasons.
+        let why = element(app, "entryAutopilotTitle")
+        XCTAssertTrue(why.waitForExistence(timeout: 10))
+        why.tap()
         let wrong = element(app, "thisWasWrong")
         XCTAssertTrue(wrong.waitForExistence(timeout: 10))
         wrong.tap()
@@ -285,12 +292,15 @@ final class ActivityFlowTests: XCTestCase {
         )
     }
 
-    /// Brings a history row fully on screen by scrolling from the mood line (plain text, nothing to press).
+    /// Brings a history row fully on screen by scrolling from the middle of the screen.
     private func bringOnScreen(_ app: XCUIApplication, _ row: XCUIElement) {
         expectToAppear(row)
         var tries = 0
         while !row.isHittable && tries < 3 {
-            drag(element(app, "activityMood"), dy: -120, speed: 600)
+            // From the middle of the screen: the list scrolls wherever the finger starts.
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
+            start.press(forDuration: 0.02, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -120)),
+                        withVelocity: XCUIGestureVelocity(rawValue: 600), thenHoldForDuration: 0.3)
             tries += 1
         }
         XCTAssertTrue(row.isHittable, "\(row) is on screen")
@@ -427,6 +437,12 @@ final class ActivityFlowTests: XCTestCase {
         let moves: [(dy: CGFloat, speed: CGFloat, pause: TimeInterval)] = [(-200, 2500, 0.02), (200, 900, 0.02), (-200, 900, 0.12), (200, 2500, 0.12)]
         for move in moves {
             centerInList(app, target)
+            if move.dy > 0 {
+                // Rows sit close under the waiting cards: give a drag down room to travel before the list's top
+                // stops it, by moving the row up the open list first (it stays in the open band).
+                nudge(app, dy: -150, avoiding: target)
+                settle(target)
+            }
             XCTAssertFalse(app.menus.firstMatch.exists, "centering did not open a context menu")
             assertDragStartsOnTheList(app, target, at: point)
             let before = target.frame.minY
@@ -493,20 +509,22 @@ final class ActivityFlowTests: XCTestCase {
         XCTAssertFalse(element(app, "autopilotQuick").waitForExistence(timeout: 1), "no menu opened")
     }
 
-    /// The chip's menu still opens on a tap, and on a press that stays a moment, from which a slide picks a row.
-    func testTheModeChipOpensOnATapAndOnAPressThatSlidesOntoARow() {
+    /// The chip opens the Mode sheet on a tap; a pick closes it and is in force the next time.
+    func testTheModeChipOpensTheModeSheet() {
         let app = launch()
         let pill = element(app, "modePill")
         expectToAppear(pill)
         pill.tap()
-        XCTAssertTrue(element(app, "autopilotQuick").waitForExistence(timeout: 3), "a tap opens the menu")
-        element(app, "quickScrim").tap()
+        XCTAssertTrue(element(app, "autopilotQuick").waitForExistence(timeout: 3), "a tap opens the sheet")
+        XCTAssertTrue(app.staticTexts["Mode"].exists, "titled Mode")
+        element(app, "modeSheetClose").tap()
         XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
-        // Press, wait, slide onto the first row (Manual) and lift: it is picked and the menu closes.
-        let start = pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        let firstRow = pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1)).withOffset(CGVector(dx: 0, dy: 40))
-        start.press(forDuration: 0.5, thenDragTo: firstRow, withVelocity: XCUIGestureVelocity(rawValue: 300), thenHoldForDuration: 0.2)
-        XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3), "the slide picked a row")
+        pill.tap()
+        element(app, "quick:AUTO").tap()
+        XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3), "a pick closes the sheet")
+        pill.tap()
+        element(app, "quick:MANUAL").tap()
+        XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
         pill.tap()
         XCTAssertTrue(element(app, "quick:MANUAL").waitForExistence(timeout: 3))
         XCTAssertTrue(element(app, "quick:MANUAL").isSelected, "Manual was picked")
@@ -595,32 +613,12 @@ final class ActivityFlowTests: XCTestCase {
 
     // MARK: Loosening needs a tap
 
-    /// From Lockdown, a press on the mode chip that slides onto Manual or Auto and lifts changes nothing: the menu stays
-    /// open, and only a tap on the row ends the lockdown.
-    func testALooseningModeIsNeverPickedByASlide() {
+    /// From Lockdown, a tap on Manual in the Mode sheet ends it (through the owner's check).
+    func testLeavingLockdownIsATapOnItsRow() {
         let app = launch(extra: ["-demoMode", "lockdown"])
         let pill = element(app, "modePill")
         expectToAppear(pill)
         XCTAssertTrue(pill.label.contains("Lockdown"), pill.label)
-        for row in ["quick:MANUAL", "quick:AUTO"] {
-            // Where the row sits once the menu is open; then closed again.
-            pill.tap()
-            let target = element(app, row)
-            expectToAppear(target, timeout: 5)
-            let onRow = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: target.frame.midX, dy: target.frame.midY))
-            element(app, "quickScrim").tap()
-            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
-            // One gesture from the closed chip: press until the menu opens, slide onto the row, lift.
-            let start = pill.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            start.press(forDuration: 0.6, thenDragTo: onRow, withVelocity: .slow, thenHoldForDuration: 0.2)
-            XCTAssertTrue(element(app, "autopilotQuick").waitForExistence(timeout: 2), "the menu stays open (\(row))")
-            XCTAssertTrue(pill.label.contains("Lockdown"), "still locked down after a slide onto \(row)")
-            element(app, "quickScrim").tap()
-            XCTAssertTrue(element(app, "autopilotQuick").waitForNonExistence(timeout: 3))
-        }
-        // A tap on the row, once the menu is open, does it. Wait for the reopened
-        // container first: a busy simulator can spend most of five seconds taking
-        // one accessibility snapshot after the repeated press/slide gestures.
         pill.tap()
         expectToAppear(element(app, "autopilotQuick"))
         let manual = element(app, "quick:MANUAL")
@@ -658,7 +656,7 @@ final class ActivityFlowTests: XCTestCase {
     func testRowsScrollUnderPaperAtTheTop() {
         let app = launch()
         expectToAppear(element(app, "activityMood"))
-        let start = element(app, "activityMood").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
         start.press(forDuration: 0.02, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -420)),
                     withVelocity: XCUIGestureVelocity(rawValue: 800), thenHoldForDuration: 0.4)
         shot(app, "activity-scrolled")
