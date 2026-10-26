@@ -416,9 +416,7 @@ impl Root {
                 PauseFor::Manual => "Until resume",
                 other => other.short(),
             };
-            let mut s = kit::segment(SharedString::from(format!("sheet-{}", length.id())), "", on, pal)
-                .h(px(32.0))
-                .px(px(10.0));
+            let mut s = kit::segment(SharedString::from(format!("sheet-{}", length.id())), "", on, pal).px(px(10.0));
             if length == PauseFor::Manual {
                 s = s.text_color(pal.danger).child(glyph(Glyph::Infinity, 14.0, pal.danger));
             }
@@ -447,37 +445,50 @@ impl Root {
             }))
             .into_any_element()
         };
+        // As the boards' Bypass sheet: a centred card, its name in red, what still asks, the lengths, the action.
         let sheet = div()
             .occlude()
             .relative()
             .flex()
             .flex_col()
-            .gap(px(12.0))
-            .w(px(440.0))
-            .p(px(24.0))
-            .rounded(px(24.0))
+            .w(px(480.0))
+            .px(px(24.0))
+            .py(px(22.0))
+            .rounded(px(22.0))
             .bg(pal.paper_raised())
             .border_1()
             .border_color(pal.rule())
             .shadow_lg()
-            .child(div().sheet_title().text_color(pal.ink()).child(kit::ask_line("Pause ", "git")))
+            .child(div().signal(crate::theme::text::MODE_TITLE).text_color(pal.danger).child("Pause git"))
             .child(
                 div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(6.0))
+                    .mt(px(10.0))
+                    .child(div().text_size(px(13.5)).font_weight(FontWeight::SEMIBOLD).text_color(pal.ink_2()).child("Still asks"))
+                    .child(kit::status_pill(Some(Glyph::Terminal), "Hooks", None, pal))
+                    .child(kit::status_pill(Some(Glyph::Link), "MCP tools", None, pal)),
+            )
+            .child(
+                div()
+                    .mt(px(10.0))
                     .text_size(px(14.0))
                     .line_height(px(20.0))
                     .text_color(pal.ink_2())
-                    .child("Pushes go straight to the hosts without asking. Hooks and MCP tools still ask your phone."),
+                    .child("Pushes go straight to the hosts without asking."),
             )
-            .child(lengths)
+            .child(div().mt(px(16.0)).child(lengths))
             .child(
                 div()
                     .flex()
                     .gap(px(8.0))
-                    .mt(px(4.0))
+                    .mt(px(18.0))
                     // Cancel and the action, 1 : 1.4.
                     .child(
                         div().flex().flex_none().w(gpui::relative(0.41)).child(
-                            kit::button("sheet-cancel", kit::Look::Outline, kit::Size::Regular, None, "Cancel", pal)
+                            kit::button("sheet-cancel", kit::Look::Soft, kit::Size::Regular, None, "Cancel", pal)
                                 .w_full()
                                 .on_click(Self::on_view(cx, |this, _| {
                                     this.pause_sheet = false;
@@ -497,7 +508,16 @@ impl Root {
                     this.hold = None;
                 },
             )))
-            .child(div().absolute().left(px(20.0)).bottom(px(64.0)).child(enter(sheet, "pause-sheet", Entrance::Sheet)))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .justify_center()
+                    .items_start()
+                    .pt(px(180.0))
+                    .child(enter(sheet, "pause-sheet", Entrance::Sheet)),
+            )
             .into_any_element()
     }
 }

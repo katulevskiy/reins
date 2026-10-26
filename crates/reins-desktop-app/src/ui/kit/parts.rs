@@ -89,9 +89,9 @@ pub fn fact_row(key: impl Into<SharedString>, value: impl IntoElement, pal: Pale
     )
 }
 
-/// A switch (40 × 24, the desktop boards' `.sw`): `violet-fill` when on, `paper-sunken` when off, a white knob.
+/// A switch (51 × 31, the boards' `.sw`): `violet-fill` when on, `paper-sunken` when off, a white knob.
 pub fn switch(id: impl Into<ElementId>, on: bool, pal: Palette) -> Stateful<Div> {
-    let (w, h, knob) = (40.0, 24.0, 20.0);
+    let (w, h, knob) = (51.0, 31.0, 27.0);
     div()
         .id(id.into())
         .flex()
@@ -113,9 +113,9 @@ pub fn switch(id: impl Into<ElementId>, on: bool, pal: Palette) -> Stateful<Div>
         .child(div().size(px(knob)).rounded_full().bg(gpui::white()).shadow_sm())
 }
 
-/// A segmented control's track: a `paper-sunken` pill (3 px inside, the desktop boards' `.seg`).
+/// A segmented control's track (`.cho`): a `paper-sunken` pill, 4 px inside.
 pub fn segmented(pal: Palette) -> Div {
-    div().flex().flex_none().items_center().p(px(3.0)).gap(px(2.0)).rounded_full().bg(pal.paper_sunken())
+    div().flex().flex_none().items_center().p(px(4.0)).gap(px(2.0)).rounded_full().bg(pal.paper_sunken())
 }
 
 /// One choice of it (30 px, 13): the selected one a `paper-raised` pill with a hairline.
@@ -132,12 +132,12 @@ pub fn segment(
         .items_center()
         .justify_center()
         .gap(px(4.0))
-        .h(px(30.0))
+        .h(px(36.0))
         .px(px(14.0))
         .rounded_full()
         .font_family(SANS)
-        .text_size(px(13.0))
-        .font_weight(FontWeight::MEDIUM)
+        .text_size(px(14.0))
+        .font_weight(FontWeight::SEMIBOLD)
         .whitespace_nowrap()
         .cursor_pointer()
         .active(|s| s.opacity(PRESSED))
