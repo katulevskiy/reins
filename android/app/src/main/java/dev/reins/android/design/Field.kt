@@ -3,7 +3,7 @@ package dev.reins.android.design
 import androidx.compose.ui.graphics.Color
 
 /**
- * The seven Signal fields: a solid colour appears only when something needs a decision, and its colour says what kind.
+ * The fields (Reins Next keeps Signal's seven and adds Overnight's night): a solid colour appears only when something needs a decision or a mode runs, and its colour says what kind.: a solid colour appears only when something needs a decision, and its colour says what kind.
  * The field colour is the same in both themes; the kind ink (a decided item's tile, a glyph on paper) is lighter in the
  * dark, and the tile is that ink at 13 %.
  */
@@ -26,8 +26,11 @@ enum class Field(private val rgb: Long) {
     /** Changes an account (passwords, recovery, sign-in). */
     Accounts(0xBE185D),
 
-    /** Reins is broken and needs you. */
+    /** Reins is broken and needs you; Lockdown. */
     Warn(0xA16207),
+
+    /** Overnight: risky asks wait for the morning. */
+    Night(0x1E2F5C),
     ;
 
     /** The solid field, the same in light and dark. White text on it is 4.9:1 or more. */
@@ -42,6 +45,7 @@ enum class Field(private val rgb: Long) {
         Pair -> c.kindPair
         Accounts -> c.kindAccounts
         Warn -> c.kindWarn
+        Night -> c.kindNight
     }
 
     /** A kind tile's fill: the ink at 13 %. */

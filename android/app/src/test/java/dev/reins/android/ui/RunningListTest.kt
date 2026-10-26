@@ -78,7 +78,7 @@ class RunningListTest {
         assertEquals(listOf(1L), runningEntries(entries, settings(AutopilotMode.OVERNIGHT, until = Long.MAX_VALUE, since = 0))!!.map { it.id })
         assertEquals(listOf(2L), runningEntries(entries, settings(AutopilotMode.LOCKDOWN))!!.map { it.id })
         assertNull("nothing runs", runningEntries(entries, settings(AutopilotMode.MANUAL)))
-        assertEquals("During this bypass", runningListTitle(settings(AutopilotMode.BYPASS, 1, 0)))
-        assertEquals("Denied while locked", runningListTitle(settings(AutopilotMode.LOCKDOWN)))
+        assertEquals("During bypass", runningListTitle(settings(AutopilotMode.BYPASS, 1, 0)))
+        assertEquals("Denied", runningListTitle(settings(AutopilotMode.LOCKDOWN)))
     }
 }

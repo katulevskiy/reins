@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Waiting widget (And-Outside 04): the top card of the stack, or the pond. Updated when what waits changes. -->
+<!-- The Waiting widget (And-Outside 05): the count on the top card, or the waiting list when wide. Updated when what waits changes. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_waiting_description"
     android:initialLayout="@layout/glance_default_loading_layout"
-    android:minWidth="250dp"
+    android:minWidth="110dp"
     android:minHeight="110dp"
-    android:minResizeWidth="180dp"
+    android:minResizeWidth="110dp"
     android:minResizeHeight="110dp"
-    android:targetCellWidth="4"
+    android:targetCellWidth="2"
     android:targetCellHeight="2"
     android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="0"

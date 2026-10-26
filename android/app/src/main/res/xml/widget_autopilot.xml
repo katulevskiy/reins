@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Autopilot widget (And-Outside 04): the mode, today's decisions, and Lock down. -->
+<!-- The Mode widget (And-Outside 05): the mode, and Lock down. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_autopilot_description"
     android:initialLayout="@layout/glance_default_loading_layout"

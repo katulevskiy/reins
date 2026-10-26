@@ -98,7 +98,7 @@ class QuickApprovalsFlowTest : FlowHarness() {
         awaitTag("burst")
         rule.onNodeWithTag("burstTitle", useUnmergedTree = true).assertTextEquals("Search Gmail 2 times and read 2 emails")
         awaitTag("approveAll")
-        rule.onNodeWithTag("approveAll").assertTextEquals("Allow 3 · 97%")
+        rule.onNodeWithTag("approveAll").assertTextEquals("Allow 3", "97%")
         tap("approveAll")
         awaitCore { core.quickApprovals.size == 3 }
         assertEquals(listOf("r1", "r2", "r3"), core.quickApprovals.toList().sorted())

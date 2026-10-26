@@ -159,6 +159,13 @@ abstract class FlowHarness {
         rule.waitForIdle()
     }
 
+    /** A service's row on Connections: the connected ones are in the Services group, the rest behind its +. */
+    protected fun openService(id: String) {
+        rule.waitUntil(10_000) { has("addService") }
+        if (!has("service:$id")) tap("addService")
+        tap("service:$id")
+    }
+
     protected fun has(tag: String): Boolean {
         settle()
         return rule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()

@@ -157,7 +157,7 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
-        <!-- Quick Settings tiles (And-Outside 03): Lockdown, what waits, Autopilot's mode. -->
+        <!-- Quick Settings tiles (Next, Outside 04): Lockdown, what waits, Auto, Bypass, Overnight. -->
         <service
             android:name=".platform.tiles.LockdownTileService"
             android:exported="true"
@@ -183,13 +183,33 @@
             android:name=".platform.tiles.AutopilotTileService"
             android:exported="true"
             android:icon="@drawable/ic_tile_autopilot"
-            android:label="Autopilot"
+            android:label="Auto"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
-        <!-- Home screen widgets (And-Outside 04), with Glance. -->
+        <service
+            android:name=".platform.tiles.BypassTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_bypass"
+            android:label="Bypass"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".platform.tiles.OvernightTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_overnight"
+            android:label="Overnight"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <!-- Home screen widgets (And-Outside 05), with Glance. -->
         <receiver
             android:name=".platform.widgets.WaitingWidgetReceiver"
             android:exported="true"
@@ -204,13 +224,24 @@
         <receiver
             android:name=".platform.widgets.AutopilotWidgetReceiver"
             android:exported="true"
-            android:label="Autopilot">
+            android:label="Mode">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_autopilot" />
+        </receiver>
+        <receiver
+            android:name=".platform.widgets.LatestWidgetReceiver"
+            android:exported="true"
+            android:label="Latest">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_latest" />
         </receiver>
 
         <!-- Long-press on a tile: Trust, or the stack. -->

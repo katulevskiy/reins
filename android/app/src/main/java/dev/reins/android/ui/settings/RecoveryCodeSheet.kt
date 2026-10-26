@@ -1,5 +1,10 @@
 package dev.reins.android.ui.settings
 
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxSize
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
@@ -72,51 +77,72 @@ fun RecoveryCodeSheet(code: String, onCopy: () -> Unit, onDone: () -> Unit, requ
         ),
     ) {
         DialogFeedback()
-        // An account field (iOS-Arrival 04): pink because it changes how the account opens.
-        val shape = RoundedCornerShape(28.dp)
-        Column(
-            Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(shape).background(c.paper).verticalScroll(rememberScrollState()).testTag("recoveryCodeSheet"),
-        ) {
-            Column(
-                Modifier.fillMaxWidth().fieldSurface(Field.Accounts, RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)).padding(22.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                LabelText("Account · Recovery", c.onField2)
-                AskText("Write down your recovery code", c.onField, target = "recovery code", style = RType.serif(32f, 36f), minSize = 26.sp)
-                RText("It opens your vault if you lose this phone. Nobody else has it, us included.", RType.sans(14.5f, lineHeight = 20f), c.onField2)
-            }
-            Column(Modifier.padding(22.dp)) {
-                SelectionContainer {
-                    RText(
-                        recoveryCodeLines(code).joinToString("\n"),
-                        RType.mono(19f, FontWeight.Medium).copy(letterSpacing = 1.sp, lineHeight = 28.sp),
-                        c.ink,
-                        Modifier.fillMaxWidth()
-                            .background(c.paperRaised, RoundedCornerShape(16.dp))
-                            .border(1.dp, c.rule, RoundedCornerShape(16.dp))
-                            .clickable(onClickLabel = "Copy recovery code", onClick = onCopy)
-                            .padding(vertical = 16.dp, horizontal = 14.dp)
-                            .testTag("recoveryCode"),
-                        ltr = true,
-                    )
+        // Next (Arrive 04): a page of its own. The account field (pink: it changes how the account opens) with the
+        // title; the code as twelve numbered groups; Copy; "I wrote it down"; Continue at the foot.
+        Column(Modifier.fillMaxSize().background(c.paper).testTag("recoveryCodeSheet")) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                dev.reins.android.design.FieldHeader(Field.Accounts) {
+                    Row(Modifier.padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        androidx.compose.foundation.layout.Box(Modifier.size(40.dp).clip(androidx.compose.foundation.shape.CircleShape).background(c.onFieldWash), contentAlignment = Alignment.Center) {
+                            dev.reins.android.design.GlyphIcon(Glyph.FileLock, c.onField, size = 18.dp)
+                        }
+                        RText("Recovery code", RType.display(40f), c.onField, Modifier.weight(1f), maxLines = 2)
+                    }
+                    RText("The only way back in if you lose this phone.", RType.sans(15f, lineHeight = 21f), c.onField2)
                 }
-                RText("A copy clears from the clipboard in 60 s.", RType.meta, c.inkMeta, Modifier.padding(top = 8.dp))
-                Spacer(Modifier.height(12.dp))
+                val groups = code.split('-', ' ').filter { it.isNotEmpty() }
+                Column(
+                    Modifier
+                        .padding(start = 16.dp, end = 16.dp, top = 16.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(c.paperRaised)
+                        .clickable(onClickLabel = "Copy recovery code", onClick = onCopy)
+                        .semantics(mergeDescendants = true) { text = androidx.compose.ui.text.AnnotatedString(recoveryCodeLines(code).joinToString("\n")) }
+                        .testTag("recoveryCode")
+                        .padding(vertical = 12.dp, horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    groups.chunked(3).forEachIndexed { row, three ->
+                        Row(Modifier.fillMaxWidth()) {
+                            three.forEachIndexed { i, g ->
+                                Row(Modifier.weight(1f), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)) {
+                                    RText("${row * 3 + i + 1}", RType.mono(10f), c.inkFaint, maxLines = 1)
+                                    RText(g, RType.mono(19f, FontWeight.Medium), c.ink, maxLines = 1, ltr = true)
+                                }
+                            }
+                            repeat(3 - three.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+                SignalButton(
+                    "Copy",
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).fillMaxWidth().testTag("copyRecoveryCode"),
+                    style = ButtonStyle.Soft,
+                    size = ButtonSize.Small,
+                    glyph = Glyph.Copy,
+                    onClick = onCopy,
+                )
+                RText("A copy clears from the clipboard in 60 s.", RType.meta, c.inkMeta, Modifier.padding(start = 24.dp, top = 8.dp))
                 if (required) {
                     Row(
-                        Modifier.fillMaxWidth().clickable { recorded = !recorded }.testTag("recoveryRecordedRow"),
+                        Modifier.padding(horizontal = 16.dp).padding(top = 12.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(c.paperRaised)
+                            .clickable { recorded = !recorded }.testTag("recoveryRecordedRow").padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Checkbox(checked = recorded, onCheckedChange = { recorded = it }, modifier = Modifier.testTag("recoveryRecorded"))
+                        dev.reins.android.design.RowTile(Glyph.Pencil)
                         RText("I wrote it down", RType.row, c.ink, Modifier.weight(1f))
+                        dev.reins.android.design.Toggle(recorded, Modifier.testTag("recoveryRecorded")) { recorded = it }
                     }
-                    Spacer(Modifier.height(12.dp))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SignalButton("Copy", Modifier.weight(1f).testTag("copyRecoveryCode"), style = ButtonStyle.Soft, size = ButtonSize.Small, glyph = Glyph.Copy, onClick = onCopy)
-                    SignalButton(if (required) "Continue" else "Done", Modifier.weight(1f).testTag("recoveryCodeDone"), enabled = !required || recorded, size = ButtonSize.Small, onClick = onDone)
                 }
             }
+            SignalButton(
+                if (required) "Continue" else "Done",
+                Modifier.navigationBarsPadding().padding(16.dp).fillMaxWidth().testTag("recoveryCodeDone"),
+                enabled = !required || recorded,
+                onClick = onDone,
+            )
         }
     }
 }

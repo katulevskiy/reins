@@ -53,6 +53,9 @@ import dev.reins.android.design.Spinner
 import dev.reins.android.platform.Authenticator
 import dev.reins.android.ui.common.quotedName
 
+/** "482193" as "482 193": two groups of three to compare at a glance. */
+internal fun spacedCode(code: String): String = if (code.length == 6 && ' ' !in code) code.take(3) + " " + code.drop(3) else code
+
 /**
  * "Add another phone", on the approval device (Reins Signal, iOS-Connect 04): the pink accounts field, then the code
  * the new phone shows, large in the serif, and what approving gives it. [onDone] gets what to tell the user once the
@@ -85,28 +88,25 @@ fun JoinSheet(viewModel: JoinViewModel, authenticator: Authenticator, onDone: (S
                     GlyphIcon(Glyph.Phone, c.onField, size = 20.dp)
                     RText("New phone", RType.sans(14.5f, FontWeight.Medium), c.onField, Modifier.weight(1f), maxLines = 1)
                 },
-                verdict = { FieldVerdict("It signed in to your account and asks for its keys.") },
+                verdict = null,
+                // Next (Pair and join 04): the code it shows, large, in the field, and the one rule.
+                below = {
+                    Column(Modifier.padding(top = 14.dp)) {
+                        RText(spacedCode(view.code), RType.codes.copy(fontSize = 48.sp, letterSpacing = 3.sp), c.onField, Modifier.testTag("joinCode"), maxLines = 1, ltr = true)
+                        RText("Approve only if it shows this code.", RType.sans(14f, FontWeight.Medium), c.onField2, Modifier.padding(top = 6.dp), maxLines = 2)
+                    }
+                },
             )
             // What the phone calls itself: quoted, one line, on a row of its own, never in the ask.
             FactGroup(Modifier.padding(top = 14.dp), tag = "joinWho", rows = listOf({ FactRow("Calls itself", device, valueTag = "joinDevice") }))
-            Column(Modifier.padding(horizontal = 22.dp).padding(top = 22.dp)) {
-                RText("Approve only if it shows this code.", RType.sans(15f), c.ink2)
-                Box(
-                    Modifier
-                        .padding(top = 12.dp)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(c.paperRaised)
-                        .border(1.dp, c.rule, RoundedCornerShape(22.dp))
-                        .padding(vertical = 22.dp),
-                    contentAlignment = Alignment.Center,
-                ) { RText(view.code, RType.serif(52f, 56f).copy(letterSpacing = 2.sp), c.ink, Modifier.testTag("joinCode"), maxLines = 1, ltr = true) }
-                Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    GlyphIcon(Glyph.Key, c.inkMeta, size = 16.dp)
-                    RText("It can then open your vault, and becomes the phone that approves once set up.", RType.meta, c.inkMeta)
-                }
-                ui.error?.let { Banner(it, Modifier.padding(top = 16.dp), BannerKind.Error, tag = "joinError") }
-            }
+            dev.reins.android.design.SectionHeader("It gets", quiet = true)
+            FactGroup(
+                rows = listOf(
+                    { dev.reins.android.design.PaneRow("Your vault", leading = { GlyphIcon(Glyph.Vault, c.inkMeta, size = 18.dp) }, first = true, flat = true) },
+                    { dev.reins.android.design.PaneRow("Approves requests", leading = { GlyphIcon(Glyph.ShieldCheck, c.inkMeta, size = 18.dp) }, first = true, flat = true) },
+                ),
+            )
+            ui.error?.let { Banner(it, Modifier.padding(horizontal = 16.dp).padding(top = 16.dp), BannerKind.Error, tag = "joinError") }
         }
         AskDock { AskButtons("Approve", onDeny = viewModel::deny, onApprove = { viewModel.approve(authenticator) }, busy = ui.busy) }
     }

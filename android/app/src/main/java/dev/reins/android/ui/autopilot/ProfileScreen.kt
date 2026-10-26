@@ -25,6 +25,12 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import dev.reins.android.design.Choice
+import dev.reins.android.design.NextPill
+import dev.reins.android.design.PaneGroup
+import dev.reins.android.design.PaneRow
+import dev.reins.android.design.RowTile
+import dev.reins.android.design.SectionHeader
+import dev.reins.android.ui.common.IntegrationIcon
 import dev.reins.android.design.Chooser
 import dev.reins.android.design.GlyphIcon
 import dev.reins.android.design.HairlineRow
@@ -136,9 +142,9 @@ fun ProfileScreen(
     var help by rememberSaveable { mutableStateOf(false) }
     var unlocking by remember { mutableStateOf<ClassView?>(null) }
 
-    Column(Modifier.fillMaxSize().background(c.paper).verticalScroll(rememberScrollState()).windowInsetsPadding(HeaderInsets).padding(horizontal = 22.dp)) {
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            RoundIconButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), onClick = onBack)
+    Column(Modifier.fillMaxSize().background(c.paper).verticalScroll(rememberScrollState()).windowInsetsPadding(HeaderInsets)) {
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 16.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            dev.reins.android.design.BackArrow(onBack, Modifier)
             Spacer(Modifier.weight(1f))
             if (profile != null) RoundIconButton(Glyph.Pencil, "Rename", Modifier.testTag("renameProfile")) { rename = true }
         }
@@ -147,70 +153,59 @@ fun ProfileScreen(
             return@Column
         }
         val ais = AutopilotText.profileAis(profile, settings, connections.map { it.id to it.label })
-        ProfileHeader(profile, ais)
-        ui.error?.let { Banner(it, Modifier.padding(top = 10.dp), BannerKind.Error, tag = "profileError") }
-        ui.notice?.let { Banner(it, Modifier.padding(top = 10.dp), tag = "profileNotice") }
-        StatTiles(
-            listOf(
-                Stat("${profile.memoryCount}", "decisions", tag = "statMemory"),
-                Stat(AutopilotText.share(profile.agreement), "matched you", c.success, tag = "statMatched"),
-                Stat("${profile.classes.count { it.autoApprove }}", "kinds on Auto", suffix = "/${profile.classes.size}", tag = "statKinds"),
-            ),
-            Modifier.padding(top = 18.dp),
-        )
+        ProfileHeader(profile, ais, Modifier.padding(horizontal = 20.dp))
+        ui.error?.let { Banner(it, Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp), BannerKind.Error, tag = "profileError") }
+        ui.notice?.let { Banner(it, Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp), tag = "profileNotice") }
 
-        Row(Modifier.padding(top = 26.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            LabelText("How sure before it acts", c.inkMeta, Modifier.weight(1f))
-            HelpIcon(help, "How sure") { help = it }
-        }
-        HelpText(AutopilotText.HOW_SURE_HELP, help, Modifier.padding(bottom = 8.dp))
-        Chooser(
-            Preset.entries.map { Choice(it, AutopilotText.presetName(it), "preset:${it.name}") },
-            profile.preset,
-            { viewModel.setPreset(profile.id, it) },
-        )
-        AnimatedVisibility(
-            profile.preset == Preset.CUSTOM,
-            enter = expandVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeIn(),
-            exit = shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeOut(),
-        ) {
-            CustomThresholds(profile, ui.replay?.takeIf { it.first == profile.id }?.second, viewModel)
-        }
-        if (profile.preset != Preset.CUSTOM) {
-            RText(AutopilotText.presetLine(profile), RType.meta, c.inkMeta, Modifier.padding(top = 10.dp).testTag("presetLine"))
+        SectionHeader("How sure", glyph = Glyph.Shield, trailing = { HelpIcon(help, "How sure") { help = it } })
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            HelpText(AutopilotText.HOW_SURE_HELP, help, Modifier.padding(bottom = 8.dp))
+            Chooser(
+                Preset.entries.map { Choice(it, AutopilotText.presetName(it), "preset:${it.name}") },
+                profile.preset,
+                { viewModel.setPreset(profile.id, it) },
+            )
+            AnimatedVisibility(
+                profile.preset == Preset.CUSTOM,
+                enter = expandVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeIn(),
+                exit = shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeOut(),
+            ) {
+                CustomThresholds(profile, ui.replay?.takeIf { it.first == profile.id }?.second, viewModel)
+            }
+            if (profile.preset != Preset.CUSTOM) {
+                RText(AutopilotText.presetLine(profile), RType.meta, c.inkMeta, Modifier.padding(start = 4.dp, top = 8.dp).testTag("presetLine"))
+            }
         }
 
-        LabelText("Kinds of request", c.inkMeta, Modifier.padding(top = 28.dp, bottom = 4.dp))
+        SectionHeader("Kinds", count = "${profile.classes.size}", modifier = Modifier.testTag("kindsCount"))
         if (profile.memoryCount > 0u) {
-            RText(AutopilotText.learningLine(profile), RType.meta, c.inkMeta, Modifier.padding(bottom = 4.dp).testTag("learningLine"))
+            RText(AutopilotText.learningLine(profile), RType.meta, c.inkMeta, Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp).testTag("learningLine"))
         }
         if (profile.classes.isEmpty()) {
             EmptyState(Glyph.Sparkle, "Nothing learned yet", "Your answers teach it.", tag = "noClasses")
-        }
-        profile.classes.forEach { cls ->
-            KindRow(cls) { locked ->
-                if (locked == false) unlocking = cls else viewModel.setClassLock(profile.id, cls.classKey, locked)
+        } else {
+            PaneGroup {
+                profile.classes.forEachIndexed { i, cls ->
+                    KindRow(cls, first = i == 0) { locked ->
+                        if (locked == false) unlocking = cls else viewModel.setClassLock(profile.id, cls.classKey, locked)
+                    }
+                }
             }
         }
 
-        Column(Modifier.padding(top = 22.dp)) {
-            HairlineRow("Try this profile", Modifier.testTag("tryProfile"), leading = { PlainTile(Glyph.Flask, 34.dp) }, trailing = { GlyphIcon(Glyph.ChevronRight, c.inkMeta, size = 16.dp) }) { onTryIt(profile.id) }
+        PaneGroup(Modifier.padding(top = 22.dp)) {
+            PaneRow("Try this profile", leading = { RowTile(Glyph.Flask) }, chevron = true, first = true, tag = "tryProfile") { onTryIt(profile.id) }
             if (!profile.isDefault) {
-                HairlineRow("Use for every AI", Modifier.testTag("makeDefault"), leading = { PlainTile(Glyph.Star, 34.dp) }) { viewModel.makeDefault(profile.id) }
+                PaneRow("Use for every AI", leading = { RowTile(Glyph.Star) }, tag = "makeDefault") { viewModel.makeDefault(profile.id) }
             }
-            HairlineRow(
+            PaneRow(
                 "Forget what it learned",
-                Modifier.testTag("resetProfile"),
                 subtitle = "${profile.memoryCount} remembered",
-                leading = { PlainTile(Glyph.Refresh, 34.dp) },
+                leading = { RowTile(Glyph.Refresh) },
+                tag = "resetProfile",
             ) { reset = true }
             if (ui.profiles.size > 1) {
-                HairlineRow(
-                    "Delete profile",
-                    Modifier.testTag("deleteProfile"),
-                    leading = { GlyphIcon(Glyph.Trash, c.danger, size = 20.dp, modifier = Modifier.padding(horizontal = 7.dp)) },
-                    divider = false,
-                ) { delete = true }
+                PaneRow("Delete profile", leading = { RowTile(Glyph.Trash, tint = c.danger) }, titleColor = c.danger, tag = "deleteProfile") { delete = true }
             }
         }
         Spacer(Modifier.height(40.dp))
@@ -269,23 +264,29 @@ fun ProfileScreen(
     }
 }
 
-/** The profile's glyph and name in the serif, Default when it is, and who uses it with how it is doing. */
+/** The profile's tile and name large, Default when it is, and the AIs that use it. */
 @Composable
-private fun ProfileHeader(profile: ProfileView, ais: List<String>) {
+private fun ProfileHeader(profile: ProfileView, ais: List<String>, modifier: Modifier = Modifier) {
     val c = LocalColors.current
-    Column(Modifier.fillMaxWidth().padding(top = 18.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ProfileTile(profile, 40.dp)
-            RText(untrusted(profile.name), RType.serif(38f, 42f), c.ink, Modifier.weight(1f, fill = false).semantics { heading() }.testTag("profileName"), maxLines = 1)
-            if (profile.isDefault) Pill("Default", c.violet, Modifier.testTag("defaultTag"))
+    Column(modifier.fillMaxWidth().padding(top = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            ProfileTile(profile, 52.dp)
+            RText(untrusted(profile.name), RType.pageTitle, c.ink, Modifier.weight(1f).semantics { heading() }.testTag("profileName"), maxLines = 1)
+            if (profile.isDefault) NextPill("Default", c.violet, Modifier.testTag("defaultTag"))
         }
-        RText(
-            if (ais.isEmpty()) "No AI yet" else ais.joinToString(", "),
-            RType.meta,
-            c.inkMeta,
-            Modifier.padding(top = 8.dp).testTag("profileAis"),
-            maxLines = 2,
-        )
+        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GlyphIcon(Glyph.Robot, c.inkMeta, size = 16.dp)
+            RText(
+                when (ais.size) {
+                    0 -> "No AI yet"
+                    else -> ais.joinToString(", ") { dev.reins.android.ui.common.untrustedName(it, 32) }
+                },
+                RType.meta,
+                c.inkMeta,
+                Modifier.testTag("profileAis"),
+                maxLines = 2,
+            )
+        }
     }
 }
 
@@ -406,50 +407,47 @@ private fun ThresholdSlider(label: String, value: Float, tint: Color, tag: Strin
 }
 
 /**
- * One kind of request: its state (a full green ring on Auto, an empty one when it asks, a pause after a wrong answer,
- * a lock when you locked it) in a glyph and a word, and, opened, its numbers and the lock.
+ * One kind of request (Autopilot 05): its icon, what it does, and its state as a pill (Auto, Asks, Paused after a wrong
+ * answer, Locked by you); opened, its numbers and the lock.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun KindRow(cls: ClassView, onLock: (Boolean?) -> Unit) {
+private fun KindRow(cls: ClassView, first: Boolean, onLock: (Boolean?) -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
     var open by remember { mutableStateOf(false) }
     val state = AutopilotText.kindState(cls)
+    val parts = cls.classKey.split('/')
+    val provider = parts.firstOrNull().orEmpty()
+    val action = parts.lastOrNull().orEmpty()
+    val (pillGlyph, pillTint) = when (state) {
+        AutopilotText.KindState.AUTO -> Glyph.AutopilotFilled to c.violet
+        AutopilotText.KindState.ASKS -> Glyph.Help to c.kindRead
+        AutopilotText.KindState.PAUSED -> Glyph.Pause to null
+        AutopilotText.KindState.LOCKED -> Glyph.Lock to c.warning
+    }
     Column(Modifier.fillMaxWidth().testTag("class:${cls.classKey}")) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .hairlineBelow(c.rule)
-                .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp)) {
-                    open = !open
-                    feedback.play(Event.expand(open))
+        PaneRow(
+            title = action.replaceFirstChar { it.uppercase() }.ifEmpty { cls.label },
+            leading = { IntegrationIcon(provider, action, size = 36.dp, ring = c.paperRaised) },
+            trailing = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    NextPill(AutopilotText.kindLine(cls), pillTint, glyph = pillGlyph, textTag = "classStatus:${cls.classKey}")
+                    GlyphIcon(if (open) Glyph.ChevronUp else Glyph.ChevronRight, c.inkFaint, size = 18.dp)
                 }
-                .padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            },
+            first = first,
+            modifier = Modifier.semantics { contentDescription = cls.label },
         ) {
-            when (state) {
-                AutopilotText.KindState.LOCKED, AutopilotText.KindState.PAUSED ->
-                    Box(Modifier.size(34.dp).clip(CircleShape).background(c.paperSunken), contentAlignment = Alignment.Center) {
-                        GlyphIcon(if (state == AutopilotText.KindState.LOCKED) Glyph.Lock else Glyph.Pause, c.ink2, size = 15.dp)
-                    }
-                AutopilotText.KindState.AUTO -> ProgressRing(1f, c.success, size = 34.dp, stroke = 3.5.dp)
-                AutopilotText.KindState.ASKS -> ProgressRing(0f, c.search, size = 34.dp, stroke = 3.5.dp)
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                RText(cls.label, RType.row, c.ink, maxLines = 1)
-                RText(AutopilotText.kindLine(cls), RType.meta, c.inkMeta, Modifier.padding(top = 2.dp).testTag("classStatus:${cls.classKey}"), maxLines = 1)
-            }
-            Spacer(Modifier.width(8.dp))
-            GlyphIcon(if (open) Glyph.ChevronUp else Glyph.ChevronDown, c.inkMeta, size = 16.dp)
+            open = !open
+            feedback.play(Event.expand(open))
         }
         AnimatedVisibility(
             open,
             enter = expandVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeIn(),
             exit = shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 500f)) + fadeOut(),
         ) {
-            Column(Modifier.padding(start = 46.dp, top = 10.dp, bottom = 14.dp)) {
+            Column(Modifier.padding(start = 62.dp, end = 14.dp, top = 2.dp, bottom = 14.dp)) {
                 RText(AutopilotText.classNumbers(cls), RType.meta, c.inkMeta, Modifier.padding(bottom = 8.dp), maxLines = 1)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SignalChip("Learn by itself", cls.manual == null, Modifier.testTag("lock:auto:${cls.classKey}")) { onLock(null) }

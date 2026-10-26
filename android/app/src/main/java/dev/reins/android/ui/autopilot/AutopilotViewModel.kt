@@ -150,9 +150,24 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
      * Overnight, which [startBypass] and [startOvernight] turn on.
      * The change is felt at once; a refusal from the core (a just-paired connection cannot be bypassed) says why.
      */
-    fun setMode(mode: AutopilotMode?, connectionId: String? = null) {
+    fun setMode(mode: AutopilotMode?, connectionId: String? = null, authenticator: Authenticator? = null) {
         // A bypass or an Overnight starts only through its own start, after the owner's check.
         if (AutopilotText.isTimed(mode)) return
+        // Leaving Lockdown loosens: it goes only through the owner's check ([endLockdown]), from any control. Without
+        // an authenticator to ask, nothing changes.
+        if (leavesLockdown(mode, connectionId)) {
+            if (authenticator != null) endLockdown(mode ?: AutopilotMode.MANUAL, authenticator, connectionId)
+            return
+        }
+        applyMode(mode, connectionId)
+    }
+
+    /** Whether setting [mode] would take [connectionId] (or every AI) out of a Lockdown in force. */
+    fun leavesLockdown(mode: AutopilotMode?, connectionId: String? = null): Boolean =
+        modeOf(connectionId) == AutopilotMode.LOCKDOWN && mode != AutopilotMode.LOCKDOWN
+
+    /** Sets the mode with no check: only for what [setMode] allows and for [endLockdown] after the owner's pass. */
+    private fun applyMode(mode: AutopilotMode?, connectionId: String?) {
         val old = modeOf(connectionId)
         val new = mode ?: settings.value?.mode ?: AutopilotMode.MANUAL
         AutopilotText.modeChangeEvent(old, new)?.let { container.feedback.play(it) }
@@ -254,7 +269,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
      * Ends Lockdown for [mode] after the owner's check: it loosens, so it asks first, wherever it is ended from (the
      * Trust field, a Quick Settings tile opening Trust). Without a pass Lockdown stays.
      */
-    fun endLockdown(mode: AutopilotMode, authenticator: Authenticator) {
+    fun endLockdown(mode: AutopilotMode, authenticator: Authenticator, connectionId: String? = null) {
         viewModelScope.launch {
             val result = try {
                 authenticator.authenticate("End lockdown", "Requests can be answered again")
@@ -264,7 +279,7 @@ class AutopilotViewModel(private val container: AppContainer) : ViewModel() {
                 AuthResult.Cancelled
             }
             when (result) {
-                AuthResult.Success -> setMode(mode)
+                AuthResult.Success -> applyMode(mode, connectionId)
                 AuthResult.Cancelled -> Unit
                 AuthResult.Unavailable -> _ui.update { it.copy(error = "Set a screen lock or fingerprint on this phone to end Lockdown.") }
             }

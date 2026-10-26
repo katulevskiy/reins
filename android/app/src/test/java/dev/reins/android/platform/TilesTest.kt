@@ -37,11 +37,35 @@ class TilesTest : FlowHarness() {
     fun `the looks say what is on`() {
         assertEquals(true to "On", lockdownLook(settings(AutopilotMode.LOCKDOWN)).let { it.active to it.subtitle })
         assertEquals(false to "Off", lockdownLook(settings(AutopilotMode.MANUAL)).let { it.active to it.subtitle })
-        assertEquals("2 waiting", waitingLook(2).subtitle)
+        assertEquals("2 waiting", waitingLook(2).label)
         assertTrue(waitingLook(2).active)
         assertEquals("Nothing waits", waitingLook(0).subtitle)
-        assertEquals("Auto", autopilotLook(settings(AutopilotMode.AUTO)).subtitle)
+        assertEquals("Auto" to "On", autopilotLook(settings(AutopilotMode.AUTO)).let { it.label to it.subtitle })
         assertFalse(autopilotLook(settings(AutopilotMode.MANUAL)).active)
+        // Bypass and Overnight are lit only while they run.
+        assertFalse(dev.reins.android.platform.tiles.bypassLook(settings(AutopilotMode.MANUAL), 0).active)
+        assertFalse(dev.reins.android.platform.tiles.overnightLook(settings(AutopilotMode.MANUAL)).active)
+    }
+
+    @Test
+    fun `the Bypass and Overnight tiles never start one, and a tap on a running one stops it`() {
+        // Off: a tap opens Trust, where starting asks the owner.
+        assertEquals(TileTap.OpenTrust, dev.reins.android.platform.tiles.bypassTap(settings(AutopilotMode.MANUAL)))
+        assertEquals(TileTap.OpenTrust, dev.reins.android.platform.tiles.overnightTap(settings(AutopilotMode.AUTO)))
+        assertEquals(TileTap.StopBypass, dev.reins.android.platform.tiles.bypassTap(settings(AutopilotMode.BYPASS)))
+        assertEquals(TileTap.StopOvernight, dev.reins.android.platform.tiles.overnightTap(settings(AutopilotMode.OVERNIGHT)))
+    }
+
+    @Test
+    fun `tapping Bypass while off changes nothing`() {
+        launch()
+        awaitTag("noActivity")
+        core.modeCalls.clear()
+        Robolectric.buildService(dev.reins.android.platform.tiles.BypassTileService::class.java).create().get().onClick()
+        settle()
+        assertTrue(core.modeCalls.isEmpty())
+        assertTrue(core.bypassCalls.isEmpty())
+        assertEquals(0, prompts.get())
     }
 
     @Test

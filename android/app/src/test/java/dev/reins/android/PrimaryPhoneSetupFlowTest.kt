@@ -25,7 +25,7 @@ class PrimaryPhoneSetupFlowTest : FlowHarness() {
         }
     }
     private fun open() {
-        legacyView(); launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        legacyView(); launch(); tap("tabConnections"); openService("gmail"); tap("accountPermissions:me@gmail.com")
         awaitTag("primarySetupOpen")
     }
     private fun dialog() { tap("primarySetupOpen"); awaitTag("primarySetupDialog") }
@@ -56,7 +56,7 @@ class PrimaryPhoneSetupFlowTest : FlowHarness() {
     @Test fun viewerAndRemovedPhonesGetGuidanceWithoutCreation() {
         legacyView(); core.setupRole = PhoneRole.VIEWER
         core.setupRoster = RosterSummary(1u, PhoneRole.VIEWER, listOf(RosterMemberView("other", "Work phone", true, false)), "fixture", emptyList())
-        launch(); tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com")
+        launch(); tap("tabConnections"); openService("gmail"); tap("accountPermissions:me@gmail.com")
         awaitTag("primarySetupGuidance"); assertFalse(has("primarySetupOpen"))
         assertTrue(showsText("Work phone", substring = true)); assertEquals(0, core.setupCalls.get())
         pressBack(); core.setupRole = PhoneRole.REMOVED; tap("accountPermissions:me@gmail.com")
@@ -126,7 +126,7 @@ class PrimaryPhoneSetupFlowTest : FlowHarness() {
         awaitGone("primarySetupDialog")
         // Account replacement clears all old lists; stand in for the new session's verified refresh.
         container.state.setServices(core.catalogue); container.state.setAccounts(core.accounts)
-        tap("tabConnections"); tap("service:gmail"); tap("accountPermissions:me@gmail.com"); awaitTag("primarySetupOpen"); dialog()
+        tap("tabConnections"); openService("gmail"); tap("accountPermissions:me@gmail.com"); awaitTag("primarySetupOpen"); dialog()
         rule.onNodeWithTag("primarySetupBackup").assertIsOff()
         rule.onNodeWithTag("primarySetupProof").assertDoesNotExist()
         rule.onNodeWithTag("primarySetupConfirm").performScrollTo().assertIsNotEnabled()

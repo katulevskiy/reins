@@ -94,8 +94,8 @@ class AttentionFlowTest : FlowHarness() {
         val view = TestData.attentionSearchView().let { it.copy(messages = it.messages + code, count = 13u) }
         openRequest(view)
         awaitTag("check:n11")
-        // A label line, in capitals.
-        assertTrue(showsText("13 FOUND · 3 TO LOOK AT"))
+        // A section line, in sentence case.
+        assertTrue(showsText("13 found · 3 to look at"))
         // A bank or a reset email starts ticked, with its chip; a code does not.
         rule.onNodeWithTag("check:n11").assertIsOn()
         rule.onNodeWithTag("check:n10").assertIsOn()

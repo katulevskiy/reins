@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.assertContentDescriptionContains
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
@@ -113,7 +114,7 @@ class OnboardingFlowTest : FlowHarness() {
         awaitTag("welcome")
         rule.onNodeWithTag("continue").assertIsEnabled()
         rule.onNodeWithTag("continue").assertTextEquals("Continue")
-        rule.onNodeWithTag("serverName").assertTextContains(AccountRules.displayHost(BuildConfig.DEFAULT_SERVER), substring = true)
+        rule.onNodeWithTag("useAnotherServer").assertContentDescriptionContains(AccountRules.displayHost(BuildConfig.DEFAULT_SERVER), substring = true)
         assertFalse(has("createAccount"))
         assertFalse(has("startSignIn"))
         assertFalse(has("server"))

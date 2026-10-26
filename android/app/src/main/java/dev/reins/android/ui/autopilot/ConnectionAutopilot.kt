@@ -50,7 +50,14 @@ const val CONNECTION_AUTOPILOT_HELP =
  * Overnight, a bypass and a lockdown for just this AI, each after its own confirmation.
  */
 @Composable
-fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewModel, onBypass: () -> Unit, onOvernight: () -> Unit = {}) {
+fun ConnectionAutopilotSection(
+    connectionId: String,
+    viewModel: AutopilotViewModel,
+    onBypass: () -> Unit,
+    onOvernight: () -> Unit = {},
+    /** Asked before a change that leaves Lockdown (see [AutopilotViewModel.setMode]). */
+    authenticator: dev.reins.android.platform.Authenticator? = null,
+) {
     val c = LocalColors.current
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
@@ -73,56 +80,35 @@ fun ConnectionAutopilotSection(connectionId: String, viewModel: AutopilotViewMod
     val choices: List<AutopilotMode?> = listOf<AutopilotMode?>(null) +
         AutopilotText.modes.filter { it != AutopilotMode.BYPASS && it != AutopilotMode.LOCKDOWN && it != AutopilotMode.OVERNIGHT }
 
-    SettingsGroup(header = "Autopilot", help = CONNECTION_AUTOPILOT_HELP, helpOpen = help, onHelp = { help = it }) {
-        Column(Modifier.padding(12.dp).testTag("connectionMode")) {
+    // Next (Connections 02): Like all, Manual or Auto as one choice; the timed modes behind "For a while".
+    SettingsGroup(header = "Autopilot", glyph = dev.reins.android.design.Glyph.Autopilot, help = CONNECTION_AUTOPILOT_HELP, helpOpen = help, onHelp = { help = it }) {
+        Column(Modifier.padding(vertical = 12.dp).testTag("connectionMode")) {
             ConnectedButtons(
                 options = choices,
-                // A bypass or a lockdown of its own is one of the buttons below: then none of these is chosen.
+                // A bypass, Overnight or lockdown of its own is one of the rows below: then none of these is chosen.
                 selected = { it == chosen },
                 label = { it?.let(AutopilotText::name) ?: "Like all" },
                 tag = { if (it == null) "connMode:follow" else "connMode:${it.name}" },
-                icon = { m -> m?.let { settingsModeIcon(it) to if (it == AutopilotMode.MANUAL) modeTint(it, c) else c.secondary } },
-            ) { m -> viewModel.setMode(m, connectionId = connectionId) }
-            if (overnightUntil != null) {
-                Countdown(TimedKind.Overnight, overnightUntil, Modifier.padding(top = 12.dp).fillMaxWidth()) { viewModel.stopOvernight(connectionId) }
-            } else {
-                PillButton(
-                    AutopilotText.OVERNIGHT,
-                    Modifier.padding(top = 12.dp).fillMaxWidth().testTag("connMode:OVERNIGHT"),
-                    icon = OvernightIcon,
-                    background = c.night.copy(alpha = 0.13f),
-                    foreground = c.night,
-                ) { onOvernight() }
-            }
-            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (bypassUntil != null) {
-                    Countdown(TimedKind.Bypass, bypassUntil, Modifier.weight(1f)) { viewModel.stopBypass(connectionId) }
-                } else {
-                    PillButton(
-                        "Bypass",
-                        Modifier.weight(1f).testTag("connMode:BYPASS"),
-                        icon = Icons.Rounded.Bolt,
-                        background = c.danger.copy(alpha = 0.12f),
-                        foreground = c.danger,
-                    ) { onBypass() }
-                }
-                if (lockedDown) {
-                    PillButton(
-                        "Unlock",
-                        Modifier.weight(1f).testTag("connMode:LOCKDOWN"),
-                        icon = Icons.Rounded.LockOpen,
-                        background = c.warning.copy(alpha = 0.14f),
-                        foreground = c.warning,
-                    ) { viewModel.setMode(null, connectionId = connectionId) }
-                } else {
-                    PillButton(
-                        "Lock down",
-                        Modifier.weight(1f).testTag("connMode:LOCKDOWN"),
-                        icon = Icons.Rounded.Lock,
-                        background = if (c.dark) Color.White.copy(alpha = 0.06f) else c.controlFill,
-                        foreground = c.text,
-                    ) { viewModel.setMode(AutopilotMode.LOCKDOWN, connectionId = connectionId) }
-                }
+                icon = { m -> m?.let { settingsModeIcon(it) to c.ink2 } },
+            ) { m -> viewModel.setMode(m, connectionId = connectionId, authenticator = authenticator) }
+            when {
+                overnightUntil != null -> Countdown(TimedKind.Overnight, overnightUntil, Modifier.padding(top = 12.dp).fillMaxWidth()) { viewModel.stopOvernight(connectionId) }
+                bypassUntil != null -> Countdown(TimedKind.Bypass, bypassUntil, Modifier.padding(top = 12.dp).fillMaxWidth()) { viewModel.stopBypass(connectionId) }
+                lockedDown -> PillButton(
+                    "Unlock",
+                    Modifier.padding(top = 12.dp).fillMaxWidth().testTag("connMode:LOCKDOWN"),
+                    icon = Icons.Rounded.LockOpen,
+                    background = c.warning.copy(alpha = 0.14f),
+                    foreground = c.warning,
+                ) { viewModel.setMode(null, connectionId = connectionId, authenticator = authenticator) }
+                else -> dev.reins.android.ui.trust.ForAWhile(
+                    onOvernight = onOvernight,
+                    onLockdown = { viewModel.setMode(AutopilotMode.LOCKDOWN, connectionId = connectionId) },
+                    onBypass = onBypass,
+                    modifier = Modifier.padding(top = 12.dp),
+                    tagPrefix = "connMode",
+                    inset = false,
+                )
             }
             if (globalLockdown) {
                 RText(

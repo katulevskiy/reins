@@ -1,5 +1,11 @@
 package dev.reins.android.ui.signin
 
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 
@@ -41,6 +47,7 @@ import dev.reins.android.design.ButtonStyle
 import dev.reins.android.design.CapsuleButton
 import dev.reins.android.design.Glyph
 import dev.reins.android.design.GlyphIcon
+import dev.reins.android.design.pane
 import dev.reins.android.design.LocalColors
 import dev.reins.android.design.RText
 import dev.reins.android.design.RTextField
@@ -73,32 +80,34 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, passkeys: PasskeyPro
     BackHandler(enabled = ui.step != UnlockStep.Choose) {
         if (ui.step == UnlockStep.Asking) viewModel.cancelAsk() else viewModel.back()
     }
-    Screen(title = null, modifier = Modifier.testTag("unlock")) {
-        Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            // Three ways in, one screen (iOS-Arrival 05): paper, the question in the serif.
-            Spacer(Modifier.height(48.dp))
-            dev.reins.android.design.AskText(
-                if (takeover) "Another phone approves for you" else "Your account is on another phone",
-                c.ink,
-                Modifier.semantics { heading() },
-                target = if (takeover) "approves for you" else "another phone",
-                style = RType.serif(40f, 44f),
-                minSize = 30.sp,
+    // Next (Arrive 05): the account field on top (the two phones, the question, the email), then the ways in.
+    Column(Modifier.fillMaxSize().background(c.paper).verticalScroll(rememberScrollState()).imePadding().testTag("unlock")) {
+        dev.reins.android.design.FieldHeader(dev.reins.android.design.Field.Accounts) {
+            Row(Modifier.padding(top = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PhoneMark(Glyph.LockOpen, filled = false)
+                repeat(4) { Box(Modifier.size(5.dp).background(c.onField.copy(alpha = 0.6f), CircleShape)) }
+                PhoneMark(Glyph.Lock, filled = true)
+            }
+            RText(
+                if (takeover) "Another phone approves for you" else "Another phone",
+                RType.display(48f),
+                c.onField,
+                Modifier.padding(top = 6.dp).semantics { heading() },
+                maxLines = 3,
             )
-            RText(email, RType.value, c.inkMeta, maxLines = 1, ltr = true)
+            RText(email, RType.mono(14f), c.onField2, maxLines = 1, ltr = true)
+        }
+        Column(Modifier.padding(horizontal = 16.dp).padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             RText(
                 when {
                     takeover -> OTHER_APPROVAL_DEVICE
-                    passkeyUnlock ->
-                        "Signed in as $email. Use your passkey, approve from your other phone, or enter your recovery code."
-                    else ->
-                        "Signed in as $email. Approve from your other phone, or enter your recovery code."
+                    passkeyUnlock -> "Signed in as $email. Use your passkey, approve from your other phone, or enter your recovery code."
+                    else -> "Signed in as $email. Approve from your other phone, or enter your recovery code."
                 },
-                RType.sans(16f, lineHeight = 22f),
+                RType.sans(14f, lineHeight = 20f),
                 c.ink2,
-                Modifier.testTag(if (takeover) "takeoverText" else "unlockText"),
+                Modifier.padding(horizontal = 8.dp).testTag(if (takeover) "takeoverText" else "unlockText"),
             )
-            Spacer(Modifier.height(20.dp))
             when (ui.step) {
                 UnlockStep.Choose -> Choose(viewModel, ui, takeover, passkeyUnlock) { viewModel.unlockWithPasskey(passkeys) }
                 UnlockStep.Asking -> Asking(viewModel, ui)
@@ -113,51 +122,71 @@ fun UnlockScreen(viewModel: UnlockViewModel, email: String, passkeys: PasskeyPro
     }
 }
 
+/** A small phone on the field: open (outlined, washed) or locked (white). */
+@Composable
+private fun PhoneMark(glyph: Glyph, filled: Boolean) {
+    val c = LocalColors.current
+    Box(
+        Modifier.size(width = 56.dp, height = 92.dp).clip(RoundedCornerShape(16.dp)).background(if (filled) androidx.compose.ui.graphics.Color.White else c.onField.copy(alpha = 0.2f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.align(Alignment.TopCenter).padding(top = 8.dp).size(width = 16.dp, height = 5.dp).background((if (filled) c.fieldAccounts else c.onField).copy(alpha = 0.35f), CircleShape))
+        GlyphIcon(glyph, if (filled) c.fieldAccounts else c.onField, size = 24.dp)
+    }
+}
+
 /** The ways in; with a passkey for the vault ([passkey]), [onPasskey] comes first and the other phone second. */
 @Composable
 private fun Choose(viewModel: UnlockViewModel, ui: UnlockUi, takeover: Boolean, passkey: Boolean, onPasskey: () -> Unit) {
     ui.ended?.let { Banner(it, kind = BannerKind.Warning, tag = "joinEnded") }
     ui.error?.let { Banner(it, kind = BannerKind.Error, tag = "unlockError") }
     if (passkey) {
-        CapsuleButton(
-            "Unlock with passkey",
+        dev.reins.android.design.SignalButton(
+            "Passkey",
             Modifier.fillMaxWidth().testTag("unlockWithPasskey"),
-            style = ButtonStyle.Primary,
             enabled = !ui.busy || ui.passkeyBusy,
-            busy = ui.passkeyBusy,
-            glyph = Glyph.Unlock,
+            leading = { if (ui.passkeyBusy) dev.reins.android.design.Spinner(LocalColors.current.onInverse, size = 18.dp) else GlyphIcon(Glyph.Fingerprint, LocalColors.current.onInverse, size = 20.dp) },
             onClick = onPasskey,
         )
     }
-    CapsuleButton(
-        "Ask my other phone",
-        Modifier.fillMaxWidth().testTag("askOtherPhone"),
-        style = if (passkey) ButtonStyle.Secondary else ButtonStyle.Primary,
-        enabled = !ui.busy || !ui.passkeyBusy,
-        busy = ui.busy && !ui.passkeyBusy,
-        glyph = Glyph.Phone,
-        onClick = viewModel::askOtherPhone,
-    )
-    CapsuleButton(
-        "Enter recovery code",
-        Modifier.fillMaxWidth().testTag("enterRecoveryCode"),
-        style = ButtonStyle.Secondary,
-        enabled = !ui.busy,
-        glyph = Glyph.Key,
-        onClick = viewModel::showRecovery,
-    )
-    // Starting over is for a phone that cannot open the keys at all, not for taking the approval role over.
-    if (!takeover) {
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.Center) {
-            TextLink("Lost both? Reset the vault", "resetVault", enabled = !ui.busy, onClick = viewModel::showReset)
-        }
+    Column(Modifier.fillMaxWidth().pane()) {
+        dev.reins.android.design.PaneRow(
+            "Other phone",
+            leading = { dev.reins.android.design.RowTile(Glyph.Phone) },
+            chevron = true,
+            first = true,
+            enabled = !ui.busy || !ui.passkeyBusy,
+            tag = "askOtherPhone",
+            trailing = if (ui.busy && !ui.passkeyBusy) ({ dev.reins.android.design.Spinner(LocalColors.current.inkMeta, size = 18.dp) }) else null,
+            onClick = viewModel::askOtherPhone,
+        )
+        dev.reins.android.design.PaneRow(
+            "Recovery code",
+            leading = { dev.reins.android.design.RowTile(Glyph.FileLock) },
+            chevron = true,
+            enabled = !ui.busy,
+            tag = "enterRecoveryCode",
+            onClick = viewModel::showRecovery,
+        )
     }
-    Row(
-        Modifier.fillMaxWidth().padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
-    ) {
-        if (takeover) TextLink("Not now", "takeoverLater", enabled = !ui.busy, onClick = viewModel::later)
-        TextLink("Sign out", "unlockSignOut", enabled = !ui.busy, onClick = viewModel::signOut)
+    val c = LocalColors.current
+    Column(Modifier.fillMaxWidth().pane()) {
+        // Starting over is for a phone that cannot open the keys at all, not for taking the approval role over.
+        if (!takeover) {
+            dev.reins.android.design.PaneRow(
+                "Reset vault",
+                leading = { dev.reins.android.design.RowTile(Glyph.Trash, tint = c.danger) },
+                titleColor = c.danger,
+                first = true,
+                enabled = !ui.busy,
+                tag = "resetVault",
+                onClick = viewModel::showReset,
+            )
+        }
+        if (takeover) {
+            dev.reins.android.design.PaneRow("Not now", leading = { dev.reins.android.design.RowTile(Glyph.Close) }, first = true, enabled = !ui.busy, tag = "takeoverLater", onClick = viewModel::later)
+        }
+        dev.reins.android.design.PaneRow("Sign out", leading = { dev.reins.android.design.RowTile(Glyph.Quit) }, enabled = !ui.busy, tag = "unlockSignOut", onClick = viewModel::signOut)
     }
 }
 

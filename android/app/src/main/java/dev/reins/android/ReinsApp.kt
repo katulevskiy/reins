@@ -36,7 +36,7 @@ class ReinsApp : Application(), Configuration.Provider {
         container.appScope.launch(Dispatchers.Default) { dev.reins.android.design.Fonts.warm() }
         // The tiles and widgets outside the app follow what waits and Autopilot's mode.
         container.appScope.launch {
-            combine(container.state.pending, container.state.autopilot) { pending, autopilot -> pending.map { it.id } to autopilot?.mode }
+            combine(container.state.pending, container.state.autopilot, container.state.activity) { pending, autopilot, activity -> Triple(pending.map { it.id }, autopilot?.mode, activity.firstOrNull()?.id) }
                 .distinctUntilChanged()
                 .collect {
                     dev.reins.android.platform.tiles.Tiles.refresh(this@ReinsApp)

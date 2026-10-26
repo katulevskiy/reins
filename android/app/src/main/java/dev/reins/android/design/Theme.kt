@@ -14,6 +14,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
+/** Tests pin the panes: true draws them solid, false frosted, null follows the system. */
+object Transparency {
+    @Volatile var forceSolid: Boolean? = null
+}
+
 /** Whether countdowns and other clocks tick live. Screenshot tests switch it off for a still frame. */
 val LocalLiveTimers = compositionLocalOf { true }
 
@@ -38,7 +43,10 @@ fun ReinsTheme(content: @Composable () -> Unit) {
         }
     }
     val highContrast = rememberHighContrast()
-    val prefs = remember(appearance, highContrast) { SignalPrefs(grain = appearance.grain && !highContrast) }
+    val reduceTransparency = Transparency.forceSolid ?: rememberReduceTransparency()
+    val prefs = remember(appearance, highContrast, reduceTransparency) {
+        SignalPrefs(grain = appearance.grain && !highContrast, frosted = !highContrast && !reduceTransparency)
+    }
     val reduceMotion = rememberReduceMotion()
     MaterialTheme(colorScheme = scheme) {
         CompositionLocalProvider(

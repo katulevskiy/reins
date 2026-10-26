@@ -57,7 +57,7 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
     val s by engine.store.settings.collectAsStateWithLifecycle()
     val update = engine.store::update
 
-    Screen(title = "Sounds and haptics", onBack = onBack) {
+    Screen(title = "Sounds", onBack = onBack) {
         Group(
             Modifier.padding(top = 10.dp),
             footer = "Off silences every sound and vibration in Reins, its notifications included.",
@@ -71,13 +71,13 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
                 "notification volume. Sound when open: a new request chimes at that volume while Reins is on screen too; " +
                 "silent, vibrate and Do Not Disturb hold it back.",
         ) {
-            SwitchRow("Sounds", s.sounds, { on -> update { copy(sounds = on) } }, glyph = Glyph.Speaker, enabled = s.master, tag = "sounds")
+            SwitchRow("Chimes", s.sounds, { on -> update { copy(sounds = on) } }, glyph = Glyph.Bell, enabled = s.master, tag = "sounds")
             Hairline(inset = 51.dp)
             SwitchRow(
                 "Interface",
                 s.interfaceSounds,
                 { on -> update { copy(interfaceSounds = on) } },
-                glyph = Glyph.Apps,
+                glyph = Glyph.Appearance,
                 enabled = s.soundsOn,
                 tag = "interfaceSounds",
             )
@@ -86,13 +86,13 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
                 "Requests",
                 s.requestSounds,
                 { on -> update { copy(requestSounds = on) } },
-                glyph = Glyph.Bell,
+                glyph = Glyph.Tray,
                 enabled = s.soundsOn,
                 tag = "requestSounds",
             )
             Hairline(inset = 51.dp)
             SwitchRow(
-                "Sound when open",
+                "When open",
                 s.soundWhenOpen,
                 { on -> update { copy(soundWhenOpen = on) } },
                 glyph = Glyph.Phone,
@@ -113,7 +113,7 @@ fun SoundsScreen(engine: AndroidFeedback, onBack: () -> Unit) {
                 "Autopilot",
                 s.autopilotSounds,
                 { on -> update { copy(autopilotSounds = on) } },
-                glyph = Glyph.Sparkle,
+                glyph = Glyph.Autopilot,
                 enabled = s.soundsOn,
                 tag = "autopilotSounds",
             )
@@ -142,17 +142,9 @@ private fun VolumeRow(engine: AndroidFeedback, s: FeedbackSettings) {
     val c = LocalColors.current
     var last by remember { mutableIntStateOf(Math.round(s.volume * VOLUME_STEPS)) }
     val enabled = s.soundsOn
-    Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            GlyphIcon(Glyph.Speaker, c.secondary, size = 21.dp)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                RText("Volume", RType.sans(16f, FontWeight.Medium), if (enabled) c.text else c.tertiary)
-                RText("Media volume", RType.sans(13f), c.secondary, Modifier.padding(top = 2.dp))
-            }
-            Spacer(Modifier.width(10.dp))
-            RText("${Math.round(s.volume * 100)}%", RType.mono(14f, FontWeight.Medium), c.secondary, Modifier.testTag("volumeValue"))
-        }
+    // Next (Settings 03): the level between a quiet and a loud speaker; its value is read out.
+    Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        GlyphIcon(Glyph.Speaker, c.inkMeta, size = 16.dp)
         Slider(
             value = s.volume,
             onValueChange = { v ->
@@ -166,15 +158,16 @@ private fun VolumeRow(engine: AndroidFeedback, s: FeedbackSettings) {
             onValueChangeFinished = { engine.preview(null, Event.Selection.cue) },
             steps = VOLUME_STEPS - 1,
             enabled = enabled,
-            modifier = Modifier.testTag("volume"),
+            modifier = Modifier.weight(1f).padding(horizontal = 10.dp).semantics { contentDescription = "Volume, ${Math.round(s.volume * 100)}%" }.testTag("volume"),
         )
+        GlyphIcon(Glyph.Speaker, c.ink2, size = 20.dp)
     }
 }
 
 @Composable
 private fun StrengthRow(s: FeedbackSettings, onChange: (HapticStrength) -> Unit) {
     val c = LocalColors.current
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Column(Modifier.padding(vertical = 12.dp)) {
         // Subtle · Standard · Strong in the chooser's well; the choice is felt at the strength it picks.
         dev.reins.android.design.Chooser(
             HapticStrength.entries.map { dev.reins.android.design.Choice(it, it.label, "strength:${it.name}") },

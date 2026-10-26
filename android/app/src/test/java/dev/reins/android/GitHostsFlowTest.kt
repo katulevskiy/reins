@@ -22,10 +22,10 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp-normal-xxhdpi")
 class GitHostsFlowTest : FlowHarness() {
-    private fun openService(id: String) {
+    private fun launchService(id: String) {
         launch()
         tap("tabConnections")
-        tap("service:$id")
+        openService(id)
     }
 
     private fun opened(): Intent {
@@ -39,6 +39,8 @@ class GitHostsFlowTest : FlowHarness() {
     fun theIntegrationsListHasTheNewGitHosts() {
         launch()
         tap("tabConnections")
+        // Not connected yet: behind the Services header's +.
+        tap("addService")
         awaitTag("service:gitlab")
         awaitTag("service:codeberg")
         awaitTag("service:bitbucket")
@@ -46,7 +48,7 @@ class GitHostsFlowTest : FlowHarness() {
 
     @Test
     fun gitlabOpensItsTokenPageFilledInAndTakesAPastedToken() {
-        openService("gitlab")
+        launchService("gitlab")
         tap("openTokenPage")
         val url = opened().dataString!!
         assertTrue(url, Regex("https://gitlab\\.com/-/user_settings/personal_access_tokens\\?name=Reins-\\d{6}&scopes=read_api,read_repository,write_repository").matches(url))
@@ -62,7 +64,7 @@ class GitHostsFlowTest : FlowHarness() {
 
     @Test
     fun aGitlabTokenCopiedOnItsPageIsPickedUpOnReturn() {
-        openService("gitlab")
+        launchService("gitlab")
         tap("openTokenPage")
         opened()
         val clipboard = context.getSystemService(ClipboardManager::class.java)
@@ -75,7 +77,7 @@ class GitHostsFlowTest : FlowHarness() {
 
     @Test
     fun codebergOpensItsApplicationsPage() {
-        openService("codeberg")
+        launchService("codeberg")
         tap("help:Codeberg tokens")
         awaitText("read:user", substring = true)
         tap("openTokenPage")
@@ -89,7 +91,7 @@ class GitHostsFlowTest : FlowHarness() {
 
     @Test
     fun bitbucketExplainsEmailColonTokenAndSendsItWhole() {
-        openService("bitbucket")
+        launchService("bitbucket")
         awaitText("email:token", substring = true)
         // The field is there at once: the email has to be typed anyway.
         awaitTag("secret")
@@ -103,7 +105,7 @@ class GitHostsFlowTest : FlowHarness() {
 
     @Test
     fun githubKeepsItsOwnPage() {
-        openService("github")
+        launchService("github")
         awaitTag("openGithub")
         assertFalse(has("openTokenPage"))
     }

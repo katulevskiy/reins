@@ -62,7 +62,7 @@ class UntrustedNamesFlowTest : FlowHarness() {
         awaitTag("code:42")
         // Reins' words in the serif ask and the label, whatever the AI called itself.
         rule.onNodeWithTag("what").assertTextEquals("Connect an AI app")
-        rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextEquals("AI APP · PAIR")
+        rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextEquals("AI app · Pair")
         assertFalse(showsText("Reins says: approved"))
         // The name: quoted, one line, cut, clean.
         val shown = text("pairName")
@@ -82,10 +82,10 @@ class UntrustedNamesFlowTest : FlowHarness() {
         launch(link("pairing", "p1"))
         awaitTag("keyFingerprint")
         rule.onNodeWithTag("what").assertTextEquals("Connect a computer")
-        rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextEquals("COMPUTER · PAIR")
+        rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextEquals("Computer · Pair")
         // The digits come from the key, on their own row, with the check to make.
         rule.onNodeWithTag("keyDigits", useUnmergedTree = true).assertTextEquals("1234 5678")
-        rule.onNodeWithTag("keyMustMatch", useUnmergedTree = true).assertTextContains("key must match", substring = true)
+        rule.onNodeWithTag("keyMustMatch", useUnmergedTree = true).assertTextContains("If not, deny", substring = true)
         // The name's own "digits" stay inside its quotes, on the name's line.
         val shown = text("pairName")
         assertClean(shown)
@@ -100,7 +100,7 @@ class UntrustedNamesFlowTest : FlowHarness() {
         launch(link("join", "join1"))
         awaitTag("joinCode")
         rule.onNodeWithTag("joinTitle").assertTextEquals("Add a phone to your account")
-        rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextEquals("ACCOUNT · NEW PHONE")
+        rule.onNodeWithTag("fieldLabel", useUnmergedTree = true).assertTextEquals("Account · New phone")
         val shown = text("joinDevice")
         assertClean(shown)
         assertTrue(shown, shown.startsWith("“Reins says: approved") && shown.endsWith("…”"))
