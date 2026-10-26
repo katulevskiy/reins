@@ -10,9 +10,11 @@ struct ActivityFilterToggle: View {
     @Environment(\.feedback) private var feedback
 
     var body: some View {
+        // Inverse while its chips show (they also show whenever a filter is on).
+        let shown = self.shown || active
         Button {
-            shown.toggle()
-            feedback.play(.expand(shown))
+            self.shown.toggle()
+            feedback.play(.expand(self.shown))
         } label: {
             GlyphIcon(.filter, size: 20)
                 .foregroundStyle(shown ? Palette.onInverse : Palette.ink)

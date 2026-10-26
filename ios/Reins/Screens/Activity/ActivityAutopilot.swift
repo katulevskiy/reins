@@ -273,7 +273,7 @@ struct AutopilotWhyRow: View {
         } label: {
             HStack(spacing: 12) {
                 ModeGlyph(.auto, size: 18).foregroundStyle(Palette.violet).frame(width: 20)
-                Text(title).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.ink).lineLimit(2)
+                Text(AutopilotWhySheet.heading(title)).font(RFont.sans(15.5, .medium)).foregroundStyle(Palette.ink).lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 RowChevron()
             }

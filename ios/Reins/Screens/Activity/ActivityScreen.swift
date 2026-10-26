@@ -515,11 +515,18 @@ struct ActivityScreen: View {
                                 .tracking(13 * TextRole.section.trackingEm)
                                 .accessibilityAddTraits(.isHeader)
                             Spacer(minLength: 8)
-                            Text("\(group.entries.count)")
-                                .font(RFont.sans(13, .semibold))
-                                .monospacedDigit()
-                                .accessibilityLabel(index == 0 ? "\(r.total) found" : "\(group.entries.count) found")
-                                .accessibilityIdentifier(index == 0 ? "searchTotal" : "")
+                            // Words searched: how many matched; a filter alone: the day's counts as glyphs.
+                            if r.key.text.isEmpty, let day = ActivityDays.group(group.entries.map(ActivityDays.stamp), calendar: .current).first {
+                                DayCounts(day: day)
+                                    .accessibilityLabel(index == 0 ? "\(r.total) found" : "\(group.entries.count) found")
+                                    .accessibilityIdentifier(index == 0 ? "searchTotal" : "")
+                            } else {
+                                Text("\(group.entries.count)")
+                                    .font(RFont.sans(13, .semibold))
+                                    .monospacedDigit()
+                                    .accessibilityLabel(index == 0 ? "\(r.total) found" : "\(group.entries.count) found")
+                                    .accessibilityIdentifier(index == 0 ? "searchTotal" : "")
+                            }
                             GlyphIcon(.chevronDown, size: 14).foregroundStyle(Palette.inkMeta).padding(.leading, 2)
                         }
                         .foregroundStyle(Palette.ink2)
