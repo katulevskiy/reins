@@ -39,9 +39,12 @@ struct ModeChip: View {
         let kind = mode.kind
         HStack(spacing: 6) {
             ModeGlyph(kind, size: 16)
-            Text(kind.name)
+            // A timed mode running shows its glyph and what is left only, so the header's title keeps its room
+            // ("Bypass 54:27" squeezed "Activity" to "Act…"); its name stays in the spoken label.
             if let left = mode.left {
-                Text(left).font(RFont.mono(13)).monospacedDigit().opacity(0.9)
+                Text(left).font(RFont.mono(13.5, .medium)).monospacedDigit()
+            } else {
+                Text(kind.name)
             }
             if chevron { GlyphIcon(.chevronDown, size: 13) }
         }
@@ -55,10 +58,14 @@ struct ModeChip: View {
             if kind == .manual { Capsule().strokeBorder(Palette.rule, lineWidth: 1) }
         }
         .fixedSize()
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
     }
 
     var title: String { mode.kind.name }
+
+    /// "Bypass, 54:27 left"; "Lockdown".
+    var spoken: String { mode.left.map { "\(mode.kind.name), \($0) left" } ?? mode.kind.name }
 }
 
 /// A word on a tint: Auto, New, Ready, Denied, Code. Colour never speaks alone, so a pill always has its word. `.tag`
