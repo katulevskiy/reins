@@ -142,6 +142,7 @@ impl ReinsAuthorizer {
             let CallAnswer {
                 request_id,
                 status,
+                ..
             } = answer;
             match status {
                 CallStatus::Answered(outcome) => {

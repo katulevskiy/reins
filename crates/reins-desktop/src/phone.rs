@@ -131,6 +131,7 @@ impl Phone {
             let CallAnswer {
                 request_id,
                 status,
+                ..
             } = answer;
             match status {
                 CallStatus::Answered(outcome) => {
@@ -360,11 +361,13 @@ pub async fn awaiting_logged<T>(
     log_quick_yes: bool,
     decision: impl Future<Output = Result<T, Refusal>>,
 ) -> Result<T, Refusal> {
+    let (decision, mut heard) = crate::told::listen(decision);
     let mut decision = std::pin::pin!(decision);
     tokio::select! {
         r = &mut decision => {
             if log_quick_yes || r.is_err() {
                 let (outcome, reason) = outcome_of(&r);
+                entry.hear(&heard.borrow_and_update());
                 entry.end(outcome, reason.as_deref());
                 journal.record(&entry);
             }
@@ -372,6 +375,7 @@ pub async fn awaiting_logged<T>(
         }
         () = tokio::time::sleep(NOTICE_AFTER) => {}
     }
+    entry.hear(&heard.borrow_and_update());
     journal.record(&entry);
     if entry.decider == Decider::Phone {
         journal.notify_waiting(&entry.what);
@@ -380,11 +384,12 @@ pub async fn awaiting_logged<T>(
         let line = waiting_line(entry.decider, timeout, &entry.what);
         tokio::task::spawn_blocking(move || t(&line))
     });
-    let r = decision.await;
+    let r = hearing(journal, &mut entry, &mut heard, decision).await;
     if let Some(told) = told {
         told.await.ok();
     }
     let (outcome, reason) = outcome_of(&r);
+    entry.hear(&heard.borrow_and_update());
     entry.end(outcome, reason.as_deref());
     journal.record(&entry);
     if let Some(tell) = tell {
@@ -392,4 +397,27 @@ pub async fn awaiting_logged<T>(
         tokio::task::spawn_blocking(move || tell(&line)).await.ok();
     }
     r
+}
+
+/// Waits for `decision`, logging `entry` again whenever the phone says something new about it (where Autopilot leans).
+pub(crate) async fn hearing<T>(
+    journal: &Journal,
+    entry: &mut Entry,
+    heard: &mut tokio::sync::watch::Receiver<crate::told::Heard>,
+    decision: impl Future<Output = T>,
+) -> T {
+    let mut decision = std::pin::pin!(decision);
+    let mut listening = true;
+    loop {
+        tokio::select! {
+            r = &mut decision => return r,
+            changed = heard.changed(), if listening => {
+                if changed.is_err() {
+                    listening = false;
+                } else if entry.hear(&heard.borrow_and_update()) {
+                    journal.record(entry);
+                }
+            }
+        }
+    }
 }

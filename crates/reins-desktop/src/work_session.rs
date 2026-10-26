@@ -292,7 +292,7 @@ pub async fn end(paths: &Paths, config: &Config) -> Result<usize, String> {
     Ok(usize::try_from(ended).unwrap_or(usize::MAX))
 }
 
-fn phone_link(paths: &Paths, config: &Config) -> Result<Arc<PhoneLink>, String> {
+pub(crate) fn phone_link(paths: &Paths, config: &Config) -> Result<Arc<PhoneLink>, String> {
     paths.ensure().map_err(|e| e.to_string())?;
     let identity =
         Arc::new(crate::identity::Identity::load_or_create(&paths.identity_file()).map_err(|e| e.to_string())?);

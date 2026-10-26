@@ -476,20 +476,32 @@ fn refusal_message(name: &str, r: &Refusal) -> String {
 }
 
 async fn list(paths: &Paths, config: &Config, given: Option<&str>) -> Result<Vec<String>, String> {
+    let tell = teller(|line: &str| eprintln!("{line}"));
+    Ok(listing(&names(paths, config, given, Some(tell), "reins vault list").await?))
+}
+
+/// The names and kinds of the vault items, as the phone gives them once its owner approves (sealed to this app and
+/// signed with the phone key this app pinned). `source`: who asks, for the activity log.
+pub async fn names(
+    paths: &Paths,
+    config: &Config,
+    given: Option<&str>,
+    tell: Option<crate::phone::Tell>,
+    source: &str,
+) -> Result<Vec<(String, String)>, String> {
     let phone = logged_in(paths, config)?;
     let phone_key = phone_key_for(&phone, paths, given, false).await?;
     let journal = Journal::new(paths);
-    let entry = Entry::new(Kind::Secrets, "the names of the vault items").source(Some("reins vault list"));
-    let tell = teller(|line: &str| eprintln!("{line}"));
+    let entry = Entry::new(Kind::Secrets, "the names of the vault items").source(Some(source));
     let asked =
         phone.ask(NAMES_TOOL, None, |_| json!({}), "No answer from your phone in time. Approve it, then run again.");
     let timeout = Duration::from_secs(config.approval_timeout_secs);
-    let answer = awaiting(&journal, entry, Some(tell), timeout, asked).await.map_err(|r| relayed(&r))?;
+    let answer = awaiting(&journal, entry, tell, timeout, asked).await.map_err(|r| relayed(&r))?;
     let names: VaultNames = open_from_phone(&phone, &phone_key, &answer.data)?;
     if names.dir != TO_DESKTOP || names.nonce != answer.nonce {
         return Err("The phone's answer is for another request; refused.".to_owned());
     }
-    Ok(listing(&names.items))
+    Ok(names.items)
 }
 
 /// One line per item: the name, and the kind when it is not a login.
