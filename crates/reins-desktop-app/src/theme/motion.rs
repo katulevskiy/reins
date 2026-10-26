@@ -5,7 +5,7 @@
 //! driven by elapsed time, not by an animation that could be skipped). The app keeps its own flag rather than GPUI's
 //! `App::set_reduce_motion`: GPUI's skips every animation outright, the cross-fades included.
 
-#![allow(dead_code, reason = "Signal's foundation: the whole set is here; the screens adopt it in phase 2")]
+#![allow(dead_code, reason = "the motion tokens, as a set: not every one is used on the desktop")]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

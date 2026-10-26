@@ -112,6 +112,22 @@ impl Pause {
             Self::Manual => Some("until you resume".to_owned()),
         }
     }
+
+    /// The time left as a menu bar clock: "3:12" (hours and minutes), "47m"; `None` without an end.
+    #[must_use]
+    pub fn clock(self, now: i64) -> Option<String> {
+        match self {
+            Self::Until(until) => {
+                let mins = ((until - now).max(0) + 59) / 60;
+                Some(if mins >= 60 {
+                    format!("{}:{:02}", mins / 60, mins % 60)
+                } else {
+                    format!("{mins}m")
+                })
+            }
+            Self::Off | Self::Manual => None,
+        }
+    }
 }
 
 impl Saved {
@@ -128,17 +144,6 @@ impl Saved {
         self.paused_at = None;
     }
 
-    /// How much of a timed pause is left at `now`, from 1 (just began) to 0; `None` when not timed.
-    #[must_use]
-    pub fn pause_left(&self, now: i64) -> Option<f32> {
-        let until = self.paused_until.filter(|_| !self.paused_manual)?;
-        // A pause from before the start was kept: as if it were a day long.
-        let from = self.paused_at.unwrap_or(until - 86_400);
-        let total = (until - from).max(1);
-        #[allow(clippy::cast_precision_loss, reason = "seconds of a day at most")]
-        Some(((until - now).clamp(0, total) as f32) / (total as f32))
-    }
-
     /// A timed pause ran out (a manual one never does).
     #[must_use]
     pub fn pause_ran_out(&self, now: i64) -> bool {
@@ -149,6 +154,15 @@ impl Saved {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The menu bar's clock: hours and minutes, or minutes, rounded up; nothing without an end.
+    #[test]
+    fn a_pause_shows_as_a_short_clock() {
+        assert_eq!(Pause::Until(3_600 * 3 + 12 * 60).clock(0), Some("3:12".to_owned()));
+        assert_eq!(Pause::Until(47 * 60 - 30).clock(0), Some("47m".to_owned()));
+        assert_eq!(Pause::Manual.clock(0), None);
+        assert_eq!(Pause::Off.clock(0), None);
+    }
 
     #[test]
     fn timed_pauses_end_and_manual_ones_do_not() {
@@ -166,18 +180,6 @@ mod tests {
         assert!(!saved.pause_ran_out(i64::MAX));
         saved.unpause();
         assert_eq!(Pause::of(&saved, 0), Pause::Off);
-    }
-
-    #[test]
-    fn what_is_left_of_a_pause() {
-        let mut saved = Saved::default();
-        assert_eq!(saved.pause_left(0), None);
-        saved.pause(PauseFor::Hour, 1_000);
-        assert_eq!(saved.pause_left(1_000), Some(1.0));
-        assert_eq!(saved.pause_left(1_000 + 1_800), Some(0.5));
-        assert_eq!(saved.pause_left(1_000 + 7_200), Some(0.0));
-        saved.pause(PauseFor::Manual, 1_000);
-        assert_eq!(saved.pause_left(1_000), None);
     }
 
     #[test]

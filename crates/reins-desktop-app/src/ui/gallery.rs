@@ -13,7 +13,7 @@ use super::icons::{Brand, Glyph, Illustration, avatar, glyph, illustration};
 use super::kit::{self, HoldLook, Look, Mode, PillLook, Size};
 use super::{Data, Root};
 use crate::theme::text::{SCALE, tracked};
-use crate::theme::{Field, MONO, Palette, SignalText as _, Tone, tokens};
+use crate::theme::{Field, MONO, NextText as _, Palette, Tone, tokens};
 
 /// What the gallery's controls are set to.
 #[derive(Clone, Copy, Debug)]
@@ -70,7 +70,7 @@ impl Root {
                         .flex()
                         .flex_col()
                         .gap(px(6.0))
-                        .child(div().title().child(kit::ask_line("Signal, ", "the kit")))
+                        .child(div().title().child(kit::ask_line("Next, ", "the kit")))
                         .child(div().mood().text_color(pal.ink_2()).child("Every piece, in this window's theme.")),
                 )
             })

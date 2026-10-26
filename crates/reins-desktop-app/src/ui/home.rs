@@ -1,36 +1,42 @@
-//! Home (`Desk-Home.png`, `Desk-Waiting.png`). Calm: "Good evening" and the mood line with "Send a test", the plate
-//! that says what Reins does for this computer, three plates (Health, Work session, Today), what a plate opens (the
-//! checks, the work session form) and the latest requests. While a request waits on the phone, it is the screen: a
-//! field of its colour across the top, under the title bar (who asks, the label line, the ask with its target in
-//! italic, where to answer and the time left, the QR code to open it on the phone), then what will happen and the
-//! latest requests.
+//! Home (`DeskNext-Home.png`, `DeskNext-Ask.png`). Calm: the wallpaper behind "Good evening", faded into the page,
+//! with "Send a test"; then Today (the day's requests, with how many were approved and denied) and three cards beside
+//! it, Health, Work session and This computer, all on frosted panes over the art. While a request waits on the phone it
+//! takes the top: a field of its colour (the timer, Hide, who asks, the ask, its target, the QR code to answer on the
+//! phone), then what will happen and, for a push, its commits with the one worth a look opened.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    AnyElement, Context, Div, FontWeight, Hsla, InteractiveElement as _, IntoElement, ParentElement, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use reins_desktop::doctor::Level;
-use reins_desktop::journal::{Entry, Outcome, Tally};
+use reins_desktop::journal::{Decider, Entry, Outcome, Tally};
 
-use super::icons::{Glyph, Mark, glyph};
-use super::parts::{FactLook, caption, dots, fact_rows, italic, link, mood, sentence};
+use super::icons::{Glyph, glyph};
+use super::parts::{FactLook, caption, fact_rows, italic, link, sentence};
 use super::sidebar::clock_left;
-use super::story::{Ask, Words, who_from};
+use super::story::{Ask, Words};
 use super::{Data, Root, kit};
 use crate::format;
 use crate::health::{self, Test};
 use crate::model::{Model, Section};
 use crate::theme::motion::{self, Entrance, curve, enter};
-use crate::theme::{Field, MONO, Palette, SERIF, SignalText as _};
+use crate::theme::{Field, MONO, NextText as _, Palette};
 use crate::tray::Look;
+use gpui::{Animation, AnimationExt as _};
+use kit::Glass;
 
-/// How many recent requests Home shows (calm), and beside a waiting request.
+/// How many requests Today shows.
 const RECENT: usize = 5;
-const RECENT_WAITING: usize = 3;
-/// The page's sides (the boards' `.main`).
-pub const SIDE: f32 = 44.0;
-/// Under a waiting request, "What will happen" and the latest requests sit side by side while each has this much.
+/// The page's sides and the space above the title (the boards' `.dt` on Home).
+pub const SIDE: f32 = 40.0;
+const TOP: f32 = 40.0;
+/// The wallpaper's height behind the title, and how far below the title the panes start.
+const WALL: f32 = 360.0;
+pub const UNDER_TITLE: f32 = 110.0;
+/// The cards' column.
+const CARDS: f32 = 300.0;
+/// Under a waiting request, the two columns sit side by side while each has this much.
 const WAITING_COLUMN_MIN: f32 = 300.0;
 
 /// Today's requests (since local midnight).
@@ -40,14 +46,14 @@ pub fn today(entries: &[Entry], now: i64) -> Tally {
     Tally::of(entries.iter().filter(|e| e.at >= start))
 }
 
-/// When a row's request was: "now", "4 min", "2 h", "Oct 3".
+/// When a row's request was, as the boards write it: "now", "4m", "2h", "Oct 3".
 #[must_use]
 pub fn short_ago(now: i64, at: i64) -> String {
     let secs = (now - at).max(0);
     match secs {
         0..60 => "now".to_owned(),
-        60..3_600 => format!("{} min", secs / 60),
-        3_600..86_400 => format!("{} h", secs / 3_600),
+        60..3_600 => format!("{}m", secs / 60),
+        3_600..86_400 => format!("{}h", secs / 3_600),
         _ => format::date(at),
     }
 }
@@ -62,7 +68,7 @@ pub fn greeting(now: i64) -> &'static str {
     }
 }
 
-/// The mood line under the greeting.
+/// The line under the greeting.
 fn mood_line(d: &Data) -> &'static str {
     match d.look {
         Look::Attention if !d.paired => "This computer is not paired yet.",
@@ -73,8 +79,8 @@ fn mood_line(d: &Data) -> &'static str {
     }
 }
 
-/// A short serif line with its last words in italic: "Fix the *login bug*" (the last two words of three or more,
-/// the last of two).
+/// A short line with its last words at 600: "Fix the **login bug**" (the last two words of three or more, the last
+/// of two).
 #[must_use]
 pub fn italic_tail(text: &str) -> Vec<Words> {
     let words: Vec<&str> = text.split_whitespace().collect();
@@ -108,182 +114,289 @@ pub fn italic_tail(text: &str) -> Vec<Words> {
     out
 }
 
-/// How a row ends: a word for every outcome but an approval (a check).
-fn ending(e: &Entry, pal: Palette) -> AnyElement {
-    let word = |w: &'static str, color| {
-        div().flex_none().text_size(px(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(color).child(w)
-    };
+/// A small tag at a row's end (`.otag`): a glyph and a word in `color` on itself at 12%.
+fn otag(g: Glyph, word: &'static str, color: Hsla) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(3.0))
+        .h(px(20.0))
+        .px(px(7.0))
+        .rounded_full()
+        .bg(color.opacity(0.12))
+        .text_color(color)
+        .text_size(px(11.5))
+        .font_weight(FontWeight::SEMIBOLD)
+        .whitespace_nowrap()
+        .child(glyph(g, 11.0, color))
+        .child(word)
+}
+
+/// How a row ended, under its time: a check, a cross, or a tag for what no one answered.
+fn outcome_mark(e: &Entry, pal: Palette) -> AnyElement {
     match e.outcome {
-        Outcome::Approved => glyph(Glyph::Check, 16.0, pal.success).into_any_element(),
-        Outcome::Denied => word("Denied", pal.danger).into_any_element(),
-        Outcome::Blocked => word("Blocked", pal.danger).into_any_element(),
-        Outcome::Failed => word("Failed", pal.danger).into_any_element(),
-        Outcome::TimedOut => word("No answer", pal.warning).into_any_element(),
-        Outcome::Allowed => word("By rules", pal.ink_meta()).into_any_element(),
-        Outcome::Waiting => word("Waiting", pal.violet()).into_any_element(),
+        Outcome::Approved => glyph(Glyph::Check, 17.0, pal.success).into_any_element(),
+        Outcome::Denied | Outcome::Blocked => glyph(Glyph::Close, 17.0, pal.danger).into_any_element(),
+        Outcome::Failed => glyph(Glyph::CircleAlert, 17.0, pal.danger).into_any_element(),
+        Outcome::TimedOut => glyph(Glyph::TimerOff, 17.0, pal.warning).into_any_element(),
+        Outcome::Allowed => otag(Glyph::Shield, "Rules", pal.ink_2()).into_any_element(),
+        Outcome::Waiting => otag(Glyph::Phone, "Waiting", pal.violet()).into_any_element(),
     }
 }
 
-/// A plate's label, value (serif 30) and the line under it.
-fn plate_value(text: impl Into<SharedString>) -> Div {
-    div()
-        .mt(px(10.0))
-        .font_family(SERIF)
-        .text_size(px(30.0))
-        .line_height(px(34.0))
-        .min_w(px(0.0))
-        .truncate()
-        .child(text.into())
+/// The amber line under a row's sentence (`.risk`), for what did not go as asked.
+fn risk_line(e: &Entry, pal: Palette) -> Option<Div> {
+    let (text, color) = match (e.outcome, e.decider) {
+        (Outcome::TimedOut, _) => ("No answer, so it was denied".to_owned(), pal.warning),
+        (Outcome::Failed, _) => (e.reason.clone().unwrap_or_else(|| "Couldn't ask your phone".to_owned()), pal.danger),
+        (Outcome::Blocked, _) => ("Blocked by your rules".to_owned(), pal.warning),
+        (Outcome::Denied | Outcome::Approved, Decider::Local) => {
+            ("Answered on this computer".to_owned(), pal.ink_meta())
+        }
+        _ => return None,
+    };
+    Some(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(5.0))
+            .mt(px(3.0))
+            .text_size(px(12.5))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(color)
+            .min_w(px(0.0))
+            .child(glyph(Glyph::Warning, 13.0, color))
+            .child(div().min_w(px(0.0)).truncate().child(text)),
+    )
 }
 
-fn plate_line(text: impl Into<SharedString>, pal: Palette) -> Div {
+/// A card's label (`.dlab`: 12.5, 600, `ink-meta`).
+fn card_label(text: impl Into<SharedString>, color: Hsla) -> Div {
+    div().text_size(px(12.5)).font_weight(FontWeight::SEMIBOLD).text_color(color).child(text.into())
+}
+
+/// A card's value (`--s: 34`) with what acts on it at its right.
+fn card_value(text: impl Into<SharedString>, action: Option<AnyElement>, color: Hsla) -> Div {
     div()
-        .flex_1()
-        .min_w(px(0.0))
-        .truncate()
-        .text_size(px(12.5))
-        .line_height(px(17.0))
-        .text_color(pal.ink_meta())
-        .child(text.into())
+        .flex()
+        .items_end()
+        .gap(px(10.0))
+        .mt(px(6.0))
+        .child(div().flex_1().min_w(px(0.0)).stat().text_color(color).truncate().child(text.into()))
+        .when_some(action, ParentElement::child)
+}
+
+/// A card's line under its value (13.5, `ink-2`).
+fn card_line(text: impl Into<SharedString>, color: Hsla) -> Div {
+    div().mt(px(4.0)).text_size(px(13.5)).line_height(px(18.0)).text_color(color).truncate().child(text.into())
 }
 
 impl Root {
-    /// Home, its own padding: the waiting field runs to the content's edges, under the title bar.
+    /// Home, its own padding: the wallpaper and a waiting field run to the content's edges, under the title bar.
     pub(super) fn home(&mut self, d: &Data, pal: Palette, window: &Window, cx: &mut Context<'_, Self>) -> AnyElement {
-        if let Some(e) = d.waiting().last() {
+        if let Some(e) = d.waiting().last().filter(|e| self.hidden_ask.as_deref() != Some(e.id.as_str())) {
             return self.home_waiting(e, d, pal, cx);
         }
-        let device = if cfg!(target_os = "macos") {
-            "Mac"
-        } else {
-            "computer"
-        };
+        let glass = Glass::over(true, !d.saved.solid_panes);
         let sending = matches!(d.test, Test::Waiting(_));
-        let test =
-            kit::button("hero-test", kit::Look::Outline, kit::Size::Regular, Some(Glyph::Send), "Send a test", pal);
+        let test = kit::button("hero-test", kit::Look::Soft, kit::Size::Regular, Some(Glyph::Send), "Send a test", pal);
         let test = if d.paired && !sending {
             test.on_click(Self::on_model(cx, Model::send_test))
         } else {
             kit::disabled(test)
         };
+        let over_art = |c: Hsla| {
+            if pal.dark {
+                gpui::white()
+            } else {
+                c
+            }
+        };
         let header = div()
+            .relative()
             .flex()
-            .flex_wrap()
             .items_end()
-            .gap(px(16.0))
+            .gap(px(12.0))
+            .px(px(SIDE))
+            .pt(px(TOP))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .min_w(px(260.0))
-                    .child(div().title().text_color(pal.ink()).child(greeting(d.now)))
-                    .child(mood(mood_line(d), pal)),
+                    .min_w(px(0.0))
+                    .child(div().title().text_color(over_art(pal.ink())).child(greeting(d.now)))
+                    .child(
+                        div()
+                            .mt(px(6.0))
+                            .mood()
+                            .text_color(if pal.dark {
+                                crate::theme::rgba(0x00E4_E4EA, 1.0)
+                            } else {
+                                pal.ink_2()
+                            })
+                            .child(mood_line(d)),
+                    ),
             )
             .child(test);
 
-        let mut page = div().flex().flex_col().gap(px(26.0)).child(header);
-        if let Some(banner) = Self::update_banner(d, pal, cx) {
-            page = page.child(banner);
+        // The left column: what needs saying, then Today and what a card opens.
+        let mut left = div().flex().flex_col().gap(px(14.0)).flex_1().min_w(px(360.0));
+        if let Some(banner) = Self::update_banner(d, glass, pal, cx) {
+            left = left.child(banner);
         }
-        page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
-        page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
+        if let Some(a) = Self::attention(d, glass, pal, cx) {
+            left = left.child(a);
+        }
+        left = left.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
+        left = left.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
         if !matches!(d.test, Test::Idle) {
-            page = page.child(kit::plate(pal).p(px(0.0)).child(Self::test_panel(d, true, pal, cx)));
+            left = left.child(kit::pane(Self::test_panel(d, true, pal, cx), glass, kit::pane::RADIUS, pal));
         }
-        page = page.child(Self::hero(d, device, pal, cx));
-
-        // The plates.
-        page = page.child(
-            div()
-                .grid()
-                .grid_cols(3)
-                .gap(px(14.0))
-                .child(self.health_tile(d, pal, cx))
-                .child(Self::work_tile(d, pal, cx))
-                .child(Self::today_tile(d, pal)),
-        );
-        // What a plate opens.
+        left = left.child(Self::today_pane(d, glass, pal, cx));
         if self.health_open {
-            page = page.child(Self::health_card(d, pal, cx));
+            left = left.child(Self::health_card(d, pal, cx));
         }
         if d.work_session().is_none() && (d.work.asking.is_some() || d.work.form.is_some()) {
-            page = page.child(self.work_card(d, pal, window, cx));
+            left = left.child(self.work_card(d, pal, window, cx));
         }
-
-        let recent: Vec<&Entry> = d.activity().iter().take(RECENT).collect();
-        page = page.child(Self::latest(&recent, "home", d, pal, cx));
-        div().w_full().px(px(SIDE)).pt(px(34.0)).pb(px(40.0)).child(page).into_any_element()
-    }
-
-    /// "LATEST", "See all" and the rows (or a quiet line when there are none).
-    fn latest(recent: &[&Entry], scope: &'static str, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Div {
-        let mut rows = div().flex().flex_col().mt(px(6.0));
-        if recent.is_empty() {
-            rows = rows.child(caption("Nothing asked yet", pal).text_color(pal.ink_meta()).py(px(12.0)));
-        }
-        for (i, e) in recent.iter().enumerate() {
-            rows = rows.child(
-                Self::entry_row(e, scope, d, pal, i + 1 == recent.len(), None)
-                    .on_click(Self::open_entry(cx, e.id.clone())),
-            );
-        }
-        div()
+        let cards = div()
             .flex()
             .flex_col()
-            .child(div().flex().items_center().justify_between().child(kit::section_label("Latest", pal)).when(
-                !recent.is_empty(),
-                |r| {
-                    r.child(
-                        link(SharedString::from(format!("see-all-{scope}")), "See all", pal)
-                            .on_click(Self::go(cx, Section::Activity)),
-                    )
-                },
-            ))
-            .child(rows)
+            .gap(px(14.0))
+            .flex_1()
+            .min_w(px(260.0))
+            .max_w(px(CARDS))
+            .child(Self::health_tile(d, glass, pal, cx))
+            .child(Self::work_tile(d, glass, pal, cx))
+            .child(Self::computer_tile(d, glass, pal, cx));
+        let content = div()
+            .relative()
+            .flex()
+            .flex_wrap()
+            .items_start()
+            .gap(px(22.0))
+            .px(px(SIDE))
+            .pt(px(UNDER_TITLE))
+            .pb(px(40.0))
+            .child(left)
+            .child(cards);
+        div()
+            .relative()
+            .w_full()
+            .min_h_full()
+            .child(kit::wallpaper::band(d.saved.wallpaper(pal.dark), WALL, pal))
+            .child(header)
+            .child(content)
+            .into_any_element()
     }
 
-    /// One request as a row: its kind tile, a line, who and what kind, when, how it ended. `selected`: Activity's row
-    /// (a raised pill when picked, the time as a clock); `None`: Home's (a hairline under it, the time as an age).
+    /// Today (`.grp.pf2` on the board): its counts, and the day's requests (the latest ones, when none came today).
+    fn today_pane(d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let start = format::start_of_day(d.now);
+        let todays: Vec<&Entry> =
+            d.activity().iter().filter(|e| e.at >= start && e.outcome != Outcome::Waiting).take(RECENT).collect();
+        let (label, rows): (&str, Vec<&Entry>) = if todays.is_empty() {
+            ("Latest", d.activity().iter().filter(|e| e.outcome != Outcome::Waiting).take(RECENT).collect())
+        } else {
+            ("Today", todays)
+        };
+        let t = today(d.activity(), d.now);
+        let count = |g: Glyph, n: usize, color: Hsla| {
+            div().flex().items_center().gap(px(3.0)).text_color(color).child(glyph(g, 13.0, color)).child(n.to_string())
+        };
+        let counts = div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .when(t.approved + t.allowed > 0, |c| c.child(count(Glyph::Check, t.approved + t.allowed, pal.success)))
+            .when(t.denied + t.blocked > 0, |c| c.child(count(Glyph::Close, t.denied + t.blocked, pal.danger)))
+            .when(t.timed_out > 0, |c| c.child(count(Glyph::TimerOff, t.timed_out, pal.warning)))
+            .child(glyph(Glyph::ChevronRight, 14.0, pal.ink_meta()));
+        let head = div()
+            .id("today-head")
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(14.0))
+            .pt(px(12.0))
+            .pb(px(4.0))
+            .label()
+            .text_color(pal.ink_2())
+            .cursor_pointer()
+            .child(div().flex_1().child(label))
+            .child(counts)
+            .on_click(Self::go(cx, Section::Activity));
+        let mut items: Vec<AnyElement> = Vec::new();
+        let surface = Self::row_surface(glass, pal);
+        for e in &rows {
+            items.push(
+                Self::entry_row(e, "home", d, pal, false, surface)
+                    .on_click(Self::open_entry(cx, e.id.clone()))
+                    .into_any_element(),
+            );
+        }
+        if items.is_empty() {
+            items.push(
+                div()
+                    .px(px(14.0))
+                    .py(px(16.0))
+                    .text_size(px(14.5))
+                    .text_color(pal.ink_meta())
+                    .child("Nothing asked yet.")
+                    .into_any_element(),
+            );
+        }
+        kit::pane(
+            div().flex().flex_col().pb(px(4.0)).child(head).children(kit::pane::with_rules(items, 62.0, glass, pal)),
+            glass,
+            kit::pane::RADIUS,
+            pal,
+        )
+    }
+
+    /// What a request icon's badge is ringed in, on a pane of `glass`.
+    pub(super) fn row_surface(glass: Glass, pal: Palette) -> Hsla {
+        match glass {
+            Glass::Solid => pal.paper_raised(),
+            Glass::Frosted if pal.dark => crate::theme::rgba(0x0024_2429, 1.0),
+            Glass::Frosted => crate::theme::rgba(0x00F4_F4F6, 1.0),
+        }
+    }
+
+    /// One request as a row (`.r`): its icon, its sentence with the target at 600 (and a line when it did not go as
+    /// asked), when, and how it ended. `selected`: Activity's picked row, washed in violet.
     pub(super) fn entry_row(
         e: &Entry,
         scope: &'static str,
         d: &Data,
         pal: Palette,
-        last: bool,
-        selected: Option<bool>,
+        selected: bool,
+        surface: Hsla,
     ) -> Stateful<Div> {
         let s = Ask::of(e);
-        // The icon's badge is ringed in what the row sits on.
-        let surface = if selected == Some(true) {
-            pal.paper_raised()
+        let when = if e.at >= format::start_of_day(d.now) {
+            short_ago(d.now, e.at)
         } else {
-            pal.paper()
+            format::clock(e.at)
         };
-        // Under the sentence, the machine's details in mono; else who and what kind.
-        let meta = match &s.details {
-            Some(details) => div().font_family(MONO).text_size(px(12.0)).child(details.clone()),
-            None => div().text_size(px(12.5)).child(format!("{} · {}", s.who, s.kind)),
-        };
-        let when = match selected {
-            Some(_) if e.at >= format::start_of_day(d.now) - 86_400 => format::clock(e.at),
-            Some(_) => format::date(e.at),
-            None => short_ago(d.now, e.at),
-        };
-        let row = div()
+        kit::pane_row()
             .id(SharedString::from(format!("{scope}-{}", e.id)))
-            .flex()
-            .items_center()
-            .gap(px(12.0))
-            .min_h(px(if selected.is_some() {
-                52.0
-            } else {
-                50.0
-            }))
-            .py(px(6.0))
-            .min_w(px(0.0))
+            .min_h(px(56.0))
             .cursor_pointer()
-            .child(kit::request_icon(s.mark, s.badge, s.field, 32.0, surface, pal))
+            .when_else(
+                selected,
+                |r| {
+                    r.bg(pal.violet().opacity(if pal.dark {
+                        0.16
+                    } else {
+                        0.10
+                    }))
+                },
+                |r| r.hover(|h| h.bg(pal.ink().opacity(0.035))),
+            )
+            .child(div().mr(px(5.0)).mb(px(5.0)).child(kit::request_icon(s.mark, s.badge, s.field, 36.0, surface, pal)))
             .child(
                 div()
                     .flex()
@@ -292,337 +405,41 @@ impl Root {
                     .min_w(px(0.0))
                     .child(
                         div()
-                            .min_w(px(0.0))
-                            .truncate()
-                            .text_size(px(if selected.is_some() {
-                                14.0
-                            } else {
-                                14.5
-                            }))
-                            .line_height(px(19.0))
-                            .font_weight(FontWeight::MEDIUM)
+                            .text_size(px(15.0))
+                            .line_height(px(20.0))
                             .text_color(pal.ink())
-                            .child(s.line()),
+                            .line_clamp(3)
+                            .child(sentence(&s.sentence, pal)),
                     )
-                    .child(meta.min_w(px(0.0)).truncate().line_height(px(17.0)).text_color(pal.ink_meta())),
+                    .when_some(risk_line(e, pal), ParentElement::child),
             )
-            .child(div().flex_none().text_size(px(12.5)).text_color(pal.ink_meta()).child(when))
-            .child(div().flex().flex_none().items_center().child(ending(e, pal)));
-        match selected {
-            // Activity's: a pill when picked; its hairline hidden under it.
-            Some(picked) => row.relative().px(px(10.0)).mx(px(-10.0)).rounded(px(12.0)).when_else(
-                picked,
-                |r| r.bg(pal.paper_raised()).border_1().border_color(pal.rule()),
-                |r| {
-                    r.hover(|h| h.bg(pal.paper_sunken().opacity(0.5))).when(!last, |r| {
-                        r.child(div().absolute().left_0().right_0().bottom_0().h(px(1.0)).bg(pal.rule()))
-                    })
-                },
-            ),
-            None => row.when(!last, |r| r.border_b_1().border_color(pal.rule())),
-        }
-    }
-
-    /// The plate under the greeting: what Reins does here (or what stops it), with what is protected as chips.
-    fn hero(d: &Data, device: &str, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let it = |t: &str, i: bool| Words {
-            text: t.to_owned(),
-            bold: i,
-        };
-        let (words, action, last_dot): (Vec<Words>, Option<AnyElement>, gpui::Hsla) = match d.look {
-            Look::Attention if !d.paired => (
-                vec![
-                    it("Pair ", false),
-                    it("this ", true),
-                    it(device, true),
-                    it(" with ", false),
-                    it("your phone", true),
-                ],
-                Some(
-                    kit::button(
-                        "hero-pair",
-                        kit::Look::Inverse,
-                        kit::Size::Regular,
-                        Some(Glyph::Phone),
-                        "Pair again",
-                        pal,
-                    )
-                    .on_click(Self::on_model(cx, Model::sign_out))
-                    .into_any_element(),
-                ),
-                pal.warning,
-            ),
-            Look::Attention => (
-                vec![it("The ", false), it("background service", true), it(" isn't running", false)],
-                Some(
-                    kit::button("hero-start", kit::Look::Inverse, kit::Size::Regular, Some(Glyph::Play), "Start", pal)
-                        .on_click(Self::on_model(cx, Model::start_service))
-                        .into_any_element(),
-                ),
-                pal.warning,
-            ),
-            Look::Paused => (
-                vec![it("git goes ", false), it("straight to the hosts", true), it(" for now", false)],
-                d.pause.on().then(|| {
-                    kit::button("hero-resume", kit::Look::Inverse, kit::Size::Regular, Some(Glyph::Play), "Resume", pal)
-                        .on_click(Self::on_model(cx, Model::resume))
-                        .into_any_element()
-                }),
-                pal.danger,
-            ),
-            Look::On | Look::Waiting => (
-                vec![
-                    it("Your phone approves what ", false),
-                    it("AI agents", true),
-                    it(" do on ", false),
-                    it("this ", true),
-                    it(device, true),
-                ],
-                None,
-                pal.success,
-            ),
-        };
-        // What is protected, as chips.
-        let mut chips = div().flex().flex_wrap().gap(px(8.0)).mt(px(12.0));
-        if matches!(d.look, Look::On | Look::Waiting) {
-            let tools = d.snapshot.as_ref().map_or(0, |s| s.harnesses.iter().filter(|h| h.added).count());
-            if tools > 0 {
-                chips = chips.child(kit::pill(
-                    Some(Glyph::Check),
-                    format::count(tools as u64, "AI tool", "AI tools"),
-                    kit::PillLook::Soft,
-                    pal,
-                ));
-            }
-            if d.snapshot.as_ref().is_some_and(|s| !s.git_routed.is_empty()) {
-                chips = chips.child(kit::pill(None, "git through Reins", kit::PillLook::Soft, pal));
-            }
-            if d.config().is_some_and(|c| c.ssh.enabled) {
-                chips = chips.child(kit::pill(None, "SSH keys from your phone", kit::PillLook::Soft, pal));
-            }
-        } else if let Some(left) = d.pause.short(d.now) {
-            chips = chips.child(kit::pill(Some(Glyph::Pause), left, kit::PillLook::Soft, pal));
-        }
-        let stage = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(10.0))
-            .child(device_tile(Glyph::Laptop, pal))
-            .child(dots(last_dot, pal))
-            .child(device_tile(Glyph::Phone, pal));
-        kit::plate(pal)
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap(px(28.0))
-            .px(px(28.0))
-            .py(px(26.0))
-            .child(stage)
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .flex_1()
-                    .min_w(px(280.0))
+                    .flex_none()
+                    .items_end()
+                    .gap(px(4.0))
+                    .min_w(px(34.0))
                     .child(
                         div()
-                            .font_family(SERIF)
-                            .text_size(px(30.0))
-                            .line_height(px(33.0))
-                            .text_color(pal.ink())
-                            .child(sentence(&words, pal)),
+                            .text_size(px(12.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(pal.ink_meta())
+                            .whitespace_nowrap()
+                            .child(when),
                     )
-                    .child(chips),
+                    .child(outcome_mark(e, pal)),
             )
-            .when_some(action, ParentElement::child)
-            .into_any_element()
     }
 
-    /// Home while a request waits: its field, then what will happen and the latest requests.
-    fn home_waiting(&mut self, e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let s = Ask::of(e);
-        // A push's commits, files and diffs, as the desktop app read them from the pack it holds.
-        self.load_push(e, cx);
-        let commits = self.kept_for(e).map(|push| self.commits(&push, false, pal, cx));
-        let field = s.field;
-        let on = pal.on_field();
-        let (total, left) = d.wait_left(e);
-        let more = d.waiting().count().saturating_sub(1);
-
-        let agent = match s.agent {
-            Mark::Brand(b) => super::icons::avatar(b, 24.0, pal).border_0().into_any_element(),
-            Mark::Glyph(i) => div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .size(px(24.0))
-                .rounded_full()
-                .bg(pal.on_field_wash())
-                .child(glyph(i, 14.0, on))
-                .into_any_element(),
-        };
-        let who = who_from(e);
-        let (name, from) = who.split_once(" · ").map_or((who.as_str(), None), |(n, f)| (n, Some(f)));
-        let who_line = div().flex().items_center().gap(px(10.0)).child(agent).child(
-            div()
-                .flex()
-                .min_w(px(0.0))
-                .text_size(px(14.0))
-                .font_weight(FontWeight::MEDIUM)
-                .child(name.to_owned())
-                .when_some(from, |l, f| {
-                    l.child(
-                        div().min_w(px(0.0)).truncate().text_color(pal.on_field_2()).child(format!("\u{a0}·\u{a0}{f}")),
-                    )
-                }),
-        );
-        let label = s.label();
-        // The ask follows the field by 60 ms.
-        let ask_id = SharedString::from(format!("ask-{}", e.id));
-        let ask =
-            div().font_family(SERIF).text_size(px(60.0)).line_height(px(58.0)).text_color(on).child(italic(&s.order));
-        let ask: AnyElement = if motion::reduce_motion() {
-            ask.into_any_element()
-        } else {
-            let (delay, run) = (motion::ASK_DELAY.as_secs_f32(), motion::FIELD_IN.as_secs_f32());
-            let ease = curve(motion::EASE_OUT);
-            ask.with_animation(ask_id, Animation::new(motion::ASK_DELAY + motion::FIELD_IN), move |el, t| {
-                let p = ease(((t * (delay + run) - delay) / run).clamp(0.0, 1.0));
-                el.opacity(p)
-            })
-            .into_any_element()
-        };
-        let mut timer_row = div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(14.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .text_size(px(14.5))
-                    .text_color(pal.on_field_2())
-                    .child(glyph(Glyph::Phone, 16.0, pal.on_field_2()))
-                    .child(format!("Answer on {}", d.phone())),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .font_family(MONO)
-                    .text_size(px(14.0))
-                    .text_color(on)
-                    .child(kit::timer(left, i64::try_from(total).unwrap_or(i64::MAX), on))
-                    .when(left >= 15, |t| t.child("left")),
-            );
-        if more > 0 {
-            timer_row = timer_row
-                .child(div().text_size(px(14.0)).text_color(pal.on_field_2()).child(format!("+{more} more waiting")));
-        }
-        let qr = div()
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(14.0))
-            .p(px(12.0))
-            .rounded(px(20.0))
-            .bg(gpui::white().opacity(0.14))
-            .child(div().flex_none().p(px(8.0)).rounded(px(12.0)).bg(gpui::white()).child(crate::qr::element(
-                crate::links::PHONE_ACTIVITY,
-                76.0,
-                gpui::black(),
-                gpui::white(),
-            )))
-            .child(
-                div()
-                    .max_w(px(150.0))
-                    .text_size(px(13.5))
-                    .line_height(px(19.0))
-                    .text_color(on)
-                    .child(format!("Scan to open it on your phone. {} can't approve.", this_computer_cap())),
-            );
-        let top = if cfg!(target_os = "macos") {
-            40.0
-        } else {
-            34.0
-        };
-        let surface = kit::field_surface(field, 0.0, kit::field::FIELD_RADIUS)
-            .flex()
-            .flex_wrap()
-            .items_end()
-            .gap(px(32.0))
-            .px(px(SIDE))
-            .pt(px(top + 6.0))
-            .pb(px(34.0))
-            .text_color(on)
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(300.0))
-                    .gap(px(14.0))
-                    .child(who_line)
-                    .child(kit::field_label(label, pal))
-                    .child(ask)
-                    // The machine's details on their own mono line, never in the serif.
-                    .when_some(s.details.clone(), |c, details| {
-                        c.child(
-                            div()
-                                .font_family(MONO)
-                                .text_size(px(14.0))
-                                .line_height(px(20.0))
-                                .text_color(pal.on_field_2())
-                                .child(super::parts::wrapped(&details)),
-                        )
-                    })
-                    .child(timer_row),
-            )
-            .child(qr);
-        let surface = enter(surface, SharedString::from(format!("field-{}", e.id)), Entrance::Field);
-
-        let rows = s.facts;
-        let what = div()
-            .flex()
-            .flex_col()
-            .child(kit::section_label("What will happen", pal))
-            .child(fact_rows(&rows, FactLook::Home, pal).mt(px(6.0)))
-            .when_some(commits, |w, c| w.child(c.mt(px(18.0))));
-        let recent: Vec<&Entry> =
-            d.activity().iter().filter(|e| e.outcome != Outcome::Waiting).take(RECENT_WAITING).collect();
-        let mut below = div().flex().flex_col().gap(px(24.0));
-        below = below.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
-        below = below.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
-        // Side by side while each has room, else the latest under what will happen (a narrow window).
-        below = below.child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_start()
-                .gap(px(32.0))
-                .child(what.flex_1().min_w(px(WAITING_COLUMN_MIN)))
-                .child(
-                    div().flex_1().min_w(px(WAITING_COLUMN_MIN)).child(Self::latest(&recent, "waiting", d, pal, cx)),
-                ),
-        );
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .child(surface)
-            .child(div().px(px(SIDE)).pt(px(24.0)).pb(px(40.0)).child(below))
-            .into_any_element()
+    /// A card on the right (`.grp.pf2`, 16 × 18 inside): its label, its value, its line.
+    fn card(content: Div, glass: Glass, pal: Palette) -> AnyElement {
+        kit::pane(content.px(px(18.0)).py(px(16.0)), glass, kit::pane::RADIUS, pal)
     }
 
     /// Health: all good, or how many things to look at with the first one's fix. A click opens the checks.
-    fn health_tile(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+    fn health_tile(d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         let checks = d.health.checks.as_deref();
         let (level, value, line) = match (checks, &d.health.error) {
             (_, Some(e)) => (Level::Fail, "Can't check".to_owned(), e.clone()),
@@ -645,45 +462,39 @@ impl Root {
             (None, None) => (Level::Skip, "Checking…".to_owned(), String::new()),
         };
         let fix = checks.and_then(|c| health::to_look_at(c).first().and_then(|c| health::fix_for(c)));
-        let flagged = matches!(level, Level::Warn | Level::Fail);
-        let mut under = div().flex().items_center().gap(px(8.0)).mt(px(4.0)).min_h(px(30.0)).child(
-            plate_line(line, pal).when(flagged, |l| {
-                l.text_color(if level == Level::Fail {
-                    pal.danger
-                } else {
-                    pal.warning
-                })
-            }),
-        );
-        if let Some(fix) = fix {
-            under = under.child(
-                kit::button("tile-fix", kit::Look::Soft, kit::Size::Small, None, fix.label(), pal).on_click(
-                    cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.model.update(cx, |m, cx| m.fix(fix, cx));
-                    }),
-                ),
-            );
-        }
-        kit::plate(pal)
+        let fix = fix.map(|fix| {
+            kit::button("tile-fix", kit::Look::Soft, kit::Size::Small, None, fix.label(), pal)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.model.update(cx, |m, cx| m.fix(fix, cx));
+                }))
+                .into_any_element()
+        });
+        let line_color = match level {
+            Level::Fail => pal.danger,
+            Level::Warn => pal.warning,
+            _ => pal.ink_2(),
+        };
+        let content = div()
+            .flex()
+            .flex_col()
+            .child(card_label("Health", pal.ink_meta()))
+            .child(card_value(value, fix, pal.ink()))
+            .child(card_line(line, line_color));
+        div()
             .id("tile-health")
-            .min_w(px(0.0))
             .cursor_pointer()
-            .when(self.health_open, |t| t.border_color(pal.rule_2()))
-            .hover(|s| s.border_color(pal.rule_2()))
-            .child(kit::section_label("Health", pal))
-            .child(plate_value(value).text_color(pal.ink()))
-            .child(under)
+            .active(|s| s.opacity(kit::button::PRESSED))
+            .child(Self::card(content, glass, pal))
             .on_click(Self::on_view(cx, |this, _| this.health_open = !this.health_open))
             .into_any_element()
     }
 
     /// Work session: Start; the request on the phone; or, running, a violet field (a session is a bundle of grants).
-    fn work_tile(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let under = || div().flex().items_center().justify_between().gap(px(8.0)).mt(px(4.0)).min_h(px(30.0));
+    fn work_tile(d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
         if let Some(session) = d.work_session() {
             let on = pal.on_field();
-            let actions: AnyElement = if d.work.ending {
+            let action: AnyElement = if d.work.ending {
                 kit::disabled(kit::button("tile-ending", kit::Look::Wash, kit::Size::Small, None, "Ending…", pal))
                     .into_any_element()
             } else if d.work.confirm_end {
@@ -704,81 +515,61 @@ impl Root {
                     .on_click(Self::on_model(cx, Model::confirm_end_work_session))
                     .into_any_element()
             };
-            let allows = session.allows.join(" · ");
-            return kit::field_surface(Field::Grant, 20.0, 20.0)
+            return kit::field_surface(Field::Grant, kit::pane::RADIUS, kit::pane::RADIUS)
                 .flex()
                 .flex_col()
-                .min_w(px(0.0))
-                .px(px(20.0))
-                .py(px(18.0))
+                .px(px(18.0))
+                .py(px(16.0))
                 .text_color(on)
-                .child(div().relative().child(kit::field_label("Work session · running", pal)))
+                .child(div().relative().child(card_label("Work session", pal.on_field_2())))
                 .child(
-                    div()
-                        .relative()
-                        .mt(px(8.0))
-                        .font_family(SERIF)
-                        .text_size(px(28.0))
-                        .line_height(px(30.0))
-                        .min_w(px(0.0))
-                        .truncate()
-                        .child(italic(&italic_tail(&session.reason))),
+                    div().relative().child(
+                        div()
+                            .flex()
+                            .items_end()
+                            .gap(px(10.0))
+                            .mt(px(6.0))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .stat()
+                                    .truncate()
+                                    .child(italic(&italic_tail(&session.reason))),
+                            )
+                            .child(action),
+                    ),
                 )
-                .child(
-                    div()
-                        .relative()
-                        .mt(px(4.0))
-                        .text_size(px(13.0))
-                        .line_height(px(18.0))
-                        .text_color(pal.on_field_2())
-                        .truncate()
-                        .child(format!(
-                            "{} left · until {}",
-                            crate::work::left(session, d.now),
-                            format::clock(session.expires_at)
-                        )),
-                )
-                .child(
-                    div()
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .mt(px(8.0))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .truncate()
-                                .text_size(px(12.5))
-                                .text_color(pal.on_field_2())
-                                .child(allows),
-                        )
-                        .child(actions),
-                )
+                .child(div().relative().child(card_line(
+                    format!("{} left · until {}", crate::work::left(session, d.now), format::clock(session.expires_at)),
+                    pal.on_field_2(),
+                )))
                 .into_any_element();
         }
-        let tile = kit::plate(pal).min_w(px(0.0)).child(kit::section_label("Work session", pal));
         if let Some(asking) = &d.work.asking {
             let left = i64::try_from(asking.left(std::time::Instant::now())).unwrap_or(0);
-            return tile
-                .child(plate_value("On your phone").text_color(pal.ink()))
-                .child(under().child(plate_line(asking.request.reason.clone(), pal)).child(
-                    div().font_family(MONO).text_size(px(12.5)).text_color(pal.violet()).child(clock_left(left)),
-                ))
+            let clock = div()
+                .font_family(MONO)
+                .text_size(px(13.5))
+                .text_color(pal.violet())
+                .child(clock_left(left))
                 .into_any_element();
-        }
-        if let Some(why) = d.work.failed.clone() {
-            return tile
-                .child(plate_value("Not started").text_color(pal.ink()))
-                .child(under().child(plate_line(why, pal).text_color(pal.danger)))
-                .into_any_element();
+            return Self::card(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(card_label("Work session", pal.ink_meta()))
+                    .child(card_value("On your phone", Some(clock), pal.ink()))
+                    .child(card_line(asking.request.reason.clone(), pal.ink_2())),
+                glass,
+                pal,
+            );
         }
         let open = d.work.form.is_some();
         let start = kit::button(
             "session-start",
             kit::Look::Soft,
-            kit::Size::Small,
+            kit::Size::Regular,
             None,
             if open {
                 "Cancel"
@@ -787,87 +578,382 @@ impl Root {
             },
             pal,
         );
-        tile.child(plate_value("Not running").text_color(pal.ink()))
-            .child(under().child(plate_line("Approve once, work freely", pal)).child(if !d.paired {
-                kit::disabled(start)
-            } else if open {
-                start.on_click(Self::on_model(cx, Model::close_work_form))
-            } else {
-                start.on_click(Self::on_model(cx, Model::open_work_form))
-            }))
-            .into_any_element()
-    }
-
-    /// Today: approved, denied, no answer, in serif numbers.
-    fn today_tile(d: &Data, pal: Palette) -> AnyElement {
-        let t = today(d.activity(), d.now);
-        let n = |v: usize, color: gpui::Hsla| {
-            div()
-                .text_color(if v == 0 {
-                    pal.ink_meta()
-                } else {
-                    color
-                })
-                .child(v.to_string())
+        let start = if !d.paired {
+            kit::disabled(start)
+        } else if open {
+            start.on_click(Self::on_model(cx, Model::close_work_form))
+        } else {
+            start.on_click(Self::on_model(cx, Model::open_work_form))
         };
-        kit::plate(pal)
-            .min_w(px(0.0))
-            .child(kit::section_label("Today", pal))
-            .child(
+        let (value, line, line_color) = match d.work.failed.clone() {
+            Some(why) => ("Not started", why, pal.danger),
+            None => ("Not running", "Approve once, then work freely".to_owned(), pal.ink_2()),
+        };
+        Self::card(
+            div()
+                .flex()
+                .flex_col()
+                .child(card_label("Work session", pal.ink_meta()))
+                .child(card_value(value, Some(start.into_any_element()), pal.ink()))
+                .child(card_line(line, line_color)),
+            glass,
+            pal,
+        )
+    }
+
+    /// This computer: how many AI tools go through Reins, and what else does. A click opens Connections.
+    fn computer_tile(d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let tools = d.snapshot.as_ref().map_or(0, |s| s.harnesses.iter().filter(|h| h.added).count());
+        let git = d.snapshot.as_ref().is_some_and(|s| !s.git_routed.is_empty());
+        let ssh = d.config().is_some_and(|c| c.ssh.enabled);
+        let line = match (git, ssh) {
+            (true, true) => "git and ssh go through Reins",
+            (true, false) => "git goes through Reins",
+            (false, true) => "ssh goes through Reins",
+            (false, false) => "git goes straight to the hosts",
+        };
+        div()
+            .id("tile-computer")
+            .cursor_pointer()
+            .active(|s| s.opacity(kit::button::PRESSED))
+            .child(Self::card(
                 div()
                     .flex()
-                    .items_baseline()
-                    .gap(px(18.0))
-                    .mt(px(10.0))
-                    .font_family(SERIF)
-                    .text_size(px(30.0))
-                    .line_height(px(34.0))
-                    .child(n(t.approved, pal.success))
-                    .child(n(t.denied, pal.danger))
-                    .child(n(t.timed_out, pal.warning)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .mt(px(4.0))
-                    .min_h(px(30.0))
-                    .child(plate_line("approved · denied · no answer", pal)),
-            )
+                    .flex_col()
+                    .child(card_label("This computer", pal.ink_meta()))
+                    .child(card_value(format::count(tools as u64, "AI tool", "AI tools"), None, pal.ink()))
+                    .child(card_line(line, pal.ink_2())),
+                glass,
+                pal,
+            ))
+            .on_click(Self::go(cx, Section::Connections))
             .into_any_element()
     }
 
-    fn update_banner(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
-        let update = d.update.as_ref()?;
-        let banner = kit::plate(pal).flex_row().items_center().gap(px(12.0)).py(px(12.0)).child(glyph(
-            Glyph::Download,
-            18.0,
-            pal.ink(),
-        ));
-        Some(
-            if update.ready.is_some() {
-                let label = if d.updating {
-                    "Restarting…"
-                } else {
-                    "Restart to update"
-                };
-                let restart = kit::button("restart-update", kit::Look::Inverse, kit::Size::Small, None, label, pal);
-                banner
-                    .child(div().flex_1().text_size(px(14.0)).child(format!("Reins {} is ready", update.version)))
-                    .child(if d.updating {
-                        kit::disabled(restart)
-                    } else {
-                        restart.on_click(Self::on_model(cx, Model::restart_to_update))
-                    })
-            } else {
-                banner
-                    .child(div().flex_1().text_size(px(14.0)).child(format!("Reins {} is out", update.version)))
-                    .child(
-                        link("download", "Download", pal).on_click(|_, _, cx| cx.open_url(&crate::links::download())),
+    /// What stops Reins, as a pane with the button that fixes it: not paired, the service down, git paused.
+    fn attention(d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
+        let (g, color, title, line, action): (Glyph, Hsla, &str, String, Option<AnyElement>) = match d.look {
+            Look::Attention if !d.paired => (
+                Glyph::Unlink,
+                pal.warning,
+                "Not paired",
+                "Pair this computer with your phone".to_owned(),
+                Some(
+                    kit::button(
+                        "hero-pair",
+                        kit::Look::Inverse,
+                        kit::Size::Regular,
+                        Some(Glyph::Phone),
+                        "Pair again",
+                        pal,
                     )
+                    .on_click(Self::on_model(cx, Model::sign_out))
+                    .into_any_element(),
+                ),
+            ),
+            Look::Attention => (
+                Glyph::Warning,
+                pal.warning,
+                "The background service isn't running",
+                d.line.clone(),
+                Some(
+                    kit::button("hero-start", kit::Look::Inverse, kit::Size::Regular, Some(Glyph::Play), "Start", pal)
+                        .on_click(Self::on_model(cx, Model::start_service))
+                        .into_any_element(),
+                ),
+            ),
+            Look::Paused => (
+                Glyph::Pause,
+                pal.danger,
+                "git goes straight to the hosts",
+                d.pause.short(d.now).unwrap_or_else(|| "Turn hosts on in Connections".to_owned()),
+                d.pause.on().then(|| {
+                    kit::button("hero-resume", kit::Look::Inverse, kit::Size::Regular, Some(Glyph::Play), "Resume", pal)
+                        .on_click(Self::on_model(cx, Model::resume))
+                        .into_any_element()
+                }),
+            ),
+            Look::On | Look::Waiting => return None,
+        };
+        let row = kit::pane_row()
+            .min_h(px(64.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(34.0))
+                    .rounded(px(10.0))
+                    .bg(color.opacity(0.14))
+                    .child(glyph(g, 17.0, color)),
+            )
+            .child(kit::title_sub(title.to_owned(), Some(div().child(line).into_any_element()), pal))
+            .when_some(action, ParentElement::child);
+        Some(kit::pane(row, glass, kit::pane::RADIUS, pal))
+    }
+
+    /// Home while a request waits: its field, then what will happen and, for a push, its commits and the one opened.
+    fn home_waiting(&mut self, e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let s = Ask::of(e);
+        // A push's commits, files and diffs, as the desktop app read them from the pack it holds.
+        self.load_push(e, cx);
+        let push = self.kept_for(e);
+        let glass = Glass::Solid;
+        let field = Self::ask_field(e, d, pal, cx);
+
+        let what = div().flex().flex_col().child(kit::section(None, "What will happen", None, pal)).child(fact_rows(
+            &s.facts,
+            FactLook::Home,
+            glass,
+            pal,
+        ));
+        let (left, right): (Div, AnyElement) = match push {
+            Some(push) => {
+                let ci = self.picked_commit(&push);
+                (
+                    what.child(Self::commit_list(&push, ci, glass, pal, cx)),
+                    self.commit_detail(&push, ci, false, pal, cx).into_any_element(),
+                )
             }
-            .into_any_element(),
-        )
+            None => (
+                what,
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(kit::section(None, "Today", None, pal))
+                    .child(Self::today_list(d, glass, pal, cx))
+                    .into_any_element(),
+            ),
+        };
+        let mut below = div().flex().flex_col().gap(px(14.0));
+        below = below.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
+        below = below.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
+        below = below.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_start()
+                .gap(px(28.0))
+                .child(left.flex_1().min_w(px(WAITING_COLUMN_MIN)))
+                .child(div().flex_1().min_w(px(WAITING_COLUMN_MIN)).child(right)),
+        );
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(field)
+            .child(div().px(px(SIDE)).pt(px(6.0)).pb(px(40.0)).child(below))
+            .into_any_element()
+    }
+
+    /// The latest requests as a pane (beside a waiting request that is not a push).
+    fn today_list(d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let surface = Self::row_surface(glass, pal);
+        let rows: Vec<AnyElement> = d
+            .activity()
+            .iter()
+            .filter(|e| e.outcome != Outcome::Waiting)
+            .take(3)
+            .map(|e| {
+                Self::entry_row(e, "waiting", d, pal, false, surface)
+                    .on_click(Self::open_entry(cx, e.id.clone()))
+                    .into_any_element()
+            })
+            .collect();
+        kit::group(rows, 62.0, glass, pal)
+    }
+
+    /// The ask (`.fld` at the top of the page): the timer and Hide, who asks, the sentence with its target, the
+    /// machine's details in mono, and the QR code that opens it on the phone (this computer cannot approve).
+    pub(super) fn ask_field(e: &Entry, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let s = Ask::of(e);
+        let on = pal.on_field();
+        let (total, left) = d.wait_left(e);
+        let more = d.waiting().count().saturating_sub(1);
+        let top = div()
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .child(kit::timer(left, i64::try_from(total).unwrap_or(i64::MAX), on))
+            .when(more > 0, |t| {
+                t.child(div().text_size(px(13.5)).text_color(pal.on_field_2()).child(format!("+{more} more waiting")))
+            })
+            .child(div().flex_1())
+            .child({
+                let id = e.id.clone();
+                div()
+                    .id("ask-hide")
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(32.0))
+                    .rounded_full()
+                    .bg(pal.on_field_wash())
+                    .cursor_pointer()
+                    .active(|s| s.opacity(kit::button::PRESSED))
+                    .child(glyph(Glyph::Close, 18.0, on))
+                    .on_click(Self::on_view(cx, move |this, _| this.hidden_ask = Some(id.clone())))
+            });
+        let agent = kit::pane::avatar(s.agent, 22.0, pal);
+        // Who asks is the requester's own word: its own run, cleaned, on one line and capped, never merged into a
+        // sentence of Reins'; the folder it asks from beside it in mono.
+        let who = super::story::middle(&super::story::clean(&s.who), 40);
+        let dir = s.dir.as_deref().filter(|d| !d.is_empty()).map(|d| super::story::middle(&super::story::clean(d), 48));
+        let service = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .mt(px(10.0))
+            .min_w(px(0.0))
+            .text_size(px(15.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(div().mr(px(4.0)).mb(px(4.0)).child(kit::request_icon(
+                s.mark,
+                s.badge,
+                s.field,
+                28.0,
+                s.field.field(),
+                pal,
+            )))
+            .child(div().opacity(0.6).child("·"))
+            .child(agent)
+            .child(div().flex_shrink(1.0).min_w(px(0.0)).truncate().whitespace_nowrap().child(who))
+            .child(match dir {
+                Some(dir) => div()
+                    .min_w(px(0.0))
+                    .truncate()
+                    .whitespace_nowrap()
+                    .font_family(MONO)
+                    .text_size(px(13.5))
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(on.opacity(0.85))
+                    .child(dir),
+                None => div()
+                    .flex_none()
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(on.opacity(0.85))
+                    .child(format!("on {}", super::parts::this_computer())),
+            });
+        // The ask follows the field by 60 ms.
+        let ask = div().mt(px(8.0)).ask_xl().text_color(on).child(italic(&s.order));
+        let ask: AnyElement = if motion::reduce_motion() {
+            ask.into_any_element()
+        } else {
+            let (delay, run) = (motion::ASK_DELAY.as_secs_f32(), motion::FIELD_IN.as_secs_f32());
+            let ease = curve(motion::EASE_OUT);
+            ask.with_animation(
+                SharedString::from(format!("ask-{}", e.id)),
+                Animation::new(motion::ASK_DELAY + motion::FIELD_IN),
+                move |el, t| el.opacity(ease(((t * (delay + run) - delay) / run).clamp(0.0, 1.0))),
+            )
+            .into_any_element()
+        };
+        let words = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(300.0))
+            .child(service)
+            .child(ask)
+            // The machine's details on their own mono line.
+            .when_some(s.details.clone(), |c, details| {
+                c.child(
+                    div()
+                        .mt(px(8.0))
+                        .font_family(MONO)
+                        .text_size(px(14.0))
+                        .line_height(px(20.0))
+                        .text_color(on.opacity(0.85))
+                        .child(super::parts::wrapped(&details)),
+                )
+            });
+        let qr = div()
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(16.0))
+            .p(px(16.0))
+            .rounded(px(20.0))
+            .bg(gpui::white().opacity(0.14))
+            .child(div().flex_none().p(px(8.0)).rounded(px(10.0)).bg(gpui::white()).child(crate::qr::element(
+                crate::links::PHONE_ACTIVITY,
+                104.0,
+                crate::theme::rgba(0x0011_1111, 1.0),
+                gpui::white(),
+            )))
+            .child(
+                div()
+                    .w(px(170.0))
+                    .child(
+                        div()
+                            .text_size(px(15.0))
+                            .line_height(px(20.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("Answer on {}", d.phone())),
+                    )
+                    .child(
+                        div()
+                            .mt(px(4.0))
+                            .text_size(px(13.5))
+                            .line_height(px(18.0))
+                            .text_color(on.opacity(0.82))
+                            .child(format!("{} can't approve. Scan to open it there.", this_computer_cap())),
+                    ),
+            );
+        let top_pad = if cfg!(target_os = "macos") {
+            30.0
+        } else {
+            22.0
+        };
+        let surface = kit::field_surface(s.field, 0.0, 28.0)
+            .flex()
+            .flex_col()
+            .px(px(SIDE))
+            .pt(px(top_pad))
+            .pb(px(28.0))
+            .text_color(on)
+            .child(top)
+            .child(div().relative().flex().flex_wrap().items_end().gap(px(30.0)).child(words).child(qr));
+        enter(surface, SharedString::from(format!("field-{}", e.id)), Entrance::Field).into_any_element()
+    }
+
+    /// A new version: ready to restart into, or out to download.
+    fn update_banner(d: &Data, glass: Glass, pal: Palette, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
+        let update = d.update.as_ref()?;
+        let (title, action): (String, AnyElement) = if update.ready.is_some() {
+            let label = if d.updating {
+                "Restarting…"
+            } else {
+                "Restart to update"
+            };
+            let restart = kit::button("restart-update", kit::Look::Inverse, kit::Size::Regular, None, label, pal);
+            (
+                format!("Reins {} is ready", update.version),
+                if d.updating {
+                    kit::disabled(restart)
+                } else {
+                    restart.on_click(Self::on_model(cx, Model::restart_to_update))
+                }
+                .into_any_element(),
+            )
+        } else {
+            (
+                format!("Reins {} is out", update.version),
+                link("download", "Download", pal)
+                    .on_click(|_, _, cx| cx.open_url(&crate::links::download()))
+                    .into_any_element(),
+            )
+        };
+        let row = kit::pane_row()
+            .child(kit::pane::tile(Glyph::Download, pal))
+            .child(kit::title_sub(title, None, pal))
+            .child(action);
+        Some(kit::pane(row, glass, kit::pane::RADIUS, pal))
     }
 }
 
@@ -878,19 +964,6 @@ fn this_computer_cap() -> &'static str {
     } else {
         "This computer"
     }
-}
-
-/// One end of the calm plate's "this computer → your phone": a 52 px neutral tile.
-fn device_tile(g: Glyph, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(52.0))
-        .rounded(px(16.0))
-        .bg(pal.paper_sunken())
-        .child(glyph(g, 22.0, pal.ink()))
 }
 
 #[cfg(test)]
@@ -919,8 +992,8 @@ mod tests {
     fn rows_say_when_in_few_words() {
         let now = 1_800_000_000;
         assert_eq!(short_ago(now, now - 10), "now");
-        assert_eq!(short_ago(now, now - 4 * 60), "4 min");
-        assert_eq!(short_ago(now, now - 2 * 3_600), "2 h");
+        assert_eq!(short_ago(now, now - 4 * 60), "4m");
+        assert_eq!(short_ago(now, now - 2 * 3_600), "2h");
         assert_eq!(short_ago(now, now - 3 * 86_400), format::date(now - 3 * 86_400));
     }
 
@@ -934,7 +1007,7 @@ mod tests {
     }
 
     #[test]
-    fn the_last_words_go_italic() {
+    fn the_last_words_go_bold() {
         let said = |text: &str| {
             italic_tail(text)
                 .iter()

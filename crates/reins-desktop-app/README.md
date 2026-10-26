@@ -4,10 +4,10 @@ The app for people who never open a terminal: a welcome flow that pairs this com
 connects the AI tools it finds, starts the background service and sends git through it, and afterwards a status
 window (with health checks, a test to the phone and work sessions) and a shield in the menu bar (macOS) or tray
 (Windows, Linux) with a Pause submenu, Resume, End work session, Open Reins and Quit. It is built with
-[GPUI](https://gpui.rs) through Zeron's fork ([zui](https://github.com/katulevskiy/zui)), in Reins Signal, the look of
-all three apps (`design/signal`): paper, ink and hairlines for everything you read, a field of colour (with its grain)
-only where something needs a decision; Instrument Serif, Instrument Sans and Geist Mono; the Signal glyphs and the real
-logos of the AI tools and git hosts.
+[GPUI](https://gpui.rs) through Zeron's fork ([zui](https://github.com/katulevskiy/zui)), in Reins Next, the look of
+all three apps (`design/next`): paper, ink and hairlines for everything you read, panes of rows (frosted over a
+dithered wallpaper on Home and Activity), a field of colour (lit and grained) only where something needs a decision;
+Sora (Geologica for Cyrillic) and JetBrains Mono; the Reins glyphs and the real logos of the AI tools and git hosts.
 
 It does its work through the `reins_desktop` library in its own process and through the running daemon's control
 API; it never runs `reins` for that. The `reins` program ships next to it (inside `Reins.app`, in the install
@@ -27,11 +27,11 @@ window's "Install command line tool" links it to `~/.local/bin`.
 | `format` | times as the window says them: "2 min ago", "3 h 12 min", "14:32" |
 | `demo` | `--demo` only: made-up activity, connections, keys and AI tools where this computer has none |
 | `ui/mod.rs` | the window: one column before setup, sidebar and sections afterwards |
-| `theme` | Reins Signal: the tokens (`theme/tokens.rs`, a copy of `design/signal/tokens/desktop/signal_tokens.rs`) behind the palette (the names from before Signal are aliases), `Field` (push, read, delete, grant, pair, accounts, warn), the fonts; `theme/text.rs` the type scale (`SignalText`); `theme/motion.rs` the durations, curves, and Reduce Motion / Reduce Transparency read from the OS |
-| `ui/kit` | Signal's components: buttons, the hold button, menus, the field surface and its baked grain (`kit/field.rs`), plates, hairline rows, switches, segmented controls, pills, the mode chip, kind tiles, the timer, keys, the empty state |
+| `theme` | Reins Next: the tokens (`theme/tokens.rs`, a copy of `design/signal/tokens/desktop/signal_tokens.rs`, whose values Next keeps) behind the palette, `Field` (push, read, delete, grant, pair, accounts, warn), the fonts (`assets/fonts`, OFL); `theme/text.rs` the type scale (`NextText`); `theme/motion.rs` the durations, curves, and Reduce Motion / Reduce Transparency read from the OS |
+| `ui/kit` | Next's components: buttons, the hold button and the held quiet row, menus, panes of rows and their section lines with the frosted glass (`kit/pane.rs`, GPUI's backdrop blur), the wallpapers (`kit/wallpaper.rs`, `assets/wallpapers`), the field surface with its baked Aurora light and grain (`kit/field.rs`), switches, segmented controls, pills, kind tiles, request icons, the timer, the empty state |
 | `ui/gallery.rs` | `--demo` only: every component, field, type style, colour and glyph, for comparing with the boards |
-| `ui/parts.rs` | building blocks the screens use today (restyled in Signal): plates, rows, kind tiles and logos, buttons, switches, chips, segmented controls, rings that count down, the stage (who → what), the (?) help |
-| `ui/icons.rs` | the assets: the Signal glyphs (`assets/icons/glyphs/`), the brands' logos in colour (`assets/icons/logos/`), the pond and kite drawings (`assets/illustrations/`), the grain (`assets/textures/`), served to GPUI |
+| `ui/parts.rs` | building blocks the screens share: tiles, chips, rings that count down, the sentence with its target at 600, a page's title, a request's facts as a pane, the welcome flow's steps, the (?) help |
+| `ui/icons.rs` | the assets: the Reins glyphs (`assets/icons/glyphs/`), the brands' logos in colour (`assets/icons/logos/`), the pond and kite drawings (`assets/illustrations/`), the grain (`assets/textures/`), served to GPUI |
 | `ui/story.rs` | a request as the phone tells it: one sentence with its target in italic, its kind and risk, who and what (logos), a row's title |
 | `ui/hold.rs` | hold to confirm ("Until I resume", disconnecting): 1200 ms by the time held, a 180 ms drain, the ring, "Keep holding" |
 | `ui/field.rs` | one-line text fields typed by hand (the server, the Rules lists, the work session's reason and branches) |

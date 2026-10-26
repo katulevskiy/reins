@@ -29,6 +29,7 @@ use crate::pause::{Pause, PauseFor};
 use crate::single::Instance;
 use crate::state::{Place, Rect, Saved};
 use crate::tray::{Action, Look, Shown, Tray};
+use crate::ui::kit::Wallpaper;
 use crate::welcome::{self, Stage, ToolRow};
 use crate::work::{self, Work};
 use crate::{Args, autostart, ui, upgrade};
@@ -248,6 +249,9 @@ pub struct Model {
 
 struct GlobalModel(Entity<Model>);
 
+/// The tag of a waiting request's banner, before its id.
+const WAITING_TAG: &str = "reins-waiting-";
+
 impl Global for GlobalModel {}
 
 /// Whether the Dock shows Reins: only while its window is open (a menu bar app otherwise).
@@ -409,6 +413,19 @@ impl Model {
             model
         });
         cx.set_global(GlobalModel(model.clone()));
+        // A waiting request's banner: Show (or the banner itself) opens Home, where it waits; Hide only closes it.
+        cx.on_system_notification_response(|response, cx| {
+            if response.action_id.as_deref() == Some("hide") {
+                cx.dismiss_system_notification(&response.tag);
+                return;
+            }
+            if response.tag.starts_with(WAITING_TAG) {
+                Self::show_window(cx);
+                if let Some(model) = cx.try_global::<GlobalModel>().map(|g| g.0.clone()) {
+                    model.update(cx, |m, cx| m.show_section(Section::Home, cx));
+                }
+            }
+        });
         let background = model.read(cx).args.background;
         if !background || screen != Screen::Status {
             Self::show_window(cx);
@@ -626,12 +643,22 @@ impl Model {
             if !config.phone {
                 continue;
             }
-            let (title, body) = reins_desktop::notify::text(&ui::spoken(e));
+            let phone = self.saved.phone.clone().unwrap_or_else(|| "your phone".to_owned());
+            let (title, body) = ui::banner(e, &phone);
             cx.show_system_notification(gpui::SystemNotification {
-                tag: format!("reins-waiting-{}", e.id).into(),
+                tag: format!("{WAITING_TAG}{}", e.id).into(),
                 title: title.into(),
                 body: body.into(),
-                actions: Vec::new(),
+                actions: vec![
+                    gpui::SystemNotificationAction {
+                        id: "show".into(),
+                        label: "Show".into(),
+                    },
+                    gpui::SystemNotificationAction {
+                        id: "hide".into(),
+                        label: "Hide".into(),
+                    },
+                ],
             });
         }
         if config.phone && config.sound {
@@ -735,8 +762,17 @@ impl Model {
             &phone,
             self.pause().short(now),
         );
+        // Beside the shield (macOS shows a status item's title): how many wait, or a pause's time left.
+        let waiting =
+            self.snapshot.as_ref().map_or(0, |s| s.activity.iter().filter(|e| e.outcome == Outcome::Waiting).count());
+        let title = match look {
+            Look::Waiting if waiting > 0 => Some(waiting.to_string()),
+            Look::Paused => self.pause().clock(now),
+            _ => None,
+        };
         let shown = Shown {
             look,
+            title,
             status,
             detail,
             can_pause: self.paired() && !paused,
@@ -762,7 +798,16 @@ impl Model {
             cx.activate(true);
             return;
         }
-        let bounds = Self::window_bounds(model.read(cx).saved.window, cx);
+        // `--demo` with `REINS_DEMO_SIZE=1280x820`: that size, centred (the boards' window, for screenshots).
+        let demo_size = std::env::var("REINS_DEMO_SIZE")
+            .ok()
+            .filter(|_| model.read(cx).demo())
+            .and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?))))
+            .map(|(w, h): (f32, f32)| (w.max(ui::MIN_WIDTH), h.max(ui::MIN_HEIGHT)));
+        let bounds = match demo_size {
+            Some((w, h)) => Bounds::centered(None, size(px(w), px(h)), cx),
+            None => Self::window_bounds(model.read(cx).saved.window, cx),
+        };
         let min = size(px(ui::MIN_WIDTH), px(ui::MIN_HEIGHT));
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -1603,6 +1648,31 @@ impl Model {
         cx.notify();
     }
 
+    /// The wallpaper for dark (`dark`) or light paper (Settings → Wallpaper).
+    pub fn set_wallpaper(&mut self, dark: bool, w: Wallpaper, cx: &mut Context<'_, Self>) {
+        if dark {
+            self.saved.wallpaper_dark = Some(w);
+        } else {
+            self.saved.wallpaper_light = Some(w);
+        }
+        self.persist();
+        cx.notify();
+    }
+
+    /// Frosted panes on or off (Settings → Wallpaper).
+    pub fn set_frosted_panes(&mut self, on: bool, cx: &mut Context<'_, Self>) {
+        self.saved.solid_panes = !on;
+        self.persist();
+        cx.notify();
+    }
+
+    /// Grain on fields on or off (Settings → Look).
+    pub fn set_grain(&mut self, on: bool, cx: &mut Context<'_, Self>) {
+        self.saved.flat_fields = !on;
+        self.persist();
+        cx.notify();
+    }
+
     pub fn toggle_autostart(&mut self, cx: &mut Context<'_, Self>) {
         let home = self.backend.home().to_path_buf();
         match autostart::set(&home, !self.autostart) {
@@ -1717,7 +1787,7 @@ fn waiting_changes<'a>(
 fn demo_screen(name: &str) -> Option<Screen> {
     Some(match name.trim().to_ascii_lowercase().replace('_', "-").as_str() {
         "status" => Screen::Status,
-        "pair" | "onboarding" => Screen::Welcome(Stage::Pair),
+        "welcome" | "pair" | "onboarding" => Screen::Welcome(Stage::Pair),
         "tools" | "tools-connected" | "setup" => Screen::Welcome(Stage::Tools),
         "turn-on" | "turning-on" => Screen::Welcome(Stage::TurnOn),
         "done" => Screen::Welcome(Stage::Done),

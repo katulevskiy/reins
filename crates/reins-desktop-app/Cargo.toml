@@ -36,8 +36,9 @@ async-trait = "0.1.92"
 # Local clock times in the activity log ("14:32", "Oct 3").
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 futures = "0.3.34"
-# The grain baked over colour fields, handed to GPUI as its own image type (already in the tree through GPUI).
-image = { version = "0.25.10", default-features = false }
+# The grain baked over colour fields and the wallpapers (JPEG), handed to GPUI as its own image type (already in the
+# tree through GPUI, with these formats).
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 log = "0.4.34"
 png = "0.18.1"
 qrcode = { version = "0.14.1", default-features = false }

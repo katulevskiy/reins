@@ -1,11 +1,16 @@
-//! A field: a solid surface of a [`Field`]'s colour, with the grain over it so it reads as painted.
+//! A field: a solid surface of a [`Field`]'s colour, lit and grained so it reads as painted.
 //!
-//! The design blends a grey noise (`grain.png`, 360 px, shown at 180) over the field with `soft-light`. GPUI has no
-//! blend modes and no image tiling, so at start [`init`] decodes the noise once and bakes one tile per field colour
-//! with the soft-light formula; a field then paints its baked tile across itself, 180 px a tile, clipped to its
-//! corners. Off under Reduce Transparency (a flat field).
+//! Next's fields wear the boards' "Aurora" texture (`.tx-aurora .grain`): three soft lights in the field's own box (a
+//! white one at the top right, a shade at the bottom left, a warm glow up left) and a grey noise (`grain.png`, 360 px,
+//! shown at 180), all blended over the field with `soft-light`. GPUI has no blend modes and no image tiling, so at
+//! start [`init`] bakes, for each field colour, what the blend makes of it: the lights as one small picture that is
+//! stretched over the field (they are sized in the field's box, so they stretch with it), and the noise as a tile,
+//! both see-through where the texture leaves the field alone. A field paints its colour, its lights, then its tile
+//! across itself, 180 px a tile, clipped to its corners. Off under Reduce Transparency and with Settings' Grain on
+//! fields off (a flat field).
 
 use std::panic::Location;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use gpui::Refineable as _;
@@ -22,12 +27,24 @@ pub const TILE: f32 = 180.0;
 /// A field's bottom corners.
 pub const FIELD_RADIUS: f32 = 30.0;
 
-/// The baked tiles, one per field (in [`Field::ALL`]'s order).
+/// The baked tiles and lights, one per field (in [`Field::ALL`]'s order).
 struct Grain {
     tiles: [Arc<RenderImage>; 7],
+    lights: [Arc<RenderImage>; 7],
 }
 
+/// The size the lights are baked at (they are smooth: stretched, they stay smooth).
+const LIGHTS: (u32, u32) = (192, 96);
+
 static GRAIN: OnceLock<Option<Grain>> = OnceLock::new();
+
+/// Grain on fields, as Settings says (on unless turned off).
+static GRAIN_ON: AtomicBool = AtomicBool::new(true);
+
+/// Turns the grain on fields on or off (Settings' Grain on fields).
+pub fn set_grain(on: bool) {
+    GRAIN_ON.store(on, Ordering::Relaxed);
+}
 
 /// Bakes the tiles, once; later calls do nothing. Without them (the noise did not decode) fields are flat.
 pub fn init() {
@@ -42,11 +59,12 @@ pub fn init() {
 
 fn bake_all() -> Result<Grain, String> {
     let noise = crate::tray::decode(GRAIN_PNG)?;
-    let tile = |f: Field| -> Result<Arc<RenderImage>, String> {
-        let bgra = bake(f.rgb(), &noise.rgba);
-        let buffer = image::RgbaImage::from_raw(noise.width, noise.height, bgra).ok_or("the grain's size")?;
+    let image = |w: u32, h: u32, bgra: Vec<u8>| -> Result<Arc<RenderImage>, String> {
+        let buffer = image::RgbaImage::from_raw(w, h, bgra).ok_or("the texture's size")?;
         Ok(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
     };
+    let tile = |f: Field| image(noise.width, noise.height, bake(f.rgb(), &noise.rgba));
+    let light = |f: Field| image(LIGHTS.0, LIGHTS.1, bake_lights(f.rgb(), LIGHTS.0, LIGHTS.1));
     Ok(Grain {
         tiles: [
             tile(Field::Push)?,
@@ -57,7 +75,99 @@ fn bake_all() -> Result<Grain, String> {
             tile(Field::Accounts)?,
             tile(Field::Warn)?,
         ],
+        lights: [
+            light(Field::Push)?,
+            light(Field::Read)?,
+            light(Field::Delete)?,
+            light(Field::Grant)?,
+            light(Field::Pair)?,
+            light(Field::Accounts)?,
+            light(Field::Warn)?,
+        ],
     })
+}
+
+/// One of the Aurora's lights: `radial-gradient(rx% ry% at cx% cy%, rgba(color, alpha), transparent end%)`.
+struct Light {
+    at: (f32, f32),
+    radii: (f32, f32),
+    color: [f32; 3],
+    alpha: f32,
+    end: f32,
+}
+
+/// The lights, bottom first (`.tx-aurora .grain`, whose first gradient is on top).
+const AURORA: [Light; 3] = [
+    Light {
+        at: (0.3, 0.2),
+        radii: (0.5, 0.6),
+        color: [1.0, 220.0 / 255.0, 180.0 / 255.0],
+        alpha: 0.35,
+        end: 0.7,
+    },
+    Light {
+        at: (0.0, 1.0),
+        radii: (0.6, 0.8),
+        color: [0.0, 0.0, 0.0],
+        alpha: 0.45,
+        end: 0.7,
+    },
+    Light {
+        at: (0.92, 0.0),
+        radii: (0.7, 0.9),
+        color: [1.0, 1.0, 1.0],
+        alpha: 0.7,
+        end: 0.6,
+    },
+];
+
+/// The lights blended soft-light over the colour `rgb`, `w` × `h` over the field's box, as BGRA with straight alpha:
+/// each pixel what the blend makes of the field there, as opaque as the lights are.
+#[must_use]
+pub fn bake_lights(rgb: u32, width: u32, height: u32) -> Vec<u8> {
+    let field = channels(rgb);
+    let mut out = Vec::with_capacity((width * height * 4) as usize);
+    for row in 0..height {
+        for col in 0..width {
+            #[allow(clippy::cast_precision_loss, reason = "a small picture")]
+            let (across, down) = ((col as f32 + 0.5) / width as f32, (row as f32 + 0.5) / height as f32);
+            // The lights composited over nothing (source-over, premultiplied).
+            let (mut c, mut a) = ([0.0f32; 3], 0.0f32);
+            for l in &AURORA {
+                let t = ((across - l.at.0) / l.radii.0).hypot((down - l.at.1) / l.radii.1);
+                let la = l.alpha * (1.0 - t / l.end).clamp(0.0, 1.0);
+                for (ch, lc) in c.iter_mut().zip(l.color) {
+                    *ch = lc.mul_add(la, *ch * (1.0 - la));
+                }
+                a = la + a * (1.0 - la);
+            }
+            let mut px = [0u8; 4];
+            for i in 0..3 {
+                let cs = if a > 0.0 {
+                    c[i] / a
+                } else {
+                    0.5
+                };
+                px[2 - i] = byte(soft_light(field[i], cs));
+            }
+            px[3] = byte(a);
+            out.extend_from_slice(&px);
+        }
+    }
+    out
+}
+
+/// `rgb`'s three channels, 0…1.
+fn channels(rgb: u32) -> [f32; 3] {
+    let channel = |shift: u32| f32::from(u8::try_from((rgb >> shift) & 0xFF).unwrap_or(0)) / 255.0;
+    [channel(16), channel(8), channel(0)]
+}
+
+/// 0…1 as a byte.
+fn byte(v: f32) -> u8 {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "0…255 after the clamp")]
+    let b = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    b
 }
 
 /// W3C `soft-light`: the backdrop `cb` lit by the source `cs` (both 0…1).
@@ -75,23 +185,18 @@ pub fn soft_light(cb: f32, cs: f32) -> f32 {
     }
 }
 
-/// The noise (`rgba`, straight alpha) blended soft-light over the colour `rgb`, opaque, as BGRA (GPUI's order).
+/// The noise (`rgba`, straight alpha) blended soft-light over the colour `rgb`, as BGRA (GPUI's order) with the
+/// noise's own alpha: painted over the field, it gives what the blend gives.
 #[must_use]
 pub fn bake(rgb: u32, rgba: &[u8]) -> Vec<u8> {
-    let channel = |shift: u32| f32::from(u8::try_from((rgb >> shift) & 0xFF).unwrap_or(0)) / 255.0;
-    let field = [channel(16), channel(8), channel(0)];
+    let field = channels(rgb);
     let mut out = Vec::with_capacity(rgba.len());
     for px in rgba.as_chunks::<4>().0 {
-        let alpha = f32::from(px[3]) / 255.0;
         let mut rgb_out = [0u8; 3];
         for (i, cb) in field.iter().copied().enumerate() {
-            let cs = f32::from(px[i]) / 255.0;
-            let blended = (soft_light(cb, cs) - cb).mul_add(alpha, cb);
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "0…255 after the clamp")]
-            let byte = (blended.clamp(0.0, 1.0) * 255.0).round() as u8;
-            rgb_out[i] = byte;
+            rgb_out[i] = byte(soft_light(cb, f32::from(px[i]) / 255.0));
         }
-        out.extend_from_slice(&[rgb_out[2], rgb_out[1], rgb_out[0], 255]);
+        out.extend_from_slice(&[rgb_out[2], rgb_out[1], rgb_out[0], px[3]]);
     }
     out
 }
@@ -100,6 +205,12 @@ fn tile_of(field: Field) -> Option<Arc<RenderImage>> {
     let grain = GRAIN.get()?.as_ref()?;
     let i = Field::ALL.iter().position(|f| *f == field)?;
     Some(Arc::clone(&grain.tiles[i]))
+}
+
+fn lights_of(field: Field) -> Option<Arc<RenderImage>> {
+    let grain = GRAIN.get()?.as_ref()?;
+    let i = Field::ALL.iter().position(|f| *f == field)?;
+    Some(Arc::clone(&grain.lights[i]))
 }
 
 /// A field's surface: its colour, its grain, its corners (`top` and `bottom` radii; a field that runs into the top of
@@ -198,12 +309,17 @@ impl Element for GrainLayer {
         window: &mut Window,
         _cx: &mut App,
     ) {
-        if motion::reduce_transparency() {
+        if motion::reduce_transparency() || !GRAIN_ON.load(Ordering::Relaxed) {
             return;
         }
         let Some(tile) = tile_of(self.field) else {
             return;
         };
+        if let Some(lights) = lights_of(self.field)
+            && let Err(e) = window.paint_image(bounds, self.corners, lights, 0, false)
+        {
+            log::debug!("lights: {e}");
+        }
         let (cols, x0) = grid(bounds.size.width.as_f32());
         let (rows, y0) = grid(bounds.size.height.as_f32());
         let (left, top) = (bounds.origin.x.as_f32(), bounds.origin.y.as_f32());
@@ -278,21 +394,49 @@ mod tests {
         for f in Field::ALL {
             let bgra = bake(f.rgb(), &noise.rgba);
             assert_eq!(bgra.len(), 360 * 360 * 4);
-            assert!(bgra.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
-            let mean = |c: usize| {
+            // The tile keeps the noise's alpha, and painted over the field stays close to its colour.
+            assert!(bgra.as_chunks::<4>().0.iter().zip(noise.rgba.as_chunks::<4>().0).all(|(p, n)| p[3] == n[3]));
+            let over = |c: usize, shift: u32| {
+                let flat = f64::from((f.rgb() >> shift) & 0xFF);
                 #[allow(clippy::cast_precision_loss, reason = "a mean of bytes")]
-                let m = bgra.as_chunks::<4>().0.iter().map(|p| f64::from(p[c])).sum::<f64>() / (360.0 * 360.0);
-                m
+                let m = bgra
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|p| {
+                        let a = f64::from(p[3]) / 255.0;
+                        f64::from(p[c]).mul_add(a, flat * (1.0 - a))
+                    })
+                    .sum::<f64>()
+                    / (360.0 * 360.0);
+                (m, flat)
             };
-            let flat = |shift: u32| f64::from((f.rgb() >> shift) & 0xFF);
             for (c, shift) in [(2, 16), (1, 8), (0, 0)] {
-                assert!((mean(c) - flat(shift)).abs() < 0.1 * 255.0, "{f:?} drifts from its colour");
+                let (m, flat) = over(c, shift);
+                assert!((m - flat).abs() < 0.1 * 255.0, "{f:?} drifts from its colour");
             }
             let first = &bgra[..4];
             assert!(bgra.as_chunks::<4>().0.iter().any(|p| p[..] != *first), "{f:?} is flat");
         }
         init();
-        assert!(Field::ALL.iter().all(|f| tile_of(*f).is_some()));
+        assert!(Field::ALL.iter().all(|f| tile_of(*f).is_some() && lights_of(*f).is_some()));
+    }
+
+    /// The Aurora lights the top right, shades the bottom left, and leaves the far side of the field alone.
+    #[test]
+    fn the_lights_light_the_top_right() {
+        let (w, h) = (64, 32);
+        let px = bake_lights(Field::Push.rgb(), w, h);
+        let at = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            (px[i + 2], px[i + 1], px[i], px[i + 3])
+        };
+        let (r_lit, _, _, a_lit) = at(w - 6, 0);
+        let (r_dark, _, _, a_dark) = at(0, h - 1);
+        let field_r = u8::try_from((Field::Push.rgb() >> 16) & 0xFF).unwrap();
+        assert!(a_lit > 100 && r_lit > field_r, "the top right is lit");
+        assert!(a_dark > 60 && r_dark < field_r, "the bottom left is shaded");
+        assert_eq!(at(w / 2 + 6, h - 1).3, 0, "the bottom middle is the field's own colour");
     }
 
     #[test]

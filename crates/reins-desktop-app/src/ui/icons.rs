@@ -1,4 +1,4 @@
-//! Icons, logos and drawings, embedded as SVG assets. Icons are the Reins Signal glyphs (`assets/icons/glyphs/`, the
+//! Icons, logos and drawings, embedded as SVG assets. Icons are the Reins glyphs (`assets/icons/glyphs/`, the
 //! one set of all three platforms, copied from `design/signal/assets/icons`): a 24 grid, a 1.6 stroke, round caps,
 //! drawn by GPUI in one colour, the text colour given. Logos (`assets/icons/logos/`) are in their own colours, drawn
 //! as images in a white circle. The pond and the kite (`assets/illustrations/`) are ink drawings for empty states and
@@ -13,7 +13,7 @@ use crate::theme::Palette;
 
 macro_rules! glyphs {
     ($($variant:ident => $file:literal),+ $(,)?) => {
-        /// A Signal glyph.
+        /// A Reins glyph.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum Glyph {
             $($variant),+
@@ -195,6 +195,12 @@ files!(Drawing, "illustrations",
 );
 
 impl Brand {
+    /// A one-colour mark (near black): on dark paper it is drawn in the paper's ink instead.
+    #[must_use]
+    pub fn mono(self) -> bool {
+        matches!(self, Self::Anthropic | Self::Cursor | Self::GitHub | Self::OpenAI)
+    }
+
     /// The mark of a git or SSH host (`github.com`), if it has one.
     #[must_use]
     pub fn of_host(host: &str) -> Option<Self> {
@@ -256,7 +262,17 @@ pub fn brand(brand: Brand, side: f32) -> Img {
     img(brand.path()).size(px(side)).flex_none()
 }
 
-/// A logo as Signal shows one: in a white circle, `side` px (28 in rows), the mark at 62% of it, a hairline around.
+/// A brand's mark, `side` px, on a plate of the paper's colour: in its own colours, but a one-colour mark in `ink`
+/// (white on dark paper).
+pub fn brand_on(b: Brand, side: f32, pal: Palette) -> AnyElement {
+    if b.mono() {
+        svg().path(b.path()).size(px(side)).flex_none().text_color(pal.ink()).into_any_element()
+    } else {
+        brand(b, side).into_any_element()
+    }
+}
+
+/// A logo on a white circle: in a white circle, `side` px (28 in rows), the mark at 62% of it, a hairline around.
 pub fn avatar(b: Brand, side: f32, pal: Palette) -> Div {
     div()
         .flex()

@@ -15,25 +15,24 @@ use super::story::{bold, plain};
 use super::{Data, Root, kit};
 use crate::format::host;
 use crate::model::{Model, Pairing};
-use crate::theme::{MONO, Palette, SERIF, Tone};
+use crate::theme::{MONO, NextText as _, Palette, Tone};
 
 /// The QR code's side, and the white frame around it (164 px in all, the board's).
-const QR: f32 = 140.0;
+const QR: f32 = 150.0;
 const QR_FRAME: f32 = 12.0;
 
-/// A step to do: its number in a small sunken circle, in mono.
+/// A step to do: its number in a small sunken circle.
 fn number(n: usize, pal: Palette) -> Div {
     div()
         .flex()
         .flex_none()
         .items_center()
         .justify_center()
-        .size(px(22.0))
+        .size(px(26.0))
         .rounded_full()
         .bg(pal.paper_sunken())
-        .font_family(MONO)
-        .text_size(px(11.0))
-        .text_color(pal.ink())
+        .text_size(px(13.0))
+        .text_color(pal.ink_2())
         .child(n.to_string())
 }
 
@@ -42,9 +41,9 @@ fn numbered(n: usize, what: impl IntoElement, pal: Palette) -> Div {
     div()
         .flex()
         .items_center()
-        .gap(px(10.0))
-        .min_h(px(26.0))
-        .text_size(px(14.0))
+        .gap(px(12.0))
+        .min_h(px(28.0))
+        .text_size(px(15.5))
         .text_color(pal.ink())
         .child(number(n, pal))
         .child(div().flex().items_center().gap(px(10.0)).min_w(px(0.0)).child(what))
@@ -59,37 +58,39 @@ fn this_computer_cap() -> &'static str {
     }
 }
 
-/// This computer's key, to compare with the one the phone shows: a plate with a shield and the digits in the serif.
-fn key_line(fingerprint: &str, pal: Palette) -> Div {
-    div()
-        .flex()
-        .w_full()
-        .items_center()
-        .gap(px(10.0))
-        .px(px(16.0))
-        .py(px(12.0))
-        .rounded(px(16.0))
-        .bg(pal.paper_raised())
-        .border_1()
-        .border_color(pal.rule())
-        .child(glyph(Glyph::ShieldCheck, 16.0, pal.success))
+/// This computer's key, to compare with the one the phone shows: a pane row with the digits in mono.
+fn key_line(fingerprint: &str, pal: Palette) -> AnyElement {
+    let row = kit::pane_row()
+        .min_h(px(52.0))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(34.0))
+                .rounded(px(10.0))
+                .bg(pal.success.opacity(0.16))
+                .child(glyph(Glyph::Fingerprint, 17.0, pal.success)),
+        )
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.0))
-                .text_size(px(14.0))
+                .text_size(px(15.0))
+                .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(pal.ink())
                 .child(format!("{}'s key", this_computer_cap())),
         )
         .child(
             div()
-                .font_family(SERIF)
-                .text_size(px(22.0))
+                .font_family(MONO)
+                .text_size(px(20.0))
                 .line_height(px(26.0))
                 .text_color(pal.ink())
                 .child(spaced(fingerprint)),
-        )
-        .child(div().text_size(px(12.5)).text_color(pal.ink_meta()).child("must match your phone"))
+        );
+    kit::pane(row, kit::Glass::Solid, kit::pane::RADIUS, pal)
 }
 
 /// The digits set a hair apart, as the board tracks them (GPUI has no letter-spacing): hair spaces between them.
@@ -141,11 +142,13 @@ impl Root {
                     .gap(px(10.0))
                     .child(match &code {
                         Some(c) => div()
-                            .p(px(QR_FRAME))
-                            .rounded(px(18.0))
+                            .p(px(if pal.dark {
+                                QR_FRAME
+                            } else {
+                                0.0
+                            }))
+                            .rounded(px(14.0))
                             .bg(gpui::white())
-                            .border_1()
-                            .border_color(pal.rule())
                             .child(crate::qr::element(&c.qr_url, QR, gpui::black(), gpui::white())),
                         None => div()
                             .flex()
@@ -178,18 +181,7 @@ impl Root {
                         .items_center()
                         .gap(px(10.0))
                         .child("Tap")
-                        .child(
-                            div()
-                                .px(px(14.0))
-                                .py(px(4.0))
-                                .rounded_full()
-                                .bg(pal.inverse())
-                                .text_color(pal.on_inverse())
-                                .font_family(SERIF)
-                                .text_size(px(26.0))
-                                .line_height(px(26.0))
-                                .child(n.to_string()),
-                        )
+                        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(n.to_string()))
                         .child("there")
                         .child(help(
                             "pair-number",
@@ -212,11 +204,22 @@ impl Root {
                 div()
                     .flex()
                     .flex_col()
-                    .items_center()
-                    .gap(px(20.0))
-                    .child(
-                        div().flex().flex_wrap().items_center().justify_center().gap(px(28.0)).child(qr).child(steps),
-                    )
+                    .w_full()
+                    .gap(px(12.0))
+                    .child(kit::pane(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap(px(36.0))
+                            .px(px(30.0))
+                            .py(px(28.0))
+                            .child(qr)
+                            .child(steps),
+                        kit::Glass::Solid,
+                        kit::pane::RADIUS,
+                        pal,
+                    ))
                     .when(!fingerprint.is_empty(), |c| c.child(key_line(&fingerprint, pal)))
                     .into_any_element()
             }
@@ -296,13 +299,13 @@ impl Root {
         let mut more = div().flex().flex_wrap().items_center().justify_center().gap(px(18.0));
         if !matches!(pairing, Pairing::Approved { .. }) {
             more = more.child(
-                quiet_link("get-app", "Get the app", 13.5, pal)
+                quiet_link("get-app", "Get the app", 15.0, pal)
                     .on_click(|_, _, cx| cx.open_url(crate::links::PHONE_APP)),
             );
         }
         if !matches!(pairing, Pairing::Browser | Pairing::Unavailable | Pairing::Approved { .. }) {
             more = more.child(
-                quiet_link("browser", "Use the browser", 13.5, pal)
+                quiet_link("browser", "Use the browser", 15.0, pal)
                     .on_click(Self::on_model(cx, Model::sign_in_with_browser)),
             );
         }
@@ -315,7 +318,7 @@ impl Root {
                     } else {
                         "Other server"
                     },
-                    13.5,
+                    15.0,
                     pal,
                 )
                 .on_click(Self::on_model(cx, Model::toggle_server)),
@@ -329,6 +332,82 @@ impl Root {
             page = page.child(caption(n, pal).text_color(pal.danger).text_center());
         }
         page.into_any_element()
+    }
+
+    /// The welcome (`DeskNext-Setup.png` 01): the wallpaper filling the window, and on the frosted pane the line
+    /// the phone says too, with Set up this computer and Other server.
+    pub(super) fn welcome_hero(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
+        let device = if cfg!(target_os = "macos") {
+            "Set up this Mac"
+        } else {
+            "Set up this computer"
+        };
+        let accent = crate::theme::Field::Accounts.kind(&pal);
+        let card = div()
+            .flex()
+            .flex_col()
+            .px(px(30.0))
+            .pt(px(26.0))
+            .pb(px(24.0))
+            .child(div().hero().text_color(pal.ink()).child("Your AI asks,"))
+            .child(div().hero().text_color(accent).child("You decide."))
+            .child(
+                div()
+                    .mt(px(14.0))
+                    .text_size(px(15.5))
+                    .line_height(px(21.0))
+                    .text_color(pal.ink_2())
+                    .child("Reins sits between your AI tools and what they touch. Your phone answers."),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .mt(px(22.0))
+                    .child(
+                        kit::button("welcome-start", kit::Look::Inverse, kit::Size::Large, None, device, pal)
+                            .flex_1()
+                            .on_click(Self::on_view(cx, |this, _| this.welcomed = true)),
+                    )
+                    .child(
+                        kit::button(
+                            "welcome-server",
+                            kit::Look::Soft,
+                            kit::Size::Large,
+                            Some(Glyph::Server),
+                            "Other server",
+                            pal,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.welcomed = true;
+                            this.model.update(cx, |m, cx| {
+                                if !m.show_server {
+                                    m.toggle_server(cx);
+                                }
+                            });
+                            cx.notify();
+                        })),
+                    ),
+            );
+        let glass = kit::Glass::over(true, !d.saved.solid_panes);
+        div()
+            .relative()
+            .size_full()
+            .child(kit::wallpaper::fill(d.saved.wallpaper(pal.dark), 300.0, pal))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .flex_col()
+                    .justify_end()
+                    .items_center()
+                    .pb(px(100.0))
+                    .px(px(40.0))
+                    .child(div().w_full().max_w(px(620.0)).child(kit::pane(card, glass, 22.0, pal))),
+            )
+            .into_any_element()
     }
 
     fn server_box(

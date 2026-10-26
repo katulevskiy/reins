@@ -1,6 +1,7 @@
-//! The tray (Windows, Linux) or menu bar (macOS) icon, which speaks Signal (`Desk-Extras.png`): the shield in ink while
-//! Reins is on, and on the field's colour when something needs you: orange while a request waits on the phone, red
-//! while git is paused, amber when Reins needs the user (not paired, or the background service is not running). On
+//! The tray (Windows, Linux) or menu bar (macOS) icon, as the Next menu bar board draws it (`DeskNext-MenuBar.png`):
+//! the shield in ink while Reins is on (on macOS with how many wait, or a pause's clock, beside it), and on the
+//! field's colour when something needs you: orange while a request waits on the phone, red while git is paused, amber
+//! when Reins needs the user (not paired, or the background service is not running). On
 //! macOS the ink shield is a template image (the menu bar colours it); the coloured ones are drawn as they are.
 //!
 //! Native menus cannot be styled, so the menu follows the board in words and order: two status lines (the first opens
@@ -92,6 +93,8 @@ pub fn status_lines(look: Look, status: String, phone: &str, pause_left: Option<
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shown {
     pub look: Look,
+    /// Beside the icon, where the platform shows one (macOS): how many wait, a pause's clock.
+    pub title: Option<String>,
     /// The first menu line ("Reins is on").
     pub status: String,
     /// The second, under it ("Dana's iPhone approves").
@@ -253,6 +256,8 @@ mod imp {
                     Err(e) => log::warn!("tray icon: {e}"),
                 }
             }
+            #[cfg(target_os = "macos")]
+            self.icon.set_title(shown.title.as_deref());
             self.status.set_text(&shown.status);
             self.detail.set_text(&shown.detail);
             self.pause.set_enabled(shown.can_pause);
@@ -373,6 +378,7 @@ mod imp {
         pub fn new(actions: UnboundedSender<Action>, runtime: &tokio::runtime::Handle) -> Result<Self, String> {
             let item = Item {
                 shown: Shown {
+                    title: None,
                     look: Look::Attention,
                     status: "Reins".to_owned(),
                     detail: String::new(),

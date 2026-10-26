@@ -13,12 +13,12 @@ use reins_desktop::settings::GuardList;
 
 use super::field::{Field, slot};
 use super::icons::{Glyph, glyph};
-use super::parts::{caption, help, italic, mood};
-use super::story::{bold, group_icon, group_tone, plain};
+use super::parts::{caption, help, mood};
+use super::story::{group_icon, group_tone};
 use super::{Data, Root, kit};
 use crate::backend::Setting;
 use crate::format;
-use crate::theme::{Field as Kind, MONO, Palette, SignalText as _, Tone};
+use crate::theme::{Field as Kind, MONO, NextText as _, Palette, Tone};
 
 /// The wait times offered, in seconds.
 const WAITS: [u64; 4] = [60, 120, 300, 600];
@@ -151,9 +151,7 @@ impl Root {
                     .flex()
                     .items_center()
                     .gap(px(10.0))
-                    .child(
-                        div().title().text_color(pal.ink()).child(italic(&[plain("What asks "), bold("your phone")])),
-                    )
+                    .child(div().title().text_color(pal.ink()).child("What asks your phone"))
                     .child(help(
                         "rules",
                         "When a rule matches, your phone is asked, and approving always happens there. Anything else \
@@ -164,7 +162,7 @@ impl Root {
                     )),
             )
             .child(mood("Checked here, before an AI tool runs a command or opens a file.", pal));
-        let mut page = div().flex().flex_col().gap(px(22.0)).child(title);
+        let mut page = div().flex().flex_col().gap(px(14.0)).child(title);
         page = page.when_some(d.notice.clone(), |p, n| p.child(caption(n, pal).text_color(pal.danger)));
         page = page.when_some(d.note.clone(), |p, n| p.child(caption(n, pal)));
         let Some(config) = d.config() else {
@@ -195,13 +193,13 @@ impl Root {
                 .gap(px(12.0))
                 .px(px(14.0))
                 .py(px(12.0))
+                .min_h(px(62.0))
                 .min_w(px(0.0))
                 .rounded(px(16.0))
                 .bg(pal.paper_raised())
-                .border_1()
-                .border_color(pal.rule())
+                .when(!pal.dark, |p| p.border_1().border_color(pal.rule()))
                 .when(!on, |p| p.opacity(0.7))
-                .child(kit::kind_tile(group_icon(id), plate_tone(id), 32.0, pal))
+                .child(kit::kind_tile(group_icon(id), plate_tone(id), 34.0, pal))
                 .child(
                     div()
                         .flex()
@@ -210,10 +208,9 @@ impl Root {
                         .min_w(px(0.0))
                         .child(
                             div()
-                                .truncate()
-                                .text_size(px(14.0))
-                                .line_height(px(18.0))
-                                .font_weight(FontWeight::MEDIUM)
+                                .text_size(px(15.0))
+                                .line_height(px(19.0))
+                                .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(pal.ink())
                                 .child(short_label(g.label).to_owned()),
                         )
@@ -222,8 +219,8 @@ impl Root {
                                 div()
                                     .truncate()
                                     .font_family(MONO)
-                                    .text_size(px(11.5))
-                                    .line_height(px(15.0))
+                                    .text_size(px(12.5))
+                                    .line_height(px(17.0))
                                     .text_color(pal.ink_meta())
                                     .child(ex),
                             )
@@ -244,19 +241,18 @@ impl Root {
         } else {
             "The built-in rules are off in config.toml (`guard.defaults = false`); only your own lists below count."
         };
+        let built_in_end = div()
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .child(format!("{on_count} of {} on", GROUPS.len()))
+            .child(help("rules-builtin", about, d, pal, cx))
+            .into_any_element();
         page = page.child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(12.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(kit::section_label(format!("Built in · {on_count} of {} on", GROUPS.len()), pal))
-                        .child(help("rules-builtin", about, d, pal, cx)),
-                )
+                .child(kit::section(Some(Glyph::Shield), "Built in", Some(built_in_end), pal).pt(px(6.0)))
                 .child(grid),
         );
 
@@ -283,8 +279,9 @@ impl Root {
                 .flex_wrap()
                 .items_start()
                 .gap(px(14.0))
-                .child(div().flex_1().min_w(px(360.0)).child(also))
-                .child(div().flex_1().min_w(px(360.0)).child(never)),
+                .gap_x(px(28.0))
+                .child(div().flex_1().min_w(px(340.0)).child(also))
+                .child(div().flex_1().min_w(px(340.0)).child(never)),
         );
 
         // No answer, and the two waits.
@@ -312,7 +309,7 @@ impl Root {
                 .flex()
                 .items_center()
                 .gap(px(12.0))
-                .child(div().text_size(px(14.0)).text_color(pal.ink_2()).child(label))
+                .child(div().text_size(px(14.5)).text_color(pal.ink_2()).child(label))
                 .child(control)
         };
         let hook_wait = waits("hook-wait", guard.timeout_secs, Setting::GuardTimeout, cx);
@@ -389,19 +386,32 @@ impl Root {
                 );
             }
         }
-        // The list the field adds to, as picked: Command or File.
+        // The list the field adds to, as picked: Command or File (the field's glyph switches between them).
         let file = self.guard_file[side];
         let list = list_of(never, file);
-        let mut kinds = kit::segmented(pal);
-        for (i, (label, is_file)) in [("Command", false), ("File", true)].into_iter().enumerate() {
-            kinds = kinds.child(
-                kit::segment(SharedString::from(format!("guard-kind-{side}-{i}")), label, file == is_file, pal)
-                    .on_click(Self::on_view(cx, move |this, _| {
-                        this.guard_file[side] = is_file;
-                        this.guard_error[side] = None;
-                    })),
-            );
-        }
+        let kind = div()
+            .id(SharedString::from(format!("guard-kind-{side}")))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(28.0))
+            .rounded(px(8.0))
+            .cursor_pointer()
+            .hover(|s| s.bg(pal.paper_sunken()))
+            .child(glyph(
+                if file {
+                    Glyph::File
+                } else {
+                    Glyph::Terminal
+                },
+                18.0,
+                pal.ink_meta(),
+            ))
+            .on_click(Self::on_view(cx, move |this, _| {
+                this.guard_file[side] = !this.guard_file[side];
+                this.guard_error[side] = None;
+            }));
         let field = Field::Guard(list);
         let typed = !self.guard_inputs[slot(list)].trim().is_empty();
         let add = kit::button(
@@ -415,52 +425,76 @@ impl Root {
             None,
             "Add",
             pal,
-        )
-        .h(px(36.0))
-        .px(px(14.0));
-        let (label, about) = if never {
-            ("Never ask about", "Exceptions to every rule above: these go through without asking.")
+        );
+        let (label, g, about) = if never {
+            ("Never ask about", Glyph::Minus, "Exceptions to every rule above: these go through without asking.")
         } else {
             (
                 "Also ask about",
+                Glyph::Plus,
                 "Commands match from the start of the command, and * matches anything (make deploy*). Files are \
-                 paths or globs (~/secrets/**).",
+                 paths or globs (~/secrets/**). The glyph in the field picks command or file.",
             )
         };
-        kit::plate(pal)
-            .p(px(18.0))
-            .gap(px(12.0))
-            .child(div().flex().items_center().gap(px(6.0)).child(kit::section_label(label, pal)).child(help(
-                if never {
-                    "rules-never"
-                } else {
-                    "rules-also"
-                },
-                about,
-                d,
-                pal,
-                cx,
-            )))
-            .when(any, |c| c.child(tags))
+        let input = div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .min_h(px(56.0))
+            .pl(px(10.0))
+            .pr(px(8.0))
+            .child(kind)
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(kinds)
-                    .child(self.text_field(field, placeholder(list), pal, window, cx))
-                    .child(if typed {
-                        add.on_click(cx.listener(move |this, _, _, cx| this.submit(field, cx)))
-                    } else {
-                        kit::disabled(add)
-                    }),
+                div().flex_1().min_w(px(0.0)).child(
+                    // The field is the row itself (`.in`): no box of its own.
+                    self.text_field(field, placeholder(list), pal, window, cx)
+                        .bg(gpui::transparent_black())
+                        .border_0()
+                        .px(px(0.0))
+                        .text_size(px(14.5)),
+                ),
             )
+            .child(if typed {
+                add.on_click(cx.listener(move |this, _, _, cx| this.submit(field, cx)))
+            } else {
+                kit::disabled(add)
+            });
+        let mut rows = Vec::new();
+        if any {
+            rows.push(div().px(px(14.0)).pt(px(12.0)).pb(px(4.0)).child(tags).into_any_element());
+        }
+        rows.push(input.into_any_element());
+        div()
+            .flex()
+            .flex_col()
+            .child(kit::section(
+                Some(g),
+                label,
+                Some(
+                    help(
+                        if never {
+                            "rules-never"
+                        } else {
+                            "rules-also"
+                        },
+                        about,
+                        d,
+                        pal,
+                        cx,
+                    )
+                    .into_any_element(),
+                ),
+                pal,
+            ))
+            .child(kit::pane(div().flex().flex_col().children(rows), kit::Glass::Solid, kit::pane::RADIUS, pal))
             .when_some(self.guard_error[side].clone(), |c, e| {
                 c.child(
                     div()
                         .flex()
                         .items_center()
                         .gap(px(6.0))
+                        .px(px(6.0))
+                        .pt(px(8.0))
                         .text_size(px(12.5))
                         .text_color(pal.danger)
                         .child(glyph(Glyph::CircleAlert, 14.0, pal.danger))

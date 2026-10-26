@@ -1,9 +1,8 @@
-//! The status window's sidebar (`Desk-Home.png`, `Desk-Waiting.png`, `Desk-Extras.png`): the mark and the serif
-//! "Reins", a card that says what Reins is doing (paper while all is well; a field when something needs you: the
-//! waiting request's colour, red while git is paused, amber when broken, violet while a work session runs), the
-//! sections in monochrome glyphs with their keys (the selected one a raised pill that slides between them), and at the
-//! bottom "Pause git", or, while paused, the red card with the time left and Resume. And the "Pause git" sheet: 15 min,
-//! 1 hour, 1 day, or until you resume (held to confirm).
+//! The status window's sidebar (`DeskNext-System.png`): a card that says what Reins is doing (raised paper while all
+//! is well; a grained field while something runs or is broken: red while git is paused, violet for a work session,
+//! amber when Reins needs you), the sections with their glyphs and keys (the selected one a raised pill that slides
+//! between them), and at the foot "Pause git", or, while paused, "Resume git". And the "Pause git" sheet, as the
+//! boards' Bypass sheet: 15 min, 1 hour, 1 day, or until you resume (held to confirm).
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -12,28 +11,26 @@ use gpui::{
 };
 
 use super::hold::Held;
-use super::icons::{Brand, Glyph, brand, glyph};
-use super::parts::ring;
+use super::icons::{Glyph, glyph};
 use super::story::field_of;
 use super::{Data, Root, kit};
-use crate::format;
 use crate::model::{Model, Section};
 use crate::pause::PauseFor;
 use crate::shortcuts;
 use crate::theme::motion::{self, Entrance, curve, enter};
-use crate::theme::{Field, MONO, Palette, SERIF, SignalText as _};
+use crate::theme::{Field, MONO, NextText as _, Palette};
 use crate::tray::Look;
 
 const WIDTH: f32 = 236.0;
-/// A section's row, and the distance from one row to the next.
-const ROW: f32 = 38.0;
-const PITCH: f32 = 40.0;
+/// A section's row (`.nav`), and the distance from one row to the next.
+const ROW: f32 = 34.0;
+const PITCH: f32 = 38.0;
 
 /// The lengths the sheet offers.
 const LENGTHS: [PauseFor; 4] = [PauseFor::Quarter, PauseFor::Hour, PauseFor::Day, PauseFor::Manual];
 
 impl Section {
-    /// The section's glyph (in ink: Signal colours only what needs a decision).
+    /// The section's glyph (in ink: colour is only for what needs a decision).
     #[must_use]
     pub fn glyph(self) -> Glyph {
         match self {
@@ -90,22 +87,12 @@ fn card_of(d: &Data) -> Card {
         field,
     };
     match d.look {
-        Look::Waiting => {
-            let oldest = d.waiting().last();
-            let left = oldest.map(|e| d.wait_left(e).1).unwrap_or_default();
-            Card {
-                clock: Some(clock_left(left)),
-                ..card(
-                    "Waiting on your phone",
-                    format::count(d.waiting().count() as u64, "request", "requests"),
-                    Glyph::Phone,
-                    Some(oldest.map_or(Field::Push, field_of)),
-                )
-            }
-        }
-        Look::Paused if d.pause.on() => {
-            card("Pushes go direct", "Hooks and MCP still ask".to_owned(), Glyph::Pause, Some(Field::Delete))
-        }
+        // A request waiting keeps the calm card: Activity's count and Home's field say it.
+        Look::Waiting => card("Reins is on", format!("{} approves", d.phone()), Glyph::ShieldCheck, None),
+        Look::Paused if d.pause.on() => Card {
+            clock: d.pause.short(d.now),
+            ..card("git paused", String::new(), Glyph::Pause, Some(Field::Delete))
+        },
         Look::Paused => {
             card("git goes direct", "Turn hosts on in Connections".to_owned(), Glyph::Warning, Some(Field::Warn))
         }
@@ -117,12 +104,10 @@ fn card_of(d: &Data) -> Card {
             ..card("", "Start it in Home".to_owned(), Glyph::Warning, Some(Field::Warn))
         },
         Look::On => match d.work_session() {
-            Some(s) => card(
-                "Work session",
-                format!("{} left · {}", crate::work::left(s, d.now), s.reason),
-                Glyph::Timer,
-                Some(Field::Grant),
-            ),
+            Some(s) => Card {
+                clock: Some(format!("{} left", crate::work::left(s, d.now))),
+                ..card("Work session", String::new(), Glyph::Timer, Some(Field::Grant))
+            },
             None => card("Reins is on", format!("{} approves", d.phone()), Glyph::ShieldCheck, None),
         },
     }
@@ -146,6 +131,7 @@ impl Root {
         };
         self.nav.go(selected_row);
 
+        // A section's row (`.nav`): its glyph, its name, its key or the waiting count.
         let entry = |id: SharedString, g: Glyph, label: &'static str, selected: bool, end: AnyElement| {
             div()
                 .id(id)
@@ -155,15 +141,16 @@ impl Root {
                 .gap(px(10.0))
                 .h(px(ROW))
                 .px(px(10.0))
-                .rounded(px(12.0))
+                .rounded(px(9.0))
                 .cursor_pointer()
-                .text_size(px(14.0))
+                .text_size(px(14.5))
+                .font_weight(FontWeight::MEDIUM)
                 .active(|s| s.opacity(kit::button::PRESSED))
                 .when_else(
                     selected,
-                    |r| r.text_color(pal.ink()).font_weight(FontWeight::SEMIBOLD),
+                    |r| r.text_color(pal.ink()),
                     |r| {
-                        r.text_color(pal.ink_2()).hover(|s| s.bg(pal.paper_sunken().opacity(0.7)).text_color(pal.ink()))
+                        r.text_color(pal.ink_2()).hover(|s| s.bg(pal.paper_sunken().opacity(0.6)).text_color(pal.ink()))
                     },
                 )
                 .child(glyph(
@@ -185,7 +172,7 @@ impl Root {
             .left_0()
             .right_0()
             .h(px(ROW))
-            .rounded(px(12.0))
+            .rounded(px(9.0))
             .bg(pal.paper_raised())
             .border_1()
             .border_color(pal.rule());
@@ -215,12 +202,12 @@ impl Root {
                     .items_center()
                     .justify_center()
                     .min_w(px(20.0))
-                    .h(px(18.0))
+                    .h(px(20.0))
                     .px(px(6.0))
                     .rounded_full()
                     .bg(badge_field.field())
                     .text_color(pal.on_field())
-                    .text_size(px(11.0))
+                    .text_size(px(12.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(waiting.to_string())
                     .into_any_element()
@@ -254,45 +241,37 @@ impl Root {
             .flex()
             .flex_col()
             .flex_none()
-            .gap(px(16.0))
+            .gap(px(4.0))
             .w(px(WIDTH))
             .h_full()
-            .px(px(14.0))
-            .pb(px(18.0))
+            .px(px(12.0))
+            .pb(px(14.0))
+            // The macOS traffic lights sit above the card.
             .pt(px(if cfg!(target_os = "macos") {
-                46.0
+                50.0
             } else {
-                18.0
+                14.0
             }))
             .bg(pal.side())
             .border_r_1()
             .border_color(pal.rule())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .px(px(6.0))
-                    .pt(px(4.0))
-                    .child(brand(Brand::Reins, 26.0).rounded(px(7.0)))
-                    .child(div().font_family(SERIF).text_size(px(24.0)).line_height(px(28.0)).child("Reins")),
-            )
-            .child(Self::status_card(d, pal, cx))
+            .child(div().mb(px(10.0)).child(Self::status_card(d, pal, cx)))
             .child(nav)
             .child(div().flex_1())
+            .child(Self::pause_box(d, pal, cx))
             .child(
-                div().flex().flex_col().gap(px(10.0)).child(Self::pause_box(d, pal, cx)).child(
-                    div()
-                        .px(px(6.0))
-                        .text_size(px(11.5))
-                        .text_color(pal.ink_meta())
-                        .child(format!("Reins {}", reins_desktop::update::VERSION)),
-                ),
+                div()
+                    .px(px(10.0))
+                    .pt(px(6.0))
+                    .text_size(px(11.5))
+                    .text_color(pal.ink_faint())
+                    .child(format!("Reins {}", reins_desktop::update::VERSION)),
             )
             .into_any_element()
     }
 
-    /// What Reins is doing: on paper while all is well, a field when something needs you. A click opens Home.
+    /// What Reins is doing (`.dcard`): on raised paper while all is well, a grained field while something runs or is
+    /// broken (red while git is paused, violet for a work session, amber when Reins needs you). A click opens Home.
     fn status_card(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let c = card_of(d);
         let (title_color, line_color) = match c.field {
@@ -300,16 +279,20 @@ impl Root {
             None => (pal.ink(), pal.ink_meta()),
         };
         let tile = match c.field {
-            Some(_) => div()
+            Some(_) => div().flex().flex_none().items_center().justify_center().size(px(20.0)).child(glyph(
+                c.glyph,
+                18.0,
+                pal.on_field(),
+            )),
+            None => div()
                 .flex()
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .size(px(32.0))
+                .size(px(34.0))
                 .rounded(px(10.0))
-                .bg(pal.on_field_wash())
-                .child(glyph(c.glyph, 18.0, pal.on_field())),
-            None => kit::kind_tile(c.glyph, crate::theme::Tone::Success, 32.0, pal),
+                .bg(pal.success.opacity(0.16))
+                .child(glyph(c.glyph, 18.0, pal.success)),
         };
         let words = div()
             .relative()
@@ -319,33 +302,43 @@ impl Root {
             .min_w(px(0.0))
             .child(
                 div()
-                    .text_size(px(13.5))
-                    .line_height(px(17.0))
+                    .text_size(px(14.0))
+                    .line_height(px(18.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(title_color)
                     .line_clamp(2)
                     .child(c.title),
             )
-            .child(
-                div()
-                    .flex()
-                    .min_w(px(0.0))
-                    .text_size(px(12.0))
-                    .line_height(px(16.0))
-                    .text_color(line_color)
-                    .child(div().min_w(px(0.0)).truncate().child(c.line))
-                    .when_some(c.clock, |l, clock| l.child(" · ").child(div().font_family(MONO).child(clock))),
-            );
+            .when(!c.line.is_empty(), |w| {
+                w.child(
+                    div().text_size(px(12.5)).line_height(px(17.0)).text_color(line_color).line_clamp(2).child(c.line),
+                )
+            })
+            .when_some(c.clock, |w, clock| {
+                w.child(
+                    div()
+                        .font_family(MONO)
+                        .text_size(px(12.5))
+                        .line_height(px(17.0))
+                        .text_color(line_color)
+                        .child(clock),
+                )
+            });
         let frame = match c.field {
-            Some(f) => kit::field_surface(f, 16.0, 16.0),
-            None => div().bg(pal.paper_raised()).rounded(px(16.0)).border_1().border_color(pal.rule()),
+            Some(f) => kit::field_surface(f, 14.0, 14.0),
+            None => div()
+                .bg(pal.paper_raised())
+                .rounded(px(14.0))
+                .when(!pal.dark, |c| c.border_1().border_color(pal.rule())),
         };
         frame
             .id("status-card")
             .flex()
             .items_center()
             .gap(px(10.0))
-            .p(px(12.0))
+            .px(px(12.0))
+            .py(px(10.0))
+            .min_h(px(56.0))
             .cursor_pointer()
             .active(|s| s.opacity(kit::button::PRESSED))
             .child(div().relative().child(tile))
@@ -353,79 +346,55 @@ impl Root {
             .on_click(Self::go(cx, Section::Home))
     }
 
-    /// The bottom of the sidebar: "Pause git"; while paused, the desktop's bypass: a red field with the time left
-    /// and Resume.
+    /// The foot of the sidebar: "Pause git", quiet; while paused, "Resume git" in its place (as "Stop bypass"
+    /// replaces the mode picker on the boards).
     fn pause_box(d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        if let Some(left) = d.pause.short(d.now) {
-            let on = pal.on_field();
-            let mark: AnyElement = match d.saved.pause_left(d.now) {
-                Some(f) => ring(f, on, on.opacity(0.3), 22.0, 2.4).into_any_element(),
-                None => div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .size(px(22.0))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(on)
-                    .child(glyph(Glyph::Infinity, 12.0, on))
-                    .into_any_element(),
-            };
-            return kit::field_surface(Field::Delete, 18.0, 18.0)
+        if d.pause.short(d.now).is_some() {
+            return div()
+                .id("side-resume")
                 .flex()
-                .flex_col()
-                .gap(px(10.0))
-                .p(px(14.0))
-                .text_color(on)
-                .child(
-                    div().relative().flex().items_center().gap(px(10.0)).child(mark).child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .child(
-                                div()
-                                    .text_size(px(14.0))
-                                    .line_height(px(18.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("git paused"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .line_height(px(16.0))
-                                    .text_color(pal.on_field_2())
-                                    .truncate()
-                                    .child(left),
-                            ),
-                    ),
-                )
-                .child(
-                    kit::button(
-                        "side-resume",
-                        kit::Look::OnField,
-                        kit::Size::Regular,
-                        Some(Glyph::Play),
-                        "Resume",
-                        pal,
-                    )
-                    .h(px(34.0))
-                    .w_full()
-                    .on_click(Self::on_model(cx, Model::resume)),
-                )
+                .items_center()
+                .justify_center()
+                .gap(px(6.0))
+                .h(px(38.0))
+                .mb(px(4.0))
+                .rounded_full()
+                .bg(pal.paper_raised())
+                .border_1()
+                .border_color(pal.rule())
+                .text_size(px(13.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(pal.danger)
+                .cursor_pointer()
+                .active(|s| s.opacity(kit::button::PRESSED))
+                .child(glyph(Glyph::Play, 14.0, pal.danger))
+                .child("Resume git")
+                .on_click(Self::on_model(cx, Model::resume))
                 .into_any_element();
         }
-        let b = kit::button("side-pause", kit::Look::Soft, kit::Size::Regular, Some(Glyph::Pause), "Pause git", pal)
-            .w_full();
+        let link = div()
+            .id("side-pause")
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(6.0))
+            .h(px(34.0))
+            .rounded(px(10.0))
+            .text_size(px(13.5))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(pal.ink_2())
+            .child(glyph(Glyph::Pause, 14.0, pal.ink_2()))
+            .child("Pause git");
         if d.paired {
-            b.on_click(Self::on_view(cx, |this, _| {
-                this.pause_sheet = !this.pause_sheet;
-            }))
-            .into_any_element()
+            link.cursor_pointer()
+                .hover(|s| s.text_color(pal.ink()))
+                .active(|s| s.opacity(kit::button::PRESSED))
+                .on_click(Self::on_view(cx, |this, _| {
+                    this.pause_sheet = !this.pause_sheet;
+                }))
+                .into_any_element()
         } else {
-            kit::disabled(b).into_any_element()
+            link.opacity(kit::button::DISABLED).into_any_element()
         }
     }
 
@@ -441,9 +410,7 @@ impl Root {
                 PauseFor::Manual => "Until resume",
                 other => other.short(),
             };
-            let mut s = kit::segment(SharedString::from(format!("sheet-{}", length.id())), "", on, pal)
-                .h(px(32.0))
-                .px(px(10.0));
+            let mut s = kit::segment(SharedString::from(format!("sheet-{}", length.id())), "", on, pal).px(px(10.0));
             if length == PauseFor::Manual {
                 s = s.text_color(pal.danger).child(glyph(Glyph::Infinity, 14.0, pal.danger));
             }
@@ -472,37 +439,56 @@ impl Root {
             }))
             .into_any_element()
         };
+        // As the boards' Bypass sheet: a centred card, its name in red, what still asks, the lengths, the action.
         let sheet = div()
             .occlude()
             .relative()
             .flex()
             .flex_col()
-            .gap(px(12.0))
-            .w(px(440.0))
-            .p(px(24.0))
-            .rounded(px(24.0))
+            .w(px(480.0))
+            .px(px(24.0))
+            .py(px(22.0))
+            .rounded(px(22.0))
             .bg(pal.paper_raised())
             .border_1()
             .border_color(pal.rule())
             .shadow_lg()
-            .child(div().sheet_title().text_color(pal.ink()).child(kit::ask_line("Pause ", "git")))
+            .child(div().signal(crate::theme::text::MODE_TITLE).text_color(pal.danger).child("Pause git"))
             .child(
                 div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(6.0))
+                    .mt(px(10.0))
+                    .child(
+                        div()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(pal.ink_2())
+                            .child("Still asks"),
+                    )
+                    .child(kit::status_pill(Some(Glyph::Terminal), "Hooks", None, pal))
+                    .child(kit::status_pill(Some(Glyph::Link), "MCP tools", None, pal)),
+            )
+            .child(
+                div()
+                    .mt(px(10.0))
                     .text_size(px(14.0))
                     .line_height(px(20.0))
                     .text_color(pal.ink_2())
-                    .child("Pushes go straight to the hosts without asking. Hooks and MCP tools still ask your phone."),
+                    .child("Pushes go straight to the hosts without asking."),
             )
-            .child(lengths)
+            .child(div().mt(px(16.0)).child(lengths))
             .child(
                 div()
                     .flex()
                     .gap(px(8.0))
-                    .mt(px(4.0))
+                    .mt(px(18.0))
                     // Cancel and the action, 1 : 1.4.
                     .child(
                         div().flex().flex_none().w(gpui::relative(0.41)).child(
-                            kit::button("sheet-cancel", kit::Look::Outline, kit::Size::Regular, None, "Cancel", pal)
+                            kit::button("sheet-cancel", kit::Look::Soft, kit::Size::Regular, None, "Cancel", pal)
                                 .w_full()
                                 .on_click(Self::on_view(cx, |this, _| {
                                     this.pause_sheet = false;
@@ -522,7 +508,11 @@ impl Root {
                     this.hold = None;
                 },
             )))
-            .child(div().absolute().left(px(20.0)).bottom(px(64.0)).child(enter(sheet, "pause-sheet", Entrance::Sheet)))
+            .child(div().absolute().inset_0().flex().justify_center().items_start().pt(px(180.0)).child(enter(
+                sheet,
+                "pause-sheet",
+                Entrance::Sheet,
+            )))
             .into_any_element()
     }
 }
