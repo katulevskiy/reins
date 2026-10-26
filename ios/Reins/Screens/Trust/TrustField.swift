@@ -277,6 +277,15 @@ struct RunningOverlay: View {
             if stage != .full {
                 bar(stage)
                     .transition(.opacity)
+            } else {
+                // The ears' band in the field's colour, drawn as the top of the full field: what scrolls up under the
+                // ears goes under it.
+                ModeSurface(mode: running.kind)
+                    .frame(height: max(fold.fieldBottom, placement.miniHeight))
+                    .frame(height: placement.top + placement.height + 4, alignment: .top)
+                    .clipped()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
             ears(stage)
         }

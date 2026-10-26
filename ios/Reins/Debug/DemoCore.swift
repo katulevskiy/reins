@@ -189,6 +189,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             case "bypass": s.apGlobal = ApRow(mode: .manual, bypassUntil: now + 47 * 60 + 12, bypassSince: now - 12 * 60)
             case "overnight": s.apGlobal = ApRow(mode: .overnight, overnightUntil: now + 6 * 3_600, overnightSince: now - 12 * 60, overnightReturn: .manual)
             case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
+            case "auto": s.apGlobal = ApRow(mode: .auto)
             default: break
             }
             // `-demoRunningEntries N`: N requests that mode decided, one every few seconds of its 12 minutes.

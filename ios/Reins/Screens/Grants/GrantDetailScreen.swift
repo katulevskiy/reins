@@ -132,6 +132,16 @@ struct GrantDetailScreen: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(extending != nil)
+        #if DEBUG
+        // `-openSheet extend` (screenshots): the Extend sheet over a running grant.
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            if grant.active, let i = args.firstIndex(of: "-openSheet"), i + 1 < args.count, args[i + 1] == "extend" {
+                try? await Task.sleep(for: .milliseconds(600))
+                extending = GrantPick(grant)
+            }
+        }
+        #endif
     }
 
     @ViewBuilder private func dock(_ grant: GrantView) -> some View {

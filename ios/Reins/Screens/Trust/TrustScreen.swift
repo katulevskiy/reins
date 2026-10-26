@@ -142,7 +142,12 @@ struct TrustScreen: View {
                 RunningFieldFull(running: mode, placement: placement, current: fold.stage == .full) { stop(mode) }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fold.fieldBottom = $0 }
                     .plainRow(EdgeInsets())
+                    .id("field")
+                    #if DEBUG
+                    .background(DebugScroll())
+                    #endif
                 runningMiddle(mode, s)
+                    .id("middle")
             } else {
                 PageHeader(title: "Trust") { EmptyView() }
                     .padding(.top, placement.safeTop + 4)
@@ -204,6 +209,15 @@ struct TrustScreen: View {
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
             if mode != nil { fold.scroll(to: y) }
         }
+        #if DEBUG
+        // `-openStack`, `-trustScroll <points>` (screenshots): the running list open; Trust scrolled to a row.
+        .task(id: mode) {
+            let args = ProcessInfo.processInfo.arguments
+            try? await Task.sleep(for: .milliseconds(1200))
+            if args.contains("-openStack") { runningListOpen = true }
+
+        }
+        #endif
     }
 
     // MARK: A running mode
@@ -251,6 +265,7 @@ struct TrustScreen: View {
             model.show(.newGrant(token: 0))
         }
         .plainRow(EdgeInsets())
+        .id("grants")
 
         if let grantError {
             FormBanner(text: grantError)
@@ -366,3 +381,23 @@ struct TrustScreen: View {
         feedback.defaultTap()
     }
 }
+
+#if DEBUG
+/// `-trustScroll <points>` (screenshots): scrolls the list this sits in to that offset, a moment after it appears.
+private struct DebugScroll: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-trustScroll"), i + 1 < args.count, let y = Double(args[i + 1]) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                var v: UIView? = view
+                while let s = v, !(s is UIScrollView) { v = s.superview }
+                (v as? UIScrollView)?.setContentOffset(CGPoint(x: 0, y: y - ((v as? UIScrollView)?.adjustedContentInset.top ?? 0)), animated: true)
+            }
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+}
+#endif

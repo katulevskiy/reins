@@ -135,6 +135,15 @@ struct TryItScreen: View {
             ap.bind(model)
             ap.clearEvaluation()
             await ap.refresh()
+            #if DEBUG
+            // `-tryExample <title> [-tryEvaluate]` (screenshots): pick an example, and ask Autopilot.
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "-tryExample"), i + 1 < args.count, let e = AutopilotText.examples.first(where: { $0.title.hasPrefix(args[i + 1]) }) {
+                example = e.title
+                text = e.situation
+            }
+            if args.contains("-tryEvaluate") { await ap.evaluate(profileId: profile?.id, situation: text) }
+            #endif
         }
     }
 
