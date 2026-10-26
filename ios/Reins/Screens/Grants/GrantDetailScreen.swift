@@ -13,6 +13,9 @@ struct GrantDetailScreen: View {
     @State private var extending: GrantPick?
     @State private var busy = false
     @State private var error: String?
+    /// Ended from here and on its way out: the dock keeps its hold button until the page closes (taking a hold button
+    /// away while its own hold confirms crashes its gesture).
+    @State private var leaving = false
 
     init(grantId: String) {
         self.grantId = grantId
@@ -146,7 +149,7 @@ struct GrantDetailScreen: View {
 
     @ViewBuilder private func dock(_ grant: GrantView) -> some View {
         HStack(spacing: 10) {
-            if grant.active {
+            if grant.active || leaving {
                 Button {
                     extending = GrantPick(grant)
                 } label: {
@@ -159,6 +162,7 @@ struct GrantDetailScreen: View {
                 .accessibilityIdentifier("extend")
                 // The grant's power goes at once: held, never a tap, no dialog.
                 HoldButton(title: "Hold to end", busy: busy) {
+                    leaving = true
                     run(leave: true) { await model.revokeGrant(grant.id) }
                 }
                 .frame(maxWidth: .infinity)
@@ -196,6 +200,7 @@ struct GrantDetailScreen: View {
             let failure = await action()
             busy = false
             error = failure
+            if failure != nil { leaving = false }
             if failure == nil && leave { model.back() }
         }
     }

@@ -403,7 +403,7 @@ final class AutopilotUITests: XCTestCase {
         waitFor("situation")
         // The examples scroll sideways: bring the fourth into view.
         let injection = waitFor("example:Injection attempt")
-        for _ in 0..<3 where !injection.isHittable { waitFor("example:Push a branch").swipeLeft() }
+        for _ in 0..<3 where injection.frame.maxX > app.frame.maxX { waitFor("example:Push a branch").swipeLeft() }
         injection.tap()
         tap("evaluate")
         waitFor("verdictWord", timeout: 8)
