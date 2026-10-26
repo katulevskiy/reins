@@ -156,10 +156,33 @@ pub fn told_body(mut body: Value, told: Told) -> Value {
     body
 }
 
-fn wait_response(wait: &WaitResult, id: &RequestId, connection: &ConnectionId, seen: PhoneSeen) -> DesktopResponse {
+/// The answer to a wait. Only a connection the phone listed as its paired desktop app (`desktop`) hears who decided and
+/// where Autopilot leans: told to an AI, the leaning would let it tune its asks until Autopilot lets them through.
+fn wait_response(
+    wait: &WaitResult,
+    id: &RequestId,
+    connection: &ConnectionId,
+    desktop: bool,
+    seen: PhoneSeen,
+) -> DesktopResponse {
     wait_body(wait, id, seen).map_or_else(DesktopResponse::not_found, |body| {
-        DesktopResponse::json(Status::Ok, told_body(body, HUB.relay.told(id, connection)))
+        let told = if desktop {
+            HUB.relay.told(id, connection)
+        } else {
+            Told::default()
+        };
+        DesktopResponse::json(Status::Ok, told_body(body, told))
     })
+}
+
+/// Waits on `id` for `connection`. A desktop app's wait also ends at a new leaning (it shows it at once); any other
+/// connection's waits as an MCP wait does, so not even its timing says that Autopilot leaned.
+async fn wait_on(id: &RequestId, connection: &ConnectionId, desktop: bool, first: bool) -> WaitResult {
+    match (desktop, first) {
+        (true, first) => HUB.relay.wait_leaning(id, connection, first).await,
+        (false, true) => HUB.relay.wait_first(id, connection).await,
+        (false, false) => HUB.relay.wait(id, connection).await,
+    }
 }
 
 // ---------------------------------------------------------------------------------------
@@ -303,13 +326,10 @@ async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Sta
     // Never hold a pooled DB connection while waiting for the phone.
     drop(conn);
     let connection_id = ConnectionId(connection.uuid.clone());
-    let waited = HUB.relay.wait_leaning(&request_id, &connection_id, true).await;
-    wait_response(
-        &waited,
-        &request_id,
-        &connection_id,
-        HUB.presence.status(&connection.user_uuid.to_string(), now_unix()),
-    )
+    let user = connection.user_uuid.to_string();
+    let desktop = HUB.is_desktop(&user, &connection.uuid);
+    let waited = wait_on(&request_id, &connection_id, desktop, true).await;
+    wait_response(&waited, &request_id, &connection_id, desktop, HUB.presence.status(&user, now_unix()))
 }
 
 /// Waits again on an earlier call of the same connection (an approval can come after the first wait ran out).
@@ -329,13 +349,10 @@ async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopRespons
     };
     let request_id = RequestId::from(id);
     let connection_id = ConnectionId(connection.uuid.clone());
-    let waited = HUB.relay.wait_leaning(&request_id, &connection_id, false).await;
-    wait_response(
-        &waited,
-        &request_id,
-        &connection_id,
-        HUB.presence.status(&connection.user_uuid.to_string(), now_unix()),
-    )
+    let user = connection.user_uuid.to_string();
+    let desktop = HUB.is_desktop(&user, &connection.uuid);
+    let waited = wait_on(&request_id, &connection_id, desktop, false).await;
+    wait_response(&waited, &request_id, &connection_id, desktop, HUB.presence.status(&user, now_unix()))
 }
 
 /// When the approval phone last asked this server for work (`null`: not since the server started), the integrations
@@ -639,7 +656,7 @@ mod tests {
         );
         assert_eq!(wait_body(&WaitResult::Offline, &id, PhoneSeen::Listening).unwrap()["last_seen"], Value::Null);
         assert_eq!(wait_body(&WaitResult::NotFound, &id, seen), None);
-        assert_eq!(wait_response(&WaitResult::NotFound, &id, &"c1".into(), seen).status, Status::NotFound);
+        assert_eq!(wait_response(&WaitResult::NotFound, &id, &"c1".into(), true, seen).status, Status::NotFound);
     }
 
     #[test]

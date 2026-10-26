@@ -334,6 +334,14 @@ impl Hub {
         modes.get(user).and_then(|(report, at)| report.for_connection(connection_id, *at))
     }
 
+    /// Whether `connection_id` is one of `user`'s desktop apps, as the phone last listed them (it pinned their keys
+    /// when pairing). Anything else, an AI's connection included, is not: and nothing the phone says for the
+    /// desktop apps (modes, who decided, where Autopilot leans) reaches it.
+    pub fn is_desktop(&self, user: &str, connection_id: &str) -> bool {
+        let modes = self.modes.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        modes.get(user).is_some_and(|(report, _)| report.desktops.iter().any(|d| d == connection_id))
+    }
+
     /// Replaces `user`'s MCP servers; reports that break the contract's bounds are dropped.
     pub fn set_mcp_servers(&self, user: &str, reports: Vec<McpServerReport>) {
         let reports = Arc::new(mcp_tools::sanitize_reports(reports));

@@ -163,3 +163,25 @@ async fn the_modes_are_reported_for_the_desktop_apps() {
     assert_eq!(until - since, 30 * 60);
     assert_eq!(report["desktops"], json!([DESK]), "only the paired desktop app is to be shown them");
 }
+
+#[tokio::test]
+async fn an_ai_connection_cannot_change_a_mode_even_to_a_stricter_one() {
+    let desk = desk().await;
+    desk.core.set_autopilot_mode(None, Some(AutopilotMode::Auto), None).await.unwrap();
+    // The same call from a connection whose desktop key the phone never pinned (an AI's): refused before anything.
+    let args = json!({"mode": "lockdown", "client_key": desk.public(), "nonce": "nonce-ai"});
+    let from_ai = call("ai1", "ai-connection", "desktop", "autopilot_mode", &args);
+    desk.send(&[from_ai]).await;
+    assert!(desk.waiting().await.is_empty(), "nothing is asked of the owner");
+    assert!(!desk.error("ai1").await.is_empty(), "refused");
+    assert_eq!(global(&desk).await, AutopilotMode::Auto, "nothing changed");
+    let correct = call(
+        "ai2",
+        "ai-connection",
+        "desktop",
+        "autopilot_correct",
+        &json!({"request_id": "r1", "should_have": "approve", "client_key": desk.public(), "nonce": "nonce-ai2"}),
+    );
+    desk.send(&[correct]).await;
+    assert!(desk.waiting().await.is_empty() && !desk.error("ai2").await.is_empty());
+}
