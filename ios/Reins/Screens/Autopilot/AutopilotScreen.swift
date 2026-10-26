@@ -108,7 +108,7 @@ struct ModelSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                SheetTitle(title: "Model", closeID: "closeModel") {
+                TrustSheetTitle(title: "Model", closeID: "closeModel") {
                     feedback.play(.tap)
                     dismiss()
                 }
@@ -153,7 +153,7 @@ struct ModelSheet: View {
 }
 
 /// A sheet's title in the display face with its round close button (the kit's `sheet(..., title)`).
-struct SheetTitle: View {
+struct TrustSheetTitle: View {
     var title: String
     var closeID: String
     var onClose: () -> Void

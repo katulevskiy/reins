@@ -22,29 +22,29 @@ struct PermissionsHomeScreen: View {
 
     var body: some View {
         List {
-            QuietTitle("Permissions").quietRow(sides: 0)
-            QuietHeader(
+            PermTitle("Permissions").permRow(sides: 0)
+            PermHeader(
                 title: "Accounts", help: "These settings also appear in Connections. Automatic permissions apply only to their selected agents and account. New agents need explicit account access.",
                 count: "\(accounts.count)"
             )
-            .quietRow(sides: 0)
+            .permRow(sides: 0)
             FlatGroup(inset: 44) {
                 ForEach(accounts, id: \.permissionIdentity) { account in
                     Button { app.show(.accountPermissions(service: account.service, account: account.account, temporary: false)) } label: {
-                        FlatRow(title: untrusted(account.account), mono: true, chevron: true) { ServiceAvatar(service: account.service, size: 32) }
+                        PermRow(title: untrusted(account.account), mono: true, chevron: true) { ServiceAvatar(service: account.service, size: 32) }
                     }
                     .buttonStyle(PressDimsStyle())
                     .accessibilityLabel("\(untrusted(account.account)), \(serviceName(account.service)) permissions")
                     .accessibilityIdentifier("managePermissions:\(account.service):\(account.account)")
                 }
             }
-            .quietRow(sides: 0)
-            QuietHeader(
+            .permRow(sides: 0)
+            PermHeader(
                 title: "Temporary", glyph: .timer,
                 help: "Open an account with supported automatic permissions above to create a temporary permission. Unknown outcomes still use the reserved budget.",
                 count: "\(records.count)"
             )
-            .quietRow(sides: 0)
+            .permRow(sides: 0)
             FlatGroup(inset: 44) {
                 if records.isEmpty {
                     Text("No temporary permissions").textRole(.body).foregroundStyle(Palette.inkMeta).frame(minHeight: 52)
@@ -52,7 +52,7 @@ struct PermissionsHomeScreen: View {
                 }
                 ForEach(records, id: \.id) { record in
                     Button { openRecord = record.id } label: {
-                        FlatRow(title: untrusted(record.account), mono: true, value: DelegationText.uses(record), chevron: true) {
+                        PermRow(title: untrusted(record.account), mono: true, value: DelegationText.uses(record), chevron: true) {
                             ServiceAvatar(service: record.service, size: 32)
                         }
                     }
@@ -61,8 +61,8 @@ struct PermissionsHomeScreen: View {
                     .accessibilityIdentifier("delegation:\(record.id)")
                 }
             }
-            .quietRow(sides: 0)
-            if let error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("delegationError").quietRow(top: 14, sides: 16) }
+            .permRow(sides: 0)
+            if let error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("delegationError").permRow(top: 14, sides: 16) }
         }
         .integrationList()
         .navigationTitle("")
@@ -181,36 +181,36 @@ private struct DelegationPage: View {
         case .revoked: .danger
         }
         return List {
-            QuietTitle(title: untrusted(record.account)) {
+            PermTitle(title: untrusted(record.account)) {
                 ServiceAvatar(service: record.service, size: 32)
             } trail: {
                 Pill(DelegationText.state(record.state), tone: tone)
             }
-            .quietRow(sides: 0)
-            QuietHeader(title: "Temporary", glyph: .timer).quietRow(sides: 0)
+            .permRow(sides: 0)
+            PermHeader(title: "Temporary", glyph: .timer).permRow(sides: 0)
             FlatGroup(inset: 44) {
-                FlatRow(title: untrusted(record.title)) { GlyphTile(.person) }
-                FlatRow(title: "Uses", value: record.usageVerified ? "\(record.used) / \(record.maxUses)" : "Unavailable") { GlyphTile(.card) }
-                FlatRow(title: "Unknown outcomes", value: "\(record.unresolved)") { GlyphTile(.help) }
-                FlatRow(title: "Expires", value: Date(timeIntervalSince1970: TimeInterval(record.expiresAt)).formatted(.dateTime.month(.abbreviated).day().hour().minute())) { GlyphTile(.timer) }
+                PermRow(title: untrusted(record.title)) { GlyphTile(.person) }
+                PermRow(title: "Uses", value: record.usageVerified ? "\(record.used) / \(record.maxUses)" : "Unavailable") { GlyphTile(.card) }
+                PermRow(title: "Unknown outcomes", value: "\(record.unresolved)") { GlyphTile(.help) }
+                PermRow(title: "Expires", value: Date(timeIntervalSince1970: TimeInterval(record.expiresAt)).formatted(.dateTime.month(.abbreviated).day().hour().minute())) { GlyphTile(.timer) }
             }
-            .quietRow(sides: 0)
+            .permRow(sides: 0)
             VStack(alignment: .leading, spacing: 8) {
-                QuietLine(untrusted(record.scopeSummary))
-                QuietLine(untrusted(record.effectiveReason))
+                PermLine(untrusted(record.scopeSummary))
+                PermLine(untrusted(record.effectiveReason))
                 ForEach(Array(record.restrictions.enumerated()), id: \.offset) { _, r in
-                    WarningLine("\(PermissionCopy.controller(r.controller)): \(untrusted(r.reason))")
+                    PermWarning("\(PermissionCopy.controller(r.controller)): \(untrusted(r.reason))")
                 }
-                if !record.usageVerified { WarningLine("Usage and quota unavailable.") }
+                if !record.usageVerified { PermWarning("Usage and quota unavailable.") }
                 if let error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("delegationError") }
             }
-            .quietRow(top: 14)
+            .permRow(top: 14)
         }
         .integrationList()
         .accessibilityIdentifier("delegationPage:\(record.id)")
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if record.state != .revoked, record.state != .expired {
-                FootButtons {
+                PermFoot {
                     if record.state == .active {
                         changeButton(record, .pause, kind: .soft, glyph: .pause)
                     } else if record.state == .paused {
@@ -224,7 +224,7 @@ private struct DelegationPage: View {
     }
 
     private func changeButton(_ record: DelegationView, _ change: DelegationChange, kind: SignalButtonKind, glyph: Glyph?) -> some View {
-        Button { onChange(record, change) } label: { GlyphLabel(DelegationText.change(change), glyph: glyph) }
+        Button { onChange(record, change) } label: { PermGlyphLabel(DelegationText.change(change), glyph: glyph) }
             .buttonStyle(SignalButtonLook(kind: kind))
             .frame(maxWidth: .infinity)
             .disabled(busy)

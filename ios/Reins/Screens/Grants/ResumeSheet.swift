@@ -29,7 +29,7 @@ struct ResumeSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    SheetTitle(title: extending ? "Extend" : "Resume", closeID: "closeResume") { dismiss() }
+                    TrustSheetTitle(title: extending ? "Extend" : "Resume", closeID: "closeResume") { dismiss() }
                         .padding(.horizontal, -20)
                     // What it is for: the grant's plate and avatar, its summary.
                     HStack(spacing: 12) {

@@ -68,20 +68,20 @@ struct AccountPermissionsScreen: View {
                 PrimaryPhoneSetupSection(editor: editor)
             }
             if let view = editor.view, !editor.canEdit {
-                QuietHeader(title: "Current permissions").quietRow(sides: 0)
+                PermHeader(title: "Current permissions").permRow(sides: 0)
                 VStack(alignment: .leading, spacing: 10) {
-                    QuietLine("Permission changes are not available for this account. Existing permissions and approval settings remain in effect.")
+                    PermLine("Permission changes are not available for this account. Existing permissions and approval settings remain in effect.")
                         .accessibilityIdentifier("permissionsReadOnly")
                     ForEach(view.capabilities, id: \.capability) { capability in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(untrusted(capability.title)).textRole(.row).foregroundStyle(Palette.ink)
-                            QuietLine(untrusted(capability.scopeSummary))
-                            QuietLine(untrusted(capability.effectiveReason))
+                            PermLine(untrusted(capability.scopeSummary))
+                            PermLine(untrusted(capability.effectiveReason))
                             PermissionRestrictions(restrictions: capability.restrictions)
                         }
                     }
                 }
-                .quietRow()
+                .permRow()
             }
             if let view = editor.view, let draft = editor.draft, !editor.saved {
                 if !temporary { presets(editor, view, draft) }
@@ -107,7 +107,7 @@ struct AccountPermissionsScreen: View {
                             .disabled(editor.busy).accessibilityIdentifier("connectionAddAnother")
                     }
                 }
-                .quietRow(top: 20, sides: 16)
+                .permRow(top: 20, sides: 16)
             }
         }
         .integrationList()
@@ -119,29 +119,29 @@ struct AccountPermissionsScreen: View {
     @ViewBuilder private func header(_ editor: AccountPermissionsModel) -> some View {
         Group {
             if finishing {
-                QuietTitle(title: "Account connected") {
+                PermTitle(title: "Account connected") {
                     GlyphIcon(.circleCheck, size: 24).foregroundStyle(Palette.success)
                 } trail: { EmptyView() }
             } else if temporary {
-                QuietTitle(title: "Temporary") { ServiceAvatar(service: service, size: 32) } trail: { EmptyView() }
+                PermTitle(title: "Temporary") { ServiceAvatar(service: service, size: 32) } trail: { EmptyView() }
             } else {
-                QuietTitle(title: untrusted(account)) { ServiceAvatar(service: service, size: 32) } trail: { EmptyView() }
+                PermTitle(title: untrusted(account)) { ServiceAvatar(service: service, size: 32) } trail: { EmptyView() }
             }
         }
-        .quietRow(sides: 0)
+        .permRow(sides: 0)
         VStack(alignment: .leading, spacing: 8) {
             if finishing || temporary {
                 Text(untrusted(account)).font(RFont.mono(14.5)).foregroundStyle(Palette.ink).textSelection(.enabled)
                     .accessibilityIdentifier("connectedIdentity")
             }
             if finishing {
-                QuietLine(editor.canEdit ? "The connection is saved. Choose permissions for selected agents below." : "The connection is saved.")
+                PermLine(editor.canEdit ? "The connection is saved. Choose permissions for selected agents below." : "The connection is saved.")
             }
             if editor.loading { ProgressView("Loading permissions…") }
             if let view = editor.view, !(temporary && editor.saved) {
-                QuietLine(untrusted(view.scopeSummary)).accessibilityIdentifier("effectiveAccountPolicy")
+                PermLine(untrusted(view.scopeSummary)).accessibilityIdentifier("effectiveAccountPolicy")
                 PermissionRestrictions(restrictions: view.restrictions)
-                if !view.usageVerified { WarningLine("Usage and remaining quota are unavailable. Automatic permissions cannot be enabled until history is verified.") }
+                if !view.usageVerified { PermWarning("Usage and remaining quota are unavailable. Automatic permissions cannot be enabled until history is verified.") }
             }
             if let error = editor.error { Banner(untrusted(error), kind: .error).accessibilityIdentifier("permissionsError") }
             if editor.changedElsewhere {
@@ -154,9 +154,9 @@ struct AccountPermissionsScreen: View {
             if editor.saved {
                 Banner(temporary ? "Temporary permission created." : "Permissions saved.").accessibilityIdentifier("permissionsSaved")
                 if let issued = editor.issued {
-                    QuietLine(untrusted(issued.scopeSummary))
-                    QuietLine(untrusted(issued.effectiveReason))
-                    QuietLine("Expires \(PermissionCopy.expiry(issued.expiresAt))")
+                    PermLine(untrusted(issued.scopeSummary))
+                    PermLine(untrusted(issued.effectiveReason))
+                    PermLine("Expires \(PermissionCopy.expiry(issued.expiresAt))")
                     PermissionRestrictions(restrictions: issued.restrictions)
                 }
                 Button("Done", action: finish)
@@ -165,21 +165,21 @@ struct AccountPermissionsScreen: View {
                     .accessibilityIdentifier("permissionsDone")
             }
         }
-        .quietRow(top: 8)
+        .permRow(top: 8)
     }
 
     /// Start from: three choices as radio rows.
     @ViewBuilder private func presets(_ editor: AccountPermissionsModel, _ view: AccountPermissionsView, _ draft: AccountPermissionsDraft) -> some View {
-        QuietHeader(
+        PermHeader(
             title: "Start from",
             help: editor.canEdit ? "Allow automatically is a scoped, explicit permission, separate from Autopilot. Review requirements and sensitive-data protections still apply." : nil
         )
-        .quietRow(sides: 0)
+        .permRow(sides: 0)
         FlatGroup(inset: 44) {
             ForEach([AccountPermissionPreset.reviewEveryRequest, .readAssist, .custom], id: \.self) { preset in
                 let on = (!finishing || editor.hasChosenPreset) && draft.preset == preset
                 Button { Task { await editor.preset(preset) } } label: {
-                    FlatRow(title: PermissionCopy.preset(preset)) { GlyphTile(PermissionLook.glyph(preset)) } trail: { RadioDot(selected: on) }
+                    PermRow(title: PermissionCopy.preset(preset)) { GlyphTile(PermissionLook.glyph(preset)) } trail: { RadioDot(selected: on) }
                 }
                 .buttonStyle(PressDimsStyle())
                 .disabled(editor.busy || editor.changedElsewhere || !view.availablePresets.contains(preset) || (preset == .readAssist && !view.usageVerified))
@@ -188,20 +188,20 @@ struct AccountPermissionsScreen: View {
                 .accessibilityIdentifier("permissionPreset:\(preset)")
             }
         }
-        .quietRow(sides: 0)
+        .permRow(sides: 0)
     }
 
     /// Agents: a switch each; selecting one without access admits it to this account.
     @ViewBuilder private func agents(_ editor: AccountPermissionsModel, _ view: AccountPermissionsView, _ draft: AccountPermissionsDraft) -> some View {
-        QuietHeader(
+        PermHeader(
             title: "Agents",
             help: "Automatic permissions require selected agents. With no selection, review and block rules apply to all agents, including future connections. Selecting an agent without access explicitly admits it to this account.",
             count: draft.agentIds.isEmpty ? nil : "\(draft.agentIds.count)"
         )
-        .quietRow(sides: 0)
+        .permRow(sides: 0)
         FlatGroup(inset: 44) {
             if view.agents.isEmpty {
-                QuietLine("No agents are connected. You can still set review or block defaults.").frame(minHeight: 52)
+                PermLine("No agents are connected. You can still set review or block defaults.").frame(minHeight: 52)
             }
             ForEach(view.agents, id: \.connectionId) { agent in
                 Toggle(isOn: Binding(get: { draft.agentIds.contains(agent.connectionId) }, set: { editor.agent(agent.connectionId, selected: $0) })) {
@@ -220,26 +220,26 @@ struct AccountPermissionsScreen: View {
                 .accessibilityIdentifier("permissionAgent:\(agent.connectionId)")
             }
         }
-        .quietRow(sides: 0)
+        .permRow(sides: 0)
         if draft.agentIds.isEmpty {
-            QuietLine("All agents (including future connections) for review and block rules. Automatic permission requires selected agents.")
+            PermLine("All agents (including future connections) for review and block rules. Automatic permission requires selected agents.")
                 .accessibilityIdentifier("permissionAllAgents")
-                .quietRow(top: 8)
+                .permRow(top: 8)
         }
     }
 
     /// Now: each operation with its rule; they open the Rules page.
     @ViewBuilder private func now(_ editor: AccountPermissionsModel, _ view: AccountPermissionsView, _ draft: AccountPermissionsDraft, opens: Bool) -> some View {
-        QuietHeader(
+        PermHeader(
             title: opens ? "Now" : "Your choices",
             help: "Review by default asks for confirmation unless a matching explicit temporary permission allows the action. Mandatory review and blocks still apply."
         )
-        .quietRow(sides: 0)
+        .permRow(sides: 0)
         FlatGroup(inset: 44) {
             ForEach(view.capabilities, id: \.capability) { capability in
                 let mode = draft.rules.first(where: { $0.capability == capability.capability })?.mode
                 Button { rulesOpen = true } label: {
-                    FlatRow(title: untrusted(capability.title), value: mode.map(PermissionLook.word), chevron: opens) {
+                    PermRow(title: untrusted(capability.title), value: mode.map(PermissionLook.word), chevron: opens) {
                         GlyphTile(PermissionLook.glyph(capability.capability))
                     }
                 }
@@ -248,15 +248,15 @@ struct AccountPermissionsScreen: View {
                 .accessibilityIdentifier("permissionRule:\(capability.capability)")
             }
         }
-        .quietRow(sides: 0)
+        .permRow(sides: 0)
     }
 
     /// Review, and (for an account with automatic operations) a temporary permission.
     @ViewBuilder private func foot(_ editor: AccountPermissionsModel) -> some View {
         if let view = editor.view, let draft = editor.draft, !editor.saved, !finishing || editor.hasChosenPreset {
-            FootButtons {
+            PermFoot {
                 if !finishing, !temporary, view.usageVerified, view.capabilities.contains(where: { $0.supportedModes.contains(.auto) }) {
-                    Button { app.show(.accountPermissions(service: service, account: account, temporary: true)) } label: { GlyphLabel("Temporary", glyph: .timer) }
+                    Button { app.show(.accountPermissions(service: service, account: account, temporary: true)) } label: { PermGlyphLabel("Temporary", glyph: .timer) }
                         .buttonStyle(SignalButtonLook(kind: .soft))
                         .frame(maxWidth: .infinity)
                         .accessibilityIdentifier("accountDelegate")
@@ -279,8 +279,8 @@ struct AccountPermissionsScreen: View {
 
     private func rules(_ editor: AccountPermissionsModel) -> some View {
         List {
-            QuietTitle("Rules").quietRow(sides: 0)
-            if let error = editor.error { Banner(untrusted(error), kind: .error).quietRow(top: 8) }
+            PermTitle("Rules").permRow(sides: 0)
+            if let error = editor.error { Banner(untrusted(error), kind: .error).permRow(top: 8) }
             if let view = editor.view, let draft = editor.draft {
                 capabilities(editor, view, draft)
             }
@@ -297,8 +297,8 @@ struct AccountPermissionsScreen: View {
         let firstAuto = shown.first { c in draft.rules.contains { $0.capability == c.capability && $0.mode == .auto } }?.capability
         ForEach(shown, id: \.capability) { capability in
             let rule = draft.rules.first(where: { $0.capability == capability.capability })
-            QuietHeader(title: untrusted(capability.title), glyph: PermissionLook.glyph(capability.capability), help: untrusted(capability.description))
-                .quietRow(sides: 0)
+            PermHeader(title: untrusted(capability.title), glyph: PermissionLook.glyph(capability.capability), help: untrusted(capability.description))
+                .permRow(sides: 0)
             VStack(alignment: .leading, spacing: 8) {
                 if temporary {
                     Toggle(isOn: Binding(get: { rule != nil }, set: { editor.include(capability.capability, selected: $0) })) {
@@ -315,15 +315,15 @@ struct AccountPermissionsScreen: View {
                         ) { editor.mode(capability.capability, mode) }
                     })
                 }
-                QuietLine("Current settings: \(untrusted(capability.scopeSummary))")
-                if !capability.effectiveReason.isEmpty { QuietLine(untrusted(capability.effectiveReason)) }
+                PermLine("Current settings: \(untrusted(capability.scopeSummary))")
+                if !capability.effectiveReason.isEmpty { PermLine(untrusted(capability.effectiveReason)) }
                 PermissionRestrictions(restrictions: capability.restrictions)
             }
-            .quietRow(top: 2)
+            .permRow(top: 2)
             if let rule, rule.mode == .auto {
                 FlatGroup(inset: 44) {
                     Button { scopeFor = capability.capability } label: {
-                        FlatRow(
+                        PermRow(
                             title: PermissionCopy.scope(rule.scope.kind),
                             value: rule.scope.kind == .allInAccount ? nil : "\(rule.scope.ids.count) selected", chevron: true
                         ) { GlyphTile(.folderSearch) }
@@ -333,7 +333,7 @@ struct AccountPermissionsScreen: View {
                     .accessibilityIdentifier("permissionScope:\(capability.capability)")
                     if capability.capability == firstAuto { limitRows(editor, view, draft) }
                 }
-                .quietRow(top: 8, sides: 0)
+                .permRow(top: 8, sides: 0)
                 if capability.capability == firstAuto { limitNotes(view, draft) }
             }
         }
@@ -347,12 +347,12 @@ struct AccountPermissionsScreen: View {
                 Button(duration.label) { editor.expiresAt(Int64(Date().timeIntervalSince1970) + Int64(duration.seconds)) }
             }
         } label: {
-            FlatRow(title: "Expires", value: draft.expiresAt.map(Self.left) ?? "Choose", chevron: true) { GlyphTile(.timer) }
+            PermRow(title: "Expires", value: draft.expiresAt.map(Self.left) ?? "Choose", chevron: true) { GlyphTile(.timer) }
                 .accessibilityValue(draft.expiresAt.map { PermissionCopy.expiry($0) } ?? "Not chosen")
         }
         .disabled(editor.busy)
         .accessibilityIdentifier("permissionExpires")
-        FlatRow(title: temporary ? "Total uses" : "Uses") { GlyphTile(.card) } trail: {
+        PermRow(title: temporary ? "Total uses" : "Uses") { GlyphTile(.card) } trail: {
             TextField("20", text: Binding(get: { view.usageVerified ? draft.maxUses.map(String.init) ?? "" : "" }, set: { editor.remainingUses(UInt64($0)) }))
                 .keyboardType(.numberPad)
                 .multilineTextAlignment(.trailing)
@@ -367,44 +367,44 @@ struct AccountPermissionsScreen: View {
 
     @ViewBuilder private func limitNotes(_ view: AccountPermissionsView, _ draft: AccountPermissionsDraft) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            if draft.expiresAt == nil || draft.maxUses == nil { WarningLine("Choose an expiry and enter a use limit before reviewing automatic permission.") }
+            if draft.expiresAt == nil || draft.maxUses == nil { PermWarning("Choose an expiry and enter a use limit before reviewing automatic permission.") }
             if view.usageVerified {
-                QuietLine("Already used: \(view.used). Limits are enforced by the core; unknown outcomes are not silently refunded.")
+                PermLine("Already used: \(view.used). Limits are enforced by the core; unknown outcomes are not silently refunded.")
             } else {
-                WarningLine("Usage is unavailable until history is verified.")
+                PermWarning("Usage is unavailable until history is verified.")
             }
         }
-        .quietRow(top: 8)
+        .permRow(top: 8)
     }
 
     // MARK: Review (04)
 
     private func review(_ editor: AccountPermissionsModel, _ preview: PermissionPreview) -> some View {
         List {
-            QuietTitle("Review").quietRow(sides: 0)
+            PermTitle("Review").permRow(sides: 0)
             Text(untrusted(preview.summary))
                 .textRole(.sub)
                 .foregroundStyle(Palette.ink2)
                 .textSelection(.enabled)
                 .accessibilityIdentifier("permissionPreviewSummary")
-                .quietRow(top: 6)
+                .permRow(top: 6)
             if let view = editor.view, let draft = editor.draft { PermissionDraftReview(view: view, draft: draft, temporary: temporary) }
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(preview.warnings, id: \.self) { WarningLine(untrusted($0)) }
-                QuietLine(PermissionCopy.history(preview)).accessibilityIdentifier("permissionPreviewHistory")
+                ForEach(preview.warnings, id: \.self) { PermWarning(untrusted($0)) }
+                PermLine(PermissionCopy.history(preview)).accessibilityIdentifier("permissionPreviewHistory")
             }
-            .quietRow(top: 12)
+            .permRow(top: 12)
         }
         .integrationList()
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            FootButtons {
+            PermFoot {
                 Button("Edit") { editor.discardPreview() }
                     .buttonStyle(SignalButtonLook(kind: .outline))
                     .frame(maxWidth: .infinity)
                     .disabled(editor.busy)
                 Button { Task { await editor.save() } } label: {
                     ZStack {
-                        GlyphLabel(temporary ? "Create" : "Save", glyph: .faceId).opacity(editor.busy ? 0 : 1)
+                        PermGlyphLabel(temporary ? "Create" : "Save", glyph: .faceId).opacity(editor.busy ? 0 : 1)
                         if editor.busy { ProgressView() }
                     }
                 }
@@ -427,7 +427,7 @@ struct PermissionRestrictions: View {
     var restrictions: [PermissionRestriction]
     var body: some View {
         ForEach(Array(restrictions.enumerated()), id: \.offset) { _, restriction in
-            WarningLine("\(PermissionCopy.controller(restriction.controller)): \(untrusted(restriction.reason))")
+            PermWarning("\(PermissionCopy.controller(restriction.controller)): \(untrusted(restriction.reason))")
         }
     }
 }
@@ -461,11 +461,11 @@ private struct PermissionDraftReview: View {
 
     var body: some View {
         FlatGroup(inset: 44) {
-            FlatRow(title: untrusted(draft.account), mono: true) { ServiceAvatar(service: draft.service, size: 32) }
+            PermRow(title: untrusted(draft.account), mono: true) { ServiceAvatar(service: draft.service, size: 32) }
                 .textSelection(.enabled)
                 .accessibilityLabel("\(serviceName(draft.service)) · \(untrusted(draft.account))")
             if draft.agentIds.isEmpty {
-                FlatRow(title: "All agents (including future connections)") { GlyphTile(.person) }
+                PermRow(title: "All agents (including future connections)") { GlyphTile(.person) }
             }
             ForEach(draft.agentIds, id: \.self) { id in
                 HStack(spacing: 12) {
@@ -478,61 +478,61 @@ private struct PermissionDraftReview: View {
                 .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
             }
         }
-        .quietRow(top: 16, sides: 0)
-        QuietHeader(title: "Account access").quietRow(sides: 0)
+        .permRow(top: 16, sides: 0)
+        PermHeader(title: "Account access").permRow(sides: 0)
         VStack(alignment: .leading, spacing: 4) {
             if draft.grantAccountAccess, !admissions.isEmpty {
-                ForEach(admissions, id: \.self) { id in QuietLine("\(untrustedName(label(id))) can discover this account.") }
-                QuietLine("Account access expires: \(draft.expiresAt.map { PermissionCopy.expiry($0) } ?? "No expiry")")
+                ForEach(admissions, id: \.self) { id in PermLine("\(untrustedName(label(id))) can discover this account.") }
+                PermLine("Account access expires: \(draft.expiresAt.map { PermissionCopy.expiry($0) } ?? "No expiry")")
             } else {
-                QuietLine("No additional agents receive account access.")
+                PermLine("No additional agents receive account access.")
             }
         }
-        .quietRow()
+        .permRow()
         ForEach(draft.rules.filter(changed), id: \.capability) { rule in
-            QuietHeader(title: untrusted(capability(rule.capability)?.title ?? "Operation"), glyph: PermissionLook.glyph(rule.capability)).quietRow(sides: 0)
+            PermHeader(title: untrusted(capability(rule.capability)?.title ?? "Operation"), glyph: PermissionLook.glyph(rule.capability)).permRow(sides: 0)
             FlatGroup(inset: 44) {
-                FlatRow(title: PermissionLook.word(rule.mode), titleColor: rule.mode == .auto ? Palette.success : rule.mode == .block ? Palette.danger : Palette.ink) {
+                PermRow(title: PermissionLook.word(rule.mode), titleColor: rule.mode == .auto ? Palette.success : rule.mode == .block ? Palette.danger : Palette.ink) {
                     ModeMarkTile(mode: rule.mode)
                 }
                 .accessibilityLabel(PermissionCopy.mode(rule.mode))
                 if rule.mode == .auto {
-                    FlatRow(title: PermissionCopy.scope(rule.scope.kind)) { GlyphTile(.folderSearch) }
+                    PermRow(title: PermissionCopy.scope(rule.scope.kind)) { GlyphTile(.folderSearch) }
                     ForEach(rule.scope.ids, id: \.self) { id in
-                        FlatRow(title: untrusted(id), mono: true) { GlyphTile(.mail) }.textSelection(.enabled)
+                        PermRow(title: untrusted(id), mono: true) { GlyphTile(.mail) }.textSelection(.enabled)
                     }
-                    FlatRow(title: Self.limits(draft)) { GlyphTile(.timer) }
+                    PermRow(title: Self.limits(draft)) { GlyphTile(.timer) }
                 }
             }
-            .quietRow(sides: 0)
+            .permRow(sides: 0)
             Group {
                 if rule.mode == .auto {
-                    if rule.scope.kind == .selectedRecipients { QuietLine("Every To and Cc address must match these recipients.") }
+                    if rule.scope.kind == .selectedRecipients { PermLine("Every To and Cc address must match these recipients.") }
                 } else {
-                    QuietLine(draft.agentIds.isEmpty ? "All requests of this operation in this account, from all agents including future connections." : "All requests of this operation in this account, from the selected agents.")
+                    PermLine(draft.agentIds.isEmpty ? "All requests of this operation in this account, from all agents including future connections." : "All requests of this operation in this account, from the selected agents.")
                 }
             }
-            .quietRow(top: 6)
+            .permRow(top: 6)
         }
         if draft.rules.contains(where: { $0.mode == .auto }) {
             VStack(alignment: .leading, spacing: 4) {
-                QuietLine("Automatic permission expires: \(PermissionCopy.expiry(draft.expiresAt))")
-                QuietLine(temporary ? "At most \(draft.maxUses.map(String.init) ?? "not set") total requests across the selected operations." : "At most \(draft.maxUses.map(String.init) ?? "not set") further uses for each automatic operation.")
+                PermLine("Automatic permission expires: \(PermissionCopy.expiry(draft.expiresAt))")
+                PermLine(temporary ? "At most \(draft.maxUses.map(String.init) ?? "not set") total requests across the selected operations." : "At most \(draft.maxUses.map(String.init) ?? "not set") further uses for each automatic operation.")
             }
             .accessibilityIdentifier("permissionReviewLimits")
-            .quietRow(top: 10)
+            .permRow(top: 10)
         }
         let unchanged = draft.rules.filter { !changed($0) }
         if !unchanged.isEmpty {
-            QuietHeader(title: "Unchanged").quietRow(sides: 0)
+            PermHeader(title: "Unchanged").permRow(sides: 0)
             FlatGroup(inset: 44) {
                 ForEach(unchanged, id: \.capability) { rule in
-                    FlatRow(title: untrusted(capability(rule.capability)?.title ?? "Operation"), value: PermissionLook.word(rule.mode)) {
+                    PermRow(title: untrusted(capability(rule.capability)?.title ?? "Operation"), value: PermissionLook.word(rule.mode)) {
                         GlyphTile(PermissionLook.glyph(rule.capability))
                     }
                 }
             }
-            .quietRow(sides: 0)
+            .permRow(sides: 0)
         }
     }
 

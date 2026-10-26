@@ -70,7 +70,7 @@ struct NewGrantScreen: View {
                     .padding(.top, 4)
                     .accessibilityAddTraits(.isHeader)
 
-                FormStep(number: 1, title: "Who")
+                GrantFormStep(number: 1, title: "Who")
                 if model.connections.isEmpty {
                     hint("No AI is connected yet.").padding(.horizontal, 20)
                 }
@@ -80,7 +80,7 @@ struct NewGrantScreen: View {
 
                 // With one Gmail account there is nothing to choose (it is picked below).
                 if showAccounts {
-                    FormStep(number: 2, title: "Account")
+                    GrantFormStep(number: 2, title: "Account")
                     if mailAccounts.isEmpty {
                         hint("No Gmail account yet. Add one under Connections.")
                             .padding(.horizontal, 20)
@@ -97,14 +97,14 @@ struct NewGrantScreen: View {
                     .padding(.horizontal, 16)
                 }
 
-                FormStep(number: showAccounts ? 3 : 2, title: "Can")
+                GrantFormStep(number: showAccounts ? 3 : 2, title: "Can")
                 Chooser([
                     Chooser.Segment(id: "kind:read", title: "Read", selected: !draft.send) { setSend(false) },
                     Chooser.Segment(id: "kind:send", title: "Send", selected: draft.send) { setSend(true) },
                 ])
                 .padding(.horizontal, 16)
 
-                FormStep(number: showAccounts ? 4 : 3, title: draft.send ? "To" : "From") {
+                GrantFormStep(number: showAccounts ? 4 : 3, title: draft.send ? "To" : "From") {
                     // All mail is time-boxed to a week and never sends: it takes the place of the addresses.
                     if !draft.send {
                         Toggle(isOn: Binding(get: { form.draft.anyMail }, set: { on in setAllMail(on) })) {
@@ -160,7 +160,7 @@ struct NewGrantScreen: View {
                     }
                 }
 
-                FormStep(number: showAccounts ? 5 : 4, title: "How long")
+                GrantFormStep(number: showAccounts ? 5 : 4, title: "How long")
                 lifetimes(draft)
                     .padding(.horizontal, 16)
 
@@ -256,7 +256,7 @@ struct NewGrantScreen: View {
 }
 
 /// A numbered step of a form (the boards' `step`): its number on a small disc, its title, anything at the right.
-struct FormStep<Trailing: View>: View {
+struct GrantFormStep<Trailing: View>: View {
     var number: Int
     var title: String
     @ViewBuilder var trailing: Trailing
@@ -284,7 +284,7 @@ struct FormStep<Trailing: View>: View {
     }
 }
 
-extension FormStep where Trailing == EmptyView {
+extension GrantFormStep where Trailing == EmptyView {
     init(number: Int, title: String) {
         self.init(number: number, title: title) { EmptyView() }
     }

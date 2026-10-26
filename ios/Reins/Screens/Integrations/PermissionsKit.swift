@@ -5,7 +5,7 @@ import SwiftUI
 // buttons at the foot of a page.
 
 /// A quiet page's title (24), with a leading mark (a service's logo) and a trailing pill ("Active").
-struct QuietTitle<Lead: View, Trail: View>: View {
+struct PermTitle<Lead: View, Trail: View>: View {
     var title: String
     var mono = false
     @ViewBuilder var lead: Lead
@@ -28,14 +28,14 @@ struct QuietTitle<Lead: View, Trail: View>: View {
     }
 }
 
-extension QuietTitle where Lead == EmptyView, Trail == EmptyView {
+extension PermTitle where Lead == EmptyView, Trail == EmptyView {
     init(_ title: String) {
         self.init(title: title) { EmptyView() } trail: { EmptyView() }
     }
 }
 
 /// A quiet section header (the boards' `qsec`): glyph, title, a (?) when it has an explanation, a count at the right.
-struct QuietHeader: View {
+struct PermHeader: View {
     var title: String
     var glyph: Glyph?
     var help: String?
@@ -63,7 +63,7 @@ struct QuietHeader: View {
 
 /// A flat row (the boards' `lrow` in `flat`): a leading mark, a title (mono for accounts and addresses), a value in
 /// ink-2, a trailing control, a chevron when it opens something.
-struct FlatRow<Lead: View, Trail: View>: View {
+struct PermRow<Lead: View, Trail: View>: View {
     var title: String
     var mono = false
     var value: String?
@@ -93,14 +93,14 @@ struct FlatRow<Lead: View, Trail: View>: View {
     }
 }
 
-extension FlatRow where Trail == EmptyView {
+extension PermRow where Trail == EmptyView {
     init(title: String, mono: Bool = false, value: String? = nil, titleColor: Color = Palette.ink, chevron: Bool = false, @ViewBuilder lead: () -> Lead) {
         self.init(title: title, mono: mono, value: value, titleColor: titleColor, chevron: chevron, lead: lead) { EmptyView() }
     }
 }
 
 /// An amber line that must stay in sight: a restriction, history that cannot be checked, what still asks.
-struct WarningLine: View {
+struct PermWarning: View {
     var text: String
     var tint: Color = Palette.warning
 
@@ -121,7 +121,7 @@ struct WarningLine: View {
 }
 
 /// A line under a row or a title in ink-2: what is in force, why.
-struct QuietLine: View {
+struct PermLine: View {
     var text: String
 
     init(_ text: String) { self.text = text }
@@ -136,7 +136,7 @@ struct QuietLine: View {
 }
 
 /// Two equal buttons at the foot of a quiet page ("Temporary" · "Review", "Edit" · "Save", "Pause" · "Revoke").
-struct FootButtons<Content: View>: View {
+struct PermFoot<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -150,7 +150,7 @@ struct FootButtons<Content: View>: View {
 }
 
 /// A glyph and a word as a button label.
-struct GlyphLabel: View {
+struct PermGlyphLabel: View {
     var title: String
     var glyph: Glyph?
 
@@ -207,7 +207,7 @@ enum PermissionLook {
 
 extension View {
     /// A row of a quiet page's list: no cell background or separators, the page's side margins.
-    func quietRow(top: CGFloat = 0, bottom: CGFloat = 0, sides: CGFloat = 20) -> some View {
+    func permRow(top: CGFloat = 0, bottom: CGFloat = 0, sides: CGFloat = 20) -> some View {
         listRowInsets(EdgeInsets(top: top, leading: sides, bottom: bottom, trailing: sides))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
