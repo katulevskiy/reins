@@ -1,5 +1,6 @@
 package dev.reins.android
 
+import androidx.compose.ui.test.assertContentDescriptionContains
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsEnabled
@@ -975,7 +976,8 @@ class AutopilotFlowTest : FlowHarness() {
         core.suggestions["req1"] = TestData.suggestion("req1", novel = true)
         openRequest(TestData.searchView())
         awaitTag("suggestion")
-        rule.onNodeWithTag("suggestion").assertTextContains("Autopilot would allow", substring = true).assertTextContains("97%", substring = true)
+        // A pill with Autopilot's share; a screen reader hears what it means.
+        rule.onNodeWithTag("suggestion").assertContentDescriptionContains("Autopilot would allow", substring = true).assertTextContains("97%", substring = true)
         assertFalse(has("getAutopilot"))
         assertFalse(has("suggestionDetail"))
         tap("suggestion")

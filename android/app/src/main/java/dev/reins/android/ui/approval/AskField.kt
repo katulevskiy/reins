@@ -9,6 +9,8 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,8 +61,10 @@ import dev.reins.android.ui.main.HeaderInsets
 // italic, and one verdict line. It slides down from the top (320 ms, ease out); the ask follows 60 ms later.
 
 /**
- * A field at the top of an ask. [top] is the row beside the close button (the asker, the timer); [verdict] the one
- * line under the ask. Under Reduce Motion it appears without sliding.
+ * A field at the top of an ask (Next, Approve and Every kind): the timer and the close button, then what it touches
+ * and who asks ([icon] · [top]), the ask in display type with its target in 600, the machine detail in mono, and
+ * [verdict]: small pills (Autopilot's share, why it always asks, the risk). Under Reduce Motion it appears without
+ * sliding.
  */
 @Composable
 fun AskField(
@@ -77,6 +81,9 @@ fun AskField(
     askTag: String = "what",
     closeGlyph: Glyph = Glyph.ArrowBack,
     closeLabel: String = "Back",
+    /** The time left, on the left of the close button. */
+    timer: (@Composable () -> Unit)? = null,
+    /** Who asks, after the request's tile (their mark and name). */
     top: @Composable RowScope.() -> Unit = {},
     verdict: (@Composable () -> Unit)? = null,
     below: (@Composable ColumnScope.() -> Unit)? = null,
@@ -93,20 +100,26 @@ fun AskField(
                 .fillMaxWidth()
                 .fieldSurface(field, FieldHeaderShape)
                 .windowInsetsPadding(HeaderInsets)
-                .padding(start = 22.dp, end = 22.dp, top = 4.dp, bottom = 22.dp)
+                .padding(start = 20.dp, end = 18.dp, top = 2.dp, bottom = 22.dp)
                 .testTag("hero"),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FieldButton(closeGlyph, closeLabel, Modifier.testTag("closeSheet"), onClick = onClose)
-                top()
+            // The time left on the left, the close button on the right (Next, Approve 01).
+            Row(Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { timer?.invoke() }
+                FieldButton(closeGlyph, closeLabel, Modifier.testTag("closeSheet"), size = 32.dp, onClick = onClose)
             }
-            if (icon != null) {
-                Row(Modifier.padding(top = 26.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    icon()
-                    LabelText(label, c.onField2, Modifier.testTag("fieldLabel"))
-                }
-            } else {
-                LabelText(label, c.onField2, Modifier.padding(top = 30.dp).testTag("fieldLabel"))
+            // What it touches (its tile, what it does on the corner) and who asks; read out as the label line.
+            Row(
+                Modifier.padding(top = 14.dp).clearAndSetSemantics {
+                    testTag = "fieldLabel"
+                    text = androidx.compose.ui.text.AnnotatedString(label)
+                },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                icon?.invoke()
+                if (icon != null) RText("·", RType.sans(15f, FontWeight.SemiBold), c.onField.copy(alpha = 0.6f), maxLines = 1)
+                top()
             }
             AnimatedVisibility(shown, enter = fadeIn(tween(if (reduce) Motion.REDUCED_MS else 240, delayMillis = if (reduce) 0 else Motion.ASK_DELAY_MS))) {
                 Column {
@@ -123,41 +136,43 @@ fun AskField(
                     )
                     // The machine part in mono, on its own line, whole (ASK-TEXT.md).
                     if (!details.isNullOrBlank()) {
-                        RText(details, RType.mono(14f), c.onField, Modifier.padding(top = 8.dp).testTag("askDetails"), ltr = true)
+                        RText(details, RType.mono(14f), c.onField.copy(alpha = 0.85f), Modifier.padding(top = 8.dp).testTag("askDetails"), ltr = true)
                     }
                 }
             }
-            if (verdict != null) Box(Modifier.padding(top = 14.dp)) { verdict() }
+            if (verdict != null) Box(Modifier.padding(top = 12.dp)) { verdict() }
             below?.invoke(this)
         }
     }
 }
 
 /**
- * Drilled in: the field shrinks to a band that keeps its colour, the ask in one line and the timer, so the ask is
- * never lost.
+ * Drilled in (Next, Approve 02 and 03): the field shrinks to a band that keeps its colour: back on the left, the page's
+ * title over the ask in one line in the middle, the timer on the right, so the ask is never lost.
  */
 @Composable
-fun AskBand(field: Field, ask: String, target: String?, onBack: () -> Unit, modifier: Modifier = Modifier, timer: @Composable () -> Unit = {}) {
+fun AskBand(field: Field, ask: String, target: String?, onBack: () -> Unit, modifier: Modifier = Modifier, title: String? = null, timer: @Composable () -> Unit = {}) {
     val c = LocalColors.current
     Row(
         modifier
             .fillMaxWidth()
-            .fieldSurface(field, FieldHeaderShape)
+            .fieldSurface(field)
             .windowInsetsPadding(HeaderInsets)
-            .padding(start = 18.dp, end = 22.dp, top = 2.dp, bottom = 14.dp)
+            .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 12.dp)
             .testTag("askBand"),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FieldButton(Glyph.ChevronLeft, "Back", Modifier.testTag("back"), size = 32.dp, onClick = onBack)
-        androidx.compose.foundation.text.BasicText(
-            askString(ask, target),
-            Modifier.weight(1f),
-            style = RType.serif(17f, 22f).copy(color = c.onField),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        FieldButton(Glyph.ArrowBack, "Back", Modifier.testTag("back"), size = 36.dp, onClick = onBack)
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (title != null) RText(title, RType.sans(16f, FontWeight.SemiBold), c.onField, Modifier.testTag("pageTitle"), maxLines = 1, ltr = true)
+            androidx.compose.foundation.text.BasicText(
+                askString(ask, target),
+                style = (if (title != null) RType.sans(13f) else RType.sans(15f, FontWeight.Medium)).copy(color = c.onField.copy(alpha = 0.85f), textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         timer()
     }
 }
@@ -184,12 +199,15 @@ fun RowScope.AskWho(name: String, host: String?, avatar: @Composable () -> Unit)
     // The mark on its white disc, the same in both themes.
     CompositionLocalProvider(LocalColors provides RColors.Light) { avatar() }
     Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-        RText(name, RType.sans(14.5f, FontWeight.Medium), c.onField, Modifier.weight(1f, fill = false), maxLines = 1)
-        if (!host.isNullOrBlank()) RText(" · $host", RType.sans(14.5f, FontWeight.Medium), c.onField2, maxLines = 1)
+        RText(name, RType.sans(15f, FontWeight.SemiBold), c.onField, Modifier.weight(1f, fill = false), maxLines = 1)
+        if (!host.isNullOrBlank()) RText(" · $host", RType.sans(15f, FontWeight.Medium), c.onField2, maxLines = 1)
     }
 }
 
-/** The verdict line on a field: a glyph (or a ring) and a few words in on-field-2; a tap opens its detail. */
+/**
+ * A verdict on a field, as a small pill (`.pill.p-onf`): a glyph (or a ring) and a few words, white on the white wash;
+ * a tap opens its detail. [spoken] is what it says to a screen reader when the words are shortened ("97%").
+ */
 @Composable
 fun FieldVerdict(
     text: String,
@@ -199,47 +217,55 @@ fun FieldVerdict(
     maxLines: Int = 2,
     chevron: Boolean = false,
     textTag: String? = null,
+    spoken: String? = null,
     onClick: (() -> Unit)? = null,
     onOverflow: (Boolean) -> Unit = {},
 ) {
     val c = LocalColors.current
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
     Row(
         modifier
-            .then(if (onClick != null) Modifier.clip(CircleShape).pressable(shape = CircleShape, label = text, onClick = onClick) else Modifier)
-            .semantics(mergeDescendants = true) {},
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .clip(shape)
+            .background(c.onField.copy(alpha = 0.2f))
+            .then(if (onClick != null) Modifier.pressable(shape = shape, label = spoken ?: text, onClick = onClick) else Modifier)
+            .semantics(mergeDescendants = true) { if (spoken != null) contentDescription = spoken }
+            .heightIn(min = 24.dp)
+            .padding(horizontal = 9.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when {
-            ring != null -> dev.reins.android.design.Ring(ring, c.onField, c.onField.copy(alpha = 0.3f), 16.dp)
-            glyph != null -> GlyphIcon(glyph, c.onField2, size = 16.dp)
+            ring != null -> dev.reins.android.design.Ring(ring, c.onField, c.onField.copy(alpha = 0.3f), 14.dp)
+            glyph != null -> GlyphIcon(glyph, c.onField, size = 13.dp)
         }
         androidx.compose.material3.Text(
             text,
             Modifier.weight(1f, fill = false).then(if (textTag != null) Modifier.testTag(textTag) else Modifier),
-            color = c.onField2,
-            style = RType.sans(14.5f, lineHeight = 19f),
+            color = c.onField,
+            style = RType.sans(12.5f, FontWeight.SemiBold, lineHeight = 16f),
             maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
             onTextLayout = { onOverflow(it.hasVisualOverflow) },
         )
-        if (chevron) GlyphIcon(Glyph.ChevronRight, c.onField2, size = 14.dp)
+        if (chevron) GlyphIcon(Glyph.ChevronRight, c.onField, size = 13.dp)
     }
 }
 
-/** The decision bar at the bottom of an ask: paper, a hairline on top, above the navigation bar. */
+/** The decision bar at the bottom of an ask (`.dock`): paper with round top corners and a hairline ring. */
 @Composable
 fun AskDock(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     val c = LocalColors.current
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
     Column(
         modifier
             .fillMaxWidth()
+            .clip(shape)
             .background(c.paper)
-            .drawBehind { drawLine(c.rule, Offset(0f, 0.5f), Offset(size.width, 0.5f), 1.dp.toPx()) }
+            .border(1.dp, c.rule, shape)
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 18.dp)
+            .padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 16.dp)
             .testTag("dock"),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
         content = content,
     )
 }

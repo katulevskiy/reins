@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -67,14 +68,65 @@ private const val HIDDEN_HELP = "Invisible characters can make code read unlike 
 private fun GitRefView.hiddenChars() = commits.any { it.hiddenChars } || files.any { it.hiddenChars }
 
 /**
- * A push from git on the user's computer, as facts: each branch or tag, its commits folded into a row that opens them
- * (with their lines added and removed), and the account. Everything shown came from the desktop app.
+ * A push from git on the user's computer (Next, Approve 01): for each branch or tag, a section header with how many
+ * commits and the lines added and removed (it opens them all), its riskiest commits first in a group (each opens its
+ * own page) and "+N more"; then the branch or tag and the account. Everything shown came from the desktop app.
  */
 @Composable
 internal fun GitFacts(view: ApprovalView, git: GitPushView) {
     val c = LocalColors.current
     val nav = LocalApprovalNav.current
+    val feedback = LocalFeedback.current
     Column(Modifier.testTag("gitPush"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        git.refs.forEachIndexed { i, ref ->
+            val commits = ref.commits.isNotEmpty() || ref.commitCount > 0u
+            val files = !commits && ref.filesChanged > 0u
+            if (!commits && !files) return@forEachIndexed
+            val open = {
+                nav.push(if (commits) ApprovalPage.Commits(i) else ApprovalPage.Files(i))
+                feedback.play(Event.Open)
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable(shape = RoundedCornerShape(8.dp), onClick = open)
+                    .testTag(if (commits) "gitCommits:$i" else "gitFiles:$i")
+                    .padding(start = 24.dp, end = 20.dp, top = 10.dp, bottom = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                dev.reins.android.design.GlyphIcon(if (commits) dev.reins.android.design.Glyph.GitCommit else dev.reins.android.design.Glyph.File, c.ink2, size = 14.dp)
+                dev.reins.android.design.LabelText(if (commits) commitsWord(ref.commitCount.toInt()) else filesWord(ref.filesChanged.toInt()), c.ink2, Modifier.weight(1f))
+                RefGlance(ref, i)
+            }
+            if (commits) {
+                val ordered = attentionOrder(ref.commits) { it.attention?.level }
+                val shown = ordered.take(INLINE_COMMITS)
+                val more = ref.commitCount.toInt() - shown.size
+                FactGroup(
+                    rows = buildList<@Composable () -> Unit> {
+                        shown.forEach { (j, commit) ->
+                            add { CommitRow(commit, Modifier.testTag("gitCommit:$i:$j"), compact = true) { nav.push(ApprovalPage.Commit(i, j)) } }
+                        }
+                        if (more > 0) {
+                            add {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 46.dp)
+                                        .pressable(highlight = c.paperSunken, shape = RoundedCornerShape(0.dp), onClick = open)
+                                        .testTag("gitMore:$i"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    RText("+$more more", RType.sans(15f), c.ink2, Modifier.weight(1f), maxLines = 1)
+                                    dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.ChevronRight, c.inkFaint, size = 18.dp)
+                                }
+                            }
+                        }
+                    },
+                )
+            }
+        }
         FactGroup(
             rows = buildList<@Composable () -> Unit> {
                 git.refs.forEachIndexed { i, ref ->
@@ -93,16 +145,6 @@ internal fun GitFacts(view: ApprovalView, git: GitPushView) {
                     }
                 }
                 view.account?.takeIf { it.isNotBlank() }?.let { add { FactRow("Account", untrusted(it), mono = true, maxLines = Int.MAX_VALUE) } }
-                git.refs.forEachIndexed { i, ref ->
-                    when {
-                        ref.commits.isNotEmpty() || ref.commitCount > 0u -> add {
-                            DrillRow(commitsWord(ref.commitCount.toInt()), "gitCommits:$i", { nav.push(ApprovalPage.Commits(i)) }) { RefGlance(ref, i) }
-                        }
-                        ref.filesChanged > 0u -> add {
-                            DrillRow(filesWord(ref.filesChanged.toInt()), "gitFiles:$i", { nav.push(ApprovalPage.Files(i)) }) { RefGlance(ref, i) }
-                        }
-                    }
-                }
             },
         )
         git.notes.forEachIndexed { k, note ->
@@ -110,6 +152,9 @@ internal fun GitFacts(view: ApprovalView, git: GitPushView) {
         }
     }
 }
+
+/** How many of a push's commits show on the ask itself, riskiest first. */
+private const val INLINE_COMMITS = 3
 
 /**
  * A ref's folded row, beside its title: how many of its items deserve a closer look ("2 of 8 to look at") and its lines
@@ -163,8 +208,9 @@ internal fun CommitsPage(view: ApprovalView, refIndex: Int) {
     val c = LocalColors.current
     val nav = LocalApprovalNav.current
     val ref = view.git?.refs?.getOrNull(refIndex) ?: return
-    Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 2.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        RText(untrusted(ref.shortName), RType.mono(13f), c.secondary, Modifier.weight(1f, fill = false).testTag("gitCommitsRef:$refIndex"), ltr = true)
+    Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 22.dp, top = 6.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        dev.reins.android.design.GlyphIcon(dev.reins.android.design.Glyph.GitBranch, c.ink2, size = 14.dp)
+        RText(untrusted(ref.shortName), RType.sans(13f, FontWeight.SemiBold), c.ink2, Modifier.weight(1f, fill = false).testTag("gitCommitsRef:$refIndex"), ltr = true)
         if (ref.filesChanged > 0u) {
             RText(
                 " · ${filesWord(ref.filesChanged.toInt())}",
@@ -181,7 +227,7 @@ internal fun CommitsPage(view: ApprovalView, refIndex: Int) {
         rows = buildList<@Composable () -> Unit> {
             // Flagged first; each row still opens its commit by its place in the push.
             attentionOrder(ref.commits) { it.attention?.level }.forEach { (j, commit) ->
-                add { CommitRow(commit, Modifier.testTag("gitCommit:$refIndex:$j")) { nav.push(ApprovalPage.Commit(refIndex, j)) } }
+                add { CommitRow(commit, Modifier.testTag("gitCommit:$refIndex:$j"), compact = true, author = true) { nav.push(ApprovalPage.Commit(refIndex, j)) } }
             }
             val unlisted = ref.commitCount.toInt() - ref.commits.size
             if (unlisted > 0) add { NotListed("$unlisted more not listed", "gitCommitsNotListed:$refIndex") }
@@ -190,7 +236,7 @@ internal fun CommitsPage(view: ApprovalView, refIndex: Int) {
 }
 
 @Composable
-private fun CommitRow(commit: GitCommitView, modifier: Modifier, onOpen: () -> Unit) {
+private fun CommitRow(commit: GitCommitView, modifier: Modifier, compact: Boolean = false, author: Boolean = false, onOpen: () -> Unit) {
     val c = LocalColors.current
     val feedback = LocalFeedback.current
     // An entry's commit opens even without its files: its page can load them.
@@ -208,10 +254,28 @@ private fun CommitRow(commit: GitCommitView, modifier: Modifier, onOpen: () -> U
                     Modifier
                 },
             )
-            .padding(top = 12.dp, bottom = 12.dp)
+            .padding(top = if (compact) 10.dp else 12.dp, bottom = if (compact) 10.dp else 12.dp)
             .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (compact) {
+            // Next: the subject over the short id and its lines; a flag on the right.
+            Column(Modifier.weight(1f)) {
+                RText(untrusted(commit.subject).ifEmpty { "(no message)" }, RType.row, c.ink, Modifier.testTag("commitRowSubject"), maxLines = 1)
+                Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RText(untrusted(commit.shortSha), RType.mono(12.5f), c.inkMeta, maxLines = 1, ltr = true)
+                    if (author) RText(untrusted(authorName(commit.author)), RType.sans(12.5f), c.inkMeta, Modifier.weight(1f, fill = false), maxLines = 1)
+                    Counts(commit.additions, commit.deletions, 12.5f)
+                    if (hiddenApart(commit.hiddenChars, commit.attention)) WarnTag("Hidden", c.danger, Modifier.testTag("commitHidden"), small = true)
+                }
+            }
+            attentionMark(commit.attention)?.let { AttentionTag(it, Modifier.padding(start = 8.dp).testTag("commitAttention:${commit.shortSha}")) }
+            if (opens) {
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.Rounded.ChevronRight, null, Modifier.size(18.dp), tint = c.inkFaint)
+            }
+            return@Row
+        }
         RText(untrusted(commit.shortSha), RType.mono(12.5f), c.tertiary, Modifier.width(66.dp).align(Alignment.Top).padding(top = 2.dp), maxLines = 1, ltr = true)
         Column(Modifier.weight(1f)) {
             // Wrapped whole: a commit that does not open shows its subject nowhere else.

@@ -376,18 +376,22 @@ private fun CardFace(
         if (!showContent) return@Column
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val sentence = remember(first, details.views[first.id]) { askSentence(first, details.views[first.id]) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // What it touches with what it does on the corner, ringed in the field (ASK-TEXT.md).
                 IntegrationIcon(sentence.provider, sentence.action, Modifier.testTag("cardIcon:${first.id}"), size = 34.dp, ring = field.fill(), field = field)
-                Spacer(Modifier.weight(1f))
-                // Who asks: their mark on its disc (Next draws it beside the timer; pairings and new phones have none).
+                RText("·", RType.sans(15f, androidx.compose.ui.text.font.FontWeight.SemiBold), c.onField.copy(alpha = 0.6f), maxLines = 1)
+                // Who asks, always visible where the card can be answered: their mark (pairings and new phones have
+                // none) and their name, with the account's address in punycode where it has other letters.
                 if (first.kind != PendingKind.PAIRING && first.kind != PendingKind.JOIN) {
-                    Box(Modifier.semantics { contentDescription = cardWho(first) }) {
-                        CompositionLocalProvider(LocalColors provides RColors.Light) {
-                            ConnectionIcon(first.connectionId, first.connectionLabel, size = 26.dp)
-                        }
+                    CompositionLocalProvider(LocalColors provides RColors.Light) {
+                        ConnectionIcon(first.connectionId, first.connectionLabel, size = 22.dp)
                     }
                 }
+                val who = when (card) {
+                    is WaitCard.One -> cardWho(first)
+                    is WaitCard.Group -> dev.reins.android.ui.common.untrustedName(first.connectionLabel)
+                }
+                RText(who, RType.sans(15f, androidx.compose.ui.text.font.FontWeight.SemiBold), c.onField, Modifier.weight(1f).testTag("cardWho:${first.id}"), maxLines = 2)
                 val waitUntil = when (card) {
                     is WaitCard.One -> first.waitUntil.takeIf { first.kind != PendingKind.BLOB }
                     is WaitCard.Group -> card.items.mapNotNull { it.waitUntil }.minOrNull()

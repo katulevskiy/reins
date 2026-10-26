@@ -1,5 +1,7 @@
 package dev.reins.android.ui.autopilot
 
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.HowToReg
@@ -231,22 +233,19 @@ fun ProbabilityRow(label: String, p: Float, color: Color, modifier: Modifier = M
 fun NeighbourRow(n: NeighbourView, modifier: Modifier = Modifier) {
     val c = LocalColors.current
     val tint = verdictTint(n.verdict, c)
-    Row(modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(22.dp).clip(CircleShape).background(tint.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
-            GlyphIcon(verdictGlyph(n.verdict), tint, size = 13.dp, weight = 2.2f)
-        }
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            RText(dev.reins.android.ui.common.untrusted(n.label), RType.sans(14f, FontWeight.Medium), c.text, maxLines = 2)
-            RText(
-                "${AutopilotText.pastVerdict(n.verdict)} · ${dev.reins.android.ui.common.relativeTime(n.at)}",
-                RType.sans(12f),
-                c.tertiary,
-                maxLines = 1,
-            )
-        }
+    // Next ("Similar"): the verdict's glyph, what it was, how alike; when it was stays for a screen reader.
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 46.dp)
+            .semantics(mergeDescendants = true) { stateDescription = "${AutopilotText.pastVerdict(n.verdict)} · ${dev.reins.android.ui.common.relativeTime(n.at)}" },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlyphIcon(verdictGlyph(n.verdict), tint, size = 17.dp)
+        Spacer(Modifier.width(12.dp))
+        RText(dev.reins.android.ui.common.untrusted(n.label), RType.sans(14.5f, FontWeight.Medium), c.ink, Modifier.weight(1f), maxLines = 2)
         Spacer(Modifier.width(8.dp))
-        RText("${AutopilotText.percent(n.similarity)} alike", RType.mono(12f, FontWeight.Medium), c.secondary, maxLines = 1)
+        RText(AutopilotText.percent(n.similarity), RType.mono(12.5f), c.inkMeta, maxLines = 1)
     }
 }
 

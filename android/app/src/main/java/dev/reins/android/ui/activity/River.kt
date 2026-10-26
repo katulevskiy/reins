@@ -146,14 +146,26 @@ fun DayCounts(day: DayCount, modifier: Modifier = Modifier) {
     }
 }
 
-/** What a row says: who did what, the AI's own name first ("My ChatGPT read **2 emails**"). */
-internal fun rowSentence(label: String, text: String): String {
-    val who = untrusted(label).trim()
-    if (who.isEmpty()) return text
-    // "Read 3 emails" becomes "read 3 emails"; a word in capitals ("SSH key") keeps them.
-    val lower = if (text.length > 1 && text[0].isUpperCase() && text[1].isLowerCase()) text[0].lowercaseChar() + text.substring(1) else text
-    return "$who $lower"
+/**
+ * The action words of a row, after the asker's name: "Read 3 emails" becomes "read 3 emails" (a word in capitals,
+ * "SSH key", keeps them). Reins writes these words; the name before them is the other side's and is drawn apart
+ * ([rowWho]).
+ */
+internal fun rowAction(text: String): String =
+    if (text.length > 1 && text[0].isUpperCase() && text[1].isLowerCase()) text[0].lowercaseChar() + text.substring(1) else text
+
+/**
+ * The asker's name at the head of a row: the name the other side chose, one line and at most 32 characters, in its own
+ * style (500, ink-2) so it can never pass for Reins' words after it. Empty when it has none.
+ */
+internal fun rowWho(label: String, c: dev.reins.android.design.RColors): AnnotatedString {
+    val name = dev.reins.android.ui.common.untrustedName(label, ROW_NAME_MAX)
+    if (name.isEmpty()) return AnnotatedString("")
+    return buildAnnotatedString { withStyle(SpanStyle(color = c.ink2, fontWeight = FontWeight.Medium)) { append(name) } }
 }
+
+/** The longest asker's name at the head of a row. */
+private const val ROW_NAME_MAX = 32
 
 /** When, at the end of a row: "now", "5m", "2h" today; the time of day before that. */
 fun compactTime(epochSeconds: Long, nowSeconds: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): String {
@@ -203,7 +215,9 @@ fun RiverRow(
             pop.animateTo(1f, Motion.fold(false))
         }
     }
-    val words = remember(sentence, entry.connectionLabel) { sentence.copy(text = rowSentence(entry.connectionLabel, sentence.text)) }
+    val words = remember(sentence) { sentence.copy(text = rowAction(sentence.text)) }
+    // Who asked, set apart where a search matched it.
+    val who = remember(entry.connectionLabel, c, terms, hit) { rowWho(entry.connectionLabel, c).let { if (terms.isEmpty()) it else it.highlighted(terms, hit.text) } }
     Row(
         modifier
             .fillMaxWidth()
@@ -237,6 +251,7 @@ fun RiverRow(
                 detailsTag = "entryDetails:${entry.id}",
                 terms = terms,
                 highlight = hit.title,
+                lead = who.takeIf { it.isNotEmpty() },
             )
             snippet?.let { SnippetLine(it, hit, Modifier.padding(top = 3.dp).testTag("snippet:${entry.id}")) }
             entry.autopilot?.risk?.takeIf { AutopilotText.riskWorthListing(it) }?.let { risk ->

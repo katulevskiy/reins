@@ -247,9 +247,18 @@ fun AskSentenceText(
     /** Words searched (lower case): where the sentence matches them is set apart in [highlight]. */
     terms: List<String> = emptyList(),
     highlight: SpanStyle? = null,
+    /** Drawn before the sentence, in its own style: the other side's name at the head of a row (never Reins' words). */
+    lead: androidx.compose.ui.text.AnnotatedString? = null,
 ) {
     Column(modifier) {
-        val text = remember(sentence.text, sentence.target, terms, highlight) { askTitle(sentence.text, sentence.target, terms, highlight) }
+        val text = remember(sentence.text, sentence.target, terms, highlight, lead) {
+            val words = askTitle(sentence.text, sentence.target, terms, highlight)
+            if (lead == null) words else androidx.compose.ui.text.buildAnnotatedString {
+                append(lead)
+                append(" ")
+                append(words)
+            }
+        }
         BasicText(
             text,
             if (tag != null) Modifier.testTag(tag) else Modifier,
