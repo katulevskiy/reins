@@ -758,21 +758,38 @@ impl Root {
                     .on_click(Self::on_view(cx, move |this, _| this.hidden_ask = Some(id.clone())))
             });
         let agent = kit::pane::avatar(s.agent, 22.0, pal);
-        let who = match s.dir.as_deref() {
-            Some(dir) if !dir.is_empty() => who_from(e),
-            _ => format!("{} on {}", s.who, super::parts::this_computer()),
-        };
+        // Who asks is the requester's own word: its own run, cleaned, on one line and capped, never merged into a
+        // sentence of Reins'; the folder it asks from beside it in mono.
+        let who = super::story::middle(&super::story::clean(&s.who), 40);
+        let dir = s.dir.as_deref().filter(|d| !d.is_empty()).map(|d| super::story::middle(&super::story::clean(d), 48));
         let service = div()
             .flex()
             .items_center()
             .gap(px(8.0))
             .mt(px(10.0))
+            .min_w(px(0.0))
             .text_size(px(15.0))
             .font_weight(FontWeight::SEMIBOLD)
             .child(div().mr(px(4.0)).mb(px(4.0)).child(kit::request_icon(s.mark, s.badge, s.field, 28.0, s.field.field(), pal)))
             .child(div().opacity(0.6).child("·"))
             .child(agent)
-            .child(div().min_w(px(0.0)).truncate().child(who));
+            .child(div().flex_shrink(1.0).min_w(px(0.0)).truncate().whitespace_nowrap().child(who))
+            .child(match dir {
+                Some(dir) => div()
+                    .min_w(px(0.0))
+                    .truncate()
+                    .whitespace_nowrap()
+                    .font_family(MONO)
+                    .text_size(px(13.5))
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(on.opacity(0.85))
+                    .child(dir),
+                None => div()
+                    .flex_none()
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(on.opacity(0.85))
+                    .child(format!("on {}", super::parts::this_computer())),
+            });
         // The ask follows the field by 60 ms.
         let ask = div().mt(px(8.0)).ask_xl().text_color(on).child(italic(&s.order));
         let ask: AnyElement = if motion::reduce_motion() {
