@@ -139,6 +139,8 @@ pub fn section(lead: Option<Glyph>, text: impl Into<SharedString>, end: Option<A
         .px(px(6.0))
         .pt(px(22.0))
         .pb(px(8.0))
+        // As tall with a + as without one, so the columns' sections line up.
+        .min_h(px(58.0))
         .label()
         .text_color(pal.ink_2())
         .when_some(lead, |s, g| s.child(glyph(g, 15.0, pal.ink_2())))
@@ -309,4 +311,24 @@ impl Element for Frosted {
             self.child.paint(window, cx);
         });
     }
+}
+
+/// A quiet last row held to confirm (`Disconnect`, `Delete key`, `Shred the originals`): [`quiet_row`] in `danger`,
+/// filling with `danger` at 14% while held, "Keep holding" under it then.
+pub fn hold_row(
+    id: impl Into<ElementId>,
+    g: Glyph,
+    title: impl Into<SharedString>,
+    sub: impl Into<SharedString>,
+    look: super::HoldLook,
+    pal: Palette,
+) -> Stateful<Div> {
+    let (fill, sub): (Option<f32>, SharedString) = match look {
+        super::HoldLook::Idle => (None, sub.into()),
+        super::HoldLook::Filling(p) => (Some(p), "Keep holding".into()),
+        super::HoldLook::Done => (Some(1.0), sub.into()),
+    };
+    let row = quiet_row(g, title, sub, pal.danger, pal).min_h(px(56.0)).overflow_hidden();
+    row.id(id.into())
+        .when_some(fill, |r, p| r.child(super::hold::fill(p, pal.danger.opacity(0.14))))
 }

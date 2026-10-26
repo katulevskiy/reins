@@ -6,7 +6,8 @@
 use std::time::Instant;
 
 use gpui::{
-    Context, Div, ElementId, InteractiveElement as _, MouseButton, SharedString, Stateful, Styled as _, Window,
+    AnyElement, Context, Div, ElementId, InteractiveElement as _, MouseButton, SharedString, Stateful, Styled as _,
+    Window,
 };
 
 use super::icons::Glyph;
@@ -26,6 +27,8 @@ pub enum Held {
     Disconnect,
     /// Delete for good the originals a secrets import sent to the trash.
     PurgeOriginals,
+    /// Disconnect an AI tool (take Reins out of its settings).
+    DisconnectTool(reins_desktop::harness::Harness),
     /// The gallery's hold button (does nothing).
     Gallery,
 }
@@ -78,6 +81,10 @@ impl Root {
             }
             Held::Disconnect => self.model.update(cx, Model::sign_out),
             Held::PurgeOriginals => self.model.update(cx, Model::purge_originals),
+            Held::DisconnectTool(h) => {
+                self.tool_page = None;
+                self.model.update(cx, |m, cx| m.set_harness(h, false, cx));
+            }
             Held::Gallery => self.gallery_held = true,
         }
         cx.notify();
@@ -105,6 +112,21 @@ impl Root {
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| this.hold_start(what, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| this.hold_cancel(cx)))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| this.hold_cancel(cx)))
+    }
+
+    /// A pane's quiet last row held to confirm ([`kit::pane::hold_row`]).
+    pub(super) fn hold_row(
+        &self,
+        id: impl Into<ElementId>,
+        what: Held,
+        g: Glyph,
+        title: impl Into<SharedString>,
+        sub: impl Into<SharedString>,
+        pal: Palette,
+        cx: &Context<'_, Self>,
+    ) -> AnyElement {
+        let look = self.hold_progress(what).map_or(HoldLook::Idle, HoldLook::Filling);
+        kit::pane(Self::hold_area(kit::pane::hold_row(id, g, title, sub, look, pal), what, cx), kit::Glass::Solid, kit::pane::RADIUS, pal)
     }
 
     /// The red button held to confirm (38 px): `label` with `idle` before it; while held, the fill and "Keep

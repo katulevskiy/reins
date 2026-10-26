@@ -112,6 +112,8 @@ pub struct Root {
     presses: u64,
     /// Home's Health tile is open to its checks.
     health_open: bool,
+    /// The AI tool Connections shows on a page of its own.
+    tool_page: Option<reins_desktop::harness::Harness>,
     /// The waiting request whose field Home hides (Hide on the field).
     hidden_ask: Option<String>,
     /// Activity's days folded or unfolded from how they start (Today open, the rest folded).
@@ -316,6 +318,11 @@ impl Root {
             presses: 0,
             health_open: demo_var("REINS_DEMO_HEALTH").is_some(),
             hidden_ask: None,
+            // `REINS_DEMO_TOOL=<id>`: that AI tool's page under Connections.
+            tool_page: demo_var("REINS_DEMO_TOOL").and_then(|id| {
+                use reins_desktop::harness::Harness;
+                [Harness::ClaudeCode, Harness::Codex, Harness::Gemini, Harness::Cursor].into_iter().find(|h| h.id() == id)
+            }),
             days_toggled: BTreeSet::new(),
             notify_open: false,
             name_open: demo_var("REINS_DEMO_NAME_OPEN").is_some(),
@@ -464,7 +471,7 @@ impl Root {
                 Section::Home => scroll(id, self.home(d, pal, window, cx), false),
                 // Activity scrolls its list itself, beside the panel of the request picked.
                 Section::Activity => self.activity(d, pal, cx),
-                Section::Connections => scroll(id, Self::connections(d, pal, cx), true),
+                Section::Connections => scroll(id, self.connections(d, pal, cx), true),
                 Section::Keys => scroll(id, self.keys(d, pal, cx), true),
                 Section::Rules => scroll(id, self.rules(d, pal, window, cx), true),
                 Section::Settings => scroll(id, self.settings(d, pal, cx), true),
@@ -494,6 +501,7 @@ impl Render for Root {
             self.help_page = page;
             self.help = None;
             self.filter_open = false;
+            self.tool_page = None;
         }
         // The tray's "Until I resume…": the pause sheet, there, to be held.
         if self.model.read(cx).pause_hold_asked {
