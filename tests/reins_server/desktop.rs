@@ -389,7 +389,7 @@ async fn the_computer_hears_where_autopilot_leans_and_who_decided() {
     );
 
     let mut answer = sealed_answer();
-    answer["decided"] = json!({"by": "autopilot", "confidence": 0.9, "reasons": ["Looks routine (97% approve)"],
+    answer["decided"] = json!({"by": "autopilot", "confidence": 0.9, "reasons": [{"code": "routine", "approve": 97}],
         "correctable": true});
     let (status, body) = phone.post(&format!("/requests/{id}/response"), &answer).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
@@ -455,7 +455,7 @@ async fn an_ai_never_hears_where_autopilot_leans_or_who_decided() {
 
     // Answered by Autopilot: only the desktop app is told who decided.
     let mut decided = sealed_answer();
-    decided["decided"] = json!({"by": "autopilot", "confidence": 0.9, "reasons": ["Looks routine (97% approve)"],
+    decided["decided"] = json!({"by": "autopilot", "confidence": 0.9, "reasons": [{"code": "routine", "approve": 97}],
         "correctable": true});
     for id in [&desk_id, &ai_id] {
         let (status, body) = phone.post(&format!("/requests/{id}/response"), &decided).await;
@@ -466,6 +466,12 @@ async fn an_ai_never_hears_where_autopilot_leans_or_who_decided() {
     let (_, _, ai_answer) = get_call(&server, Some(&ai.access), &ai_id).await;
     assert_eq!(ai_answer["status"], "answered");
     assert!(ai_answer.get("decided").is_none() && ai_answer.get("suggestion").is_none(), "{ai_answer}");
+    // A peek answers at once, with the same rule.
+    let (_, _, desk_peek) = get_call(&server, Some(&tokens.access), &format!("{desk_id}?peek=true")).await;
+    assert_eq!(desk_peek["decided"]["by"], "autopilot");
+    let (_, _, ai_peek) = get_call(&server, Some(&ai.access), &format!("{ai_id}?peek=true")).await;
+    assert_eq!(ai_peek["status"], "answered");
+    assert!(ai_peek.get("decided").is_none(), "{ai_peek}");
 
     // Before the phone has said which connections are its desktop apps, nobody is told.
     let (server, phone, tokens) = paired().await;

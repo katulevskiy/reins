@@ -336,6 +336,21 @@ impl RelayHub {
         }
     }
 
+    /// Where `id` stands now, for the connection that created it, without waiting: answered, with the phone
+    /// (pending), not picked up yet (offline), or unknown.
+    pub fn peek(&self, id: &RequestId, connection_id: &ConnectionId) -> WaitResult {
+        let map = self.lock();
+        let Some(entry) = map.get(id).filter(|e| e.request.connection_id == *connection_id) else {
+            return WaitResult::NotFound;
+        };
+        let state = entry.state.borrow();
+        match (&state.outcome, state.delivered) {
+            (Some(outcome), _) => WaitResult::Answered(outcome.clone()),
+            (None, true) => WaitResult::Pending,
+            (None, false) => WaitResult::Offline,
+        }
+    }
+
     /// What the phone said beside its answer to `id`, for the connection that created it only.
     pub fn told(&self, id: &RequestId, connection_id: &ConnectionId) -> Told {
         let map = self.lock();
@@ -757,14 +772,25 @@ mod tests {
         let decided = Decided {
             by: DecidedBy::Autopilot,
             confidence: Some(2.0),
-            reasons: vec!["Looks routine\n(97% approve)".to_owned()],
+            reasons: vec![reins_proto::autopilot::Reason::Routine {
+                approve: 140,
+            }],
             correctable: true,
         };
         h.answer_decided(USER, &req.id, found(), Some(decided)).unwrap();
         let told = h.told(&req.id, &conn());
         assert_eq!(told.suggestion, None, "answered: nothing leans any more");
         let decided = told.decided.unwrap();
-        assert_eq!((decided.confidence, decided.reasons[0].as_str()), (None, "Looks routine (97% approve)"));
+        assert_eq!(
+            (decided.confidence, decided.reasons[0]),
+            (
+                None,
+                reins_proto::autopilot::Reason::Routine {
+                    approve: 100
+                }
+            ),
+            "made safe to show"
+        );
         assert_eq!(h.suggest(USER, &req.id, leaning), Err(AnswerError::AlreadyAnswered));
         // An older phone's answer says nothing of it.
         let older = h.submit(USER, &conn(), "Desktop", search(), None, 0).unwrap();
@@ -800,6 +826,18 @@ mod tests {
             h.suggest(USER, &req.id, lean(0.9)).unwrap();
         });
         assert_eq!((desk, start.elapsed()), (WaitResult::Pending, secs(4)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_peek_says_where_a_request_stands_without_waiting() {
+        let h = hub();
+        let req = h.submit(USER, &conn(), "Desktop", search(), None, 0).unwrap();
+        assert_eq!(h.peek(&req.id, &conn()), WaitResult::Offline);
+        h.fetch(USER, &req.id).unwrap();
+        assert_eq!(h.peek(&req.id, &conn()), WaitResult::Pending);
+        h.answer(USER, &req.id, found()).unwrap();
+        assert_eq!(h.peek(&req.id, &conn()), WaitResult::Answered(found()));
+        assert_eq!(h.peek(&req.id, &"conn-2".into()), WaitResult::NotFound, "another connection's");
     }
 
     fn small() -> RelayHub {

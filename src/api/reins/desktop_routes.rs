@@ -332,9 +332,11 @@ async fn post_call(data: Data<'_>, request: McpRequest, conn: DbConn, pool: &Sta
     wait_response(&waited, &request_id, &connection_id, desktop, HUB.presence.status(&user, now_unix()))
 }
 
-/// Waits again on an earlier call of the same connection (an approval can come after the first wait ran out).
-#[get("/reins/desktop/calls/<id>")]
-async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopResponse {
+/// Waits again on an earlier call of the same connection (an approval can come after the first wait ran out). With
+/// `peek=true`, says where it stands now without waiting (the desktop app reads where Autopilot leans and why it
+/// decided this way, kept in its memory rather than in its activity log).
+#[get("/reins/desktop/calls/<id>?<peek>")]
+async fn get_call(id: &str, peek: Option<bool>, request: McpRequest, conn: DbConn) -> DesktopResponse {
     let connection = match authenticated(&request, &conn).await {
         Ok(c) => c,
         Err(response) => return response,
@@ -342,6 +344,14 @@ async fn get_call(id: &str, request: McpRequest, conn: DbConn) -> DesktopRespons
     drop(conn);
     if id.is_empty() || id.len() > MAX_REQUEST_ID_BYTES {
         return DesktopResponse::not_found();
+    }
+    if peek == Some(true) {
+        let request_id = RequestId::from(id);
+        let connection_id = ConnectionId(connection.uuid.clone());
+        let user = connection.user_uuid.to_string();
+        let desktop = HUB.is_desktop(&user, &connection.uuid);
+        let now = HUB.relay.peek(&request_id, &connection_id);
+        return wait_response(&now, &request_id, &connection_id, desktop, HUB.presence.status(&user, now_unix()));
     }
     let _waiting = match enter_waiting(&connection) {
         Ok(place) => place,
