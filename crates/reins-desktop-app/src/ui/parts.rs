@@ -1,20 +1,18 @@
-//! Building blocks the screens use today, restyled in Reins Signal (phase 1: the same layout, Signal's colours,
-//! type, glyphs and press states; phase 2 moves the screens onto [`super::kit`]): plates with hairlines, rows with
-//! kind tiles, switches, pills, segmented controls, the (?) and its bubble, rings that count down, and the "stage"
-//! (who → what) of a request. Icons are the Signal glyphs, logos the brands' own marks ([`super::icons`]).
+//! Building blocks the screens share: tiles, the (?) and its bubble, links, rings that count down, the sentence with
+//! its target at 600, a page's title, a request's facts as a pane of rows, mono text that wraps where it may, the
+//! welcome flow's steps. Icons are the Reins glyphs, logos the brands' own marks ([`super::icons`]).
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, Div, ElementId, FontStyle, FontWeight, HighlightStyle, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement, PathBuilder, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
-    StyledText, anchored, canvas, deferred, div, point, px,
+    AnyElement, Context, Div, ElementId, FontWeight, HighlightStyle, Hsla, InteractiveElement as _, IntoElement,
+    ParentElement, PathBuilder, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, StyledText,
+    anchored, canvas, deferred, div, point, px,
 };
 
 use super::icons::{Glyph, Mark, avatar, glyph};
 use super::story::{FactStyle, Words};
 use super::{Data, Root};
-use crate::theme::text::tracked;
-use crate::theme::{MONO, Palette, SERIF, SignalText as _, Tone, motion};
+use crate::theme::{MONO, NextText as _, Palette, motion};
 use crate::welcome::Stage;
 
 /// "this Mac", "this computer": what the window calls the computer it runs on.
@@ -25,19 +23,6 @@ pub fn this_computer() -> &'static str {
     } else {
         "this computer"
     }
-}
-
-/// A check in a soft circle of `color`: something went well.
-pub fn check_circle(side: f32, color: Hsla) -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(side))
-        .rounded_full()
-        .bg(color.opacity(0.14))
-        .child(glyph(Glyph::Check, side * 0.5, color))
 }
 
 /// A kind tile: an icon in `color` over `color` at 13% (a kind, a rule, a setting).
@@ -51,19 +36,6 @@ pub fn tile(i: Glyph, color: Hsla, side: f32) -> Div {
         .rounded(px(side * 0.31))
         .bg(color.opacity(0.13))
         .child(glyph(i, side * 0.53, color))
-}
-
-/// A kind tile of `tone` (a neutral one is `paper-sunken` under `ink`).
-pub fn tone_tile(i: Glyph, tone: Tone, pal: Palette, side: f32) -> Div {
-    super::kit::kind_tile(i, tone, side, pal)
-}
-
-/// A logo (an AI tool, a git host, an API): a brand's mark in a white circle, an icon in a neutral tile.
-pub fn logo(m: Mark, pal: Palette) -> Div {
-    match m {
-        Mark::Brand(b) => avatar(b, 30.0, pal),
-        Mark::Glyph(i) => tone_tile(i, Tone::Neutral, pal, 30.0),
-    }
 }
 
 /// A plate of rows: `paper-raised`, a `rule` hairline, 20 px corners.
@@ -201,82 +173,6 @@ fn help_bubble(
     )
 }
 
-/// The title of a section of the status window, in the serif (`title`, 44/44), with room after it (a (?), buttons).
-pub fn page_header(title: &'static str, help: Option<Stateful<Div>>) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(10.0))
-        .min_h(px(44.0))
-        .child(div().flex_1().min_w(px(0.0)).title().child(title))
-        .when_some(help, ParentElement::child)
-}
-
-/// What a button looks like (Signal's looks: [`super::kit::Look`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Btn {
-    /// Soft: `paper-sunken`.
-    Plain,
-    /// `inverse`: continue, resume, confirm.
-    Primary,
-}
-
-impl Btn {
-    /// Signal's look for it.
-    #[must_use]
-    pub fn look(self) -> super::kit::Look {
-        match self {
-            Self::Plain => super::kit::Look::Soft,
-            Self::Primary => super::kit::Look::Inverse,
-        }
-    }
-}
-
-/// A button's frame in `look` (a pill, 32 px; dims to 55% while pressed), and the colour of what goes on it.
-fn btn_frame(id: impl Into<ElementId>, look: Btn, pal: Palette) -> (Stateful<Div>, Hsla) {
-    let (bg, fg) = look.look().colors(pal);
-    let b = div()
-        .id(id.into())
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .gap(px(6.0))
-        .h(px(32.0))
-        .px(px(14.0))
-        .rounded_full()
-        .bg(bg)
-        .text_color(fg)
-        .text_size(px(13.0))
-        .font_weight(FontWeight::SEMIBOLD)
-        .whitespace_nowrap()
-        .cursor_pointer()
-        .active(|s| s.opacity(super::kit::button::PRESSED));
-    (b, fg)
-}
-
-/// A button: 32 px, semibold, in `look`.
-pub fn btn(id: impl Into<ElementId>, label: impl Into<SharedString>, look: Btn, pal: Palette) -> Stateful<Div> {
-    btn_frame(id, look, pal).0.child(label.into())
-}
-
-/// [`btn`] with an icon before its label.
-pub fn btn_icon(
-    id: impl Into<ElementId>,
-    i: Glyph,
-    label: impl Into<SharedString>,
-    look: Btn,
-    pal: Palette,
-) -> Stateful<Div> {
-    let (b, fg) = btn_frame(id, look, pal);
-    b.child(glyph(i, 14.0, fg)).child(label.into())
-}
-
-/// A smaller [`btn`], for tiles and chips' rows.
-pub fn small(b: Stateful<Div>) -> Stateful<Div> {
-    b.h(px(28.0)).px(px(12.0)).text_size(px(12.5))
-}
-
 pub fn link(id: impl Into<ElementId>, label: impl Into<SharedString>, pal: Palette) -> Stateful<Div> {
     div()
         .id(id.into())
@@ -294,8 +190,8 @@ pub fn quiet_link(id: impl Into<ElementId>, label: impl Into<SharedString>, size
     div()
         .id(id.into())
         .text_size(px(size))
+        .font_weight(FontWeight::SEMIBOLD)
         .text_color(pal.ink_2())
-        .underline()
         .whitespace_nowrap()
         .cursor_pointer()
         .hover(|s| s.text_color(pal.ink()))
@@ -466,8 +362,8 @@ pub fn stage(from: Mark, to: Mark, badge: Option<(Glyph, Hsla)>, color: Hsla, si
         .child(stage_tile(to, side, badge, pal.paper_raised(), pal))
 }
 
-/// A sentence with its important words (the target) in italic and `ink`; the rest in the caller's colour. Set it in
-/// the serif ([`SERIF`]): the italic is Instrument Serif's own.
+/// A sentence with its important words (the target) at 600 and in `ink` (the boards' `em`); the rest in the caller's
+/// colour and weight.
 pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
     let mut text = String::new();
     let mut highlights = Vec::new();
@@ -479,7 +375,7 @@ pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
                 start..text.len(),
                 HighlightStyle {
                     color: Some(pal.ink()),
-                    font_style: Some(FontStyle::Italic),
+                    font_weight: Some(FontWeight::SEMIBOLD),
                     ..HighlightStyle::default()
                 },
             ));
@@ -488,7 +384,7 @@ pub fn sentence(words: &[Words], pal: Palette) -> StyledText {
     StyledText::new(text).with_highlights(highlights)
 }
 
-/// Words with the important ones in italic and nothing else changed (the colour is the caller's: white on a field).
+/// Words with the important ones at 600 and nothing else changed (the colour is the caller's: white on a field).
 pub fn italic(words: &[Words]) -> StyledText {
     let mut text = String::new();
     let mut highlights = Vec::new();
@@ -499,7 +395,7 @@ pub fn italic(words: &[Words]) -> StyledText {
             highlights.push((
                 start..text.len(),
                 HighlightStyle {
-                    font_style: Some(FontStyle::Italic),
+                    font_weight: Some(FontWeight::SEMIBOLD),
                     ..HighlightStyle::default()
                 },
             ));
@@ -508,25 +404,18 @@ pub fn italic(words: &[Words]) -> StyledText {
     StyledText::new(text).with_highlights(highlights)
 }
 
-/// The quiet line under a page's title: serif italic 21 in `ink-2` (the desktop boards' size).
+/// The line under a page's title (`.dsub`): 14.5 in `ink-2`.
 pub fn mood(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div()
-        .mt(px(8.0))
-        .font_family(SERIF)
-        .text_size(px(21.0))
-        .line_height(px(26.0))
-        .italic()
-        .text_color(pal.ink_2())
-        .child(text.into())
+    div().mt(px(6.0)).mood().text_color(pal.ink_2()).child(text.into())
 }
 
-/// A page's title (serif 44, `words` with the italic ones in italic) and the mood line under it; `right` beside them,
-/// at the bottom (a button).
+/// A page's title (`words`, the important ones at 600) and the line under it; `right` beside them, at the middle (a
+/// button).
 pub fn page_title(words: &[Words], line: Option<&str>, right: Option<AnyElement>, pal: Palette) -> Div {
     div()
         .flex()
         .flex_wrap()
-        .items_end()
+        .items_center()
         .gap(px(16.0))
         .child(
             div()
@@ -538,83 +427,6 @@ pub fn page_title(words: &[Words], line: Option<&str>, right: Option<AnyElement>
                 .when_some(line, |c, l| c.child(mood(l.to_owned(), pal))),
         )
         .when_some(right, ParentElement::child)
-}
-
-/// A row of a page's list (the desktop boards' `.row`): 54 px at least, a hairline under it but the last. Rows divide
-/// lists; they are never cards.
-pub fn list_row(pal: Palette, last: bool) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(12.0))
-        .min_h(px(54.0))
-        .py(px(6.0))
-        .min_w(px(0.0))
-        .text_size(px(14.0))
-        .when(!last, |r| r.border_b_1().border_color(pal.rule()))
-}
-
-/// A row's title (14.5, 500) and its meta line (12.5, `ink-meta`) under it.
-pub fn title_meta(title: impl IntoElement, meta: Option<AnyElement>, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w(px(0.0))
-        .child(
-            div()
-                .min_w(px(0.0))
-                .truncate()
-                .text_size(px(14.5))
-                .line_height(px(19.0))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(pal.ink())
-                .child(title),
-        )
-        .when_some(meta, |c, m| {
-            c.child(
-                div()
-                    .min_w(px(0.0))
-                    .truncate()
-                    .text_size(px(12.5))
-                    .line_height(px(17.0))
-                    .text_color(pal.ink_meta())
-                    .child(m),
-            )
-        })
-}
-
-/// A mono line (a path, a vault reference, a SHA) as a row's title or meta.
-pub fn mono(text: impl Into<SharedString>, size: f32) -> Div {
-    div().min_w(px(0.0)).truncate().font_family(MONO).text_size(px(size)).child(text.into())
-}
-
-/// A section of a page: its label (and a (?) about it), then `body` 4 px under.
-pub fn section(label: &str, help: Option<Stateful<Div>>, body: impl IntoElement, pal: Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .h(px(22.0))
-                .child(tracked(label.to_owned()).text_color(pal.ink_meta()))
-                .when_some(help, ParentElement::child),
-        )
-        .child(div().mt(px(2.0)).child(body))
-}
-
-/// Two columns 40 px apart while each has 380 px, else one under the other (the boards' `auto-fit` grids).
-pub fn columns(left: Div, right: Div, min: f32) -> Div {
-    div()
-        .flex()
-        .flex_wrap()
-        .items_start()
-        .gap(px(40.0))
-        .child(left.flex_1().min_w(px(min)))
-        .child(right.flex_1().min_w(px(min)))
 }
 
 /// Where a request's facts are shown, and so how: the rows' height and text, the hairlines.
@@ -633,20 +445,24 @@ const FACT_KEY_WIDTH: f32 = 96.0;
 /// whole width.
 const FACT_VALUE_MIN: f32 = 160.0;
 
-/// The facts of a request as hairline rows: the key in `ink-2` in a column of its own width, the value in `ink` (mono
-/// for the machine's) taking the rest of the row, or the whole row under the key when the row is narrow.
-pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, pal: Palette) -> Div {
-    let (min_h, text_size) = match look {
-        FactLook::Home => (48.0, 13.5),
-        FactLook::Detail => (0.0, 14.0),
-    };
-    let mut list = div().flex().flex_col();
-    for (i, f) in rows.iter().enumerate() {
-        let key = div().flex_none().w(px(FACT_KEY_WIDTH)).text_color(pal.ink_2()).child(f.key.clone());
-        let value = div().flex_1().min_w(px(FACT_VALUE_MIN)).text_color(pal.ink());
+/// The facts of a request as a pane of rows (`.kv`): the key (13.5, 500, `ink-meta`) in a column of its own width, the
+/// value (15.5, 500, `ink`; mono 14 for the machine's) taking the rest of the row, or the whole row under the key when
+/// the row is narrow.
+pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, glass: super::kit::Glass, pal: Palette) -> AnyElement {
+    let _ = look;
+    let mut out = Vec::new();
+    for f in rows {
+        let key = div()
+            .flex_none()
+            .w(px(FACT_KEY_WIDTH))
+            .text_size(px(13.5))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(pal.ink_meta())
+            .child(f.key.clone());
+        let value = div().flex_1().min_w(px(FACT_VALUE_MIN)).text_color(pal.ink()).font_weight(FontWeight::MEDIUM);
         let value = match f.style {
             // Each part may wrap inside the row (`min_w(0)`) rather than push past it.
-            FactStyle::Text => value.text_size(px(text_size)).child(
+            FactStyle::Text => value.text_size(px(15.5)).child(
                 div()
                     .flex()
                     .flex_wrap()
@@ -658,7 +474,7 @@ pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, pal: Palette) -> D
                             div()
                                 .min_w(px(0.0))
                                 .font_family(MONO)
-                                .text_size(px(13.0))
+                                .text_size(px(14.0))
                                 .text_color(pal.ink_2())
                                 .child(wrap_points(&format!("· {t}"))),
                         )
@@ -666,26 +482,26 @@ pub fn fact_rows(rows: &[super::story::Fact], look: FactLook, pal: Palette) -> D
             ),
             // The machine's, whole: long values wrap after a `/`, a `-`, a `=`..., never cut.
             FactStyle::Mono => {
-                value.font_family(MONO).text_size(px(13.0)).line_height(px(19.0)).child(wrapped(&f.value))
+                value.font_family(MONO).text_size(px(14.0)).line_height(px(20.0)).child(wrapped(&f.value))
             }
-            FactStyle::Changes => value.font_family(MONO).text_size(px(13.0)).child(changes(&f.value, pal)),
+            FactStyle::Changes => value.text_size(px(15.5)).child(changes(&f.value, pal)),
         };
-        list = list.child(
+        out.push(
             div()
                 .flex()
                 .flex_wrap()
-                .items_start()
+                .items_baseline()
                 .gap_x(px(12.0))
                 .gap_y(px(2.0))
-                .min_h(px(min_h))
-                .py(px(6.0))
-                .text_size(px(14.0))
-                .when(i + 1 < rows.len() || look == FactLook::Detail, |r| r.border_b_1().border_color(pal.rule()))
+                .min_h(px(50.0))
+                .px(px(16.0))
+                .py(px(14.0))
                 .child(key)
-                .child(value),
+                .child(value)
+                .into_any_element(),
         );
     }
-    list
+    super::kit::group(out, 16.0, glass, pal)
 }
 
 /// Mono text that may be long (a command, a path): each line its own block, wrapped whole where the line may break
@@ -724,18 +540,23 @@ pub fn wrap_points(line: &str) -> String {
     out
 }
 
-/// `+128 −31 · 9 files` with the additions green and the removals red.
+/// `+128 −31 · 9 files`: the additions green and the removals red in mono, the rest in `ink-2`.
 pub fn changes(text: &str, pal: Palette) -> Div {
-    let mut line = div().flex().flex_wrap().gap_x(px(6.0));
+    let mut line = div().flex().flex_wrap().items_baseline().gap_x(px(6.0));
     for part in text.split_whitespace() {
-        let color = if part.starts_with('+') {
-            pal.success
+        let (color, mono) = if part.starts_with('+') {
+            (pal.success, true)
         } else if part.starts_with(['−', '-']) && part.len() > 1 {
-            pal.danger
+            (pal.danger, true)
         } else {
-            pal.ink()
+            (pal.ink_2(), false)
         };
-        line = line.child(div().text_color(color).child(part.to_owned()));
+        let word = div().text_color(color).child(part.to_owned());
+        line = line.child(if mono {
+            word.font_family(MONO).text_size(px(14.0))
+        } else {
+            word
+        });
     }
     line
 }
@@ -804,46 +625,38 @@ pub fn phone_qr(pal: Palette) -> Div {
         )
 }
 
-/// The welcome flow's steps (`Desk-Setup.png`): "1 Pair — 2 AI tools — 3 Turn on — ✓ Done". Behind: ink dots with a
-/// check; here: an ink ring; ahead: a hairline ring. Numbers in mono.
+/// The welcome flow's steps (`.dstep` in `DeskNext-Setup.dc.html`): "1 Pair — 2 AI tools — 3 Turn on — 4 Done".
+/// Behind: a green dot with a check; here: an ink dot with its number; ahead: a hairline ring.
 pub fn step_indicator(current: Stage, pal: Palette) -> Div {
     let mut bar = div().flex().items_center().justify_center().gap(px(8.0));
     for (i, stage) in Stage::ALL.into_iter().enumerate() {
-        let behind = stage < current || (current == Stage::Done && stage != Stage::Done);
+        let behind = stage < current;
         let here = stage == current;
         if i > 0 {
-            bar = bar.child(div().flex_none().w(px(28.0)).h(px(1.5)).bg(pal.rule_2()));
+            bar = bar.child(div().flex_none().w(px(60.0)).h(px(1.0)).mx(px(4.0)).bg(pal.rule_2()));
         }
-        let (ink, ring) = if behind {
-            (pal.paper(), None)
-        } else if here {
-            (pal.ink(), Some(pal.ink()))
-        } else {
-            (pal.ink_meta(), Some(pal.rule_2()))
-        };
-        // Behind, and Done itself: a check; the rest their number.
-        let mark: AnyElement = match stage.number() {
-            Some(n) if !behind => n.to_string().into_any_element(),
-            _ => glyph(Glyph::Check, 12.0, ink).into_any_element(),
-        };
+        let number = stage.number().unwrap_or(i + 1).to_string();
         let circle = div()
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
-            .size(px(22.0))
+            .size(px(24.0))
             .rounded_full()
-            .font_family(MONO)
-            .text_size(px(11.0))
-            .text_color(ink)
-            .when_some(ring, |c, r| c.border(px(1.5)).border_color(r))
-            .when(behind, |c| c.bg(pal.ink()))
-            .child(mark);
+            .text_size(px(12.5))
+            .font_weight(FontWeight::SEMIBOLD);
+        let circle = if behind {
+            circle.bg(pal.success).child(glyph(Glyph::Check, 13.0, gpui::white()))
+        } else if here {
+            circle.bg(pal.ink()).text_color(pal.paper()).child(number)
+        } else {
+            circle.border(px(1.5)).border_color(pal.rule_2()).text_color(pal.ink_meta()).child(number)
+        };
         bar = bar.child(
             div().flex().flex_none().items_center().gap(px(8.0)).child(circle).child(
-                // One weight for every label: a bolder current step would widen the bar and shift it sideways.
                 div()
-                    .text_size(px(12.5))
+                    .text_size(px(13.5))
+                    .font_weight(FontWeight::MEDIUM)
                     .whitespace_nowrap()
                     .text_color(if here {
                         pal.ink()
@@ -857,7 +670,7 @@ pub fn step_indicator(current: Stage, pal: Palette) -> Div {
     bar
 }
 
-/// The sentence a screen of the welcome flow is about: the serif at 40/42, centred, its target in italic; and a (?).
+/// The sentence a screen of the welcome flow is about (`--s: 40`), centred, its target at 600; and a (?).
 pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette) -> Div {
     div()
         .flex()
@@ -865,16 +678,7 @@ pub fn welcome_title(words: &[Words], help: Option<Stateful<Div>>, pal: Palette)
         .justify_center()
         .gap(px(8.0))
         .mt(px(6.0))
-        .child(
-            div()
-                .font_family(SERIF)
-                .text_size(px(40.0))
-                .line_height(px(42.0))
-                .font_weight(FontWeight::NORMAL)
-                .text_color(pal.ink())
-                .text_center()
-                .child(italic(words)),
-        )
+        .child(div().step_title().text_color(pal.ink()).text_center().child(italic(words)))
         .when_some(help, ParentElement::child)
 }
 

@@ -4,28 +4,28 @@
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement, SharedString, Stateful,
+    AnyElement, Context, Div, InteractiveElement as _, IntoElement, ParentElement, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use reins_desktop::harness::after_add_note;
 
 use super::connections::harness_mark;
-use super::icons::{Glyph, Illustration, glyph, illustration};
-use super::parts::{caption, help, list_row, quiet_link, title_meta, waiting_dot, warning, welcome_title};
+use super::icons::{Glyph, glyph};
+use super::parts::{caption, help, quiet_link, waiting_dot, warning, welcome_title};
 use super::story::{bold, plain};
 use super::{Data, Root, kit};
 use crate::model::{Model, Step, TurnOn};
-use crate::theme::Palette;
+use crate::theme::{NextText as _, Palette};
 use crate::welcome::{self, ToolRow};
 
-/// A step's own button (`.btn` on the board: 42 px, 14.5).
+/// A step's own button (`.btn` on the board: 54 px, 16.5).
 fn step_button(
     id: impl Into<gpui::ElementId>,
     look: kit::Look,
     label: impl Into<SharedString>,
     pal: Palette,
 ) -> Stateful<Div> {
-    kit::button(id, look, kit::Size::Regular, None, label, pal).h(px(42.0)).px(px(18.0)).text_size(px(14.5))
+    kit::button(id, look, kit::Size::Large, None, label, pal)
 }
 
 /// The row of buttons at the bottom of a step: what goes back on the left, what goes on at the right.
@@ -64,8 +64,8 @@ impl Root {
             welcome::connectable(&rows)
         };
 
-        let mut list = div().flex().flex_col().w_full();
-        for (i, r) in rows.iter().enumerate() {
+        let mut items: Vec<AnyElement> = Vec::new();
+        for r in &rows {
             let h = r.harness;
             // A line only when there is something to do or to know: why it failed, or the restart it needs.
             let detail: Option<AnyElement> = if let Some(e) = &r.error {
@@ -81,8 +81,6 @@ impl Root {
                         .child(help(h.id(), after_add_note(h), d, pal, cx))
                         .into_any_element(),
                 )
-            } else if !r.installed && !r.connected {
-                Some("Not installed".into_any_element())
             } else {
                 None
             };
@@ -106,23 +104,13 @@ impl Root {
                         )
                         .on_click(Self::on_model(cx, move |m, cx| m.undo_tool(h, cx))),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.0))
-                            .text_size(px(12.5))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(pal.success)
-                            .child(glyph(Glyph::Check, 14.0, pal.success))
-                            .child("Connected"),
-                    )
+                    .child(kit::status_pill(Some(Glyph::Check), "Connected", Some(pal.success), pal))
                     .into_any_element()
             } else if r.installed {
                 let b = kit::button(
                     SharedString::from(format!("connect-{}", h.id())),
                     kit::Look::Inverse,
-                    kit::Size::Small,
+                    kit::Size::Regular,
                     None,
                     "Connect",
                     pal,
@@ -132,16 +120,20 @@ impl Root {
                 } else {
                     b.on_click(Self::on_model(cx, move |m, cx| m.connect_tool(h, cx))).into_any_element()
                 }
+            } else if !r.installed {
+                kit::pane::row_value("Not installed", pal).into_any_element()
             } else {
                 div().into_any_element()
             };
-            let line = list_row(pal, i + 1 == rows.len())
-                .child(kit::logo_tile(harness_mark(h), pal))
-                .child(title_meta(h.label(), detail, pal))
+            let line = kit::pane_row()
+                .min_h(px(58.0))
+                .child(kit::pane::avatar(harness_mark(h), 32.0, pal))
+                .child(kit::title_sub(h.label(), detail, pal))
                 .child(right)
                 .when(!r.installed && !r.connected, |l| l.opacity(0.5));
-            list = list.child(line);
+            items.push(line.into_any_element());
         }
+        let list = kit::group(items, kit::pane::INSET, kit::Glass::Solid, pal);
 
         let any_connected = rows.iter().any(|r| r.connected);
         let forward = div()
@@ -188,7 +180,7 @@ impl Root {
                 )),
                 pal,
             ))
-            .child(div().mt(px(-8.0)).text_size(px(14.0)).text_color(pal.ink_meta()).text_center().child(format!(
+            .child(div().mt(px(-12.0)).text_size(px(15.0)).text_color(pal.ink_2()).text_center().child(format!(
                 "{}. Reins adds itself to each; Undo takes it out again.",
                 welcome::tools_line(&rows, super::parts::this_computer())
             )))
@@ -221,71 +213,84 @@ impl Root {
                           about: &'static str,
                           what: Option<(TurnOn, bool)>,
                           last: bool| {
-                let r = list_row(pal, last)
+                let _ = last;
+                let r = kit::pane_row()
                     .id(id)
-                    .child(div().flex().flex_none().items_center().justify_center().size(px(18.0)).child(glyph(
-                        g,
-                        16.0,
-                        pal.ink_2(),
-                    )))
-                    .child(title_meta(title, Some(line.into_any_element()), pal))
+                    .child(kit::pane::tile(g, pal))
+                    .child(kit::title_sub(title, Some(line.into_any_element()), pal))
                     .child(help(id, about, d, pal, cx));
                 match what {
                     Some((what, on)) => r
                         .cursor_pointer()
                         .child(kit::switch(SharedString::from(format!("{id}-switch")), on, pal))
-                        .on_click(Self::on_model(cx, move |m, cx| m.toggle_turn_on(what, cx))),
-                    None => r,
+                        .on_click(Self::on_model(cx, move |m, cx| m.toggle_turn_on(what, cx)))
+                        .into_any_element(),
+                    None => r.child(glyph(Glyph::Check, 16.0, pal.success)).into_any_element(),
                 }
             };
-            div()
-                .flex()
-                .flex_col()
-                .w_full()
-                .child(option(
-                    "turn-service",
-                    Glyph::Server,
-                    "Start the background service",
-                    "Runs at login",
-                    "Hooks, git and API keys go through it. It starts again when you log in.",
-                    None,
-                    false,
-                ))
-                .child(option(
-                    "turn-git",
-                    Glyph::GitBranch,
-                    "Send git through Reins",
-                    "Pushes ask your phone",
-                    "Pushes to GitHub wait for your OK on your phone; agents never see your token.",
-                    Some((TurnOn::Git, git)),
-                    false,
-                ))
-                .child(option(
-                    "turn-login",
-                    Glyph::Power,
-                    "Open at login",
-                    shield,
-                    "The shield in the menu bar or tray shows that Reins is on.",
-                    Some((TurnOn::Autostart, login)),
-                    true,
-                ))
+            kit::group(
+                [
+                    option(
+                        "turn-service",
+                        Glyph::Server,
+                        "Start the background service",
+                        "Runs at login",
+                        "Hooks, git and API keys go through it. It starts again when you log in.",
+                        None,
+                        false,
+                    ),
+                    option(
+                        "turn-git",
+                        Glyph::GitBranch,
+                        "Send git through Reins",
+                        "Pushes ask your phone",
+                        "Pushes to GitHub wait for your OK on your phone; agents never see your token.",
+                        Some((TurnOn::Git, git)),
+                        false,
+                    ),
+                    option(
+                        "turn-login",
+                        Glyph::Power,
+                        "Open at login",
+                        shield,
+                        "The shield in the menu bar or tray shows that Reins is on.",
+                        Some((TurnOn::Autostart, login)),
+                        true,
+                    ),
+                ],
+                kit::pane::INSET,
+                kit::Glass::Solid,
+                pal,
+            )
         } else {
-            let mut progress = div().flex().flex_col().w_full();
+            let mut progress: Vec<AnyElement> = Vec::new();
             for (i, (label, step)) in steps.iter().enumerate() {
                 let line = match step {
                     Step::Running => None,
                     Step::Done(t) | Step::Failed(t) => (!t.is_empty()).then(|| t.clone()),
                 };
                 let failed_line = matches!(step, Step::Failed(_));
-                progress = progress.child(
-                    list_row(pal, i + 1 == steps.len()).child(state_mark(Some(step), label, pal)).child(title_meta(
-                        label.clone(),
-                        line.map(|l| div().when(failed_line, |t| t.text_color(pal.danger)).child(l).into_any_element()),
-                        pal,
-                    )),
+                let _ = i;
+                progress.push(
+                    kit::pane_row()
+                        .child(
+                            div().flex().flex_none().items_center().justify_center().size(px(34.0)).child(state_mark(
+                                Some(step),
+                                label,
+                                pal,
+                            )),
+                        )
+                        .child(kit::title_sub(
+                            label.clone(),
+                            line.map(|l| {
+                                div().when(failed_line, |t| t.text_color(pal.danger)).child(l).into_any_element()
+                            }),
+                            pal,
+                        ))
+                        .into_any_element(),
                 );
             }
-            progress
+            kit::group(progress, kit::pane::INSET, kit::Glass::Solid, pal)
         };
 
         let back = (!running && (!finished || failed)).then(|| {
@@ -354,27 +359,32 @@ impl Root {
         let phone = d.saved.phone.clone();
 
         // What is on, as plain rows with a check; what still needs a step, in amber on the right.
-        let mut lines: Vec<(bool, String, Option<&str>)> = vec![(
+        let mut lines: Vec<(Glyph, bool, String, Option<&str>)> = vec![(
+            Glyph::Phone,
             true,
             phone.map_or_else(|| "Paired with your phone".to_owned(), |p| format!("Paired with {p}")),
             None,
         )];
         lines.push(match tools {
-            Some(names) => (true, format!("{names} connected"), restart.then_some("restart it to finish")),
-            None => (false, "No AI tool connected".to_owned(), None),
+            Some(names) => (Glyph::Link, true, format!("{names} connected"), restart.then_some("restart it to finish")),
+            None => (Glyph::Link, false, "No AI tool connected".to_owned(), None),
         });
         match (git, login) {
-            (true, true) => lines.push((true, "git through Reins · opens at login".to_owned(), None)),
-            (true, false) => lines.push((true, "git through Reins".to_owned(), None)),
-            (false, true) => lines.push((true, "Opens at login".to_owned(), None)),
+            (true, true) => lines.push((Glyph::GitBranch, true, "git through Reins · opens at login".to_owned(), None)),
+            (true, false) => lines.push((Glyph::GitBranch, true, "git through Reins".to_owned(), None)),
+            (false, true) => lines.push((Glyph::Power, true, "Opens at login".to_owned(), None)),
             (false, false) => {}
         }
-        let n = lines.len();
-        let mut summary = div().flex().flex_col().w_full();
-        for (i, (ok, text, note)) in lines.into_iter().enumerate() {
-            summary = summary.child(
-                list_row(pal, i + 1 == n)
-                    .child(div().flex().flex_none().items_center().justify_center().size(px(18.0)).child(glyph(
+        let summary = kit::group(
+            lines.into_iter().map(|(g, ok, text, note)| {
+                kit::pane_row()
+                    .child(kit::pane::tile(g, pal))
+                    .child(kit::title_sub(
+                        text,
+                        note.map(|n| div().text_color(pal.warning).child(n).into_any_element()),
+                        pal,
+                    ))
+                    .child(glyph(
                         if ok {
                             Glyph::Check
                         } else {
@@ -386,41 +396,27 @@ impl Root {
                         } else {
                             pal.ink_faint()
                         },
-                    )))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .text_size(px(14.5))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(pal.ink())
-                            .child(text),
-                    )
-                    .when_some(note, |r, note| r.child(div().text_size(px(12.5)).text_color(pal.warning).child(note))),
-            );
-        }
+                    ))
+                    .into_any_element()
+            }),
+            kit::pane::INSET,
+            kit::Glass::Solid,
+            pal,
+        );
 
         div()
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(20.0))
-            .child(illustration(Illustration::Pond, 260.0, pal))
-            .child(welcome_title(
-                &[plain("Reins is "), bold("on")],
-                Some(help("done", "Your phone now approves what your AI agents do on this computer.", d, pal, cx)),
+            .gap(px(14.0))
+            .child(div().ask().text_color(pal.ink()).text_center().child("Reins is on"))
+            .child(div().w_full().mt(px(6.0)).child(summary))
+            .child(div().w_full().child(kit::pane(
+                Self::test_panel(d, true, pal, cx),
+                kit::Glass::Solid,
+                kit::pane::RADIUS,
                 pal,
-            ))
-            .child(summary)
-            .child(
-                div()
-                    .w_full()
-                    .rounded(px(16.0))
-                    .bg(pal.paper_raised())
-                    .border_1()
-                    .border_color(pal.rule())
-                    .child(Self::test_panel(d, true, pal, cx)),
-            )
+            )))
             .child(actions(
                 None,
                 step_button("open-reins", kit::Look::Inverse, "Open Reins", pal)

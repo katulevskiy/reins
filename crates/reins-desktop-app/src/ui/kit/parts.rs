@@ -9,7 +9,7 @@ use gpui::{
 
 use super::button::PRESSED;
 use crate::theme::text::tracked;
-use crate::theme::{Field, MONO, Palette, SANS, SignalText as _, Tone, motion};
+use crate::theme::{Field, MONO, NextText as _, Palette, SANS, Tone, motion};
 use crate::ui::icons::{Glyph, Illustration, Mark, glyph, illustration};
 use crate::ui::parts::ring;
 
@@ -89,9 +89,9 @@ pub fn fact_row(key: impl Into<SharedString>, value: impl IntoElement, pal: Pale
     )
 }
 
-/// A switch (40 × 24, the desktop boards' `.sw`): `violet-fill` when on, `paper-sunken` when off, a white knob.
+/// A switch (51 × 31, the boards' `.sw`): `violet-fill` when on, `paper-sunken` when off, a white knob.
 pub fn switch(id: impl Into<ElementId>, on: bool, pal: Palette) -> Stateful<Div> {
-    let (w, h, knob) = (40.0, 24.0, 20.0);
+    let (w, h, knob) = (51.0, 31.0, 27.0);
     div()
         .id(id.into())
         .flex()
@@ -113,9 +113,9 @@ pub fn switch(id: impl Into<ElementId>, on: bool, pal: Palette) -> Stateful<Div>
         .child(div().size(px(knob)).rounded_full().bg(gpui::white()).shadow_sm())
 }
 
-/// A segmented control's track: a `paper-sunken` pill (3 px inside, the desktop boards' `.seg`).
+/// A segmented control's track (`.cho`): a `paper-sunken` pill, 4 px inside.
 pub fn segmented(pal: Palette) -> Div {
-    div().flex().flex_none().items_center().p(px(3.0)).gap(px(2.0)).rounded_full().bg(pal.paper_sunken())
+    div().flex().flex_none().items_center().p(px(4.0)).gap(px(2.0)).rounded_full().bg(pal.paper_sunken())
 }
 
 /// One choice of it (30 px, 13): the selected one a `paper-raised` pill with a hairline.
@@ -132,12 +132,12 @@ pub fn segment(
         .items_center()
         .justify_center()
         .gap(px(4.0))
-        .h(px(30.0))
+        .h(px(36.0))
         .px(px(14.0))
         .rounded_full()
         .font_family(SANS)
-        .text_size(px(13.0))
-        .font_weight(FontWeight::MEDIUM)
+        .text_size(px(14.0))
+        .font_weight(FontWeight::SEMIBOLD)
         .whitespace_nowrap()
         .cursor_pointer()
         .active(|s| s.opacity(PRESSED))
@@ -287,75 +287,48 @@ pub fn timer(left_secs: i64, total_secs: i64, on: Hsla) -> Div {
         .gap(px(6.0))
         .text_color(on)
         .font_family(MONO)
-        .text_size(px(13.0))
-        .child(ring(fraction, on, on.opacity(0.25), 14.0, 1.8))
+        .text_size(px(13.5))
+        .font_weight(FontWeight::MEDIUM)
+        .child(ring(fraction, on, on.opacity(0.3), 18.0, 2.2))
         .child(clock)
 }
 
-/// A service's or an AI tool's mark on a 32 px white tile with a hairline (the boards' `.mk`), the logo at 58%; a
-/// glyph instead sits on `paper-sunken` in `ink`.
-pub fn logo_tile(m: Mark, pal: Palette) -> Div {
-    let tile = div().flex().flex_none().items_center().justify_center().size(px(32.0)).rounded(px(10.0));
-    match m {
-        Mark::Brand(b) => tile
-            .bg(gpui::white())
-            .border_1()
-            .border_color(pal.rule())
-            .child(gpui::img(b.path()).size(gpui::relative(0.58)).flex_none()),
-        Mark::Glyph(i) => tile.bg(pal.paper_sunken()).child(glyph(i, 17.0, pal.ink())),
-    }
-}
-
-/// A request's icon (`ASK-TEXT.md`): the integration's mark (a logo on its white plate, or a glyph on `paper-sunken`
-/// for what happens on this computer), and the action on a round badge at its bottom-right corner, white on the kind's
+/// A request's icon (`.ri` on the boards): the integration's mark on a white tile (white on dark paper too, so every
+/// logo keeps its colours), and the action on a round badge at its bottom-right corner (`.rib`), white on the kind's
 /// field colour, ringed in `surface` (what the icon sits on) so it stands apart from the mark.
 pub fn request_icon(mark: Mark, badge: Glyph, field: Field, side: f32, surface: Hsla, pal: Palette) -> Div {
-    let plate = div().flex().flex_none().items_center().justify_center().size(px(side)).rounded(px(side * 0.31));
+    let _ = pal;
+    let plate = div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(side))
+        .rounded(px(side * 0.305))
+        .bg(gpui::white())
+        .border_1()
+        .border_color(crate::theme::rgba(0, 0.08));
     let plate = match mark {
-        Mark::Brand(b) => plate
-            .bg(gpui::white())
-            .border_1()
-            .border_color(pal.rule())
-            .child(gpui::img(b.path()).size(gpui::relative(0.58)).flex_none()),
-        Mark::Glyph(g) => plate.bg(pal.paper_sunken()).child(glyph(g, side * 0.53, pal.ink())),
+        Mark::Brand(b) => plate.child(gpui::img(b.path()).size(px(side * 0.53)).flex_none()),
+        Mark::Glyph(g) => plate.child(glyph(g, side * 0.5, crate::theme::token(crate::theme::tokens::INK, false))),
     };
-    let dot = (side * 0.5).round();
-    let ring = if side >= 36.0 {
-        2.0
-    } else {
-        1.5
-    };
+    let dot = (side * 0.47).round();
+    let out = (side * 0.14).round();
     div().relative().flex_none().size(px(side)).child(plate).child(
         div()
             .absolute()
-            .right(px(-dot * 0.22))
-            .bottom(px(-dot * 0.22))
+            .right(px(-out))
+            .bottom(px(-out))
             .flex()
             .items_center()
             .justify_center()
             .size(px(dot))
             .rounded_full()
             .bg(field.field())
-            .border(px(ring))
+            .border(px(2.0))
             .border_color(surface)
-            .child(glyph(badge, dot * 0.56, gpui::white())),
+            .child(glyph(badge, dot * 0.59, gpui::white())),
     )
-}
-
-/// A key cap in a list of shortcuts ("⌘R", "Esc"): mono 12 on `paper-sunken`, `ink-2`.
-pub fn key_cap(text: impl Into<SharedString>, pal: Palette) -> Div {
-    div()
-        .flex_none()
-        .px(px(8.0))
-        .py(px(3.0))
-        .rounded(px(7.0))
-        .bg(pal.paper_sunken())
-        .font_family(MONO)
-        .text_size(px(12.0))
-        .line_height(px(16.0))
-        .text_color(pal.ink_2())
-        .whitespace_nowrap()
-        .child(text.into())
 }
 
 /// A state as a small pill (11.5, 600): `color` on itself at 13% ("Held until 22:34", "Installed"), or `ink-2` on
@@ -406,7 +379,7 @@ pub fn field_label(text: impl Into<SharedString>, pal: Palette) -> Div {
     tracked(text).text_color(pal.on_field_2())
 }
 
-/// A serif line with the words after `plain` in italic: "Push 8 commits to *octo/app*".
+/// A line with the words after `plain` at 600: "Push 8 commits to **octo/app**".
 pub fn ask_line(plain: &str, target: &str) -> AnyElement {
     let text = format!("{plain}{target}");
     let start = plain.len();
@@ -414,7 +387,7 @@ pub fn ask_line(plain: &str, target: &str) -> AnyElement {
         .with_highlights([(
             start..start + target.len(),
             gpui::HighlightStyle {
-                font_style: Some(gpui::FontStyle::Italic),
+                font_weight: Some(FontWeight::SEMIBOLD),
                 ..gpui::HighlightStyle::default()
             },
         )])
