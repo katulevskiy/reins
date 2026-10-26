@@ -72,7 +72,8 @@ final class IntegrationsUITests: XCTestCase {
         text("Account connected")
         text("new.account@gmail.com")
         shot("google-account-connected")
-        waitFor("connectionAddAnother").tap()
+        // The finishing page is a list: its last buttons load as it scrolls.
+        reveal(element("connectionAddAnother")).tap()
         XCTAssertFalse(element("integrationConnected").exists)
         _ = waitFor("addAccount")
         _ = waitFor("account:new.account@gmail.com")
