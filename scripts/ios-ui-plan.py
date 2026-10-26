@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Decide which iOS UI test classes a run executes, and how the five shards split them.
+"""Decide which iOS UI test classes a run executes, and how the five UI shards split them.
 
+Every run has a sixth shard, unit, for ReinsTests: it gates the iOS check. The UI shards never do (ios.yml).
 A pull request runs ReinsTests plus the classes ios/ci-ui-map.txt names for its diff.
 Longest matching prefix wins. Anything the map does not cover under ios/ (except the
 unit tests), and any shared or core path, runs the whole suite. So does a push, the
@@ -43,7 +44,7 @@ ALL_PREFIXES = (
 )
 
 # Whole classes owned by one shard. ActivityFlowTests is split by method below.
-# Rest runs ReinsTests, the classes in REMAINDER, and the activity methods nobody else named.
+# Rest runs the classes in REMAINDER and the activity methods nobody else named. Unit runs ReinsTests.
 SHARDS = (
     ("autopilot", ("AutopilotUITests",), ()),
     ("grants", ("GrantsSettingsUITests",), (
@@ -177,7 +178,7 @@ def shard_by_name(name):
     for shard, classes, methods in SHARDS:
         if shard == name:
             return classes, methods
-    if name == "rest":
+    if name in ("rest", "unit"):
         return (), ()
     raise SystemExit(f"unknown shard {name}")
 
@@ -192,6 +193,8 @@ def parse_classes(text):
 def shard_args(name, classes):
     """Return (only, skip) comma-separated. only is empty when the shard has nothing to run."""
     selected = parse_classes(classes)
+    if name == "unit":
+        return "ReinsTests", ""
     if name == "rest":
         return rest_args(selected)
     owned, methods = shard_by_name(name)
@@ -215,8 +218,8 @@ def rest_args(selected):
     method_skips = [ident(f"ActivityFlowTests/{item}") for item in activity_methods()]
     if selected == "ALL":
         skips = [ident(item) for item in dedicated] + method_skips
-        return "ReinsTests,ReinsUITests", ",".join(skips)
-    parts = ["ReinsTests"]
+        return "ReinsUITests", ",".join(skips)
+    parts = []
     if "ActivityFlowTests" in selected:
         parts.append(ident("ActivityFlowTests"))
     for item in REMAINDER:

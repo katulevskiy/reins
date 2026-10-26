@@ -3,6 +3,8 @@ name: iOS
 # A pull request runs ReinsTests and the UI classes ios/ci-ui-map.txt names for its diff.
 # The full suite runs on a push to main, the nightly, a hand run, and a pull request labelled ios-full.
 # scripts/wait-for-ci.sh waits for ci.yml on that same commit, not this workflow, so none of this holds a release.
+# The iOS check gates on the core, the build and ReinsTests (the unit shard). The UI shards never gate a merge:
+# their failures are warnings with the result bundle attached (docs/ios-dev.md).
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
@@ -39,7 +41,8 @@ defaults:
     shell: bash
 
 # Same GitHub-hosted runner and Xcode as release.yml's ios-testflight (`xcode-27`, Xcode 27.0). That label
-# is in the GitHub Actions runner group, not a self-hosted Mac. macos-15 is not a fallback: the release
+# is in the GitHub Actions runner group, not a self-hosted Mac. The repository variables IOS_RUNNER,
+# IOS_DEVELOPER_DIR and IOS_XCODE_VERSION override the three (ios-job.yml and ios-core.yml read the same ones). macos-15 is not a fallback: the release
 # workflow records that macos-26 stops at Xcode 26.6, and this project is generated for the 27.0 SDK.
 #
 # No `environment:` and no secrets. These jobs cannot read the testflight or production environments.
@@ -110,11 +113,11 @@ jobs:
     name: iOS Rust core
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    runs-on: xcode-27
+    runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
     env:
-      XCODE_VERSION: "27.0"
-      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      XCODE_VERSION: ${{ vars.IOS_XCODE_VERSION || '27.0' }}
+      DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -143,18 +146,28 @@ jobs:
         with:
           path: target/ios-core/iphonesimulator
           key: ios-sim-core-v1-${{ runner.os }}-${{ hashFiles('crates/reins-core/**', 'crates/reins-proto/**', 'crates/reins-policy/**', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'ios/scripts/build-core.sh') }}
-      - name: Install Rust toolchain
+      # The core ios-core.yml published for this content hash (a public release asset), before building one.
+      - name: Prebuilt core
+        id: prebuilt
         if: steps.core.outputs.cache-hit != 'true'
+        run: |
+          if ios/scripts/core-cache.sh fetch iphonesimulator; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Rust toolchain
+        if: steps.core.outputs.cache-hit != 'true' && steps.prebuilt.outputs.hit != 'true'
         run: rustup toolchain install && rustup target add aarch64-apple-ios-sim && rustc -vV
       - uses: Swatinem/rust-cache@v2
-        if: steps.core.outputs.cache-hit != 'true'
+        if: steps.core.outputs.cache-hit != 'true' && steps.prebuilt.outputs.hit != 'true'
         with:
           shared-key: macos-ios-sim-core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the simulator core and check the committed bindings
         id: build
         env:
-          CACHE_HIT: ${{ steps.core.outputs.cache-hit }}
+          CACHE_HIT: ${{ steps.core.outputs.cache-hit == 'true' || steps.prebuilt.outputs.hit == 'true' }}
         run: |
           set -euo pipefail
           lib="target/ios-core/iphonesimulator"
@@ -165,7 +178,7 @@ jobs:
               echo "::error::ios/Core/Generated/reins_core.swift does not match the UniFFI bindings for these sources."
               exit 1
             fi
-            echo "Reused the cached simulator core"
+            echo "Reused the cached or prebuilt simulator core"
           else
             # Debug is what the test scheme builds. build-core.sh then uses release-low, as a local simulator
             # build does. The TestFlight archive sets CONFIGURATION=Release, which selects the release profile.
@@ -198,11 +211,11 @@ jobs:
     name: iOS build
     needs: [changes, ios-core]
     if: needs.changes.outputs.ios == 'true' && needs.ios-core.result == 'success'
-    runs-on: xcode-27
+    runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
     env:
-      XCODE_VERSION: "27.0"
-      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      XCODE_VERSION: ${{ vars.IOS_XCODE_VERSION || '27.0' }}
+      DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -304,21 +317,24 @@ jobs:
           # Keep build inputs as long as test results so failed shards can be rerun.
           retention-days: 7
 
+  # unit (ReinsTests) gates the iOS check. The five UI shards do not: the job and its test step continue on error, so a
+  # failing UI test is a warning on a green job, with its result bundle uploaded, and never holds a merge or a release.
   ios-test:
     name: iOS tests (${{ matrix.shard }})
     needs: [changes, ios-build]
     if: needs.changes.outputs.ios == 'true' && needs.ios-build.result == 'success'
-    runs-on: xcode-27
+    runs-on: ${{ vars.IOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 45
+    continue-on-error: ${{ matrix.shard != 'unit' }}
     strategy:
       fail-fast: false
       # Three at a time on a pull request, a main push, or a hand run. The nightly uses all five.
       max-parallel: ${{ github.event_name == 'schedule' && 5 || 3 }}
       matrix:
-        shard: [autopilot, grants, onboarding, field, rest]
+        shard: [unit, autopilot, grants, onboarding, field, rest]
     env:
-      XCODE_VERSION: "27.0"
-      DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+      XCODE_VERSION: ${{ vars.IOS_XCODE_VERSION || '27.0' }}
+      DEVELOPER_DIR: ${{ vars.IOS_DEVELOPER_DIR || '/Applications/Xcode_27.0.app/Contents/Developer' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -347,7 +363,9 @@ jobs:
           name: ios-test-products
           path: derived/Build/Products
       - name: Tests (${{ matrix.shard }})
+        id: tests
         if: steps.plan.outputs.only != ''
+        continue-on-error: ${{ matrix.shard != 'unit' }}
         env:
           MODE: test-without-building
           ONLY: ${{ steps.plan.outputs.only }}
@@ -355,8 +373,15 @@ jobs:
         run: |
           set -euo pipefail
           bash ios/scripts/ci-xcode-test.sh
+      - name: UI tests failed (not blocking)
+        if: matrix.shard != 'unit' && steps.tests.outcome == 'failure'
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          echo "::warning title=iOS UI tests (${SHARD})::UI tests failed on this shard. They do not block a merge; the result bundle is the ios-tests-${SHARD}-xcresult artifact."
+          echo "UI tests failed on the ${SHARD} shard (not blocking): see the ios-tests-${SHARD}-xcresult artifact." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload the test result
-        if: failure()
+        if: failure() || steps.tests.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
           name: ios-tests-${{ matrix.shard }}-xcresult
@@ -365,7 +390,8 @@ jobs:
           retention-days: 7
 
   # The check to require. Shards are skipped when the lane is off, which would leave a required shard
-  # pending; this job passes in that case and fails when a shard, the build, the core, or the lane selector did.
+  # pending; this job passes in that case and fails when the unit shard, the build, the core, or the lane selector
+  # did. A UI shard continues on error, so its failure never reaches this result.
   ios:
     name: iOS
     needs: [changes, ios-core, ios-build, ios-test]

@@ -86,7 +86,7 @@ def test_all_shards_match_the_full_suite():
     assert only == ["ReinsUITests/AutopilotUITests"]
     assert skip == []
     only, skip = runs("rest", "ALL")
-    assert only == ["ReinsTests", "ReinsUITests"]
+    assert only == ["ReinsUITests"]
     assert "ReinsUITests/ActivityFlowTests" not in skip
     assert "ReinsUITests/AutopilotUITests" in skip
     assert QUARANTINE in skip
@@ -98,7 +98,16 @@ def test_mapped_shards_leave_the_others_empty():
     only, _ = runs("autopilot", "PasskeyUITests")
     assert only == []
     only, _ = runs("rest", "PasskeyUITests")
-    assert only == ["ReinsTests"]
+    assert only == []
+
+
+def test_unit_tests_have_their_own_shard():
+    # ReinsTests gates the iOS check; the UI shards do not, so it never shares one with them.
+    for classes in ("ALL", "", "PasskeyUITests", "ActivityFlowTests"):
+        assert runs("unit", classes) == (["ReinsTests"], []), classes
+        for shard in ("autopilot", "grants", "onboarding", "field", "rest"):
+            only, _ = runs(shard, classes)
+            assert "ReinsTests" not in only, (shard, classes)
 
 
 def test_activity_stays_split_and_the_quarantine_still_runs():
@@ -108,7 +117,6 @@ def test_activity_stays_split_and_the_quarantine_still_runs():
     only, _ = runs("field", "ActivityFlowTests")
     assert QUARANTINE in only
     only, skip = runs("rest", "ActivityFlowTests")
-    assert "ReinsTests" in only
     assert "ReinsUITests/ActivityFlowTests" in only
     assert "ReinsUITests/IntegrationsUITests" not in only
     assert "ReinsUITests/ActivityFlowTests/testAnEntryOpensAndAnEmailInItOpensInFull" in skip
@@ -147,6 +155,11 @@ def test_cli_select_and_shard():
         ["python3", str(ROOT / "scripts/ios-ui-plan.py"), "shard", "--name", "rest", "--classes", ""],
         text=True,
     )
+    assert output == "only=\nskip=\n"
+    output = subprocess.check_output(
+        ["python3", str(ROOT / "scripts/ios-ui-plan.py"), "shard", "--name", "unit", "--classes", ""],
+        text=True,
+    )
     assert output == "only=ReinsTests\nskip=\n"
 
 
@@ -157,6 +170,7 @@ if __name__ == "__main__":
     test_full_events_and_label()
     test_all_shards_match_the_full_suite()
     test_mapped_shards_leave_the_others_empty()
+    test_unit_tests_have_their_own_shard()
     test_activity_stays_split_and_the_quarantine_still_runs()
     test_every_ui_class_runs_on_the_full_suite()
     test_cli_select_and_shard()
