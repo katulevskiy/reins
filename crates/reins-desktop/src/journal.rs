@@ -142,23 +142,26 @@ pub struct Entry {
     /// The phone's id for the request (what "This was wrong" names).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
-    /// Who decided on the phone when the user did not (Autopilot, a mode), and why. `None`: the user, or not said.
+    /// Who decided on the phone when the user did not (Autopilot, a mode). `None`: the user, or not said. Only who
+    /// is written to the log: Autopilot's confidence and reasons are kept in memory (see [`Attribution`]).
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
     pub autopilot: Option<Attribution>,
-    /// While it waits: what Autopilot would do with it.
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "lenient")]
+    /// While it waits: what Autopilot would do with it. Never written to the log: an AI of the same user that reads it
+    /// would learn how to word its next ask; the app asks the server for it instead.
+    #[serde(skip)]
     pub leaning: Option<Lean>,
 }
 
-/// Who decided a request on the phone without the user, as the phone's answer said (made safe to show).
+/// Who decided a request on the phone without the user, as the phone's answer said (made safe to show). Only `by`
+/// and `correctable` are written to the log; the confidence and the reasons stay in memory, like the leaning.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attribution {
     pub by: reins_proto::autopilot::DecidedBy,
     /// Autopilot's confidence, in percent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub confidence: Option<u8>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub reasons: Vec<String>,
+    #[serde(skip)]
+    pub reasons: Vec<reins_proto::autopilot::Reason>,
     /// "This was wrong" may be sent for it.
     #[serde(default)]
     pub correctable: bool,
@@ -246,9 +249,11 @@ impl Entry {
     }
 
     /// What the phone said about it so far ([`crate::told::Heard`]): its request id, where Autopilot leans while it
-    /// waits, and who decided once it is answered. `true` when that changed the entry.
+    /// waits, and who decided once it is answered. `true` when that changed what the log keeps of it.
     pub fn hear(&mut self, heard: &crate::told::Heard) -> bool {
-        let before = (self.request_id.clone(), self.autopilot.clone(), self.leaning);
+        // What the log keeps: the request id, and who decided.
+        let kept = |e: &Self| (e.request_id.clone(), e.autopilot.as_ref().map(|a| (a.by, a.correctable)));
+        let before = kept(self);
         if heard.request_id.is_some() {
             self.request_id.clone_from(&heard.request_id);
         }
@@ -257,7 +262,7 @@ impl Entry {
             self.autopilot.clone_from(&heard.decided);
             self.leaning = None;
         }
-        before != (self.request_id.clone(), self.autopilot.clone(), self.leaning)
+        before != kept(self)
     }
 
     #[must_use]

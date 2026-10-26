@@ -1,8 +1,8 @@
 //! The phone's Autopilot in the window (`DeskNext-Rules.png`, `DeskNext-Home.png` 03, `DeskNext-MenuBar.png`): the
-//! picker at the sidebar's foot (Manual or Auto, "For a while": Overnight, Lockdown, Bypass; Stop while one runs),
-//! the Bypass sheet, the band a running mode lays over every page (its name, its clock, Stop), the tag on a row the
-//! phone decided without the user, "Why Autopilot allowed" with "This was wrong", and where Autopilot leans on a
-//! request that waits.
+//! picker at the sidebar's foot (Manual or Auto, "For a while": Overnight and Bypass start on the phone, Lockdown
+//! here; Stop while one runs), the band a running mode lays over every page (its name, its clock, Stop), the tag on a
+//! row the phone decided without the user, "Why Autopilot allowed" with "This was wrong", and where Autopilot leans on
+//! a request that waits.
 //!
 //! None of it changes a mode here: every change is a request to the phone ([`Model::change_mode`]), which applies
 //! what is stricter and asks its owner, held to approve, for anything looser.
@@ -10,7 +10,7 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     Anchor, AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, anchored, deferred, div, point, px,
+    StatefulInteractiveElement as _, Styled as _, anchored, deferred, div, point, px,
 };
 use reins_desktop::autopilot::{ModeChoice, is_stricter};
 use reins_desktop::journal::{Entry, Outcome};
@@ -20,10 +20,7 @@ use super::icons::{Glyph, glyph};
 use super::{Data, Root, kit};
 use crate::modes::{self, Running};
 use crate::theme::motion::{Entrance, enter};
-use crate::theme::{Field, MONO, NextText as _, Palette};
-
-/// The lengths the Bypass sheet offers, in minutes (the phone allows up to a day).
-pub const BYPASS_LENGTHS: [(u16, &str); 4] = [(15, "15 min"), (60, "1 hour"), (240, "4 hours"), (1_440, "1 day")];
+use crate::theme::{Field, MONO, Palette};
 
 impl Data {
     /// The mode that runs on the phone now for this computer.
@@ -314,15 +311,13 @@ impl Root {
                     Glyph::ShieldAlert,
                     tile(Field::Delete),
                     "Bypass",
-                    Some("Needs your phone".into()),
+                    Some("Starts on your phone".into()),
+                    matches!(d.running(), Some(Running::Bypass { .. })),
                     false,
-                    true,
                     pal,
                 )
-                .on_click(Self::on_view(cx, |this, _| {
-                    this.while_open = false;
-                    this.bypass_sheet = true;
-                })),
+                .opacity(0.6)
+                .cursor_default(),
             )
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.while_open = false;
@@ -343,122 +338,6 @@ impl Root {
             ),
         )
         .into_any_element()
-    }
-
-    /// The Bypass sheet, as the boards draw it: its name in red, what still asks, the lengths, and the button that
-    /// asks the phone (a bypass starts only once its owner approves it there).
-    pub(super) fn bypass_sheet(&self, d: &Data, pal: Palette, cx: &mut Context<'_, Self>) -> AnyElement {
-        let minutes = self.bypass_minutes;
-        let mut lengths = kit::segmented(pal).w_full();
-        for (m, label) in BYPASS_LENGTHS {
-            lengths = lengths.child(
-                kit::segment(SharedString::from(format!("bypass-{m}")), label, minutes == m, pal)
-                    .px(px(10.0))
-                    .on_click(Self::on_view(cx, move |this, _| this.bypass_minutes = m)),
-            );
-        }
-        let close = |this: &mut Self, _: &mut Context<'_, Self>| this.bypass_sheet = false;
-        let sheet = div()
-            .occlude()
-            .relative()
-            .flex()
-            .flex_col()
-            .w(px(480.0))
-            .px(px(24.0))
-            .py(px(22.0))
-            .rounded(px(22.0))
-            .bg(pal.paper_raised())
-            .border_1()
-            .border_color(pal.rule())
-            .shadow_lg()
-            .child(div().signal(crate::theme::text::MODE_TITLE).text_color(pal.danger).child("Bypass"))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(6.0))
-                    .mt(px(10.0))
-                    .child(
-                        div()
-                            .text_size(px(13.5))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(pal.ink_2())
-                            .child("Still asks"),
-                    )
-                    .child(kit::status_pill(Some(Glyph::Plus), "New AI", None, pal))
-                    .child(kit::status_pill(Some(Glyph::Phone), "New phone", None, pal)),
-            )
-            .child(
-                div()
-                    .mt(px(10.0))
-                    .text_size(px(14.0))
-                    .line_height(px(20.0))
-                    .text_color(pal.ink_2())
-                    .child("Everything else is approved without asking, for every AI."),
-            )
-            .child(div().mt(px(16.0)).child(lengths))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.0))
-                    .mt(px(14.0))
-                    .px(px(14.0))
-                    .py(px(10.0))
-                    .rounded(px(14.0))
-                    .bg(pal.paper_sunken())
-                    .child(glyph(Glyph::FaceId, 18.0, pal.ink_2()))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .text_size(px(13.5))
-                            .line_height(px(18.0))
-                            .text_color(pal.ink_2())
-                            .child(format!("Confirm on {}", d.phone())),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.0))
-                    .mt(px(18.0))
-                    .child(
-                        div().flex().flex_none().w(gpui::relative(0.41)).child(
-                            kit::button("bypass-cancel", kit::Look::Soft, kit::Size::Regular, None, "Cancel", pal)
-                                .w_full()
-                                .on_click(Self::on_view(cx, close)),
-                        ),
-                    )
-                    .child(
-                        div().flex().flex_1().min_w(px(0.0)).child(
-                            kit::button(
-                                "bypass-ask",
-                                kit::Look::Inverse,
-                                kit::Size::Regular,
-                                Some(Glyph::Phone),
-                                "Ask my phone",
-                                pal,
-                            )
-                            .w_full()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.bypass_sheet = false;
-                                this.model.update(cx, |m, cx| m.change_mode(ModeChoice::Bypass(minutes), cx));
-                            })),
-                        ),
-                    ),
-            );
-        div()
-            .absolute()
-            .inset_0()
-            .child(div().id("bypass-scrim").absolute().inset_0().bg(pal.scrim()).on_click(Self::on_view(cx, close)))
-            .child(div().absolute().inset_0().flex().justify_center().items_start().pt(px(180.0)).child(enter(
-                sheet,
-                "bypass-sheet",
-                Entrance::Sheet,
-            )))
-            .into_any_element()
     }
 
     /// The band a running mode lays over every page (`.mtop`): its field, its name and clock, what still asks, and
@@ -560,7 +439,7 @@ impl Root {
                         .py(px(8.0))
                         .when(i > 0, |r| r.border_t_1().border_color(pal.rule()))
                         .child(glyph(Glyph::Check, 15.0, pal.ink_2()))
-                        // The phone's words, on their own line, capped when they were made safe to show.
+                        // A code and numbers from the phone, worded here.
                         .child(
                             div()
                                 .flex_1()
@@ -568,7 +447,7 @@ impl Root {
                                 .truncate()
                                 .text_size(px(14.0))
                                 .text_color(pal.ink())
-                                .child(SharedString::from(reason.clone())),
+                                .child(modes::reason_words(*reason)),
                         ),
                 );
             }
@@ -624,7 +503,6 @@ fn short(choice: ModeChoice) -> String {
         ModeChoice::Manual => "Manual".to_owned(),
         ModeChoice::Auto => "Auto".to_owned(),
         ModeChoice::Lockdown => "Lockdown".to_owned(),
-        ModeChoice::Bypass(m) => format!("Bypass, {}", reins_desktop::work_session::span(u64::from(m) * 60)),
         ModeChoice::Stop => "Stop".to_owned(),
     }
 }

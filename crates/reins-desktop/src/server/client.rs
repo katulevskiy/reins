@@ -109,6 +109,15 @@ impl DesktopClient {
         self.send(|server| self.http.get(format!("{server}/reins/desktop/calls/{id}"))).await
     }
 
+    /// Where an earlier call stands now, without waiting (and without telling the call being asked on this task):
+    /// for the app, which keeps where Autopilot leans and why in memory only.
+    pub async fn peek(&self, request_id: &str) -> Result<CallAnswer, LinkError> {
+        let id: String = url::form_urlencoded::byte_serialize(request_id.as_bytes()).collect();
+        parse_answer(
+            &self.send_raw(|server| self.http.get(format!("{server}/reins/desktop/calls/{id}?peek=true"))).await?,
+        )
+    }
+
     /// When the approval phone last asked the server for work. `LinkError::NotFound` from a server too old to say.
     pub async fn phone(&self) -> Result<PhoneSeen, LinkError> {
         let body = self.send_raw(|server| self.http.get(format!("{server}/reins/desktop/phone"))).await?;
@@ -262,11 +271,15 @@ mod tests {
     fn who_decided_and_the_leaning_are_read_when_they_fit_and_never_fail_an_answer() {
         let a = parse_answer(
             br#"{"request_id":"r1","status":"answered","outcome":{"outcome":"denied","reason":null},
-                "decided":{"by":"lockdown","correctable":false,"reasons":["Lockdown\u0007 denies"]}}"#,
+                "decided":{"by":"lockdown","correctable":false,"reasons":["Lockdown\u0007 denies",{"code":"lockdown"}]}}"#,
         )
         .unwrap();
         let d = a.decided.unwrap();
-        assert_eq!((d.by, d.reasons[0].as_str()), (reins_proto::autopilot::DecidedBy::Lockdown, "Lockdown denies"));
+        assert_eq!(
+            (d.by, d.reasons),
+            (reins_proto::autopilot::DecidedBy::Lockdown, vec![reins_proto::autopilot::Reason::Lockdown]),
+            "text is never a reason"
+        );
         let p = parse_answer(
             br#"{"request_id":"r2","status":"pending","suggestion":{"v":1,"leaning":"deny","confidence":0.8}}"#,
         )

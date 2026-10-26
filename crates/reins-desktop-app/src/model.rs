@@ -65,6 +65,8 @@ pub enum Chime {
 const DEMO_ANSWER: Duration = Duration::from_secs(4);
 /// How often the phone's modes are read again from the server.
 const MODES_POLL: Duration = Duration::from_secs(30);
+/// How often the app asks the server about what waits (where Autopilot leans) and what Autopilot just decided.
+const TOLD_POLL: Duration = Duration::from_secs(4);
 /// The longest "what" the tray's first line quotes.
 const TRAY_WHAT: usize = 60;
 
@@ -206,8 +208,6 @@ pub struct Model {
     pub show_phone_qr: bool,
     /// The tray's "Until I resume…": the window opens its pause sheet there, to be held.
     pub pause_hold_asked: bool,
-    /// The tray's "Bypass…": the window opens its Bypass sheet.
-    pub bypass_asked: bool,
     /// "Other server" is open.
     pub show_server: bool,
     pub server_input: String,
@@ -232,6 +232,10 @@ pub struct Model {
     pub modes: Option<reins_proto::autopilot::DesktopModes>,
     /// A change of mode asked of the phone, until it answers.
     pub mode_asked: Option<reins_desktop::autopilot::ModeChoice>,
+    /// What the phone said about requests of this computer (by request id): where Autopilot leans on one that waits,
+    /// who decided one and why. In memory only: the activity log keeps who decided, never the rest, which an AI of the
+    /// same user could read to word its next ask.
+    told: std::collections::HashMap<String, reins_desktop::told::Heard>,
     /// "This was wrong" sent for these requests (by the phone's request id), and the one on its way.
     pub corrected: std::collections::HashSet<String>,
     pub correcting: Option<String>,
@@ -375,7 +379,6 @@ impl Model {
                 note: None,
                 show_phone_qr: false,
                 pause_hold_asked: false,
-                bypass_asked: false,
                 show_server: false,
                 autostart: autostart::enabled(&home),
                 cli_installed: args_demo || backend_cli,
@@ -405,6 +408,7 @@ impl Model {
                 vault_names: (args_demo && std::env::var_os("REINS_DEMO_VAULT").is_some_and(|v| !v.is_empty()))
                     .then(Demo::vault_names),
                 vault_asking: false,
+                told: std::collections::HashMap::new(),
                 corrected: std::collections::HashSet::new(),
                 correcting: None,
                 demo_paired,
@@ -499,20 +503,13 @@ impl Model {
                 cx.notify();
                 cx.defer(Self::show_window);
             }
-            Action::Mode(ModeAct::Bypass) if self.screen == Screen::Status => {
-                self.bypass_asked = true;
-                self.show_phone_qr = false;
-                cx.notify();
-                cx.defer(Self::show_window);
-            }
-            Action::Mode(ModeAct::Bypass) => cx.defer(Self::show_window),
             Action::Mode(act) => {
                 use reins_desktop::autopilot::ModeChoice;
                 let choice = match act {
                     ModeAct::Manual => ModeChoice::Manual,
                     ModeAct::Auto => ModeChoice::Auto,
                     ModeAct::Lockdown => ModeChoice::Lockdown,
-                    ModeAct::Stop | ModeAct::Bypass => ModeChoice::Stop,
+                    ModeAct::Stop => ModeChoice::Stop,
                 };
                 self.change_mode(choice, cx);
             }
@@ -594,6 +591,15 @@ impl Model {
                 cx.background_executor().timer(HEALTH_TICK).await;
             }
         }));
+        // Where Autopilot leans on what waits, and why it decided: asked of the server, kept in memory.
+        self.tasks.push(cx.spawn(async move |this, cx| {
+            loop {
+                if this.update(cx, Self::refresh_told).is_err() {
+                    break;
+                }
+                cx.background_executor().timer(TOLD_POLL).await;
+            }
+        }));
         // The phone's modes, from the server: often enough for a mode started on the phone to show here soon.
         self.tasks.push(cx.spawn(async move |this, cx| {
             loop {
@@ -651,6 +657,7 @@ impl Model {
             demo.fill(&mut snapshot, self.pause().on());
         }
         self.fill_work_session(&mut snapshot, now, cx);
+        self.fill_told(&mut snapshot);
         // Signed out elsewhere (`reins logout`, or the phone removed the connection).
         if snapshot.server.is_none() && !self.demo_paired && self.screen != Screen::Welcome(Stage::Pair) {
             self.screen = Screen::Welcome(Stage::Pair);
@@ -1611,6 +1618,68 @@ impl Model {
         .detach();
     }
 
+    /// The requests of this computer the phone may say more about now: those that wait, and those it decided in the
+    /// last ten minutes (the server keeps an answer that long) that are not known yet. At most ten.
+    fn to_hear(&self, now: i64) -> Vec<String> {
+        let Some(s) = &self.snapshot else {
+            return Vec::new();
+        };
+        s.activity
+            .iter()
+            .filter_map(|e| {
+                let id = e.request_id.as_ref()?;
+                let decided_recently = e.autopilot.is_some()
+                    && e.ended_at.is_some_and(|t| now - t < 600)
+                    && self.told.get(id).is_none_or(|h| h.decided.is_none());
+                (e.outcome == Outcome::Waiting || decided_recently).then(|| id.clone())
+            })
+            .take(10)
+            .collect()
+    }
+
+    /// Asks the server about [`Self::to_hear`], and keeps what it says in memory.
+    fn refresh_told(&mut self, cx: &mut Context<'_, Self>) {
+        let ids = self.to_hear(reins_desktop::now_unix());
+        if self.args.demo || ids.is_empty() {
+            return;
+        }
+        let backend = Arc::clone(&self.backend);
+        cx.spawn(async move |this, cx| {
+            let heard = Tokio::spawn(cx, async move { backend.told(ids).await }).await.unwrap_or_default();
+            let _gone = this.update(cx, |m, cx| {
+                for (id, h) in heard {
+                    m.told.insert(id, h);
+                }
+                // Forget what no row needs any more.
+                if m.told.len() > 500 {
+                    m.told.clear();
+                }
+                m.refresh_now(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Puts what the phone said (kept in memory) on the snapshot's rows.
+    fn fill_told(&self, snapshot: &mut Snapshot) {
+        if self.told.is_empty() {
+            return;
+        }
+        let mut activity = (*snapshot.activity).clone();
+        for e in &mut activity {
+            let Some(h) = e.request_id.as_ref().and_then(|id| self.told.get(id)) else {
+                continue;
+            };
+            if e.outcome == Outcome::Waiting {
+                e.leaning = h.leaning;
+            } else if let (Some(kept), Some(heard)) = (e.autopilot.as_mut(), h.decided.as_ref()) {
+                kept.confidence = heard.confidence;
+                kept.reasons.clone_from(&heard.reasons);
+            }
+        }
+        snapshot.activity = Arc::new(activity);
+    }
+
     /// Asks the phone to change its mode (the sidebar's picker, "For a while", Stop). The phone applies at once what
     /// is stricter and asks its owner for the rest: nothing changes here until it says so.
     pub fn change_mode(&mut self, choice: reins_desktop::autopilot::ModeChoice, cx: &mut Context<'_, Self>) {
@@ -1638,8 +1707,9 @@ impl Model {
             return;
         }
         let backend = Arc::clone(&self.backend);
+        let modes = self.modes;
         cx.spawn(async move |this, cx| {
-            let result = Tokio::spawn(cx, async move { backend.change_mode(choice).await })
+            let result = Tokio::spawn(cx, async move { backend.change_mode(choice, modes).await })
                 .await
                 .unwrap_or_else(|e| Err(e.to_string()));
             let _gone = this.update(cx, |m, cx| {

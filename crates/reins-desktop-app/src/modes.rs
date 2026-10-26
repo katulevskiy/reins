@@ -6,7 +6,7 @@
 //! a request to the phone (`reins_desktop::autopilot`), which applies what is stricter and asks its owner for the rest.
 
 use reins_desktop::journal::{Attribution, Entry, Lean, Outcome};
-use reins_proto::autopilot::{DecidedBy, DesktopModes, Leaning, Mode};
+use reins_proto::autopilot::{DecidedBy, DesktopModes, Leaning, Mode, Reason, RiskWord};
 
 /// A mode that runs on the phone now, for this computer's requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,6 +184,42 @@ pub fn correction(e: &Entry) -> Option<(String, bool)> {
     }
 }
 
+/// A reason the phone gave, as a code and numbers, in words.
+#[must_use]
+pub fn reason_words(r: Reason) -> String {
+    match r {
+        Reason::Routine {
+            approve,
+        } => format!("Looks routine ({approve}% approve)"),
+        Reason::Harmful {
+            deny,
+        } => format!("Looks harmful ({deny}% deny)"),
+        Reason::LikeYours {
+            approved,
+            denied: 0,
+        } => format!("You approved {approved} like it"),
+        Reason::LikeYours {
+            approved: 0,
+            denied,
+        } => format!("You denied {denied} like it"),
+        Reason::LikeYours {
+            approved,
+            denied,
+        } => format!("You approved {approved} and denied {denied} like it"),
+        Reason::Risk {
+            level,
+        } => match level {
+            RiskWord::Routine => "Risk: routine",
+            RiskWord::Undoable => "Risk: easily undone",
+            RiskWord::HardToUndo => "Risk: hard to undo",
+            RiskWord::Irreversible => "Risk: irreversible",
+        }
+        .to_owned(),
+        Reason::Bypass => "Bypass approves everything until it ends".to_owned(),
+        Reason::Lockdown => "Lockdown denies everything".to_owned(),
+    }
+}
+
 /// Where Autopilot leans on a request that waits, in a few words: "Autopilot would allow", with its confidence.
 #[must_use]
 pub fn leaning(l: Lean) -> (&'static str, u8) {
@@ -244,17 +280,6 @@ pub fn demo_after(
         ModeChoice::Manual => "manual",
         ModeChoice::Auto => "auto",
         ModeChoice::Lockdown => "lockdown",
-        ModeChoice::Bypass(minutes) => {
-            let mut m = demo("bypass", now).unwrap_or_else(|| unreachable!("a demo mode"));
-            m.base = if base == Mode::Lockdown {
-                Mode::Manual
-            } else {
-                base
-            };
-            m.span.since = Some(now);
-            m.span.until = Some(now + i64::from(minutes) * 60);
-            return m;
-        }
         ModeChoice::Stop => {
             if base == Mode::Auto {
                 "auto"

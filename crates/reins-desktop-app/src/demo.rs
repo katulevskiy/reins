@@ -20,7 +20,7 @@ use reins_desktop::secrets_scan::{
 };
 use reins_desktop::stats::Connection;
 use reins_desktop::work_session::{Request, Session};
-use reins_proto::autopilot::{DecidedBy, Leaning};
+use reins_proto::autopilot::{DecidedBy, Leaning, Reason, RiskWord};
 
 use crate::backend::{DaemonState, Snapshot};
 
@@ -370,9 +370,16 @@ impl Demo {
                         by: DecidedBy::Autopilot,
                         confidence: Some(95),
                         reasons: vec![
-                            "Looks routine (96% approve)".to_owned(),
-                            "You approved 40 like it".to_owned(),
-                            "Risk: easily undone".to_owned(),
+                            Reason::Routine {
+                                approve: 96,
+                            },
+                            Reason::LikeYours {
+                                approved: 40,
+                                denied: 0,
+                            },
+                            Reason::Risk {
+                                level: RiskWord::Undoable,
+                            },
                         ],
                         correctable: true,
                     }),

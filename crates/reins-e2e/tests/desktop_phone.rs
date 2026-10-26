@@ -525,15 +525,36 @@ async fn the_desktop_app_sees_the_phones_modes_and_only_asks_to_loosen_them() {
     };
     let mode = async || phone.core.autopilot_settings().await.unwrap().mode;
 
+    // ---- the phone's key on this computer (once): looser asks carry the app's proof, boxed to it ----
+    let digits = phone.core.phone_key_fingerprint().await.unwrap();
+    let writer = reins_desktop::secrets_client::PhoneVaultWriter::new(&paths, &config, Some(digits));
+    let user = async {
+        let item = next_item(&phone).await;
+        phone
+            .core
+            .approve(
+                item.id,
+                ApprovalChoice {
+                    selected_message_ids: vec![],
+                    standing: None,
+                },
+            )
+            .await
+            .unwrap();
+    };
+    let (pinned, ()) = tokio::join!(writer.check_phone_key(), user);
+    pinned.expect("the phone's key is pinned");
+
     // ---- Auto on the phone: the app is shown it ----
     phone.core.set_autopilot_mode(None, Some(AutopilotMode::Auto), None).await.unwrap();
     let shown = autopilot::modes(&paths).await.unwrap().expect("the phone reported its modes");
     assert_eq!((shown.mode, shown.base), (PhoneMode::Auto, PhoneMode::Auto));
 
     // ---- back to Manual from the computer: stricter, applied at once, nothing asked ----
-    with_phone_open(&phone, autopilot::change_mode(&paths, &config, ModeChoice::Manual)).await.unwrap();
+    with_phone_open(&phone, autopilot::change_mode(&paths, &config, ModeChoice::Manual, Some(&shown))).await.unwrap();
     assert_eq!(mode().await, AutopilotMode::Manual);
-    assert_eq!(autopilot::modes(&paths).await.unwrap().unwrap().mode, PhoneMode::Manual);
+    let shown = autopilot::modes(&paths).await.unwrap().unwrap();
+    assert_eq!(shown.mode, PhoneMode::Manual);
 
     // ---- Auto from the computer: looser, so the owner is asked, in the phone's words, held to approve ----
     let user = async {
@@ -555,18 +576,19 @@ async fn the_desktop_app_sees_the_phones_modes_and_only_asks_to_loosen_them() {
             .await
             .unwrap();
     };
-    let (changed, ()) = tokio::join!(autopilot::change_mode(&paths, &config, ModeChoice::Auto), user);
+    let (changed, ()) = tokio::join!(autopilot::change_mode(&paths, &config, ModeChoice::Auto, Some(&shown)), user);
     changed.unwrap();
     assert_eq!(mode().await, AutopilotMode::Auto);
 
-    // ---- a bypass from the computer, refused on the phone: nothing changes ----
+    // ---- Auto asked again after Manual, refused on the phone: nothing changes ----
+    with_phone_open(&phone, autopilot::change_mode(&paths, &config, ModeChoice::Manual, None)).await.unwrap();
     let user = async {
         let item = next_item(&phone).await;
         phone.core.deny(item.id).await.unwrap();
     };
-    let (refused, ()) = tokio::join!(autopilot::change_mode(&paths, &config, ModeChoice::Bypass(30)), user);
+    let (refused, ()) = tokio::join!(autopilot::change_mode(&paths, &config, ModeChoice::Auto, None), user);
     assert!(refused.unwrap_err().contains("denied"));
-    assert_eq!(mode().await, AutopilotMode::Auto);
+    assert_eq!(mode().await, AutopilotMode::Manual);
 
     // ---- a question the bypass the owner started answers: the app's log says the bypass decided it ----
     phone.core.start_bypass(None, Some(30)).await.unwrap();
@@ -587,6 +609,10 @@ async fn the_desktop_app_sees_the_phones_modes_and_only_asks_to_loosen_them() {
     let decided = asked.autopilot.as_ref().expect("who decided");
     assert_eq!(decided.by, DecidedBy::Bypass);
     assert!(asked.request_id.is_some());
+    // The log keeps who decided, never the leaning, the confidence or the reasons (an AI could read them).
+    let raw = std::fs::read_to_string(reins_desktop::journal::Journal::file(&paths)).unwrap();
+    assert!(raw.contains("\"autopilot\""), "{raw}");
+    assert!(!raw.contains("leaning") && !raw.contains("confidence") && !raw.contains("reasons"), "{raw}");
     let modes = autopilot::modes(&paths).await.unwrap().unwrap();
     assert_eq!(modes.mode, PhoneMode::Bypass);
     assert!(modes.span.until.is_some(), "with its end");

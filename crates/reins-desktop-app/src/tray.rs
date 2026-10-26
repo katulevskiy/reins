@@ -43,21 +43,18 @@ pub enum ModeAct {
     Manual,
     Auto,
     Lockdown,
-    /// Opens the window's Bypass sheet.
-    Bypass,
     /// Ends the running bypass or Overnight.
     Stop,
 }
 
 impl ModeAct {
-    pub const ALL: [Self; 5] = [Self::Manual, Self::Auto, Self::Lockdown, Self::Bypass, Self::Stop];
+    pub const ALL: [Self; 4] = [Self::Manual, Self::Auto, Self::Lockdown, Self::Stop];
 
     fn id(self) -> &'static str {
         match self {
             Self::Manual => "mode-manual",
             Self::Auto => "mode-auto",
             Self::Lockdown => "mode-lockdown",
-            Self::Bypass => "mode-bypass",
             Self::Stop => "mode-stop",
         }
     }
@@ -68,7 +65,6 @@ impl ModeAct {
             Self::Manual => "Manual",
             Self::Auto => "Auto",
             Self::Lockdown => "Lockdown",
-            Self::Bypass => "Bypass…",
             Self::Stop => "Stop bypass or Overnight",
         }
     }
@@ -288,15 +284,12 @@ mod imp {
                 &[&quarter, &hour, &four, &day, &PredefinedMenuItem::separator(), &manual],
             )
             .map_err(|e| e.to_string())?;
-            let [manual, auto, lockdown, bypass] = [ModeAct::Manual, ModeAct::Auto, ModeAct::Lockdown, ModeAct::Bypass]
+            let [manual, auto, lockdown] = [ModeAct::Manual, ModeAct::Auto, ModeAct::Lockdown]
                 .map(|m| MenuItem::with_id(Action::Mode(m).id(), m.label(), true, None));
             let stop = MenuItem::with_id(Action::Mode(ModeAct::Stop).id(), ModeAct::Stop.label(), false, None);
-            let modes = Submenu::with_items(
-                MODE_MENU,
-                false,
-                &[&manual, &auto, &PredefinedMenuItem::separator(), &lockdown, &bypass],
-            )
-            .map_err(|e| e.to_string())?;
+            let modes =
+                Submenu::with_items(MODE_MENU, false, &[&manual, &auto, &PredefinedMenuItem::separator(), &lockdown])
+                    .map_err(|e| e.to_string())?;
             let resume = MenuItem::with_id(Action::Resume.id(), "Resume", false, None);
             let end = MenuItem::with_id(Action::EndSession.id(), END_SESSION, false, None);
             let open = MenuItem::with_id(Action::Open.id(), "Open Reins", true, None);
@@ -469,7 +462,6 @@ mod imp {
                         item(ModeAct::Auto.label(), Action::Mode(ModeAct::Auto), true),
                         ksni::MenuItem::Separator,
                         item(ModeAct::Lockdown.label(), Action::Mode(ModeAct::Lockdown), true),
-                        item(ModeAct::Bypass.label(), Action::Mode(ModeAct::Bypass), true),
                     ],
                     ..SubMenu::default()
                 }

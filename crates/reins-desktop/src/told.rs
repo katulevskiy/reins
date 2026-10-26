@@ -31,19 +31,25 @@ pub fn listen<F: Future>(question: F) -> (impl Future<Output = F::Output>, watch
     (HEARING.scope(Arc::new(tx), question), rx)
 }
 
+/// What `answer` says beside the answer itself.
+#[must_use]
+pub fn heard_of(answer: &CallAnswer) -> Heard {
+    let mut heard = Heard {
+        request_id: Some(answer.request_id.clone()),
+        ..Heard::default()
+    };
+    match &answer.status {
+        CallStatus::Answered(_) => heard.decided = answer.decided.clone().map(Attribution::from),
+        CallStatus::Pending | CallStatus::Offline => heard.leaning = answer.suggestion.as_ref().map(Lean::from),
+    }
+    heard
+}
+
 /// Tells the question being asked on this task (if one listens) what the server answered about it.
 pub fn hear(answer: &CallAnswer) {
     let _outside = HEARING.try_with(|tx| {
         tx.send_if_modified(|heard| {
-            let mut next = heard.clone();
-            next.request_id = Some(answer.request_id.clone());
-            match &answer.status {
-                CallStatus::Answered(_) => {
-                    next.leaning = None;
-                    next.decided = answer.decided.clone().map(Attribution::from);
-                }
-                CallStatus::Pending | CallStatus::Offline => next.leaning = answer.suggestion.as_ref().map(Lean::from),
-            }
+            let next = heard_of(answer);
             let changed = next != *heard;
             *heard = next;
             changed
@@ -53,7 +59,7 @@ pub fn hear(answer: &CallAnswer) {
 
 #[cfg(test)]
 mod tests {
-    use reins_proto::autopilot::{Decided, DecidedBy, Leaning, Suggestion};
+    use reins_proto::autopilot::{Decided, DecidedBy, Leaning, Reason, Suggestion};
     use reins_proto::relay::RelayOutcome;
 
     use super::*;
@@ -86,7 +92,9 @@ mod tests {
                 Some(Decided {
                     by: DecidedBy::Autopilot,
                     confidence: Some(0.97),
-                    reasons: vec!["Looks routine\n(97% approve)".to_owned()],
+                    reasons: vec![Reason::Routine {
+                        approve: 97,
+                    }],
                     correctable: true,
                 }),
                 None,
@@ -98,7 +106,12 @@ mod tests {
         assert_eq!(heard.leaning, None, "answered: it leans no more");
         let decided = heard.decided.unwrap();
         assert_eq!((decided.by, decided.confidence, decided.correctable), (DecidedBy::Autopilot, Some(97), true));
-        assert_eq!(decided.reasons, ["Looks routine (97% approve)"]);
+        assert_eq!(
+            decided.reasons,
+            [Reason::Routine {
+                approve: 97
+            }]
+        );
         // Nobody listening: nothing happens.
         hear(&answer(CallStatus::Pending, None, None));
     }

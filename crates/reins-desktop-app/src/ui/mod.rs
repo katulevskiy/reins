@@ -105,10 +105,8 @@ pub struct Root {
     /// across its refs).
     commits_open: BTreeSet<usize>,
     files_open: BTreeSet<(usize, usize)>,
-    /// The sidebar's "For a while" menu is open; the Bypass sheet is open, and the length picked in it (minutes).
+    /// The sidebar's "For a while" menu is open.
     while_open: bool,
-    bypass_sheet: bool,
-    bypass_minutes: u16,
     /// The "Pause git" sheet is open, and the length picked in it.
     pause_sheet: bool,
     pause_choice: PauseFor,
@@ -334,8 +332,6 @@ impl Root {
                 .into_iter()
                 .collect(),
             while_open: demo_var("REINS_DEMO_WHILE").is_some(),
-            bypass_sheet: demo_var("REINS_DEMO_BYPASS").is_some(),
-            bypass_minutes: 60,
             pause_sheet: pause_demo.is_some(),
             pause_choice: if matches!(pause_demo.as_deref(), Some("manual" | "hold")) {
                 PauseFor::Manual
@@ -413,7 +409,6 @@ impl Root {
             Shortcut::Quit => self.model.update(cx, Model::quit),
             Shortcut::Escape => {
                 let open = self.pause_sheet
-                    || self.bypass_sheet
                     || self.while_open
                     || self.filter_open
                     || self.appearance_open
@@ -428,7 +423,6 @@ impl Root {
                     });
                 }
                 self.pause_sheet = false;
-                self.bypass_sheet = false;
                 self.while_open = false;
                 self.filter_open = false;
                 self.appearance_open = false;
@@ -529,9 +523,6 @@ impl Root {
         if self.pause_sheet && d.paired {
             root = root.child(self.pause_sheet(pal, cx));
         }
-        if self.bypass_sheet && d.paired {
-            root = root.child(self.bypass_sheet(d, pal, cx));
-        }
         root.into_any_element()
     }
 }
@@ -555,11 +546,6 @@ impl Render for Root {
             self.pause_sheet = true;
             self.pause_choice = PauseFor::Manual;
             self.hold = None;
-        }
-        // The tray's "Bypass…": the Bypass sheet, there.
-        if self.model.read(cx).bypass_asked {
-            self.model.update(cx, |m, _| m.bypass_asked = false);
-            self.bypass_sheet = true;
         }
         let mut d = Data::of(self.model.read(cx));
         d.help = self.help;

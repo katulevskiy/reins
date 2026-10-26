@@ -733,9 +733,29 @@ impl Backend {
     }
 
     /// Asks the phone to change its mode: what is stricter applies at once, the rest waits for the owner there.
-    pub async fn change_mode(&self, choice: reins_desktop::autopilot::ModeChoice) -> Result<(), String> {
+    pub async fn change_mode(
+        &self,
+        choice: reins_desktop::autopilot::ModeChoice,
+        modes: Option<reins_proto::autopilot::DesktopModes>,
+    ) -> Result<(), String> {
         let config = self.config()?;
-        reins_desktop::autopilot::change_mode(&self.paths, &config, choice).await
+        reins_desktop::autopilot::change_mode(&self.paths, &config, choice, modes.as_ref()).await
+    }
+
+    /// What the phone said about these requests (where Autopilot leans, who decided and why), asked of the server
+    /// without waiting: the app keeps it in memory, never in the activity log. A request the server no longer has is
+    /// left out.
+    pub async fn told(&self, request_ids: Vec<String>) -> Vec<(String, reins_desktop::told::Heard)> {
+        let Ok(client) = reins_desktop::server::client::DesktopClient::new(&self.paths) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for id in request_ids {
+            if let Ok(answer) = client.peek(&id).await {
+                out.push((id, reins_desktop::told::heard_of(&answer)));
+            }
+        }
+        out
     }
 
     /// "This was wrong" for `request_id`: what Autopilot should have done (`true`: approve).
