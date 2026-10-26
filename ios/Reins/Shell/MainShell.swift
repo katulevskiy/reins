@@ -240,6 +240,8 @@ struct RouteView: View {
         case .sounds: SoundsScreen()
         case .vaultPasskeys: VaultPasskeysScreen()
         case .appearance: AppearanceScreen()
+        case .wallpaper: WallpaperScreen()
+        case let .ownWallpaper(dark): OwnPhotoScreen(dark: dark)
         case .devices: DevicesScreen()
         case .vault: VaultScreen()
         case .vaultAdd: VaultAddScreen()

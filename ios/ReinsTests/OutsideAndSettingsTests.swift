@@ -1,0 +1,169 @@
+import SwiftUI
+import XCTest
+@testable import Reins
+
+/// The Next look outside the app (widgets, Live Activities, notifications) and on the Settings pages: who asks stays
+/// visible wherever something can be approved, and the pure helpers behind the pages.
+final class OutsideAndSettingsTests: XCTestCase {
+    private let now: Int64 = 1_800_000_000
+
+    private func item(kind: Snapshot.Item.Kind = .request, connection: String = "Claude Code", quick: Bool? = nil, label: String? = "GitHub · Push") -> Snapshot.Item {
+        var i = Snapshot.Item(
+            id: "r1", kind: kind, title: "\(connection): Push 8 commits to octo/app", subtitle: "feature/passkeys", connection: connection,
+            service: "github", createdAt: now - 20, expiresAt: now + 100, suggestion: nil, field: "push", label: label
+        )
+        i.quick = quick
+        return i
+    }
+
+    // MARK: Who asks, wherever Allow is offered
+
+    func testTheLiveActivityOffersApproveOnlyForARoutineRequestThatStillWaits() throws {
+        let routine = try XCTUnwrap(Glance.approvalState([item(quick: true)], now: now))
+        XCTAssertTrue(ApprovalLiveViews(state: routine, stale: false).offersApprove)
+        XCTAssertFalse(ApprovalLiveViews(state: routine, stale: true).offersApprove, "no longer waiting: nothing to approve")
+        let asked = try XCTUnwrap(Glance.approvalState([item(quick: false)], now: now))
+        XCTAssertFalse(ApprovalLiveViews(state: asked, stale: false).offersApprove, "asked every time: Deny and Review only")
+        let pairing = try XCTUnwrap(Glance.approvalState([item(kind: .pairing, quick: true, label: nil)], now: now))
+        XCTAssertFalse(ApprovalLiveViews(state: pairing, stale: false).offersApprove, "a pairing is answered in the app")
+    }
+
+    func testTheWhoLineBesideApproveNamesTheRequesterOnItsOwnRun() throws {
+        let state = try XCTUnwrap(Glance.approvalState([item(quick: true)], now: now))
+        let views = ApprovalLiveViews(state: state, stale: false)
+        let who = views.who(ring: .black)
+        XCTAssertEqual(who.connection, "Claude Code", "who asks is drawn beside the ask, not only spoken")
+        XCTAssertEqual(who.service, "github")
+        XCTAssertEqual(who.glyph, .gitBranch)
+        // The ask itself never carries the name.
+        XCTAssertEqual(views.title, "Push 8 commits to octo/app")
+    }
+
+    func testARequestersNameIsCleanedAndCappedOnTheWhoLine() {
+        let sneaky = "Claude\u{202E}edoC " + String(repeating: "x", count: 60)
+        let shown = Glance.who(sneaky)
+        XCTAssertFalse(shown.unicodeScalars.contains { $0.value == 0x202E }, "bidirectional controls are dropped")
+        XCTAssertLessThanOrEqual(shown.count, 28)
+        XCTAssertTrue(shown.hasSuffix("…"))
+        XCTAssertEqual(Glance.who("Claude\nCode"), "Claude Code", "one line")
+    }
+
+    func testARoutineNotificationKeepsWhoAsksInItsTitle() {
+        var p = PendingItem(
+            kind: .request, id: "r1", title: "Read emails", subtitle: "me@gmail.com", createdAt: now, connectionId: "c1",
+            connectionLabel: "Claude\u{202E} with a very long name that goes on and on and on", action: "read", count: 3, service: "gmail",
+            account: "me@gmail.com", waitUntil: nil, op: "", opTitle: "", suggestion: nil
+        )
+        p.quick = true
+        let c = NotificationContent.pending(p, settings: FeedbackSettings())
+        XCTAssertEqual(c.categoryIdentifier, NotificationCategory.quickRequest.rawValue, "it offers Approve")
+        XCTAssertTrue(c.title.hasPrefix("\(untrustedName(p.connectionLabel, limit: 40)): "), "who asks leads the bold line: \(c.title)")
+    }
+
+    // MARK: Badges, ages, controls
+
+    func testTheRequestIconsBadgeFollowsTheAction() {
+        XCTAssertEqual(Glance.actionGlyph(item()), .gitBranch)
+        XCTAssertEqual(Glance.actionGlyph("read", field: nil), .eye)
+        XCTAssertEqual(Glance.actionGlyph("search", field: nil), .search)
+        XCTAssertEqual(Glance.actionGlyph(Glance.verb("Gmail · Send"), field: .push), .send)
+        XCTAssertEqual(Glance.actionGlyph(nil, field: .delete), .trash, "no verb: the field's own")
+        XCTAssertEqual(Glance.actionGlyph(item(kind: .pairing, label: nil)), .link)
+        XCTAssertEqual(Glance.actionGlyph(item(kind: .join, label: nil)), .phone)
+    }
+
+    func testShortAges() {
+        XCTAssertEqual(Glance.shortAgo(now - 10, now: now), "now")
+        XCTAssertEqual(Glance.shortAgo(now - 120, now: now), "2m")
+        XCTAssertEqual(Glance.shortAgo(now - 7_200, now: now), "2h")
+        XCTAssertEqual(Glance.shortAgo(now - 3 * 86_400, now: now), "3d")
+        XCTAssertEqual(SettingsText.compactAgo(now - 300, now: now), "5m")
+        XCTAssertEqual(SettingsText.compactAgo(now - 3_600, now: now), "1h")
+    }
+
+    func testAControlIsColouredOnlyWhileOn() {
+        XCTAssertNil(ControlLook.modeTint(.manual))
+        XCTAssertNil(ControlLook.modeTint(.auto))
+        XCTAssertEqual(ControlLook.modeTint(.bypass), Palette.fieldDelete)
+        var s = Snapshot()
+        s.signedIn = true
+        XCTAssertEqual(ControlLook.stopState(s, now: now), "Off")
+        s.bypassUntil = now + 47 * 60
+        s.anyBypassUntil = s.bypassUntil
+        XCTAssertEqual(ControlLook.stopState(s, now: now), "47 min left")
+    }
+
+    func testOlderSnapshotEntriesWithoutAServiceStillRead() throws {
+        let old = #"{"id":1,"title":"Claude read 3 emails","outcome":"Released","approved":true,"at":1}"#
+        let entry = try JSONDecoder().decode(Snapshot.Entry.self, from: Data(old.utf8))
+        XCTAssertNil(entry.service)
+        XCTAssertNil(entry.action)
+    }
+
+    // MARK: Your photo
+
+    private func photo(width: Int = 300, height: Int = 400) throws -> CGImage {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: {
+            let f = UIGraphicsImageRendererFormat()
+            f.scale = 1
+            return f
+        }())
+        let image = renderer.image { ctx in
+            for y in stride(from: 0, to: height, by: 20) {
+                UIColor(white: CGFloat(y) / CGFloat(height), alpha: 1).setFill()
+                ctx.fill(CGRect(x: 0, y: y, width: width, height: 20))
+            }
+        }
+        return try XCTUnwrap(image.cgImage)
+    }
+
+    private func pixel(_ image: CGImage, _ x: Int, _ y: Int) throws -> (UInt8, UInt8, UInt8) {
+        let px = try XCTUnwrap(Pixels(fill: image, width: image.width, height: image.height))
+        let i = px.index(x, y)
+        return (px.bytes[i], px.bytes[i + 1], px.bytes[i + 2])
+    }
+
+    func testEveryEffectMakesAWallpaperOfTheRightSizeFadedIntoThePaper() throws {
+        let source = try photo()
+        for effect in WallpaperEffect.allCases {
+            for dark in [true, false] {
+                let out = try XCTUnwrap(WallpaperRender.render(source, effect: effect, fade: 0.55, dark: dark, size: CGSize(width: 78, height: 100)), "\(effect)")
+                XCTAssertEqual(out.width, 78)
+                XCTAssertEqual(out.height, 100)
+                let bottom = try pixel(out, 40, 99)
+                let paper = WallpaperRender.paper(dark: dark)
+                XCTAssertLessThanOrEqual(abs(Int(bottom.0) - Int(paper.r)), 6, "\(effect) fades into the page at its bottom")
+                XCTAssertLessThanOrEqual(abs(Int(bottom.2) - Int(paper.b)), 6)
+            }
+        }
+    }
+
+    func testDitherUsesOnlyItsTwoInksAboveTheFade() throws {
+        let out = try XCTUnwrap(WallpaperRender.render(try photo(), effect: .dither, fade: 0, dark: true, size: CGSize(width: 260, height: 333)))
+        let px = try XCTUnwrap(Pixels(fill: out, width: out.width, height: out.height))
+        var colours = Set<Int>()
+        for y in stride(from: 0, to: 200, by: 7) {
+            for x in stride(from: 0, to: px.width, by: 5) {
+                let i = px.index(x, y)
+                colours.insert(Int(px.bytes[i]) << 16 | Int(px.bytes[i + 1]) << 8 | Int(px.bytes[i + 2]))
+            }
+        }
+        XCTAssertEqual(colours, [0x000000, 0xE4E8FF])
+    }
+
+    func testMoreFadeStartsHigher() {
+        XCTAssertLessThan(WallpaperRender.fadeStart(1), WallpaperRender.fadeStart(0))
+    }
+
+    // MARK: Settings words
+
+    func testDeletingTheAccountListsWhatGoesInFiveWords() {
+        XCTAssertEqual(SettingsText.deletionItems, ["Account and vault", "Connections and access", "Permissions and activity", "Sign-in", "Data on this phone"])
+    }
+
+    func testTheRecoveryCodeIsNumberedInReadingOrder() {
+        let cells = RecoveryCodeSheet.cells("AAAA-BBBB-CCCC-DDDD")
+        XCTAssertEqual(cells.map(\.number), [1, 2, 3, 4])
+        XCTAssertEqual(cells.last?.group, "DDDD")
+    }
+}

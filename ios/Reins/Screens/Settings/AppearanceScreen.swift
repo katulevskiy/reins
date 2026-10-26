@@ -1,56 +1,39 @@
 import SwiftUI
 
-/// Settings > Appearance (iOS-Settings.png, 04): a small room of your own. The theme (the phone's, Paper or Graphite)
-/// as three small phones, and grain on fields. Changes apply live, no restart.
+/// Settings > Appearance (the Settings board, 04), quiet: the theme (the phone's, Paper or Graphite) as three small
+/// phones, the focal point, and grain on fields. Changes apply at once, widgets too.
 struct AppearanceScreen: View {
     @AppStorage(Appearance.themeKey, store: AppGroup.defaults) private var theme = Appearance.Theme.system.rawValue
     @AppStorage(Appearance.grainKey, store: AppGroup.defaults) private var grain = true
     @Environment(\.feedback) private var feedback
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Appearance")
-                    .textRole(.title)
-                    .foregroundStyle(Palette.ink)
-                    .accessibilityAddTraits(.isHeader)
-                    .padding(.horizontal, 24)
-                HStack(spacing: 12) {
-                    ForEach(Appearance.Theme.allCases, id: \.self) { t in
-                        ThemeTile(theme: t, selected: theme == t.rawValue) {
-                            guard theme != t.rawValue else { return }
-                            feedback.play(.selection)
-                            theme = t.rawValue
-                        }
+        QuietPage("Appearance") {
+            SectionHeader("Theme", quiet: true)
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(Appearance.Theme.allCases, id: \.self) { t in
+                    ThemeTile(theme: t, selected: theme == t.rawValue) {
+                        guard theme != t.rawValue else { return }
+                        feedback.play(.selection)
+                        theme = t.rawValue
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 24)
-                VStack(spacing: 0) {
-                    Toggle(isOn: $grain) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Grain on fields").font(TextRole.row.font()).foregroundStyle(Palette.ink)
-                            Text("A painted finish on requests").textRole(.meta).foregroundStyle(Palette.inkMeta)
-                        }
-                    }
-                    .toggleStyle(SignalSwitchStyle())
-                    .padding(.vertical, 12)
-                    .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
-                    .accessibilityIdentifier("grainSwitch")
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 26)
             }
-            .padding(.bottom, 32)
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
+            SectionHeader("Look", quiet: true)
+                .padding(.top, 4)
+            FlatGroup {
+                SwitchTileRow(title: "Grain on fields", glyph: .appearance, isOn: grain, id: "grainSwitch") { on in
+                    grain = on
+                }
+            }
         }
-        .pageBackground()
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-/// One theme as a small phone: a field's band on top and two lines of text, in that theme's paper; the chosen one is
-/// ringed in violet.
+/// One theme as a small phone: a field's band (with its grain) on top and three lines of text, in that theme's paper;
+/// the chosen one is ringed in violet.
 private struct ThemeTile: View {
     var theme: Appearance.Theme
     var selected: Bool
@@ -60,43 +43,48 @@ private struct ThemeTile: View {
         Button(action: action) {
             VStack(spacing: 8) {
                 phone
-                    .frame(height: 112)
                     .padding(3)
-                    .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).strokeBorder(selected ? Palette.violet : .clear, lineWidth: 2))
+                    .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).strokeBorder(selected ? Palette.violet : .clear, lineWidth: 2))
                 Text(theme.title)
-                    .font(RFont.sans(13.5, selected ? .semibold : .regular))
+                    .font(RFont.sans(14, selected ? .semibold : .regular))
                     .foregroundStyle(selected ? Palette.ink : Palette.ink2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
-        .buttonStyle(PressDim())
+        .buttonStyle(PressDimsStyle())
         .accessibilityLabel(theme.title)
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
         .accessibilityIdentifier("theme:\(theme.rawValue)")
     }
 
+    private static let paper = Color(uiColor: UIColor(hex: 0xF5F5F7))
+    private static let graphite = Color(uiColor: UIColor(hex: 0x111114))
+
     /// The phone: half and half for System, else that theme's paper.
-    @ViewBuilder private var phone: some View {
-        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-        ZStack {
+    private var phone: some View {
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        return ZStack(alignment: .top) {
             switch theme {
-            case .system:
-                HStack(spacing: 0) {
-                    Color(uiColor: UIColor(hex: 0xF5F5F7))
-                    Color(uiColor: UIColor(hex: 0x111114))
-                }
-            case .paper: Color(uiColor: UIColor(hex: 0xF5F5F7))
-            case .graphite: Color(uiColor: UIColor(hex: 0x111114))
+            case .system: HStack(spacing: 0) { Self.paper; Self.graphite }
+            case .paper: Self.paper
+            case .graphite: Self.graphite
             }
-            VStack(alignment: .leading, spacing: 6) {
-                FieldKind.push.fill.frame(height: 34)
-                Capsule().fill(Color.gray.opacity(0.35)).frame(width: 46, height: 4).padding(.horizontal, 8)
-                Capsule().fill(Color.gray.opacity(0.25)).frame(width: 30, height: 4).padding(.horizontal, 8)
-                Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 0) {
+                FieldSurface(kind: .push).frame(height: 46)
+                bar(50, 0.4).padding(.top, 10)
+                bar(34, 0.28).padding(.top, 7)
+                bar(44, 0.28).padding(.top, 7)
             }
         }
+        .frame(height: 150)
         .clipShape(shape)
         .overlay(shape.strokeBorder(Palette.rule, lineWidth: 1))
+    }
+
+    private func bar(_ width: CGFloat, _ opacity: Double) -> some View {
+        Capsule().fill(Color(white: 0.5).opacity(opacity)).frame(width: width, height: 5).padding(.horizontal, 10)
     }
 }

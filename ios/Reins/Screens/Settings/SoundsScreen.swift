@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Settings > Sounds & haptics (the Android app's `SoundsScreen`): one master above everything (notifications
-/// included), the sounds by kind with a volume, haptics with a strength, and a list that plays the real thing. The
-/// switches here are the only ones Reins listens to; the ring/silent switch and the volume buttons still shape what is
-/// heard (see `SoundPlayer`).
+/// Settings > Sounds (the Settings board, 03; the Android app's `SoundsScreen`), quiet: one master above everything
+/// (notifications included), the sounds by kind with a volume, haptics with a strength, and chips that play the real
+/// thing. The switches here are the only ones Reins listens to; the ring/silent switch and the volume buttons still
+/// shape what is heard (see `SoundPlayer`).
 struct SoundsScreen: View {
     @Environment(\.feedback) private var feedback
 
@@ -12,145 +12,60 @@ struct SoundsScreen: View {
 
     var body: some View {
         let s = store.settings
-        List {
-            Section {
-                SwitchRow(title: "Sounds & haptics", glyph: .speaker, isOn: s.master, id: "soundsMaster") { on in
+        QuietPage("Sounds") {
+            FlatGroup {
+                SwitchTileRow(title: "Sounds & haptics", glyph: .speaker, isOn: s.master, id: "soundsMaster") { on in
                     store.update { $0.master = on }
                 }
-            } footer: {
-                FooterText("Off silences every sound and vibration in Reins, its notifications included.")
             }
+            .padding(.top, 14)
 
-            Section {
-                SwitchRow(title: "Sounds", subtitle: "Chimes for requests and answers", glyph: .speaker, isOn: s.sounds,
-                          enabled: s.master, id: "sounds") { on in store.update { $0.sounds = on } }
-                SwitchRow(title: "Interface", subtitle: nil,
-                          glyph: .settings, isOn: s.interfaceSounds, enabled: s.soundsOn, id: "interfaceSounds") { on in
+            QuietHelpHeader(title: "Sounds", help: "The first switch silences every sound and vibration in Reins, its notifications included. "
+                + "These play while Reins is open; in the background the same chimes come with its notifications. "
+                + "When open: a new request chimes while Reins is on screen too; the ring/silent switch mutes it.")
+            FlatGroup {
+                SwitchTileRow(title: "Chimes", glyph: .bell, isOn: s.sounds, enabled: s.master, id: "sounds") { on in
+                    store.update { $0.sounds = on }
+                }
+                SwitchTileRow(title: "Interface", glyph: .appearance, isOn: s.interfaceSounds, enabled: s.soundsOn, id: "interfaceSounds") { on in
                     store.update { $0.interfaceSounds = on }
                 }
-                SwitchRow(title: "Requests", subtitle: nil, glyph: .bell,
-                          isOn: s.requestSounds, enabled: s.soundsOn, id: "requestSounds") { on in store.update { $0.requestSounds = on } }
-                SwitchRow(title: "Sound when open", subtitle: nil, glyph: .phone,
-                          isOn: s.soundWhenOpen, enabled: s.allows(.requests), id: "soundWhenOpen") { on in
+                SwitchTileRow(title: "Requests", glyph: .tray, isOn: s.requestSounds, enabled: s.soundsOn, id: "requestSounds") { on in
+                    store.update { $0.requestSounds = on }
+                }
+                SwitchTileRow(title: "When open", glyph: .phone, isOn: s.soundWhenOpen, enabled: s.allows(.requests), id: "soundWhenOpen") { on in
                     store.update { $0.soundWhenOpen = on }
                 }
-                SwitchRow(title: "Alerts", subtitle: nil,
-                          glyph: .warning, isOn: s.alertSounds, enabled: s.soundsOn, id: "alertSounds") { on in
+                SwitchTileRow(title: "Alerts", glyph: .warning, isOn: s.alertSounds, enabled: s.soundsOn, id: "alertSounds") { on in
                     store.update { $0.alertSounds = on }
                 }
-                SwitchRow(title: "Autopilot", subtitle: nil, glyph: .autopilot,
-                          isOn: s.autopilotSounds, enabled: s.soundsOn, id: "autopilotSounds") { on in store.update { $0.autopilotSounds = on } }
+                SwitchTileRow(title: "Autopilot", glyph: .autopilot, isOn: s.autopilotSounds, enabled: s.soundsOn, id: "autopilotSounds") { on in
+                    store.update { $0.autopilotSounds = on }
+                }
                 VolumeRow(store: store, engine: engine)
-            } header: {
-                HeaderText("Sounds")
-            } footer: {
-                FooterText("While Reins is open. In the background the same chimes come with its notifications. "
-                    + "Sound when open: a new request chimes while Reins is on screen too; the ring/silent switch mutes it.")
             }
 
-            Section {
-                SwitchRow(title: "Haptics", subtitle: engine?.hapticTier, glyph: .haptics, isOn: s.haptics,
-                          enabled: s.master, id: "haptics") { on in store.update { $0.haptics = on } }
-                StrengthRow(store: store)
-            } header: {
-                HeaderText("Haptics")
+            SectionHeader("Haptics", quiet: true)
+            FlatGroup {
+                SwitchTileRow(title: "Haptics", glyph: .haptics, isOn: s.haptics, enabled: s.master, id: "haptics") { on in
+                    store.update { $0.haptics = on }
+                }
             }
+            StrengthRow(store: store)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
 
-            Section {
-                PreviewChips(engine: engine, enabled: s.soundsOn || s.hapticsOn)
-                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            } header: {
-                HeaderText("Feel them")
-            } footer: {
-                FooterText("Each plays its sound and haptic, even when that kind of sound is off.")
-            }
+            SectionHeader("Feel them", quiet: true)
+            PreviewChips(engine: engine, enabled: s.soundsOn || s.hapticsOn)
+                .padding(.horizontal, 20)
         }
-        .listStyle(.insetGrouped)
-        .listRowSeparatorTint(Palette.rule)
-        .scrollContentBackground(.hidden)
-        .pageBackground()
-        .navigationTitle("Sounds and haptics")
-        .navigationBarTitleDisplayMode(.large)
     }
 }
 
 // MARK: Rows
 
-private struct HeaderText: View {
-    var text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
-        Text(text).textRole(.section).foregroundStyle(Palette.inkMeta)
-    }
-}
-
-private struct FooterText: View {
-    var text: String
-    init(_ text: String) { self.text = text }
-
-    var body: some View { GroupFooter(text) }
-}
-
-/// A glyph, a title with an explanation, and a switch. Greyed out like the switch when a switch above turns it off.
-private struct SwitchRow: View {
-    var title: String
-    var subtitle: String?
-    var glyph: Glyph
-    var isOn: Bool
-    var enabled = true
-    var id: String
-    var onChange: (Bool) -> Void
-
-    @Environment(\.feedback) private var feedback
-
-    var body: some View {
-        Toggle(isOn: Binding(get: { isOn }, set: { on in
-            onChange(on)
-            // After the change: turning the master off is silent, turning it on answers.
-            feedback.play(.toggle(on))
-        })) {
-            RowLabel(title: title, subtitle: subtitle, glyph: glyph, enabled: enabled)
-        }
-        .disabled(!enabled)
-        .listRowBackground(Color.clear)
-        .accessibilityIdentifier(id)
-    }
-}
-
-private struct RowLabel: View {
-    var title: String
-    var subtitle: String?
-    var glyph: Glyph
-    var enabled = true
-
-    var body: some View {
-        HStack(spacing: 14) {
-            GlyphIcon(glyph, size: 20)
-                .foregroundStyle(Palette.ink2)
-                .frame(width: 24)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .textRole(.row)
-                    .foregroundStyle(enabled ? Palette.ink : Palette.inkMeta)
-                if let subtitle {
-                    Text(subtitle)
-                        .textRole(.meta)
-                        .foregroundStyle(Palette.inkMeta)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .opacity(enabled ? 1 : 0.6)
-        .padding(.vertical, 2)
-    }
-}
-
-/// Ten steps of volume. The detents climb the scale as the thumb moves, heard at the level they set; letting go plays
-/// the selection sound once more at the final level.
+/// Ten steps of volume, between a small and a big speaker. The detents climb the scale as the thumb moves, heard at
+/// the level they set; letting go plays the selection sound once more at the final level.
 private struct VolumeRow: View {
     static let steps = 10
 
@@ -161,16 +76,9 @@ private struct VolumeRow: View {
     var body: some View {
         let s = store.settings
         let enabled = s.soundsOn
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 10) {
-                RowLabel(title: "Volume", subtitle: nil, glyph: .speaker, enabled: enabled)
-                Spacer(minLength: 0)
-                Text("\(Int((s.volume * 100).rounded()))%")
-                    .font(RFont.mono(14, .medium))
-                    .foregroundStyle(Palette.ink2)
-                    .monospacedDigit()
-                    .accessibilityIdentifier("volumeValue")
-            }
+        let percent = Int((s.volume * 100).rounded())
+        HStack(spacing: 12) {
+            GlyphIcon(.speaker, size: 16).foregroundStyle(Palette.inkMeta).accessibilityHidden(true)
             Slider(
                 value: Binding(get: { Double(store.settings.volume) }, set: { change(Float($0)) }),
                 in: 0...1,
@@ -181,12 +89,13 @@ private struct VolumeRow: View {
             )
             .tint(Palette.violet)
             .accessibilityLabel("Volume")
-            .accessibilityValue("\(Int((s.volume * 100).rounded())) percent")
+            .accessibilityValue("\(percent) percent")
             .accessibilityIdentifier("volume")
+            GlyphIcon(.speaker, size: 22).foregroundStyle(Palette.ink2).accessibilityHidden(true)
         }
+        .frame(minHeight: 56)
         .disabled(!enabled)
-        .padding(.vertical, 4)
-        .listRowBackground(Color.clear)
+        .opacity(enabled ? 1 : 0.4)
     }
 
     private func change(_ value: Float) {
@@ -205,21 +114,17 @@ private struct StrengthRow: View {
 
     var body: some View {
         let s = store.settings
-        VStack(alignment: .leading, spacing: 12) {
-            RowLabel(title: "Strength", subtitle: "How firmly taps and alerts are felt", glyph: .haptics, enabled: s.hapticsOn)
-            Chooser(HapticStrength.allCases.map { level in
-                Chooser.Segment(id: "strength:\(level.label)", title: level.label, selected: s.strength == level) {
-                    store.update { $0.strength = level }
-                    feedback.play(.selection)
-                }
-            })
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("strength")
-        }
+        Chooser(HapticStrength.allCases.map { level in
+            Chooser.Segment(id: "strength:\(level.label)", title: level.label, selected: s.strength == level) {
+                store.update { $0.strength = level }
+                feedback.play(.selection)
+            }
+        })
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Strength")
+        .accessibilityIdentifier("strength")
         .disabled(!s.hapticsOn)
         .opacity(s.hapticsOn ? 1 : 0.5)
-        .padding(.vertical, 4)
-        .listRowBackground(Color.clear)
     }
 }
 
@@ -286,7 +191,6 @@ private struct PreviewChips: View {
                 .accessibilityIdentifier("try:\(sample.title)")
             }
         }
-        .padding(.horizontal, 4)
     }
 
     private func play(_ sample: Sample) {
