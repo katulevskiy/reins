@@ -1,7 +1,8 @@
 import XCTest
 
-/// Walks Autopilot in the `-demo` app the way a user would: the modes, a bypass held to confirm (timed and until
-/// turned off), Lock down as a plain tap, the model, a profile and its thresholds, "Try it". Screenshots go to the test's attachments and, when `REINS_SHOTS` names a folder, there too.
+/// Walks Autopilot in the `-demo` app the way a user would: Manual and Auto, "For a while" (a bypass held to confirm,
+/// timed and until turned off; Overnight and Lock down on a tap), the running field's collapse, the model, a profile
+/// and its thresholds, "Try it". Screenshots go to the test's attachments and, when `REINS_SHOTS` names a folder, there too.
 final class AutopilotUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -140,39 +141,50 @@ final class AutopilotUITests: XCTestCase {
         waitForExpectations(timeout: timeout)
     }
 
-    /// Manual → Auto → Manual → Auto: each time the card in force is selected, the other is not, and both stay
+    /// Opens "For a while" and picks one of its modes (Overnight, Lockdown or Bypass) from the iOS menu.
+    private func pickTimed(_ mode: String) {
+        tap("forAWhile")
+        let byId = app.buttons.matching(identifier: "mode:\(mode)").firstMatch
+        let item = byId.waitForExistence(timeout: 5) ? byId : app.buttons[mode.prefix(1).uppercased() + mode.dropFirst()].firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "no \(mode) in the menu")
+        item.tap()
+    }
+
+    /// Manual → Auto → Manual → Auto: each time the half in force is selected, the other is not, and both stay
     /// enabled (nothing is left dimmed or pressed).
     func testManualAndAutoSwitchBackAndForth() {
         launch()
-        waitFor("mode:manual")
-        selected("mode:manual")
+        waitFor("modeSwitch:manual")
+        selected("modeSwitch:manual")
         for (picked, other) in [("auto", "manual"), ("manual", "auto"), ("auto", "manual")] {
-            tap("mode:\(picked)")
-            selected("mode:\(picked)")
-            notSelected("mode:\(other)")
-            XCTAssertTrue(element("mode:\(picked)").isEnabled, "\(picked) stays enabled")
-            XCTAssertTrue(element("mode:\(other)").isEnabled, "\(other) stays enabled")
-            XCTAssertTrue(element("mode:\(other)").isHittable, "\(other) can be tapped again")
+            tap("modeSwitch:\(picked)")
+            selected("modeSwitch:\(picked)")
+            notSelected("modeSwitch:\(other)")
+            XCTAssertTrue(element("modeSwitch:\(picked)").isEnabled, "\(picked) stays enabled")
+            XCTAssertTrue(element("modeSwitch:\(other)").isEnabled, "\(other) stays enabled")
+            XCTAssertTrue(element("modeSwitch:\(other)").isHittable, "\(other) can be tapped again")
         }
         shot("autopilot-switched")
     }
 
-    /// "Mode" has its (?) beside it, and what the modes do opens under it.
-    func testTheModeHeaderExplainsTheModes() {
+    /// "For a while" opens the menu of the three timed modes.
+    func testForAWhileOpensTheMenuOfTimedModes() {
         launch()
-        let header = waitFor("modeHeader")
-        header.buttons["help"].firstMatch.tap()
-        XCTAssertTrue(waitFor("modeHelp").label.contains("Lock down denies everything that would ask"))
+        tap("forAWhile")
+        for mode in ["overnight", "lockdown", "bypass"] {
+            XCTAssertTrue(app.buttons.matching(identifier: "mode:\(mode)").firstMatch.waitForExistence(timeout: 5), "\(mode) is in the menu")
+        }
+        shot("trust-for-a-while-menu")
     }
 
     func testBypassIsHeldAndLockDownIsAPlainTap() {
         launch()
-        waitFor("mode:manual")
-        selected("mode:manual")
+        waitFor("modeSwitch:manual")
+        selected("modeSwitch:manual")
         shot("autopilot-manual")
-        tap("mode:auto")
-        selected("mode:auto")
-        tap("mode:bypass")
+        tap("modeSwitch:auto")
+        selected("modeSwitch:auto")
+        pickTimed("bypass")
         waitFor("confirmBypass")
         shot("autopilot-bypass-sheet")
         tap("bypass:60")
@@ -181,53 +193,39 @@ final class AutopilotUITests: XCTestCase {
         XCTAssertTrue(element("confirmBypass").exists, "a tap does not start a bypass")
         waitFor("confirmBypass").press(forDuration: 2.6)
         waitFor("bypassClock")
-        text("Approving without asking")
         shot("autopilot-bypass")
         tap("stopBypass")
-        selected("mode:auto")
+        selected("modeSwitch:auto")
         // Lock down: no dialog.
-        tap("mode:lockdown")
+        pickTimed("lockdown")
         waitFor("endLockdown")
         XCTAssertFalse(app.alerts.firstMatch.exists, "Lock down asks nothing")
         shot("autopilot-lockdown")
         tap("endLockdown")
         // Lockdown replaced the mode picked before it, so it ends in Manual (as on Android).
-        waitFor("mode:lockdown")
-        selected("mode:manual")
+        waitFor("modeSwitch:manual")
+        selected("modeSwitch:manual")
     }
 
-    /// Overnight opens the bypass sheet in its own look: its (?) says it decides like Auto when the model does not rate
-    /// risk (the demo's does not), it takes what to do with what is too risky, it is held to start, runs with its ring
-    /// and stops back to the mode it interrupted.
-    func testOvernightIsHeldRunsAndStopsBackToTheModeItInterrupted() {
+    /// Overnight starts on a tap from "For a while" (the owner's check is the core's), runs as Trust's field with what
+    /// to do with what is too risky under it, and stops back to the mode it interrupted.
+    func testOvernightStartsOnATapRunsAndStopsBackToTheModeItInterrupted() {
         launch()
-        tap("mode:auto")
-        selected("mode:auto")
-        tap("mode:overnight")
-        let sheet = waitFor("overnightDialog")
-        waitFor("overnight:480")
-        selected("overnight:480")
-        sheet.buttons["help"].firstMatch.tap()
-        XCTAssertTrue(waitFor("helpText").label.contains("decides like Auto"))
+        tap("modeSwitch:auto")
+        selected("modeSwitch:auto")
+        pickTimed("overnight")
+        waitFor("overnightClock")
         selected("whenRisky:wait")
         tap("whenRisky:deny")
         selected("whenRisky:deny")
-        shot("autopilot-overnight-sheet")
-        // A tap is not enough: held for two seconds.
-        waitFor("confirmOvernight").tap()
-        XCTAssertTrue(element("confirmOvernight").exists, "a tap does not start Overnight")
-        waitFor("confirmOvernight").press(forDuration: 2.6)
-        waitFor("overnightClock")
-        text("Holds what is too risky")
-        selected("whenRisky:deny")
         shot("autopilot-overnight")
         tap("stopOvernight")
-        selected("mode:auto")
+        selected("modeSwitch:auto")
     }
 
     func testABypassCanRunUntilTurnedOff() {
         launch()
-        tap("mode:bypass")
+        pickTimed("bypass")
         tap("bypass:custom")
         waitFor("bypassForDialog")
         tap("bypassFor:untilOff")
@@ -237,16 +235,15 @@ final class AutopilotUITests: XCTestCase {
         // Back on the first sheet, Custom shows the choice.
         XCTAssertTrue(waitFor("bypass:custom").label.contains("Until off"))
         waitFor("confirmBypass").press(forDuration: 2.6)
-        waitFor("bypassClock")
-        text("On until you stop it")
+        XCTAssertTrue(waitFor("bypassClock").label.contains("until you stop it"))
         shot("autopilot-bypass-until-off")
         tap("stopBypass")
-        waitFor("mode:bypass")
+        waitFor("modeSwitch:manual")
     }
 
     func testACustomLengthStartsFromItsOwnSheet() {
         launch()
-        tap("mode:bypass")
+        pickTimed("bypass")
         tap("bypass:custom")
         waitFor("bypassForDialog")
         let stepper = waitFor("bypassStepper")
@@ -255,20 +252,19 @@ final class AutopilotUITests: XCTestCase {
         XCTAssertEqual(stepper.value as? String, "4 days")
         waitFor("confirmBypassFor").press(forDuration: 2.6)
         waitFor("bypassClock")
-        text("Approving without asking")
         tap("stopBypass")
     }
 
     func testTheModelDownloadsWithProgressAndCanBeDeleted() {
         launch(["-demoNoModel"])
-        text("Get Autopilot's score")
-        XCTAssertTrue(waitFor("mode:auto").label.contains("Needs the model"))
+        text("Auto needs the model")
+        XCTAssertFalse(waitFor("modeSwitch:auto").isEnabled, "Auto waits for the model")
         shot("autopilot-no-model")
         tap("downloadModel")
         waitFor("modelProgress")
         shot("autopilot-downloading")
-        // Installed: the week's numbers take the offer's place; the model's row is further down Trust, under the grants.
-        waitFor("stat:scored", timeout: 15)
+        // Installed: the offer goes; the model's row is further down Trust, under the grants.
+        XCTAssertTrue(element("modelOffer").waitForNonExistence(timeout: 15), "the offer goes once the model is here")
         scrollTo("modelInstalled")
         waitFor("modelInstalled")
         tap("modelRow")
@@ -325,9 +321,9 @@ final class AutopilotUITests: XCTestCase {
         shot("profile-custom")
     }
 
-    /// A running bypass, Overnight or lockdown folds into a compact bar as Trust scrolls: the label line and the timer
-    /// stay, the button moves to the timer's right and stays a full target; back at the top it opens again.
-    func testTheRunningFieldFoldsIntoACompactBarOnScroll() {
+    /// A running bypass, Overnight or lockdown collapses in two steps as Trust scrolls: full, then short (the clock and
+    /// Stop on one line), then mini (only the island's row, Stop a full target); back at the top it is full again.
+    func testTheRunningFieldCollapsesInTwoStepsOnScroll() {
         for (mode, button, clock) in [("bypass", "stopBypass", "bypassClock"), ("overnight", "stopOvernight", "overnightClock"), ("lockdown", "endLockdown", nil)] {
             launchRunning(["-demoMode", mode])
             scrollRunningFieldToTop()
@@ -335,54 +331,48 @@ final class AutopilotUITests: XCTestCase {
             if let clock { waitFor(clock) }
             shot("trust-\(mode)-open")
 
-            // A slow drag held before letting go stops without momentum, half way through the fold.
-            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
-            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.64)), withVelocity: .slow, thenHoldForDuration: 0.4)
-            waitForFold("folding")
-            shot("trust-\(mode)-folding")
+            // A slow drag held before letting go stops without momentum, past the full field's clock.
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.53)), withVelocity: .slow, thenHoldForDuration: 0.4)
+            waitForFold("short")
+            shot("trust-\(mode)-short")
 
             app.swipeUp()
             app.swipeUp()
             waitForFold("compact")
             if let clock { waitFor(clock) }
-            XCTAssertTrue(element("heroMode").exists, "the sentence keeps its label when compact")
             let stop = waitFor(button)
             // To the point: a frame measured between fractional positions reads 43.999999999999986.
             XCTAssertGreaterThanOrEqual(stop.frame.height.rounded(), 44, "\(button) stays a full touch target")
-            XCTAssertLessThan(stop.frame.maxY, app.frame.minY + 200, "\(button) moved up into the bar")
+            XCTAssertLessThan(stop.frame.maxY, app.frame.minY + 120, "\(button) moved up into the island's row")
             shot("trust-\(mode)-compact")
 
             scrollRunningFieldToTop()
             waitForFold("open")
 
-            // Compact again, a finger on the button stops the mode. (XCUITest's isHittable says no here: the faded
-            // sentence, kept for VoiceOver and passing touches through, overlaps the button's frame. The tap proves it.)
+            // Mini again, a finger on Stop stops the mode.
             app.swipeUp()
             app.swipeUp()
             waitForFold("compact")
-            let compactStop = waitFor(button)
-            compactStop.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            XCTAssertTrue(element("runningField").waitForNonExistence(timeout: 8), "\(button) in the compact bar stopped \(mode)")
+            waitFor(button).coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            XCTAssertTrue(element("runningField").waitForNonExistence(timeout: 8), "\(button) in the mini bar stopped \(mode)")
             app.terminate()
         }
     }
 
-    /// A bypass that approved 100 requests lists the latest three; "Show all 97" opens the rest in place and "Show less"
-    /// folds them back. Trust opens folded again.
-    func testABypassListFoldsToItsLatestThree() {
+    /// A bypass that approved 100 requests shows its newest with the rest stacked under it; "+99" opens them in place
+    /// and Show less folds them back. Trust opens folded again.
+    func testABypassListStacksUnderItsNewest() {
         launchRunning(["-demoMode", "bypass", "-demoRunningEntries", "100"])
         let showAll = waitFor("runningShowAll")
-        // The mood line says what the bypass did (12 minutes of it; all of today unless the test runs just after midnight).
-        XCTAssertTrue(waitFor("trustMood").label.hasPrefix("Bypass approved"), "the mood line counts the bypass, not Autopilot")
-        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'runningEntry:'")).count, 3)
+        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'runningEntry:'")).count, 1)
         shot("trust-bypass-list-folded")
-        // The 100 seeded and whatever else the demo's bypass decided in its 12 minutes, all but the three shown.
+        // The 100 seeded and whatever else the demo's bypass decided in its 12 minutes, all but the one shown.
         let hidden = Int(showAll.label.replacingOccurrences(of: "Show all ", with: "")) ?? 0
-        XCTAssertGreaterThanOrEqual(hidden, 97, showAll.label)
+        XCTAssertGreaterThanOrEqual(hidden, 99, showAll.label)
         showAll.tap()
-        // Open, the list runs on (Show less is at its far end, not yet laid out): more rows than the three, and no Show all.
-        XCTAssertTrue(showAll.waitForNonExistence(timeout: 5), "Show all opened the list")
-        XCTAssertGreaterThan(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'runningEntry:'")).count, 3)
+        XCTAssertTrue(showAll.waitForNonExistence(timeout: 5), "+99 opened the stack")
+        XCTAssertGreaterThan(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'runningEntry:'")).count, 1)
         shot("trust-bypass-list-open")
         XCTAssertTrue(app.openTab("activity"))
         XCTAssertTrue(app.openTab("trust"))
@@ -411,7 +401,10 @@ final class AutopilotUITests: XCTestCase {
         scrollTo("openTryIt")
         tap("openTryIt")
         waitFor("situation")
-        tap("example:Injection attempt")
+        // The examples scroll sideways: bring the fourth into view.
+        let injection = waitFor("example:Injection attempt")
+        for _ in 0..<3 where injection.frame.maxX > app.frame.maxX { waitFor("example:Push a branch").swipeLeft() }
+        injection.tap()
         tap("evaluate")
         waitFor("verdictWord", timeout: 8)
         text("Deny")

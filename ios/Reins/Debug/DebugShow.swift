@@ -1,7 +1,7 @@
 #if DEBUG
 /// `-show <place>` at launch (screenshots, manual checks): a tab (`activity`, `trust`, `connections`, `settings`) or a
 /// page in it: `sounds`, `devices`, `passkeys`, `appearance`, `vault`, `vaultAdd`, `vaultItem:<id>`, `vaultNew:<kind>`, `connection:<id>`,
-/// `gmail`, `service:<id>`, `mcp:<id>`, `connectSheet`, `addService`, `typeCode`, `join:<id>`, `grant:<id>`, `profile:<id>`, `tryit`, `ended`, `newgrant`, `entry:<id>` (an Activity entry), and `tour` (its page
+/// `gmail`, `service:<id>`, `mcp:<id>`, `connectSheet`, `addService`, `typeCode`, `join:<id>`, `grant:<id>`, `profile:<id>`, `tryit`, `ended`, `permissions`, `accountPermissions:<service>/<account>[/temp]`, `newgrant`, `entry:<id>` (an Activity entry), and `tour` (its page
 /// from `-tourPage <n>`, 0 to 4).
 @MainActor
 enum DebugShow {
@@ -24,6 +24,11 @@ enum DebugShow {
         case "profile": model.show(.autopilotProfile(id), in: .trust)
         case "tryit": model.show(.tryIt(nil), in: .trust)
         case "ended": model.show(.expiredGrants, in: .trust)
+        case "permissions": model.show(.permissions, in: .trust)
+        case "accountPermissions":
+            // `accountPermissions:gmail/me@gmail.com`, or `.../temp` for a temporary one.
+            let parts = id.split(separator: "/").map(String.init)
+            model.show(.accountPermissions(service: parts.first ?? "gmail", account: parts.count > 1 ? parts[1] : "", temporary: parts.count > 2), in: .trust)
         case "newgrant": model.show(.newGrant(token: 1), in: .trust)
         case "tour": model.startTour()
         case "typeCode":

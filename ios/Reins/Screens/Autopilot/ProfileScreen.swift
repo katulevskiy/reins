@@ -20,7 +20,6 @@ struct ProfileScreen: View {
                 content(profile)
                     .frame(maxWidth: 680)
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
                     .padding(.bottom, 32)
             } else if ap.loaded {
                 EmptyState(symbol: "person.2", title: "Not found", message: "This profile no longer exists.")
@@ -42,7 +41,7 @@ struct ProfileScreen: View {
                         feedback.play(.tap)
                         rename = true
                     } label: {
-                        Image(systemName: "pencil")
+                        GlyphIcon(.pencil, size: 18).foregroundStyle(Palette.ink)
                     }
                     .accessibilityLabel("Rename")
                     .accessibilityIdentifier("renameProfile")
@@ -102,19 +101,21 @@ struct ProfileScreen: View {
     }
 
     private func content(_ profile: ProfileView) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            ProfileHeader(profile: profile, ais: AutopilotText.profileAis(
-                profile, settings: model.autopilot, connections: model.connections.map { ($0.id, $0.label) }
-            ))
+        VStack(alignment: .leading, spacing: 0) {
+            ProfileHeader(profile: profile, ais: profileConnections(profile))
             if ap.error != nil || ap.notice != nil {
                 VStack(spacing: 8) {
                     if let error = ap.error { IntegrationBanner(text: error, kind: .error).accessibilityIdentifier("profileError") }
                     if let notice = ap.notice { IntegrationBanner(text: notice).accessibilityIdentifier("profileNotice") }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                HelpHeader(title: "How sure before it acts", help: AutopilotText.howSureHelp).padding(.horizontal, 12)
+            SectionHeader("How sure", glyph: .shieldCheck) {
+                HelpButton(text: AutopilotText.howSureHelp).frame(height: 20)
+            }
+            VStack(alignment: .leading, spacing: 12) {
                 Chooser(AutopilotText.presets.map { p in
                     let name = AutopilotText.presetName(p)
                     return Chooser.Segment(id: "preset:\(name.lowercased())", title: name, selected: profile.preset == p) {
@@ -136,23 +137,28 @@ struct ProfileScreen: View {
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
+            .padding(.horizontal, 16)
             .animation(.smooth(duration: 0.25), value: profile.preset)
 
-            AutopilotGroup(header: "Kinds of request") {
-                if profile.memoryCount > 0 {
-                    Text(AutopilotText.learningLine(profile))
-                        .font(RFont.sans(12.5))
-                        .foregroundStyle(Palette.inkMeta)
-                        .padding(.horizontal, 14)
-                        .padding(.top, 10)
-                        .accessibilityIdentifier("learningLine")
-                }
+            SectionHeader("Kinds", trailing: "\(profile.classes.count)")
+            if profile.memoryCount > 0 {
+                Text(AutopilotText.learningLine(profile))
+                    .textRole(.sub)
+                    .foregroundStyle(Palette.inkMeta)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier("learningLine")
+            }
+            RaisedGroup(inset: 62) {
                 if profile.classes.isEmpty {
-                    EmptyState(symbol: "sparkles", title: "Nothing learned yet", message: "Your answers teach it.")
+                    Text("Nothing learned yet. Your answers teach it.")
+                        .textRole(.body)
+                        .foregroundStyle(Palette.inkMeta)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("noClasses")
                 }
-                ForEach(Array(profile.classes.enumerated()), id: \.element.classKey) { i, cls in
-                    if i > 0 { RowDivider(inset: 60) }
+                ForEach(profile.classes, id: \.classKey) { cls in
                     KindRow(cls: cls) { locked in
                         if locked == false {
                             unlocking = cls
@@ -163,85 +169,79 @@ struct ProfileScreen: View {
                 }
             }
 
-            AutopilotGroup(header: nil) {
-                AutopilotRow(title: "Try this profile", symbol: "flask", tint: Palette.kindPush, chevron: true, identifier: "tryProfile") {
-                    model.push(.tryIt(profile.id))
-                }
+            RaisedGroup(inset: 62) {
+                Button { model.push(.tryIt(profile.id)) } label: { TileRow("Try this profile", glyph: .flask) }
+                    .buttonStyle(PressDimsStyle())
+                    .feedbackTap(.tap, feedback)
+                    .accessibilityIdentifier("tryProfile")
             }
+            .padding(.top, 22)
 
-            AutopilotGroup(header: nil) {
+            RaisedGroup(inset: 62) {
                 if !profile.isDefault {
-                    AutopilotRow(title: "Use for every AI by default", symbol: "star", identifier: "makeDefault") {
-                        Task { await ap.makeDefault(profile.id) }
-                    }
-                    RowDivider(inset: 64)
+                    Button { Task { await ap.makeDefault(profile.id) } } label: { TileRow("Use for every AI by default", glyph: .star, chevron: false) }
+                        .buttonStyle(PressDimsStyle())
+                        .accessibilityIdentifier("makeDefault")
                 }
-                AutopilotRow(title: "Forget what it learned", symbol: "arrow.counterclockwise", identifier: "resetProfile") { reset = true }
+                Button { reset = true } label: { TileRow("Forget what it learned", glyph: .undo, chevron: false) }
+                    .buttonStyle(PressDimsStyle())
+                    .accessibilityIdentifier("resetProfile")
                 if ap.profiles.count > 1 {
-                    RowDivider(inset: 64)
-                    AutopilotRow(title: "Delete profile", symbol: "trash", destructive: true, identifier: "deleteProfile") { delete = true }
+                    Button { delete = true } label: { TileRow("Delete profile", glyph: .trash, danger: true, chevron: false) }
+                        .buttonStyle(PressDimsStyle())
+                        .accessibilityIdentifier("deleteProfile")
                 }
             }
+            .padding(.top, 12)
         }
+    }
+
+    /// The AIs that use this profile, for their avatars.
+    private func profileConnections(_ profile: ProfileView) -> [ConnectionView] {
+        let names = AutopilotText.profileAis(profile, settings: model.autopilot, connections: model.connections.map { ($0.id, $0.label) })
+        return model.connections.filter { c in names.contains(c.label) || names.contains(untrusted(c.label)) }
     }
 }
 
-/// The emoji, the name, and the AIs that use it; then its numbers.
+/// The profile's tile and name (with Default), then the AIs that use it as overlapping avatars and how many.
 private struct ProfileHeader: View {
     var profile: ProfileView
-    var ais: [String]
+    var ais: [ConnectionView]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
-                ProfileTile(profile: profile, size: 58)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 8) {
-                        Text(untrusted(profile.name))
-                            .font(RFont.display(29.5))
-                            .foregroundStyle(Palette.ink)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                            .accessibilityAddTraits(.isHeader)
-                        if profile.isDefault {
-                            StatusPill(text: "Default", tint: Palette.violet).accessibilityIdentifier("defaultTag")
-                        }
-                    }
-                    Text(ais.isEmpty ? "No AI yet" : ais.map { untrustedName($0, limit: 40) }.joined(separator: ", "))
-                        .textRole(.meta)
-                        .foregroundStyle(Palette.inkMeta)
-                        .lineLimit(2)
+                ProfileTile(profile: profile, size: 52)
+                Text(untrusted(profile.name))
+                    .textRole(.title)
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                if profile.isDefault {
+                    Pill("Default", tone: .violet).accessibilityIdentifier("defaultTag")
                 }
             }
-            .padding(.horizontal, 4)
-            // Its numbers in the serif between two hairlines, as Trust's week.
-            HStack(alignment: .top, spacing: 8) {
-                stat("\(profile.memoryCount)", profile.memoryCount == 1 ? "decision" : "decisions").accessibilityIdentifier("statMemory")
-                stat(AutopilotText.share(profile.agreement), "matched you", tint: profile.agreement == nil ? Palette.ink : Palette.success)
-                    .accessibilityIdentifier("statAgreement")
-                stat("\(profile.classes.filter(\.autoApprove).count)", "kinds on Auto", suffix: "/\(profile.classes.count)")
-                    .accessibilityIdentifier("statKinds")
+            HStack(spacing: 10) {
+                HStack(spacing: -8) {
+                    ForEach(ais.prefix(7), id: \.id) { c in
+                        ConnectionAvatar(connection: c, size: 30)
+                            .padding(2)
+                            .background(Palette.paper, in: Circle())
+                    }
+                }
+                .accessibilityHidden(true)
+                Text(ais.isEmpty ? "No AI yet" : ais.count == 1 ? "1 AI" : "\(ais.count) AIs")
+                    .textRole(.meta)
+                    .foregroundStyle(Palette.inkMeta)
             }
-            .padding(.vertical, 12)
-            .overlay(alignment: .top) { Rectangle().fill(Palette.rule).frame(height: 1) }
-            .overlay(alignment: .bottom) { Rectangle().fill(Palette.rule).frame(height: 1) }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(ais.isEmpty ? "No AI yet" : ais.map { untrustedName($0.label, limit: 40) }.joined(separator: ", "))
+            .accessibilityIdentifier("statMemory")
         }
+        .padding(.horizontal, 20)
         .padding(.top, 4)
-    }
-}
-
-private extension ProfileHeader {
-    func stat(_ value: String, _ label: String, tint: Color = Palette.ink, suffix: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .lastTextBaseline, spacing: 1) {
-                Text(value).font(RFont.display(23.5)).foregroundStyle(tint)
-                if let suffix { Text(suffix).font(RFont.display(15)).foregroundStyle(Palette.inkMeta) }
-            }
-            .lineLimit(1)
-            Text(label).textRole(.meta).foregroundStyle(Palette.inkMeta).lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -383,8 +383,8 @@ private struct ThresholdSlider: View {
     }
 }
 
-/// One kind of request: its state (a full green ring on Auto, an empty one when it asks, a pause after a wrong answer,
-/// a lock when the user locked it) in a glyph and a word, and, opened, its numbers and the lock.
+/// One kind of request (the Autopilot board, 05): its request icon, its name, its state as a tag (Auto, Asks, Paused,
+/// Locked); opened, its numbers and the lock.
 private struct KindRow: View {
     var cls: ClassView
     var onLock: (Bool?) -> Void
@@ -399,36 +399,19 @@ private struct KindRow: View {
                 feedback.play(.expand(open))
             } label: {
                 HStack(spacing: 12) {
-                    switch state {
-                    case .locked, .paused:
-                        Circle().fill(Palette.paperSunken)
-                            .frame(width: 34, height: 34)
-                            .overlay {
-                                Image(systemName: state == .locked ? "lock.fill" : "pause.fill")
-                                    .font(.system(size: 13)).foregroundStyle(Palette.ink2)
-                            }
-                    case .auto, .asks:
-                        ProgressRing(
-                            fraction: state == .auto ? 1 : 0,
-                            tint: state == .auto ? Palette.success : Palette.kindRead, size: 34, stroke: 3.5
-                        )
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(cls.label).font(RFont.sans(15, .medium)).foregroundStyle(Palette.ink).lineLimit(1)
-                        Text(AutopilotText.kindLine(cls))
-                            .font(RFont.sans(12.5))
-                            .foregroundStyle(Palette.inkMeta)
-                            .lineLimit(1)
-                            .accessibilityIdentifier("kindLine:\(cls.classKey)")
-                    }
-                    Spacer(minLength: 8)
-                    Chevron().rotationEffect(.degrees(open ? 90 : 0))
+                    RequestIcon(spec: Self.icon(cls), size: 36, ring: Palette.paperRaised)
+                    Text(cls.label).textRole(.row).foregroundStyle(Palette.ink).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    KindTag(state: state)
+                        .accessibilityIdentifier("kindLine:\(cls.classKey)")
+                    RowChevron().rotationEffect(.degrees(open ? 90 : 0))
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.vertical, 10)
+                .frame(minHeight: 58)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(RowPress())
+            .buttonStyle(PressDimsStyle())
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityHint(open ? "Hides the lock" : "Shows the lock")
@@ -438,10 +421,10 @@ private struct KindRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(AutopilotText.classStatus(cls))
                             .font(RFont.sans(13, .medium))
-                            .foregroundStyle(state == .auto ? Palette.success : state == .asks ? Palette.kindRead : Palette.ink2)
+                            .foregroundStyle(state == .auto ? Palette.violet : state == .asks ? Palette.kindRead : Palette.ink2)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("classStatus:\(cls.classKey)")
-                        Text(AutopilotText.classNumbers(cls)).font(RFont.sans(12.5)).foregroundStyle(Palette.inkMeta)
+                        Text(AutopilotText.classNumbers(cls)).textRole(.sub).foregroundStyle(Palette.inkMeta)
                     }
                     FlowRow(spacing: 8) {
                         AutopilotChip(title: "Learn by itself", selected: cls.manual == nil, identifier: "lock:auto:\(cls.classKey)") { onLock(nil) }
@@ -449,12 +432,51 @@ private struct KindRow: View {
                         AutopilotChip(title: "Trust now", selected: cls.manual == true, identifier: "lock:off:\(cls.classKey)") { onLock(false) }
                     }
                 }
-                .padding(.leading, 60)
+                .padding(.leading, 62)
                 .padding(.trailing, 16)
                 .padding(.bottom, 14)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .clipped()
+    }
+
+    /// The kind's request icon from its key ("github/write/push"): the service's mark, the action's badge.
+    static func icon(_ cls: ClassView) -> AskIcon {
+        let parts = cls.classKey.split(separator: "/").map(String.init)
+        let provider = parts.first ?? ""
+        let action = parts.count > 2 ? parts[2] : parts.count > 1 ? parts[1] : ""
+        let kind = parts.count > 1 ? ActionKind.of(parts[1]) : .other
+        return AskLabels.icon(provider: provider, action: action, field: FieldKind.of(kind))
+    }
+}
+
+/// A kind's state as a glyph and a word on its tint (the boards' `ktag`).
+private struct KindTag: View {
+    var state: AutopilotText.KindState
+
+    var body: some View {
+        let (word, tint): (String, Color) = switch state {
+        case .auto: ("Auto", Palette.violet)
+        case .asks: ("Asks", Palette.kindRead)
+        case .paused: ("Paused", Palette.ink2)
+        case .locked: ("Locked", Palette.warning)
+        }
+        HStack(spacing: 4) {
+            switch state {
+            case .auto: Bolt(size: 12)
+            case .asks: GlyphIcon(.help, size: 12)
+            case .paused: GlyphIcon(.pause, size: 12)
+            case .locked: GlyphIcon(.lock, size: 12)
+            }
+            Text(word).font(RFont.fixedSans(12.5, .semibold))
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .background(tint.opacity(0.12), in: Capsule())
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(word)
     }
 }

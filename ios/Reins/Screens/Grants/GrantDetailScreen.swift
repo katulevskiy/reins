@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// One grant (iOS-Trust.png, 02): a violet field, since it is power already handed over: its time left in the serif
-/// with a ring that drains, what it allows in a sentence, for whom; then what it may and never does, its uses and end as
-/// hairline rows, what it was used for; and Extend with End now (held), or Resume and Delete once it ended.
+/// One grant (the Trust board, 02): a violet field, since it is power already handed over: who it is for beside the
+/// back button, the time left with a ring that drains and the service's icon, what it allows in the display face;
+/// then what it never does, its uses, end, account and where it came from, what it was used for; and Extend with Hold
+/// to end, or Resume and Delete once it ended.
 struct GrantDetailScreen: View {
     var grantId: String
     @Environment(AppModel.self) private var model
@@ -12,6 +13,9 @@ struct GrantDetailScreen: View {
     @State private var extending: GrantPick?
     @State private var busy = false
     @State private var error: String?
+    /// Ended from here and on its way out: the dock keeps its hold button until the page closes (taking a hold button
+    /// away while its own hold confirms crashes its gesture).
+    @State private var leaving = false
 
     init(grantId: String) {
         self.grantId = grantId
@@ -44,57 +48,59 @@ struct GrantDetailScreen: View {
                         FormBanner(text: error).padding(.horizontal, 16).padding(.top, 14)
                     }
 
-                    // What it may do (a check) and never includes (a ban), as hairline rows.
-                    FactGroup {
-                        if grant.lines.isEmpty {
-                            allowLine("Nothing specific", allowed: true)
-                        }
-                        ForEach(Array(grant.lines.enumerated()), id: \.offset) { _, line in
-                            allowLine(untrusted(line), allowed: true)
-                        }
-                        ForEach(Array(never.enumerated()), id: \.offset) { _, line in
-                            allowLine(line, allowed: false)
+                    // What it allows beyond its sentence, when the core spells it out.
+                    if grant.lines.count > 1 {
+                        SectionHeader("Can", glyph: .check)
+                        RaisedGroup(inset: 46) {
+                            ForEach(Array(grant.lines.enumerated()), id: \.offset) { _, line in
+                                GrantFact(glyph: .check, text: untrusted(line))
+                            }
                         }
                     }
-                    .padding(.top, 12)
 
-                    FactGroup {
-                        FactRow(key: "Uses", value: GrantText.usesValue(grant)) {
-                            if let max = grant.maxUses { UsesDashes(uses: Int(grant.uses), max: Int(max)) }
+                    if !never.isEmpty {
+                        SectionHeader("Never", glyph: .close)
+                        RaisedGroup(inset: 46) {
+                            ForEach(Array(never.enumerated()), id: \.offset) { _, line in
+                                GrantFact(glyph: GrantFact.glyph(never: line), text: line)
+                                    .accessibilityLabel("Never: \(line)")
+                            }
                         }
+                    }
+
+                    RaisedGroup(inset: 46) {
+                        GrantFact(glyph: .card, text: GrantFactText.uses(grant))
                         TimelineView(.periodic(from: .now, by: 30)) { _ in
-                            FactRow(key: grant.active ? "Ends" : GrantText.inactiveWord(grant), value: ends(grant))
+                            GrantFact(glyph: .timer, text: GrantFactText.ends(grant))
                         }
                         if let account = grant.account, !account.trimmingCharacters(in: .whitespaces).isEmpty {
-                            FactRow(key: "Account", value: untrusted(account), mono: true)
+                            GrantFact(glyph: .person, text: untrusted(account), mono: true)
                         }
-                        FactRow(key: "Came from", value: GrantText.origin(grant.origin, label: grant.connectionLabel))
+                        GrantFact(glyph: .circleCheck, text: GrantText.origin(grant.origin, label: grant.connectionLabel))
                     }
-                    .padding(.top, 14)
+                    .padding(.top, 12)
 
                     // A permission for secrets: its values may still be held on computers, so they can be told to drop them.
                     if grant.action == "secrets", let project = grant.secretsProject {
                         RevokeEverywhereSection(project: project, env: grant.secretsEnv).padding(.top, 12)
                     }
 
-                    Text(used.isEmpty ? "Used for" : "Used for · \(used.count)")
-                        .textRole(.section)
-                        .foregroundStyle(Palette.inkMeta)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 26)
-                        .padding(.bottom, 4)
+                    SectionHeader("Used for", trailing: used.isEmpty ? nil : "\(used.count)")
                     if used.isEmpty {
-                        Text("Nothing yet").textRole(.body).foregroundStyle(Palette.inkMeta).padding(.horizontal, 24).padding(.vertical, 8)
-                    }
-                    ForEach(used.prefix(10), id: \.id) { entry in
-                        Button {
-                            feedback.play(.tap)
-                            model.push(.activityDetail(entry.id))
-                        } label: {
-                            HistoryRow(entry: entry)
+                        Text("Nothing yet").textRole(.body).foregroundStyle(Palette.inkMeta).padding(.horizontal, 24).padding(.vertical, 4)
+                    } else {
+                        RaisedGroup(inset: 62) {
+                            ForEach(used.prefix(10), id: \.id) { entry in
+                                Button {
+                                    feedback.play(.tap)
+                                    model.push(.activityDetail(entry.id))
+                                } label: {
+                                    RunningEntryRow(entry: entry, outcome: .grant)
+                                }
+                                .buttonStyle(PressDimsStyle())
+                                .accessibilityIdentifier("entry:\(entry.id)")
+                            }
                         }
-                        .buttonStyle(RowButtonStyle())
-                        .accessibilityIdentifier("entry:\(entry.id)")
                     }
                 }
                 .padding(.bottom, 24)
@@ -129,65 +135,55 @@ struct GrantDetailScreen: View {
             .environment(\.feedback, feedback)
         }
         .presentationFeedback(extending != nil)
-    }
-
-    /// One line of what the grant allows (a green check) or never includes (a red ban).
-    private func allowLine(_ text: String, allowed: Bool) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            GlyphIcon(allowed ? .check : .block, size: 16)
-                .foregroundStyle(allowed ? Palette.success : Palette.danger)
-                .frame(width: 18)
-                .padding(.top, 1)
-            Text(text)
-                .font(RFont.sans(15))
-                .foregroundStyle(allowed ? Palette.ink : Palette.inkMeta)
-                .environment(\.layoutDirection, .leftToRight)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        #if DEBUG
+        // `-openSheet extend` (screenshots): the Extend sheet over a running grant.
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            if grant.active, let i = args.firstIndex(of: "-openSheet"), i + 1 < args.count, args[i + 1] == "extend" {
+                try? await Task.sleep(for: .milliseconds(600))
+                extending = GrantPick(grant)
+            }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(allowed ? text : "Never: \(text)")
-    }
-
-    private func ends(_ grant: GrantView) -> String {
-        guard let end = grant.expiresAt else { return grant.active ? "Never on its own" : "" }
-        return TimeText.dateTime(end)
+        #endif
     }
 
     @ViewBuilder private func dock(_ grant: GrantView) -> some View {
         HStack(spacing: 10) {
-            if grant.active {
+            if grant.active || leaving {
                 Button {
                     extending = GrantPick(grant)
                 } label: {
-                    Label("Extend", systemImage: "timer")
+                    Label { Text("Extend") } icon: { GlyphIcon(.timer, size: 18) }
                 }
                 .buttonStyle(SignalButtonLook(kind: .outline))
+                .frame(maxWidth: .infinity)
                 .frame(height: 54)
                 .disabled(busy)
                 .accessibilityIdentifier("extend")
                 // The grant's power goes at once: held, never a tap, no dialog.
-                HoldButton(title: "End now", busy: busy) {
+                HoldButton(title: "Hold to end", busy: busy) {
+                    leaving = true
                     run(leave: true) { await model.revokeGrant(grant.id) }
                 }
+                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("revoke")
             } else {
                 Button {
                     resuming = GrantPick(grant)
                 } label: {
-                    Label("Resume", systemImage: "arrow.clockwise")
+                    Label { Text("Resume") } icon: { GlyphIcon(.refresh, size: 18) }
                 }
-                .buttonStyle(DockButtonStyle(kind: .light))
+                .buttonStyle(SignalButtonLook(kind: .soft))
+                .frame(height: 54)
                 .disabled(busy)
                 .accessibilityIdentifier("resume")
                 Button(role: .destructive) {
                     confirmingDelete = true
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Label { Text("Delete") } icon: { GlyphIcon(.trash, size: 18) }
                 }
-                .buttonStyle(DockButtonStyle(kind: .danger))
+                .buttonStyle(SignalButtonLook(kind: .danger))
+                .frame(height: 54)
                 .disabled(busy)
                 .accessibilityIdentifier("deleteEnded")
             }
@@ -204,13 +200,66 @@ struct GrantDetailScreen: View {
             let failure = await action()
             busy = false
             error = failure
+            if failure != nil { leaving = false }
             if failure == nil && leave { model.back() }
         }
     }
 }
 
-/// The grant's field: "Grant · Gmail", the time left ("5h *left*") with its ring, the core's summary in the serif, and
-/// who it is for. An ended grant's field is dimmed.
+/// What a grant's fact rows say.
+enum GrantFactText {
+    /// "12 uses", "3 of 5 uses", "Not used yet".
+    static func uses(_ g: GrantView) -> String {
+        if let cap = g.maxUses { return "\(g.uses) of \(cap) uses" }
+        switch g.uses {
+        case 0: return "Not used yet"
+        case 1: return "1 use"
+        default: return "\(g.uses) uses"
+        }
+    }
+
+    /// "Ends Oct 25, 3:50 PM", "Never ends on its own", "Expired Oct 25, 3:50 PM", "Used up".
+    static func ends(_ g: GrantView) -> String {
+        guard let end = g.expiresAt else { return g.active ? "Never ends on its own" : GrantText.inactiveWord(g) }
+        let when = Date(timeIntervalSince1970: TimeInterval(end)).formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        return "\(g.active ? "Ends" : GrantText.inactiveWord(g)) \(when)"
+    }
+}
+
+/// A fact on a grant's page (the boards' `fact`): a glyph and a line.
+struct GrantFact: View {
+    var glyph: Glyph
+    var text: String
+    var mono = false
+
+    /// The glyph of what a grant never does: sending, codes and passwords, reading, else a ban.
+    static func glyph(never line: String) -> Glyph {
+        let l = line.lowercased()
+        if l.contains("code") || l.contains("password") { return .vault }
+        if l.contains("send") { return .send }
+        if l.contains("read") || l.contains("open") { return .eye }
+        return .block
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            GlyphIcon(glyph, size: 18).foregroundStyle(Palette.ink2)
+            Text(verbatim: text)
+                .font(mono ? RFont.mono(14.5) : TextRole.row.font(target: false))
+                .foregroundStyle(Palette.ink)
+                .environment(\.layoutDirection, .leftToRight)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(minHeight: 50)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The grant's field: who it is for (beside the back button), the time left with its ring and the service's icon, and
+/// the core's summary in the display face. An ended grant's field is dimmed.
 private struct GrantField: View {
     var grant: GrantView
     /// The status bar's and the bar's height: the field runs under them.
@@ -219,77 +268,59 @@ private struct GrantField: View {
     var body: some View {
         SignalField(kind: .grant) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Grant · \(grant.service.isEmpty ? "Reins" : serviceName(grant.service))")
-                    .textRole(.section)
-                    .foregroundStyle(Palette.onField2)
-                    .lineLimit(1)
+                // Who: the agent's avatar and name, one short clean line, in the bar's row after the back button.
+                HStack(spacing: 10) {
+                    ConnectionIcon(connectionId: grant.connectionId, label: grant.connectionLabel, size: 28)
+                    Text(verbatim: untrustedName(grant.connectionLabel))
+                        .font(RFont.sans(15, .semibold))
+                        .lineLimit(1)
+                }
+                .frame(height: 44)
+                .padding(.leading, 48)
+                .padding(.top, max(top - 50, 0))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("For \(untrustedName(grant.connectionLabel))")
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     let clock = grantClock(grant, now: nowSeconds(ctx.date))
-                    HStack(alignment: .center) {
-                        HStack(alignment: .lastTextBaseline, spacing: 6) {
-                            Text(grant.active ? GrantText.ringLabel(clock).replacingOccurrences(of: " ", with: "") : GrantText.inactiveWord(grant))
-                                .font(RFont.display(grant.active ? 38 : 30))
-                            if grant.active && clock.remaining != nil {
-                                Text("left").font(RFont.display(18, target: true))
-                            }
-                        }
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        Spacer(minLength: 8)
+                    HStack(alignment: .center, spacing: 14) {
+                        Text(grant.active ? (clock.remaining.map(compactDuration) ?? "\u{221E}") : GrantText.inactiveWord(grant))
+                            .font(RFont.display(grant.active ? 48 : 34))
+                            .tracking(RFont.displayTracking(48))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                            .accessibilityLabel(grant.active ? (clock.remaining.map { "\(compactDuration($0)) left" } ?? "No time limit") : GrantText.inactiveWord(grant))
+                            .accessibilityIdentifier("grantClock")
                         if grant.active {
-                            ArcRing(fraction: clock.fraction, color: Palette.onField, track: Palette.onField.opacity(0.25), lineWidth: 3)
+                            ArcRing(fraction: clock.fraction, color: Palette.onField, track: Palette.onField.opacity(0.25), lineWidth: 3.2)
                                 .frame(width: 30, height: 30)
+                                .accessibilityHidden(true)
                         }
+                        Spacer(minLength: 8)
+                        RequestIcon(spec: AskIcon(mark: .service(grant.service.isEmpty ? "gmail" : grant.service), action: .key, kind: .grant), size: 38, ring: Palette.fieldGrant)
                     }
                     .foregroundStyle(Palette.onField)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(grant.active ? (clock.remaining.map { "\(compactDuration($0)) left" } ?? "No time limit") : GrantText.inactiveWord(grant))
-                    .accessibilityIdentifier("grantClock")
                 }
-                .padding(.top, 18)
-                Text(verbatim: untrusted(grant.summary))
-                    .font(RFont.display(26.5))
-                    .lineHeight(.multiple(factor: 38 / 36))
-                    .foregroundStyle(Palette.onField)
+                .padding(.top, 10)
+                GrantWords.runs(grant.summary).reduce(Text(verbatim: "")) { sentence, run in
+                    Text("\(sentence)\(Text(verbatim: run.text).font(RFont.display(27, target: run.target)))")
+                }
+                    .tracking(RFont.displayTracking(27))
+                    .lineHeight(.multiple(factor: 1.04))
                     .lineLimit(4)
-                    .minimumScaleFactor(0.78)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 6)
+                    .foregroundStyle(Palette.onField)
+                    .padding(.top, 2)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(untrusted(grant.summary))
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityIdentifier("grantTitle")
-                HStack(spacing: 6) {
-                    ConnectionIcon(connectionId: grant.connectionId, label: grant.connectionLabel, size: 18)
-                        .environment(\.colorScheme, .light)
-                    Text(verbatim: [untrustedName(grant.connectionLabel), grant.account.map { untrusted($0) } ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(RFont.sans(13.5))
-                        .foregroundStyle(Palette.onField2)
-                        .lineLimit(1)
-                }
-                .padding(.top, 12)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, top + 8)
+            .padding(.horizontal, 20)
             .padding(.bottom, 24)
         }
         .opacity(grant.active ? 1 : 0.62)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("grantField")
-    }
-}
-
-/// How much of a grant's uses are spent, one dash per use (ten at most drawn).
-private struct UsesDashes: View {
-    var uses: Int
-    var max: Int
-
-    var body: some View {
-        let shown = min(max, 10)
-        let filled = max == 0 ? 0 : Int((Double(min(uses, max)) / Double(max) * Double(shown)).rounded(.up))
-        HStack(spacing: 3) {
-            ForEach(0..<shown, id: \.self) { i in
-                Capsule().fill(i < filled ? Palette.violet : Palette.rule).frame(width: 10, height: 3)
-            }
-        }
-        .accessibilityHidden(true)
     }
 }

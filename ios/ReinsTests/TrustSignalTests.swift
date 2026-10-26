@@ -1,7 +1,8 @@
 import XCTest
 @testable import Reins
 
-/// Trust in Signal: the mood line, and which field and list a running mode paints Trust with.
+/// Trust in Next: which mode runs as Trust's field, what its stack lists and folds to, the field's two-step collapse,
+/// where the ears go, and how grant rows and the ended list read.
 final class TrustSignalTests: XCTestCase {
     private func settings(_ mode: AutopilotMode, bypassUntil: Int64? = nil, bypassSince: Int64? = nil, overnightUntil: Int64? = nil) -> AutopilotSettings {
         AutopilotSettings(
@@ -12,46 +13,28 @@ final class TrustSignalTests: XCTestCase {
         )
     }
 
-    func testTheMoodCountsWhatAutopilotDecidedToday() {
-        // Mid-morning wherever the test runs, so a minute earlier is still today.
-        let midnight = Int64(Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000)).timeIntervalSince1970)
-        let now = midnight + 10 * 3_600
-        let entries = [
-            DemoData.entry(1, at: now - 60, action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
-            DemoData.entry(2, at: now - 120, action: "read", outcome: "released", detail: "", decidedBy: "overnight"),
-            DemoData.entry(3, at: now - 180, action: "read", outcome: "released", detail: ""),
-            DemoData.entry(4, at: now - 3 * 86_400, action: "read", outcome: "released", detail: "", decidedBy: "autopilot"),
-        ]
-        XCTAssertEqual(TrustText.decided(entries, now: now), "Autopilot decided 2 things today.")
-        XCTAssertEqual(TrustText.decided(Array(entries.prefix(1)), now: now), "Autopilot decided 1 thing today.")
-        XCTAssertEqual(TrustText.decided([], now: now), "Autopilot decided nothing yet today.")
-    }
-
-    func testWhileABypassOrOvernightRunsTheMoodSaysWhatItDidToday() {
-        let midnight = Int64(Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_800_000_000)).timeIntervalSince1970)
-        let now = midnight + 10 * 3_600
-        let bypassed = (1...100).map { k in
-            DemoData.entry(Int64(k), at: now - 600 + Int64(k), action: "read", outcome: "released", detail: "", decidedBy: "bypass")
-        }
-        let s = settings(.bypass, bypassUntil: now + 3_600, bypassSince: now - 700)
-        let listed = TrustRunning.bypass(until: now + 3_600).entries(bypassed, settings: s)
-        XCTAssertEqual(TrustText.running(.bypass(until: now + 3_600), listed: listed, now: now), "Bypass approved 100 today.", "counted from the list")
-        XCTAssertEqual(TrustText.decided(bypassed, now: now), "Autopilot decided nothing yet today.", "what it said before")
-        XCTAssertEqual(TrustText.running(.bypass(until: now + 3_600), listed: [], now: now), "Bypass approved nothing yet today.")
-        let yesterday = DemoData.entry(200, at: midnight - 60, action: "read", outcome: "released", detail: "", decidedBy: "bypass")
-        XCTAssertEqual(TrustText.running(.bypass(until: now + 3_600), listed: [yesterday] + listed.prefix(1), now: now), "Bypass approved 1 today.", "today only")
-        XCTAssertEqual(TrustText.running(.overnight(until: now + 3_600), listed: Array(listed.prefix(12)), now: now), "\(AutopilotText.overnightName) decided 12 today.")
-        XCTAssertNil(TrustText.running(.lockdown, listed: listed, now: now), "a lockdown keeps Autopilot's line")
-    }
-
-    func testARunningModePaintsTrustInItsField() {
+    func testARunningModeBecomesTrustsField() {
         XCTAssertNil(TrustRunning.of(settings(.manual)))
         XCTAssertNil(TrustRunning.of(settings(.auto)))
-        XCTAssertEqual(TrustRunning.of(settings(.bypass, bypassUntil: 100))?.field, .delete, "a bypass is red")
-        XCTAssertEqual(TrustRunning.of(settings(.overnight, overnightUntil: 100))?.field, .grant, "Overnight is violet")
-        XCTAssertEqual(TrustRunning.of(settings(.lockdown))?.field, .warn, "Lockdown is amber")
-        XCTAssertEqual(TrustRunning.lockdown.hero.italic, "is denied")
-        XCTAssertEqual(TrustRunning.bypass(until: 1).label, "Autopilot · Bypass")
+        XCTAssertEqual(TrustRunning.of(settings(.bypass, bypassUntil: 100))?.kind, .bypass, "a bypass is red")
+        XCTAssertEqual(TrustRunning.of(settings(.overnight, overnightUntil: 100))?.kind, .overnight, "Overnight is navy")
+        XCTAssertEqual(TrustRunning.of(settings(.lockdown))?.kind, .lockdown, "Lockdown is amber")
+        XCTAssertEqual(TrustRunning.bypass(until: 1).kind.fill, Palette.fieldDelete)
+        XCTAssertEqual(TrustRunning.overnight(until: 1).kind.fill, Palette.modeOvernight)
+        XCTAssertNil(TrustRunning.lockdown.until, "the core keeps no end for a lockdown")
+        XCTAssertEqual(TrustRunning.bypass(until: 1).countGlyph, .check)
+        XCTAssertEqual(TrustRunning.overnight(until: 1).countGlyph, .pause)
+        XCTAssertEqual(TrustRunning.lockdown.countGlyph, .close)
+        XCTAssertEqual(TrustRunning.bypass(until: 1).stopIdentifier, "stopBypass")
+        XCTAssertEqual(TrustRunning.lockdown.stopIdentifier, "endLockdown")
+    }
+
+    func testTheClockSaysWhatIsLeft() {
+        XCTAssertEqual(RunningClock.text(.bypass(until: 1_000 + 47 * 60 + 12), now: 1_000), "47:12")
+        XCTAssertEqual(RunningClock.text(.overnight(until: 1_000 + 5 * 3_600 + 59 * 60 + 12), now: 1_000), "5:59:12")
+        XCTAssertEqual(RunningClock.text(.bypass(until: AutopilotText.untilOff), now: 1_000), "∞")
+        XCTAssertNil(RunningClock.text(.lockdown, now: 1_000))
+        XCTAssertEqual(RunningClock.spoken(.lockdown, now: 1_000), "Lockdown")
     }
 
     func testTheListUnderTheFieldIsWhatItDecidedWhileItRan() {
@@ -63,115 +46,117 @@ final class TrustSignalTests: XCTestCase {
         let bypass = TrustRunning.bypass(until: 2_000)
         XCTAssertEqual(bypass.entries(entries, settings: settings(.bypass, bypassUntil: 2_000, bypassSince: 800)).map(\.id), [3], "only since it started")
         XCTAssertEqual(TrustRunning.lockdown.entries(entries, settings: settings(.lockdown)).map(\.id), [1])
-        XCTAssertEqual(bypass.listTitle, "During this bypass")
+        XCTAssertEqual(bypass.listTitle, "During bypass")
+        XCTAssertEqual(TrustRunning.lockdown.listTitle, "Denied")
+        XCTAssertEqual(bypass.outcome, .bypass)
+        XCTAssertEqual(TrustRunning.lockdown.outcome, .locked)
     }
 
-    func testALongListFoldsToItsLatestThree() {
-        // 100 entries of a running bypass, in any order: newest first, folded to three, "Show all 97" opens the rest.
+    func testALongListStacksUnderItsNewest() {
+        // 100 entries of a running bypass, in any order: newest first, folded to one with two peeking, "+99" opens it.
         let entries = (1...100).map { k in
             DemoData.entry(Int64(k), at: 1_000 + Int64((k * 37) % 100), action: "read", outcome: "released", detail: "", decidedBy: "bypass")
         }.shuffled()
         let mine = TrustRunning.bypass(until: 5_000).entries(entries, settings: settings(.bypass, bypassUntil: 5_000, bypassSince: 900))
         XCTAssertEqual(mine.count, 100, "nothing is dropped")
         XCTAssertEqual(mine.map(\.at), mine.map(\.at).sorted(by: >), "newest first")
-        XCTAssertEqual(RunningListFold.shown(mine.count, expanded: false), 3)
+        XCTAssertEqual(RunningListFold.shown(mine.count, expanded: false), 1)
         XCTAssertEqual(RunningListFold.shown(mine.count, expanded: true), 100)
-        XCTAssertEqual(RunningListFold.showAll(mine.count), "Show all 97")
-        XCTAssertEqual(RunningListFold.shown(2, expanded: false), 2)
-        XCTAssertNil(RunningListFold.showAll(3), "nothing to open")
-        XCTAssertEqual(RunningListFold.showAll(4), "Show all 1")
+        XCTAssertEqual(RunningListFold.showAll(mine.count), "Show all 99")
+        XCTAssertEqual(RunningListFold.hidden(4), 3, "+3")
+        XCTAssertNil(RunningListFold.showAll(1), "nothing to open")
+        XCTAssertEqual(RunningListFold.peeks(1), 0)
+        XCTAssertEqual(RunningListFold.peeks(2), 1)
+        XCTAssertEqual(RunningListFold.peeks(40), 2)
     }
 
-    // MARK: The fold
+    // MARK: The collapse
 
-    private let sizes = RunningFieldGeometry.Sizes(
-        width: 390, labelHeight: 16, labelNaturalWidth: 180, clockOpen: CGSize(width: 220, height: 70), clockCompact: CGSize(width: 220, height: 70),
-        heroHeight: 100, buttonCompactWidth: 120
-    )
-
-    func testTheFoldFollowsTheScrollAndCrossFadesUnderReduceMotion() {
-        XCTAssertEqual(TrustFold.progress(scrolled: 0, range: 200, reduceMotion: false), 0)
-        XCTAssertEqual(TrustFold.progress(scrolled: 50, range: 200, reduceMotion: false), 0.25, "continuous, not a snap")
-        XCTAssertEqual(TrustFold.progress(scrolled: 900, range: 200, reduceMotion: false), 1)
-        XCTAssertEqual(TrustFold.progress(scrolled: -40, range: 200, reduceMotion: false), 0, "pulling to refresh keeps it open")
-        XCTAssertEqual(TrustFold.progress(scrolled: 99, range: 200, reduceMotion: true), 0)
-        XCTAssertEqual(TrustFold.progress(scrolled: 100, range: 200, reduceMotion: true), 1, "Reduce Motion: one state or the other")
-        XCTAssertEqual(TrustFold.progress(scrolled: 100, range: 0, reduceMotion: false), 0, "open until measured")
-        XCTAssertEqual(TrustFold.held(500, range: 200), 200, "nothing past the fold redraws the field")
-        XCTAssertEqual(TrustFold.held(-30, range: 200), 0)
-        XCTAssertEqual(TrustFold.heroOpacity(0), 1)
-        XCTAssertEqual(TrustFold.heroOpacity(0.35), 0, "gone before the button crosses it")
-        XCTAssertEqual(TrustFold.heroOpacity(0.45), 0)
-        XCTAssertEqual(TrustFold.stateValue(0), "open")
-        XCTAssertEqual(TrustFold.stateValue(0.4), "folding")
-        XCTAssertEqual(TrustFold.stateValue(1), "compact")
+    func testScrollingCollapsesInTwoSteps() {
+        // A full field 268 pt tall, the short bar 118, the mini 60.
+        func stage(_ y: CGFloat) -> RunningStage { RunningStage.at(offset: y, fieldBottom: 268, shortHeight: 118, miniHeight: 60) }
+        XCTAssertEqual(stage(-40), .full, "pulling to refresh keeps it full")
+        XCTAssertEqual(stage(0), .full)
+        XCTAssertEqual(stage(149), .full)
+        XCTAssertEqual(stage(150), .short, "once only the short bar's height is left")
+        XCTAssertEqual(stage(247), .short, "the short bar is seen for a while")
+        XCTAssertEqual(stage(248), .mini)
+        XCTAssertEqual(stage(2_000), .mini)
+        XCTAssertEqual(RunningStage.at(offset: 500, fieldBottom: 0, shortHeight: 118, miniHeight: 60), .full, "full until measured")
+        XCTAssertEqual(RunningStage.full.value, "open")
+        XCTAssertEqual(RunningStage.short.value, "short")
+        XCTAssertEqual(RunningStage.mini.value, "compact")
     }
 
-    func testOpenTheButtonRunsAcrossUnderTheSentence() {
-        let g = RunningFieldGeometry(sizes, progress: 0)
-        XCTAssertEqual(g.button.minX, 22)
-        XCTAssertEqual(g.button.width, 346)
-        XCTAssertEqual(g.button.height, 54)
-        XCTAssertGreaterThan(g.button.minY, g.hero.maxY)
-        XCTAssertGreaterThan(g.hero.minY, g.clock!.maxY)
-        XCTAssertEqual(g.surface.height, g.openHeight)
-        XCTAssertEqual(g.openHeight, g.button.maxY + 22)
+    func testTheEarsGoBesideTheIslandOrUnderTheStatusBar() {
+        let island = EarsPlacement(safeTop: 59, accessibility: false)
+        XCTAssertTrue(island.beside)
+        XCTAssertTrue(island.hidesStatusBar, "the ears take the status bar's place")
+        XCTAssertEqual(island.top, 12)
+        XCTAssertEqual(island.side, 30, "clear of the corner curve")
+        XCTAssertEqual(island.maxWidth, 95, "never reaching the island")
+        XCTAssertEqual(island.contentTop, 64)
+        XCTAssertEqual(island.shortHeight, 118)
+        XCTAssertEqual(island.miniHeight, 60)
+
+        let se = EarsPlacement(safeTop: 20, accessibility: false)
+        XCTAssertFalse(se.beside, "no island: the status bar stays")
+        XCTAssertFalse(se.hidesStatusBar)
+        XCTAssertEqual(se.top, 20, "right under the status bar")
+        XCTAssertEqual(se.side, 16)
+        XCTAssertEqual(se.maxWidth, 160)
+        XCTAssertEqual(se.contentTop, 66)
+
+        let largest = EarsPlacement(safeTop: 59, accessibility: true)
+        XCTAssertFalse(largest.beside, "accessibility sizes no longer fit beside the island")
+        XCTAssertFalse(largest.hidesStatusBar)
+        XCTAssertGreaterThanOrEqual(largest.top, 59)
+        XCTAssertGreaterThanOrEqual(largest.height, 44)
     }
 
-    func testCompactTheButtonSitsRightOfTheTimer() {
-        let g = RunningFieldGeometry(sizes, progress: 1)
-        XCTAssertEqual(g.button.maxX, 390 - 22, "at the right edge")
-        XCTAssertEqual(g.button.width, 120, "its own width")
-        XCTAssertEqual(g.button.height, 44, "still a full touch target")
-        XCTAssertEqual(g.label.minY, 6, "the label line stays")
-        let clock = g.clock!
-        let drawnClock = clock.height * RunningFieldGeometry.clockScale
-        XCTAssertEqual(g.button.midY, clock.minY + drawnClock / 2, accuracy: 0.5, "level with the timer")
-        XCTAssertLessThan(clock.minX + clock.width * RunningFieldGeometry.clockScale, g.button.minX, "side by side")
-        XCTAssertEqual(g.surface.height, g.compactHeight)
-        XCTAssertLessThan(g.compactHeight, g.openHeight / 2)
-        XCTAssertEqual(g.openHeight, RunningFieldGeometry(sizes, progress: 0).openHeight, "the space it keeps does not move")
+    // MARK: Grants
+
+    func testAGrantsTargetIsSetApart() {
+        XCTAssertEqual(GrantWords.runs("Read emails from @bank.com"), [AskText.Run(text: "Read emails from "), AskText.Run(text: "@bank.com", target: true)])
+        XCTAssertEqual(GrantWords.runs("Change issues and code of octo/app"), [AskText.Run(text: "Change issues and code of "), AskText.Run(text: "octo/app", target: true)])
+        XCTAssertEqual(GrantWords.runs("Read all emails"), [AskText.Run(text: "Read all emails")])
+        XCTAssertEqual(GrantWords.runs("Read\nemails from @bank.com").map(\.text).joined().contains("\n"), false, "one clean line")
     }
 
-    func testHalfwayEverythingIsHalfwayThere() {
-        let open = RunningFieldGeometry(sizes, progress: 0), compact = RunningFieldGeometry(sizes, progress: 1)
-        let mid = RunningFieldGeometry(sizes, progress: 0.5)
-        XCTAssertEqual(mid.surface.height, (open.surface.height + compact.surface.height) / 2, accuracy: 0.01)
-        XCTAssertEqual(mid.button.minY, (open.button.minY + compact.button.minY) / 2, accuracy: 0.01)
-        XCTAssertEqual(mid.button.width, (open.button.width + compact.button.width) / 2, accuracy: 0.01)
-        XCTAssertEqual(RunningFieldGeometry.clockScale(0.5), (1 + RunningFieldGeometry.clockScale) / 2, accuracy: 0.001)
+    func testAGrantsFactsReadShort() {
+        let g = DemoData.grants(1_800_000_000).first { $0.maxUses == nil && $0.uses > 1 }!
+        XCTAssertEqual(GrantFactText.uses(g), "\(g.uses) uses")
+        var capped = g
+        capped.maxUses = 5
+        capped.uses = 3
+        XCTAssertEqual(GrantFactText.uses(capped), "3 of 5 uses")
+        capped.uses = 0
+        capped.maxUses = nil
+        XCTAssertEqual(GrantFactText.uses(capped), "Not used yet")
+        capped.expiresAt = nil
+        capped.active = true
+        XCTAssertEqual(GrantFactText.ends(capped), "Never ends on its own")
+        XCTAssertEqual(GrantFact.glyph(never: "Send or change anything"), .send)
+        XCTAssertEqual(GrantFact.glyph(never: "Codes and passwords"), .vault)
     }
 
-    func testALockdownFoldsItsButtonOntoTheLabelLine() {
-        var lockdown = sizes
-        lockdown.clockOpen = nil
-        lockdown.clockCompact = nil
-        let g = RunningFieldGeometry(lockdown, progress: 1)
-        XCTAssertNil(g.clock)
-        XCTAssertEqual(g.button.midY, g.label.midY, accuracy: 0.5)
-        XCTAssertLessThanOrEqual(g.label.maxX, g.button.minX, "the label gives the button room")
-        XCTAssertEqual(g.compactHeight, 6 + 44 + 12)
-    }
-
-    func testALabelTooLongToShareItsLineKeepsItAndTheButtonGoesUnder() {
-        var lockdown = sizes
-        lockdown.clockOpen = nil
-        lockdown.clockCompact = nil
-        lockdown.labelNaturalWidth = 230
-        lockdown.buttonCompactWidth = 170
-        let g = RunningFieldGeometry(lockdown, progress: 1)
-        XCTAssertEqual(g.label.width, 346, "never cut")
-        XCTAssertEqual(g.button.maxX, 390 - 22, "at the right edge")
-        XCTAssertGreaterThanOrEqual(g.button.minY, g.label.maxY, "under the label")
-        XCTAssertEqual(g.button.height, 44)
-    }
-
-    /// Measured heights make the fold's range fractional: scrolled past it, the field is fully compact, not 0.997.
-    @MainActor
-    func testAFractionalFoldStillReachesCompact() {
-        XCTAssertEqual(TrustFold.held(500, range: 120.4), 120.4)
-        XCTAssertEqual(TrustFold.progress(scrolled: TrustFold.held(500, range: 120.4), range: 120.4, reduceMotion: false), 1)
-        XCTAssertEqual(TrustFold.stateValue(TrustFold.progress(scrolled: TrustFold.held(121, range: 120.4), range: 120.4, reduceMotion: false)), "compact")
-        XCTAssertEqual(TrustFold.held(60.4, range: 120.4), 60, "whole points before the end")
+    func testEndedGrantsGroupByHowTheyEnded() {
+        var expired = DemoData.grants(1_800_000_000)[0]
+        expired.active = false
+        expired.state = "expired"
+        var usedUp = expired
+        usedUp.id = "u"
+        usedUp.state = "used_up"
+        usedUp.maxUses = 3
+        usedUp.uses = 3
+        var revoked = expired
+        revoked.id = "r"
+        revoked.state = "revoked"
+        let groups = EndedGroup.split([revoked, usedUp, expired])
+        XCTAssertEqual(groups.map(\.kind), [.expired, .usedUp, .byYou])
+        XCTAssertEqual(groups.map(\.kind.title), ["Expired", "Used up", "Ended by you"])
+        XCTAssertTrue(EndedGroup.line(usedUp).hasSuffix("3 of 3 uses"))
+        XCTAssertFalse(EndedGroup.line(revoked).contains("·"), "ended by you: who only")
+        XCTAssertEqual(EndedGroup.split([expired]).count, 1, "empty groups are left out")
     }
 }

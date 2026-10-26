@@ -172,6 +172,16 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
         s.approvalElsewhere = approvalElsewhere
         s.passkeys = passkeys ? [Self.demoPasskey] : []
         s.passkeysOffline = passkeysOffline
+        // `-demoTemporary` (screenshots): one temporary permission for me@gmail.com, as the Permissions board shows it.
+        if ProcessInfo.processInfo.arguments.contains("-demoTemporary") {
+            s.delegationRecords = [DelegationView(
+                id: "temporary-0", revision: 1, title: "Selected agents", service: "gmail", account: "me@gmail.com", state: .active,
+                expiresAt: now + 86_400, agentIds: ["c1"],
+                rules: [CapabilityPermissionInput(capability: .mailSearch, mode: .auto, scope: PermissionScopeSelection(kind: .allInAccount, ids: []))],
+                used: 0, usageVerified: true, unresolved: 0, maxUses: 20, scopeSummary: "Search mail in this account, for Claude",
+                effectiveReason: "Explicit temporary permission", restrictions: []
+            )]
+        }
         // `-demoMode bypass|overnight|lockdown` (screenshots): start with that mode running, as if started 12 minutes ago.
         let args = ProcessInfo.processInfo.arguments
         // `-demoOnly computers|ais|none` (screenshots): only the computers, only the AI apps, or a new account with
@@ -191,6 +201,7 @@ final class DemoReinsCore: ReinsCoreProtocol, @unchecked Sendable {
             case "bypass": s.apGlobal = ApRow(mode: .manual, bypassUntil: now + 47 * 60 + 12, bypassSince: now - 12 * 60)
             case "overnight": s.apGlobal = ApRow(mode: .overnight, overnightUntil: now + 6 * 3_600, overnightSince: now - 12 * 60, overnightReturn: .manual)
             case "lockdown": s.apGlobal = ApRow(mode: .lockdown)
+            case "auto": s.apGlobal = ApRow(mode: .auto)
             default: break
             }
             // `-demoRunningEntries N`: N requests that mode decided, one every few seconds of its 12 minutes.

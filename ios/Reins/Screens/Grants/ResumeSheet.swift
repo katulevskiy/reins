@@ -12,13 +12,14 @@ struct ResumeSheet: View {
     @Environment(\.feedback) private var feedback
     @State private var draft: ResumeDraft
     @State private var error: String?
-    @State private var detent: PresentationDetent = .medium
+    @State private var detent: PresentationDetent
 
     init(grant: GrantView, extending: Bool = false, onResume: @escaping (_ seconds: Int64, _ standing: StandingGrant?) -> Void) {
         self.grant = grant
         self.extending = extending
         self.onResume = onResume
         _draft = State(initialValue: initialResumeDraft(grant))
+        _detent = State(initialValue: extending ? .height(330) : .height(400))
     }
 
     private var editable: Bool { grant.editableScope != nil }
@@ -28,17 +29,20 @@ struct ResumeSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // "Extend *for*": the sheet's title in the serif, one italic word; what it is for under it.
-                    AskText([AskText.Run(text: extending ? "Extend " : "Resume "), AskText.Run(text: "for", target: true)], role: .cardAsk)
-                        .foregroundStyle(Palette.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(verbatim: untrusted(grant.summary))
-                        .textRole(.body)
-                        .foregroundStyle(Palette.ink2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
+                    TrustSheetTitle(title: extending ? "Extend" : "Resume", closeID: "closeResume") { dismiss() }
+                        .padding(.horizontal, -20)
+                    // What it is for: the grant's plate and avatar, its summary.
+                    HStack(spacing: 12) {
+                        GrantMini(service: grant.service, symbol: ActionKind.of(grant.action).symbol, connectionId: grant.connectionId,
+                                  label: grant.connectionLabel, size: 34)
+                        AskRunsText(runs: GrantWords.runs(grant.summary), size: TextRole.row.size)
+                            .foregroundStyle(Palette.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.top, 8)
                     durations
-                        .padding(.top, 20)
+                        .padding(.top, 18)
 
                     if extending {
                         if draft.moreOpen { customTime.transition(.opacity.combined(with: .move(edge: .top))) }
@@ -50,33 +54,26 @@ struct ResumeSheet: View {
                     if let error {
                         FormBanner(text: error).padding(.top, 14).accessibilityIdentifier("resumeInvalid")
                     }
+
+                    Button(action: confirm) {
+                        Label { Text(extending ? "Extend" : "Resume") } icon: { GlyphIcon(.faceId, size: 18) }
+                    }
+                    .buttonStyle(SignalButtonLook(kind: .inverse))
+                    .frame(height: 54)
+                    .padding(.top, 16)
+                    .accessibilityIdentifier("confirmResume")
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 28)
+                .padding(.horizontal, 20)
+                .padding(.top, 22)
                 .padding(.bottom, 20)
                 .animation(.smooth(duration: 0.25), value: draft.moreOpen)
             }
             .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 10) {
-                    Button("Cancel") { dismiss() }
-                        .buttonStyle(SignalButtonLook(kind: .outline))
-                    Button(action: confirm) {
-                        Label(extending ? "Extend" : "Resume", systemImage: BiometricSymbol.name)
-                    }
-                    .buttonStyle(SignalButtonLook(kind: .inverse))
-                    .accessibilityIdentifier("confirmResume")
-                }
-                .frame(height: 54)
-                .padding(.horizontal, 22)
-                .padding(.top, 10)
-                .padding(.bottom, 12)
-                .background(Palette.paper.opacity(0.001))
-            }
+            .scrollBounceBehavior(.basedOnSize)
             .toolbar(.hidden, for: .navigationBar)
             .background(Palette.paper.ignoresSafeArea())
         }
-        .presentationDetents([.medium, .large], selection: $detent)
+        .presentationDetents([extending ? .height(330) : .height(400), .large], selection: $detent)
         .presentationDragIndicator(.visible)
         .presentationBackground(Palette.paper)
         .accessibilityIdentifier(extending ? "extendDialog" : "resumeDialog")
