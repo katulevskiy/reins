@@ -71,7 +71,7 @@ struct EarsPlacement: Equatable {
     /// In from the screen's edges: clear of the corner curve beside the island.
     var side: CGFloat { beside ? 30 : 16 }
     /// Never reaching the island.
-    var maxWidth: CGFloat { beside ? 95 : 160 }
+    var maxWidth: CGFloat { beside ? 95 : accessibility ? 240 : 160 }
     var height: CGFloat { accessibility ? 44 : 36 }
     /// Where the field's own content starts.
     var contentTop: CGFloat { top + height + (beside ? 16 : 10) }

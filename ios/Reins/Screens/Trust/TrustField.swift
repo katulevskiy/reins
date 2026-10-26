@@ -142,6 +142,7 @@ enum RunningClock {
 
     static func spoken(_ running: TrustRunning, now: Int64) -> String {
         guard let until = running.until else { return running.kind.name }
+        if AutopilotText.isUntilOff(until) { return "\(running.kind.name), on until you stop it" }
         return "\(running.kind.name), \(AutopilotText.timeLeft(until: until, now: now))"
     }
 }
@@ -239,15 +240,23 @@ struct StillAsksRow: View {
         ViewThatFits(in: .horizontal) {
             StillAsks()
             VStack(alignment: .leading, spacing: 6) {
-                Text("Still asks").font(RFont.sans(13, .semibold)).opacity(0.85)
-                HStack(spacing: 6) {
-                    Pill("New AI", tone: .onFieldWash, glyph: .link, size: .pill)
-                    Pill("New phone", tone: .onFieldWash, glyph: .phone, size: .pill)
-                }
+                label
+                HStack(spacing: 6) { pills }
             }
-            .foregroundStyle(.white)
-            .accessibilityElement(children: .combine)
+            VStack(alignment: .leading, spacing: 6) {
+                label
+                pills
+            }
         }
+        .foregroundStyle(.white)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var label: some View { Text("Still asks").font(RFont.sans(13, .semibold)).opacity(0.85) }
+
+    @ViewBuilder private var pills: some View {
+        Pill("New AI", tone: .onFieldWash, glyph: .link, size: .pill)
+        Pill("New phone", tone: .onFieldWash, glyph: .phone, size: .pill)
     }
 }
 

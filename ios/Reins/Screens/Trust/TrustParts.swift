@@ -226,11 +226,33 @@ struct RunningEntryRow: View {
     var entry: ActivityEntry
     var outcome: Outcome
     var now: Int64 = nowSeconds()
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let line = EntryLook.line(entry, who: entry.connectionLabel)
-        ActivityRowView(runs: line.runs, time: Self.time(entry.at, now: now), outcome: outcome) {
-            RequestIcon(spec: line.icon, size: 36, ring: Palette.paperRaised)
+        if typeSize.isAccessibilitySize {
+            // Largest text: the time and the outcome move under the sentence.
+            HStack(alignment: .top, spacing: 12) {
+                RequestIcon(spec: line.icon, size: 36, ring: Palette.paperRaised)
+                VStack(alignment: .leading, spacing: 6) {
+                    AskRunsText(runs: line.runs, size: TextRole.body.size)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Text(Self.time(entry.at, now: now)).textRole(.meta).foregroundStyle(Palette.inkMeta)
+                        OutcomeMark(outcome)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 14)
+            .accessibilityElement(children: .combine)
+        } else {
+            ActivityRowView(runs: line.runs, time: Self.time(entry.at, now: now), outcome: outcome) {
+                RequestIcon(spec: line.icon, size: 36, ring: Palette.paperRaised)
+            }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
