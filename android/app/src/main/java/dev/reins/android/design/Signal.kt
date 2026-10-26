@@ -486,14 +486,20 @@ fun ModeChip(mode: ChipMode, modifier: Modifier = Modifier, timer: String? = nul
             .background(bg)
             .then(if (field == null) Modifier.border(1.dp, c.rule, CircleShape) else Modifier)
             .then(if (onClick != null) Modifier.pressable(shape = CircleShape, label = mode.label, onClick = onClick) else Modifier)
+            .then(if (timer != null) Modifier.semantics { contentDescription = "${mode.label}, $timer left" } else Modifier)
             .padding(horizontal = 13.dp)
             .testTag("modeChip:${mode.name}"),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         mode.glyph?.let { GlyphIcon(it, fg, size = 16.dp) }
-        RText(mode.label, RType.sans(14f, FontWeight.SemiBold), fg, maxLines = 1)
-        if (timer != null) RText(timer, RType.mono(13.5f, FontWeight.Medium), fg.copy(alpha = 0.85f), maxLines = 1, ltr = true)
+        // A running timed mode (Bypass, Overnight) is its glyph and the time left, so the chip leaves the page title
+        // room; the name stays in the spoken label. Modes without a timer (Lockdown, Manual, Auto) keep their name.
+        if (timer != null) {
+            RText(timer, RType.mono(14f, FontWeight.SemiBold), fg, maxLines = 1, ltr = true)
+        } else {
+            RText(mode.label, RType.sans(14f, FontWeight.SemiBold), fg, maxLines = 1)
+        }
         if (chevron) GlyphIcon(Glyph.ChevronDown, fg, size = 15.dp)
     }
 }
