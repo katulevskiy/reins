@@ -132,6 +132,14 @@ final class AutopilotUITests: XCTestCase {
         waitForFold("open")
     }
 
+    /// Auto stays disabled until the model's state has loaded (a fresh simulator can take a while): tap it only then.
+    private func tapAuto() {
+        let auto = waitFor("modeSwitch:auto")
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: auto)
+        waitForExpectations(timeout: 15)
+        tap("modeSwitch:auto")
+    }
+
     /// As long as `waitFor`: on a busy Mac a switch can take more than 5 s to show.
     private func selected(_ id: String, timeout: TimeInterval = 8) {
         expectation(for: NSPredicate(format: "isSelected == true"), evaluatedWith: element(id))
@@ -144,12 +152,19 @@ final class AutopilotUITests: XCTestCase {
     }
 
     /// Opens "For a while" and picks one of its modes (Overnight, Lockdown or Bypass) from the iOS menu.
+    /// Opens "For a while" and picks one of its modes. Its rows are found by identifier or name; where the system's
+    /// menu exposes them as bare cells (iOS 27.0 on the CI's iPhone 18 Pro Max) by their fixed order: Overnight,
+    /// Lockdown, Bypass.
     private func pickTimed(_ mode: String) {
-        tap("forAWhile")
         let byId = app.buttons.matching(identifier: "mode:\(mode)").firstMatch
-        let item = byId.waitForExistence(timeout: 5) ? byId : app.buttons[mode.prefix(1).uppercased() + mode.dropFirst()].firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout: 5), "no \(mode) in the menu")
-        item.tap()
+        let byName = app.buttons[mode.prefix(1).uppercased() + mode.dropFirst()].firstMatch
+        tap("forAWhile")
+        if byId.waitForExistence(timeout: 4) { return byId.tap() }
+        if byName.exists, byName.isHittable { return byName.tap() }
+        let order = ["overnight", "lockdown", "bypass"]
+        let menu = app.collectionViews.allElementsBoundByIndex.last { $0.cells.count == order.count }
+        guard let menu, let index = order.firstIndex(of: mode) else { return XCTFail("no \(mode) in the menu") }
+        menu.cells.element(boundBy: index).tap()
     }
 
     /// Manual → Auto → Manual → Auto: each time the half in force is selected, the other is not, and both stay
@@ -184,7 +199,7 @@ final class AutopilotUITests: XCTestCase {
         waitFor("modeSwitch:manual")
         selected("modeSwitch:manual")
         shot("autopilot-manual")
-        tap("modeSwitch:auto")
+        tapAuto()
         selected("modeSwitch:auto")
         pickTimed("bypass")
         waitFor("confirmBypass")
@@ -213,7 +228,7 @@ final class AutopilotUITests: XCTestCase {
     /// to do with what is too risky under it, and stops back to the mode it interrupted.
     func testOvernightStartsOnATapRunsAndStopsBackToTheModeItInterrupted() {
         launch()
-        tap("modeSwitch:auto")
+        tapAuto()
         selected("modeSwitch:auto")
         pickTimed("overnight")
         waitFor("overnightClock")
@@ -333,9 +348,12 @@ final class AutopilotUITests: XCTestCase {
             if let clock { waitFor(clock) }
             shot("trust-\(mode)-open")
 
-            // A slow drag held before letting go stops without momentum, past the full field's clock.
-            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.53)), withVelocity: .slow, thenHoldForDuration: 0.4)
+            // Slow drags held before letting go stop without momentum: 60 pt at a time until the full field's clock has
+            // passed, so the ~100 pt "short" stretch is never jumped over, whatever the phone's height.
+            for _ in 0..<12 where element("runningField").value as? String == "open" {
+                let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+                from.press(forDuration: 0.1, thenDragTo: from.withOffset(CGVector(dx: 0, dy: -60)), withVelocity: .slow, thenHoldForDuration: 0.4)
+            }
             waitForFold("short")
             shot("trust-\(mode)-short")
 
@@ -392,9 +410,9 @@ final class AutopilotUITests: XCTestCase {
         shot("trust-bottom")
 
         XCTAssertTrue(app.openTab("connections"))
-        // The button itself: its list cell carries the same identifier and has no frame of its own.
-        let addFrame = scrollTo("addMcp", type: .button, toEnd: true)
-        XCTAssertLessThanOrEqual(addFrame.maxY, app.tab("connections").frame.minY, "Add MCP server clears the tab bar")
+        // Connections' last row (the demo's MCP server; adding one is in the Add a service sheet now).
+        let lastFrame = scrollTo("mcp:linear", type: .button, toEnd: true)
+        XCTAssertLessThanOrEqual(lastFrame.maxY, app.tab("connections").frame.minY, "Connections' last row clears the tab bar")
         shot("connections-bottom")
     }
 
